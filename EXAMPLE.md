@@ -1,13 +1,13 @@
-# Photo Tagger — Quick Start & Usage Examples
+# TagPup — Quick Start & Usage Examples
 
-This guide walks you through setting up the Photo Tagger and running common photo organization workflows.
+This guide walks you through setting up the TagPup and running common photo organization workflows.
 
 ---
 
 ## 1. Initial Setup
 
 ### Step 1: Install Dependencies
-Open a terminal in your project directory (e.g. `C:\src\ImageTagger`) and run:
+Open a terminal in your project directory (e.g. `C:\src\TagPup`) and run:
 ```powershell
 # Using PowerShell
 powershell -ExecutionPolicy Bypass -File .\setup.ps1

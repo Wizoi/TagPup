@@ -10,7 +10,7 @@ Image.MAX_IMAGE_PIXELS = None
 import torch
 import open_clip
 
-logger = logging.getLogger("photo_tagger.embedder")
+logger = logging.getLogger("tagpup.embedder")
 
 def pad_to_square(image: Image.Image, background_color=(0, 0, 0)) -> Image.Image:
     """Pad the image to a square with a solid background color (default black) to preserve entire frame."""

@@ -1,7 +1,7 @@
 # run.ps1
 # Runs the main python script inside the virtual environment
 
-$scriptPath = Join-Path $PSScriptRoot "photo_tagger.py"
+$scriptPath = Join-Path $PSScriptRoot "tagpup.py"
 $venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 
 if (-not (Test-Path $venvPython)) {

@@ -13,7 +13,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, message=".*weights_onl
 from facenet_pytorch import MTCNN, InceptionResnetV1
 from sklearn.cluster import DBSCAN
 
-logger = logging.getLogger("photo_tagger.faces")
+logger = logging.getLogger("tagpup.faces")
 
 class FaceProcessor:
     def __init__(self, device: str = None):

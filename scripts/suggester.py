@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Tuple, Set, Optional
 from taxonomy import TagTaxonomy
 from index import PhotoIndex
 
-logger = logging.getLogger("photo_tagger.suggester")
+logger = logging.getLogger("tagpup.suggester")
 
 def extract_path_hints(file_path: str) -> List[str]:
     """Extract folder names from the file's path as hints."""
