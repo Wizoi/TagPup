@@ -3,11 +3,12 @@ import os
 import json
 import hashlib
 import logging
-from typing import List, Union, Optional
+from typing import List, Union, Optional, Any
 from PIL import Image
 # Disable Pillow image size check limit to support large photos / panoramas
 Image.MAX_IMAGE_PIXELS = None
 import torch
+import numpy as np
 import open_clip
 
 logger = logging.getLogger("tagpup.embedder")
@@ -27,13 +28,14 @@ def pad_to_square(image: Image.Image, background_color=(0, 0, 0)) -> Image.Image
         return result
 
 class ClipEmbedder:
-    def __init__(self, model_name: str = "ViT-B-32", pretrained: str = "laion2b_s34b_b79k", cache_dir: str = "data/embedding_cache", preserve_full_frame: bool = False, max_aspect_ratio: float = 2.0, force_image_size: Optional[int] = None):
+    def __init__(self, model_name: str = "ViT-B-32", pretrained: str = "laion2b_s34b_b79k", cache_dir: str = "data/embedding_cache", preserve_full_frame: bool = False, max_aspect_ratio: float = 2.0, force_image_size: Optional[int] = None, photo_index: Optional[Any] = None):
         self.model_name = model_name
         self.pretrained = pretrained
         self.cache_dir = cache_dir
         self.preserve_full_frame = preserve_full_frame
         self.max_aspect_ratio = max_aspect_ratio
         self.force_image_size = force_image_size
+        self.photo_index = photo_index
         
         # Lazy initialization
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -82,6 +84,34 @@ class ClipEmbedder:
         if not os.path.exists(file_path):
             return None
             
+        # Try database cache first if photo_index is available
+        if self.photo_index is not None and self.photo_index.conn is not None:
+            try:
+                stat = os.stat(file_path)
+                abs_path = os.path.abspath(file_path)
+                cursor = self.photo_index.conn.cursor()
+                cursor.execute("""
+                    SELECT mtime, size, model_name, pretrained, preserve_full_frame, max_aspect_ratio, force_image_size, embedding
+                    FROM embedding_cache WHERE path = ?
+                """, (abs_path,))
+                row = cursor.fetchone()
+                if row:
+                    mtime, size, model_name, pretrained, preserve_full_frame, max_aspect_ratio, force_image_size, emb_bytes = row
+                    preserve_full_frame_bool = bool(preserve_full_frame)
+                    
+                    if (mtime == stat.st_mtime and 
+                        size == stat.st_size and 
+                        model_name == self.model_name and 
+                        pretrained == self.pretrained and 
+                        preserve_full_frame_bool == self.preserve_full_frame and 
+                        max_aspect_ratio == self.max_aspect_ratio and 
+                        force_image_size == self.force_image_size):
+                        return np.frombuffer(emb_bytes, dtype=np.float32).tolist()
+            except Exception as e:
+                logger.warning(f"Failed to read/validate database cache for {file_path}: {e}")
+            return None
+
+        # Fallback to disk-based cache
         cache_path = self._get_cache_path(file_path)
         if not os.path.exists(cache_path):
             return None
@@ -109,9 +139,35 @@ class ClipEmbedder:
         """Save embedding to cache with file stats."""
         try:
             stat = os.stat(file_path)
+            abs_path = os.path.abspath(file_path)
+            
+            # Try database cache first if photo_index is available
+            if self.photo_index is not None and self.photo_index.conn is not None:
+                emb_bytes = np.array(embedding, dtype=np.float32).tobytes()
+                cursor = self.photo_index.conn.cursor()
+                cursor.execute("""
+                    INSERT OR REPLACE INTO embedding_cache (
+                        path, mtime, size, model_name, pretrained, 
+                        preserve_full_frame, max_aspect_ratio, force_image_size, embedding
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    abs_path,
+                    stat.st_mtime,
+                    stat.st_size,
+                    self.model_name,
+                    self.pretrained,
+                    1 if self.preserve_full_frame else 0,
+                    self.max_aspect_ratio,
+                    self.force_image_size,
+                    emb_bytes
+                ))
+                self.photo_index.conn.commit()
+                return
+
+            # Fallback to disk-based cache
             cache_path = self._get_cache_path(file_path)
             data = {
-                "path": os.path.abspath(file_path),
+                "path": abs_path,
                 "mtime": stat.st_mtime,
                 "size": stat.st_size,
                 "model_name": self.model_name,

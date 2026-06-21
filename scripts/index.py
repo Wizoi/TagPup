@@ -86,6 +86,22 @@ class PhotoIndex:
                 FOREIGN KEY(photo_path) REFERENCES photos(path) ON DELETE CASCADE
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS embedding_cache (
+                path TEXT PRIMARY KEY,
+                mtime REAL,
+                size INTEGER,
+                model_name TEXT,
+                pretrained TEXT,
+                preserve_full_frame INTEGER,
+                max_aspect_ratio REAL,
+                force_image_size INTEGER,
+                embedding BLOB
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_faces_photo_path ON faces(photo_path)
+        """)
         self.conn.commit()
 
     def load(self) -> bool:
@@ -151,7 +167,7 @@ class PhotoIndex:
             self.metadata = []
             return False
 
-    def build_or_update(self, embeddings: List[List[float]], metas: List[Dict[str, Any]], dim: int = 512):
+    def build_or_update(self, embeddings: List[List[float]], metas: List[Dict[str, Any]], dim: int = 512, reload: bool = True):
         """Batch insert/update photos inside the SQLite database (transaction-safe)."""
         if not embeddings or self.conn is None:
             return
@@ -175,8 +191,9 @@ class PhotoIndex:
                 ))
             self.conn.commit()
             
-            # Reload to rebuild the in-memory FAISS index to reflect the updates
-            self.load()
+            if reload:
+                # Reload to rebuild the in-memory FAISS index to reflect the updates
+                self.load()
         except Exception as e:
             logger.error(f"Error saving batch to SQLite: {e}")
             self.conn.rollback()
@@ -308,4 +325,103 @@ class PhotoIndex:
             logger.error(f"Error updating face names: {e}")
             self.conn.rollback()
             raise e
+
+    def save_faces_batch(self, batch_faces: Dict[str, List[Dict[str, Any]]]):
+        """Save detected faces for a batch of photos in a single transaction."""
+        if self.conn is None or not batch_faces:
+            return
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("BEGIN TRANSACTION")
+            for photo_path, faces in batch_faces.items():
+                cursor.execute("DELETE FROM faces WHERE photo_path = ?", (photo_path,))
+                for face in faces:
+                    box_json = json.dumps(face["box"])
+                    emb_bytes = np.array(face["embedding"], dtype=np.float32).tobytes()
+                    cursor.execute("""
+                        INSERT INTO faces (photo_path, box, embedding, name)
+                        VALUES (?, ?, ?, ?)
+                    """, (photo_path, box_json, emb_bytes, face.get("name")))
+            self.conn.commit()
+        except Exception as e:
+            logger.error(f"Error saving faces batch to SQLite: {e}")
+            self.conn.rollback()
+            raise e
+
+    def migrate_disk_cache_to_sqlite(self, cache_dir: str):
+        """Read existing cache .json files, insert them into embedding_cache table, and delete disk files."""
+        if self.conn is None or not os.path.exists(cache_dir):
+            return
+
+        try:
+            json_files = [f for f in os.listdir(cache_dir) if f.endswith(".json")]
+        except Exception as e:
+            logger.warning(f"Failed to scan cache directory '{cache_dir}': {e}")
+            return
+
+        if not json_files:
+            return
+
+        logger.info(f"Found {len(json_files)} cache files in '{cache_dir}'. Starting database migration...")
+        
+        batch_size = 1000
+        cursor = self.conn.cursor()
+        
+        for idx in range(0, len(json_files), batch_size):
+            batch = json_files[idx:idx + batch_size]
+            migrated_files = []
+            
+            try:
+                cursor.execute("BEGIN TRANSACTION")
+                for filename in batch:
+                    filepath = os.path.join(cache_dir, filename)
+                    try:
+                        with open(filepath, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            
+                        # Extract and validate fields
+                        path = data.get("path")
+                        mtime = data.get("mtime")
+                        size = data.get("size")
+                        model_name = data.get("model_name")
+                        pretrained = data.get("pretrained")
+                        preserve_full_frame = 1 if data.get("preserve_full_frame") else 0
+                        max_aspect_ratio = data.get("max_aspect_ratio")
+                        force_image_size = data.get("force_image_size")
+                        embedding = data.get("embedding")
+                        
+                        if path and embedding:
+                            emb_bytes = np.array(embedding, dtype=np.float32).tobytes()
+                            cursor.execute("""
+                                INSERT OR REPLACE INTO embedding_cache (
+                                    path, mtime, size, model_name, pretrained, 
+                                    preserve_full_frame, max_aspect_ratio, force_image_size, embedding
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                path, mtime, size, model_name, pretrained,
+                                preserve_full_frame, max_aspect_ratio, force_image_size, emb_bytes
+                            ))
+                            migrated_files.append(filepath)
+                    except Exception as e:
+                        # Log error and clean up corrupt file to avoid blocking future migrations
+                        logger.warning(f"Corrupt or invalid cache file {filename}: {e}. Removing file.")
+                        try:
+                            os.remove(filepath)
+                        except Exception:
+                            pass
+                
+                self.conn.commit()
+                
+                # Delete files from disk only after successful DB commit
+                for filepath in migrated_files:
+                    try:
+                        os.remove(filepath)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete migrated cache file {filepath}: {e}")
+                        
+                logger.info(f"Successfully migrated and cleaned up {len(migrated_files)} cache files.")
+            except Exception as e:
+                logger.error(f"Failed to migrate batch of cache files: {e}")
+                self.conn.rollback()
+
 
