@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Tuple, Optional, Set
 import numpy as np
 import faiss
 
-logger = logging.getLogger("photo_tagger.index")
+logger = logging.getLogger("tagpup.index")
 
 class PathLocker:
     def __init__(self, lock_dir: str = "data/locks"):

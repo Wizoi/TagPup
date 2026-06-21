@@ -1,16 +1,16 @@
-# 🏷️ ImageTagger (Photo Tagger)
+# 🐶 TagPup
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Platform Windows](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](#preconditions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**ImageTagger** is a modular, AI-powered local photo tagging and semantic search engine. It automatically indexes, clusters, searches, and tags your local photo library entirely offline. By leveraging state-of-the-art vision models (CLIP), face detection and recognition models (MTCNN + Facenet), and standard metadata tools (ExifTool), ImageTagger helps you organize your photos without sending your private data to the cloud.
+**TagPup** is a modular, AI-powered local photo tagging and semantic search engine. Just like a loyal retriever puppy, TagPup sniffs out your photos' visual features and faces, fetches metadata, and tags your files to keep them organized and easy to retrieve. It automatically indexes, clusters, searches, and tags your local photo library entirely offline. By leveraging state-of-the-art vision models (CLIP), face detection and recognition models (MTCNN + Facenet), and standard metadata tools (ExifTool), TagPup helps you organize your photos without sending your private data to the cloud.
 
 ---
 
 ## 🗺️ System Architecture
 
-ImageTagger processes photos in three main phases: **Indexing**, **Suggestion**, and **Metadata Writing**.
+TagPup processes photos in three main phases: **Indexing**, **Suggestion**, and **Metadata Writing**.
 
 ```mermaid
 graph TD
@@ -73,7 +73,7 @@ graph TD
 
 ## 📖 Command Reference & Workflows
 
-ImageTagger comes with a unified CLI entry point wrapper (`run.bat` / `run.ps1`) to automatically execute operations within the local environment.
+TagPup comes with a unified CLI entry point wrapper (`run.bat` / `run.ps1`) to automatically execute operations within the local environment.
 
 > [!TIP]
 > **Testing Mode:** Prefix any command with the global `--test` option (e.g., `run.bat --test index ...`) to redirect database operations to a separate test index (`test_photo_index.db`). This allows you to experiment freely without altering your production data.

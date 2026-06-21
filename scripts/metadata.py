@@ -4,7 +4,7 @@ import logging
 from typing import List, Dict, Any, Optional
 import exiftool
 
-logger = logging.getLogger("photo_tagger.metadata")
+logger = logging.getLogger("tagpup.metadata")
 
 # Define target fields mapped to keys we want to return
 # ExifTool output keys can be namespaced or bare (without prefix).

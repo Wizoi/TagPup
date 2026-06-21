@@ -5,7 +5,7 @@ import logging
 from typing import List, Dict, Any, Optional
 import exiftool
 
-logger = logging.getLogger("photo_tagger.writer")
+logger = logging.getLogger("tagpup.writer")
 
 def derive_caption_from_tags(tags: List[str]) -> Optional[str]:
     """Derive a clean, readable caption based directly on the hierarchical/flat tags."""

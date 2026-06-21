@@ -1,4 +1,4 @@
-# Photo Tagger — System Specification
+# TagPup — System Specification
 
 AI-powered local tag inference for photo libraries. Runs entirely on your local Windows PC — offline, private, and requiring no cloud API keys.
 
@@ -27,7 +27,7 @@ The tool is built as a modular Python application with script wrappers. It relie
                                                       [Tagged Image]
 ```
 
-- **`photo_tagger.py` (CLI entry point)**: Unified Command Line Interface using `click` and `rich`.
+- **`tagpup.py` (CLI entry point)**: Unified Command Line Interface using `click` and `rich`.
 - **`scripts/metadata.py` (Metadata Extraction)**: Interfaces with `exiftool` to read standard metadata fields in batches of 500. Handles bare and namespaced tag keys.
 - **`scripts/embedder.py` (Visual Embeddings)**: Loads CLIP (`ViT-H-14` by default, customizable resolution up to $512 \times 512$) using PyTorch (supporting GPU/CUDA acceleration if available with FP16 half-precision, or falling back to CPU). Generates normalized embeddings and maintains a local cache to avoid re-embedding unchanged files.
 - **`scripts/index.py` (SQLite & FAISS Vector Index)**: Manages an SQLite database (`photo_index.db`) containing indexed photo records and parallel face coordinate/embedding entries, and builds an in-memory `faiss.IndexFlatIP` flat index at runtime for rapid cosine similarity queries.
@@ -44,7 +44,7 @@ The tool is built as a modular Python application with script wrappers. It relie
 |-------------|---------|
 | **Operating System** | Windows 10 or 11 |
 | **Python** | Python 3.10+ added to system PATH |
-| **ExifTool** | Installed on path or resolved dynamically in `photo_tagger.py` (defaults to `%USERPROFILE%\AppData\Local\Programs\ExifTool\exiftool.exe`) |
+| **ExifTool** | Installed on path or resolved dynamically in `tagpup.py` (defaults to `%USERPROFILE%\AppData\Local\Programs\ExifTool\exiftool.exe`) |
 | **Disk Space** | ~3.8 GB one-time download for the default `ViT-H-14` CLIP model weights. Face models require ~112 MB. Cache consumes ~4 KB per photo indexed. |
 | **Hardware Acceleration** | NVIDIA GPU with CUDA support (e.g. CUDA 12.1 runtime) enables FP16 hardware acceleration, offering 2x-3x speedup. Falls back to CPU if CUDA is unavailable. |
 

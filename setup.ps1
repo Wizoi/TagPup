@@ -1,5 +1,5 @@
 # setup.ps1
-# Setup script for Photo Tagger
+# Setup script for TagPup
 
 Write-Host "Setting up Python virtual environment..." -ForegroundColor Cyan
 

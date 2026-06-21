@@ -1,4 +1,4 @@
-# photo_tagger.py
+# tagpup.py
 import os
 import sys
 import json
@@ -16,7 +16,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
-logger = logging.getLogger("photo_tagger")
+logger = logging.getLogger("tagpup")
 
 # Suppress verbose faiss loader and huggingface logs
 logging.getLogger("faiss.loader").setLevel(logging.WARNING)
@@ -105,7 +105,7 @@ def scan_for_images(dir_path: str) -> List[str]:
 @click.option("--test", is_flag=True, help="Use test database paths to avoid cluttering production index.")
 @click.pass_context
 def cli(ctx, test):
-    """Photo Tagger: AI-powered local photo tagging system."""
+    """TagPup: AI-powered local photo tagging system."""
     ctx.ensure_object(dict)
     ctx.obj["test"] = test
 
