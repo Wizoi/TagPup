@@ -161,7 +161,9 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     max_aspect_ratio = config.getfloat("model", "max_aspect_ratio", fallback=2.0)
     force_image_size = config.get("model", "force_image_size", fallback=None)
     force_image_size = int(force_image_size) if force_image_size else None
-    embedder = ClipEmbedder(model_name=model_name, pretrained=pretrained, cache_dir=cache_dir, preserve_full_frame=preserve_full_frame, max_aspect_ratio=max_aspect_ratio, force_image_size=force_image_size)
+    embedder = ClipEmbedder(model_name=model_name, pretrained=pretrained, cache_dir=cache_dir, preserve_full_frame=preserve_full_frame, max_aspect_ratio=max_aspect_ratio, force_image_size=force_image_size, photo_index=photo_index)
+    if not test_mode:
+        photo_index.migrate_disk_cache_to_sqlite(cache_dir)
 
     console.print(f"[bold cyan]Scanning directory:[/bold cyan] {directory}")
     all_images = scan_for_images(directory)
@@ -280,12 +282,12 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
                     if paths_to_remove:
                         photo_index.remove_paths(paths_to_remove)
                         paths_to_remove.clear()
-                    photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
+                    photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]), reload=False)
                     
-                    # Now that the photos table rows exist, save the corresponding face embeddings
-                    for f_path, f_list in batch_faces.items():
-                        photo_index.save_faces_for_path(f_path, f_list)
-                    batch_faces.clear()
+                    # Save faces for the batch in a single transaction
+                    if batch_faces:
+                        photo_index.save_faces_batch(batch_faces)
+                        batch_faces.clear()
                     
                     taxonomy.save()
                     
@@ -306,12 +308,12 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
 
         # Rebuild or update the FAISS index for the final batch
         if batch_embeddings:
-            photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
+            photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]), reload=True)
             
             # Save the remaining face embeddings
-            for f_path, f_list in batch_faces.items():
-                photo_index.save_faces_for_path(f_path, f_list)
-            batch_faces.clear()
+            if batch_faces:
+                photo_index.save_faces_batch(batch_faces)
+                batch_faces.clear()
             
             taxonomy.save()
             for saved_meta in batch_metas:
@@ -376,7 +378,9 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
         max_aspect_ratio = config.getfloat("model", "max_aspect_ratio", fallback=2.0)
         force_image_size = config.get("model", "force_image_size", fallback=None)
         force_image_size = int(force_image_size) if force_image_size else None
-        embedder = ClipEmbedder(model_name=model_name, pretrained=pretrained, cache_dir=cache_dir, preserve_full_frame=preserve_full_frame, max_aspect_ratio=max_aspect_ratio, force_image_size=force_image_size)
+        embedder = ClipEmbedder(model_name=model_name, pretrained=pretrained, cache_dir=cache_dir, preserve_full_frame=preserve_full_frame, max_aspect_ratio=max_aspect_ratio, force_image_size=force_image_size, photo_index=photo_index)
+        if not test_mode:
+            photo_index.migrate_disk_cache_to_sqlite(cache_dir)
         suggester = TagSuggester(photo_index, taxonomy, embedder=embedder, candidate_tags=candidate_tags)
 
         # Scan untagged photos
@@ -502,7 +506,7 @@ def search(ctx, query: str, k: int):
         max_aspect_ratio = config.getfloat("model", "max_aspect_ratio", fallback=2.0)
         force_image_size = config.get("model", "force_image_size", fallback=None)
         force_image_size = int(force_image_size) if force_image_size else None
-        embedder = ClipEmbedder(model_name=model_name, pretrained=pretrained, cache_dir=cache_dir, preserve_full_frame=preserve_full_frame, max_aspect_ratio=max_aspect_ratio, force_image_size=force_image_size)
+        embedder = ClipEmbedder(model_name=model_name, pretrained=pretrained, cache_dir=cache_dir, preserve_full_frame=preserve_full_frame, max_aspect_ratio=max_aspect_ratio, force_image_size=force_image_size, photo_index=photo_index)
         console.print(f"Embedding query: '[bold yellow]{query}[/bold yellow]'")
         query_vector = embedder.embed_text(query)
 

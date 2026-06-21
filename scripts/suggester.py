@@ -157,15 +157,20 @@ class TagSuggester:
             weighted_sim = sim * weight
             total_sim += weighted_sim
             
-            # Combine tags and people (treating people as tags or category paths)
-            raw_tags = list(meta.get("tags", [])) + list(meta.get("people", []))
+            # Only use non-people tags for propagation
+            raw_tags = list(meta.get("tags", []))
             
-            # Expand tags according to the taxonomy
+            # Expand tags according to the taxonomy, excluding family and friends branches
             expanded_tags = set()
             for tag in raw_tags:
+                tag_parts = tag.split("/")
+                if tag_parts and tag_parts[0].lower() in ["family", "friends"]:
+                    continue
                 expanded = self.taxonomy.expand_tag(tag)
                 for t in expanded:
-                    expanded_tags.add(t)
+                    t_parts = t.split("/")
+                    if t_parts and t_parts[0].lower() not in ["family", "friends"]:
+                        expanded_tags.add(t)
             
             # Record similarities for each tag
             for tag in expanded_tags:
@@ -208,26 +213,63 @@ class TagSuggester:
             detected_faces = processor.detect_and_embed_faces(photo_path)
             
             if detected_faces:
-                db_faces = self.index.get_all_faces()
-                if db_faces:
-                    db_embs = np.array([f["embedding"] for f in db_faces], dtype=np.float32)
-                    
-                    for face in detected_faces:
-                        face_emb = np.array(face["embedding"], dtype=np.float32)
-                        # Cosine similarity (dot product of L2 normalized vectors)
-                        sims = np.dot(db_embs, face_emb)
-                        best_idx = int(np.argmax(sims))
-                        best_sim = float(sims[best_idx])
+                # Calculate areas and filter out tiny background/noise faces
+                face_areas = []
+                for f in detected_faces:
+                    box = f.get("box", [0, 0, 0, 0])
+                    area = (box[2] - box[0]) * (box[3] - box[1])
+                    face_areas.append(area)
+                max_area = max(face_areas) if face_areas else 0
+                
+                valid_detected_faces = []
+                for area, f in zip(face_areas, detected_faces):
+                    if area < 0.10 * max_area and area < 2000:
+                        continue
+                    valid_detected_faces.append(f)
+                
+                if valid_detected_faces:
+                    db_faces = self.index.get_all_faces()
+                    if db_faces:
+                        # Group DB faces by name to compute mean embeddings
+                        by_name = {}
+                        for f in db_faces:
+                            name = f["name"]
+                            if name:
+                                by_name.setdefault(name, []).append(f["embedding"])
                         
-                        # High similarity threshold for face match
-                        if best_sim >= 0.85:
-                            match_name = db_faces[best_idx]["name"]
-                            if match_name:
+                        mean_embeddings = {}
+                        for name, embs in by_name.items():
+                            mean = np.mean(embs, axis=0)
+                            norm = np.linalg.norm(mean)
+                            if norm > 0:
+                                mean_embeddings[name] = mean / norm
+                        
+                        for face in valid_detected_faces:
+                            face_emb = np.array(face["embedding"], dtype=np.float32)
+                            
+                            # Find the closest person
+                            best_dist = float('inf')
+                            best_name = None
+                            
+                            for name, mean_emb in mean_embeddings.items():
+                                dist = np.linalg.norm(face_emb - mean_emb)
+                                if dist < best_dist:
+                                    best_dist = dist
+                                    best_name = name
+                            
+                            # Score matches with a threshold of 1.15
+                            if best_name and best_dist < 1.15:
+                                # Calculate a confidence score between 0.50 and 1.0
+                                if best_dist < 0.60:
+                                    score = 1.0
+                                else:
+                                    score = max(0.50, round(1.0 - (best_dist - 0.60) / (1.15 - 0.60) * 0.50, 2))
+                                
                                 # Resolve leaf name to full taxonomy path if possible
-                                resolved_path = match_name
+                                resolved_path = best_name
                                 for path in self.taxonomy.paths:
                                     parts = path.split("/")
-                                    if len(parts) >= 2 and parts[-1].lower() == match_name.lower() and parts[0].lower() in ["family", "friends"]:
+                                    if len(parts) >= 2 and parts[-1].lower() == best_name.lower() and parts[0].lower() in ["family", "friends"]:
                                         resolved_path = path
                                         break
                                 
@@ -235,13 +277,13 @@ class TagSuggester:
                                 found = False
                                 for t in suggested_tags:
                                     if t["tag"].lower() == resolved_path.lower() or t["tag"].lower().endswith("/" + resolved_path.lower()):
-                                        t["score"] = 1.0
+                                        t["score"] = max(t["score"], score)
                                         found = True
                                         break
                                 if not found:
                                     suggested_tags.append({
                                         "tag": resolved_path,
-                                        "score": 1.0,
+                                        "score": score,
                                         "source_count": 1,
                                         "is_face_match": True
                                     })
@@ -257,6 +299,17 @@ class TagSuggester:
                 image_np = image_np / image_norm
                 
             for tag, tag_emb in active_candidates.items():
+                # Skip if this tag is a person tag (to defer entirely to face matching)
+                is_person_tag = False
+                for path in self.taxonomy.paths:
+                    parts = path.split("/")
+                    if len(parts) >= 2 and parts[0].lower() in ["family", "friends"]:
+                        if parts[-1].lower() == tag.lower() or path.lower() == tag.lower():
+                            is_person_tag = True
+                            break
+                if is_person_tag:
+                    continue
+                    
                 # Skip if this tag is already suggested by neighbors
                 tag_lower = tag.lower()
                 if any(t["tag"].lower() == tag_lower or t["tag"].lower().endswith("/" + tag_lower) for t in suggested_tags):
