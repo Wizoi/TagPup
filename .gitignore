@@ -1,0 +1,10 @@
+# Virtual environments
+.venv/
+
+# Local data files and cache directories
+data/
+
+# Python compilation and cache files
+__pycache__/
+*.py[cod]
+*$py.class
