@@ -50,7 +50,7 @@ DEFAULT_EXIFTOOL_PATH = os.path.join(
 
 def get_config():
     """Load configuration parameters from config.ini."""
-    config = configparser.ConfigParser()
+    config = configparser.ConfigParser(interpolation=None)
     config_path = os.path.join(os.path.dirname(__file__), "config.ini")
     
     if os.path.exists(config_path):
