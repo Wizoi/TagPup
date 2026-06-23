@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TagTuner - Photo Metadata and Face Tuning</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Top Navbar -->
+        <header class="app-header">
+            <div class="logo-container">
+                <span class="logo-icon">🎯</span>
+                <h1>TagTuner</h1>
+            </div>
+            <div class="controls-container">
+                <div class="control-group">
+                    <label for="tuner-mode">Tune target:</label>
+                    <select id="tuner-mode" class="mode-select">
+                        <option value="unmatched">Unmatched Faces</option>
+                        <option value="face-matching">Face Matching</option>
+                    </select>
+                </div>
+                <button id="btn-recluster" class="btn btn-secondary">🔄 Re-cluster Faces</button>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="app-content">
+            <!-- Sidebar: Photo List -->
+            <aside class="sidebar">
+                <div class="search-container">
+                    <input type="text" id="photo-search" placeholder="Search photos..." class="search-input">
+                    <span class="search-icon">🔍</span>
+                </div>
+                <div class="sidebar-header-row">
+                    <div class="list-stats" id="list-stats">Loading...</div>
+                    <button id="btn-refresh-list" class="btn btn-secondary btn-sm" title="Refresh photo list">🔄 Refresh List</button>
+                </div>
+                <ul class="photo-list" id="photo-list">
+                    <!-- Photo items will be inserted here dynamically -->
+                </ul>
+            </aside>
+            <div class="sidebar-resizer" id="sidebar-resizer"></div>
+
+            <!-- Details Panel: Main View -->
+            <section class="details-panel" id="details-panel">
+                <div class="empty-state" id="empty-state">
+                    <div class="empty-state-icon">🖼️</div>
+                    <h2>No Photo Selected</h2>
+                    <p>Select a photo from the left sidebar to view details and begin tuning face tags.</p>
+                </div>
+                
+                <div class="panel-content hidden" id="panel-content">
+                    <!-- Top section: Original Image -->
+                    <div class="image-section">
+                        <div class="card-header">
+                            <h3>Original Image</h3>
+                        </div>
+                        <div class="image-viewer">
+                            <img id="main-image" src="" alt="Selected Photo">
+                        </div>
+                    </div>
+
+                    <!-- Middle section: Detected Faces Tuning -->
+                    <div class="faces-section">
+                        <div class="card-header faces-header-row">
+                            <h3>Detected Faces</h3>
+                            <div class="faces-actions-group">
+                                <button id="btn-automatch-all" class="btn btn-secondary btn-sm" title="Auto-match unmatched faces in this photo">🤖 AutoMatch All</button>
+                                <button id="btn-unmatch-all" class="btn btn-danger btn-sm" title="Unmatch all faces in this photo">⚠️ Unmatch All</button>
+                            </div>
+                        </div>
+                        <div class="faces-grid" id="faces-grid">
+                            <!-- Face crops will be rendered here dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Bottom section: Image Details -->
+                    <div class="details-section">
+                        <div class="card-header">
+                            <h3>Image Details</h3>
+                        </div>
+                        <div class="details-grid">
+                            <div class="detail-item full-width">
+                                <span class="detail-label">File Path</span>
+                                <span class="detail-value clickable" id="detail-path"></span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Filename</span>
+                                <span class="detail-value font-bold" id="detail-filename"></span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Title / Caption</span>
+                                <span class="detail-value italic" id="detail-title"></span>
+                            </div>
+                            <div class="detail-item full-width">
+                                <span class="detail-label">Keywords / Tags</span>
+                                <div class="tags-container" id="detail-tags">
+                                    <!-- Tag pills will be inserted here -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Face Matching Content View -->
+                <div class="face-matching-content hidden" id="face-matching-content">
+                    <div class="matching-main-area">
+                        <div class="matching-header-card">
+                            <div>
+                                <h2 id="matching-person-name">Selected Name</h2>
+                                <p id="matching-person-count">0 faces matched</p>
+                            </div>
+                            <div class="matching-actions" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <div class="matching-reassign-container" style="display: flex; gap: 5px; align-items: center;">
+                                    <input type="text" id="input-reassign-name" placeholder="Assign to name..." list="people-datalist" style="padding: 6px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-secondary); color: var(--text-primary); outline: none; width: 180px;">
+                                    <button id="btn-reassign-selected" class="btn btn-primary" style="padding: 6px 12px;" disabled>Assign Selected</button>
+                                </div>
+                                <button id="btn-unmatch-selected" class="btn btn-danger" disabled>⚠️ Unmatch Selected (0)</button>
+                            </div>
+                        </div>
+                        
+                        <div class="matching-grid-card">
+                            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                                <h3>Matched Faces</h3>
+                                <div style="font-size: 12px; color: var(--text-muted);">Click faces to select/deselect. Multi-selection is enabled.</div>
+                            </div>
+                            <div class="matching-faces-grid" id="matching-faces-grid">
+                                <!-- Face crops will be rendered here dynamically -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Details Pane Sidebar -->
+                    <div class="matching-details-sidebar" id="matching-details-sidebar">
+                        <div class="sidebar-placeholder" id="matching-details-placeholder">
+                            <div class="placeholder-icon" style="font-size: 48px; margin-bottom: 12px; opacity: 0.6;">👤</div>
+                            <h4 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 500;">No Face Selected</h4>
+                            <p style="margin: 0; font-size: 13px; color: var(--text-muted); line-height: 1.5; text-align: center;">Click a matched face crop to view its original photo, bounding box coordinates, parent tags, and matching diagnostics.</p>
+                        </div>
+                        <div class="sidebar-details-content hidden" id="matching-details-content">
+                            <div class="card-header" style="margin-bottom: 15px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">
+                                <h3 style="margin: 0; font-size: 16px;">Face Crop Details</h3>
+                            </div>
+                            <div class="sidebar-face-preview-container" style="position: relative; width: 100%; border-radius: 6px; overflow: hidden; background: var(--bg-secondary); border: 1px solid var(--border-color); margin-bottom: 15px; max-height: 220px; display: flex; align-items: center; justify-content: center;">
+                                <img id="matching-detail-img" src="" alt="Original Photo Preview" style="max-width: 100%; max-height: 220px; object-fit: contain; display: block;">
+                                <div id="matching-detail-bounding-box-overlay" class="bounding-box-overlay" style="position: absolute; border: 2px solid #ef4444; box-shadow: 0 0 0 9999px rgba(0,0,0,0.4); pointer-events: none; transition: all 0.2s ease;"></div>
+                            </div>
+                            <div class="details-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+                                <div class="detail-item">
+                                    <span class="detail-label" style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 3px;">Face ID</span>
+                                    <span class="detail-value" id="matching-detail-id" style="font-weight: 600;"></span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label" style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 3px;">Detection Confidence</span>
+                                    <span class="detail-value" id="matching-detail-confidence" style="font-weight: 600; color: #10b981;"></span>
+                                </div>
+                                <div class="detail-item full-width" style="grid-column: 1 / -1;">
+                                    <span class="detail-label" style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 3px;">Bounding Box [x1, y1, x2, y2]</span>
+                                    <span class="detail-value code" id="matching-detail-box" style="font-family: monospace; font-size: 12px; background: var(--bg-secondary); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-color); display: block;"></span>
+                                </div>
+                                <div class="detail-item full-width" style="grid-column: 1 / -1;">
+                                    <span class="detail-label" style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 3px;">Original Photo File Path</span>
+                                    <span class="detail-value" style="font-size: 11px; word-break: break-all; background: var(--bg-secondary); padding: 6px 8px; border-radius: 4px; border: 1px solid var(--border-color); display: block;" id="matching-detail-path"></span>
+                                </div>
+                                <div class="detail-item full-width" style="grid-column: 1 / -1;">
+                                    <span class="detail-label" style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 3px;">Original Keywords / Tags</span>
+                                    <div class="tags-container" id="matching-detail-tags" style="display: flex; flex-wrap: wrap; gap: 4px;"></div>
+                                </div>
+                                <div class="detail-item full-width" style="grid-column: 1 / -1;">
+                                    <span class="detail-label" style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 3px;">Matched People in Photo</span>
+                                    <div class="tags-container" id="matching-detail-people" style="display: flex; flex-wrap: wrap; gap: 4px;"></div>
+                                </div>
+                                <div class="detail-item full-width" style="grid-column: 1 / -1;">
+                                    <span class="detail-label" style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 5px;">Top Matching Identities (Diagnostics)</span>
+                                    <div class="diagnostics-list" id="matching-detail-diagnostics" style="display: flex; flex-direction: column; gap: 6px; background: var(--bg-secondary); padding: 8px; border-radius: 4px; border: 1px solid var(--border-color);"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    <datalist id="people-datalist"></datalist>
+    <script src="app.js"></script>
+</body>
+</html>

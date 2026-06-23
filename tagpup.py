@@ -794,8 +794,10 @@ def index_faces(ctx, directory: str, force: bool):
 
 
 @cli.command("cluster-faces")
+@click.option("--reset", is_flag=True, help="Reset all face name assignments back to NULL before clustering.")
+@click.option("--max-iterations", default=5, type=int, help="Maximum iterations for propagation loop (set to 0 for anchor only).")
 @click.pass_context
-def cluster_faces(ctx):
+def cluster_faces(ctx, reset: bool, max_iterations: int):
     """Run self-tuning identity resolution to cluster and name faces using photo tags."""
     config = get_config()
     test_mode = ctx.obj.get("test", False)
@@ -806,12 +808,19 @@ def cluster_faces(ctx):
         console.print("[bold red]Error:[/bold red] No photo index found.")
         return
 
+    if reset:
+        try:
+            photo_index.reset_face_assignments()
+            console.print("[bold yellow]Successfully reset all face name assignments and restored original people metadata in database.[/bold yellow]")
+        except Exception as e:
+            console.print(f"[bold red]Failed to reset face assignments: {e}[/bold red]")
+
     taxonomy = TagTaxonomy(file_path=tax_path)
     taxonomy.load()
 
     try:
         processor = FaceProcessor()
-        resolved_stats = processor.cluster_and_resolve_identities(photo_index, taxonomy)
+        resolved_stats = processor.cluster_and_resolve_identities(photo_index, taxonomy, max_iterations=max_iterations)
         
         if not resolved_stats:
             console.print("[yellow]No faces were resolved to identities. Try tagging photos with people names first.[/yellow]")
