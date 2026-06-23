@@ -2,10 +2,13 @@
 import os
 import json
 import logging
+import io
 from typing import List, Dict, Any, Tuple, Optional
 from PIL import Image
+Image.MAX_IMAGE_PIXELS = None
 import numpy as np
 import torch
+import configparser
 
 # Import facenet-pytorch elements
 import warnings
@@ -21,6 +24,25 @@ class FaceProcessor:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.mtcnn: Optional[MTCNN] = None
         self.resnet: Optional[InceptionResnetV1] = None
+        
+        # Load config.ini parameters if present
+        config = configparser.ConfigParser(interpolation=None)
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
+        
+        self.min_face_size = 20
+        self.confidence_threshold = 0.85
+        self.mtcnn_thresholds = [0.6, 0.7, 0.7]
+        
+        if os.path.exists(config_path):
+            config.read(config_path, encoding='utf-8')
+            if config.has_section("faces"):
+                self.min_face_size = config.getint("faces", "min_face_size", fallback=20)
+                self.confidence_threshold = config.getfloat("faces", "confidence_threshold", fallback=0.85)
+                thresholds_str = config.get("faces", "mtcnn_thresholds", fallback="0.6,0.7,0.7")
+                try:
+                    self.mtcnn_thresholds = [float(x.strip()) for x in thresholds_str.split(",")]
+                except Exception:
+                    self.mtcnn_thresholds = [0.6, 0.7, 0.7]
 
     def _init_models(self):
         """Lazily initialize MTCNN detector and InceptionResnetV1 face embedder."""
@@ -29,7 +51,12 @@ class FaceProcessor:
             
         logger.info(f"Initializing face detection (MTCNN) and embedding models (InceptionResnetV1) on {self.device.upper()}...")
         # MTCNN options: keep_all=True detects multiple faces, post_process=False keeps crops raw
-        self.mtcnn = MTCNN(keep_all=True, device=self.device, min_face_size=20, thresholds=[0.6, 0.7, 0.7])
+        self.mtcnn = MTCNN(
+            keep_all=True, 
+            device=self.device, 
+            min_face_size=self.min_face_size, 
+            thresholds=self.mtcnn_thresholds
+        )
         # Resnet trained on VGGFace2 to extract 512-dimensional face features
         self.resnet = InceptionResnetV1(pretrained='vggface2', device=self.device).eval()
         if self.device == "cuda":
@@ -58,7 +85,7 @@ class FaceProcessor:
                     
                 detected_faces = []
                 for box, prob in zip(boxes, probs):
-                    if prob < 0.85:  # High confidence threshold to filter out false face detections
+                    if prob < self.confidence_threshold:  # Configurable confidence threshold to filter out false face detections
                         continue
                         
                     x1, y1, x2, y2 = box
@@ -87,10 +114,28 @@ class FaceProcessor:
                         emb_tensor /= emb_tensor.norm(dim=-1, keepdim=True)
                         emb = emb_tensor[0].cpu().numpy().tolist()
                         
+                    # Save a web-optimized face crop image (downscaled to max 256px if larger)
+                    face_crop_img = img.crop((x1, y1, x2, y2))
+                    if max(face_crop_img.size) > 256:
+                        try:
+                            resample = Image.Resampling.LANCZOS
+                        except AttributeError:
+                            try:
+                                resample = Image.LANCZOS
+                            except AttributeError:
+                                resample = Image.ANTIALIAS
+                        face_crop_img.thumbnail((256, 256), resample)
+                    
+                    crop_buffer = io.BytesIO()
+                    face_crop_img.save(crop_buffer, format="JPEG", quality=90)
+                    crop_bytes = crop_buffer.getvalue()
+                        
                     detected_faces.append({
                         "box": [x1, y1, x2, y2],
                         "embedding": emb,
-                        "name": None
+                        "name": None,
+                        "crop_image": crop_bytes,
+                        "prob": float(prob)
                     })
                     
                 return detected_faces
@@ -98,7 +143,7 @@ class FaceProcessor:
             logger.error(f"Error processing faces in {img_path}: {e}")
             return []
 
-    def cluster_and_resolve_identities(self, photo_index: Any, taxonomy: Any):
+    def cluster_and_resolve_identities(self, photo_index: Any, taxonomy: Any, max_iterations: int = 5):
         """Analyze face embeddings, cluster them with DBSCAN, and assign names using photo tags."""
         logger.info("Starting self-tuning face identity resolution...")
         all_faces = photo_index.get_all_faces()
@@ -113,8 +158,9 @@ class FaceProcessor:
         # Since embeddings are L2 normalized, Cosine Distance = 0.5 * (Euclidean Distance)^2.
         # A cosine similarity cutoff of 0.85 equals a cosine distance of 0.15.
         # Euclidean eps = sqrt(2 * 0.15) = sqrt(0.3) ≈ 0.547.
-        # We use metric='euclidean' and eps=0.55. min_samples=1 so single faces can form their own cluster.
-        db = DBSCAN(eps=0.55, min_samples=1, metric='euclidean')
+        # We use metric='euclidean' and eps=0.48. min_samples=1 so single faces can form their own cluster.
+        # n_jobs=-1 enables multi-threaded distance computation for large datasets.
+        db = DBSCAN(eps=0.48, min_samples=1, metric='euclidean', n_jobs=-1)
         labels = db.fit_predict(embeddings)
         
         # Group face index records by cluster ID
@@ -137,44 +183,61 @@ class FaceProcessor:
             p_path = f["photo_path"]
             face_counts_by_photo[p_path] = face_counts_by_photo.get(p_path, 0) + 1
 
-        # Step 1: Initial resolution based on cluster majority vote (stored in memory first)
+        # Traces map to record the resolution path for each face: face_id -> dict
+        traces = {}
+        assignment_counter = 0
+
+        # Phase 1: Identify direct anchors (faces in photos containing exactly 1 face and exactly 1 person tag)
+        direct_anchors = {}
+        for face in all_faces:
+            p_path = face["photo_path"]
+            meta = meta_by_path.get(p_path)
+            if meta:
+                people = meta.get("people", [])
+                if face_counts_by_photo.get(p_path, 0) == 1 and len(people) == 1:
+                    direct_anchors[face["id"]] = people[0]
+
+        # Phase 2: Cluster voting using direct anchors
         initial_resolved_names = {}
         for cluster_id, cluster_faces in tqdm(clusters.items(), desc="Resolving face identities"):
-            # Gather all people tags present on the parent photos of this face cluster
+            # Count direct anchor names present in this cluster
+            cluster_anchors = {}
             photo_people_tags = []
-            anchor_votes = {} # High confidence votes from photos with only 1 face and 1 person tag
             
             # Map containing parent photos of the cluster and how many faces they have
             photo_face_counts = {}
             for face in cluster_faces:
                 path = face["photo_path"]
                 if path not in photo_face_counts:
-                    # Look up total faces in this parent photo from precomputed dict
                     photo_face_counts[path] = face_counts_by_photo.get(path, 0)
-
-            for face in cluster_faces:
-                path = face["photo_path"]
-                meta = meta_by_path.get(path)
-                if not meta:
-                    continue
-                    
-                people = meta.get("people", [])
-                photo_people_tags.extend(people)
                 
-                # Anchor rule: If a photo contains exactly 1 face and exactly 1 person tag,
-                # that face is almost certainly that person.
-                if photo_face_counts[path] == 1 and len(people) == 1:
-                    person_name = people[0]
-                    anchor_votes[person_name] = anchor_votes.get(person_name, 0) + 1
+                # Gather direct anchor assignment if it exists
+                anchor_name = direct_anchors.get(face["id"])
+                if anchor_name:
+                    cluster_anchors[anchor_name] = cluster_anchors.get(anchor_name, 0) + 1
+                
+                # Also gather people tags on parent photos of this cluster (for majority vote fallback)
+                meta = meta_by_path.get(path)
+                if meta:
+                    people = meta.get("people", [])
+                    photo_people_tags.extend(people)
 
             resolved_name = None
+            method = "unassigned"
+            trigger_photos = []
             
-            # Scenario A: We have anchor photos
-            if anchor_votes:
-                # Select the name with the most anchor votes
-                resolved_name = max(anchor_votes, key=anchor_votes.get)
-            # Scenario B: No anchor photos, but we can do majority voting of people tags on all parent photos
+            if cluster_anchors:
+                # If there are direct anchors in the cluster, resolve to the one with the most anchor votes
+                resolved_name = max(cluster_anchors, key=cluster_anchors.get)
+                method = "direct_anchor_propagation"
+                # Gather photos that triggered this anchor vote
+                for face in cluster_faces:
+                    path = face["photo_path"]
+                    anchor_name = direct_anchors.get(face["id"])
+                    if anchor_name == resolved_name:
+                        trigger_photos.append(path)
             elif photo_people_tags:
+                # Fall back to majority voting of people tags on all parent photos
                 unique_tags, counts = np.unique(photo_people_tags, return_counts=True)
                 tag_freqs = dict(zip(unique_tags, counts))
                 best_tag = max(tag_freqs, key=tag_freqs.get)
@@ -183,18 +246,93 @@ class FaceProcessor:
                 total_photos = len(photo_face_counts)
                 if tag_freqs[best_tag] / total_photos >= 0.50:
                     resolved_name = best_tag
+                    method = "cluster_majority_vote"
+                    for face in cluster_faces:
+                        path = face["photo_path"]
+                        people = meta_by_path.get(path, {}).get("people", []) if meta_by_path.get(path) else []
+                        if resolved_name in people:
+                            trigger_photos.append(path)
 
             # Assign resolved name to all faces in this cluster
-            for face in cluster_faces:
-                initial_resolved_names[face["id"]] = resolved_name
+            if resolved_name:
+                assignment_counter += 1
+                for face in cluster_faces:
+                    initial_resolved_names[face["id"]] = resolved_name
+                    
+                    # Record trace
+                    face_direct_anchor = direct_anchors.get(face["id"])
+                    if face_direct_anchor == resolved_name:
+                        traces[face["id"]] = {
+                            "face_id": face["id"],
+                            "photo_path": face["photo_path"],
+                            "cluster_id": int(cluster_id),
+                            "assigned_name": resolved_name,
+                            "resolution_method": "direct_anchor",
+                            "assignment_order": assignment_counter,
+                            "trigger_photos": [face["photo_path"]]
+                        }
+                    else:
+                        traces[face["id"]] = {
+                            "face_id": face["id"],
+                            "photo_path": face["photo_path"],
+                            "cluster_id": int(cluster_id),
+                            "assigned_name": resolved_name,
+                            "resolution_method": method,
+                            "assignment_order": assignment_counter,
+                            "trigger_photos": trigger_photos
+                        }
+            else:
+                for face in cluster_faces:
+                    traces[face["id"]] = {
+                        "face_id": face["id"],
+                        "photo_path": face["photo_path"],
+                        "cluster_id": int(cluster_id),
+                        "assigned_name": None,
+                        "resolution_method": "unassigned",
+                        "assignment_order": None,
+                        "trigger_photos": []
+                    }
 
         # Step 2 & 3: Run iterative propagation loop to bootstrap unknown identities by process of elimination
         current_resolved_names = {face["id"]: initial_resolved_names.get(face["id"]) for face in all_faces}
         
+        # Metadata conflict override: If a photo has people tags, clear any initial face assignments that do not match the photo's tags
+        override_count = 0
+        for face in all_faces:
+            fid = face["id"]
+            p_path = face["photo_path"]
+            meta = meta_by_path.get(p_path)
+            if meta:
+                photo_tags = set(meta.get("people", []))
+                if photo_tags:
+                    curr_name = current_resolved_names.get(fid)
+                    if curr_name and curr_name != "Non Person" and curr_name not in photo_tags:
+                        current_resolved_names[fid] = None
+                        override_count += 1
+                        traces[fid] = {
+                            "face_id": fid,
+                            "photo_path": p_path,
+                            "cluster_id": traces.get(fid, {}).get("cluster_id") if fid in traces else None,
+                            "assigned_name": None,
+                            "resolution_method": "metadata_conflict_override",
+                            "assignment_order": None,
+                            "trigger_photos": []
+                        }
+        if override_count > 0:
+            logger.info(f"Metadata conflict override: Unassigned {override_count} initial face labels that did not match parent photo people tags.")
+        
+        # Pre-group faces by photo once (since photo_path values never change during iterations)
+        faces_by_photo = {}
+        for face in all_faces:
+            p_path = face["photo_path"]
+            if p_path not in faces_by_photo:
+                faces_by_photo[p_path] = []
+            faces_by_photo[p_path].append(face)
+
         logger.info("Resolving multi-face photo conflicts and applying metadata consensus (iterative loop)...")
         refined_resolved_names = {}
         
-        for iteration in range(5):
+        for iteration in range(max_iterations):
             # 2a. Compute mean embeddings for current resolved names
             mean_embeddings = {}
             embeddings_by_name = {}
@@ -210,14 +348,6 @@ class FaceProcessor:
                 norm = np.linalg.norm(mean_embeddings[name])
                 if norm > 0:
                     mean_embeddings[name] /= norm
-            
-            # 2b. Group faces by photo
-            faces_by_photo = {}
-            for face in all_faces:
-                p_path = face["photo_path"]
-                if p_path not in faces_by_photo:
-                    faces_by_photo[p_path] = []
-                faces_by_photo[p_path].append(face)
 
             new_resolved_names = {}
             
@@ -324,9 +454,35 @@ class FaceProcessor:
                         for f, tag in zip(unassigned_faces, sorted(list(unknown_unused))):
                             face_resolved[f["id"]] = tag
 
-                # Store refined assignments
+                # Store refined assignments and update traces if resolved names changed
                 for f in photo_faces:
-                    new_resolved_names[f["id"]] = face_resolved.get(f["id"])
+                    fid = f["id"]
+                    old_val = current_resolved_names.get(fid)
+                    new_val = face_resolved.get(fid)
+                    new_resolved_names[fid] = new_val
+                    
+                    if old_val != new_val:
+                        if new_val:
+                            assignment_counter += 1
+                            traces[fid] = {
+                                "face_id": fid,
+                                "photo_path": f["photo_path"],
+                                "cluster_id": traces.get(fid, {}).get("cluster_id") if fid in traces else None,
+                                "assigned_name": new_val,
+                                "resolution_method": f"iterative_propagation_iteration_{iteration + 1}",
+                                "assignment_order": assignment_counter,
+                                "trigger_photos": [p_path]
+                            }
+                        else:
+                            traces[fid] = {
+                                "face_id": fid,
+                                "photo_path": f["photo_path"],
+                                "cluster_id": traces.get(fid, {}).get("cluster_id") if fid in traces else None,
+                                "assigned_name": None,
+                                "resolution_method": "unassigned",
+                                "assignment_order": None,
+                                "trigger_photos": []
+                            }
             
             # Check if there were any changes in assignment compared to the previous iteration
             changed = False
@@ -344,10 +500,106 @@ class FaceProcessor:
         refined_resolved_names = current_resolved_names
 
         # Step 4: Build database updates and calculate final statistics
+        # Compute mean embeddings for the final resolved names to classify remaining unassigned faces
+        final_mean_embeddings = {}
+        final_embeddings_by_name = {}
+        for face in all_faces:
+            name = refined_resolved_names.get(face["id"])
+            if name and name != "Non Person":
+                if name not in final_embeddings_by_name:
+                    final_embeddings_by_name[name] = []
+                final_embeddings_by_name[name].append(face["embedding"])
+                
+        for name, embs in final_embeddings_by_name.items():
+            mean_emb = np.mean(embs, axis=0)
+            norm = np.linalg.norm(mean_emb)
+            if norm > 0:
+                mean_emb /= norm
+            final_mean_embeddings[name] = mean_emb
+
         face_updates = []
         resolved_stats = {}
         for face in all_faces:
             final_name = refined_resolved_names.get(face["id"])
+            
+            if final_name is None:
+                # If unresolved, check similarity to all known resolved people
+                best_sim = -1.0
+                best_name = None
+                f_emb = np.array(face["embedding"])
+                for name, mean_emb in final_mean_embeddings.items():
+                    sim = np.dot(f_emb, mean_emb)
+                    if sim > best_sim:
+                        best_sim = sim
+                        best_name = name
+                
+                # Check parent photo metadata for people tags
+                p_path = face["photo_path"]
+                meta = meta_by_path.get(p_path)
+                photo_tags = set(meta.get("people", [])) if meta else set()
+                
+                if photo_tags:
+                    # Photo is tagged with people. We only match if the best matching name is in those tags.
+                    # Since we have confirmation via tags, we use a standard threshold (>= 0.65)
+                    if best_name in photo_tags and best_sim >= 0.65:
+                        final_name = best_name
+                        traces[face["id"]] = {
+                            "face_id": face["id"],
+                            "photo_path": p_path,
+                            "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
+                            "assigned_name": final_name,
+                            "resolution_method": f"final_matching_tagged_photo (similarity={best_sim:.4f})",
+                            "assignment_order": None,
+                            "trigger_photos": []
+                        }
+                    else:
+                        final_name = "Non Person"
+                        traces[face["id"]] = {
+                            "face_id": face["id"],
+                            "photo_path": p_path,
+                            "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
+                            "assigned_name": "Non Person",
+                            "resolution_method": f"final_matching_tagged_photo_failed (max_similarity={best_sim:.4f})",
+                            "assignment_order": None,
+                            "trigger_photos": []
+                        }
+                else:
+                    # Photo is untagged. We should be much more selective/restrictive (>= 0.80) to reduce false positives.
+                    if best_name and best_sim >= 0.80:
+                        final_name = best_name
+                        traces[face["id"]] = {
+                            "face_id": face["id"],
+                            "photo_path": p_path,
+                            "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
+                            "assigned_name": final_name,
+                            "resolution_method": f"final_matching_untagged_photo (similarity={best_sim:.4f})",
+                            "assignment_order": None,
+                            "trigger_photos": []
+                        }
+                    else:
+                        if final_mean_embeddings and best_sim < 0.65:
+                            final_name = "Non Person"
+                            traces[face["id"]] = {
+                                "face_id": face["id"],
+                                "photo_path": p_path,
+                                "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
+                                "assigned_name": "Non Person",
+                                "resolution_method": f"low_similarity_threshold (max_similarity={best_sim:.4f})",
+                                "assignment_order": None,
+                                "trigger_photos": []
+                            }
+                        else:
+                            final_name = None
+                            traces[face["id"]] = {
+                                "face_id": face["id"],
+                                "photo_path": p_path,
+                                "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
+                                "assigned_name": None,
+                                "resolution_method": f"untagged_photo_below_high_threshold (similarity={best_sim:.4f})",
+                                "assignment_order": None,
+                                "trigger_photos": []
+                            }
+            
             face_updates.append((final_name, face["id"]))
             if final_name:
                 resolved_stats[final_name] = resolved_stats.get(final_name, 0) + 1
@@ -356,5 +608,14 @@ class FaceProcessor:
         if face_updates:
             photo_index.save_face_names(face_updates)
             
+        # Save traces to JSON
+        try:
+            trace_path = os.path.join(os.path.dirname(photo_index.db_path), "face_resolution_trace.json")
+            with open(trace_path, "w", encoding="utf-8") as f:
+                json.dump(list(traces.values()), f, indent=2)
+            logger.info(f"Face resolution traces saved to {trace_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save face resolution traces: {e}")
+
         logger.info("Face identity resolution completed successfully.")
         return resolved_stats

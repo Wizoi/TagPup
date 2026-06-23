@@ -83,6 +83,8 @@ class PhotoIndex:
                 box TEXT,
                 embedding BLOB,
                 name TEXT,
+                crop_image BLOB,
+                prob REAL,
                 FOREIGN KEY(photo_path) REFERENCES photos(path) ON DELETE CASCADE
             )
         """)
@@ -116,7 +118,19 @@ class PhotoIndex:
             self.conn.execute("PRAGMA foreign_keys = ON;")
             self._create_table()
             
+            # Dynamic migration: add crop_image and prob columns to faces table if they don't exist
             cursor = self.conn.cursor()
+            cursor.execute("PRAGMA table_info(faces)")
+            columns = [info[1] for info in cursor.fetchall()]
+            if "crop_image" not in columns:
+                logger.info("Migrating faces table: Adding crop_image column...")
+                cursor.execute("ALTER TABLE faces ADD COLUMN crop_image BLOB")
+                self.conn.commit()
+            if "prob" not in columns:
+                logger.info("Migrating faces table: Adding prob column...")
+                cursor.execute("ALTER TABLE faces ADD COLUMN prob REAL")
+                self.conn.commit()
+            
             cursor.execute("SELECT path, mtime, size, tags, people, captions, raw_metadata, embedding FROM photos")
             rows = cursor.fetchall()
             
@@ -279,10 +293,11 @@ class PhotoIndex:
             for face in faces:
                 box_json = json.dumps(face["box"])
                 emb_bytes = np.array(face["embedding"], dtype=np.float32).tobytes()
+                crop_bytes = face.get("crop_image")
                 cursor.execute("""
-                    INSERT INTO faces (photo_path, box, embedding, name)
-                    VALUES (?, ?, ?, ?)
-                """, (photo_path, box_json, emb_bytes, face.get("name")))
+                    INSERT INTO faces (photo_path, box, embedding, name, crop_image, prob)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (photo_path, box_json, emb_bytes, face.get("name"), crop_bytes, face.get("prob")))
             self.conn.commit()
         except Exception as e:
             logger.error(f"Error saving faces for {photo_path}: {e}")
@@ -294,19 +309,20 @@ class PhotoIndex:
             return []
         try:
             cursor = self.conn.cursor()
-            cursor.execute("SELECT id, photo_path, box, embedding, name FROM faces")
+            cursor.execute("SELECT id, photo_path, box, embedding, name, prob FROM faces")
             rows = cursor.fetchall()
             
             faces = []
-            for face_id, photo_path, box_json, emb_bytes, name in rows:
+            for face_id, photo_path, box_json, emb_bytes, name, prob in rows:
                 box = json.loads(box_json)
-                embedding = np.frombuffer(emb_bytes, dtype=np.float32).tolist()
+                embedding = np.frombuffer(emb_bytes, dtype=np.float32)
                 faces.append({
                     "id": face_id,
                     "photo_path": photo_path,
                     "box": box,
                     "embedding": embedding,
-                    "name": name
+                    "name": name,
+                    "prob": prob
                 })
             return faces
         except Exception as e:
@@ -326,6 +342,44 @@ class PhotoIndex:
             self.conn.rollback()
             raise e
 
+    def reset_face_assignments(self):
+        """Reset all face name assignments in faces table and restore original people metadata in database."""
+        if self.conn is None:
+            return False
+        try:
+            cursor = self.conn.cursor()
+            # 1. Reset faces name
+            cursor.execute("UPDATE faces SET name = NULL")
+            
+            # 2. Reset photos.people to original tags extracted from raw_metadata
+            cursor.execute("SELECT path, raw_metadata, tags FROM photos")
+            rows = cursor.fetchall()
+            
+            from metadata import extract_people
+            
+            updates = []
+            for path, raw_meta_json, tags_json in rows:
+                try:
+                    raw_meta = json.loads(raw_meta_json) if raw_meta_json else {}
+                    tags = json.loads(tags_json) if tags_json else []
+                except Exception:
+                    raw_meta = {}
+                    tags = []
+                orig_people = extract_people(raw_meta, tags)
+                updates.append((json.dumps(orig_people), path))
+                
+            if updates:
+                cursor.executemany("UPDATE photos SET people = ? WHERE path = ?", updates)
+                
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error resetting face assignments in database: {e}")
+            if self.conn:
+                self.conn.rollback()
+            raise e
+
+
     def save_faces_batch(self, batch_faces: Dict[str, List[Dict[str, Any]]]):
         """Save detected faces for a batch of photos in a single transaction."""
         if self.conn is None or not batch_faces:
@@ -338,10 +392,11 @@ class PhotoIndex:
                 for face in faces:
                     box_json = json.dumps(face["box"])
                     emb_bytes = np.array(face["embedding"], dtype=np.float32).tobytes()
+                    crop_bytes = face.get("crop_image")
                     cursor.execute("""
-                        INSERT INTO faces (photo_path, box, embedding, name)
-                        VALUES (?, ?, ?, ?)
-                    """, (photo_path, box_json, emb_bytes, face.get("name")))
+                        INSERT INTO faces (photo_path, box, embedding, name, crop_image, prob)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (photo_path, box_json, emb_bytes, face.get("name"), crop_bytes, face.get("prob")))
             self.conn.commit()
         except Exception as e:
             logger.error(f"Error saving faces batch to SQLite: {e}")

@@ -163,3 +163,13 @@ run.bat remove --path "D:\Photos\Tagged_Archive\Family\sample.jpg"
 run.bat remove --folder "D:\Photos\Tagged_Archive\Family"
 ```
 *(Requires typing `YES` to confirm deletion. This deletes the photo's visual vector, tags, and face coordinates from the SQLite database via cascade deletion; it does not delete your physical photo files).*
+
+---
+
+### Scenario H: Interactive Tuning (TagTuner Web UI)
+Start the interactive web interface in your browser to inspect metadata, tune tags, auto-match faces, and manage face identities.
+
+```cmd
+# Start TagTuner Web UI (Recommended: runs server inside the virtual environment)
+.venv\Scripts\python tagtuner.py
+```
