@@ -53,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let activePersonName = null;
     let selectedFaceIds = [];
     let activePersonFaces = [];
+    let activeTab = 'matches'; // 'matches' or 'outliers'
 
     // Abort controllers for ongoing fetch requests
     let sidebarAbortController = null;
@@ -60,11 +61,41 @@ document.addEventListener('DOMContentLoaded', () => {
     let sidebarDetailAbortController = null;
 
     // Load initial data
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlMode = urlParams.get('mode');
+    if (urlMode && (urlMode === 'unmatched' || urlMode === 'face-matching')) {
+        modeSelect.value = urlMode;
+    }
+
+    const urlPhoto = urlParams.get('photo');
+    if (urlPhoto) {
+        activePhotoPath = urlPhoto;
+    }
+
+    const urlPerson = urlParams.get('person');
+    if (urlPerson) {
+        activePersonName = urlPerson;
+    }
+
     fetchPhotos();
     fetchKnownPeople();
 
     // Event Listeners
-    modeSelect.addEventListener('change', fetchPhotos);
+    modeSelect.addEventListener('change', () => {
+        updateURLParams();
+        fetchPhotos();
+    });
+    const hideNotPersonToggle = document.getElementById('hide-notperson');
+    if (hideNotPersonToggle) {
+        hideNotPersonToggle.addEventListener('change', () => {
+            fetchPhotos();
+            if (activePhotoPath && modeSelect.value === 'unmatched') {
+                selectPhoto(activePhotoPath);
+            } else if (activePersonName === 'Unmatched' && modeSelect.value === 'face-matching') {
+                selectPerson('Unmatched');
+            }
+        });
+    }
     photoSearch.addEventListener('input', filterPhotos);
     if (btnRecluster) {
         btnRecluster.addEventListener('click', triggerReclustering);
@@ -101,9 +132,35 @@ document.addEventListener('DOMContentLoaded', () => {
         btnReassignSelected.addEventListener('click', () => {
             const name = inputReassignName.value.trim();
             if (!name || selectedFaceIds.length === 0) return;
-            if (confirm(`Are you sure you want to assign the ${selectedFaceIds.length} selected face(s) to "${name}"?`)) {
-                postMatchBulk(selectedFaceIds, name);
+            if (!allKnownPeople.includes(name)) {
+                if (!confirm(`"${name}" is not currently in the database. Do you want to create a new person tag and assign it to the selected face(s)?`)) {
+                    return;
+                }
+            } else {
+                if (!confirm(`Are you sure you want to assign the ${selectedFaceIds.length} selected face(s) to "${name}"?`)) {
+                    return;
+                }
             }
+            postMatchBulk(selectedFaceIds, name);
+        });
+    }
+
+    const tabMatches = document.getElementById('tab-matches');
+    const tabOutliers = document.getElementById('tab-outliers');
+    if (tabMatches && tabOutliers) {
+        tabMatches.addEventListener('click', () => {
+            if (activeTab === 'matches') return;
+            activeTab = 'matches';
+            tabMatches.classList.add('active');
+            tabOutliers.classList.remove('active');
+            renderPersonFaces(activePersonFaces);
+        });
+        tabOutliers.addEventListener('click', () => {
+            if (activeTab === 'outliers') return;
+            activeTab = 'outliers';
+            tabOutliers.classList.add('active');
+            tabMatches.classList.remove('active');
+            renderPersonFaces(activePersonFaces);
         });
     }
 
@@ -147,9 +204,33 @@ document.addEventListener('DOMContentLoaded', () => {
         return p1.replace(/\\/g, '/').toLowerCase() === p2.replace(/\\/g, '/').toLowerCase();
     }
 
+    function updateURLParams() {
+        const params = new URLSearchParams(window.location.search);
+        params.set('mode', modeSelect.value);
+        if (modeSelect.value === 'face-matching') {
+            if (activePersonName) {
+                params.set('person', activePersonName);
+            } else {
+                params.delete('person');
+            }
+            params.delete('photo');
+        } else {
+            if (activePhotoPath) {
+                params.set('photo', activePhotoPath);
+            } else {
+                params.delete('photo');
+            }
+            params.delete('person');
+        }
+        window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+    }
+
     // Fetch photos list from API
     function fetchPhotos() {
         const mode = modeSelect.value;
+        const toggleGroup = document.getElementById('notperson-toggle-group');
+        const hideNotPersonCheckbox = document.getElementById('hide-notperson');
+        const hideNotPerson = hideNotPersonCheckbox ? hideNotPersonCheckbox.checked : false;
         updateEmptyState();
 
         // Abort any ongoing sidebar fetches
@@ -164,9 +245,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (mode === 'face-matching') {
+            if (activePersonName === 'Unmatched') {
+                if (toggleGroup) toggleGroup.classList.remove('hidden');
+            } else {
+                if (toggleGroup) toggleGroup.classList.add('hidden');
+            }
             fetchPeopleWithCounts();
             return;
         }
+
+        if (toggleGroup) toggleGroup.classList.remove('hidden');
 
         // Hide face matching panel if returning to standard modes
         faceMatchingContent.classList.add('hidden');
@@ -181,7 +269,7 @@ document.addEventListener('DOMContentLoaded', () => {
         listStats.textContent = 'Loading photos...';
         photoList.innerHTML = '';
         
-        fetch(`/api/photos?mode=${mode}`, { signal: sidebarAbortController.signal })
+        fetch(`/api/photos?mode=${mode}&hide_notperson=${hideNotPerson}`, { signal: sidebarAbortController.signal })
             .then(res => {
                 if (!res.ok) throw new Error('Network response was not ok');
                 return res.json();
@@ -197,7 +285,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     }
 
-    // Render photo list in sidebar grouped by folder, sorted by mtime descending
+    // Render photo list in sidebar grouped by year and folder, sorted descending
     function renderPhotoList() {
         photoList.innerHTML = '';
         
@@ -208,96 +296,199 @@ document.addEventListener('DOMContentLoaded', () => {
 
         listStats.textContent = `Found ${allPhotos.length} photo(s)`;
 
-        // Group photos by their folder path
-        const folderGroups = {};
+        // Group photos by year, then by folder path
+        const yearGroups = {};
         allPhotos.forEach(photo => {
+            const year = photo.year || 'Unknown';
             const folder = photo.folder || 'Root';
-            if (!folderGroups[folder]) {
-                folderGroups[folder] = {
+            
+            if (!yearGroups[year]) {
+                yearGroups[year] = {
+                    name: year,
+                    folders: {},
+                    maxMtime: 0
+                };
+            }
+            if (!yearGroups[year].folders[folder]) {
+                yearGroups[year].folders[folder] = {
                     name: folder,
                     photos: [],
                     maxMtime: 0
                 };
             }
-            folderGroups[folder].photos.push(photo);
-            if (photo.mtime > folderGroups[folder].maxMtime) {
-                folderGroups[folder].maxMtime = photo.mtime;
+            yearGroups[year].folders[folder].photos.push(photo);
+            if (photo.mtime > yearGroups[year].folders[folder].maxMtime) {
+                yearGroups[year].folders[folder].maxMtime = photo.mtime;
+            }
+            if (photo.mtime > yearGroups[year].maxMtime) {
+                yearGroups[year].maxMtime = photo.mtime;
             }
         });
 
-        // Convert to array and sort folders by maximum mtime descending
-        const sortedFolders = Object.values(folderGroups).sort((a, b) => b.maxMtime - a.maxMtime);
-
-        sortedFolders.forEach(group => {
-            // Create Folder Header item
-            const folderLi = document.createElement('li');
-            folderLi.className = 'folder-header';
-            
-            const folderIcon = document.createElement('span');
-            folderIcon.className = 'folder-icon';
-            folderIcon.textContent = '📁';
-            folderLi.appendChild(folderIcon);
-
-            const folderTitle = document.createElement('span');
-            folderTitle.className = 'folder-title';
-            
-            // Clean up backslashes and get the folder base name
-            const cleanPath = group.name.replace(/\\/g, '/');
-            const parts = cleanPath.split('/');
-            const baseName = parts[parts.length - 1] || cleanPath;
-            folderTitle.textContent = baseName;
-            folderTitle.title = group.name; // Full path as tooltip
-            folderLi.appendChild(folderTitle);
-
-            const totalUnmatched = group.photos.reduce((sum, p) => sum + p.unmatched_count, 0);
-            const folderCount = document.createElement('span');
-            folderCount.className = 'folder-count';
-            folderCount.textContent = ` (${totalUnmatched} unmatched)`;
-            folderLi.appendChild(folderCount);
-
-            photoList.appendChild(folderLi);
-
-            // Render photos inside this folder (already sorted by SQL, but we can enforce it)
-            group.photos.sort((a, b) => b.mtime - a.mtime);
-            
-            group.photos.forEach(photo => {
-                const li = document.createElement('li');
-                li.className = 'photo-item folder-photo-item';
-                li.photo = photo; // Store photo object reference for filterPhotos
-                
-                if (pathsEqual(photo.path, activePhotoPath)) {
-                    li.classList.add('active');
-                }
-
-                const title = document.createElement('div');
-                title.className = 'photo-title';
-                title.textContent = photo.filename;
-
-                const subtitle = document.createElement('div');
-                subtitle.className = 'photo-subtitle';
-                subtitle.textContent = photo.path;
-
-                const badge = document.createElement('span');
-                badge.className = 'photo-badge unmatched';
-                badge.textContent = `${photo.unmatched_count} unmatched`;
-
-                li.appendChild(title);
-                li.appendChild(subtitle);
-                li.appendChild(badge);
-
-                li.addEventListener('click', () => selectPhoto(photo.path, li));
-                photoList.appendChild(li);
-            });
+        // Sort years descending
+        const sortedYears = Object.values(yearGroups).sort((a, b) => {
+            if (a.name === 'Unknown') return 1;
+            if (b.name === 'Unknown') return -1;
+            return b.name - a.name;
         });
+
+        sortedYears.forEach((yearGroup, yearIdx) => {
+            // Create Year Container
+            const yearLi = document.createElement('li');
+            yearLi.className = 'year-group';
+            
+            // Year Header
+            const yearHeader = document.createElement('div');
+            yearHeader.className = 'year-header';
+            
+            const yearChevron = document.createElement('span');
+            yearChevron.className = 'chevron-icon';
+            // Default expand the first entry (first year)
+            const isYearExpanded = (yearIdx === 0);
+            yearChevron.textContent = isYearExpanded ? '▼' : '▶';
+            yearHeader.appendChild(yearChevron);
+            
+            const yearTitle = document.createElement('span');
+            yearTitle.className = 'year-title';
+            yearTitle.textContent = `📅 ${yearGroup.name}`;
+            yearHeader.appendChild(yearTitle);
+            
+            yearLi.appendChild(yearHeader);
+            
+            // Year Content (Folders list)
+            const yearContent = document.createElement('ul');
+            yearContent.className = 'year-content';
+            yearContent.style.listStyle = 'none';
+            if (!isYearExpanded) {
+                yearContent.style.display = 'none';
+            }
+            
+            // Toggle logic for Year
+            yearHeader.addEventListener('click', () => {
+                const collapsed = (yearContent.style.display === 'none');
+                yearContent.style.display = collapsed ? 'block' : 'none';
+                yearChevron.textContent = collapsed ? '▼' : '▶';
+            });
+            
+            // Sort folders in this year descending
+            const sortedFolders = Object.values(yearGroup.folders).sort((a, b) => b.maxMtime - a.maxMtime);
+            
+            sortedFolders.forEach((folderGroup, folderIdx) => {
+                // Create Folder Container
+                const folderLi = document.createElement('li');
+                folderLi.className = 'folder-group';
+                
+                // Folder Header
+                const folderHeader = document.createElement('div');
+                folderHeader.className = 'folder-header';
+                
+                const folderChevron = document.createElement('span');
+                folderChevron.className = 'chevron-icon';
+                // Default expand the first entry: first folder of the first year
+                const isFolderExpanded = (yearIdx === 0 && folderIdx === 0);
+                folderChevron.textContent = isFolderExpanded ? '▼' : '▶';
+                folderHeader.appendChild(folderChevron);
+                
+                const folderIcon = document.createElement('span');
+                folderIcon.className = 'folder-icon';
+                folderIcon.textContent = '📁';
+                folderHeader.appendChild(folderIcon);
+                
+                const folderTitle = document.createElement('span');
+                folderTitle.className = 'folder-title';
+                const cleanPath = folderGroup.name.replace(/\\/g, '/');
+                const parts = cleanPath.split('/');
+                const baseName = parts[parts.length - 1] || cleanPath;
+                folderTitle.textContent = baseName;
+                folderTitle.title = folderGroup.name;
+                folderHeader.appendChild(folderTitle);
+                
+                const totalUnmatched = folderGroup.photos.reduce((sum, p) => sum + p.unmatched_count, 0);
+                const folderCount = document.createElement('span');
+                folderCount.className = 'folder-count';
+                folderCount.textContent = ` (${totalUnmatched})`;
+                folderHeader.appendChild(folderCount);
+                
+                folderLi.appendChild(folderHeader);
+                
+                // Folder Content (Photos list)
+                const folderContent = document.createElement('ul');
+                folderContent.className = 'folder-content';
+                folderContent.style.listStyle = 'none';
+                if (!isFolderExpanded) {
+                    folderContent.style.display = 'none';
+                }
+                
+                // Toggle logic for Folder
+                folderHeader.addEventListener('click', () => {
+                    const collapsed = (folderContent.style.display === 'none');
+                    folderContent.style.display = collapsed ? 'block' : 'none';
+                    folderChevron.textContent = collapsed ? '▼' : '▶';
+                });
+                
+                // Render photos inside folder
+                folderGroup.photos.sort((a, b) => b.mtime - a.mtime);
+                
+                folderGroup.photos.forEach(photo => {
+                    const li = document.createElement('li');
+                    li.className = 'photo-item folder-photo-item';
+                    li.photo = photo;
+                    
+                    if (pathsEqual(photo.path, activePhotoPath)) {
+                        li.classList.add('active');
+                        // Ensure parent folders / years are expanded if photo is active
+                        yearContent.style.display = 'block';
+                        yearChevron.textContent = '▼';
+                        folderContent.style.display = 'block';
+                        folderChevron.textContent = '▼';
+                    }
+
+                    const title = document.createElement('div');
+                    title.className = 'photo-title';
+                    title.textContent = photo.filename;
+
+                    const subtitle = document.createElement('div');
+                    subtitle.className = 'photo-subtitle';
+                    subtitle.textContent = photo.path;
+
+                    const badge = document.createElement('span');
+                    badge.className = 'photo-badge unmatched';
+                    badge.textContent = `${photo.unmatched_count} unmatched`;
+
+                    li.appendChild(title);
+                    li.appendChild(subtitle);
+                    li.appendChild(badge);
+
+                    li.addEventListener('click', () => selectPhoto(photo.path, li));
+                    folderContent.appendChild(li);
+                });
+                
+                folderLi.appendChild(folderContent);
+                yearContent.appendChild(folderLi);
+            });
+            
+            yearLi.appendChild(yearContent);
+            photoList.appendChild(yearLi);
+        });
+
+        if (activePhotoPath) {
+            const exists = allPhotos.some(p => pathsEqual(p.path, activePhotoPath));
+            if (exists) {
+                selectPhoto(activePhotoPath);
+            } else {
+                activePhotoPath = null;
+                updateURLParams();
+            }
+        }
     }
 
     // Filter photo list based on search bar input
     function filterPhotos() {
         const query = photoSearch.value.toLowerCase();
         const mode = modeSelect.value;
-        const items = Array.from(photoList.children);
 
         if (mode === 'face-matching') {
+            const items = Array.from(photoList.children);
             items.forEach(item => {
                 if (item.personName) {
                     const match = item.personName.toLowerCase().includes(query);
@@ -307,32 +498,55 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        let currentFolderHeader = null;
-        let folderHasVisiblePhotos = false;
+        const yearGroups = Array.from(photoList.querySelectorAll('.year-group'));
+        
+        yearGroups.forEach(yearGroup => {
+            const folderGroups = Array.from(yearGroup.querySelectorAll('.folder-group'));
+            let yearHasVisiblePhotos = false;
 
-        items.forEach(item => {
-            if (item.classList.contains('folder-header')) {
-                if (currentFolderHeader) {
-                    currentFolderHeader.style.display = folderHasVisiblePhotos ? 'flex' : 'none';
-                }
-                currentFolderHeader = item;
-                folderHasVisiblePhotos = false;
-            } else if (item.classList.contains('photo-item')) {
-                const photo = item.photo;
-                if (photo) {
-                    const match = photo.filename.toLowerCase().includes(query) || 
-                                  photo.path.toLowerCase().includes(query);
-                    item.style.display = match ? 'block' : 'none';
-                    if (match) {
-                        folderHasVisiblePhotos = true;
+            folderGroups.forEach(folderGroup => {
+                const photos = Array.from(folderGroup.querySelectorAll('.photo-item'));
+                let folderHasVisiblePhotos = false;
+
+                photos.forEach(photoItem => {
+                    const photo = photoItem.photo;
+                    if (photo) {
+                        const match = photo.filename.toLowerCase().includes(query) || 
+                                      photo.path.toLowerCase().includes(query);
+                        photoItem.style.display = match ? 'block' : 'none';
+                        if (match) {
+                            folderHasVisiblePhotos = true;
+                        }
                     }
+                });
+
+                // Display or hide folder group
+                folderGroup.style.display = folderHasVisiblePhotos ? 'block' : 'none';
+                
+                // If query is not empty, automatically expand folder content to show matching photos
+                const folderContent = folderGroup.querySelector('.folder-content');
+                const folderChevron = folderGroup.querySelector('.folder-header .chevron-icon');
+                if (query.length > 0 && folderHasVisiblePhotos) {
+                    if (folderContent) folderContent.style.display = 'block';
+                    if (folderChevron) folderChevron.textContent = '▼';
                 }
+
+                if (folderHasVisiblePhotos) {
+                    yearHasVisiblePhotos = true;
+                }
+            });
+
+            // Display or hide year group
+            yearGroup.style.display = yearHasVisiblePhotos ? 'block' : 'none';
+
+            // If query is not empty, automatically expand year content to show matching folders
+            const yearContent = yearGroup.querySelector('.year-content');
+            const yearChevron = yearGroup.querySelector('.year-header .chevron-icon');
+            if (query.length > 0 && yearHasVisiblePhotos) {
+                if (yearContent) yearContent.style.display = 'block';
+                if (yearChevron) yearChevron.textContent = '▼';
             }
         });
-        
-        if (currentFolderHeader) {
-            currentFolderHeader.style.display = folderHasVisiblePhotos ? 'flex' : 'none';
-        }
     }
 
     // Fetch all unique known people for autocomplete
@@ -405,9 +619,25 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (activeEl) {
             activeEl.classList.add('active');
+            
+            // Traverse up to expand year/folder content containers if collapsed
+            let parent = activeEl.parentElement;
+            while (parent && parent !== photoList) {
+                if (parent.classList.contains('folder-content') || parent.classList.contains('year-content')) {
+                    parent.style.display = 'block';
+                    // Update chevron of corresponding header
+                    const header = parent.previousElementSibling;
+                    if (header) {
+                        const chevron = header.querySelector('.chevron-icon');
+                        if (chevron) chevron.textContent = '▼';
+                    }
+                }
+                parent = parent.parentElement;
+            }
         }
 
         activePhotoPath = path;
+        updateURLParams();
         
         // Abort any ongoing details fetches
         if (detailsAbortController) {
@@ -433,12 +663,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Render photo details inside main panel
     function renderPhotoDetails(details) {
+        const hideNotPersonCheckbox = document.getElementById('hide-notperson');
+        const hideNotPerson = hideNotPersonCheckbox ? hideNotPersonCheckbox.checked : false;
+
         // Update inline badge count on the sidebar list item (if present)
         const items = photoList.getElementsByClassName('photo-item');
         const activeEl = Array.from(items).find(item => item.photo && pathsEqual(item.photo.path, details.path));
         if (activeEl) {
-            // Count unmatched faces in details.faces
-            const unmatchedCount = (details.faces || []).filter(f => !f.name).length;
+            // Count unmatched faces in details.faces (respecting hideNotPerson toggle)
+            const unmatchedCount = (details.faces || []).filter(f => {
+                if (hideNotPerson) {
+                    return !f.name;
+                } else {
+                    return !f.name || f.name === 'Non Person';
+                }
+            }).length;
             activeEl.photo.unmatched_count = unmatchedCount;
             const badge = activeEl.querySelector('.photo-badge');
             if (badge) {
@@ -493,8 +732,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const faces = details.faces || [];
 
         faces.forEach(face => {
+            const isNotPerson = face.name === 'Non Person';
+            const hideNotPersonCheckbox = document.getElementById('hide-notperson');
+            const hideNotPerson = hideNotPersonCheckbox ? hideNotPersonCheckbox.checked : false;
+
             const card = document.createElement('div');
             card.className = 'face-card';
+            if (isNotPerson) {
+                card.classList.add('notperson-face');
+                if (hideNotPerson) {
+                    card.classList.add('hidden');
+                }
+            }
 
             const header = document.createElement('div');
             header.className = 'face-card-header';
@@ -504,7 +753,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const cropImg = document.createElement('img');
             cropImg.src = `/api/face-crop?id=${face.id}`;
-            cropImg.alt = face.name || 'Unknown Face';
+            cropImg.alt = (face.name && face.name !== 'Non Person') ? face.name : 'Unmatched Face';
             cropContainer.appendChild(cropImg);
 
             const info = document.createElement('div');
@@ -516,15 +765,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const name = document.createElement('span');
             name.className = 'face-name';
-            name.textContent = face.name || 'Unknown Person';
+            name.textContent = (face.name && face.name !== 'Non Person') ? face.name : 'Unmatched';
 
             const status = document.createElement('span');
-            if (face.name) {
+            if (face.name && face.name !== 'Non Person') {
                 status.className = 'face-status resolved';
                 status.textContent = 'Resolved';
             } else {
                 status.className = 'face-status unknown';
-                status.textContent = 'Unknown';
+                status.textContent = 'Unmatched';
             }
 
             const coords = document.createElement('span');
@@ -597,7 +846,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const actionsBar = document.createElement('div');
             actionsBar.className = 'edit-actions-bar';
 
-            if (face.name) {
+            if (face.name && face.name !== 'Non Person') {
                 const btnUnmatch = document.createElement('button');
                 btnUnmatch.className = 'btn btn-danger';
                 btnUnmatch.textContent = 'Unmatch Face';
@@ -680,9 +929,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 // Validate against known people
                 if (!allKnownPeople.includes(nameVal)) {
-                    valError.textContent = 'Person must exist in database.';
-                    valError.classList.remove('hidden');
-                    return;
+                    if (!confirm(`"${nameVal}" is not currently in the database. Do you want to create a new person tag with this name?`)) {
+                        return;
+                    }
                 }
                 valError.classList.add('hidden');
                 postMatch(face.id, nameVal);
@@ -930,6 +1179,16 @@ document.addEventListener('DOMContentLoaded', () => {
             li.addEventListener('click', () => selectPerson(person.name, li));
             photoList.appendChild(li);
         });
+
+        if (activePersonName) {
+            const exists = allPeopleWithCounts.some(p => p.name === activePersonName);
+            if (exists) {
+                selectPerson(activePersonName);
+            } else {
+                activePersonName = null;
+                updateURLParams();
+            }
+        }
     }
 
     // Select a person to display their face matches
@@ -946,10 +1205,41 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         activePersonName = name;
+        updateURLParams();
         selectedFaceIds = [];
         activePersonFaces = [];
+        activeTab = 'matches';
+        
+        // Reset tabs UI
+        const tabMatches = document.getElementById('tab-matches');
+        const tabOutliers = document.getElementById('tab-outliers');
+        const matchingTabs = document.getElementById('matching-tabs');
+        const matchingStaticTitle = document.getElementById('matching-static-title');
+        
+        if (tabMatches && tabOutliers) {
+            tabMatches.classList.add('active');
+            tabMatches.textContent = 'Matches';
+            tabOutliers.classList.remove('active');
+            tabOutliers.textContent = 'Outliers';
+        }
+        
+        if (name === 'Unmatched') {
+            if (matchingTabs) matchingTabs.classList.add('hidden');
+            if (matchingStaticTitle) matchingStaticTitle.classList.remove('hidden');
+        } else {
+            if (matchingTabs) matchingTabs.classList.remove('hidden');
+            if (matchingStaticTitle) matchingStaticTitle.classList.add('hidden');
+        }
+
         updateMatchingSelectionUI();
         clearFaceDetails();
+
+        const toggleGroup = document.getElementById('notperson-toggle-group');
+        if (name === 'Unmatched') {
+            if (toggleGroup) toggleGroup.classList.remove('hidden');
+        } else {
+            if (toggleGroup) toggleGroup.classList.add('hidden');
+        }
 
         // Switch views
         emptyState.classList.add('hidden');
@@ -966,21 +1256,45 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         detailsAbortController = new AbortController();
 
-        fetch(`/api/person-faces?name=${encodeURIComponent(name)}`, { signal: detailsAbortController.signal })
+        fetch(`/api/person-faces?name=${encodeURIComponent(name)}&limit=-1`, { signal: detailsAbortController.signal })
             .then(res => {
                 if (!res.ok) throw new Error('Failed to load faces');
                 return res.json();
             })
-            .then(faces => {
-                activePersonFaces = faces;
-                matchingPersonCount.textContent = `${faces.length} face${faces.length !== 1 ? 's' : ''} matched`;
-                renderPersonFaces(faces);
+            .then(data => {
+                activePersonFaces = data.faces;
+                
+                // Update tab counts
+                updateTabLabels();
+                
+                renderPersonFaces(activePersonFaces);
             })
             .catch(err => {
                 if (err.name === 'AbortError') return;
                 console.error('Error loading person faces:', err);
                 matchingPersonCount.textContent = 'Error loading faces';
             });
+    }
+
+    function updateTabLabels() {
+        const tabMatches = document.getElementById('tab-matches');
+        const tabOutliers = document.getElementById('tab-outliers');
+        if (!tabMatches || !tabOutliers) return;
+        
+        let filteredFaces = activePersonFaces;
+        if (activePersonName === 'Unmatched') {
+            const hideNotPersonToggle = document.getElementById('hide-notperson');
+            const hideNotPerson = hideNotPersonToggle ? hideNotPersonToggle.checked : false;
+            if (hideNotPerson) {
+                filteredFaces = activePersonFaces.filter(f => f.name !== 'Non Person');
+            }
+        }
+        
+        const standards = filteredFaces.filter(f => activePersonName === 'Unmatched' || f.similarity === undefined || f.similarity >= 0.85);
+        const outliers = filteredFaces.filter(f => activePersonName !== 'Unmatched' && f.similarity !== undefined && f.similarity < 0.85);
+        
+        tabMatches.textContent = `Matches (${standards.length})`;
+        tabOutliers.textContent = `Outliers (${outliers.length})`;
     }
 
     // Render face match items in grid
@@ -990,49 +1304,150 @@ document.addEventListener('DOMContentLoaded', () => {
         updateMatchingSelectionUI();
         clearFaceDetails();
 
-        if (faces.length === 0) {
+        let renderedFaces = faces;
+        if (activePersonName === 'Unmatched') {
+            const hideNotPersonCheckbox = document.getElementById('hide-notperson');
+            const hideNotPerson = hideNotPersonCheckbox ? hideNotPersonCheckbox.checked : false;
+            if (hideNotPerson) {
+                renderedFaces = faces.filter(f => f.name !== 'Non Person');
+            }
+        }
+
+        const standards = [];
+        const outliers = [];
+
+        renderedFaces.forEach(face => {
+            if (activePersonName === 'Unmatched') {
+                standards.push(face);
+            } else {
+                if (face.similarity !== undefined && face.similarity < 0.85) {
+                    outliers.push(face);
+                } else {
+                    standards.push(face);
+                }
+            }
+        });
+
+        // Set count header
+        const displayedCount = activeTab === 'matches' || activePersonName === 'Unmatched' 
+            ? standards.length 
+            : outliers.length;
+        
+        const unmatchedText = activePersonName === 'Unmatched' ? 'unmatched' : (activeTab === 'matches' ? 'matched' : 'outlier');
+        matchingPersonCount.textContent = `${displayedCount} ${unmatchedText} face${displayedCount !== 1 ? 's' : ''}`;
+
+        if (displayedCount === 0) {
             const emptyGrid = document.createElement('div');
-            emptyGrid.style.gridColumn = '1 / -1';
             emptyGrid.style.textAlign = 'center';
             emptyGrid.style.padding = '40px';
             emptyGrid.style.color = 'var(--text-muted)';
-            emptyGrid.textContent = 'No faces matched to this person.';
+            if (activePersonName === 'Unmatched') {
+                emptyGrid.textContent = 'No unmatched faces found.';
+            } else if (activeTab === 'matches') {
+                emptyGrid.textContent = 'No matching faces found for this person.';
+            } else {
+                emptyGrid.textContent = 'No outliers found for this person.';
+            }
             matchingFacesGrid.appendChild(emptyGrid);
             return;
         }
 
-        faces.forEach(face => {
-            const item = document.createElement('div');
-            item.className = 'face-match-item';
-            item.title = face.photo_path; // Tooltip shows full path/filename
+        function renderGroupSection(title, groupFaces) {
+            const section = document.createElement('div');
+            section.className = 'matching-group-section';
 
-            const img = document.createElement('img');
-            img.src = `/api/face-crop?id=${face.id}`;
-            img.alt = `Face crop ${face.id}`;
-            img.loading = 'lazy';
-            item.appendChild(img);
+            const header = document.createElement('div');
+            header.className = 'matching-group-header';
+            header.textContent = title;
+            section.appendChild(header);
 
-            item.addEventListener('click', () => {
-                const idx = selectedFaceIds.indexOf(face.id);
-                if (idx > -1) {
-                    selectedFaceIds.splice(idx, 1);
-                    item.classList.remove('selected');
-                } else {
-                    selectedFaceIds.push(face.id);
+            const grid = document.createElement('div');
+            grid.className = 'matching-group-grid';
+
+            groupFaces.forEach(face => {
+                const item = document.createElement('div');
+                item.className = 'face-match-item';
+                item.title = face.photo_path;
+                item.setAttribute('data-face-id', face.id);
+
+                if (selectedFaceIds.includes(face.id)) {
                     item.classList.add('selected');
                 }
-                updateMatchingSelectionUI();
 
-                if (selectedFaceIds.length > 0) {
-                    const lastFaceId = selectedFaceIds[selectedFaceIds.length - 1];
-                    showFaceDetails(lastFaceId);
-                } else {
-                    clearFaceDetails();
-                }
+                const img = document.createElement('img');
+                img.src = `/api/face-crop?id=${face.id}`;
+                img.alt = `Face crop ${face.id}`;
+                img.loading = 'lazy';
+                item.appendChild(img);
+
+                item.addEventListener('click', () => {
+                    const idx = selectedFaceIds.indexOf(face.id);
+                    if (idx > -1) {
+                        selectedFaceIds.splice(idx, 1);
+                        item.classList.remove('selected');
+                    } else {
+                        selectedFaceIds.push(face.id);
+                        item.classList.add('selected');
+                    }
+                    updateMatchingSelectionUI();
+
+                    if (selectedFaceIds.length > 0) {
+                        const lastFaceId = selectedFaceIds[selectedFaceIds.length - 1];
+                        showFaceDetails(lastFaceId);
+                    } else {
+                        clearFaceDetails();
+                    }
+                });
+
+                grid.appendChild(item);
             });
 
-            matchingFacesGrid.appendChild(item);
-        });
+            section.appendChild(grid);
+            matchingFacesGrid.appendChild(section);
+        }
+
+        if (activeTab === 'matches' || activePersonName === 'Unmatched') {
+            // Group standards by year
+            const standardsByYear = {};
+            standards.forEach(face => {
+                const year = face.year || 'Unknown';
+                if (!standardsByYear[year]) {
+                    standardsByYear[year] = [];
+                }
+                standardsByYear[year].push(face);
+            });
+
+            // Sort years descending
+            const sortedYears = Object.keys(standardsByYear).sort((a, b) => {
+                if (a === 'Unknown') return 1;
+                if (b === 'Unknown') return -1;
+                return b - a;
+            });
+
+            // Sort faces within each year descending by mtime
+            sortedYears.forEach(year => {
+                standardsByYear[year].sort((a, b) => {
+                    const timeA = a.mtime || 0;
+                    const timeB = b.mtime || 0;
+                    return timeB - timeA;
+                });
+            });
+
+            // Render Year sections
+            sortedYears.forEach(year => {
+                renderGroupSection(year, standardsByYear[year]);
+            });
+        } else {
+            // Sort outliers descending by mtime
+            outliers.sort((a, b) => {
+                const timeA = a.mtime || 0;
+                const timeB = b.mtime || 0;
+                return timeB - timeA;
+            });
+
+            // Render Outliers section
+            renderGroupSection('Outliers', outliers);
+        }
     }
 
     // Populate matching details sidebar
@@ -1219,9 +1634,67 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         .then(data => {
             if (data.success) {
-                // Refresh list of people and select person again to update grid
+                // In-place DOM removal of selected cards
+                faceIds.forEach(id => {
+                    const card = matchingFacesGrid.querySelector(`[data-face-id="${id}"]`);
+                    if (card) {
+                        const grid = card.parentElement;
+                        card.remove();
+                        if (grid && grid.children.length === 0) {
+                            const section = grid.parentElement;
+                            if (section && section.classList.contains('matching-group-section')) {
+                                section.remove();
+                            }
+                        }
+                    }
+                });
+
+                // Update activePersonFaces
+                activePersonFaces = activePersonFaces.filter(f => !faceIds.includes(f.id));
+
+                // Update tab counts
+                updateTabLabels();
+
+                // Get remaining count for the current tab
+                let filteredFaces = activePersonFaces;
+                if (activePersonName === 'Unmatched') {
+                    const hideNotPersonToggle = document.getElementById('hide-notperson');
+                    const hideNotPerson = hideNotPersonToggle ? hideNotPersonToggle.checked : false;
+                    if (hideNotPerson) {
+                        filteredFaces = activePersonFaces.filter(f => f.name !== 'Non Person');
+                    }
+                }
+                const displayedFaces = activeTab === 'matches' || activePersonName === 'Unmatched'
+                    ? filteredFaces.filter(f => activePersonName === 'Unmatched' || f.similarity === undefined || f.similarity >= 0.85)
+                    : filteredFaces.filter(f => activePersonName !== 'Unmatched' && f.similarity !== undefined && f.similarity < 0.85);
+
+                const finalCount = displayedFaces.length;
+                const unmatchedText = activePersonName === 'Unmatched' ? 'unmatched' : (activeTab === 'matches' ? 'matched' : 'outlier');
+                matchingPersonCount.textContent = `${finalCount} ${unmatchedText} face${finalCount !== 1 ? 's' : ''}`;
+
+                if (finalCount === 0) {
+                    matchingFacesGrid.innerHTML = '';
+                    const emptyGrid = document.createElement('div');
+                    emptyGrid.style.textAlign = 'center';
+                    emptyGrid.style.padding = '40px';
+                    emptyGrid.style.color = 'var(--text-muted)';
+                    if (activePersonName === 'Unmatched') {
+                        emptyGrid.textContent = 'No unmatched faces found.';
+                    } else if (activeTab === 'matches') {
+                        emptyGrid.textContent = 'No matching faces found for this person.';
+                    } else {
+                        emptyGrid.textContent = 'No outliers found for this person.';
+                    }
+                    matchingFacesGrid.appendChild(emptyGrid);
+                }
+
+                // Clear selection state and details
+                selectedFaceIds = [];
+                updateMatchingSelectionUI();
+                clearFaceDetails();
+
+                // Fetch updated sidebar counts in background
                 fetchPeopleWithCounts();
-                selectPerson(activePersonName);
             } else {
                 alert('Failed to unmatch faces');
                 updateMatchingSelectionUI();
@@ -1253,13 +1726,70 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         .then(data => {
             if (data.success) {
-                // Clear selection and re-load person faces
+                // In-place DOM removal of selected cards
+                faceIds.forEach(id => {
+                    const card = matchingFacesGrid.querySelector(`[data-face-id="${id}"]`);
+                    if (card) {
+                        const grid = card.parentElement;
+                        card.remove();
+                        if (grid && grid.children.length === 0) {
+                            const section = grid.parentElement;
+                            if (section && section.classList.contains('matching-group-section')) {
+                                section.remove();
+                            }
+                        }
+                    }
+                });
+
+                // Update activePersonFaces
+                activePersonFaces = activePersonFaces.filter(f => !faceIds.includes(f.id));
+
+                // Update tab counts
+                updateTabLabels();
+
+                // Get remaining count for the current tab
+                let filteredFaces = activePersonFaces;
+                if (activePersonName === 'Unmatched') {
+                    const hideNotPersonToggle = document.getElementById('hide-notperson');
+                    const hideNotPerson = hideNotPersonToggle ? hideNotPersonToggle.checked : false;
+                    if (hideNotPerson) {
+                        filteredFaces = activePersonFaces.filter(f => f.name !== 'Non Person');
+                    }
+                }
+                const displayedFaces = activeTab === 'matches' || activePersonName === 'Unmatched'
+                    ? filteredFaces.filter(f => activePersonName === 'Unmatched' || f.similarity === undefined || f.similarity >= 0.85)
+                    : filteredFaces.filter(f => activePersonName !== 'Unmatched' && f.similarity !== undefined && f.similarity < 0.85);
+
+                const finalCount = displayedFaces.length;
+                const unmatchedText = activePersonName === 'Unmatched' ? 'unmatched' : (activeTab === 'matches' ? 'matched' : 'outlier');
+                matchingPersonCount.textContent = `${finalCount} ${unmatchedText} face${finalCount !== 1 ? 's' : ''}`;
+
+                if (finalCount === 0) {
+                    matchingFacesGrid.innerHTML = '';
+                    const emptyGrid = document.createElement('div');
+                    emptyGrid.style.textAlign = 'center';
+                    emptyGrid.style.padding = '40px';
+                    emptyGrid.style.color = 'var(--text-muted)';
+                    if (activePersonName === 'Unmatched') {
+                        emptyGrid.textContent = 'No unmatched faces found.';
+                    } else if (activeTab === 'matches') {
+                        emptyGrid.textContent = 'No matching faces found for this person.';
+                    } else {
+                        emptyGrid.textContent = 'No outliers found for this person.';
+                    }
+                    matchingFacesGrid.appendChild(emptyGrid);
+                }
+
+                // Clear selection and reassign name field
                 selectedFaceIds = [];
                 if (inputReassignName) {
                     inputReassignName.value = '';
                 }
+                updateMatchingSelectionUI();
+                clearFaceDetails();
+
+                // Fetch updated sidebar counts and known people in background
                 fetchPeopleWithCounts();
-                selectPerson(activePersonName);
                 fetchKnownPeople();
             } else {
                 alert('Failed to reassign faces.');

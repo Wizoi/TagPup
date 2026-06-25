@@ -93,7 +93,8 @@ class MetadataWriter:
         self, 
         suggestions_file: str, 
         live: bool = False, 
-        min_score: float = 0.50
+        min_score: float = 0.50,
+        nobackup: bool = False
     ) -> bool:
         """Read suggestions from suggestions.json, filter by min_score, and write to files using ExifTool."""
         if not os.path.exists(suggestions_file):
@@ -206,7 +207,8 @@ class MetadataWriter:
                             params["EXIF:XPComment"] = caption
 
                         if params:
-                            et.set_tags([path], tags=params)
+                            extra_params = ["-overwrite_original"] if nobackup else None
+                            et.set_tags([path], tags=params, params=extra_params)
                             success_count += 1
                         else:
                             success_count += 1  # Nothing to write

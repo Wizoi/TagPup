@@ -13,9 +13,92 @@ import numpy as np
 
 logger = logging.getLogger("tagtuner.server")
 
+import re
+
+YEAR_RE = re.compile(r"^(\d{4})")
+DATE_KEYS = [
+    "EXIF:DateTimeOriginal", "DateTimeOriginal",
+    "XMP:DateTimeOriginal",
+    "EXIF:CreateDate", "CreateDate",
+    "XMP:CreateDate",
+    "EXIF:ModifyDate", "ModifyDate",
+    "XMP:ModifyDate"
+]
+
+_year_cache = {}
+
+def parse_year_from_raw_metadata(raw_meta):
+    if not raw_meta:
+        return None
+    for key in DATE_KEYS:
+        val = raw_meta.get(key)
+        if val:
+            if isinstance(val, list) and val:
+                val = val[0]
+            val_str = str(val).strip()
+            match = YEAR_RE.match(val_str)
+            if match:
+                try:
+                    year = int(match.group(1))
+                    if 1800 <= year <= 2100:
+                        return year
+                except ValueError:
+                    pass
+    return None
+
+def compute_geometric_median(X, eps=1e-5, max_iter=20):
+    if len(X) == 0:
+        return None
+    if len(X) <= 2:
+        return np.mean(X, axis=0)
+    y = np.mean(X, axis=0)
+    for _ in range(max_iter):
+        distances = np.linalg.norm(X - y, axis=1)
+        zero_mask = distances < 1e-10
+        if np.any(zero_mask):
+            distances = np.where(zero_mask, 1e-10, distances)
+        weights = 1.0 / distances
+        weights_sum = np.sum(weights)
+        next_y = np.sum(X * weights[:, np.newaxis], axis=0) / weights_sum
+        if np.linalg.norm(next_y - y) < eps:
+            break
+        y = next_y
+    return y
+
+_metadata_year_cache = {}
+
+def get_year_from_mtime_or_meta(mtime, raw_meta_json):
+    parsed_year = None
+    if raw_meta_json:
+        if raw_meta_json in _metadata_year_cache:
+            parsed_year = _metadata_year_cache[raw_meta_json]
+        else:
+            try:
+                if isinstance(raw_meta_json, str):
+                    raw_meta = json.loads(raw_meta_json)
+                else:
+                    raw_meta = raw_meta_json
+                parsed_year = parse_year_from_raw_metadata(raw_meta)
+                _metadata_year_cache[raw_meta_json] = parsed_year
+            except Exception:
+                pass
+                
+    if not parsed_year and mtime:
+        try:
+            import time
+            parsed_year = time.gmtime(mtime).tm_year
+        except Exception:
+            try:
+                import datetime
+                parsed_year = datetime.datetime.fromtimestamp(mtime).year
+            except Exception:
+                pass
+    return parsed_year if parsed_year else "Unknown"
+
 class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
     db_path = "data/photo_index.db"
     gui_dir = "gui"
+    clustering_in_progress = False
 
     def log_message(self, format, *args):
         # Suppress request spam logging in console unless error
@@ -70,6 +153,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_error(404, "File Not Found")
 
     def do_POST(self):
+        if TunerHTTPRequestHandler.clustering_in_progress:
+            self.send_json_error(409, "Server is currently clustering faces. Please try again later.")
+            return
+
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
 
@@ -102,6 +189,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
             self.end_headers()
             self.wfile.write(content)
         except Exception as e:
@@ -109,47 +199,64 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
 
     def handle_get_photos(self, query):
         mode = query.get("mode", ["unmatched"])[0]
+        hide_notperson = query.get("hide_notperson", ["false"])[0].lower() == "true"
 
         if not os.path.exists(self.db_path):
             self.send_json([])
             return
 
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             
             if mode == "unmatched":
-                # Find photos having at least one face record where name is null
-                # Join with photos table to retrieve mtime for sorting
-                cursor.execute("""
-                    SELECT f.photo_path, COUNT(*), p.mtime
-                    FROM faces f
-                    LEFT JOIN photos p ON f.photo_path = p.path
-                    WHERE f.name IS NULL
-                    GROUP BY f.photo_path
-                    ORDER BY p.mtime DESC
-                """)
+                if hide_notperson:
+                    cursor.execute("""
+                        SELECT f.photo_path, COUNT(*), p.mtime, p.raw_metadata
+                        FROM faces f
+                        LEFT JOIN photos p ON p.path = f.photo_path
+                        WHERE f.name IS NULL
+                        GROUP BY f.photo_path
+                        ORDER BY p.mtime DESC
+                    """)
+                else:
+                    cursor.execute("""
+                        SELECT f.photo_path, COUNT(*), p.mtime, p.raw_metadata
+                        FROM faces f
+                        LEFT JOIN photos p ON p.path = f.photo_path
+                        WHERE f.name IS NULL OR f.name = 'Non Person'
+                        GROUP BY f.photo_path
+                        ORDER BY p.mtime DESC
+                    """)
                 rows = cursor.fetchall()
                 photos = []
                 for row in rows:
                     p_path = row[0]
                     unmatched_count = row[1]
                     mtime = row[2] if row[2] is not None else 0.0
+                    raw_meta_json = row[3]
+                    
+                    year = get_year_from_mtime_or_meta(mtime, raw_meta_json)
+                    
                     photos.append({
                         "path": p_path,
                         "filename": os.path.basename(p_path),
                         "unmatched_count": unmatched_count,
                         "mtime": mtime,
+                        "year": year,
                         "folder": os.path.dirname(p_path)
                     })
                 self.send_json(photos)
             else:
                 self.send_json([])
-                
-            conn.close()
         except Exception as e:
             logger.error(f"Error fetching photos: {e}")
             self.send_error(500, f"Database error: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def handle_get_photo_details(self, query):
         photo_path_list = query.get("path")
@@ -163,8 +270,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Database not found")
             return
 
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
             # 1. Fetch metadata from photos table
@@ -225,8 +334,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                     "name": fname
                 })
 
-            conn.close()
-
             # Compile details response
             details = {
                 "path": photo_path,
@@ -241,6 +348,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error(f"Error fetching photo details for {photo_path}: {e}")
             self.send_error(500, f"Database error: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def handle_serve_photo_file(self, query):
         photo_path_list = query.get("path")
@@ -324,14 +434,15 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Database not found")
             return
 
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             cursor.execute("SELECT photo_path, box, crop_image FROM faces WHERE id = ?", (face_id,))
             row = cursor.fetchone()
 
             if not row:
-                conn.close()
                 self.send_error(404, f"Face ID {face_id} not found in DB")
                 return
 
@@ -340,7 +451,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             crop_image = row[2]
 
             if crop_image is not None:
-                conn.close()
                 self.send_response(200)
                 self.send_header("Content-Type", "image/jpeg")
                 self.send_header("Content-Length", str(len(crop_image)))
@@ -350,7 +460,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
 
             # Fallback if crop_image is None (older records)
             if not os.path.exists(photo_path):
-                conn.close()
                 self.send_error(404, f"Original photo file not found: {photo_path}")
                 return
 
@@ -360,7 +469,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 try:
                     box = [int(x) for x in box_str.replace('[', '').replace(']', '').split(',')]
                 except Exception:
-                    conn.close()
                     self.send_error(500, "Invalid bounding box format stored in DB")
                     return
 
@@ -405,8 +513,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 conn.commit()
             except Exception as cache_err:
                 logger.warning(f"Failed to cache face crop in database for face ID {face_id}: {cache_err}")
-            finally:
-                conn.close()
 
             self.send_response(200)
             self.send_header("Content-Type", "image/jpeg")
@@ -417,13 +523,18 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error(f"Error serving face crop for ID {face_id}: {e}")
             self.send_error(500, f"Error cropping face: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def handle_get_people(self):
         if not os.path.exists(self.db_path):
             self.send_json([])
             return
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             
             # Get people from faces table
@@ -444,11 +555,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                         pass
                         
             all_people = sorted([p for p in faces_names.union(photos_people) if p != "Non Person"])
-            conn.close()
             self.send_json(all_people)
         except Exception as e:
             logger.error(f"Error fetching people: {e}")
             self.send_error(500, f"Database error: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def handle_get_face_matches(self, query):
         face_id_list = query.get("id")
@@ -465,27 +578,27 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_json([])
             return
 
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             
             # Fetch target embedding
             cursor.execute("SELECT embedding, name FROM faces WHERE id = ?", (face_id,))
             row = cursor.fetchone()
             if not row:
-                conn.close()
                 self.send_error(404, "Face not found")
                 return
                 
             target_emb_bytes = row[0]
             target_emb = np.frombuffer(target_emb_bytes, dtype=np.float32)
             
-            # Fetch all resolved faces (excluding the current face if it's already resolved)
-            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL AND id != ?", (face_id,))
+            # Fetch all resolved faces (excluding the current face if it's already resolved, and excluding 'Non Person')
+            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL AND name != 'Non Person' AND id != ?", (face_id,))
             faces_rows = cursor.fetchall()
             
             if not faces_rows:
-                conn.close()
                 self.send_json([])
                 return
                 
@@ -515,12 +628,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                     if len(top_matches) >= 5:
                         break
                         
-            conn.close()
             self.send_json(top_matches)
             
         except Exception as e:
             logger.error(f"Error finding face matches: {e}")
             self.send_error(500, f"Error finding matches: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def read_json_body(self):
         content_length = int(self.headers.get('Content-Length', 0))
@@ -530,8 +645,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
         return json.loads(body.decode('utf-8'))
 
     def handle_post_match(self):
+        conn = None
         try:
-            data = self.read_json_body()
+            try:
+                data = self.read_json_body()
+            except Exception as json_err:
+                self.send_error(400, f"Malformed JSON: {json_err}")
+                return
+
             face_id = data.get("face_id")
             person_name = data.get("person_name")
             
@@ -542,7 +663,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             try:
                 face_id = int(face_id)
                 person_name = str(person_name).strip()
-            except ValueError:
+            except (ValueError, TypeError):
                 self.send_error(400, "Invalid parameters")
                 return
 
@@ -550,14 +671,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
             # 1. Fetch face details: photo_path and old name
             cursor.execute("SELECT photo_path, name FROM faces WHERE id = ?", (face_id,))
             face_row = cursor.fetchone()
             if not face_row:
-                conn.close()
                 self.send_error(404, "Face ID not found")
                 return
                 
@@ -565,7 +686,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             
             # If name is unchanged, just return success
             if old_name == person_name:
-                conn.close()
                 self.send_json({"success": True})
                 return
 
@@ -613,17 +733,24 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (people_json, actual_photo_path))
 
             conn.commit()
-            conn.close()
-            
             self.send_json({"success": True})
             
         except Exception as e:
             logger.error(f"Error in handle_post_match: {e}")
             self.send_error(500, f"Internal error: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def handle_post_unmatch(self):
+        conn = None
         try:
-            data = self.read_json_body()
+            try:
+                data = self.read_json_body()
+            except Exception as json_err:
+                self.send_error(400, f"Malformed JSON: {json_err}")
+                return
+
             face_id = data.get("face_id")
             
             if face_id is None:
@@ -632,7 +759,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 
             try:
                 face_id = int(face_id)
-            except ValueError:
+            except (ValueError, TypeError):
                 self.send_error(400, "Invalid face_id")
                 return
 
@@ -640,14 +767,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
             # 1. Fetch face details: photo_path and old name
             cursor.execute("SELECT photo_path, name FROM faces WHERE id = ?", (face_id,))
             face_row = cursor.fetchone()
             if not face_row:
-                conn.close()
                 self.send_error(404, "Face ID not found")
                 return
                 
@@ -655,7 +782,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             
             if old_name is None:
                 # Already unmatched
-                conn.close()
                 self.send_json({"success": True})
                 return
 
@@ -694,13 +820,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (people_json, actual_photo_path))
 
             conn.commit()
-            conn.close()
-            
             self.send_json({"success": True})
             
         except Exception as e:
             logger.error(f"Error in handle_post_unmatch: {e}")
             self.send_error(500, f"Internal error: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def handle_post_recluster(self):
         import threading
@@ -719,6 +846,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             max_iterations = 5
         
         def run_recluster_bg(db_path, reset_db, max_iters):
+            photo_index = None
             try:
                 # Lazy imports to avoid startup dependencies
                 from index import PhotoIndex
@@ -742,7 +870,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                         logger.info("Background thread: Successfully reset face assignments and restored original people metadata.")
                     except Exception as e:
                         logger.error(f"Background thread: Failed to reset database: {e}")
-                        photo_index.close()
                         return
 
                 taxonomy = TagTaxonomy(file_path=tax_path)
@@ -786,13 +913,17 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                     
                     conn.commit()
 
-                photo_index.close()
                 logger.info("Background thread: Re-clustering and sync completed successfully.")
             except Exception as e:
                 logger.error(f"Background thread: Error during re-clustering: {e}", exc_info=True)
+            finally:
+                if photo_index:
+                    photo_index.close()
+                TunerHTTPRequestHandler.clustering_in_progress = False
 
         try:
             # Start background thread to avoid HTTP request timeouts on large databases
+            TunerHTTPRequestHandler.clustering_in_progress = True
             t = threading.Thread(target=run_recluster_bg, args=(self.db_path, reset, max_iterations), daemon=True)
             t.start()
             self.send_json({
@@ -800,13 +931,19 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 "message": "Clustering started in background"
             })
         except Exception as e:
+            TunerHTTPRequestHandler.clustering_in_progress = False
             logger.error(f"Error starting re-clustering thread: {e}")
             self.send_error(500, f"Internal error: {e}")
 
-
     def handle_post_unmatch_all(self):
+        conn = None
         try:
-            data = self.read_json_body()
+            try:
+                data = self.read_json_body()
+            except Exception as json_err:
+                self.send_error(400, f"Malformed JSON: {json_err}")
+                return
+
             photo_path = data.get("photo_path")
             if not photo_path:
                 self.send_error(400, "Missing photo_path")
@@ -816,8 +953,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
+            cursor = conn.conn.cursor() if hasattr(conn, 'conn') else conn.cursor()
 
             # 1. Fetch currently matched names for faces in this photo
             cursor.execute("SELECT DISTINCT name FROM faces WHERE photo_path = ? AND name IS NOT NULL", (photo_path,))
@@ -854,16 +992,23 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                     cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(people), actual_photo_path))
 
             conn.commit()
-            conn.close()
-            
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error in handle_post_unmatch_all: {e}")
             self.send_error(500, f"Internal error: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def handle_post_automatch(self):
+        conn = None
         try:
-            data = self.read_json_body()
+            try:
+                data = self.read_json_body()
+            except Exception as json_err:
+                self.send_error(400, f"Malformed JSON: {json_err}")
+                return
+
             photo_path = data.get("photo_path")
             if not photo_path:
                 self.send_error(400, "Missing photo_path")
@@ -873,7 +1018,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
             # 1. Fetch unmatched faces in this photo
@@ -886,16 +1032,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 unmatched_rows = cursor.fetchall()
 
             if not unmatched_rows:
-                conn.close()
                 self.send_json({"success": True, "matched_count": 0})
                 return
 
-            # 2. Fetch all resolved face embeddings in the database (faces that have a non-null name)
-            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL")
+            # 2. Fetch all resolved face embeddings in the database (faces that have a non-null name, excluding 'Non Person')
+            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL AND name != 'Non Person'")
             resolved_rows = cursor.fetchall()
 
             if not resolved_rows:
-                conn.close()
                 self.send_json({"success": True, "matched_count": 0})
                 return
 
@@ -956,34 +1100,53 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                         cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(people), actual_photo_path))
 
             conn.commit()
-            conn.close()
-
             self.send_json({"success": True, "matched_count": matched_count})
         except Exception as e:
             logger.error(f"Error in handle_post_automatch: {e}")
             self.send_error(500, f"Internal error: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def handle_get_people_with_counts(self):
         if not os.path.exists(self.db_path):
             self.send_json([])
             return
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
+            # Fetch people with matched counts
             cursor.execute("""
                 SELECT name, COUNT(*) as count
                 FROM faces
-                WHERE name IS NOT NULL
+                WHERE name IS NOT NULL AND name != 'Non Person'
                 GROUP BY name
                 ORDER BY count DESC
             """)
             rows = cursor.fetchall()
             people_counts = [{"name": r[0], "count": r[1]} for r in rows]
-            conn.close()
+
+            # Fetch unmatched count
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM faces
+                WHERE name IS NULL OR name = 'Non Person'
+            """)
+            unmatched_row = cursor.fetchone()
+            unmatched_count = unmatched_row[0] if unmatched_row else 0
+
+            if unmatched_count > 0:
+                people_counts.insert(0, {"name": "Unmatched", "count": unmatched_count})
+
             self.send_json(people_counts)
         except Exception as e:
             logger.error(f"Error fetching people with counts: {e}")
             self.send_error(500, f"Database error: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def handle_get_person_faces(self, query):
         name_list = query.get("name")
@@ -992,40 +1155,144 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             return
         name = urllib.parse.unquote(name_list[0])
 
-        if not os.path.exists(self.db_path):
-            self.send_json([])
-            return
+        limit = 100
         try:
-            conn = sqlite3.connect(self.db_path)
+            if "limit" in query:
+                limit = int(query["limit"][0])
+        except Exception:
+            pass
+
+        page = 1
+        try:
+            if "page" in query:
+                page = int(query["page"][0])
+        except Exception:
+            pass
+        offset = (page - 1) * limit
+
+        if not os.path.exists(self.db_path):
+            self.send_json({"faces": [], "total_count": 0, "has_more": False})
+            return
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, photo_path, box, prob
-                FROM faces
-                WHERE name = ?
-            """, (name,))
-            rows = cursor.fetchall()
             faces = []
-            for r in rows:
-                try:
-                    box = json.loads(r[2]) if r[2] else []
-                except Exception:
-                    box = []
-                faces.append({
-                    "id": r[0],
-                    "photo_path": r[1],
-                    "filename": os.path.basename(r[1]),
-                    "box": box,
-                    "prob": r[3]
-                })
-            conn.close()
-            self.send_json(faces)
+            
+            if name == "Unmatched":
+                cursor.execute("SELECT COUNT(*) FROM faces WHERE name IS NULL OR name = 'Non Person'")
+                total_count = cursor.fetchone()[0]
+
+                cursor.execute("""
+                    SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.name, p.raw_metadata
+                    FROM faces f
+                    LEFT JOIN photos p ON p.path = f.photo_path
+                    WHERE f.name IS NULL OR f.name = 'Non Person'
+                    LIMIT ? OFFSET ?
+                """, (limit, offset))
+                rows = cursor.fetchall()
+                for r in rows:
+                    try:
+                        box = json.loads(r[2]) if r[2] else []
+                    except Exception:
+                        box = []
+                        
+                    year = get_year_from_mtime_or_meta(r[4], r[6])
+                    
+                    faces.append({
+                        "id": r[0],
+                        "photo_path": r[1],
+                        "filename": os.path.basename(r[1]),
+                        "box": box,
+                        "prob": r[3],
+                        "mtime": r[4] if r[4] is not None else 0.0,
+                        "year": year,
+                        "similarity": 1.0,
+                        "name": r[5]
+                    })
+            else:
+                cursor.execute("SELECT COUNT(*) FROM faces WHERE name = ?", (name,))
+                total_count = cursor.fetchone()[0]
+
+                # Fetch all embeddings for centroid calculation (from faces table directly)
+                cursor.execute("SELECT embedding FROM faces WHERE name = ?", (name,))
+                emb_rows = cursor.fetchall()
+                embeddings = []
+                for r in emb_rows:
+                    if r[0] is not None and len(r[0]) > 0:
+                        embeddings.append(np.frombuffer(r[0], dtype=np.float32))
+                        
+                centroid = None
+                if len(embeddings) > 0:
+                    centroid = compute_geometric_median(embeddings)
+                    norm = np.linalg.norm(centroid)
+                    if norm > 0:
+                        centroid /= norm
+
+                cursor.execute("""
+                    SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata
+                    FROM faces f
+                    LEFT JOIN photos p ON p.path = f.photo_path
+                    WHERE f.name = ?
+                    LIMIT ? OFFSET ?
+                """, (name, limit, offset))
+                rows = cursor.fetchall()
+                        
+                for r in rows:
+                    try:
+                        box = json.loads(r[2]) if r[2] else []
+                    except Exception:
+                        box = []
+                        
+                    similarity = 1.0
+                    if centroid is not None and r[5] is not None and len(r[5]) > 0:
+                        emb = np.frombuffer(r[5], dtype=np.float32)
+                        emb_norm = np.linalg.norm(emb)
+                        if emb_norm > 0:
+                            emb = emb / emb_norm
+                        similarity = float(np.dot(emb, centroid))
+                        
+                    year = get_year_from_mtime_or_meta(r[4], r[6])
+                    
+                    faces.append({
+                        "id": r[0],
+                        "photo_path": r[1],
+                        "filename": os.path.basename(r[1]),
+                        "box": box,
+                        "prob": r[3],
+                        "mtime": r[4] if r[4] is not None else 0.0,
+                        "year": year,
+                        "similarity": similarity
+                    })
+
+            has_more = False
+            if limit >= 0:
+                has_more = (offset + len(faces)) < total_count
+
+            self.send_json({
+                "faces": faces,
+                "total_count": total_count,
+                "has_more": has_more,
+                "page": page,
+                "limit": limit
+            })
         except Exception as e:
             logger.error(f"Error fetching faces for person {name}: {e}")
             self.send_error(500, f"Database error: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def handle_post_unmatch_bulk(self):
+        conn = None
         try:
-            data = self.read_json_body()
+            try:
+                data = self.read_json_body()
+            except Exception as json_err:
+                self.send_error(400, f"Malformed JSON: {json_err}")
+                return
+
             face_ids = data.get("face_ids")
             if not face_ids or not isinstance(face_ids, list):
                 self.send_error(400, "Missing or invalid face_ids")
@@ -1033,7 +1300,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
 
             try:
                 face_ids = [int(fid) for fid in face_ids]
-            except ValueError:
+            except (ValueError, TypeError):
                 self.send_error(400, "Invalid face_ids format")
                 return
 
@@ -1041,7 +1308,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
             photos_to_check = {}
@@ -1091,15 +1359,23 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                         cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(updated_people), actual_photo_path))
 
             conn.commit()
-            conn.close()
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error in handle_post_unmatch_bulk: {e}")
             self.send_error(500, f"Internal error: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def handle_post_match_bulk(self):
+        conn = None
         try:
-            data = self.read_json_body()
+            try:
+                data = self.read_json_body()
+            except Exception as json_err:
+                self.send_error(400, f"Malformed JSON: {json_err}")
+                return
+
             face_ids = data.get("face_ids")
             person_name = data.get("person_name")
             
@@ -1110,7 +1386,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             try:
                 face_ids = [int(fid) for fid in face_ids]
                 person_name = str(person_name).strip()
-            except ValueError:
+            except (ValueError, TypeError):
                 self.send_error(400, "Invalid parameters format")
                 return
 
@@ -1118,7 +1394,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
             photos_to_check = {}
@@ -1176,17 +1453,33 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                         cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(updated_people), actual_photo_path))
 
             conn.commit()
-            conn.close()
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error in handle_post_match_bulk: {e}")
             self.send_error(500, f"Internal error: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def send_json(self, data):
         content = json.dumps(data).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        self.end_headers()
+        self.wfile.write(content)
+
+    def send_json_error(self, status_code, message):
+        content = json.dumps({"success": False, "error": message}).encode("utf-8")
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.end_headers()
         self.wfile.write(content)
 
@@ -1198,8 +1491,9 @@ def start_server(port=8080, db_path="data/photo_index.db", gui_dir="gui"):
     TunerHTTPRequestHandler.gui_dir = gui_dir
 
     # Automatically check and apply schema migration on startup
+    conn = None
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=30.0)
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(faces)")
         columns = [info[1] for info in cursor.fetchall()]
@@ -1211,9 +1505,15 @@ def start_server(port=8080, db_path="data/photo_index.db", gui_dir="gui"):
             logger.info("Migrating faces table: Adding prob column...")
             cursor.execute("ALTER TABLE faces ADD COLUMN prob REAL")
             conn.commit()
-        conn.close()
+        
+        # Ensure faces(name) index exists
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_faces_name ON faces(name)")
+        conn.commit()
     except Exception as e:
         logger.error(f"Error checking/migrating database schema: {e}")
+    finally:
+        if conn:
+            conn.close()
 
     server_address = ("", port)
     server = ThreadedHTTPServer(server_address, TunerHTTPRequestHandler)

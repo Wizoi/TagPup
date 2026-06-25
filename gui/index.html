@@ -25,6 +25,13 @@
                         <option value="face-matching">Face Matching</option>
                     </select>
                 </div>
+                <div class="control-group" id="notperson-toggle-group">
+                    <label class="switch-container">
+                        <input type="checkbox" id="hide-notperson" class="switch-input" checked>
+                        <span class="switch-slider"></span>
+                        <span class="switch-label">Hide Not-Person</span>
+                    </label>
+                </div>
                 <button id="btn-recluster" class="btn btn-secondary">🔄 Re-cluster Faces</button>
             </div>
         </header>
@@ -126,8 +133,12 @@
                         </div>
                         
                         <div class="matching-grid-card">
-                            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
-                                <h3>Matched Faces</h3>
+                            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 20px;">
+                                <div class="matching-tabs" id="matching-tabs">
+                                    <button id="tab-matches" class="tab-btn active">Matches</button>
+                                    <button id="tab-outliers" class="tab-btn">Outliers</button>
+                                </div>
+                                <h3 id="matching-static-title" class="hidden">Unmatched Faces</h3>
                                 <div style="font-size: 12px; color: var(--text-muted);">Click faces to select/deselect. Multi-selection is enabled.</div>
                             </div>
                             <div class="matching-faces-grid" id="matching-faces-grid">
