@@ -68,6 +68,14 @@ class ClipEmbedder:
             self.preprocess = preprocess
             self.tokenizer = open_clip.get_tokenizer(self.model_name)
             self.model.eval()
+            
+            if self.device == "cuda" and os.name != "nt" and hasattr(torch, "compile"):
+                try:
+                    logger.info("Compiling CLIP model for CUDA acceleration...")
+                    self.model = torch.compile(self.model)
+                except Exception as compile_err:
+                    logger.warning(f"Failed to compile CLIP model: {compile_err}. Using standard model.")
+                    
             logger.info("CLIP model loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to load CLIP model: {e}", exc_info=True)

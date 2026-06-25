@@ -4,6 +4,7 @@ import sys
 import json
 import logging
 import configparser
+import platform
 from typing import List
 import click
 from rich.console import Console
@@ -43,10 +44,14 @@ from writer import MetadataWriter
 from faces import FaceProcessor
 
 # Default ExifTool path (uses local user profile dynamically to avoid hardcoded PII)
-DEFAULT_EXIFTOOL_PATH = os.path.join(
-    os.environ.get("USERPROFILE", "C:\\Users\\Username"),
-    r"AppData\Local\Programs\ExifTool\exiftool.exe"
-)
+if platform.system() == "Windows":
+    DEFAULT_EXIFTOOL_PATH = os.path.join(
+        os.environ.get("USERPROFILE", "C:\\Users\\Username"),
+        r"AppData\Local\Programs\ExifTool\exiftool.exe"
+    )
+else:
+    import shutil
+    DEFAULT_EXIFTOOL_PATH = shutil.which("exiftool") or "/usr/bin/exiftool"
 
 def get_config():
     """Load configuration parameters from config.ini."""
@@ -145,14 +150,11 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     if photo_index.index is not None:
         expected_dim = 768 if "ViT-L" in model_name else (1024 if "ViT-H" in model_name else 512)
         if photo_index.index.d != expected_dim:
-            console.print(f"[yellow]Warning: Index dimensionality ({photo_index.index.d}) does not match current model {model_name} expected dimensionality ({expected_dim}). Auto-resetting index...[/yellow]")
-            if os.path.exists(db_path):
-                try:
-                    os.remove(db_path)
-                except Exception:
-                    pass
-            photo_index = PhotoIndex(db_path=db_path)
-            photo_index.load()
+            console.print(f"[yellow]Warning: Index dimensionality ({photo_index.index.d}) does not match current model {model_name} expected dimensionality ({expected_dim}). Clearing cached photo embeddings to reindex with the new model...[/yellow]")
+            try:
+                photo_index.clear_clip_embeddings()
+            except Exception as e:
+                console.print(f"[bold red]Failed to clear CLIP embeddings: {e}[/bold red]")
 
     taxonomy = TagTaxonomy(file_path=tax_path)
     taxonomy.load()
@@ -186,7 +188,9 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
                 try:
                     stat = os.stat(path)
                     saved = existing_entries[path]
-                    if saved.get("mtime") == stat.st_mtime and saved.get("size") == stat.st_size:
+                    if (saved.get("mtime") == stat.st_mtime and 
+                        saved.get("size") == stat.st_size and 
+                        saved.get("has_embedding", False)):
                         skipped_count += 1
                         continue
                 except Exception:
@@ -423,20 +427,57 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
         console.print("[bold cyan]Applying event-level folder consensus...[/bold cyan]")
         suggestions_output = suggester.apply_folder_consensus(suggestions_output)
 
+        import numpy as np
+
+        def convert_numpy_types(obj):
+            if isinstance(obj, dict):
+                return {k: convert_numpy_types(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy_types(item) for item in obj]
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.bool_):
+                return bool(obj)
+            elif isinstance(obj, np.complexfloating):
+                return complex(obj)
+            elif isinstance(obj, np.float32):
+                return float(obj)
+            elif isinstance(obj, np.float64):
+                return float(obj)
+            elif isinstance(obj, np.int32):
+                return int(obj)
+            elif isinstance(obj, np.int64):
+                return int(obj)
+            # Handle any other numpy scalar types that might not be caught above
+            elif hasattr(obj, 'dtype') and hasattr(obj, 'item'):
+                # This catches numpy scalars like np.float32, np.int32 etc.
+                try:
+                    return obj.item()
+                except:
+                    return obj
+            return obj
+
         # Write suggestions to JSON
         try:
+            # Convert all numpy types to native Python types
+            suggestions_converted = convert_numpy_types(suggestions_output)
+
             with open(output, "w", encoding="utf-8") as f:
-                json.dump(suggestions_output, f, indent=2)
+                json.dump(suggestions_converted, f, indent=2)
             console.print(f"[bold green]Suggestions successfully written to {output}[/bold green]\n")
             
             # Display a summary table
-            if suggestions_output:
+            if suggestions_converted:
                 table = Table(title="Generated Tag Suggestions Summary")
                 table.add_column("Photo File", style="green")
                 table.add_column("Top Suggested Tags (Confidence)", style="magenta")
                 table.add_column("Nearest Neighbors (Similarity)", style="cyan")
 
-                for sugg in suggestions_output:
+                for sugg in suggestions_converted:
                     # Format suggested tags, limiting to top 5 for neatness
                     # Appends '*' for tags that are new recommendations
                     tags = sugg.get("suggested_tags", [])
@@ -467,13 +508,14 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
 @click.argument("suggestions_file", type=click.Path(exists=True, dir_okay=False))
 @click.option("-Live", "live", is_flag=True, help="Write tags to files for real (modifies files).")
 @click.option("-MinScore", "min_score", default=0.50, type=float, help="Write tags at or above this score threshold.")
-def write(suggestions_file: str, live: bool, min_score: float):
+@click.option("--nobackup", is_flag=True, help="Avoid creating backup copies (_original files) during write operations.")
+def write(suggestions_file: str, live: bool, min_score: float, nobackup: bool):
     """Phase 3: Write suggested tags back to photos using ExifTool."""
     config = get_config()
     exiftool_path = get_exiftool_path(config)
     
     writer = MetadataWriter(exiftool_path=exiftool_path)
-    writer.write_tags_to_photos(suggestions_file, live=live, min_score=min_score)
+    writer.write_tags_to_photos(suggestions_file, live=live, min_score=min_score, nobackup=nobackup)
 
 @cli.command()
 @click.argument("query")

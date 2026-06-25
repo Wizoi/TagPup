@@ -104,6 +104,9 @@ class PhotoIndex:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_faces_photo_path ON faces(photo_path)
         """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_faces_name ON faces(name)
+        """)
         self.conn.commit()
 
     def load(self) -> bool:
@@ -146,6 +149,7 @@ class PhotoIndex:
                 except Exception:
                     tags, people, captions, raw_meta = [], [], [], {}
                     
+                has_emb = (emb_bytes is not None and len(emb_bytes) > 0)
                 self.metadata.append({
                     "path": path,
                     "mtime": mtime,
@@ -153,11 +157,13 @@ class PhotoIndex:
                     "tags": tags,
                     "people": people,
                     "captions": captions,
-                    "raw_metadata": raw_meta
+                    "raw_metadata": raw_meta,
+                    "has_embedding": has_emb
                 })
                 
-                emb = np.frombuffer(emb_bytes, dtype=np.float32)
-                embeddings.append(emb)
+                if has_emb:
+                    emb = np.frombuffer(emb_bytes, dtype=np.float32)
+                    embeddings.append(emb)
                 
             if embeddings:
                 self.dim = len(embeddings[0])
@@ -168,7 +174,24 @@ class PhotoIndex:
                 norms[norms == 0] = 1.0
                 embedding_matrix = embedding_matrix / norms
                 
-                self.index = faiss.IndexFlatIP(self.dim)
+                has_gpu = False
+                if hasattr(faiss, "get_num_gpus"):
+                    try:
+                        has_gpu = (faiss.get_num_gpus() > 0)
+                    except Exception:
+                        pass
+
+                if has_gpu:
+                    try:
+                        res = faiss.StandardGpuResources()
+                        self.index = faiss.index_cpu_to_gpu(res, 0, faiss.IndexFlatIP(self.dim))
+                        logger.info("Initialized GPU-accelerated FAISS index.")
+                    except Exception as gpu_err:
+                        logger.warning(f"Failed to initialize GPU FAISS index: {gpu_err}. Falling back to CPU index.")
+                        self.index = faiss.IndexFlatIP(self.dim)
+                else:
+                    self.index = faiss.IndexFlatIP(self.dim)
+
                 self.index.add(embedding_matrix)
                 logger.info(f"Loaded {len(self.metadata)} index entries from SQLite.")
             else:
@@ -256,6 +279,23 @@ class PhotoIndex:
             self.load()
         except Exception as e:
             logger.error(f"Error deleting paths from SQLite: {e}")
+            self.conn.rollback()
+            raise e
+
+    def clear_clip_embeddings(self):
+        """Set all embedding values in photos table to NULL and commit, then clear in-memory FAISS index."""
+        if self.conn is None:
+            return
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("UPDATE photos SET embedding = NULL")
+            self.conn.commit()
+            # Clear in-memory FAISS index
+            self.index = None
+            # Reload metadata (has_embedding will be updated to False)
+            self.load()
+        except Exception as e:
+            logger.error(f"Error clearing clip embeddings from SQLite: {e}")
             self.conn.rollback()
             raise e
 

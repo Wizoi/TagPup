@@ -61,6 +61,15 @@ class FaceProcessor:
         self.resnet = InceptionResnetV1(pretrained='vggface2', device=self.device).eval()
         if self.device == "cuda":
             self.resnet = self.resnet.half()
+            
+        # Conditionally compile model for CUDA acceleration (disabled on Windows due to lack of Triton support)
+        if self.device == "cuda" and os.name != "nt" and hasattr(torch, "compile"):
+            try:
+                logger.info("Compiling InceptionResnetV1 model for CUDA acceleration...")
+                self.resnet = torch.compile(self.resnet)
+            except Exception as compile_err:
+                logger.warning(f"Failed to compile InceptionResnetV1 model: {compile_err}. Using standard model.")
+                
         logger.info("Face models loaded successfully.")
 
     def detect_and_embed_faces(self, img_path: str) -> List[Dict[str, Any]]:
@@ -84,6 +93,7 @@ class FaceProcessor:
                     return []
                     
                 detected_faces = []
+                face_crops_info = []
                 for box, prob in zip(boxes, probs):
                     if prob < self.confidence_threshold:  # Configurable confidence threshold to filter out false face detections
                         continue
@@ -99,24 +109,14 @@ class FaceProcessor:
                     # Crop face from PIL image
                     face_crop = img.crop((x1, y1, x2, y2))
                     # Preprocess crop to match InceptionResnetV1 inputs (160x160 RGB normalized)
-                    face_crop = face_crop.resize((160, 160), Image.BILINEAR)
-                    face_tensor = torch.tensor(np.array(face_crop), dtype=torch.float32).permute(2, 0, 1)
+                    face_crop_resized = face_crop.resize((160, 160), Image.BILINEAR)
+                    face_tensor = torch.tensor(np.array(face_crop_resized), dtype=torch.float32).permute(2, 0, 1)
                     # Normalize tensor elements from [0, 255] to [-1, 1] range as expected by facenet
                     face_tensor = (face_tensor - 127.5) / 128.0
-                    face_tensor = face_tensor.unsqueeze(0).to(self.device)
-                    if self.device == "cuda":
-                        face_tensor = face_tensor.half()
                     
-                    # Generate 512-dimensional embedding
-                    with torch.no_grad():
-                        emb_tensor = self.resnet(face_tensor)
-                        # L2 normalization of face vector
-                        emb_tensor /= emb_tensor.norm(dim=-1, keepdim=True)
-                        emb = emb_tensor[0].cpu().numpy().tolist()
-                        
                     # Save a web-optimized face crop image (downscaled to max 256px if larger)
-                    face_crop_img = img.crop((x1, y1, x2, y2))
-                    if max(face_crop_img.size) > 256:
+                    face_crop_thumb = face_crop.copy()
+                    if max(face_crop_thumb.size) > 256:
                         try:
                             resample = Image.Resampling.LANCZOS
                         except AttributeError:
@@ -124,19 +124,39 @@ class FaceProcessor:
                                 resample = Image.LANCZOS
                             except AttributeError:
                                 resample = Image.ANTIALIAS
-                        face_crop_img.thumbnail((256, 256), resample)
+                        face_crop_thumb.thumbnail((256, 256), resample)
                     
                     crop_buffer = io.BytesIO()
-                    face_crop_img.save(crop_buffer, format="JPEG", quality=90)
+                    face_crop_thumb.save(crop_buffer, format="JPEG", quality=90)
                     crop_bytes = crop_buffer.getvalue()
-                        
-                    detected_faces.append({
+                    
+                    face_crops_info.append({
                         "box": [x1, y1, x2, y2],
-                        "embedding": emb,
-                        "name": None,
+                        "tensor": face_tensor,
                         "crop_image": crop_bytes,
                         "prob": float(prob)
                     })
+
+                if face_crops_info:
+                    # Stack all face tensors into a single batch and move to device
+                    batch_tensors = torch.stack([x["tensor"] for x in face_crops_info]).to(self.device)
+                    if self.device == "cuda":
+                        batch_tensors = batch_tensors.half()
+
+                    # Generate 512-dimensional embeddings in a single forward pass
+                    with torch.no_grad():
+                        emb_tensors = self.resnet(batch_tensors)
+                        emb_tensors /= emb_tensors.norm(dim=-1, keepdim=True)
+                        embeddings = emb_tensors.cpu().numpy().tolist()
+
+                    for info, emb in zip(face_crops_info, embeddings):
+                        detected_faces.append({
+                            "box": info["box"],
+                            "embedding": emb,
+                            "name": None,
+                            "crop_image": info["crop_image"],
+                            "prob": info["prob"]
+                        })
                     
                 return detected_faces
         except Exception as e:
@@ -159,9 +179,16 @@ class FaceProcessor:
         # A cosine similarity cutoff of 0.85 equals a cosine distance of 0.15.
         # Euclidean eps = sqrt(2 * 0.15) = sqrt(0.3) ≈ 0.547.
         # We use metric='euclidean' and eps=0.48. min_samples=1 so single faces can form their own cluster.
-        # n_jobs=-1 enables multi-threaded distance computation for large datasets.
-        db = DBSCAN(eps=0.48, min_samples=1, metric='euclidean', n_jobs=-1)
-        labels = db.fit_predict(embeddings)
+        try:
+            from cuml.cluster import DBSCAN as cuDBSCAN
+            db = cuDBSCAN(eps=0.48, min_samples=1, metric='euclidean')
+            labels = db.fit_predict(embeddings)
+            logger.info("Using GPU-accelerated cuML DBSCAN for clustering.")
+        except ImportError:
+            # Fallback to CPU DBSCAN
+            # n_jobs=-1 enables multi-threaded distance computation for large datasets.
+            db = DBSCAN(eps=0.48, min_samples=1, metric='euclidean', n_jobs=-1)
+            labels = db.fit_predict(embeddings)
         
         # Group face index records by cluster ID
         clusters = {}
@@ -257,29 +284,48 @@ class FaceProcessor:
             if resolved_name:
                 assignment_counter += 1
                 for face in cluster_faces:
-                    initial_resolved_names[face["id"]] = resolved_name
+                    p_path = face["photo_path"]
+                    meta = meta_by_path.get(p_path)
+                    photo_people = meta.get("people", []) if meta else []
                     
-                    # Record trace
-                    face_direct_anchor = direct_anchors.get(face["id"])
-                    if face_direct_anchor == resolved_name:
-                        traces[face["id"]] = {
-                            "face_id": face["id"],
-                            "photo_path": face["photo_path"],
-                            "cluster_id": int(cluster_id),
-                            "assigned_name": resolved_name,
-                            "resolution_method": "direct_anchor",
-                            "assignment_order": assignment_counter,
-                            "trigger_photos": [face["photo_path"]]
-                        }
+                    if resolved_name in photo_people:
+                        initial_resolved_names[face["id"]] = resolved_name
+                        
+                        # Record trace
+                        face_direct_anchor = direct_anchors.get(face["id"])
+                        if face_direct_anchor == resolved_name:
+                            traces[face["id"]] = {
+                                "face_id": face["id"],
+                                "photo_path": p_path,
+                                "cluster_id": int(cluster_id),
+                                "assigned_name": resolved_name,
+                                "resolution_method": "direct_anchor",
+                                "assignment_order": assignment_counter,
+                                "trigger_photos": [p_path]
+                            }
+                        else:
+                            truncated_triggers = trigger_photos[:5]
+                            if len(trigger_photos) > 5:
+                                truncated_triggers.append(f"...and {len(trigger_photos) - 5} more")
+                            traces[face["id"]] = {
+                                "face_id": face["id"],
+                                "photo_path": p_path,
+                                "cluster_id": int(cluster_id),
+                                "assigned_name": resolved_name,
+                                "resolution_method": method,
+                                "assignment_order": assignment_counter,
+                                "trigger_photos": truncated_triggers
+                            }
                     else:
+                        # Parent photo is not tagged with this person: skip assignment
                         traces[face["id"]] = {
                             "face_id": face["id"],
-                            "photo_path": face["photo_path"],
+                            "photo_path": p_path,
                             "cluster_id": int(cluster_id),
-                            "assigned_name": resolved_name,
-                            "resolution_method": method,
-                            "assignment_order": assignment_counter,
-                            "trigger_photos": trigger_photos
+                            "assigned_name": None,
+                            "resolution_method": "strict_tag_enforcement_override",
+                            "assignment_order": None,
+                            "trigger_photos": []
                         }
             else:
                 for face in cluster_faces:
@@ -334,11 +380,15 @@ class FaceProcessor:
         
         for iteration in range(max_iterations):
             # 2a. Compute mean embeddings for current resolved names
+            # Prioritize direct anchors to build unpolluted centroids
             mean_embeddings = {}
             embeddings_by_name = {}
+            names_with_anchors = set(direct_anchors.values())
             for face in all_faces:
                 name = current_resolved_names.get(face["id"])
                 if name:
+                    if name in names_with_anchors and face["id"] not in direct_anchors:
+                        continue
                     if name not in embeddings_by_name:
                         embeddings_by_name[name] = []
                     embeddings_by_name[name].append(face["embedding"])
@@ -358,6 +408,14 @@ class FaceProcessor:
                 
                 # Map of face_id -> resolved_name in this photo
                 face_resolved = {f["id"]: current_resolved_names.get(f["id"]) for f in photo_faces}
+                
+                # Validate existing assignments against mean embeddings (clear if similarity < 0.80)
+                for f in photo_faces:
+                    name = face_resolved.get(f["id"])
+                    if name and name in mean_embeddings:
+                        dist = np.linalg.norm(np.array(f["embedding"]) - mean_embeddings[name])
+                        if dist >= 0.63246:  # Cosine similarity < 0.80
+                            face_resolved[f["id"]] = None
                 
                 # Calculate face areas and find maximum area
                 face_areas = []
@@ -392,18 +450,23 @@ class FaceProcessor:
                         # Find all valid faces in this photo that resolved to this name
                         conf_faces = [f for f in valid_photo_faces if face_resolved.get(f["id"]) == conf_name]
                         
-                        # Calculate distance from each face to the mean embedding of the conflicting name
-                        distances = []
-                        for f in conf_faces:
-                            dist = np.linalg.norm(np.array(f["embedding"]) - mean_embeddings[conf_name])
-                            distances.append((dist, f))
-                        
-                        # Sort faces by distance (closest stays assigned, others get unassigned)
-                        distances.sort(key=lambda x: x[0])
-                        # The closest face keeps the name
-                        best_face = distances[0][1]
-                        for dist, f in distances[1:]:
-                            face_resolved[f["id"]] = None
+                        # Calculate distance from each face to the mean embedding of the conflicting name (if it exists)
+                        if conf_name in mean_embeddings:
+                            distances = []
+                            for f in conf_faces:
+                                dist = np.linalg.norm(np.array(f["embedding"]) - mean_embeddings[conf_name])
+                                distances.append((dist, f))
+                            
+                            # Sort faces by distance (closest stays assigned, others get unassigned)
+                            distances.sort(key=lambda x: x[0])
+                            # The closest face keeps the name
+                            best_face = distances[0][1]
+                            for dist, f in distances[1:]:
+                                face_resolved[f["id"]] = None
+                        else:
+                            # If the centroid doesn't exist, unassign all conflicting faces
+                            for f in conf_faces:
+                                face_resolved[f["id"]] = None
 
                 # Now try to match unassigned valid faces to unused tags in this photo's metadata
                 unassigned_faces = [f for f in valid_photo_faces if face_resolved.get(f["id"]) is None]
@@ -431,10 +494,10 @@ class FaceProcessor:
                         cost_matrix = np.array(cost_matrix)
                         row_ind, col_ind = linear_sum_assignment(cost_matrix)
                         
-                        # Assign matches if distance is within threshold (e.g. 1.15)
+                        # Assign matches if distance is within threshold (dist < 0.63246 corresponds to cosine similarity >= 0.80)
                         for r, c in zip(row_ind, col_ind):
                             dist = cost_matrix[r, c]
-                            if dist < 1.15:
+                            if dist < 0.63246:
                                 f = unassigned_faces[r]
                                 tag = known_unused[c]
                                 face_resolved[f["id"]] = tag
@@ -501,11 +564,15 @@ class FaceProcessor:
 
         # Step 4: Build database updates and calculate final statistics
         # Compute mean embeddings for the final resolved names to classify remaining unassigned faces
+        # Prioritize direct anchors to build unpolluted centroids
         final_mean_embeddings = {}
         final_embeddings_by_name = {}
+        names_with_anchors = set(direct_anchors.values())
         for face in all_faces:
             name = refined_resolved_names.get(face["id"])
             if name and name != "Non Person":
+                if name in names_with_anchors and face["id"] not in direct_anchors:
+                    continue
                 if name not in final_embeddings_by_name:
                     final_embeddings_by_name[name] = []
                 final_embeddings_by_name[name].append(face["embedding"])
@@ -540,8 +607,8 @@ class FaceProcessor:
                 
                 if photo_tags:
                     # Photo is tagged with people. We only match if the best matching name is in those tags.
-                    # Since we have confirmation via tags, we use a standard threshold (>= 0.65)
-                    if best_name in photo_tags and best_sim >= 0.65:
+                    # Since we have confirmation via tags, we use a high confidence threshold (>= 0.80) to prevent false assignments in multi-face photos
+                    if best_name in photo_tags and best_sim >= 0.80:
                         final_name = best_name
                         traces[face["id"]] = {
                             "face_id": face["id"],
@@ -564,41 +631,17 @@ class FaceProcessor:
                             "trigger_photos": []
                         }
                 else:
-                    # Photo is untagged. We should be much more selective/restrictive (>= 0.80) to reduce false positives.
-                    if best_name and best_sim >= 0.80:
-                        final_name = best_name
-                        traces[face["id"]] = {
-                            "face_id": face["id"],
-                            "photo_path": p_path,
-                            "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
-                            "assigned_name": final_name,
-                            "resolution_method": f"final_matching_untagged_photo (similarity={best_sim:.4f})",
-                            "assignment_order": None,
-                            "trigger_photos": []
-                        }
-                    else:
-                        if final_mean_embeddings and best_sim < 0.65:
-                            final_name = "Non Person"
-                            traces[face["id"]] = {
-                                "face_id": face["id"],
-                                "photo_path": p_path,
-                                "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
-                                "assigned_name": "Non Person",
-                                "resolution_method": f"low_similarity_threshold (max_similarity={best_sim:.4f})",
-                                "assignment_order": None,
-                                "trigger_photos": []
-                            }
-                        else:
-                            final_name = None
-                            traces[face["id"]] = {
-                                "face_id": face["id"],
-                                "photo_path": p_path,
-                                "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
-                                "assigned_name": None,
-                                "resolution_method": f"untagged_photo_below_high_threshold (similarity={best_sim:.4f})",
-                                "assignment_order": None,
-                                "trigger_photos": []
-                            }
+                    # Photo is untagged. Under strict tag enforcement, we do not assign any identity.
+                    final_name = None
+                    traces[face["id"]] = {
+                        "face_id": face["id"],
+                        "photo_path": p_path,
+                        "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
+                        "assigned_name": None,
+                        "resolution_method": "untagged_photo_strict_tag_enforcement",
+                        "assignment_order": None,
+                        "trigger_photos": []
+                    }
             
             face_updates.append((final_name, face["id"]))
             if final_name:
