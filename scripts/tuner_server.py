@@ -66,8 +66,22 @@ def compute_geometric_median(X, eps=1e-5, max_iter=20):
     return y
 
 _metadata_year_cache = {}
+_path_year_cache = {}
 
-def get_year_from_mtime_or_meta(mtime, raw_meta_json):
+def extract_4_digit_year(s):
+    if not s:
+        return None
+    matches = re.findall(r'\d{4}', s)
+    for m in matches:
+        val = int(m)
+        if 1800 <= val <= 2100:
+            return val
+    return None
+
+def get_year_from_mtime_or_meta(mtime, raw_meta_json, path=None):
+    if path and path in _path_year_cache:
+        return _path_year_cache[path]
+
     parsed_year = None
     if raw_meta_json:
         if raw_meta_json in _metadata_year_cache:
@@ -83,17 +97,32 @@ def get_year_from_mtime_or_meta(mtime, raw_meta_json):
             except Exception:
                 pass
                 
-    if not parsed_year and mtime:
-        try:
-            import time
-            parsed_year = time.gmtime(mtime).tm_year
-        except Exception:
-            try:
-                import datetime
-                parsed_year = datetime.datetime.fromtimestamp(mtime).year
-            except Exception:
-                pass
-    return parsed_year if parsed_year else "Unknown"
+    if not parsed_year and path:
+        # Normalize path separators to forward slashes
+        norm_path = path.replace("\\", "/")
+        parts = norm_path.split("/")
+        
+        # The filename is the last segment
+        if parts:
+            filename = parts[-1]
+            parsed_year = extract_4_digit_year(filename)
+            
+        # The directory components are all segments except the last
+        if not parsed_year and len(parts) > 1:
+            # Check folders starting from the closest parent (right to left)
+            for folder in reversed(parts[:-1]):
+                if not folder:
+                    continue
+                year = extract_4_digit_year(folder)
+                if year:
+                    parsed_year = year
+                    break
+                    
+    year_str = parsed_year if parsed_year else "Unknown"
+    if path:
+        _path_year_cache[path] = year_str
+    return year_str
+
 
 class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
     db_path = "data/photo_index.db"
@@ -148,6 +177,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
         # API: get top 5 similar matched faces for a selected face
         elif path == "/api/face-matches":
             self.handle_get_face_matches(query)
+
+        # API: get list of high confident unmatched face matches for a selected face ID
+        elif path == "/api/face-matches-unmatched":
+            self.handle_get_face_matches_unmatched(query)
             
         else:
             self.send_error(404, "File Not Found")
@@ -174,6 +207,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.handle_post_unmatch_all()
         elif path == "/api/photo/automatch":
             self.handle_post_automatch()
+        elif path == "/api/folder/automatch":
+            self.handle_post_folder_automatch()
         else:
             self.send_error(404, "Endpoint Not Found")
 
@@ -199,7 +234,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
 
     def handle_get_photos(self, query):
         mode = query.get("mode", ["unmatched"])[0]
-        hide_notperson = query.get("hide_notperson", ["false"])[0].lower() == "true"
 
         if not os.path.exists(self.db_path):
             self.send_json([])
@@ -212,38 +246,35 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             cursor = conn.cursor()
             
             if mode == "unmatched":
-                if hide_notperson:
-                    cursor.execute("""
-                        SELECT f.photo_path, COUNT(*), p.mtime, p.raw_metadata
-                        FROM faces f
-                        LEFT JOIN photos p ON p.path = f.photo_path
-                        WHERE f.name IS NULL
-                        GROUP BY f.photo_path
-                        ORDER BY p.mtime DESC
-                    """)
-                else:
-                    cursor.execute("""
-                        SELECT f.photo_path, COUNT(*), p.mtime, p.raw_metadata
-                        FROM faces f
-                        LEFT JOIN photos p ON p.path = f.photo_path
-                        WHERE f.name IS NULL OR f.name = 'Non Person'
-                        GROUP BY f.photo_path
-                        ORDER BY p.mtime DESC
-                    """)
+                cursor.execute("""
+                    SELECT 
+                        f.photo_path, 
+                        SUM(CASE WHEN f.name IS NULL THEN 1 ELSE 0 END) as unmatched,
+                        SUM(CASE WHEN f.name IS NOT NULL THEN 1 ELSE 0 END) as matched,
+                        p.mtime, 
+                        p.raw_metadata
+                    FROM faces f
+                    LEFT JOIN photos p ON p.path = f.photo_path
+                    GROUP BY f.photo_path
+                    HAVING unmatched > 0
+                    ORDER BY p.mtime DESC
+                """)
                 rows = cursor.fetchall()
                 photos = []
                 for row in rows:
                     p_path = row[0]
                     unmatched_count = row[1]
-                    mtime = row[2] if row[2] is not None else 0.0
-                    raw_meta_json = row[3]
+                    matched_count = row[2]
+                    mtime = row[3] if row[3] is not None else 0.0
+                    raw_meta_json = row[4]
                     
-                    year = get_year_from_mtime_or_meta(mtime, raw_meta_json)
+                    year = get_year_from_mtime_or_meta(mtime, raw_meta_json, p_path)
                     
                     photos.append({
                         "path": p_path,
                         "filename": os.path.basename(p_path),
                         "unmatched_count": unmatched_count,
+                        "matched_count": matched_count,
                         "mtime": mtime,
                         "year": year,
                         "folder": os.path.dirname(p_path)
@@ -277,17 +308,19 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             cursor = conn.cursor()
 
             # 1. Fetch metadata from photos table
-            cursor.execute("SELECT people, tags, captions FROM photos WHERE path = ?", (photo_path,))
+            cursor.execute("SELECT people, tags, captions, mtime, raw_metadata FROM photos WHERE path = ?", (photo_path,))
             photo_row = cursor.fetchone()
             
             # Fallback for Windows path casing mismatches
             if not photo_row:
-                cursor.execute("SELECT people, tags, captions FROM photos WHERE path LIKE ?", (photo_path,))
+                cursor.execute("SELECT people, tags, captions, mtime, raw_metadata FROM photos WHERE path LIKE ?", (photo_path,))
                 photo_row = cursor.fetchone()
 
             people = []
             tags = []
             caption = None
+            mtime = 0.0
+            raw_meta_json = None
 
             if photo_row:
                 try:
@@ -303,21 +336,39 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                     caption = captions[0] if captions else None
                 except Exception:
                     caption = None
+                
+                mtime = photo_row[3] if photo_row[3] is not None else 0.0
+                raw_meta_json = photo_row[4]
+
+            year = get_year_from_mtime_or_meta(mtime, raw_meta_json, photo_path)
 
             # 2. Fetch face detections from faces table
-            cursor.execute("SELECT id, box, name FROM faces WHERE photo_path = ?", (photo_path,))
+            cursor.execute("SELECT id, box, name, embedding FROM faces WHERE photo_path = ?", (photo_path,))
             face_rows = cursor.fetchall()
             
             # Fallback casing mismatch
             if not face_rows:
-                cursor.execute("SELECT id, box, name FROM faces WHERE photo_path LIKE ?", (photo_path,))
+                cursor.execute("SELECT id, box, name, embedding FROM faces WHERE photo_path LIKE ?", (photo_path,))
                 face_rows = cursor.fetchall()
+
+            # Load all resolved face embeddings to compute max correlation
+            cursor.execute("SELECT embedding FROM faces WHERE name IS NOT NULL")
+            known_rows = cursor.fetchall()
+            known_embs = []
+            for k_row in known_rows:
+                known_embs.append(np.frombuffer(k_row[0], dtype=np.float32))
+            
+            if known_embs:
+                known_matrix = np.array(known_embs, dtype=np.float32)
+            else:
+                known_matrix = None
 
             faces = []
             for f_row in face_rows:
                 fid = f_row[0]
                 box_str = f_row[1]
                 fname = f_row[2]
+                emb_bytes = f_row[3]
                 
                 try:
                     box = json.loads(box_str)
@@ -327,11 +378,20 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                         box = [int(x) for x in box_str.replace('[', '').replace(']', '').split(',')]
                     except Exception:
                         box = [0, 0, 0, 0]
+                
+                max_sim = 0.0
+                if emb_bytes is not None:
+                    target_emb = np.frombuffer(emb_bytes, dtype=np.float32)
+                    if known_matrix is not None:
+                        sims = np.dot(known_matrix, target_emb)
+                        if len(sims) > 0:
+                            max_sim = float(np.max(sims))
                         
                 faces.append({
                     "id": fid,
                     "box": box,
-                    "name": fname
+                    "name": fname,
+                    "max_similarity": max_sim
                 })
 
             # Compile details response
@@ -341,7 +401,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 "people": people,
                 "tags": tags,
                 "caption": caption,
-                "faces": faces
+                "faces": faces,
+                "year": year
             }
             self.send_json(details)
 
@@ -554,7 +615,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
                         
-            all_people = sorted([p for p in faces_names.union(photos_people) if p != "Non Person"])
+            all_people = sorted([p for p in faces_names.union(photos_people) if p])
             self.send_json(all_people)
         except Exception as e:
             logger.error(f"Error fetching people: {e}")
@@ -594,8 +655,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             target_emb_bytes = row[0]
             target_emb = np.frombuffer(target_emb_bytes, dtype=np.float32)
             
-            # Fetch all resolved faces (excluding the current face if it's already resolved, and excluding 'Non Person')
-            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL AND name != 'Non Person' AND id != ?", (face_id,))
+            # Fetch all resolved faces (excluding the current face if it's already resolved)
+            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL AND id != ?", (face_id,))
             faces_rows = cursor.fetchall()
             
             if not faces_rows:
@@ -632,6 +693,88 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             
         except Exception as e:
             logger.error(f"Error finding face matches: {e}")
+            self.send_error(500, f"Error finding matches: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+    def handle_get_face_matches_unmatched(self, query):
+        face_id_list = query.get("id")
+        if not face_id_list:
+            self.send_error(400, "Missing 'id' parameter")
+            return
+        try:
+            face_id = int(face_id_list[0])
+        except ValueError:
+            self.send_error(400, "Invalid 'id' parameter")
+            return
+
+        if not os.path.exists(self.db_path):
+            self.send_json({"matches": []})
+            return
+
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
+            cursor = conn.cursor()
+            
+            # Fetch target embedding
+            cursor.execute("SELECT embedding FROM faces WHERE id = ?", (face_id,))
+            row = cursor.fetchone()
+            if not row:
+                self.send_error(404, "Face not found")
+                return
+                
+            target_emb_bytes = row[0]
+            target_emb = np.frombuffer(target_emb_bytes, dtype=np.float32)
+            
+            # Fetch all other unmatched faces
+            cursor.execute("SELECT id, photo_path, box, embedding FROM faces WHERE name IS NULL AND id != ?", (face_id,))
+            faces_rows = cursor.fetchall()
+            
+            if not faces_rows:
+                self.send_json({"matches": []})
+                return
+                
+            face_ids = []
+            photo_paths = []
+            boxes = []
+            embeddings_list = []
+            for fid, photo_path, box_json, emb_bytes in faces_rows:
+                face_ids.append(fid)
+                photo_paths.append(photo_path)
+                try:
+                    box = json.loads(box_json) if box_json else []
+                except Exception:
+                    box = []
+                boxes.append(box)
+                embeddings_list.append(np.frombuffer(emb_bytes, dtype=np.float32))
+                
+            embeddings_matrix = np.array(embeddings_list, dtype=np.float32)
+            
+            # Calculate similarities
+            similarities = np.dot(embeddings_matrix, target_emb)
+            
+            # Sort indices descending
+            sorted_indices = np.argsort(similarities)[::-1]
+            
+            matches = []
+            for idx in sorted_indices:
+                sim = float(similarities[idx])
+                if sim >= 0.8:
+                    matches.append({
+                        "id": face_ids[idx],
+                        "photo_path": photo_paths[idx],
+                        "filename": os.path.basename(photo_paths[idx]),
+                        "box": boxes[idx],
+                        "similarity": sim
+                    })
+                    
+            self.send_json({"matches": matches})
+            
+        except Exception as e:
+            logger.error(f"Error finding unmatched face matches: {e}")
             self.send_error(500, f"Error finding matches: {e}")
         finally:
             if conn:
@@ -689,6 +832,23 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.send_json({"success": True})
                 return
 
+            # Check for conflict: is person_name already tagged on another face in this photo?
+            cursor.execute("SELECT id FROM faces WHERE photo_path = ? AND name = ? AND id != ?", (photo_path, person_name, face_id))
+            conflict_row = cursor.fetchone()
+            if not conflict_row:
+                cursor.execute("SELECT id FROM faces WHERE photo_path LIKE ? AND name = ? AND id != ?", (photo_path, person_name, face_id))
+                conflict_row = cursor.fetchone()
+                
+            if conflict_row:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "success": False,
+                    "error": f"Cannot match: '{person_name}' is already tagged on another face in this photo."
+                }).encode("utf-8"))
+                return
+
             # 2. Update faces table
             cursor.execute("UPDATE faces SET name = ? WHERE id = ?", (person_name, face_id))
 
@@ -712,7 +872,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                         people = []
 
             # Append the new person name if missing
-            if person_name not in people and person_name != "Non Person":
+            if person_name not in people:
                 people.append(person_name)
 
             # Check if old name is no longer matched to any other faces in the photo
@@ -883,8 +1043,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 if conn:
                     cursor = conn.cursor()
                     
-                    # Fetch all faces with a name (excluding "Non Person")
-                    cursor.execute("SELECT photo_path, name FROM faces WHERE name IS NOT NULL AND name != 'Non Person'")
+                    # Fetch all faces with a name
+                    cursor.execute("SELECT photo_path, name FROM faces WHERE name IS NOT NULL")
                     faces_by_photo = {}
                     for p_path, name in cursor.fetchall():
                         if p_path not in faces_by_photo:
@@ -1035,8 +1195,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.send_json({"success": True, "matched_count": 0})
                 return
 
-            # 2. Fetch all resolved face embeddings in the database (faces that have a non-null name, excluding 'Non Person')
-            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL AND name != 'Non Person'")
+            # 2. Fetch all resolved face embeddings in the database (faces that have a non-null name)
+            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL")
             resolved_rows = cursor.fetchall()
 
             if not resolved_rows:
@@ -1052,10 +1212,16 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
 
             resolved_matrix = np.array(resolved_embs, dtype=np.float32)
 
-            # 3. For each unmatched face, find the best match
-            matched_count = 0
-            newly_matched_names = set()
+            # Fetch names already resolved in this photo to avoid duplicate assignments
+            cursor.execute("SELECT name FROM faces WHERE photo_path = ? AND name IS NOT NULL", (photo_path,))
+            already_tagged_rows = cursor.fetchall()
+            if not already_tagged_rows:
+                cursor.execute("SELECT name FROM faces WHERE photo_path LIKE ? AND name IS NOT NULL", (photo_path,))
+                already_tagged_rows = cursor.fetchall()
+            already_tagged_names = {row[0] for row in already_tagged_rows if row[0]}
 
+            # 3. For each unmatched face, find the best candidate match
+            proposed_matches = {}  # face_id -> matched_name
             for face_id, target_emb_bytes in unmatched_rows:
                 target_emb = np.frombuffer(target_emb_bytes, dtype=np.float32)
                 
@@ -1066,9 +1232,23 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
 
                 # High confidence threshold for auto-matching (cosine similarity >= 0.8)
                 if best_sim >= 0.8:
-                    matched_name = resolved_names[best_idx]
-                    
-                    # Update face record
+                    proposed_matches[face_id] = resolved_names[best_idx]
+
+            # Detect conflicts (proposed same name for multiple faces, or name already tagged)
+            proposed_counts = {}
+            for name in proposed_matches.values():
+                proposed_counts[name] = proposed_counts.get(name, 0) + 1
+
+            conflicting_names = set()
+            for name, count in proposed_counts.items():
+                if count > 1 or name in already_tagged_names:
+                    conflicting_names.add(name)
+
+            # Apply only non-conflicting matches
+            matched_count = 0
+            newly_matched_names = set()
+            for face_id, matched_name in proposed_matches.items():
+                if matched_name not in conflicting_names:
                     cursor.execute("UPDATE faces SET name = ? WHERE id = ?", (matched_name, face_id))
                     newly_matched_names.add(matched_name)
                     matched_count += 1
@@ -1092,7 +1272,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
 
                     updated = False
                     for name in newly_matched_names:
-                        if name not in people and name != "Non Person":
+                        if name and name not in people:
                             people.append(name)
                             updated = True
 
@@ -1103,6 +1283,165 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_json({"success": True, "matched_count": matched_count})
         except Exception as e:
             logger.error(f"Error in handle_post_automatch: {e}")
+            self.send_error(500, f"Internal error: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+    def handle_post_folder_automatch(self):
+        conn = None
+        try:
+            try:
+                data = self.read_json_body()
+            except Exception as json_err:
+                self.send_error(400, f"Malformed JSON: {json_err}")
+                return
+
+            folder_path = data.get("folder_path")
+            if not folder_path:
+                self.send_error(400, "Missing folder_path")
+                return
+            folder_path = folder_path.rstrip("/\\")
+
+            if not os.path.exists(self.db_path):
+                self.send_error(404, "Database not found")
+                return
+
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
+            cursor = conn.cursor()
+
+            # 1. Fetch unmatched faces in this folder
+            pattern1 = folder_path.replace("/", "\\") + "\\%"
+            pattern2 = folder_path.replace("\\", "/") + "/%"
+            
+            cursor.execute("""
+                SELECT id, embedding, photo_path 
+                FROM faces 
+                WHERE (photo_path LIKE ? OR photo_path LIKE ?) AND name IS NULL
+            """, (pattern1, pattern2))
+            unmatched_rows = cursor.fetchall()
+
+            if not unmatched_rows:
+                self.send_json({"success": True, "matched_count": 0})
+                return
+
+            # 2. Fetch all resolved face embeddings in the database (faces that have a non-null name)
+            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL")
+            resolved_rows = cursor.fetchall()
+
+            if not resolved_rows:
+                self.send_json({"success": True, "matched_count": 0})
+                return
+
+            # Compile resolved embeddings matrix and names
+            resolved_names = []
+            resolved_embs = []
+            for name, emb_bytes in resolved_rows:
+                resolved_names.append(name)
+                resolved_embs.append(np.frombuffer(emb_bytes, dtype=np.float32))
+
+            resolved_matrix = np.array(resolved_embs, dtype=np.float32)
+
+            # Fetch all resolved names for photos in this folder to check for already-tagged conflicts
+            cursor.execute("""
+                SELECT name, photo_path
+                FROM faces
+                WHERE (photo_path LIKE ? OR photo_path LIKE ?) AND name IS NOT NULL
+            """, (pattern1, pattern2))
+            already_tagged_rows = cursor.fetchall()
+            
+            already_tagged_by_photo = {}
+            for name, p_path in already_tagged_rows:
+                if p_path not in already_tagged_by_photo:
+                    already_tagged_by_photo[p_path] = set()
+                already_tagged_by_photo[p_path].add(name)
+
+            # 3. For each unmatched face, find the best candidate match, grouped by photo
+            proposed_by_photo = {}  # photo_path -> list of (face_id, proposed_name)
+            for face_id, target_emb_bytes, photo_path in unmatched_rows:
+                target_emb = np.frombuffer(target_emb_bytes, dtype=np.float32)
+                
+                # Calculate similarities
+                similarities = np.dot(resolved_matrix, target_emb)
+                best_idx = np.argmax(similarities)
+                best_sim = similarities[best_idx]
+
+                # High confidence threshold for auto-matching (cosine similarity >= 0.8)
+                if best_sim >= 0.8:
+                    matched_name = resolved_names[best_idx]
+                    if photo_path not in proposed_by_photo:
+                        proposed_by_photo[photo_path] = []
+                    proposed_by_photo[photo_path].append((face_id, matched_name))
+
+            # Detect conflicts per photo and apply updates
+            matched_count = 0
+            photos_to_update = {}
+
+            for photo_path, proposed_list in proposed_by_photo.items():
+                already_tagged = already_tagged_by_photo.get(photo_path, set())
+                
+                proposed_counts = {}
+                for _, name in proposed_list:
+                    proposed_counts[name] = proposed_counts.get(name, 0) + 1
+                    
+                conflicting_names = set()
+                for name, count in proposed_counts.items():
+                    if count > 1 or name in already_tagged:
+                        conflicting_names.add(name)
+                        
+                for face_id, name in proposed_list:
+                    if name not in conflicting_names:
+                        cursor.execute("UPDATE faces SET name = ? WHERE id = ?", (name, face_id))
+                        if photo_path not in photos_to_update:
+                            photos_to_update[photo_path] = set()
+                        photos_to_update[photo_path].add(name)
+                        matched_count += 1
+
+            # 4. Update photos table people lists for each affected photo
+            for photo_path, newly_matched_names in photos_to_update.items():
+                cursor.execute("SELECT path, people FROM photos WHERE path = ?", (photo_path,))
+                photo_row = cursor.fetchone()
+                if not photo_row:
+                    cursor.execute("SELECT path, people FROM photos WHERE path LIKE ?", (photo_path,))
+                    photo_row = cursor.fetchone()
+
+                if photo_row:
+                    actual_photo_path = photo_row[0]
+                    people = []
+                    if photo_row[1]:
+                        try:
+                            people = json.loads(photo_row[1])
+                        except Exception:
+                            people = []
+
+                    updated = False
+                    for name in newly_matched_names:
+                        if name and name not in people:
+                            people.append(name)
+                            updated = True
+
+                    if updated:
+                        cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(people), actual_photo_path))
+
+            # Query the remaining unmatched counts for photos in this folder
+            cursor.execute("""
+                SELECT f.photo_path, COUNT(*)
+                FROM faces f
+                WHERE (f.photo_path LIKE ? OR f.photo_path LIKE ?) AND f.name IS NULL
+                GROUP BY f.photo_path
+            """, (pattern1, pattern2))
+            remaining_rows = cursor.fetchall()
+            remaining_counts = {r[0]: r[1] for r in remaining_rows}
+
+            conn.commit()
+            self.send_json({
+                "success": True, 
+                "matched_count": matched_count,
+                "remaining_counts": remaining_counts
+            })
+        except Exception as e:
+            logger.error(f"Error in handle_post_folder_automatch: {e}")
             self.send_error(500, f"Internal error: {e}")
         finally:
             if conn:
@@ -1121,7 +1460,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             cursor.execute("""
                 SELECT name, COUNT(*) as count
                 FROM faces
-                WHERE name IS NOT NULL AND name != 'Non Person'
+                WHERE name IS NOT NULL
                 GROUP BY name
                 ORDER BY count DESC
             """)
@@ -1132,7 +1471,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             cursor.execute("""
                 SELECT COUNT(*)
                 FROM faces
-                WHERE name IS NULL OR name = 'Non Person'
+                WHERE name IS NULL
             """)
             unmatched_row = cursor.fetchone()
             unmatched_count = unmatched_row[0] if unmatched_row else 0
@@ -1181,14 +1520,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             faces = []
             
             if name == "Unmatched":
-                cursor.execute("SELECT COUNT(*) FROM faces WHERE name IS NULL OR name = 'Non Person'")
+                cursor.execute("SELECT COUNT(*) FROM faces WHERE name IS NULL")
                 total_count = cursor.fetchone()[0]
 
                 cursor.execute("""
                     SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.name, p.raw_metadata
                     FROM faces f
                     LEFT JOIN photos p ON p.path = f.photo_path
-                    WHERE f.name IS NULL OR f.name = 'Non Person'
+                    WHERE f.name IS NULL
                     LIMIT ? OFFSET ?
                 """, (limit, offset))
                 rows = cursor.fetchall()
@@ -1198,7 +1537,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                     except Exception:
                         box = []
                         
-                    year = get_year_from_mtime_or_meta(r[4], r[6])
+                    year = get_year_from_mtime_or_meta(r[4], r[6], r[1])
                     
                     faces.append({
                         "id": r[0],
@@ -1253,7 +1592,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                             emb = emb / emb_norm
                         similarity = float(np.dot(emb, centroid))
                         
-                    year = get_year_from_mtime_or_meta(r[4], r[6])
+                    year = get_year_from_mtime_or_meta(r[4], r[6], r[1])
                     
                     faces.append({
                         "id": r[0],
@@ -1411,6 +1750,48 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                     if old_name and old_name != person_name:
                         photos_to_check[photo_path].add(old_name)
 
+            # Group selected face IDs by photo_path to detect duplicates and verify existing matches
+            photo_to_selected_fids = {}
+            for face_id in face_ids:
+                cursor.execute("SELECT photo_path FROM faces WHERE id = ?", (face_id,))
+                row = cursor.fetchone()
+                if row:
+                    p_path = row[0]
+                    if p_path not in photo_to_selected_fids:
+                        photo_to_selected_fids[p_path] = []
+                    photo_to_selected_fids[p_path].append(face_id)
+
+            # Check conflicts for each photo
+            for photo_path, fids in photo_to_selected_fids.items():
+                # Conflict 1: Multiple selected faces in the same photo are being assigned to this person
+                if len(fids) > 1:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "success": False,
+                        "error": f"Cannot match: Multiple selected faces in photo '{os.path.basename(photo_path)}' are being assigned to '{person_name}'."
+                    }).encode("utf-8"))
+                    return
+
+                # Conflict 2: The person is already tagged on another face in this photo
+                fid = fids[0]
+                cursor.execute("SELECT id FROM faces WHERE photo_path = ? AND name = ? AND id != ?", (photo_path, person_name, fid))
+                conflict_row = cursor.fetchone()
+                if not conflict_row:
+                    cursor.execute("SELECT id FROM faces WHERE photo_path LIKE ? AND name = ? AND id != ?", (photo_path, person_name, fid))
+                    conflict_row = cursor.fetchone()
+
+                if conflict_row:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "success": False,
+                        "error": f"Cannot match: '{person_name}' is already tagged on another face in photo '{os.path.basename(photo_path)}'."
+                    }).encode("utf-8"))
+                    return
+
             # 2. Update faces table in one transaction
             placeholders = ",".join("?" for _ in face_ids)
             cursor.execute(f"UPDATE faces SET name = ? WHERE id IN ({placeholders})", [person_name] + face_ids)
@@ -1432,8 +1813,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                         except Exception:
                             people = []
 
-                    # Append the new person name if missing and not "Non Person"
-                    if person_name not in people and person_name != "Non Person":
+                    # Append the new person name if missing
+                    if person_name and person_name not in people:
                         people.append(person_name)
 
                     # Remove old names if they are no longer matched to any other faces in the photo
@@ -1508,6 +1889,10 @@ def start_server(port=8080, db_path="data/photo_index.db", gui_dir="gui"):
         
         # Ensure faces(name) index exists
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_faces_name ON faces(name)")
+        conn.commit()
+
+        # Migrate 'Non Person' to NULL
+        cursor.execute("UPDATE faces SET name = NULL WHERE name = 'Non Person'")
         conn.commit()
     except Exception as e:
         logger.error(f"Error checking/migrating database schema: {e}")

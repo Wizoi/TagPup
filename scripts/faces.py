@@ -352,7 +352,7 @@ class FaceProcessor:
                 photo_tags = set(meta.get("people", []))
                 if photo_tags:
                     curr_name = current_resolved_names.get(fid)
-                    if curr_name and curr_name != "Non Person" and curr_name not in photo_tags:
+                    if curr_name and curr_name not in photo_tags:
                         current_resolved_names[fid] = None
                         override_count += 1
                         traces[fid] = {
@@ -450,23 +450,9 @@ class FaceProcessor:
                         # Find all valid faces in this photo that resolved to this name
                         conf_faces = [f for f in valid_photo_faces if face_resolved.get(f["id"]) == conf_name]
                         
-                        # Calculate distance from each face to the mean embedding of the conflicting name (if it exists)
-                        if conf_name in mean_embeddings:
-                            distances = []
-                            for f in conf_faces:
-                                dist = np.linalg.norm(np.array(f["embedding"]) - mean_embeddings[conf_name])
-                                distances.append((dist, f))
-                            
-                            # Sort faces by distance (closest stays assigned, others get unassigned)
-                            distances.sort(key=lambda x: x[0])
-                            # The closest face keeps the name
-                            best_face = distances[0][1]
-                            for dist, f in distances[1:]:
-                                face_resolved[f["id"]] = None
-                        else:
-                            # If the centroid doesn't exist, unassign all conflicting faces
-                            for f in conf_faces:
-                                face_resolved[f["id"]] = None
+                        # If a photo is trying to match 2 people to the same name for two different faces, do not match either.
+                        for f in conf_faces:
+                            face_resolved[f["id"]] = None
 
                 # Now try to match unassigned valid faces to unused tags in this photo's metadata
                 unassigned_faces = [f for f in valid_photo_faces if face_resolved.get(f["id"]) is None]
@@ -570,7 +556,7 @@ class FaceProcessor:
         names_with_anchors = set(direct_anchors.values())
         for face in all_faces:
             name = refined_resolved_names.get(face["id"])
-            if name and name != "Non Person":
+            if name:
                 if name in names_with_anchors and face["id"] not in direct_anchors:
                     continue
                 if name not in final_embeddings_by_name:
@@ -620,12 +606,12 @@ class FaceProcessor:
                             "trigger_photos": []
                         }
                     else:
-                        final_name = "Non Person"
+                        final_name = None
                         traces[face["id"]] = {
                             "face_id": face["id"],
                             "photo_path": p_path,
                             "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
-                            "assigned_name": "Non Person",
+                            "assigned_name": None,
                             "resolution_method": f"final_matching_tagged_photo_failed (max_similarity={best_sim:.4f})",
                             "assignment_order": None,
                             "trigger_photos": []

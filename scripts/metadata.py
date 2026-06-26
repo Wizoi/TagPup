@@ -213,23 +213,58 @@ class MetadataExtractor:
         return results
 
 def parse_year_from_metadata(meta: Dict[str, Any]) -> Optional[int]:
-    """Extract a 4-digit numeric year from EXIF/XMP date tags."""
+    """Extract a 4-digit numeric year from EXIF/XMP date tags, or fallback to filename/folder."""
     import re
+    import os
     date_keys = [
         "EXIF:DateTimeOriginal", "DateTimeOriginal",
         "XMP:DateTimeOriginal",
         "EXIF:CreateDate", "CreateDate"
     ]
     raw_meta = meta.get("raw_metadata", meta)
-    for key in date_keys:
-        val = raw_meta.get(key)
-        if val:
-            if isinstance(val, list) and val:
-                val = val[0]
-            val_str = str(val).strip()
-            match = re.match(r"^(\d{4})", val_str)
-            if match:
-                year = int(match.group(1))
-                if 1800 <= year <= 2100:
+    if raw_meta:
+        for key in date_keys:
+            val = raw_meta.get(key)
+            if val:
+                if isinstance(val, list) and val:
+                    val = val[0]
+                val_str = str(val).strip()
+                match = re.match(r"^(\d{4})", val_str)
+                if match:
+                    year = int(match.group(1))
+                    if 1800 <= year <= 2100:
+                        return year
+
+    def extract_year(s):
+        if not s:
+            return None
+        matches = re.findall(r'\d{4}', s)
+        for m in matches:
+            val = int(m)
+            if 1800 <= val <= 2100:
+                return val
+        return None
+
+    path = meta.get("path")
+    if path:
+        # Normalize separators
+        norm_path = path.replace("\\", "/")
+        parts = norm_path.split("/")
+        
+        # Check filename
+        if parts:
+            filename = parts[-1]
+            year = extract_year(filename)
+            if year:
+                return year
+                
+        # Check folders from right to left
+        if len(parts) > 1:
+            for folder in reversed(parts[:-1]):
+                if not folder:
+                    continue
+                year = extract_year(folder)
+                if year:
                     return year
+                    
     return None

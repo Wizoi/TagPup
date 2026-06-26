@@ -734,12 +734,20 @@ class RunnerApp:
             return
 
         try:
-            self.server_instance.shutdown()
-            self.server_instance.server_close()
+            instance = self.server_instance
             self.server_instance = None
             self.server_thread = None
             
-            # Update UI
+            def shutdown_worker():
+                try:
+                    instance.shutdown()
+                    instance.server_close()
+                except Exception as e:
+                    self.log_text(f"Error in background server shutdown: {e}\n", tag="error")
+
+            threading.Thread(target=shutdown_worker, daemon=True).start()
+            
+            # Update UI immediately to prevent GUI thread hang
             self.btn_start_server.config(state=tk.NORMAL)
             self.btn_stop_server.config(state=tk.DISABLED)
             self.btn_open_browser.config(state=tk.DISABLED)

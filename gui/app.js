@@ -14,13 +14,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const detailFilename = document.getElementById('detail-filename');
     const detailTitle = document.getElementById('detail-title');
     const detailTags = document.getElementById('detail-tags');
+    const detailYear = document.getElementById('detail-year');
     const facesGrid = document.getElementById('faces-grid');
-    const btnRecluster = document.getElementById('btn-recluster');
     const btnRefreshList = document.getElementById('btn-refresh-list');
     const sidebar = document.querySelector('.sidebar');
     const sidebarResizer = document.getElementById('sidebar-resizer');
     const btnAutomatchAll = document.getElementById('btn-automatch-all');
     const btnUnmatchAll = document.getElementById('btn-unmatch-all');
+    const showMatchedToggle = document.getElementById('show-matched-toggle');
+    const showMatchedContainer = document.getElementById('show-matched-container');
 
     // Face Matching Mode DOM Elements
     const faceMatchingContent = document.getElementById('face-matching-content');
@@ -30,6 +32,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const matchingFacesGrid = document.getElementById('matching-faces-grid');
     const inputReassignName = document.getElementById('input-reassign-name');
     const btnReassignSelected = document.getElementById('btn-reassign-selected');
+    const btnNewPerson = document.getElementById('btn-new-person');
+
+    // New Person Modal DOM Elements
+    const newPersonModal = document.getElementById('new-person-modal');
+    const btnCloseModal = document.getElementById('btn-close-modal');
+    const newPersonName = document.getElementById('new-person-name');
+    const modalNameError = document.getElementById('modal-name-error');
+    const btnMatchSelectAll = document.getElementById('btn-match-select-all');
+    const btnMatchSelectNone = document.getElementById('btn-match-select-none');
+    const modalMatchesLoading = document.getElementById('modal-matches-loading');
+    const modalMatchesList = document.getElementById('modal-matches-list');
+    const btnModalCancel = document.getElementById('btn-modal-cancel');
+    const btnModalSave = document.getElementById('btn-modal-save');
 
     // Face Matching Details Sidebar DOM Elements
     const matchingDetailsPlaceholder = document.getElementById('matching-details-placeholder');
@@ -47,6 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let allPhotos = [];
     let activePhotoPath = null;
     let allKnownPeople = [];
+    let currentPhotoDetails = null;
 
     // Face Matching Mode State
     let allPeopleWithCounts = [];
@@ -54,6 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let selectedFaceIds = [];
     let activePersonFaces = [];
     let activeTab = 'matches'; // 'matches' or 'outliers'
+    let modalSelectedFaceIds = [];
 
     // Abort controllers for ongoing fetch requests
     let sidebarAbortController = null;
@@ -77,29 +94,39 @@ document.addEventListener('DOMContentLoaded', () => {
         activePersonName = urlPerson;
     }
 
+    const urlShowMatched = urlParams.get('show_matched');
+    if (urlShowMatched === 'true' && showMatchedToggle) {
+        showMatchedToggle.checked = true;
+    }
+    updateMatchedToggleVisibility();
+
     fetchPhotos();
     fetchKnownPeople();
 
     // Event Listeners
     modeSelect.addEventListener('change', () => {
+        updateMatchedToggleVisibility();
         updateURLParams();
         fetchPhotos();
     });
-    const hideNotPersonToggle = document.getElementById('hide-notperson');
-    if (hideNotPersonToggle) {
-        hideNotPersonToggle.addEventListener('change', () => {
+
+    if (showMatchedToggle) {
+        showMatchedToggle.addEventListener('change', () => {
+            updateURLParams();
             fetchPhotos();
-            if (activePhotoPath && modeSelect.value === 'unmatched') {
-                selectPhoto(activePhotoPath);
-            } else if (activePersonName === 'Unmatched' && modeSelect.value === 'face-matching') {
-                selectPerson('Unmatched');
-            }
         });
     }
-    photoSearch.addEventListener('input', filterPhotos);
-    if (btnRecluster) {
-        btnRecluster.addEventListener('click', triggerReclustering);
+
+    function updateMatchedToggleVisibility() {
+        const mode = modeSelect.value;
+        if (mode === 'unmatched') {
+            if (showMatchedContainer) showMatchedContainer.classList.remove('hidden');
+        } else {
+            if (showMatchedContainer) showMatchedContainer.classList.add('hidden');
+        }
     }
+
+    photoSearch.addEventListener('input', filterPhotos);
     if (btnRefreshList) {
         btnRefreshList.addEventListener('click', fetchPhotos);
     }
@@ -143,6 +170,263 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             postMatchBulk(selectedFaceIds, name);
         });
+    }
+
+    if (btnNewPerson) {
+        btnNewPerson.addEventListener('click', () => {
+            if (selectedFaceIds.length !== 1) return;
+            const seedFaceId = selectedFaceIds[0];
+            openNewPersonModal(seedFaceId);
+        });
+    }
+
+    function openNewPersonModal(seedFaceId) {
+        if (newPersonName) {
+            newPersonName.value = '';
+        }
+        if (modalNameError) {
+            modalNameError.classList.add('hidden');
+        }
+        if (btnModalSave) {
+            btnModalSave.disabled = true;
+        }
+        if (newPersonModal) {
+            newPersonModal.classList.remove('hidden');
+        }
+        modalSelectedFaceIds = [];
+        if (modalMatchesLoading) {
+            modalMatchesLoading.classList.remove('hidden');
+            modalMatchesLoading.textContent = 'Finding similar faces...';
+        }
+        if (modalMatchesList) {
+            modalMatchesList.innerHTML = '';
+        }
+
+        fetch(`/api/face-matches-unmatched?id=${seedFaceId}`)
+            .then(res => {
+                if (!res.ok) throw new Error('Failed to fetch similar faces');
+                return res.json();
+            })
+            .then(data => {
+                if (modalMatchesLoading) {
+                    modalMatchesLoading.classList.add('hidden');
+                }
+                renderModalMatches(data.matches);
+            })
+            .catch(err => {
+                console.error(err);
+                if (modalMatchesLoading) {
+                    modalMatchesLoading.textContent = 'Error finding similar faces.';
+                }
+            });
+    }
+
+    function renderModalMatches(matches) {
+        if (!modalMatchesList) return;
+        modalMatchesList.innerHTML = '';
+        if (!matches || matches.length === 0) {
+            const noMatches = document.createElement('div');
+            noMatches.style.gridColumn = '1 / -1';
+            noMatches.style.textAlign = 'center';
+            noMatches.style.padding = '20px';
+            noMatches.style.color = 'var(--text-muted)';
+            noMatches.textContent = 'No similar unmatched faces found (similarity >= 0.8).';
+            modalMatchesList.appendChild(noMatches);
+            return;
+        }
+
+        matches.forEach(match => {
+            const card = document.createElement('div');
+            card.className = 'modal-face-card';
+            card.setAttribute('data-modal-face-id', match.id);
+
+            const imgWrapper = document.createElement('div');
+            imgWrapper.className = 'modal-face-card-img-wrapper';
+            const img = document.createElement('img');
+            img.src = `/api/face-crop?id=${match.id}`;
+            img.alt = 'Similar Face';
+            img.loading = 'lazy';
+            imgWrapper.appendChild(img);
+            card.appendChild(imgWrapper);
+
+            const details = document.createElement('div');
+            details.className = 'modal-face-card-details';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'modal-face-card-checkbox';
+            checkbox.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleModalFaceSelection(match.id, checkbox.checked, card);
+            });
+            details.appendChild(checkbox);
+
+            const score = document.createElement('span');
+            score.className = 'modal-face-card-score';
+            score.textContent = (match.similarity * 100).toFixed(1) + '%';
+            details.appendChild(score);
+            card.appendChild(details);
+
+            const filename = document.createElement('span');
+            filename.className = 'modal-face-card-filename';
+            filename.textContent = match.filename;
+            filename.title = match.filename;
+            card.appendChild(filename);
+
+            card.addEventListener('click', () => {
+                checkbox.checked = !checkbox.checked;
+                toggleModalFaceSelection(match.id, checkbox.checked, card);
+            });
+
+            modalMatchesList.appendChild(card);
+        });
+    }
+
+    function toggleModalFaceSelection(faceId, isSelected, cardElement) {
+        const idx = modalSelectedFaceIds.indexOf(faceId);
+        if (isSelected) {
+            if (idx === -1) modalSelectedFaceIds.push(faceId);
+            cardElement.classList.add('selected');
+        } else {
+            if (idx > -1) modalSelectedFaceIds.splice(idx, 1);
+            cardElement.classList.remove('selected');
+        }
+    }
+
+    if (btnMatchSelectAll) {
+        btnMatchSelectAll.addEventListener('click', () => {
+            if (!modalMatchesList) return;
+            const cards = modalMatchesList.getElementsByClassName('modal-face-card');
+            Array.from(cards).forEach(card => {
+                const faceIdStr = card.getAttribute('data-modal-face-id');
+                if (!faceIdStr) return;
+                const faceId = parseInt(faceIdStr);
+                const checkbox = card.querySelector('.modal-face-card-checkbox');
+                if (checkbox) checkbox.checked = true;
+                if (!modalSelectedFaceIds.includes(faceId)) {
+                    modalSelectedFaceIds.push(faceId);
+                }
+                card.classList.add('selected');
+            });
+        });
+    }
+
+    if (btnMatchSelectNone) {
+        btnMatchSelectNone.addEventListener('click', () => {
+            if (!modalMatchesList) return;
+            const cards = modalMatchesList.getElementsByClassName('modal-face-card');
+            Array.from(cards).forEach(card => {
+                const checkbox = card.querySelector('.modal-face-card-checkbox');
+                if (checkbox) checkbox.checked = false;
+                card.classList.remove('selected');
+            });
+            modalSelectedFaceIds = [];
+        });
+    }
+
+    if (newPersonName) {
+        newPersonName.addEventListener('input', () => {
+            validateNewPersonName();
+        });
+    }
+
+    function validateNewPersonName() {
+        if (!newPersonName || !modalNameError || !btnModalSave) return false;
+        const val = newPersonName.value.trim();
+        if (!val) {
+            modalNameError.textContent = 'Name cannot be empty.';
+            modalNameError.classList.remove('hidden');
+            btnModalSave.disabled = true;
+            return false;
+        }
+
+        const isDup = allKnownPeople.some(p => p.toLowerCase() === val.toLowerCase());
+        if (isDup) {
+            modalNameError.textContent = 'This name already exists in the database. Please enter a unique name.';
+            modalNameError.classList.remove('hidden');
+            btnModalSave.disabled = true;
+            return false;
+        }
+
+        modalNameError.classList.add('hidden');
+        btnModalSave.disabled = false;
+        return true;
+    }
+
+    if (btnModalSave) {
+        btnModalSave.addEventListener('click', () => {
+            const name = newPersonName.value.trim();
+            if (!validateNewPersonName()) return;
+
+            const seedFaceId = selectedFaceIds[0];
+            const allFaceIdsToMatch = [seedFaceId, ...modalSelectedFaceIds];
+
+            btnModalSave.disabled = true;
+            btnModalSave.textContent = 'Saving...';
+
+            fetch('/api/faces/match-bulk', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ face_ids: allFaceIdsToMatch, person_name: name })
+            })
+            .then(async res => {
+                if (!res.ok) {
+                    let errMsg = 'Matching failed';
+                    try {
+                        const errData = await res.json();
+                        if (errData && errData.error) errMsg = errData.error;
+                    } catch(e) {}
+                    throw new Error(errMsg);
+                }
+                return res.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    if (newPersonModal) {
+                        newPersonModal.classList.add('hidden');
+                    }
+                    
+                    selectedFaceIds = [];
+                    updateMatchingSelectionUI();
+                    clearFaceDetails();
+                    
+                    fetchPeopleWithCounts();
+                    fetchKnownPeople();
+                    
+                    if (activePersonName) {
+                        selectPerson(activePersonName);
+                    }
+                    if (activePhotoPath) {
+                        selectPhoto(activePhotoPath);
+                    }
+                } else {
+                    alert('Failed to save matches.');
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                alert('Error saving matches: ' + err.message);
+            })
+            .finally(() => {
+                btnModalSave.disabled = false;
+                btnModalSave.textContent = 'Create & Tag Matches';
+            });
+        });
+    }
+
+    const hideNewPersonModal = () => {
+        if (newPersonModal) {
+            newPersonModal.classList.add('hidden');
+        }
+    };
+
+    if (btnCloseModal) {
+        btnCloseModal.addEventListener('click', hideNewPersonModal);
+    }
+    if (btnModalCancel) {
+        btnModalCancel.addEventListener('click', hideNewPersonModal);
     }
 
     const tabMatches = document.getElementById('tab-matches');
@@ -214,6 +498,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 params.delete('person');
             }
             params.delete('photo');
+            params.delete('show_matched');
         } else {
             if (activePhotoPath) {
                 params.set('photo', activePhotoPath);
@@ -221,6 +506,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 params.delete('photo');
             }
             params.delete('person');
+            if (showMatchedToggle && showMatchedToggle.checked) {
+                params.set('show_matched', 'true');
+            } else {
+                params.delete('show_matched');
+            }
         }
         window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
     }
@@ -228,9 +518,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Fetch photos list from API
     function fetchPhotos() {
         const mode = modeSelect.value;
-        const toggleGroup = document.getElementById('notperson-toggle-group');
-        const hideNotPersonCheckbox = document.getElementById('hide-notperson');
-        const hideNotPerson = hideNotPersonCheckbox ? hideNotPersonCheckbox.checked : false;
         updateEmptyState();
 
         // Abort any ongoing sidebar fetches
@@ -245,16 +532,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (mode === 'face-matching') {
-            if (activePersonName === 'Unmatched') {
-                if (toggleGroup) toggleGroup.classList.remove('hidden');
-            } else {
-                if (toggleGroup) toggleGroup.classList.add('hidden');
-            }
             fetchPeopleWithCounts();
             return;
         }
-
-        if (toggleGroup) toggleGroup.classList.remove('hidden');
 
         // Hide face matching panel if returning to standard modes
         faceMatchingContent.classList.add('hidden');
@@ -269,7 +549,8 @@ document.addEventListener('DOMContentLoaded', () => {
         listStats.textContent = 'Loading photos...';
         photoList.innerHTML = '';
         
-        fetch(`/api/photos?mode=${mode}&hide_notperson=${hideNotPerson}`, { signal: sidebarAbortController.signal })
+        const showMatched = showMatchedToggle && showMatchedToggle.checked;
+        fetch(`/api/photos?mode=${mode}&show_matched=${showMatched}`, { signal: sidebarAbortController.signal })
             .then(res => {
                 if (!res.ok) throw new Error('Network response was not ok');
                 return res.json();
@@ -384,8 +665,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 const folderChevron = document.createElement('span');
                 folderChevron.className = 'chevron-icon';
-                // Default expand the first entry: first folder of the first year
-                const isFolderExpanded = (yearIdx === 0 && folderIdx === 0);
+                // Default expand the first entry: first folder of the first year (disabled)
+                const isFolderExpanded = false;
                 folderChevron.textContent = isFolderExpanded ? '▼' : '▶';
                 folderHeader.appendChild(folderChevron);
                 
@@ -408,6 +689,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 folderCount.className = 'folder-count';
                 folderCount.textContent = ` (${totalUnmatched})`;
                 folderHeader.appendChild(folderCount);
+                folderGroup.countEl = folderCount;
+
+                if (totalUnmatched > 0) {
+                    const btnFolderAutomatch = document.createElement('button');
+                    btnFolderAutomatch.className = 'btn-folder-automatch';
+                    btnFolderAutomatch.innerHTML = '🤖';
+                    btnFolderAutomatch.title = 'AutoMatch all photos in this folder';
+                    btnFolderAutomatch.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        postFolderAutoMatch(folderGroup, btnFolderAutomatch);
+                    });
+                    folderHeader.appendChild(btnFolderAutomatch);
+                    folderGroup.btnEl = btnFolderAutomatch;
+                }
                 
                 folderLi.appendChild(folderHeader);
                 
@@ -427,7 +722,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 
                 // Render photos inside folder
-                folderGroup.photos.sort((a, b) => b.mtime - a.mtime);
+                folderGroup.photos.sort((a, b) => a.filename.localeCompare(b.filename, undefined, { numeric: true, sensitivity: 'base' }));
                 
                 folderGroup.photos.forEach(photo => {
                     const li = document.createElement('li');
@@ -447,17 +742,28 @@ document.addEventListener('DOMContentLoaded', () => {
                     title.className = 'photo-title';
                     title.textContent = photo.filename;
 
-                    const subtitle = document.createElement('div');
-                    subtitle.className = 'photo-subtitle';
-                    subtitle.textContent = photo.path;
+                    const badgeContainer = document.createElement('div');
+                    badgeContainer.className = 'photo-badges-container';
+                    badgeContainer.style.display = 'flex';
+                    badgeContainer.style.gap = '6px';
+                    badgeContainer.style.marginTop = '6px';
 
-                    const badge = document.createElement('span');
-                    badge.className = 'photo-badge unmatched';
-                    badge.textContent = `${photo.unmatched_count} unmatched`;
+                    const badgeUnmatched = document.createElement('span');
+                    badgeUnmatched.className = 'photo-badge unmatched';
+                    badgeUnmatched.textContent = `${photo.unmatched_count} unmatched`;
+                    photo.badgeEl = badgeUnmatched;
+                    badgeContainer.appendChild(badgeUnmatched);
+
+                    const badgeMatched = document.createElement('span');
+                    badgeMatched.className = 'photo-badge matched';
+                    badgeMatched.textContent = `${photo.matched_count || 0} matched`;
+                    photo.badgeMatchedEl = badgeMatched;
+                    badgeContainer.appendChild(badgeMatched);
+
+                    photo.liEl = li;
 
                     li.appendChild(title);
-                    li.appendChild(subtitle);
-                    li.appendChild(badge);
+                    li.appendChild(badgeContainer);
 
                     li.addEventListener('click', () => selectPhoto(photo.path, li));
                     folderContent.appendChild(li);
@@ -575,37 +881,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Trigger face re-clustering API and refresh data
-    function triggerReclustering() {
-        if (!btnRecluster) return;
-        btnRecluster.disabled = true;
-        const originalText = btnRecluster.textContent;
-        btnRecluster.textContent = 'Clustering...';
-
-        fetch('/api/faces/recluster', {
-            method: 'POST'
-        })
-        .then(res => {
-            if (!res.ok) throw new Error('Re-clustering request failed');
-            return res.json();
-        })
-        .then(data => {
-            if (data.success) {
-                alert('Face re-clustering has been successfully started in the background. Depending on the size of your library, it will take a moment to complete. You can continue using TagTuner and refresh or select items to view updated identities.');
-            } else {
-                alert('Failed to start re-clustering.');
-            }
-        })
-        .catch(err => {
-            console.error('Error during re-clustering:', err);
-            alert('Error during re-clustering: ' + err.message);
-        })
-        .finally(() => {
-            btnRecluster.disabled = false;
-            btnRecluster.textContent = originalText;
-        });
-    }
-
     // Select a photo and load details
     function selectPhoto(path, element) {
         // Remove active class from all items and add to clicked
@@ -663,25 +938,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Render photo details inside main panel
     function renderPhotoDetails(details) {
-        const hideNotPersonCheckbox = document.getElementById('hide-notperson');
-        const hideNotPerson = hideNotPersonCheckbox ? hideNotPersonCheckbox.checked : false;
-
+        currentPhotoDetails = details;
         // Update inline badge count on the sidebar list item (if present)
         const items = photoList.getElementsByClassName('photo-item');
         const activeEl = Array.from(items).find(item => item.photo && pathsEqual(item.photo.path, details.path));
-        if (activeEl) {
-            // Count unmatched faces in details.faces (respecting hideNotPerson toggle)
-            const unmatchedCount = (details.faces || []).filter(f => {
-                if (hideNotPerson) {
-                    return !f.name;
-                } else {
-                    return !f.name || f.name === 'Non Person';
-                }
-            }).length;
+        if (activeEl && activeEl.photo) {
+            // Count unmatched and matched faces in details.faces
+            const unmatchedCount = (details.faces || []).filter(f => !f.name).length;
+            const matchedCount = (details.faces || []).filter(f => f.name).length;
             activeEl.photo.unmatched_count = unmatchedCount;
-            const badge = activeEl.querySelector('.photo-badge');
-            if (badge) {
-                badge.textContent = `${unmatchedCount} unmatched`;
+            activeEl.photo.matched_count = matchedCount;
+            if (activeEl.photo.badgeEl) {
+                activeEl.photo.badgeEl.textContent = `${unmatchedCount} unmatched`;
+            }
+            if (activeEl.photo.badgeMatchedEl) {
+                activeEl.photo.badgeMatchedEl.textContent = `${matchedCount} matched`;
             }
         }
 
@@ -696,6 +967,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // Metadata details
         detailPath.textContent = details.path;
         detailFilename.textContent = details.filename;
+        if (detailYear) {
+            detailYear.textContent = details.year || 'Unknown';
+        }
         detailTitle.textContent = details.caption || 'No description available';
 
         // Tag pills
@@ -731,19 +1005,19 @@ document.addEventListener('DOMContentLoaded', () => {
         facesGrid.innerHTML = '';
         const faces = details.faces || [];
 
-        faces.forEach(face => {
-            const isNotPerson = face.name === 'Non Person';
-            const hideNotPersonCheckbox = document.getElementById('hide-notperson');
-            const hideNotPerson = hideNotPersonCheckbox ? hideNotPersonCheckbox.checked : false;
+        // Sort faces: matched faces first, then sorted by max correlation (similarity) to known faces descending
+        faces.sort((a, b) => {
+            const aMatched = a.name ? 1 : 0;
+            const bMatched = b.name ? 1 : 0;
+            if (aMatched !== bMatched) {
+                return bMatched - aMatched;
+            }
+            return (b.max_similarity || 0) - (a.max_similarity || 0);
+        });
 
+        faces.forEach(face => {
             const card = document.createElement('div');
             card.className = 'face-card';
-            if (isNotPerson) {
-                card.classList.add('notperson-face');
-                if (hideNotPerson) {
-                    card.classList.add('hidden');
-                }
-            }
 
             const header = document.createElement('div');
             header.className = 'face-card-header';
@@ -753,7 +1027,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const cropImg = document.createElement('img');
             cropImg.src = `/api/face-crop?id=${face.id}`;
-            cropImg.alt = (face.name && face.name !== 'Non Person') ? face.name : 'Unmatched Face';
+            cropImg.alt = face.name ? face.name : 'Unmatched Face';
             cropContainer.appendChild(cropImg);
 
             const info = document.createElement('div');
@@ -765,10 +1039,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const name = document.createElement('span');
             name.className = 'face-name';
-            name.textContent = (face.name && face.name !== 'Non Person') ? face.name : 'Unmatched';
+            name.textContent = face.name ? face.name : 'Unmatched';
 
             const status = document.createElement('span');
-            if (face.name && face.name !== 'Non Person') {
+            if (face.name) {
                 status.className = 'face-status resolved';
                 status.textContent = 'Resolved';
             } else {
@@ -835,6 +1109,19 @@ document.addEventListener('DOMContentLoaded', () => {
             btnMatch.className = 'btn btn-primary';
             btnMatch.textContent = 'Match';
             customGroup.appendChild(btnMatch);
+
+            const btnNewPersonUnmatched = document.createElement('button');
+            btnNewPersonUnmatched.className = 'btn btn-secondary';
+            btnNewPersonUnmatched.textContent = '👤+';
+            btnNewPersonUnmatched.title = 'Create new person profile';
+            btnNewPersonUnmatched.style.padding = '6px 10px';
+            btnNewPersonUnmatched.addEventListener('click', (e) => {
+                e.stopPropagation();
+                selectedFaceIds = [face.id];
+                openNewPersonModal(face.id);
+            });
+            customGroup.appendChild(btnNewPersonUnmatched);
+
             matchGroup.appendChild(customGroup);
 
             const valError = document.createElement('div');
@@ -846,7 +1133,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const actionsBar = document.createElement('div');
             actionsBar.className = 'edit-actions-bar';
 
-            if (face.name && face.name !== 'Non Person') {
+            if (face.name) {
                 const btnUnmatch = document.createElement('button');
                 btnUnmatch.className = 'btn btn-danger';
                 btnUnmatch.textContent = 'Unmatch Face';
@@ -973,6 +1260,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // POST face match update
     function postMatch(faceId, personName) {
+        // Client-side conflict check to prevent second match in same photo
+        if (currentPhotoDetails && currentPhotoDetails.faces) {
+            const alreadyMatched = currentPhotoDetails.faces.some(f => f.id !== faceId && f.name === personName);
+            if (alreadyMatched) {
+                alert(`Cannot match: "${personName}" is already tagged on another face in this photo.`);
+                return;
+            }
+        }
+
         fetch('/api/face/match', {
             method: 'POST',
             headers: {
@@ -980,8 +1276,15 @@ document.addEventListener('DOMContentLoaded', () => {
             },
             body: JSON.stringify({ face_id: faceId, person_name: personName })
         })
-        .then(res => {
-            if (!res.ok) throw new Error('Match operation failed');
+        .then(async res => {
+            if (!res.ok) {
+                let errMsg = 'Match operation failed';
+                try {
+                    const errData = await res.json();
+                    if (errData && errData.error) errMsg = errData.error;
+                } catch(e) {}
+                throw new Error(errMsg);
+            }
             return res.json();
         })
         .then(data => {
@@ -1048,7 +1351,6 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         .then(data => {
             if (data.success) {
-                alert(`AutoMatch completed. Matched ${data.matched_count} face(s).`);
                 selectPhoto(photoPath);
             } else {
                 alert('Failed to AutoMatch faces.');
@@ -1061,6 +1363,72 @@ document.addEventListener('DOMContentLoaded', () => {
         .finally(() => {
             btnAutomatchAll.disabled = false;
             btnAutomatchAll.textContent = originalText;
+        });
+    }
+
+    // POST automatch all photos in a folder
+    function postFolderAutoMatch(folderGroup, btn) {
+        btn.disabled = true;
+        const originalContent = btn.innerHTML;
+        btn.innerHTML = '⏳';
+        btn.title = 'AutoMatching...';
+
+        fetch('/api/folder/automatch', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ folder_path: folderGroup.name })
+        })
+        .then(res => {
+            if (!res.ok) throw new Error('Folder AutoMatch operation failed');
+            return res.json();
+        })
+        .then(data => {
+            if (data.success) {
+                const remaining = data.remaining_counts || {};
+                folderGroup.photos.forEach(p => {
+                    const matchedDiff = p.unmatched_count - (remaining[p.path] || 0);
+                    p.unmatched_count = remaining[p.path] || 0;
+                    p.matched_count = (p.matched_count || 0) + matchedDiff;
+
+                    if (p.badgeEl) {
+                        p.badgeEl.textContent = `${p.unmatched_count} unmatched`;
+                    }
+                    if (p.badgeMatchedEl) {
+                        p.badgeMatchedEl.textContent = `${p.matched_count} matched`;
+                    }
+                    if (p.unmatched_count === 0 && p.liEl) {
+                        if (modeSelect.value === 'unmatched') {
+                            p.liEl.style.display = 'none';
+                        }
+                    }
+                });
+
+                const totalUnmatched = folderGroup.photos.reduce((sum, p) => sum + p.unmatched_count, 0);
+                if (folderGroup.countEl) {
+                    folderGroup.countEl.textContent = ` (${totalUnmatched})`;
+                }
+
+                if (totalUnmatched === 0 && folderGroup.btnEl) {
+                    folderGroup.btnEl.style.display = 'none';
+                }
+
+                if (activePhotoPath) {
+                    selectPhoto(activePhotoPath);
+                }
+            } else {
+                alert('Failed to AutoMatch faces in this folder.');
+            }
+        })
+        .catch(err => {
+            console.error('Error during Folder AutoMatch:', err);
+            alert('Error during Folder AutoMatch: ' + err.message);
+        })
+        .finally(() => {
+            btn.disabled = false;
+            btn.innerHTML = originalContent;
+            btn.title = 'AutoMatch all photos in this folder';
         });
     }
 
@@ -1248,6 +1616,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         matchingPersonName.textContent = name;
         matchingPersonCount.textContent = 'Loading faces...';
+        
+        // Cancel any pending face-crop image requests in the grid
+        const activeImgs = matchingFacesGrid.querySelectorAll('img');
+        activeImgs.forEach(img => {
+            img.src = '';
+        });
         matchingFacesGrid.innerHTML = '';
 
         // Abort any ongoing details fetches
@@ -1282,13 +1656,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!tabMatches || !tabOutliers) return;
         
         let filteredFaces = activePersonFaces;
-        if (activePersonName === 'Unmatched') {
-            const hideNotPersonToggle = document.getElementById('hide-notperson');
-            const hideNotPerson = hideNotPersonToggle ? hideNotPersonToggle.checked : false;
-            if (hideNotPerson) {
-                filteredFaces = activePersonFaces.filter(f => f.name !== 'Non Person');
-            }
-        }
         
         const standards = filteredFaces.filter(f => activePersonName === 'Unmatched' || f.similarity === undefined || f.similarity >= 0.85);
         const outliers = filteredFaces.filter(f => activePersonName !== 'Unmatched' && f.similarity !== undefined && f.similarity < 0.85);
@@ -1299,19 +1666,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Render face match items in grid
     function renderPersonFaces(faces) {
+        // Cancel any pending face-crop image requests in the grid
+        const activeImgs = matchingFacesGrid.querySelectorAll('img');
+        activeImgs.forEach(img => {
+            img.src = '';
+        });
         matchingFacesGrid.innerHTML = '';
         selectedFaceIds = [];
         updateMatchingSelectionUI();
         clearFaceDetails();
 
         let renderedFaces = faces;
-        if (activePersonName === 'Unmatched') {
-            const hideNotPersonCheckbox = document.getElementById('hide-notperson');
-            const hideNotPerson = hideNotPersonCheckbox ? hideNotPersonCheckbox.checked : false;
-            if (hideNotPerson) {
-                renderedFaces = faces.filter(f => f.name !== 'Non Person');
-            }
-        }
 
         const standards = [];
         const outliers = [];
@@ -1406,48 +1771,38 @@ document.addEventListener('DOMContentLoaded', () => {
             matchingFacesGrid.appendChild(section);
         }
 
-        if (activeTab === 'matches' || activePersonName === 'Unmatched') {
-            // Group standards by year
-            const standardsByYear = {};
-            standards.forEach(face => {
-                const year = face.year || 'Unknown';
-                if (!standardsByYear[year]) {
-                    standardsByYear[year] = [];
-                }
-                standardsByYear[year].push(face);
-            });
+        const targetFaces = (activeTab === 'matches' || activePersonName === 'Unmatched') ? standards : outliers;
 
-            // Sort years descending
-            const sortedYears = Object.keys(standardsByYear).sort((a, b) => {
-                if (a === 'Unknown') return 1;
-                if (b === 'Unknown') return -1;
-                return b - a;
-            });
+        // Group faces by year
+        const facesByYear = {};
+        targetFaces.forEach(face => {
+            const year = face.year || 'Unknown';
+            if (!facesByYear[year]) {
+                facesByYear[year] = [];
+            }
+            facesByYear[year].push(face);
+        });
 
-            // Sort faces within each year descending by mtime
-            sortedYears.forEach(year => {
-                standardsByYear[year].sort((a, b) => {
-                    const timeA = a.mtime || 0;
-                    const timeB = b.mtime || 0;
-                    return timeB - timeA;
-                });
-            });
+        // Sort years descending
+        const sortedYears = Object.keys(facesByYear).sort((a, b) => {
+            if (a === 'Unknown') return 1;
+            if (b === 'Unknown') return -1;
+            return b - a;
+        });
 
-            // Render Year sections
-            sortedYears.forEach(year => {
-                renderGroupSection(year, standardsByYear[year]);
-            });
-        } else {
-            // Sort outliers descending by mtime
-            outliers.sort((a, b) => {
+        // Sort faces within each year descending by mtime
+        sortedYears.forEach(year => {
+            facesByYear[year].sort((a, b) => {
                 const timeA = a.mtime || 0;
                 const timeB = b.mtime || 0;
                 return timeB - timeA;
             });
+        });
 
-            // Render Outliers section
-            renderGroupSection('Outliers', outliers);
-        }
+        // Render Year sections
+        sortedYears.forEach(year => {
+            renderGroupSection(year, facesByYear[year]);
+        });
     }
 
     // Populate matching details sidebar
@@ -1613,6 +1968,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (btnReassignSelected) {
             btnReassignSelected.disabled = count === 0 || !inputReassignName.value.trim();
         }
+
+        if (btnNewPerson) {
+            btnNewPerson.disabled = count !== 1;
+        }
     }
 
     // POST bulk unmatch to backend API
@@ -1657,13 +2016,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Get remaining count for the current tab
                 let filteredFaces = activePersonFaces;
-                if (activePersonName === 'Unmatched') {
-                    const hideNotPersonToggle = document.getElementById('hide-notperson');
-                    const hideNotPerson = hideNotPersonToggle ? hideNotPersonToggle.checked : false;
-                    if (hideNotPerson) {
-                        filteredFaces = activePersonFaces.filter(f => f.name !== 'Non Person');
-                    }
-                }
                 const displayedFaces = activeTab === 'matches' || activePersonName === 'Unmatched'
                     ? filteredFaces.filter(f => activePersonName === 'Unmatched' || f.similarity === undefined || f.similarity >= 0.85)
                     : filteredFaces.filter(f => activePersonName !== 'Unmatched' && f.similarity !== undefined && f.similarity < 0.85);
@@ -1720,8 +2072,15 @@ document.addEventListener('DOMContentLoaded', () => {
             },
             body: JSON.stringify({ face_ids: faceIds, person_name: name })
         })
-        .then(res => {
-            if (!res.ok) throw new Error('Bulk matching failed');
+        .then(async res => {
+            if (!res.ok) {
+                let errMsg = 'Bulk matching failed';
+                try {
+                    const errData = await res.json();
+                    if (errData && errData.error) errMsg = errData.error;
+                } catch(e) {}
+                throw new Error(errMsg);
+            }
             return res.json();
         })
         .then(data => {
@@ -1749,13 +2108,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Get remaining count for the current tab
                 let filteredFaces = activePersonFaces;
-                if (activePersonName === 'Unmatched') {
-                    const hideNotPersonToggle = document.getElementById('hide-notperson');
-                    const hideNotPerson = hideNotPersonToggle ? hideNotPersonToggle.checked : false;
-                    if (hideNotPerson) {
-                        filteredFaces = activePersonFaces.filter(f => f.name !== 'Non Person');
-                    }
-                }
                 const displayedFaces = activeTab === 'matches' || activePersonName === 'Unmatched'
                     ? filteredFaces.filter(f => activePersonName === 'Unmatched' || f.similarity === undefined || f.similarity >= 0.85)
                     : filteredFaces.filter(f => activePersonName !== 'Unmatched' && f.similarity !== undefined && f.similarity < 0.85);
@@ -1805,4 +2157,66 @@ document.addEventListener('DOMContentLoaded', () => {
             updateMatchingSelectionUI();
         });
     }
+
+    // Keyboard navigation (Up/Down arrow keys) through visible sidebar entries
+    document.addEventListener('keydown', (e) => {
+        // Only trigger arrow navigation if we are not focused on input fields
+        if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'SELECT') {
+            return;
+        }
+
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            const mode = modeSelect.value;
+            // Find all photo/person items in the sidebar
+            const items = Array.from(photoList.getElementsByClassName('photo-item'));
+            // Filter to only those that are currently visible
+            const visibleItems = items.filter(item => {
+                if (window.getComputedStyle(item).display === 'none') {
+                    return false;
+                }
+                // Check parent folders/years
+                let parent = item.parentElement;
+                while (parent && parent !== photoList) {
+                    if (window.getComputedStyle(parent).display === 'none') {
+                        return false;
+                    }
+                    parent = parent.parentElement;
+                }
+                return true;
+            });
+
+            if (visibleItems.length === 0) return;
+
+            // Find current active index
+            const activeIndex = visibleItems.findIndex(item => item.classList.contains('active'));
+            
+            let nextIndex = -1;
+            if (e.key === 'ArrowDown') {
+                if (activeIndex === -1) {
+                    nextIndex = 0;
+                } else if (activeIndex < visibleItems.length - 1) {
+                    nextIndex = activeIndex + 1;
+                }
+            } else if (e.key === 'ArrowUp') {
+                if (activeIndex === -1) {
+                    nextIndex = visibleItems.length - 1;
+                } else if (activeIndex > 0) {
+                    nextIndex = activeIndex - 1;
+                }
+            }
+
+            if (nextIndex !== -1) {
+                e.preventDefault(); // Prevent page scrolling
+                const nextItem = visibleItems[nextIndex];
+                if (nextItem) {
+                    if (mode === 'unmatched' && nextItem.photo) {
+                        selectPhoto(nextItem.photo.path, nextItem);
+                    } else if (mode === 'face-matching' && nextItem.personName) {
+                        selectPerson(nextItem.personName, nextItem);
+                    }
+                    nextItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                }
+            }
+        }
+    });
 });

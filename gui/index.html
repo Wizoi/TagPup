@@ -25,14 +25,13 @@
                         <option value="face-matching">Face Matching</option>
                     </select>
                 </div>
-                <div class="control-group" id="notperson-toggle-group">
+                <div class="control-group" id="show-matched-container">
                     <label class="switch-container">
-                        <input type="checkbox" id="hide-notperson" class="switch-input" checked>
+                        <input type="checkbox" id="show-matched-toggle" class="switch-input">
                         <span class="switch-slider"></span>
-                        <span class="switch-label">Hide Not-Person</span>
+                        <span class="switch-label">Show Matched Photos</span>
                     </label>
                 </div>
-                <button id="btn-recluster" class="btn btn-secondary">🔄 Re-cluster Faces</button>
             </div>
         </header>
 
@@ -102,6 +101,10 @@
                                 <span class="detail-value font-bold" id="detail-filename"></span>
                             </div>
                             <div class="detail-item">
+                                <span class="detail-label">Date Taken / Year</span>
+                                <span class="detail-value" id="detail-year"></span>
+                            </div>
+                            <div class="detail-item full-width">
                                 <span class="detail-label">Title / Caption</span>
                                 <span class="detail-value italic" id="detail-title"></span>
                             </div>
@@ -127,6 +130,7 @@
                                 <div class="matching-reassign-container" style="display: flex; gap: 5px; align-items: center;">
                                     <input type="text" id="input-reassign-name" placeholder="Assign to name..." list="people-datalist" style="padding: 6px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-secondary); color: var(--text-primary); outline: none; width: 180px;">
                                     <button id="btn-reassign-selected" class="btn btn-primary" style="padding: 6px 12px;" disabled>Assign Selected</button>
+                                    <button id="btn-new-person" class="btn btn-secondary" style="padding: 6px 12px;" title="Create new person from selected face" disabled>👤+</button>
                                 </div>
                                 <button id="btn-unmatch-selected" class="btn btn-danger" disabled>⚠️ Unmatch Selected (0)</button>
                             </div>
@@ -198,6 +202,42 @@
             </section>
         </main>
     </div>
+    
+    <!-- New Person Popup Modal -->
+    <div id="new-person-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create New Person Profile</h3>
+                <button id="btn-close-modal" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="new-person-name">Person Name:</label>
+                    <input type="text" id="new-person-name" placeholder="Enter unique name..." class="modal-input" autocomplete="off">
+                    <div id="modal-name-error" class="validation-error hidden">Name must be unique and not empty.</div>
+                </div>
+                
+                <div class="matches-section">
+                    <div class="matches-header">
+                        <h4>Highly Similar Unmatched Faces</h4>
+                        <div class="matches-selection-actions">
+                            <button id="btn-match-select-all" class="btn btn-xs btn-secondary">Select All</button>
+                            <button id="btn-match-select-none" class="btn btn-xs btn-secondary">Select None</button>
+                        </div>
+                    </div>
+                    <div id="modal-matches-loading" class="matches-loading">Finding similar faces...</div>
+                    <div id="modal-matches-list" class="modal-matches-grid">
+                        <!-- Similar faces will be rendered here with checkboxes -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-modal-cancel" class="btn btn-secondary">Cancel</button>
+                <button id="btn-modal-save" class="btn btn-primary" disabled>Create & Tag Matches</button>
+            </div>
+        </div>
+    </div>
+
     <datalist id="people-datalist"></datalist>
     <script src="app.js"></script>
 </body>

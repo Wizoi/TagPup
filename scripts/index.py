@@ -134,6 +134,10 @@ class PhotoIndex:
                 cursor.execute("ALTER TABLE faces ADD COLUMN prob REAL")
                 self.conn.commit()
             
+            # Migrate 'Non Person' to NULL
+            cursor.execute("UPDATE faces SET name = NULL WHERE name = 'Non Person'")
+            self.conn.commit()
+            
             cursor.execute("SELECT path, mtime, size, tags, people, captions, raw_metadata, embedding FROM photos")
             rows = cursor.fetchall()
             
