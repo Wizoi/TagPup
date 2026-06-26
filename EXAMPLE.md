@@ -1,6 +1,28 @@
 # TagPup — Quick Start & Usage Examples
 
-This guide walks you through setting up the TagPup and running common photo organization workflows.
+This guide walks you through setting up TagPup and running common photo organization workflows.
+
+---
+
+## 🚀 Key Commands Cheat Sheet
+
+Here is a quick reference table of the most common commands you will use in TagPup:
+
+| Workflow / Task | Command | Description |
+| :--- | :--- | :--- |
+| **Launch Dashboard** | `python runner.py` | Starts the graphical GUI dashboard launcher. |
+| **Index Library** | `run.bat index "path/to/photos"` | Scans photos, extracts CLIP vectors, and detects faces in a single pass. |
+| **Cluster Faces** | `run.bat cluster-faces` | Performs DBSCAN clustering on face embeddings and resolves names. |
+| **Suggest Tags** | `run.bat suggest "path/to/untagged"` | Analyzes untagged photos and generates `suggestions.json`. |
+| **Preview Suggests** | `run.bat write suggestions.json` | Displays a table preview of tags proposed for writing. |
+| **Apply Tags (Live)** | `run.bat write suggestions.json -Live` | Appends flat/hierarchical tags and captions directly to photo files. |
+| **Semantic Search** | `run.bat search "your text query"` | Finds the top 10 visually closest matches to a natural language query. |
+| **Start TagTuner UI** | `python tagtuner.py` | Launches the local server and web browser client for manual face matching. |
+| **Index Stats** | `run.bat stats` | Displays overall database metrics, top tags, and resolved people. |
+| **List Photos** | `run.bat list-index` | Prints list of all photos currently present in the index database. |
+
+> [!TIP]
+> **Safe Testing Mode:** Prefix any database command with the global `--test` flag (e.g. `run.bat --test stats`) to run operations on a temporary test database index (`test_photo_index.db`) without touching production archives.
 
 ---
 

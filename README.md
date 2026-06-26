@@ -157,6 +157,24 @@ Start the interactive web interface in your browser to inspect metadata, tune ta
 .venv\Scripts\python tagtuner.py
 ```
 
+### 🎛️ 9. GUI Dashboard Runner
+TagPup includes a GUI dashboard that allows you to easily execute indexing commands, cluster faces, and start/stop the TagTuner web server from a graphical interface:
+
+```cmd
+# Launch the desktop GUI dashboard
+.venv\Scripts\python runner.py
+```
+
+---
+
+## 📚 Project Documentation
+
+For deeper details, refer to the following documentation files:
+- 🐶 [TagPup CLI & Backend Specification](SPEC_TAGPUP.md): Full technical description of visual embeddings (CLIP), face clustering (DBSCAN), hierarchical taxonomy calculations, and backend indexing/suggestion logic.
+- 🎯 [TagTuner UI Specification](SPEC_TAGTUNER.md): Interface guidelines, dynamic modal profiles workflow, grid sorting behavior, and complete list of server API routes.
+- 🗄️ [Database Specification](DATABASE.md): Detailed SQLite tables structure, foreign key relations, and ER schemas.
+- 📖 [Quick Start & Usage Examples](EXAMPLE.md): Step-by-step developer tutorials and command workflows.
+
 ---
 
 ## ⚙️ Configuration (`config.ini`)

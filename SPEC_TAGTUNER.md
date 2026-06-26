@@ -5,10 +5,10 @@ This document records the design, specifications, prerequisites, and instruction
 ## Design and Visual Aesthetics
 - **Core Principle**: Dark mode, premium styling with Outfit (headings) and Plus Jakarta Sans (body) typography.
 - **Glassmorphism**: Backdrop blur headers (`backdrop-filter: blur(12px)`) with subtle gradient borders.
-- **Layout**: Two-pane split view. Left sidebar lists photos with unmatched faces. Right details panel shows the main image, interactive face cards, and photo metadata tags.
+- **Layout**: Two-pane split view. Left sidebar lists photos with unmatched faces (or resolved people in Face Matching mode). Right details panel shows the main image, interactive face cards, and photo metadata tags.
 - **Interactive States**: 
   - Face cards transition smoothly when selected (expanding to vertical layout with custom options).
-  - Validation styling displays inline errors for unauthorized names.
+  - Validation styling displays inline errors for duplicate or empty names.
 
 ## Features and Mechanics
 
@@ -18,35 +18,50 @@ This document records the design, specifications, prerequisites, and instruction
 - **Suggestions (Top 5 matches)**: Dynamically fetches and displays the top 5 names of people whose faces are most similar to the selected face embedding (calculated via cosine similarity/dot-product of 512-dimensional embeddings).
 - **Match Selection**:
   - Input field with standard HTML5 autocomplete linked to a global `<datalist>` of all known people.
-  - Strictly prevents creation of brand-new people from this view (validates against the known database list).
   - Appends the name to the photo's `people` array in the database upon matching.
+- **New Person Profile Creator**:
+  - Clicking the `👤+` button (available in both unmatched face panel and face matching actions) opens the **Create New Person Profile** modal dialog.
+  - Validates in real-time that the entered name is unique (case-insensitive check against `allKnownPeople`) and non-empty.
+  - Fetches similar unmatched faces from `/api/face-matches-unmatched?id=<face_id>` (similarity $\ge 0.8$).
+  - Allows bulk-tagging the seed face and all selected similar faces under the new name.
 - **Unmatching**:
   - Displays an "Unmatch Face" button for resolved faces.
   - Clears the name from the face record (`SET name = NULL`).
   - Removes the person from the photo's `people` array if no other face in the same photo is matched to them.
 
 ### 2. Photo List Sorting and Grouping
-- **Sorting**: Photos in the left sidebar list are sorted by their modification time (`mtime`) descending (newest first).
-- **Grouping**: Photos are grouped under folder header elements representing their physical parent directory path.
+- **Grouping & Nesting**: Photos are grouped under collapsible Year and physical parent folder headers.
 - **Folder Sort**: Folders are sorted by the latest `mtime` of the photos contained within them.
-- **Manual Refresh**: The left sidebar list is not updated automatically upon match/unmatch operations to prevent layout shifting during rapid tuning. Users can manually refresh the list using the "Refresh List" button located at the top of the sidebar.
+- **Default State**: Folders start collapsed by default on initial page load.
+- **Photo Sorting**: Inside each folder group, photos are sorted alphabetically ascending by filename.
+- **Arrow Key Navigation**: Users can navigate up/down through visible sidebar entries using the arrow keys.
+- **Matched Photos Toggle**: A toggle checkbox controls whether photos with zero unmatched faces are displayed in the list.
+
+### 3. Detected Faces Grid Sorting
+- Inside the details panel, the detected faces grid is sorted with **already matched faces at the top**, followed by unmatched faces.
+- Within both groups, faces are sorted descending by their computed maximum similarity/correlation to known identities in the database.
 
 ## Backend APIs
 
 ### `GET` Endpoints
-- `/api/photos?mode=unmatched`: Returns JSON array of photo records with unmatched face counts, file metadata, and folder paths. Joined with the `photos` table to retrieve `mtime` for sorting.
-- `/api/photo-details?path=<photo_path>`: Returns metadata details (path, filename, caption, people, tags, faces list).
-- `/api/photo-file?path=<photo_path>`: Serves the original image file.
-- `/api/face-crop?id=<face_id>`: Dynamically crops the face from the original photo and returns it as a JPEG.
-- `/api/people`: Returns a sorted list of all unique people names in the database for autocomplete.
+- `/api/photos?mode=unmatched&show_matched=<bool>`: Returns JSON array of photo records with unmatched face counts, file metadata, and folder paths.
+- `/api/photo-details?path=<photo_path>`: Returns metadata details (path, filename, caption, people, tags, faces list with `max_similarity` scores).
+- `/api/photo-file?path=<photo_path>`: Serves the original image file (supports dynamic resizing via `size=<int>` parameter).
+- `/api/face-crop?id=<face_id>`: Dynamically crops the face from the original photo and returns it as a JPEG (caches the JPEG crop binary in the database).
+- `/api/people`: Returns a sorted list of all unique people names in the database.
+- `/api/people-with-counts`: Returns unique names with their respective face counts.
+- `/api/person-faces?name=<name>`: Returns matched/outlier faces for a person (outliers defined as similarity < 0.85).
 - `/api/face-matches?id=<face_id>`: Evaluates face similarity and returns the top 5 closest matched people.
+- `/api/face-matches-unmatched?id=<face_id>`: Returns other unmatched faces with cosine similarity $\ge 0.8$ for bulk profile creation.
 
 ### `POST` Endpoints
 - `/api/face/match`: Expects JSON body `{"face_id": int, "person_name": string}`.
 - `/api/face/unmatch`: Expects JSON body `{"face_id": int}`.
-- `/api/faces/recluster`: Triggers the DBSCAN face clustering and identity resolution offline algorithm. Automatically syncs newly resolved face names back to their photos' `people` tag arrays.
-- `/api/photo/unmatch-all`: Expects JSON body `{"photo_path": string}`. Clears names for all faces in the photo and removes matched names from the photo's `people` array.
+- `/api/faces/match-bulk`: Expects JSON body `{"face_ids": list, "person_name": string}`. Matches face IDs in bulk. Implements duplicate-tagging protection.
+- `/api/faces/unmatch-bulk`: Expects JSON body `{"face_ids": list}`. Unmatches face IDs in bulk.
+- `/api/photo/unmatch-all`: Expects JSON body `{"photo_path": string}`.
 - `/api/photo/automatch`: Expects JSON body `{"photo_path": string}`. For each unmatched face in the photo, finds the closest resolved face in the DB. If similarity > 0.8, assigns the name and appends it to the photo's `people` array.
+- `/api/folder/automatch`: Expects JSON body `{"folder_path": string}`. Automatches unmatched faces across all photos in the folder recursively.
 
 ## Database Schema (SQLite)
 
@@ -57,7 +72,8 @@ This document records the design, specifications, prerequisites, and instruction
 - `tags` (TEXT - JSON Array)
 - `people` (TEXT - JSON Array)
 - `captions` (TEXT - JSON Array)
-- `embedding` (BLOB)
+- `raw_metadata` (TEXT - JSON)
+- `embedding` (BLOB - 1024 floats)
 
 ### Table: `faces`
 - `id` (INTEGER PRIMARY KEY AUTOINCREMENT)
@@ -65,3 +81,5 @@ This document records the design, specifications, prerequisites, and instruction
 - `box` (TEXT - JSON coordinates)
 - `embedding` (BLOB - 512 floats)
 - `name` (TEXT)
+- `crop_image` (BLOB - JPEG thumbnail cache)
+- `prob` (REAL - MTCNN detection confidence score)

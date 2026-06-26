@@ -133,7 +133,8 @@ To resolve individual image noise by leveraging event-level folder context, reco
 
 ### G. Face-Level Identity Self-Tuning & Recognition
 - Bounding boxes are extracted via MTCNN (confidence $\ge 0.85$, dimensions $\ge 15\text{px}$).
-- Faces are clustered using DBSCAN (Euclidean epsilon = `0.55`, representing a cosine similarity of $\ge 0.85$ on normalized face vectors).
+- Faces are clustered using DBSCAN (Euclidean epsilon = `0.48`, representing a cosine similarity of $\ge 0.885$ on normalized face vectors).
 - **Cluster Naming**: Visual groups are assigned people identities based on tag voting. If a photo has only one face and one name tag (e.g. `John Doe`), it acts as an anchor vote.
+- **Centroid Validation & Refinement**: During iterative propagation, resolved assignments are validated against the visual centroid of their resolved identities. Faces showing a similarity $< 0.80$ (Euclidean distance $\ge 0.63246$) to their respective identity centroid are unassigned/cleared to maintain visual profile purity.
 - **Match Suggestion Boost**: Untagged images undergo face detection. Detected faces are matched against resolved database faces. If a face yields a similarity $\ge 0.85$ to a known profile, the matching person's tag is automatically boosted to a confidence score of `1.0`.
 
