@@ -20,7 +20,7 @@ def main():
     c.execute("""
         SELECT name, COUNT(*) as count 
         FROM faces 
-        WHERE name IS NOT NULL AND name != 'Non Person'
+        WHERE name IS NOT NULL
         GROUP BY name 
         ORDER BY count DESC 
         LIMIT 5

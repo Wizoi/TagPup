@@ -31,7 +31,7 @@ Stores details of faces detected within photos, including face crop coordinates,
 | `photo_path` | TEXT | FOREIGN KEY | Path to parent photo. References `photos(path)` with `ON DELETE CASCADE`. |
 | `box` | TEXT | | JSON-serialized bounding box coordinates `[x1, y1, x2, y2]`. |
 | `embedding` | BLOB | | 128-dimensional face embedding vector (binary representation of float32 array). |
-| `name` | TEXT | | The resolved name of the person (or `"Non Person"`, or `NULL` if unmatched). |
+| `name` | TEXT | | The resolved name of the person (or `NULL` if unmatched). |
 | `crop_image` | BLOB | | Cache of the cropped face thumbnail (JPEG bytes). |
 | `prob` | REAL | | Detection confidence/probability score from MTCNN. |
 

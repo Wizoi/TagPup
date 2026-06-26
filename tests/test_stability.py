@@ -355,7 +355,7 @@ class TestStability(unittest.TestCase):
         self.assertEqual(len(photo2_faces), 2, "Photo 2 should have 2 faces")
         
         for name in [r[1] for r in photo2_faces]:
-            self.assertTrue(name is None or name == "Non Person", "Faces in Photo 2 must remain unmatched because similarity < 0.80")
+            self.assertIsNone(name, "Faces in Photo 2 must remain unmatched because similarity < 0.80")
 
     def test_large_lookup_performance(self):
         photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
@@ -414,6 +414,312 @@ class TestStability(unittest.TestCase):
         self.assertLess(duration, 2.0)
         self.assertIn("faces", res_data)
         self.assertEqual(len(res_data["faces"]), 5000)
+
+    def test_year_fallback_chain(self):
+        import sys
+        sys.path.append("scripts")
+        from tuner_server import get_year_from_mtime_or_meta
+        from metadata import parse_year_from_metadata
+        
+        # 1. Test tuner_server's get_year_from_mtime_or_meta
+        # Metadata has year
+        raw_meta = json.dumps({"EXIF:DateTimeOriginal": "2005:06:26 12:34:56"})
+        year = get_year_from_mtime_or_meta(123456789.0, raw_meta, "D:/Training/Pictures/2008/2008-06-26/2008-06-Family.jpg")
+        self.assertEqual(year, 2005)
+        
+        # Metadata is empty/None, filename has year
+        year = get_year_from_mtime_or_meta(123456789.0, None, "D:/Training/Pictures/2008/family_2004.jpg")
+        self.assertEqual(year, 2004)
+        
+        # Metadata is empty/None, filename has no year, containing folder has year
+        year = get_year_from_mtime_or_meta(123456789.0, None, "D:/Training/Pictures/2008/EarthDay/photo.jpg")
+        self.assertEqual(year, 2008)
+        
+        # None of them have year
+        year = get_year_from_mtime_or_meta(123456789.0, None, "D:/Training/Pictures/NoYear/photo.jpg")
+        self.assertEqual(year, "Unknown")
+        
+        # 2. Test metadata's parse_year_from_metadata
+        meta_1 = {"raw_metadata": {"EXIF:DateTimeOriginal": "2005:06:26 12:34:56"}, "path": "D:/2008/photo.jpg"}
+        self.assertEqual(parse_year_from_metadata(meta_1), 2005)
+        
+        meta_2 = {"raw_metadata": None, "path": "D:/Training/Pictures/2008/family_2004.jpg"}
+        self.assertEqual(parse_year_from_metadata(meta_2), 2004)
+        
+        meta_3 = {"raw_metadata": None, "path": "D:/Training/Pictures/2008/EarthDay/photo.jpg"}
+        self.assertEqual(parse_year_from_metadata(meta_3), 2008)
+        
+        meta_4 = {"raw_metadata": None, "path": "D:/Training/Pictures/NoYear/photo.jpg"}
+        self.assertIsNone(parse_year_from_metadata(meta_4))
+
+    def test_api_photo_automatch_unmatched(self):
+        # Open database, insert a resolved face (e.g. John Doe) and an unmatched face (name = None) with similar embedding
+        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index.load()
+        cursor = photo_index.conn.cursor()
+        
+        # Insert a resolved face
+        resolved_emb = np.ones(512, dtype=np.float32)
+        norm = np.linalg.norm(resolved_emb)
+        resolved_emb /= norm
+        
+        # Insert unmatched face with same embedding (similarity = 1.0) but name IS NULL
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("C:/photos/automatch_test.jpg", 1000.0, 100, "[]", "[]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("C:/photos/john_doe.jpg", 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+        
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/john_doe.jpg", "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/automatch_test.jpg", "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
+        photo_index.conn.commit()
+        photo_index.close()
+        
+        # Trigger automatch API
+        url = f"http://127.0.0.1:{self.TEST_PORT}/api/photo/automatch"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({"photo_path": "C:/photos/automatch_test.jpg"}).encode('utf-8'),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        response = urllib.request.urlopen(req)
+        data = json.loads(response.read().decode('utf-8'))
+        self.assertTrue(data["success"])
+        self.assertEqual(data["matched_count"], 1)
+        
+        # Verify the face was successfully resolved to John Doe in the DB
+        conn = sqlite3.connect(self.TEST_DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT name FROM faces WHERE photo_path = 'C:/photos/automatch_test.jpg'")
+        name = c.fetchone()[0]
+        self.assertEqual(name, "John Doe")
+        
+        # Also verify photo's people field is updated
+        c.execute("SELECT people FROM photos WHERE path = 'C:/photos/automatch_test.jpg'")
+        people = json.loads(c.fetchone()[0])
+        self.assertIn("John Doe", people)
+        conn.close()
+
+    def test_api_folder_automatch(self):
+        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index.load()
+        cursor = photo_index.conn.cursor()
+        
+        resolved_emb = np.ones(512, dtype=np.float32)
+        norm = np.linalg.norm(resolved_emb)
+        resolved_emb /= norm
+        
+        # Insert photos in the same folder
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("C:/photos/folderA/photo1.jpg", 1000.0, 100, "[]", "[]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("C:/photos/folderA/photo2.jpg", 1000.0, 100, "[]", "[]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("C:/photos/folderA/john_doe.jpg", 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+        
+        # Insert faces
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/folderA/john_doe.jpg", "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/folderA/photo1.jpg", "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/folderA/photo2.jpg", "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
+        photo_index.conn.commit()
+        photo_index.close()
+        
+        # Trigger folder automatch API
+        url = f"http://127.0.0.1:{self.TEST_PORT}/api/folder/automatch"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({"folder_path": "C:/photos/folderA"}).encode('utf-8'),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        response = urllib.request.urlopen(req)
+        data = json.loads(response.read().decode('utf-8'))
+        self.assertTrue(data["success"])
+        self.assertEqual(data["matched_count"], 2)
+        self.assertIn("remaining_counts", data)
+        
+        # Verify the faces were successfully resolved to John Doe in the DB
+        conn = sqlite3.connect(self.TEST_DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT name FROM faces WHERE photo_path IN ('C:/photos/folderA/photo1.jpg', 'C:/photos/folderA/photo2.jpg')")
+        names = [r[0] for r in c.fetchall()]
+        self.assertEqual(names, ["John Doe", "John Doe"])
+        conn.close()
+
+    def test_api_photo_automatch_duplicate_protection(self):
+        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index.load()
+        cursor = photo_index.conn.cursor()
+        
+        resolved_emb = np.ones(512, dtype=np.float32)
+        norm = np.linalg.norm(resolved_emb)
+        resolved_emb /= norm
+        
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("C:/photos/duplicate_test.jpg", 1000.0, 100, "[]", "[]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("C:/photos/john_doe.jpg", 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+        
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/john_doe.jpg", "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
+        # Insert two unmatched faces on the same photo that both match John Doe
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/duplicate_test.jpg", "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/duplicate_test.jpg", "[20,20,30,30]", resolved_emb.tobytes(), None, 0.95))
+        photo_index.conn.commit()
+        photo_index.close()
+        
+        # Trigger automatch API
+        url = f"http://127.0.0.1:{self.TEST_PORT}/api/photo/automatch"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({"photo_path": "C:/photos/duplicate_test.jpg"}).encode('utf-8'),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        response = urllib.request.urlopen(req)
+        data = json.loads(response.read().decode('utf-8'))
+        
+        # Neither face should be matched (matched_count = 0)
+        self.assertEqual(data["matched_count"], 0)
+        
+        # Verify both faces remain None in the DB
+        conn = sqlite3.connect(self.TEST_DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT name FROM faces WHERE photo_path = 'C:/photos/duplicate_test.jpg'")
+        names = [r[0] for r in c.fetchall()]
+        self.assertEqual(names, [None, None])
+        conn.close()
+
+    def test_api_photo_automatch_already_tagged_protection(self):
+        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index.load()
+        cursor = photo_index.conn.cursor()
+        
+        resolved_emb = np.ones(512, dtype=np.float32)
+        norm = np.linalg.norm(resolved_emb)
+        resolved_emb /= norm
+        
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("C:/photos/already_tagged_test.jpg", 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("C:/photos/john_doe.jpg", 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+        
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/john_doe.jpg", "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
+        # One face already matched to John Doe, another unmatched but matches John Doe's embedding
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/already_tagged_test.jpg", "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/already_tagged_test.jpg", "[20,20,30,30]", resolved_emb.tobytes(), None, 0.95))
+        photo_index.conn.commit()
+        photo_index.close()
+        
+        # Trigger automatch API
+        url = f"http://127.0.0.1:{self.TEST_PORT}/api/photo/automatch"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({"photo_path": "C:/photos/already_tagged_test.jpg"}).encode('utf-8'),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        response = urllib.request.urlopen(req)
+        data = json.loads(response.read().decode('utf-8'))
+        
+        # The unmatched face should not be matched because John Doe is already tagged on this photo
+        self.assertEqual(data["matched_count"], 0)
+        
+        # Verify the unmatched face remains None in the DB
+        conn = sqlite3.connect(self.TEST_DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT name FROM faces WHERE photo_path = 'C:/photos/already_tagged_test.jpg'")
+        names = sorted([str(r[0]) for r in c.fetchall()])
+        self.assertEqual(names, ["John Doe", "None"])
+        conn.close()
+
+    def test_api_face_match_duplicate_conflict(self):
+        # Open database, insert two faces in the same photo
+        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index.load()
+        cursor = photo_index.conn.cursor()
+        
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("C:/photos/conflict_test.jpg", 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+        
+        # Face 1 is John Doe, Face 2 is unmatched
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/conflict_test.jpg", "[0,0,10,10]", b"", "John Doe", 0.95))
+        face1_id = cursor.lastrowid
+        
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/conflict_test.jpg", "[20,20,30,30]", b"", None, 0.95))
+        face2_id = cursor.lastrowid
+        photo_index.conn.commit()
+        photo_index.close()
+        
+        # Trigger single match API trying to tag face 2 as "John Doe"
+        url = f"http://127.0.0.1:{self.TEST_PORT}/api/face/match"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({"face_id": face2_id, "person_name": "John Doe"}).encode('utf-8'),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        try:
+            response = urllib.request.urlopen(req)
+            self.fail("API should return HTTP 400 for duplicate tag conflict")
+        except urllib.error.HTTPError as e:
+            self.assertEqual(e.code, 400)
+            data = json.loads(e.read().decode('utf-8'))
+            self.assertFalse(data["success"])
+            self.assertIn("already tagged on another face", data["error"])
+
+    def test_api_faces_match_bulk_duplicate_conflict(self):
+        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index.load()
+        cursor = photo_index.conn.cursor()
+        
+        # Photo 1 has John Doe already, and an unmatched face
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("C:/photos/conflict_p1.jpg", 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/conflict_p1.jpg", "[0,0,10,10]", b"", "John Doe", 0.95))
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/conflict_p1.jpg", "[20,20,30,30]", b"", None, 0.95))
+        face2_id = cursor.lastrowid
+        
+        # Photo 2 has another unmatched face
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("C:/photos/conflict_p2.jpg", 1000.0, 100, "[]", "[]", "[]", "{}"))
+        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                       ("C:/photos/conflict_p2.jpg", "[0,0,10,10]", b"", None, 0.95))
+        face3_id = cursor.lastrowid
+        
+        photo_index.conn.commit()
+        photo_index.close()
+        
+        # Trigger match-bulk trying to assign Face 2 and Face 3 to "John Doe"
+        url = f"http://127.0.0.1:{self.TEST_PORT}/api/faces/match-bulk"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({"face_ids": [face2_id, face3_id], "person_name": "John Doe"}).encode('utf-8'),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        try:
+            response = urllib.request.urlopen(req)
+            self.fail("API should return HTTP 400 for duplicate tag conflict in bulk match")
+        except urllib.error.HTTPError as e:
+            self.assertEqual(e.code, 400)
+            data = json.loads(e.read().decode('utf-8'))
+            self.assertFalse(data["success"])
+            self.assertIn("already tagged on another face", data["error"])
 
 if __name__ == "__main__":
     unittest.main()
