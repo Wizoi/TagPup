@@ -125,6 +125,22 @@ class TagSuggester:
         import numpy as np
         from metadata import parse_year_from_metadata
         
+        # Collect all known people names (from taxonomy and database) to suppress them from neighbor/CLIP suggestions
+        known_people = set()
+        for path in self.taxonomy.paths:
+            parts = path.split("/")
+            if len(parts) >= 2 and parts[0].lower() in ["family", "friends"]:
+                known_people.add(parts[-1].lower())
+        try:
+            db_faces = self.index.get_all_faces()
+            if db_faces:
+                for f in db_faces:
+                    name = f.get("name")
+                    if name:
+                        known_people.add(name.lower())
+        except Exception as db_err:
+            logger.warning(f"Failed to query known faces from database for suggestion pruning: {db_err}")
+
         # 1. Search index for neighbors
         neighbors = self.index.search(embedding, k=k)
         
@@ -160,17 +176,22 @@ class TagSuggester:
             # Only use non-people tags for propagation
             raw_tags = list(meta.get("tags", []))
             
-            # Expand tags according to the taxonomy, excluding family and friends branches
+            # Expand tags according to the taxonomy, excluding family and friends branches and known people
             expanded_tags = set()
             for tag in raw_tags:
                 tag_parts = tag.split("/")
                 if tag_parts and tag_parts[0].lower() in ["family", "friends"]:
                     continue
+                if tag_parts and tag_parts[-1].lower() in known_people:
+                    continue
                 expanded = self.taxonomy.expand_tag(tag)
                 for t in expanded:
                     t_parts = t.split("/")
-                    if t_parts and t_parts[0].lower() not in ["family", "friends"]:
-                        expanded_tags.add(t)
+                    if t_parts and t_parts[0].lower() in ["family", "friends"]:
+                        continue
+                    if t_parts and t_parts[-1].lower() in known_people:
+                        continue
+                    expanded_tags.add(t)
             
             # Record similarities for each tag
             for tag in expanded_tags:
@@ -257,13 +278,13 @@ class TagSuggester:
                                     best_dist = dist
                                     best_name = name
                             
-                            # Score matches with a threshold of 1.15
-                            if best_name and best_dist < 1.15:
+                            # Score matches with a high-confidence threshold of 0.90
+                            if best_name and best_dist < 0.90:
                                 # Calculate a confidence score between 0.50 and 1.0
                                 if best_dist < 0.60:
                                     score = 1.0
                                 else:
-                                    score = max(0.50, round(1.0 - (best_dist - 0.60) / (1.15 - 0.60) * 0.50, 2))
+                                    score = max(0.50, round(1.0 - (best_dist - 0.60) / (0.90 - 0.60) * 0.50, 2))
                                 
                                 # Resolve leaf name to full taxonomy path if possible
                                 resolved_path = best_name
@@ -300,14 +321,7 @@ class TagSuggester:
                 
             for tag, tag_emb in active_candidates.items():
                 # Skip if this tag is a person tag (to defer entirely to face matching)
-                is_person_tag = False
-                for path in self.taxonomy.paths:
-                    parts = path.split("/")
-                    if len(parts) >= 2 and parts[0].lower() in ["family", "friends"]:
-                        if parts[-1].lower() == tag.lower() or path.lower() == tag.lower():
-                            is_person_tag = True
-                            break
-                if is_person_tag:
+                if tag.lower() in known_people:
                     continue
                     
                 # Skip if this tag is already suggested by neighbors

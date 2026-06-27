@@ -33,6 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const inputReassignName = document.getElementById('input-reassign-name');
     const btnReassignSelected = document.getElementById('btn-reassign-selected');
     const btnNewPerson = document.getElementById('btn-new-person');
+    const btnRenamePerson = document.getElementById('btn-rename-person');
 
     // New Person Modal DOM Elements
     const newPersonModal = document.getElementById('new-person-modal');
@@ -67,6 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Face Matching Mode State
     let allPeopleWithCounts = [];
     let activePersonName = null;
+    let lastLoadedPersonName = null;
     let selectedFaceIds = [];
     let activePersonFaces = [];
     let activeTab = 'matches'; // 'matches' or 'outliers'
@@ -80,7 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load initial data
     const urlParams = new URLSearchParams(window.location.search);
     const urlMode = urlParams.get('mode');
-    if (urlMode && (urlMode === 'unmatched' || urlMode === 'face-matching')) {
+    if (urlMode && (urlMode === 'folder-match' || urlMode === 'face-matching' || urlMode === 'unmatched-faces')) {
         modeSelect.value = urlMode;
     }
 
@@ -119,7 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateMatchedToggleVisibility() {
         const mode = modeSelect.value;
-        if (mode === 'unmatched') {
+        if (mode === 'folder-match') {
             if (showMatchedContainer) showMatchedContainer.classList.remove('hidden');
         } else {
             if (showMatchedContainer) showMatchedContainer.classList.add('hidden');
@@ -177,6 +179,56 @@ document.addEventListener('DOMContentLoaded', () => {
             if (selectedFaceIds.length !== 1) return;
             const seedFaceId = selectedFaceIds[0];
             openNewPersonModal(seedFaceId);
+        });
+    }
+
+    if (btnRenamePerson) {
+        btnRenamePerson.addEventListener('click', () => {
+            if (!activePersonName || activePersonName === 'Unmatched') return;
+            const newName = prompt(`Rename person "${activePersonName}" to:`, activePersonName);
+            if (newName === null) return;
+            const trimmed = newName.trim();
+            if (!trimmed) {
+                alert('Name cannot be empty.');
+                return;
+            }
+            if (trimmed === activePersonName) return;
+            
+            if (!confirm(`Are you sure you want to rename "${activePersonName}" to "${trimmed}"? This will update all of their matched face tags and photo metadata.`)) {
+                return;
+            }
+            
+            postRenamePerson(activePersonName, trimmed);
+        });
+    }
+
+    const btnMatchingSelectAll = document.getElementById('btn-matching-select-all');
+    if (btnMatchingSelectAll) {
+        btnMatchingSelectAll.addEventListener('click', () => {
+            const faceItems = matchingFacesGrid.querySelectorAll('.face-match-item');
+            const faceIds = Array.from(faceItems).map(item => parseInt(item.getAttribute('data-face-id')));
+            
+            const allSelected = faceIds.every(id => selectedFaceIds.includes(id));
+            
+            if (allSelected) {
+                selectedFaceIds = selectedFaceIds.filter(id => !faceIds.includes(id));
+                faceItems.forEach(item => item.classList.remove('selected'));
+            } else {
+                faceIds.forEach(id => {
+                    if (!selectedFaceIds.includes(id)) {
+                        selectedFaceIds.push(id);
+                    }
+                });
+                faceItems.forEach(item => item.classList.add('selected'));
+            }
+            
+            updateMatchingSelectionUI();
+            
+            if (selectedFaceIds.length > 0) {
+                showFaceDetails(selectedFaceIds[selectedFaceIds.length - 1]);
+            } else {
+                clearFaceDetails();
+            }
         });
     }
 
@@ -431,20 +483,43 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const tabMatches = document.getElementById('tab-matches');
     const tabOutliers = document.getElementById('tab-outliers');
-    if (tabMatches && tabOutliers) {
+    const tabLowConf = document.getElementById('tab-low-conf');
+    if (tabMatches && tabOutliers && tabLowConf) {
         tabMatches.addEventListener('click', () => {
-            if (activeTab === 'matches') return;
-            activeTab = 'matches';
+            const targetMode = modeSelect.value === 'unmatched-faces' ? 'high' : 'matches';
+            if (activeTab === targetMode) return;
+            activeTab = targetMode;
             tabMatches.classList.add('active');
             tabOutliers.classList.remove('active');
+            tabLowConf.classList.remove('active');
+            selectedFaceIds = [];
             renderPersonFaces(activePersonFaces);
+            updateMatchingSelectionUI();
+            clearFaceDetails();
         });
         tabOutliers.addEventListener('click', () => {
-            if (activeTab === 'outliers') return;
-            activeTab = 'outliers';
+            const targetMode = modeSelect.value === 'unmatched-faces' ? 'lower' : 'outliers';
+            if (activeTab === targetMode) return;
+            activeTab = targetMode;
             tabOutliers.classList.add('active');
             tabMatches.classList.remove('active');
+            tabLowConf.classList.remove('active');
+            selectedFaceIds = [];
             renderPersonFaces(activePersonFaces);
+            updateMatchingSelectionUI();
+            clearFaceDetails();
+        });
+        tabLowConf.addEventListener('click', () => {
+            if (modeSelect.value !== 'unmatched-faces') return;
+            if (activeTab === 'low') return;
+            activeTab = 'low';
+            tabLowConf.classList.add('active');
+            tabMatches.classList.remove('active');
+            tabOutliers.classList.remove('active');
+            selectedFaceIds = [];
+            renderPersonFaces(activePersonFaces);
+            updateMatchingSelectionUI();
+            clearFaceDetails();
         });
     }
 
@@ -491,7 +566,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateURLParams() {
         const params = new URLSearchParams(window.location.search);
         params.set('mode', modeSelect.value);
-        if (modeSelect.value === 'face-matching') {
+        const mode = modeSelect.value;
+        if (mode === 'face-matching' || mode === 'unmatched-faces') {
             if (activePersonName) {
                 params.set('person', activePersonName);
             } else {
@@ -531,7 +607,7 @@ document.addEventListener('DOMContentLoaded', () => {
             detailsAbortController.abort();
         }
 
-        if (mode === 'face-matching') {
+        if (mode === 'face-matching' || mode === 'unmatched-faces') {
             fetchPeopleWithCounts();
             return;
         }
@@ -793,7 +869,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const query = photoSearch.value.toLowerCase();
         const mode = modeSelect.value;
 
-        if (mode === 'face-matching') {
+        if (mode === 'face-matching' || mode === 'unmatched-faces') {
             const items = Array.from(photoList.children);
             items.forEach(item => {
                 if (item.personName) {
@@ -1399,7 +1475,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         p.badgeMatchedEl.textContent = `${p.matched_count} matched`;
                     }
                     if (p.unmatched_count === 0 && p.liEl) {
-                        if (modeSelect.value === 'unmatched') {
+                        if (modeSelect.value === 'folder-match') {
                             p.liEl.style.display = 'none';
                         }
                     }
@@ -1472,10 +1548,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const icon = emptyState.querySelector('.empty-state-icon');
         const title = emptyState.querySelector('h2');
         const text = emptyState.querySelector('p');
-        if (modeSelect.value === 'face-matching') {
+        if (modeSelect.value === 'face-matching' || modeSelect.value === 'unmatched-faces') {
             if (icon) icon.textContent = '👤';
             if (title) title.textContent = 'No Person Selected';
-            if (text) text.textContent = 'Select a person from the left sidebar to view and manage their matched faces.';
+            if (text) text.textContent = 'Select a person from the left sidebar to view and manage potential unmatched face matches.';
         } else {
             if (icon) icon.textContent = '🖼️';
             if (title) title.textContent = 'No Photo Selected';
@@ -1484,18 +1560,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Fetch people with face counts from backend
-    function fetchPeopleWithCounts() {
-        listStats.textContent = 'Loading people...';
-        photoList.innerHTML = '';
+    function fetchPeopleWithCounts(isSilent = false, keepTab = false) {
+        if (!isSilent) {
+            listStats.textContent = 'Loading people...';
+            photoList.innerHTML = '';
+        }
         
-        fetch('/api/people-with-counts', { signal: sidebarAbortController.signal })
+        const mode = modeSelect.value;
+        const apiPath = (mode === 'unmatched-faces')
+            ? '/api/unmatched-faces/people'
+            : '/api/people-with-counts';
+
+        fetch(apiPath, { signal: sidebarAbortController.signal })
             .then(res => {
                 if (!res.ok) throw new Error('Network response was not ok');
                 return res.json();
             })
             .then(data => {
                 allPeopleWithCounts = data;
-                renderPeopleList();
+                renderPeopleList(keepTab);
             })
             .catch(err => {
                 if (err.name === 'AbortError') return;
@@ -1505,7 +1588,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Render unique people with counts in the sidebar
-    function renderPeopleList() {
+    function renderPeopleList(keepTab = false) {
+        const savedScrollTop = photoList.scrollTop;
         photoList.innerHTML = '';
         
         if (allPeopleWithCounts.length === 0) {
@@ -1539,7 +1623,11 @@ document.addEventListener('DOMContentLoaded', () => {
             badge.style.color = 'var(--text-secondary)';
             badge.style.backgroundColor = 'var(--bg-tertiary)';
             badge.style.border = '1px solid var(--border-color)';
-            badge.textContent = `${person.count} face${person.count !== 1 ? 's' : ''}`;
+            if (modeSelect.value === 'unmatched-faces') {
+                badge.textContent = `${person.count} photo${person.count !== 1 ? 's' : ''}`;
+            } else {
+                badge.textContent = `${person.count} face${person.count !== 1 ? 's' : ''}`;
+            }
 
             li.appendChild(title);
             li.appendChild(badge);
@@ -1548,10 +1636,17 @@ document.addEventListener('DOMContentLoaded', () => {
             photoList.appendChild(li);
         });
 
+        // Restore scroll position
+        photoList.scrollTop = savedScrollTop;
+
         if (activePersonName) {
             const exists = allPeopleWithCounts.some(p => p.name === activePersonName);
             if (exists) {
-                selectPerson(activePersonName);
+                if (activePersonName === lastLoadedPersonName) {
+                    selectPerson(activePersonName, null, true);
+                } else {
+                    selectPerson(activePersonName, null, false, keepTab);
+                }
             } else {
                 activePersonName = null;
                 updateURLParams();
@@ -1560,7 +1655,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Select a person to display their face matches
-    function selectPerson(name, element) {
+    function selectPerson(name, element, skipFetch = false, keepTab = false) {
         const items = photoList.getElementsByClassName('photo-item');
         Array.from(items).forEach(item => item.classList.remove('active'));
         
@@ -1570,33 +1665,100 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (activeEl) {
             activeEl.classList.add('active');
+            activeEl.scrollIntoView({ block: 'nearest' });
         }
 
         activePersonName = name;
         updateURLParams();
+
+        if (skipFetch) return;
+
         selectedFaceIds = [];
         activePersonFaces = [];
-        activeTab = 'matches';
         
-        // Reset tabs UI
+        const mode = modeSelect.value;
         const tabMatches = document.getElementById('tab-matches');
         const tabOutliers = document.getElementById('tab-outliers');
+        const tabLowConf = document.getElementById('tab-low-conf');
         const matchingTabs = document.getElementById('matching-tabs');
         const matchingStaticTitle = document.getElementById('matching-static-title');
-        
-        if (tabMatches && tabOutliers) {
-            tabMatches.classList.add('active');
-            tabMatches.textContent = 'Matches';
-            tabOutliers.classList.remove('active');
-            tabOutliers.textContent = 'Outliers';
+
+        if (!keepTab) {
+            if (mode === 'unmatched-faces') {
+                activeTab = 'high';
+                if (tabMatches && tabOutliers && tabLowConf) {
+                    tabMatches.classList.add('active');
+                    tabMatches.textContent = 'High Confidence';
+                    tabOutliers.classList.remove('active');
+                    tabOutliers.textContent = 'Lower Confidence';
+                    tabLowConf.classList.remove('active');
+                    tabLowConf.classList.add('hidden');
+                }
+                if (inputReassignName) {
+                    if (name !== 'Unknown Faces') {
+                        inputReassignName.value = name;
+                    } else {
+                        inputReassignName.value = '';
+                    }
+                }
+            } else {
+                activeTab = 'matches';
+                if (tabMatches && tabOutliers) {
+                    tabMatches.classList.add('active');
+                    tabMatches.textContent = 'Matches';
+                    tabOutliers.classList.remove('active');
+                    tabOutliers.textContent = 'Outliers';
+                }
+                if (tabLowConf) {
+                    tabLowConf.classList.add('hidden');
+                }
+                if (inputReassignName) {
+                    inputReassignName.value = '';
+                }
+            }
+        } else {
+            // Even if keeping the tab, make sure tab text/visibility is correct for the mode
+            if (mode === 'unmatched-faces') {
+                if (tabMatches && tabOutliers && tabLowConf) {
+                    tabMatches.textContent = 'High Confidence';
+                    tabOutliers.textContent = 'Lower Confidence';
+                    tabLowConf.classList.add('hidden');
+                }
+            } else {
+                if (tabMatches && tabOutliers) {
+                    tabMatches.textContent = 'Matches';
+                    tabOutliers.textContent = 'Outliers';
+                }
+                if (tabLowConf) {
+                    tabLowConf.classList.add('hidden');
+                }
+            }
         }
         
         if (name === 'Unmatched') {
             if (matchingTabs) matchingTabs.classList.add('hidden');
-            if (matchingStaticTitle) matchingStaticTitle.classList.remove('hidden');
+            if (matchingStaticTitle) {
+                matchingStaticTitle.classList.remove('hidden');
+                matchingStaticTitle.textContent = 'Unmatched Faces';
+            }
+            if (btnRenamePerson) btnRenamePerson.classList.add('hidden');
+        } else if (name === 'Unknown Faces') {
+            if (matchingTabs) matchingTabs.classList.remove('hidden');
+            if (matchingStaticTitle) matchingStaticTitle.classList.add('hidden');
+            if (btnRenamePerson) btnRenamePerson.classList.add('hidden');
         } else {
             if (matchingTabs) matchingTabs.classList.remove('hidden');
             if (matchingStaticTitle) matchingStaticTitle.classList.add('hidden');
+            if (btnRenamePerson) btnRenamePerson.classList.remove('hidden');
+        }
+
+        const matchingActions = document.querySelector('.matching-actions');
+        if (matchingActions) {
+            if (name === 'Unknown Faces' && mode === 'unmatched-faces') {
+                matchingActions.classList.add('hidden');
+            } else {
+                matchingActions.classList.remove('hidden');
+            }
         }
 
         updateMatchingSelectionUI();
@@ -1630,13 +1792,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         detailsAbortController = new AbortController();
 
-        fetch(`/api/person-faces?name=${encodeURIComponent(name)}&limit=-1`, { signal: detailsAbortController.signal })
+        const apiPath = (mode === 'unmatched-faces')
+            ? `/api/unmatched-faces/person-matches?name=${encodeURIComponent(name)}`
+            : `/api/person-faces?name=${encodeURIComponent(name)}&limit=-1`;
+
+        fetch(apiPath, { signal: detailsAbortController.signal })
             .then(res => {
                 if (!res.ok) throw new Error('Failed to load faces');
                 return res.json();
             })
             .then(data => {
                 activePersonFaces = data.faces;
+                lastLoadedPersonName = name;
                 
                 // Update tab counts
                 updateTabLabels();
@@ -1653,15 +1820,27 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateTabLabels() {
         const tabMatches = document.getElementById('tab-matches');
         const tabOutliers = document.getElementById('tab-outliers');
+        const tabLowConf = document.getElementById('tab-low-conf');
         if (!tabMatches || !tabOutliers) return;
         
         let filteredFaces = activePersonFaces;
         
-        const standards = filteredFaces.filter(f => activePersonName === 'Unmatched' || f.similarity === undefined || f.similarity >= 0.85);
-        const outliers = filteredFaces.filter(f => activePersonName !== 'Unmatched' && f.similarity !== undefined && f.similarity < 0.85);
-        
-        tabMatches.textContent = `Matches (${standards.length})`;
-        tabOutliers.textContent = `Outliers (${outliers.length})`;
+        if (modeSelect.value === 'unmatched-faces') {
+            const high = filteredFaces.filter(f => f.similarity !== undefined && f.similarity >= 0.9);
+            const lower = filteredFaces.filter(f => f.similarity !== undefined && f.similarity >= 0.8 && f.similarity < 0.9);
+            
+            tabMatches.textContent = `High Confidence (${high.length})`;
+            tabOutliers.textContent = `Lower Confidence (${lower.length})`;
+            if (tabLowConf) {
+                tabLowConf.classList.add('hidden');
+            }
+        } else {
+            const standards = filteredFaces.filter(f => activePersonName === 'Unmatched' || f.similarity === undefined || f.similarity >= 0.85);
+            const outliers = filteredFaces.filter(f => activePersonName !== 'Unmatched' && f.similarity !== undefined && f.similarity < 0.85);
+            
+            tabMatches.textContent = `Matches (${standards.length})`;
+            tabOutliers.textContent = `Outliers (${outliers.length})`;
+        }
     }
 
     // Render face match items in grid
@@ -1678,27 +1857,56 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let renderedFaces = faces;
 
+        const high = [];
+        const lower = [];
         const standards = [];
         const outliers = [];
 
         renderedFaces.forEach(face => {
-            if (activePersonName === 'Unmatched') {
-                standards.push(face);
+            if (modeSelect.value === 'unmatched-faces') {
+                if (face.similarity !== undefined && face.similarity >= 0.9) {
+                    high.push(face);
+                } else if (face.similarity !== undefined && face.similarity >= 0.8) {
+                    lower.push(face);
+                }
             } else {
-                if (face.similarity !== undefined && face.similarity < 0.85) {
-                    outliers.push(face);
-                } else {
+                if (activePersonName === 'Unmatched') {
                     standards.push(face);
+                } else {
+                    if (face.similarity !== undefined && face.similarity < 0.85) {
+                        outliers.push(face);
+                    } else {
+                        standards.push(face);
+                    }
                 }
             }
         });
 
-        // Set count header
-        const displayedCount = activeTab === 'matches' || activePersonName === 'Unmatched' 
-            ? standards.length 
-            : outliers.length;
+        // Set count header and determine faces to render
+        let targetFaces = [];
+        let displayedCount = 0;
+        let unmatchedText = '';
         
-        const unmatchedText = activePersonName === 'Unmatched' ? 'unmatched' : (activeTab === 'matches' ? 'matched' : 'outlier');
+        if (modeSelect.value === 'unmatched-faces') {
+            if (activeTab === 'high') {
+                targetFaces = high;
+                unmatchedText = 'high confidence potential';
+            } else {
+                targetFaces = lower;
+                unmatchedText = 'lower confidence potential';
+            }
+            displayedCount = targetFaces.length;
+        } else {
+            if (activeTab === 'matches' || activePersonName === 'Unmatched') {
+                targetFaces = standards;
+                unmatchedText = activePersonName === 'Unmatched' ? 'unmatched' : 'matched';
+            } else {
+                targetFaces = outliers;
+                unmatchedText = 'outlier';
+            }
+            displayedCount = targetFaces.length;
+        }
+
         matchingPersonCount.textContent = `${displayedCount} ${unmatchedText} face${displayedCount !== 1 ? 's' : ''}`;
 
         if (displayedCount === 0) {
@@ -1706,24 +1914,78 @@ document.addEventListener('DOMContentLoaded', () => {
             emptyGrid.style.textAlign = 'center';
             emptyGrid.style.padding = '40px';
             emptyGrid.style.color = 'var(--text-muted)';
-            if (activePersonName === 'Unmatched') {
-                emptyGrid.textContent = 'No unmatched faces found.';
-            } else if (activeTab === 'matches') {
-                emptyGrid.textContent = 'No matching faces found for this person.';
+            if (modeSelect.value === 'unmatched-faces') {
+                emptyGrid.textContent = `No potential ${activeTab} confidence matches found.`;
             } else {
-                emptyGrid.textContent = 'No outliers found for this person.';
+                if (activePersonName === 'Unmatched') {
+                    emptyGrid.textContent = 'No unmatched faces found.';
+                } else if (activeTab === 'matches') {
+                    emptyGrid.textContent = 'No matching faces found for this person.';
+                } else {
+                    emptyGrid.textContent = 'No outliers found for this person.';
+                }
             }
             matchingFacesGrid.appendChild(emptyGrid);
             return;
         }
 
-        function renderGroupSection(title, groupFaces) {
+        function renderGroupSection(title, groupFaces, returnElement = false) {
             const section = document.createElement('div');
             section.className = 'matching-group-section';
 
             const header = document.createElement('div');
             header.className = 'matching-group-header';
-            header.textContent = title;
+            header.style.display = 'flex';
+            header.style.justifyContent = 'space-between';
+            header.style.alignItems = 'center';
+
+            const titleSpan = document.createElement('span');
+            if (modeSelect.value === 'unmatched-faces') {
+                const numFaces = groupFaces.length;
+                const numPhotos = new Set(groupFaces.map(f => f.photo_path)).size;
+                titleSpan.textContent = `${title} (${numFaces} face${numFaces !== 1 ? 's' : ''} in ${numPhotos} photo${numPhotos !== 1 ? 's' : ''})`;
+            } else {
+                titleSpan.textContent = title;
+            }
+            header.appendChild(titleSpan);
+
+            if (modeSelect.value === 'unmatched-faces') {
+                const assignBtn = document.createElement('button');
+                assignBtn.className = 'btn btn-primary btn-sm';
+                assignBtn.style.padding = '2px 8px';
+                assignBtn.style.fontSize = '11px';
+                assignBtn.textContent = '👤 Assign Cluster';
+                assignBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const executeAssignment = (name) => {
+                        if (!allKnownPeople.includes(name)) {
+                            if (!confirm(`"${name}" is not currently in the database. Do you want to create a new person tag and assign this cluster to it?`)) {
+                                return;
+                            }
+                        } else {
+                            if (!confirm(`Are you sure you want to assign all ${groupFaces.length} faces in this cluster to "${name}"?`)) {
+                                return;
+                            }
+                        }
+                        const faceIds = groupFaces.map(f => f.id);
+                        postMatchBulk(faceIds, name);
+                    };
+
+                    if (activePersonName === 'Unknown Faces') {
+                        showAutocompletePopup(groupFaces.length, executeAssignment);
+                    } else {
+                        const name = inputReassignName.value.trim();
+                        if (!name) {
+                            alert('Please enter or select a name in the "Assign to name..." input field first.');
+                            inputReassignName.focus();
+                            return;
+                        }
+                        executeAssignment(name);
+                    }
+                });
+                header.appendChild(assignBtn);
+            }
+
             section.appendChild(header);
 
             const grid = document.createElement('div');
@@ -1768,41 +2030,116 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             section.appendChild(grid);
-            matchingFacesGrid.appendChild(section);
+            if (returnElement) {
+                return section;
+            } else {
+                matchingFacesGrid.appendChild(section);
+            }
         }
 
-        const targetFaces = (activeTab === 'matches' || activePersonName === 'Unmatched') ? standards : outliers;
-
-        // Group faces by year
-        const facesByYear = {};
-        targetFaces.forEach(face => {
-            const year = face.year || 'Unknown';
-            if (!facesByYear[year]) {
-                facesByYear[year] = [];
-            }
-            facesByYear[year].push(face);
-        });
-
-        // Sort years descending
-        const sortedYears = Object.keys(facesByYear).sort((a, b) => {
-            if (a === 'Unknown') return 1;
-            if (b === 'Unknown') return -1;
-            return b - a;
-        });
-
-        // Sort faces within each year descending by mtime
-        sortedYears.forEach(year => {
-            facesByYear[year].sort((a, b) => {
-                const timeA = a.mtime || 0;
-                const timeB = b.mtime || 0;
-                return timeB - timeA;
+        if (modeSelect.value === 'unmatched-faces') {
+            // 1. Group target faces by cluster name
+            const clusterMap = {};
+            targetFaces.forEach(face => {
+                const clusterName = face.cluster_name || 'Unclustered';
+                if (!clusterMap[clusterName]) {
+                    clusterMap[clusterName] = [];
+                }
+                clusterMap[clusterName].push(face);
             });
-        });
 
-        // Render Year sections
-        sortedYears.forEach(year => {
-            renderGroupSection(year, facesByYear[year]);
-        });
+            // Sort faces within each cluster descending by similarity
+            Object.keys(clusterMap).forEach(cName => {
+                clusterMap[cName].sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+            });
+
+            // 2. Map each cluster to its most recent year
+            const yearClusters = {};
+            Object.keys(clusterMap).forEach(cName => {
+                const faces = clusterMap[cName];
+                let maxYear = 0;
+                faces.forEach(f => {
+                    const y = parseInt(f.year);
+                    if (y && y > maxYear) maxYear = y;
+                });
+                const yearStr = maxYear > 0 ? maxYear.toString() : 'Unknown';
+                if (!yearClusters[yearStr]) {
+                    yearClusters[yearStr] = [];
+                }
+                yearClusters[yearStr].push({ name: cName, faces: faces });
+            });
+
+            // 3. Sort years descending
+            const sortedYears = Object.keys(yearClusters).sort((a, b) => {
+                if (a === 'Unknown') return 1;
+                if (b === 'Unknown') return -1;
+                return parseInt(b) - parseInt(a);
+            });
+
+            // 4. Render year headers and clusters
+            sortedYears.forEach(year => {
+                const yearContainer = document.createElement('div');
+                yearContainer.className = 'year-section-container';
+                yearContainer.style.marginBottom = '30px';
+
+                const yearHeader = document.createElement('div');
+                yearHeader.className = 'year-section-header';
+                yearHeader.style.padding = '8px 4px';
+                yearHeader.style.fontSize = '18px';
+                yearHeader.style.fontWeight = '700';
+                yearHeader.style.borderBottom = '2px solid var(--border-color)';
+                yearHeader.style.color = 'var(--text-primary)';
+                yearHeader.style.marginBottom = '16px';
+                yearHeader.textContent = `Year: ${year}`;
+                yearContainer.appendChild(yearHeader);
+
+                // Sort clusters inside this year by size descending
+                const clusters = yearClusters[year];
+                clusters.sort((a, b) => b.faces.length - a.faces.length);
+
+                clusters.forEach(cluster => {
+                    const section = renderGroupSection(cluster.name, cluster.faces, true);
+                    if (section) {
+                        yearContainer.appendChild(section);
+                    }
+                });
+
+                matchingFacesGrid.appendChild(yearContainer);
+            });
+        } else {
+            // Group by year
+            const groups = {};
+            targetFaces.forEach(face => {
+                const year = face.year || 'Unknown';
+                if (!groups[year]) {
+                    groups[year] = [];
+                }
+                groups[year].push(face);
+            });
+
+            // Sort years descending
+            const sortedGroupNames = Object.keys(groups).sort((a, b) => {
+                if (a === 'Unknown') return 1;
+                if (b === 'Unknown') return -1;
+                return b - a;
+            });
+
+            // Sort faces within each year descending by mtime
+            sortedGroupNames.forEach(year => {
+                groups[year].sort((a, b) => {
+                    const timeA = a.mtime || 0;
+                    const timeB = b.mtime || 0;
+                    return timeB - timeA;
+                });
+            });
+
+            // Render sections
+            sortedGroupNames.forEach(groupName => {
+                renderGroupSection(groupName, groups[groupName]);
+            });
+        }
+
+        updateMatchingSelectionUI();
     }
 
     // Populate matching details sidebar
@@ -1972,6 +2309,20 @@ document.addEventListener('DOMContentLoaded', () => {
         if (btnNewPerson) {
             btnNewPerson.disabled = count !== 1;
         }
+
+        const btnMatchingSelectAll = document.getElementById('btn-matching-select-all');
+        if (btnMatchingSelectAll) {
+            const faceItems = matchingFacesGrid.querySelectorAll('.face-match-item');
+            if (faceItems.length === 0) {
+                btnMatchingSelectAll.disabled = true;
+                btnMatchingSelectAll.textContent = 'Select All';
+            } else {
+                btnMatchingSelectAll.disabled = false;
+                const faceIds = Array.from(faceItems).map(item => parseInt(item.getAttribute('data-face-id')));
+                const allSelected = faceIds.every(id => selectedFaceIds.includes(id));
+                btnMatchingSelectAll.textContent = allSelected ? 'Select None' : 'Select All';
+            }
+        }
     }
 
     // POST bulk unmatch to backend API
@@ -2014,39 +2365,42 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Update tab counts
                 updateTabLabels();
 
-                // Get remaining count for the current tab
-                let filteredFaces = activePersonFaces;
-                const displayedFaces = activeTab === 'matches' || activePersonName === 'Unmatched'
-                    ? filteredFaces.filter(f => activePersonName === 'Unmatched' || f.similarity === undefined || f.similarity >= 0.85)
-                    : filteredFaces.filter(f => activePersonName !== 'Unmatched' && f.similarity !== undefined && f.similarity < 0.85);
-
-                const finalCount = displayedFaces.length;
-                const unmatchedText = activePersonName === 'Unmatched' ? 'unmatched' : (activeTab === 'matches' ? 'matched' : 'outlier');
-                matchingPersonCount.textContent = `${finalCount} ${unmatchedText} face${finalCount !== 1 ? 's' : ''}`;
-
-                if (finalCount === 0) {
-                    matchingFacesGrid.innerHTML = '';
-                    const emptyGrid = document.createElement('div');
-                    emptyGrid.style.textAlign = 'center';
-                    emptyGrid.style.padding = '40px';
-                    emptyGrid.style.color = 'var(--text-muted)';
-                    if (activePersonName === 'Unmatched') {
-                        emptyGrid.textContent = 'No unmatched faces found.';
-                    } else if (activeTab === 'matches') {
-                        emptyGrid.textContent = 'No matching faces found for this person.';
-                    } else {
-                        emptyGrid.textContent = 'No outliers found for this person.';
-                    }
-                    matchingFacesGrid.appendChild(emptyGrid);
-                }
+                // Render remaining faces inline immediately
+                renderPersonFaces(activePersonFaces);
 
                 // Clear selection state and details
                 selectedFaceIds = [];
                 updateMatchingSelectionUI();
                 clearFaceDetails();
 
-                // Fetch updated sidebar counts in background
-                fetchPeopleWithCounts();
+                // Check if the person is going to be removed after unmatching
+                const willBeRemoved = (activePersonName !== 'Unmatched' && activePersonFaces.length === 0);
+                if (willBeRemoved) {
+                    let priorName = null;
+                    if (allPeopleWithCounts && allPeopleWithCounts.length > 0) {
+                        const idx = allPeopleWithCounts.findIndex(p => p.name === activePersonName);
+                        if (idx !== -1) {
+                            if (idx > 0) {
+                                priorName = allPeopleWithCounts[idx - 1].name;
+                            } else if (allPeopleWithCounts.length > 1) {
+                                priorName = allPeopleWithCounts[idx + 1].name;
+                            }
+                        }
+                    }
+
+                    if (priorName) {
+                        selectPerson(priorName);
+                    } else {
+                        activePersonName = null;
+                        updateURLParams();
+                        emptyState.classList.remove('hidden');
+                        panelContent.classList.add('hidden');
+                        faceMatchingContent.classList.add('hidden');
+                    }
+                }
+
+                // Fetch updated sidebar counts in background silently
+                fetchPeopleWithCounts(true, true);
             } else {
                 alert('Failed to unmatch faces');
                 updateMatchingSelectionUI();
@@ -2106,42 +2460,47 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Update tab counts
                 updateTabLabels();
 
-                // Get remaining count for the current tab
-                let filteredFaces = activePersonFaces;
-                const displayedFaces = activeTab === 'matches' || activePersonName === 'Unmatched'
-                    ? filteredFaces.filter(f => activePersonName === 'Unmatched' || f.similarity === undefined || f.similarity >= 0.85)
-                    : filteredFaces.filter(f => activePersonName !== 'Unmatched' && f.similarity !== undefined && f.similarity < 0.85);
-
-                const finalCount = displayedFaces.length;
-                const unmatchedText = activePersonName === 'Unmatched' ? 'unmatched' : (activeTab === 'matches' ? 'matched' : 'outlier');
-                matchingPersonCount.textContent = `${finalCount} ${unmatchedText} face${finalCount !== 1 ? 's' : ''}`;
-
-                if (finalCount === 0) {
-                    matchingFacesGrid.innerHTML = '';
-                    const emptyGrid = document.createElement('div');
-                    emptyGrid.style.textAlign = 'center';
-                    emptyGrid.style.padding = '40px';
-                    emptyGrid.style.color = 'var(--text-muted)';
-                    if (activePersonName === 'Unmatched') {
-                        emptyGrid.textContent = 'No unmatched faces found.';
-                    } else if (activeTab === 'matches') {
-                        emptyGrid.textContent = 'No matching faces found for this person.';
-                    } else {
-                        emptyGrid.textContent = 'No outliers found for this person.';
-                    }
-                    matchingFacesGrid.appendChild(emptyGrid);
-                }
+                // Render remaining faces inline immediately
+                renderPersonFaces(activePersonFaces);
 
                 // Clear selection and reassign name field
                 selectedFaceIds = [];
                 if (inputReassignName) {
-                    inputReassignName.value = '';
+                    if (modeSelect.value !== 'unmatched-faces') {
+                        inputReassignName.value = '';
+                    }
                 }
                 updateMatchingSelectionUI();
                 clearFaceDetails();
 
-                // Fetch updated sidebar counts and known people in background
-                fetchPeopleWithCounts();
+                // Check if the person is going to be removed after matching
+                const willBeRemoved = (activePersonName !== 'Unmatched' && activePersonFaces.length === 0);
+                if (willBeRemoved) {
+                    let priorName = null;
+                    if (allPeopleWithCounts && allPeopleWithCounts.length > 0) {
+                        const idx = allPeopleWithCounts.findIndex(p => p.name === activePersonName);
+                        if (idx !== -1) {
+                            if (idx > 0) {
+                                priorName = allPeopleWithCounts[idx - 1].name;
+                            } else if (allPeopleWithCounts.length > 1) {
+                                priorName = allPeopleWithCounts[idx + 1].name;
+                            }
+                        }
+                    }
+
+                    if (priorName) {
+                        selectPerson(priorName);
+                    } else {
+                        activePersonName = null;
+                        updateURLParams();
+                        emptyState.classList.remove('hidden');
+                        panelContent.classList.add('hidden');
+                        faceMatchingContent.classList.add('hidden');
+                    }
+                }
+
+                // Fetch updated sidebar counts and known people in background silently
+                fetchPeopleWithCounts(true, true);
                 fetchKnownPeople();
             } else {
                 alert('Failed to reassign faces.');
@@ -2156,6 +2515,144 @@ document.addEventListener('DOMContentLoaded', () => {
             btnReassignSelected.textContent = originalText;
             updateMatchingSelectionUI();
         });
+    }
+
+    // POST rename person to backend API
+    function postRenamePerson(oldName, newName) {
+        if (btnRenamePerson) btnRenamePerson.disabled = true;
+        const originalText = btnRenamePerson.textContent;
+        btnRenamePerson.textContent = '✏️ Renaming...';
+
+        fetch('/api/person/rename', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ old_name: oldName, new_name: newName })
+        })
+        .then(res => {
+            if (!res.ok) throw new Error('Rename operation failed');
+            return res.json();
+        })
+        .then(data => {
+            if (data.success) {
+                // Update selection state to new name
+                activePersonName = newName;
+                lastLoadedPersonName = null;
+                updateURLParams();
+                
+                // Refresh sidebar and known people lists
+                fetchPeopleWithCounts();
+                fetchKnownPeople();
+            } else {
+                alert('Failed to rename person');
+            }
+        })
+        .catch(err => {
+            console.error('Error renaming person:', err);
+            alert('Error renaming person: ' + err.message);
+        })
+        .finally(() => {
+            if (btnRenamePerson) {
+                btnRenamePerson.disabled = false;
+                btnRenamePerson.textContent = originalText;
+            }
+        });
+    }
+
+    function showAutocompletePopup(facesCount, onConfirm) {
+        // Create modal overlay
+        const overlay = document.createElement('div');
+        overlay.style.position = 'fixed';
+        overlay.style.top = '0';
+        overlay.style.left = '0';
+        overlay.style.width = '100vw';
+        overlay.style.height = '100vh';
+        overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.6)';
+        overlay.style.backdropFilter = 'blur(4px)';
+        overlay.style.display = 'flex';
+        overlay.style.justifyContent = 'center';
+        overlay.style.alignItems = 'center';
+        overlay.style.zIndex = '10000';
+
+        // Create modal card
+        const card = document.createElement('div');
+        card.style.backgroundColor = 'var(--bg-secondary)';
+        card.style.border = '1px solid var(--border-color)';
+        card.style.borderRadius = '8px';
+        card.style.padding = '24px';
+        card.style.width = '350px';
+        card.style.boxShadow = '0 10px 25px rgba(0, 0, 0, 0.5)';
+
+        // Title
+        const title = document.createElement('h3');
+        title.style.margin = '0 0 12px 0';
+        title.style.fontSize = '16px';
+        title.style.color = 'var(--text-primary)';
+        title.textContent = `Assign ${facesCount} faces in cluster to:`;
+        card.appendChild(title);
+
+        // Autocomplete Input
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = 'Search or enter name...';
+        input.setAttribute('list', 'people-datalist');
+        input.style.width = '100%';
+        input.style.boxSizing = 'border-box';
+        input.style.padding = '8px 12px';
+        input.style.border = '1px solid var(--border-color)';
+        input.style.borderRadius = '4px';
+        input.style.backgroundColor = 'var(--bg-tertiary)';
+        input.style.color = 'var(--text-primary)';
+        input.style.outline = 'none';
+        input.style.marginBottom = '20px';
+        card.appendChild(input);
+
+        // Button group
+        const btnGroup = document.createElement('div');
+        btnGroup.style.display = 'flex';
+        btnGroup.style.justifyContent = 'flex-end';
+        btnGroup.style.gap = '10px';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'btn btn-secondary';
+        cancelBtn.style.padding = '6px 12px';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', () => {
+            document.body.removeChild(overlay);
+        });
+
+        const confirmBtn = document.createElement('button');
+        confirmBtn.className = 'btn btn-primary';
+        confirmBtn.style.padding = '6px 12px';
+        confirmBtn.textContent = 'Assign';
+        
+        const submitAction = () => {
+            const val = input.value.trim();
+            if (!val) {
+                alert('Name cannot be empty.');
+                input.focus();
+                return;
+            }
+            document.body.removeChild(overlay);
+            onConfirm(val);
+        };
+
+        confirmBtn.addEventListener('click', submitAction);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                submitAction();
+            }
+        });
+
+        btnGroup.appendChild(cancelBtn);
+        btnGroup.appendChild(confirmBtn);
+        card.appendChild(btnGroup);
+        overlay.appendChild(card);
+        document.body.appendChild(overlay);
+
+        // Focus input
+        setTimeout(() => input.focus(), 50);
     }
 
     // Keyboard navigation (Up/Down arrow keys) through visible sidebar entries
@@ -2209,9 +2706,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 e.preventDefault(); // Prevent page scrolling
                 const nextItem = visibleItems[nextIndex];
                 if (nextItem) {
-                    if (mode === 'unmatched' && nextItem.photo) {
+                    if (mode === 'folder-match' && nextItem.photo) {
                         selectPhoto(nextItem.photo.path, nextItem);
-                    } else if (mode === 'face-matching' && nextItem.personName) {
+                    } else if ((mode === 'face-matching' || mode === 'unmatched-faces') && nextItem.personName) {
                         selectPerson(nextItem.personName, nextItem);
                     }
                     nextItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });

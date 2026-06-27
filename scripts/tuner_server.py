@@ -182,6 +182,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/face-matches-unmatched":
             self.handle_get_face_matches_unmatched(query)
             
+        elif path == "/api/unmatched-faces/people":
+            self.handle_get_unmatched_faces_people()
+        elif path == "/api/unmatched-faces/person-matches":
+            self.handle_get_unmatched_faces_person_matches(query)
+            
         else:
             self.send_error(404, "File Not Found")
 
@@ -201,6 +206,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.handle_post_unmatch_bulk()
         elif path == "/api/faces/match-bulk":
             self.handle_post_match_bulk()
+        elif path == "/api/person/rename":
+            self.handle_post_person_rename()
         elif path == "/api/faces/recluster":
             self.handle_post_recluster()
         elif path == "/api/photo/unmatch-all":
@@ -233,7 +240,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_error(500, f"Internal server error: {e}")
 
     def handle_get_photos(self, query):
-        mode = query.get("mode", ["unmatched"])[0]
+        mode = query.get("mode", ["folder-match"])[0]
 
         if not os.path.exists(self.db_path):
             self.send_json([])
@@ -245,7 +252,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             
-            if mode == "unmatched":
+            if mode == "folder-match" or mode == "unmatched":
                 cursor.execute("""
                     SELECT 
                         f.photo_path, 
@@ -827,8 +834,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 
             photo_path, old_name = face_row
             
-            # If name is unchanged, just return success
-            if old_name == person_name:
+            # If name is unchanged (case-insensitive), just return success
+            if old_name and old_name.strip().lower() == person_name.lower():
                 self.send_json({"success": True})
                 return
 
@@ -1737,6 +1744,20 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
+            # Filter out face IDs that are already assigned to person_name in the database (case-insensitive)
+            filtered_face_ids = []
+            for face_id in face_ids:
+                cursor.execute("SELECT name FROM faces WHERE id = ?", (face_id,))
+                row = cursor.fetchone()
+                if row and row[0] and row[0].strip().lower() == person_name.lower():
+                    continue # Already matched, skip
+                filtered_face_ids.append(face_id)
+            
+            face_ids = filtered_face_ids
+            if not face_ids:
+                self.send_json({"success": True})
+                return
+
             photos_to_check = {}
 
             # 1. Fetch photo details for each face_id to check if previous names are unused now
@@ -1838,6 +1859,344 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error(f"Error in handle_post_match_bulk: {e}")
             self.send_error(500, f"Internal error: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+    def handle_post_person_rename(self):
+        conn = None
+        try:
+            try:
+                data = self.read_json_body()
+            except Exception as json_err:
+                self.send_error(400, f"Malformed JSON: {json_err}")
+                return
+
+            old_name = data.get("old_name")
+            new_name = data.get("new_name")
+
+            if not old_name or not new_name:
+                self.send_error(400, "Missing old_name or new_name")
+                return
+
+            old_name = str(old_name).strip()
+            new_name = str(new_name).strip()
+
+            if old_name == new_name:
+                self.send_json({"success": True})
+                return
+
+            if old_name == "Unmatched" or new_name == "Unmatched":
+                self.send_error(400, "Cannot rename to/from 'Unmatched'")
+                return
+
+            if not os.path.exists(self.db_path):
+                self.send_error(404, "Database not found")
+                return
+
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
+            cursor = conn.cursor()
+
+            # 1. Update faces table
+            cursor.execute("UPDATE faces SET name = ? WHERE name = ?", (new_name, old_name))
+            cursor.execute("UPDATE faces SET name = ? WHERE LOWER(name) = LOWER(?)", (new_name, old_name))
+
+            # 2. Find and update all photos containing the old name in their people metadata list
+            cursor.execute("SELECT path, people FROM photos WHERE people LIKE ?", (f"%{old_name}%",))
+            photo_rows = cursor.fetchall()
+
+            for path, people_json in photo_rows:
+                if not people_json:
+                    continue
+                try:
+                    people = json.loads(people_json)
+                except Exception:
+                    continue
+                
+                updated_people = []
+                changed = False
+                for name in people:
+                    if name.strip().lower() == old_name.lower():
+                        if new_name not in updated_people:
+                            updated_people.append(new_name)
+                        changed = True
+                    else:
+                        if name not in updated_people:
+                            updated_people.append(name)
+                
+                if changed and updated_people != people:
+                    cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(updated_people), path))
+
+            conn.commit()
+            self.send_json({"success": True})
+        except Exception as e:
+            logger.error(f"Error in handle_post_person_rename: {e}")
+            self.send_error(500, f"Internal error: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+    def handle_get_unmatched_faces_people(self):
+        if not os.path.exists(self.db_path):
+            self.send_json([])
+            return
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
+            cursor = conn.cursor()
+
+            # 1. Fetch all unmatched faces with their embeddings and people lists
+            cursor.execute("""
+                SELECT f.id, f.photo_path, p.people, f.embedding
+                FROM faces f
+                LEFT JOIN photos p ON p.path = f.photo_path
+                WHERE f.name IS NULL
+            """)
+            unmatched_rows = cursor.fetchall()
+
+            # 2. Fetch matched faces by photo to find already matched names
+            cursor.execute("SELECT photo_path, name FROM faces WHERE name IS NOT NULL")
+            matched_rows = cursor.fetchall()
+            matched_by_photo = {}
+            for p_path, name in matched_rows:
+                if p_path not in matched_by_photo:
+                    matched_by_photo[p_path] = set()
+                matched_by_photo[p_path].add(name)
+
+            # Group candidate faces by unmatched tag
+            tag_candidates = {}
+            unknown_candidates = []
+
+            for r in unmatched_rows:
+                photo_path = r[1]
+                people_json = r[2]
+                emb_bytes = r[3]
+                
+                if not emb_bytes or len(emb_bytes) == 0:
+                    continue
+                
+                emb = np.frombuffer(emb_bytes, dtype=np.float32)
+                norm = np.linalg.norm(emb)
+                if norm > 0:
+                    emb = emb / norm
+                
+                people = []
+                if people_json:
+                    try:
+                        people = json.loads(people_json)
+                    except Exception:
+                        pass
+                
+                matched_names = matched_by_photo.get(photo_path, set())
+                unmatched_tags = [p for p in people if p not in matched_names]
+
+                if unmatched_tags:
+                    for tag in unmatched_tags:
+                        if tag not in tag_candidates:
+                            tag_candidates[tag] = []
+                        tag_candidates[tag].append((photo_path, emb))
+                else:
+                    unknown_candidates.append((photo_path, emb))
+
+            # Filter tags based on unmatched clusters and compute unique photo counts (min_samples=2)
+            tag_photos = {}
+            from sklearn.cluster import DBSCAN
+
+            for tag, candidates in tag_candidates.items():
+                if len(candidates) >= 2:
+                    embs = np.array([c[1] for c in candidates])
+                    db = DBSCAN(eps=0.48, min_samples=2, metric='euclidean', n_jobs=-1)
+                    labels = db.fit_predict(embs)
+                    for idx, label in enumerate(labels):
+                        if label >= 0: # Belongs to a cluster of size >= 2
+                            if tag not in tag_photos:
+                                tag_photos[tag] = set()
+                            tag_photos[tag].add(candidates[idx][0])
+
+            # For Unknown Faces: run DBSCAN with min_samples=2
+            unknown_photos = set()
+            if len(unknown_candidates) >= 2:
+                embs = np.array([c[1] for c in unknown_candidates])
+                db = DBSCAN(eps=0.48, min_samples=2, metric='euclidean', n_jobs=-1)
+                labels = db.fit_predict(embs)
+                for idx, label in enumerate(labels):
+                    if label >= 0:
+                        unknown_photos.add(unknown_candidates[idx][0])
+
+            # Format the counts
+            people_counts = []
+            for tag, photos in tag_photos.items():
+                if len(photos) > 0:
+                    people_counts.append({"name": tag, "count": len(photos)})
+
+            # Sort descending by photo count
+            people_counts.sort(key=lambda x: x["count"], reverse=True)
+            
+            # Put Unknown Faces first
+            if len(unknown_photos) > 0:
+                people_counts.insert(0, {"name": "Unknown Faces", "count": len(unknown_photos)})
+            
+            self.send_json(people_counts)
+        except Exception as e:
+            logger.error(f"Error fetching unmatched faces people: {e}")
+            self.send_error(500, f"Database error: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+    def handle_get_unmatched_faces_person_matches(self, query):
+        name_list = query.get("name")
+        if not name_list:
+            self.send_error(400, "Missing 'name' parameter")
+            return
+        name = urllib.parse.unquote(name_list[0])
+
+        if not os.path.exists(self.db_path):
+            self.send_json({"faces": [], "total_count": 0, "has_more": False})
+            return
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
+            cursor = conn.cursor()
+
+            # 1. Fetch all unmatched faces in database
+            cursor.execute("""
+                SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata, p.people
+                FROM faces f
+                LEFT JOIN photos p ON p.path = f.photo_path
+                WHERE f.name IS NULL
+            """)
+            unmatched_rows = cursor.fetchall()
+            
+            if not unmatched_rows:
+                self.send_json({"faces": [], "total_count": 0, "has_more": False})
+                return
+
+            # 2. Fetch matched faces by photo to find already matched names
+            cursor.execute("SELECT photo_path, name FROM faces WHERE name IS NOT NULL")
+            matched_rows = cursor.fetchall()
+            matched_by_photo = {}
+            for p_path, m_name in matched_rows:
+                if p_path not in matched_by_photo:
+                    matched_by_photo[p_path] = set()
+                matched_by_photo[p_path].add(m_name)
+
+            # Filter candidate faces based on 'name'
+            candidate_rows = []
+            for r in unmatched_rows:
+                photo_path = r[1]
+                people_json = r[7]
+                
+                # Parse photo people tags
+                people = []
+                if people_json:
+                    try:
+                        people = json.loads(people_json)
+                    except Exception:
+                        pass
+                
+                matched_names = matched_by_photo.get(photo_path, set())
+                unmatched_tags = [p for p in people if p not in matched_names]
+
+                if name == "Unknown Faces":
+                    # Photos with no unmatched tags
+                    if not unmatched_tags:
+                        candidate_rows.append(r)
+                else:
+                    # Photos where 'name' is an unmatched tag
+                    if name in unmatched_tags:
+                        candidate_rows.append(r)
+
+            if not candidate_rows:
+                self.send_json({"faces": [], "total_count": 0, "has_more": False})
+                return
+
+            # Extract embeddings
+            valid_rows = []
+            embs = []
+            for r in candidate_rows:
+                if r[5] and len(r[5]) > 0:
+                    emb = np.frombuffer(r[5], dtype=np.float32)
+                    norm = np.linalg.norm(emb)
+                    embs.append(emb / norm if norm > 0 else emb)
+                    valid_rows.append(r)
+
+            if not embs:
+                self.send_json({"faces": [], "total_count": 0, "has_more": False})
+                return
+
+            embs = np.array(embs)
+
+            # Run DBSCAN on the candidate embeddings to group them into clusters (min_samples=2)
+            from sklearn.cluster import DBSCAN
+            db = DBSCAN(eps=0.48, min_samples=2, metric='euclidean', n_jobs=-1)
+            labels = db.fit_predict(embs)
+
+            # Group faces by cluster label (discard noise label == -1)
+            cluster_groups = {}
+            for idx, label in enumerate(labels):
+                if label == -1:
+                    continue # Discard noise
+                if label not in cluster_groups:
+                    cluster_groups[label] = []
+                cluster_groups[label].append(idx)
+
+            # Sort cluster groups by size descending
+            sorted_labels = sorted(cluster_groups.keys(), key=lambda l: len(cluster_groups[l]), reverse=True)
+
+            faces = []
+            for cluster_idx, label in enumerate(sorted_labels):
+                indices = cluster_groups[label]
+                cluster_name = f"Cluster {cluster_idx + 1}"
+                
+                # Compute the centroid of this cluster to get similarities
+                cluster_embs = embs[indices]
+                cluster_centroid = np.mean(cluster_embs, axis=0)
+                cnorm = np.linalg.norm(cluster_centroid)
+                if cnorm > 0:
+                    cluster_centroid /= cnorm
+                cluster_sims = np.dot(cluster_embs, cluster_centroid)
+
+                for local_idx, global_idx in enumerate(indices):
+                    r = valid_rows[global_idx]
+                    similarity = float(cluster_sims[local_idx])
+                    
+                    try:
+                        box = json.loads(r[2]) if r[2] else []
+                    except Exception:
+                        box = []
+                        
+                    year = get_year_from_mtime_or_meta(r[4], r[6], r[1])
+                    faces.append({
+                        "id": r[0],
+                        "photo_path": r[1],
+                        "filename": os.path.basename(r[1]),
+                        "box": box,
+                        "prob": r[3],
+                        "mtime": r[4] if r[4] is not None else 0.0,
+                        "year": year,
+                        "similarity": similarity,
+                        "cluster_id": int(label),
+                        "cluster_name": cluster_name
+                    })
+
+            # Sort by similarity descending
+            faces.sort(key=lambda x: x["similarity"], reverse=True)
+
+            self.send_json({
+                "faces": faces,
+                "total_count": len(faces),
+                "has_more": False,
+                "page": 1,
+                "limit": -1
+            })
+
+        except Exception as e:
+            logger.error(f"Error fetching unmatched faces person matches: {e}")
+            self.send_error(500, f"Database error: {e}")
         finally:
             if conn:
                 conn.close()
