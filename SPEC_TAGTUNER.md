@@ -41,6 +41,26 @@ This document records the design, specifications, prerequisites, and instruction
 - Inside the details panel, the detected faces grid is sorted with **already matched faces at the top**, followed by unmatched faces.
 - Within both groups, faces are sorted descending by their computed maximum similarity/correlation to known identities in the database.
 
+### 4. Folder View and Thumbnail Selection Actions
+- **Thumbnail Grid Selections**:
+  - Supports standard checkbox check toggles and select all/none actions.
+  - **Contiguous Range Selection (Shift-Click)**: Holding `Shift` while clicking a card or checkbox selects a continuous range of photos between the current target and the last-clicked path.
+- **Date Taken Range**:
+  - Displays the Date Taken range for multiple selections in the sidebar, showing the chronological minimum and maximum timestamps. Smart Date-Time formatting simplifies display.
+- **Smart Renaming & Cycle Eviction**:
+  - Automatically renames selected photos sequentially based on a `[Grouping] - [Index] - [Caption].[Ext]` pattern.
+  - Pads sequence indices dynamically based on the selection size: 1 digit for <10 items, 2 for <100, up to 4 for 1000+ items.
+  - If a renaming destination is occupied by an external file (not in the selection), it is automatically evicted to a unique conflict filename (`{Name}_conflict_{Counter}.ext`).
+  - Utilizes a cycle-safe two-pass renaming sequence (using temp paths) to avoid self-overwrite overlaps.
+  - Stamps the original filename in `XMP-xmpMM:PreservedFileName` metadata.
+  - Auto-renames files on disk when their Title is edited if they contain a preserved original filename.
+- **Inline Title Renaming**:
+  - Allows renaming photo captions directly inside the grid by clicking on the filename (marked by dotted underlines). Pressing `Enter` or blurring saves the title, and `Escape` cancels editing.
+- **Thumbnail Sizes**:
+  - Segment buttons toggle grid sizes between **Small**, **Medium** (Default), and **Large** (preferences are saved in `localStorage`).
+- **Camera Time Shift Highlights**:
+  - Toggles a clock panel (`⏰`) to shift timestamps on camera models recursively. Toggles visual dashed highlights on cards matching the selected model.
+
 ## Backend APIs
 
 ### `GET` Endpoints

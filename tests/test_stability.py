@@ -721,5 +721,251 @@ class TestStability(unittest.TestCase):
             self.assertFalse(data["success"])
             self.assertIn("already tagged on another face", data["error"])
 
+    def test_api_folder_time_shift(self):
+        import tempfile
+        import shutil
+        from PIL import Image
+        import tuner_server
+        
+        temp_dir = tempfile.mkdtemp()
+        img_path = os.path.join(temp_dir, "test_shift.jpg")
+        img = Image.new("RGB", (10, 10), color="blue")
+        img.save(img_path, "JPEG")
+        
+        tuner_server.TunerHTTPRequestHandler.folder_cache[temp_dir] = {
+            img_path: {
+                "path": img_path,
+                "raw_metadata": {
+                    "EXIF:Model": "Test Camera", 
+                    "EXIF:DateTimeOriginal": "2026:01:01 12:00:00",
+                    "EXIF:CreateDate": "2026:01:01 12:00:00"
+                }
+            }
+        }
+        
+        url = f"http://127.0.0.1:{self.TEST_PORT}/api/folder/time-shift"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({
+                "folder_path": temp_dir,
+                "camera_model": "Test Camera",
+                "shift_minutes": 30
+            }).encode('utf-8'),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        
+        try:
+            response = urllib.request.urlopen(req)
+            data = json.loads(response.read().decode('utf-8'))
+            self.assertTrue(data["success"])
+            self.assertIn("updated_photos", data)
+        except Exception as e:
+            shutil.rmtree(temp_dir)
+            self.fail(f"Time shift API request failed: {e}")
+            
+        shutil.rmtree(temp_dir)
+
+    def test_build_photo_ui_record(self):
+        from metadata import build_photo_ui_record
+        dummy_meta = {
+            "tags": ["A", "B"],
+            "people": ["Alice"],
+            "captions": ["Caption 1"],
+            "raw_metadata": {"EXIF:DateTimeOriginal": "2026:05:27 12:34:56"}
+        }
+        res = build_photo_ui_record("C:/path/to/my_photo.jpg", dummy_meta, mtime=123.45, size=999)
+        self.assertEqual(res["filename"], "my_photo.jpg")
+        self.assertEqual(res["year"], "2026")
+        self.assertEqual(res["title"], "Caption 1")
+        self.assertEqual(res["mtime"], 123.45)
+        self.assertEqual(res["size"], 999)
+        self.assertEqual(res["tags"], ["A", "B"])
+
+    def test_rotate_image_file_direction_validation(self):
+        import tempfile
+        import shutil
+        from PIL import Image
+        from metadata import rotate_image_file
+        
+        temp_dir = tempfile.mkdtemp()
+        img_path = os.path.join(temp_dir, "test_rotate.jpg")
+        
+        # Create an asymmetrical image: 10 wide, 20 high
+        img = Image.new("RGB", (10, 20), color="red")
+        img.save(img_path, "JPEG")
+        
+        # Rotate left (counter-clockwise) -> should become 20 wide, 10 high
+        rotate_image_file(img_path, "left")
+        with Image.open(img_path) as rotated:
+            self.assertEqual(rotated.size, (20, 10), "Rotating left should swap dimensions")
+            
+        # Rotate right (clockwise) -> should become 10 wide, 20 high again
+        rotate_image_file(img_path, "right")
+        with Image.open(img_path) as rotated:
+            self.assertEqual(rotated.size, (10, 20), "Rotating right should swap dimensions back")
+            
+        shutil.rmtree(temp_dir)
+
+    def test_hierarchical_tags_cleaning(self):
+        from metadata import extract_tags
+        dummy_meta = {
+            "XMP:Subject": ["Family/John Doe", "John Doe", "Family", "Nature"],
+            "XMP:HierarchicalSubject": ["Family/John Doe"]
+        }
+        res = extract_tags(dummy_meta)
+        self.assertIn("Family/John Doe", res)
+        self.assertIn("Nature", res)
+        self.assertNotIn("John Doe", res, "Should hide redundant leaf component tag")
+        self.assertNotIn("Family", res, "Should hide redundant parent component tag")
+
+    def test_api_folder_rename_photos(self):
+        import tempfile
+        import shutil
+        from PIL import Image
+        
+        temp_dir = tempfile.mkdtemp().replace("\\", "/")
+        try:
+            p1 = os.path.join(temp_dir, "file_A.jpg").replace("\\", "/")
+            p2 = os.path.join(temp_dir, "file_B.jpg").replace("\\", "/")
+            
+            im = Image.new("RGB", (10, 10), "blue")
+            im.save(p1)
+            im.save(p2)
+            
+            conn = sqlite3.connect(self.TEST_DB_PATH)
+            c = conn.cursor()
+            c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (p1, 2000.0, 100, "[]", "[]", "[]", json.dumps({"EXIF:DateTimeOriginal": "2026:06:27 12:00:00"})))
+            c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (p2, 1000.0, 100, "[]", "[]", "[]", json.dumps({"EXIF:DateTimeOriginal": "2026:06:27 11:00:00"})))
+            conn.commit()
+            conn.close()
+            
+            from metadata import build_photo_ui_record
+            TunerHTTPRequestHandler.folder_cache[temp_dir] = {
+                p1: build_photo_ui_record(p1, {"path": p1, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 12:00:00"}}, 2000.0, 100),
+                p2: build_photo_ui_record(p2, {"path": p2, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 11:00:00"}}, 1000.0, 100)
+            }
+            
+            url = f"http://127.0.0.1:{self.TEST_PORT}/api/folder/rename-photos"
+            req = urllib.request.Request(
+                url,
+                data=json.dumps({
+                    "folder_path": temp_dir,
+                    "photo_paths": [p1, p2],
+                    "grouping": "TestGroup"
+                }).encode('utf-8'),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            response = urllib.request.urlopen(req)
+            data = json.loads(response.read().decode('utf-8'))
+            
+            self.assertTrue(data["success"])
+            
+            expected_p2_new = os.path.join(temp_dir, "TestGroup - 1.jpg").replace("\\", "/")
+            expected_p1_new = os.path.join(temp_dir, "TestGroup - 2.jpg").replace("\\", "/")
+            
+            self.assertTrue(os.path.exists(expected_p2_new))
+            self.assertTrue(os.path.exists(expected_p1_new))
+            self.assertFalse(os.path.exists(p1))
+            self.assertFalse(os.path.exists(p2))
+            
+            conn = sqlite3.connect(self.TEST_DB_PATH)
+            c = conn.cursor()
+            c.execute("SELECT path FROM photos")
+            db_paths = [r[0].replace("\\", "/") for r in c.fetchall()]
+            conn.close()
+            
+            self.assertIn(expected_p1_new, db_paths)
+            self.assertIn(expected_p2_new, db_paths)
+            
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_api_folder_rename_photos_conflict_resolution(self):
+        import tempfile
+        import shutil
+        from PIL import Image
+        
+        temp_dir = tempfile.mkdtemp().replace("\\", "/")
+        try:
+            # Create two selected files
+            p1 = os.path.join(temp_dir, "file_A.jpg").replace("\\", "/")
+            p2 = os.path.join(temp_dir, "file_B.jpg").replace("\\", "/")
+            # Create conflicting file occupant (this one is NOT in our renaming selection)
+            p_conflict = os.path.join(temp_dir, "TestGroup - 1.jpg").replace("\\", "/")
+            
+            im = Image.new("RGB", (10, 10), "blue")
+            im.save(p1)
+            im.save(p2)
+            im.save(p_conflict)
+            
+            # Setup DB record cache
+            conn = sqlite3.connect(self.TEST_DB_PATH)
+            c = conn.cursor()
+            c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (p1, 2000.0, 100, "[]", "[]", "[]", json.dumps({"EXIF:DateTimeOriginal": "2026:06:27 12:00:00"})))
+            c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (p2, 1000.0, 100, "[]", "[]", "[]", json.dumps({"EXIF:DateTimeOriginal": "2026:06:27 11:00:00"})))
+            c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (p_conflict, 500.0, 100, "[]", "[]", "[]", json.dumps({})))
+            conn.commit()
+            conn.close()
+            
+            # Pre-populate server cache
+            from metadata import build_photo_ui_record
+            TunerHTTPRequestHandler.folder_cache[temp_dir] = {
+                p1: build_photo_ui_record(p1, {"path": p1, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 12:00:00"}}, 2000.0, 100),
+                p2: build_photo_ui_record(p2, {"path": p2, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 11:00:00"}}, 1000.0, 100),
+                p_conflict: build_photo_ui_record(p_conflict, {"path": p_conflict, "raw_metadata": {}}, 500.0, 100)
+            }
+            
+            # Trigger renaming POST request
+            url = f"http://127.0.0.1:{self.TEST_PORT}/api/folder/rename-photos"
+            req = urllib.request.Request(
+                url,
+                data=json.dumps({
+                    "folder_path": temp_dir,
+                    "photo_paths": [p1, p2],
+                    "grouping": "TestGroup"
+                }).encode('utf-8'),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            response = urllib.request.urlopen(req)
+            data = json.loads(response.read().decode('utf-8'))
+            
+            self.assertTrue(data["success"])
+            
+            # Check targets were successfully created
+            expected_p2_new = os.path.join(temp_dir, "TestGroup - 1.jpg").replace("\\", "/")
+            expected_p1_new = os.path.join(temp_dir, "TestGroup - 2.jpg").replace("\\", "/")
+            expected_conflict_new = os.path.join(temp_dir, "TestGroup - 1_conflict_1.jpg").replace("\\", "/")
+            
+            self.assertTrue(os.path.exists(expected_p2_new), f"Should have created {expected_p2_new}")
+            self.assertTrue(os.path.exists(expected_p1_new), f"Should have created {expected_p1_new}")
+            self.assertTrue(os.path.exists(expected_conflict_new), f"Should have moved conflicting occupant to {expected_conflict_new}")
+            
+            # Verify original selected files and old conflict files are gone from their old paths
+            self.assertFalse(os.path.exists(p1))
+            self.assertFalse(os.path.exists(p2))
+            # Note that p_conflict old path was occupied by expected_p2_new, so the old path now has the new file content.
+            
+            # Verify DB paths
+            conn = sqlite3.connect(self.TEST_DB_PATH)
+            c = conn.cursor()
+            c.execute("SELECT path FROM photos")
+            db_paths = [r[0].replace("\\", "/") for r in c.fetchall()]
+            conn.close()
+            
+            self.assertIn(expected_p1_new, db_paths)
+            self.assertIn(expected_p2_new, db_paths)
+            self.assertIn(expected_conflict_new, db_paths)
+            
+        finally:
+            shutil.rmtree(temp_dir)
+
 if __name__ == "__main__":
     unittest.main()
