@@ -107,6 +107,20 @@ class PhotoIndex:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_faces_name ON faces(name)
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tag_taxonomy (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tag TEXT UNIQUE,
+                parent_id INTEGER,
+                name TEXT,
+                is_people INTEGER DEFAULT 0,
+                hidden_from_autocomplete INTEGER DEFAULT 0,
+                FOREIGN KEY(parent_id) REFERENCES tag_taxonomy(id) ON DELETE CASCADE
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_tag_taxonomy_tag ON tag_taxonomy(tag)
+        """)
         self.conn.commit()
 
     def load(self) -> bool:
@@ -409,7 +423,7 @@ class PhotoIndex:
                 except Exception:
                     raw_meta = {}
                     tags = []
-                orig_people = extract_people(raw_meta, tags)
+                orig_people = extract_people(raw_meta, tags, db_path=self.db_path)
                 updates.append((json.dumps(orig_people), path))
                 
             if updates:

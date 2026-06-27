@@ -1297,3 +1297,218 @@ body {
 .hidden {
     display: none !important;
 }
+
+/* Modal overlay classes */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(9, 13, 22, 0.85);
+    backdrop-filter: blur(8px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.modal-overlay.active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.modal-container {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    transform: scale(0.97);
+    transition: transform 0.2s ease;
+}
+
+.modal-overlay.active .modal-container {
+    transform: scale(1);
+}
+
+.modal-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h2 {
+    font-family: var(--font-heading);
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0;
+}
+
+.modal-close-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 24px;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.modal-close-btn:hover {
+    color: var(--text-primary);
+}
+
+.modal-body {
+    padding: 24px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.modal-footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+/* Tree taxonomy custom styling */
+.taxonomy-controls {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.taxonomy-search-input {
+    flex: 1;
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-family: var(--font-body);
+    outline: none;
+}
+
+.taxonomy-search-input:focus {
+    border-color: var(--accent);
+}
+
+.taxonomy-tree-list {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+.taxonomy-node {
+    margin: 6px 0;
+}
+
+.taxonomy-node-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid transparent;
+    transition: background-color 0.2s, border-color 0.2s;
+}
+
+.taxonomy-node-content:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+    border-color: var(--border-color);
+}
+
+.taxonomy-node-expander {
+    cursor: pointer;
+    font-size: 12px;
+    width: 16px;
+    display: inline-flex;
+    justify-content: center;
+    color: var(--text-muted);
+    user-select: none;
+}
+
+.taxonomy-node-name {
+    font-weight: 500;
+    flex: 1;
+}
+
+.taxonomy-node-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-right: 8px;
+}
+
+.taxonomy-node-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.taxonomy-node-badge {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+}
+
+.badge-people {
+    background-color: rgba(99, 102, 241, 0.15);
+    color: #a5b4fc;
+}
+
+.badge-hidden {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #fca5a5;
+}
+
+.taxonomy-sublist {
+    list-style-type: none;
+    padding-left: 20px;
+    border-left: 1px dashed var(--border-color);
+    margin-left: 7px;
+}
+
+.taxonomy-sublist.hidden {
+    display: none;
+}
+
+/* Radio placement option styling */
+.placement-options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 16px 0;
+}
+
+.placement-option-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-color);
+    padding: 12px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.2s, border-color 0.2s;
+    font-size: 14px;
+}
+
+.placement-option-label:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+.placement-option-label input[type="radio"]:checked + span {
+    color: #a5b4fc;
+    font-weight: 600;
+}

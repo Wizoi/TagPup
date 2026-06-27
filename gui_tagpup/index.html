@@ -17,6 +17,9 @@
                 <span class="logo-icon">🐶</span>
                 <h1>TagPup GUI</h1>
             </div>
+            <div class="header-actions" style="margin-left: auto; margin-right: 20px;">
+                <button id="btn-manage-taxonomy" class="btn btn-secondary" style="display: flex; align-items: center; gap: 8px;">🏷️ Manage Tags Tree</button>
+            </div>
             <div class="header-status">
                 <span class="status-indicator-dot" id="status-dot"></span>
                 <span class="status-text" id="status-text">Ready</span>
@@ -319,6 +322,28 @@
     <datalist id="people-datalist"></datalist>
     <datalist id="tags-datalist"></datalist>
     <datalist id="folder-datalist"></datalist>
+
+    <!-- Taxonomy Manager Modal -->
+    <div id="taxonomy-modal" class="modal-overlay">
+        <div class="modal-container" style="max-width: 650px;">
+            <div class="modal-header">
+                <h2>Tags Taxonomy Tree Manager</h2>
+                <button class="modal-close-btn" id="btn-close-taxonomy">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="taxonomy-controls">
+                    <input type="text" id="taxonomy-search-input" placeholder="Search taxonomy tags..." class="taxonomy-search-input">
+                    <button id="btn-taxonomy-add-root" class="btn btn-primary">➕ Add Root Category</button>
+                </div>
+                <div id="taxonomy-tree-container" style="min-height: 200px; max-height: 50vh; overflow-y: auto; padding: 10px; background: rgba(0,0,0,0.15); border-radius: 8px;">
+                    <!-- Tree will render dynamically here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-close-taxonomy-footer">Close</button>
+            </div>
+        </div>
+    </div>
     
     <script src="app.js"></script>
 </body>

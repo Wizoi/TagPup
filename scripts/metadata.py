@@ -1,7 +1,7 @@
 # metadata.py
 import os
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 import exiftool
 
 logger = logging.getLogger("tagpup_cli.metadata")
@@ -113,8 +113,29 @@ def extract_tags(meta: Dict[str, Any]) -> List[str]:
             
     return cleaned_tags
 
-def extract_people(meta: Dict[str, Any], tags: List[str]) -> List[str]:
-    """Extract people tags from PersonInImage or RegionName, and also from hierarchical tags starting with Family/ or Friends/."""
+def get_people_roots(db_path: Optional[str] = None) -> Set[str]:
+    """Retrieve lowercase names of all root categories marked as People from database."""
+    roots = {"family", "friends", "people"}  # Default fallbacks
+    if not db_path:
+        db_path = "data/photo_index.db"
+    if db_path and os.path.exists(db_path):
+        try:
+            import sqlite3
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
+            if cursor.fetchone():
+                cursor.execute("SELECT name FROM tag_taxonomy WHERE (parent_id IS NULL OR tag NOT LIKE '%/%') AND is_people = 1")
+                for row in cursor.fetchall():
+                    if row[0]:
+                        roots.add(row[0].lower().strip())
+            conn.close()
+        except Exception:
+            pass
+    return roots
+
+def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str] = None) -> List[str]:
+    """Extract people tags from PersonInImage or RegionName, and also from hierarchical tags starting with People/ or custom designated categories."""
     people = []
     for key in ["XMP:PersonInImage", "PersonInImage", "XMP:RegionName", "RegionName"]:
         val = meta.get(key)
@@ -124,13 +145,15 @@ def extract_people(meta: Dict[str, Any], tags: List[str]) -> List[str]:
             else:
                 people.append(str(val).strip())
                 
-    # Extract person name from hierarchical tags starting with Family or Friends
+    people_roots = get_people_roots(db_path)
+    
+    # Extract person name from hierarchical tags starting with any people roots
     for tag in tags:
         normalized = tag.replace("|", "/").replace("\\", "/")
         parts = [p.strip() for p in normalized.split("/") if p.strip()]
         if len(parts) >= 2:
             root = parts[0].lower()
-            if root in ["family", "friends"]:
+            if root in people_roots:
                 # The leaf node of the tag path is the name of the person
                 people.append(parts[-1])
                 
@@ -159,7 +182,7 @@ class MetadataExtractor:
     def __init__(self, exiftool_path: Optional[str] = None):
         self.exiftool_path = exiftool_path
 
-    def batch_read(self, file_paths: List[str]) -> List[Dict[str, Any]]:
+    def batch_read(self, file_paths: List[str], db_path: Optional[str] = None) -> List[Dict[str, Any]]:
         """Read metadata for a batch of files using pyexiftool."""
         if not file_paths:
             return []
@@ -193,7 +216,7 @@ class MetadataExtractor:
                     
                     # Extract high-level aggregated lists
                     tags = extract_tags(cleaned)
-                    people = extract_people(cleaned, tags)
+                    people = extract_people(cleaned, tags, db_path=db_path)
                     captions = extract_captions(cleaned)
                     
                     # Retrieve file stats for change detection

@@ -54,8 +54,13 @@ def main():
     db_path = os.path.join(data_dir, "photo_index.db")
     
     if not os.path.exists(db_path):
-        logger.error(f"Database not found at {db_path}! Please run 'python tagpup_cli.py index <dir>' first to index your photos.")
-        sys.exit(1)
+        logger.info(f"Database not found at {db_path}. Initializing empty database with default categories...")
+        from index import PhotoIndex
+        from taxonomy import seed_taxonomy_from_db
+        photo_index = PhotoIndex(db_path=db_path)
+        photo_index.load()
+        seed_taxonomy_from_db(db_path)
+        logger.info("Database initialized successfully.")
         
     port = find_available_port(8090)
     url = f"http://localhost:{port}/"

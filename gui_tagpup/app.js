@@ -104,6 +104,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let progressTimer = null;
     let knownTags = [];
     let knownPeople = [];
+    let taxonomyNodes = [];
     
     // Abort controller for scan fetches
     let scanAbortController = null;
@@ -331,22 +332,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Dynamic Autocomplete loaders
     function fetchKnownTagsAndPeople() {
-        fetch('/api/tags')
-            .then(res => res.json())
-            .then(data => {
-                knownTags = data;
-                updateTagsDatalist();
-                updatePeopleDatalist();
-            })
-            .catch(err => console.error("Error loading tags taxonomy:", err));
+        loadTaxonomy().then(() => {
+            fetch('/api/tags')
+                .then(res => res.json())
+                .then(data => {
+                    knownTags = data;
+                    updateTagsDatalist();
+                    updatePeopleDatalist();
+                })
+                .catch(err => console.error("Error loading tags taxonomy:", err));
 
-        fetch('/api/people')
-            .then(res => res.json())
-            .then(data => {
-                knownPeople = data;
-                updatePeopleDatalist();
-            })
-            .catch(err => console.error("Error loading database people:", err));
+            fetch('/api/people')
+                .then(res => res.json())
+                .then(data => {
+                    knownPeople = data;
+                    updatePeopleDatalist();
+                })
+                .catch(err => console.error("Error loading database people:", err));
+        }).catch(err => console.error("Error loading taxonomy tree:", err));
     }
 
     function isPersonTag(tag) {
@@ -1430,7 +1433,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function saveSingleAddPerson() {
+    async function saveSingleAddPerson() {
         const path = activePhotoPath;
         if (!path) return;
         
@@ -1440,8 +1443,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const photo = folderPhotos.find(p => p.path === path);
         if (!photo) return;
 
-        const newPeople = newPersonVal.split(',').map(t => t.trim()).filter(t => t);
-        const updatedTags = Array.from(new Set([...photo.tags, ...newPeople]));
+        const inputPeople = newPersonVal.split(',').map(t => t.trim()).filter(t => t);
+        const resolvedPeople = [];
+        
+        for (const p of inputPeople) {
+            const resolved = await resolveTagOrPerson(p, true);
+            if (resolved) {
+                resolvedPeople.push(resolved);
+            }
+        }
+        
+        if (resolvedPeople.length === 0) return;
+
+        const updatedTags = Array.from(new Set([...photo.tags, ...resolvedPeople]));
 
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Adding person...';
@@ -1456,9 +1470,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.success) {
                 photo.tags = updatedTags;
                 
-                // Add to photo's memory people list to preserve frontend grouping
                 if (!photo.people) photo.people = [];
-                newPeople.forEach(p => {
+                resolvedPeople.forEach(p => {
                     const leaf = p.includes('/') ? p.split('/').pop().trim() : p;
                     if (!photo.people.includes(leaf)) photo.people.push(leaf);
                 });
@@ -1480,7 +1493,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function saveSingleAddTag() {
+    async function saveSingleAddTag() {
         const path = activePhotoPath;
         if (!path) return;
         
@@ -1490,8 +1503,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const photo = folderPhotos.find(p => p.path === path);
         if (!photo) return;
 
-        const newTags = newTagVal.split(',').map(t => t.trim()).filter(t => t);
-        const updatedTags = Array.from(new Set([...photo.tags, ...newTags]));
+        const inputTags = newTagVal.split(',').map(t => t.trim()).filter(t => t);
+        const resolvedTags = [];
+        for (const t of inputTags) {
+            const resolved = await resolveTagOrPerson(t, false);
+            if (resolved) {
+                resolvedTags.push(resolved);
+            }
+        }
+        
+        if (resolvedTags.length === 0) return;
+
+        const updatedTags = Array.from(new Set([...photo.tags, ...resolvedTags]));
 
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Adding tag...';
@@ -1866,7 +1889,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Bulk Editing operations
-    function bulkAddPeopleToSelection() {
+    async function bulkAddPeopleToSelection() {
         if (selectedThumbnails.length === 0) return;
         const val = bulkAddPeopleInput.value.trim();
         if (!val) return;
@@ -1874,25 +1897,34 @@ document.addEventListener('DOMContentLoaded', () => {
         const peopleList = val.split(',').map(p => p.trim()).filter(p => p);
         if (peopleList.length === 0) return;
 
+        const resolvedPeople = [];
+        for (const p of peopleList) {
+            const resolved = await resolveTagOrPerson(p, true);
+            if (resolved) {
+                resolvedPeople.push(resolved);
+            }
+        }
+        if (resolvedPeople.length === 0) return;
+
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Adding people...';
 
         fetch('/api/photos/bulk-tags', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: selectedThumbnails, add_tags: peopleList, remove_tags: [] })
+            body: JSON.stringify({ paths: selectedThumbnails, add_tags: resolvedPeople, remove_tags: [] })
         })
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                // Update tags & people in cache
                 selectedThumbnails.forEach(path => {
                     const photo = folderPhotos.find(p => p.path === path);
                     if (photo) {
                         if (!photo.people) photo.people = [];
-                        peopleList.forEach(p => {
+                        resolvedPeople.forEach(p => {
                             if (!photo.tags.includes(p)) photo.tags.push(p);
-                            if (!photo.people.includes(p)) photo.people.push(p);
+                            const leaf = p.includes('/') ? p.split('/').pop().trim() : p;
+                            if (!photo.people.includes(leaf)) photo.people.push(leaf);
                         });
                     }
                 });
@@ -1918,7 +1950,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function bulkAddTagsToSelection() {
+    async function bulkAddTagsToSelection() {
         if (selectedThumbnails.length === 0) return;
         const val = bulkAddTagsInput.value.trim();
         if (!val) return;
@@ -1926,22 +1958,30 @@ document.addEventListener('DOMContentLoaded', () => {
         const tagsList = val.split(',').map(t => t.trim()).filter(t => t);
         if (tagsList.length === 0) return;
 
+        const resolvedTags = [];
+        for (const t of tagsList) {
+            const resolved = await resolveTagOrPerson(t, false);
+            if (resolved) {
+                resolvedTags.push(resolved);
+            }
+        }
+        if (resolvedTags.length === 0) return;
+
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Adding tags...';
 
         fetch('/api/photos/bulk-tags', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: selectedThumbnails, add_tags: tagsList, remove_tags: [] })
+            body: JSON.stringify({ paths: selectedThumbnails, add_tags: resolvedTags, remove_tags: [] })
         })
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                // Update tags in cache
                 selectedThumbnails.forEach(path => {
                     const photo = folderPhotos.find(p => p.path === path);
                     if (photo) {
-                        tagsList.forEach(t => {
+                        resolvedTags.forEach(t => {
                             if (!photo.tags.includes(t)) photo.tags.push(t);
                         });
                     }
@@ -2286,5 +2326,708 @@ document.addEventListener('DOMContentLoaded', () => {
                 card.classList.remove('timeshift-highlighted');
             }
         });
+    }
+
+    // Taxonomy Tree Manager Controls & Resolution Dialogs
+    const btnManageTaxonomy = document.getElementById('btn-manage-taxonomy');
+    const taxonomyModal = document.getElementById('taxonomy-modal');
+    const btnCloseTaxonomy = document.getElementById('btn-close-taxonomy');
+    const btnCloseTaxonomyFooter = document.getElementById('btn-close-taxonomy-footer');
+    const btnTaxonomyAddRoot = document.getElementById('btn-taxonomy-add-root');
+    const taxonomySearchInput = document.getElementById('taxonomy-search-input');
+    
+    if (btnManageTaxonomy && taxonomyModal) {
+        btnManageTaxonomy.addEventListener('click', () => {
+            taxonomyModal.classList.add('active');
+            renderTaxonomyTree();
+        });
+        
+        const closeTaxonomy = () => {
+            taxonomyModal.classList.remove('active');
+        };
+        
+        btnCloseTaxonomy.addEventListener('click', closeTaxonomy);
+        btnCloseTaxonomyFooter.addEventListener('click', closeTaxonomy);
+        
+        btnTaxonomyAddRoot.addEventListener('click', () => {
+            const name = prompt("Enter name of new root category:");
+            if (name && name.trim()) {
+                const isPeople = confirm(`Is "${name}" a category for People?`);
+                createTaxonomyNode(name.trim(), null, isPeople ? 1 : 0);
+            }
+        });
+        
+        taxonomySearchInput.addEventListener('input', () => {
+            renderTaxonomyTree();
+        });
+    }
+
+    function loadTaxonomy() {
+        return fetch('/api/taxonomy/tree')
+            .then(res => res.json())
+            .then(data => {
+                taxonomyNodes = data;
+            });
+    }
+
+    function renderTaxonomyTree() {
+        const container = document.getElementById('taxonomy-tree-container');
+        if (!container) return;
+        const searchVal = taxonomySearchInput.value.toLowerCase().trim();
+        container.innerHTML = '';
+        
+        const nodesById = {};
+        taxonomyNodes.forEach(node => {
+            nodesById[node.id] = { ...node, children: [] };
+        });
+        
+        const roots = [];
+        Object.values(nodesById).forEach(node => {
+            if (node.parent_id === null) {
+                roots.push(node);
+            } else {
+                const parent = nodesById[node.parent_id];
+                if (parent) {
+                    parent.children.push(node);
+                } else {
+                    roots.push(node);
+                }
+            }
+        });
+        
+        function matchesSearch(node) {
+            if (!searchVal) return true;
+            if (node.tag.toLowerCase().includes(searchVal)) return true;
+            return node.children.some(child => matchesSearch(child));
+        }
+        
+        const filteredRoots = roots.filter(matchesSearch);
+        
+        if (filteredRoots.length === 0) {
+            container.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 20px;">No tags match your search or taxonomy is empty.</div>';
+            return;
+        }
+        
+        const ul = document.createElement('ul');
+        ul.className = 'taxonomy-tree-list';
+        
+        filteredRoots.forEach(root => {
+            ul.appendChild(createNodeElement(root, nodesById));
+        });
+        
+        container.appendChild(ul);
+    }
+
+    function createNodeElement(node, nodesById) {
+        const li = document.createElement('li');
+        li.className = 'taxonomy-node';
+        li.setAttribute('data-id', node.id);
+        
+        const content = document.createElement('div');
+        content.className = 'taxonomy-node-content';
+        
+        const expander = document.createElement('span');
+        expander.className = 'taxonomy-node-expander';
+        if (node.children && node.children.length > 0) {
+            expander.textContent = '▶';
+            expander.onclick = (e) => {
+                e.stopPropagation();
+                const sublist = li.querySelector('.taxonomy-sublist');
+                if (sublist) {
+                    if (sublist.classList.contains('hidden')) {
+                        sublist.classList.remove('hidden');
+                        expander.textContent = '▼';
+                    } else {
+                        sublist.classList.add('hidden');
+                        expander.textContent = '▶';
+                    }
+                }
+            };
+        } else {
+            expander.textContent = '•';
+            expander.style.cursor = 'default';
+        }
+        content.appendChild(expander);
+        
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'taxonomy-node-name';
+        nameSpan.textContent = node.name;
+        content.appendChild(nameSpan);
+        
+        const metaSpan = document.createElement('span');
+        metaSpan.className = 'taxonomy-node-meta';
+        metaSpan.textContent = `${node.usage_count} ${node.usage_count === 1 ? 'img' : 'imgs'}`;
+        content.appendChild(metaSpan);
+        
+        const actions = document.createElement('div');
+        actions.className = 'taxonomy-node-actions';
+        
+        if (node.parent_id === null) {
+            const peopleLabel = document.createElement('label');
+            peopleLabel.style.display = 'inline-flex';
+            peopleLabel.style.alignItems = 'center';
+            peopleLabel.style.gap = '4px';
+            peopleLabel.style.fontSize = '12px';
+            peopleLabel.style.marginRight = '8px';
+            peopleLabel.title = "Designate this category as a People list";
+            
+            const peopleCheckbox = document.createElement('input');
+            peopleCheckbox.type = 'checkbox';
+            peopleCheckbox.checked = node.is_people === 1;
+            peopleCheckbox.onchange = (e) => {
+                updateTaxonomyNode(node.id, { is_people: e.target.checked ? 1 : 0 });
+            };
+            peopleLabel.appendChild(peopleCheckbox);
+            
+            const labelText = document.createElement('span');
+            labelText.textContent = 'People';
+            peopleLabel.appendChild(labelText);
+            
+            actions.appendChild(peopleLabel);
+        } else {
+            if (node.is_people === 1) {
+                const badge = document.createElement('span');
+                badge.className = 'taxonomy-node-badge badge-people';
+                badge.textContent = 'Person';
+                actions.appendChild(badge);
+            }
+        }
+        
+        const hideLabel = document.createElement('label');
+        hideLabel.style.display = 'inline-flex';
+        hideLabel.style.alignItems = 'center';
+        hideLabel.style.gap = '4px';
+        hideLabel.style.fontSize = '12px';
+        hideLabel.style.marginRight = '8px';
+        hideLabel.title = "Hide this tag and its sub-tags from autocomplete popups for new images";
+        
+        const hideCheckbox = document.createElement('input');
+        hideCheckbox.type = 'checkbox';
+        hideCheckbox.checked = node.hidden_from_autocomplete === 1;
+        hideCheckbox.onchange = (e) => {
+            updateTaxonomyNode(node.id, { hidden_from_autocomplete: e.target.checked ? 1 : 0 });
+        };
+        hideLabel.appendChild(hideCheckbox);
+        
+        const hideText = document.createElement('span');
+        hideText.textContent = 'Hide';
+        hideLabel.appendChild(hideText);
+        actions.appendChild(hideLabel);
+        
+        const btnAdd = document.createElement('button');
+        btnAdd.className = 'btn btn-secondary btn-sm';
+        btnAdd.style.padding = '2px 6px';
+        btnAdd.style.fontSize = '11px';
+        btnAdd.textContent = '➕ Add';
+        btnAdd.onclick = (e) => {
+            e.stopPropagation();
+            const childName = prompt(`Enter name of new subtag under "${node.tag}":`);
+            if (childName && childName.trim()) {
+                createTaxonomyNode(childName.trim(), node.id);
+            }
+        };
+        actions.appendChild(btnAdd);
+
+        const btnRename = document.createElement('button');
+        btnRename.className = 'btn btn-secondary btn-sm';
+        btnRename.style.padding = '2px 6px';
+        btnRename.style.fontSize = '11px';
+        btnRename.textContent = '✏️ Rename';
+        btnRename.onclick = (e) => {
+            e.stopPropagation();
+            const newName = prompt(`Enter new name for tag "${node.name}":`, node.name);
+            if (newName && newName.trim() && newName.trim() !== node.name) {
+                renameTaxonomyNode(node.id, newName.trim());
+            }
+        };
+        actions.appendChild(btnRename);
+        
+        const btnDel = document.createElement('button');
+        btnDel.className = 'btn btn-secondary btn-sm';
+        btnDel.style.padding = '2px 6px';
+        btnDel.style.fontSize = '11px';
+        btnDel.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+        btnDel.style.color = '#f87171';
+        btnDel.style.borderColor = 'rgba(239, 68, 68, 0.2)';
+        btnDel.textContent = '🗑️';
+        btnDel.onclick = (e) => {
+            e.stopPropagation();
+            deleteTaxonomyNode(node.id, node.tag);
+        };
+        actions.appendChild(btnDel);
+        
+        content.appendChild(actions);
+        li.appendChild(content);
+        
+        if (node.children && node.children.length > 0) {
+            const sublist = document.createElement('ul');
+            sublist.className = 'taxonomy-sublist hidden';
+            
+            node.children.forEach(child => {
+                sublist.appendChild(createNodeElement(child, nodesById));
+            });
+            
+            li.appendChild(sublist);
+        }
+        
+        return li;
+    }
+
+    function updateTaxonomyNode(id, fields) {
+        statusDot.className = 'status-indicator-dot busy';
+        statusText.textContent = 'Updating taxonomy...';
+        
+        fetch('/api/taxonomy/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, ...fields })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                loadTaxonomy().then(() => {
+                    renderTaxonomyTree();
+                    fetchKnownTagsAndPeople();
+                    statusDot.className = 'status-indicator-dot';
+                    statusText.textContent = 'Ready';
+                });
+            } else {
+                alert("Error updating tag: " + data.error);
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Error';
+        });
+    }
+
+    function createTaxonomyNode(name, parentId = null, isPeople = 0) {
+        statusDot.className = 'status-indicator-dot busy';
+        statusText.textContent = 'Creating tag...';
+        
+        fetch('/api/taxonomy/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, parent_id: parentId, is_people: isPeople })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                loadTaxonomy().then(() => {
+                    renderTaxonomyTree();
+                    fetchKnownTagsAndPeople();
+                    statusDot.className = 'status-indicator-dot';
+                    statusText.textContent = 'Ready';
+                });
+            } else {
+                alert("Error creating tag: " + data.error);
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Error';
+        });
+    }
+
+    function deleteTaxonomyNode(id, tagPath) {
+        statusDot.className = 'status-indicator-dot busy';
+        statusText.textContent = 'Checking usage...';
+        
+        fetch('/api/taxonomy/delete-check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag_id: id })
+        })
+        .then(res => res.json())
+        .then(async (data) => {
+            if (!data.success) {
+                alert("Error checking tag usage: " + data.error);
+                return;
+            }
+            
+            let confirmResult = { action: 'remove' };
+            
+            if (data.used) {
+                const possibleTargets = taxonomyNodes
+                    .filter(n => n.id !== id && !n.tag.startsWith(tagPath + "/"))
+                    .map(n => n.tag);
+                    
+                confirmResult = await showDeleteConflictModal(tagPath, data.count, possibleTargets);
+                if (!confirmResult) {
+                    statusDot.className = 'status-indicator-dot';
+                    statusText.textContent = 'Ready';
+                    return;
+                }
+            } else {
+                const confirmed = confirm(`Are you sure you want to remove tag "${tagPath}"?`);
+                if (!confirmed) {
+                    statusDot.className = 'status-indicator-dot';
+                    statusText.textContent = 'Ready';
+                    return;
+                }
+            }
+            
+            statusDot.className = 'status-indicator-dot busy';
+            statusText.textContent = 'Deleting tag...';
+            
+            fetch('/api/taxonomy/delete-confirm', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tag_id: id,
+                    action: confirmResult.action,
+                    target_tag: confirmResult.target_tag
+                })
+            })
+            .then(res => res.json())
+            .then(resData => {
+                if (resData.success) {
+                    loadTaxonomy().then(() => {
+                        renderTaxonomyTree();
+                        fetchKnownTagsAndPeople();
+                        if (data.used && scannedFolder) {
+                            scanFolder(true);
+                        }
+                        statusDot.className = 'status-indicator-dot';
+                        statusText.textContent = 'Ready';
+                    });
+                } else {
+                    alert("Error deleting tag: " + resData.error);
+                }
+            });
+        })
+        .catch(err => {
+            console.error(err);
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Error';
+        });
+    }
+
+    function renameTaxonomyNode(tagId, newName) {
+        statusDot.className = 'status-indicator-dot busy';
+        statusText.textContent = 'Renaming tag...';
+        
+        fetch('/api/taxonomy/rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag_id: tagId, new_name: newName })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                loadTaxonomy().then(() => {
+                    renderTaxonomyTree();
+                    fetchKnownTagsAndPeople();
+                    if (scannedFolder) {
+                        scanFolder(true);
+                    }
+                    statusDot.className = 'status-indicator-dot';
+                    statusText.textContent = 'Ready';
+                });
+            } else {
+                alert("Error renaming tag: " + data.error);
+                statusDot.className = 'status-indicator-dot';
+                statusText.textContent = 'Ready';
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Error';
+        });
+    }
+
+    function showPlacementModal(title, message, options, allowNewRoot = false) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay active';
+            
+            let optionsHtml = options.map((opt, idx) => `
+                <label class="placement-option-label">
+                    <input type="radio" name="placement-opt" value="${opt}" ${idx === 0 ? 'checked' : ''}>
+                    <span>${opt}</span>
+                </label>
+            `).join('');
+            
+            if (allowNewRoot) {
+                optionsHtml += `
+                    <label class="placement-option-label">
+                        <input type="radio" name="placement-opt" value="__new_root__">
+                        <span>Create a new root category...</span>
+                    </label>
+                    <div id="new-root-input-container" style="display: none; padding-left: 24px; margin-top: 8px; flex-direction: column; gap: 8px;">
+                        <input type="text" id="new-root-name-input" placeholder="New root category name..." class="taxonomy-search-input">
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary);">
+                            <input type="checkbox" id="new-root-is-people-checkbox">
+                            <span>This is a People category</span>
+                        </label>
+                    </div>
+                `;
+            }
+            
+            overlay.innerHTML = `
+                <div class="modal-container" style="max-width: 450px;">
+                    <div class="modal-header">
+                        <h2>${title}</h2>
+                        <button class="modal-close-btn">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <p style="margin-bottom: 16px; color: var(--text-secondary); line-height: 1.5; font-size: 14px;">${message}</p>
+                        <div class="placement-options">
+                            ${optionsHtml}
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary btn-cancel">Cancel</button>
+                        <button class="btn btn-primary btn-confirm">Confirm</button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(overlay);
+            
+            const radioNewRoot = overlay.querySelector('input[value="__new_root__"]');
+            const newRootContainer = overlay.querySelector('#new-root-input-container');
+            
+            overlay.querySelectorAll('input[name="placement-opt"]').forEach(rad => {
+                rad.addEventListener('change', (e) => {
+                    if (newRootContainer) {
+                        newRootContainer.style.display = e.target.value === '__new_root__' ? 'flex' : 'none';
+                    }
+                });
+            });
+            
+            const close = (value) => {
+                overlay.className = 'modal-overlay';
+                setTimeout(() => overlay.remove(), 300);
+                resolve(value);
+            };
+            
+            overlay.querySelector('.modal-close-btn').onclick = () => close(null);
+            overlay.querySelector('.btn-cancel').onclick = () => close(null);
+            
+            overlay.querySelector('.btn-confirm').onclick = () => {
+                const selected = overlay.querySelector('input[name="placement-opt"]:checked').value;
+                if (selected === '__new_root__') {
+                    const name = overlay.querySelector('#new-root-name-input').value.trim();
+                    const isPeople = overlay.querySelector('#new-root-is-people-checkbox').checked;
+                    if (!name) {
+                        alert("Please enter a root category name.");
+                        return;
+                    }
+                    close({ action: 'create_root', name, isPeople });
+                } else {
+                    close({ action: 'select', root: selected });
+                }
+            };
+        });
+    }
+
+    function showDeleteConflictModal(tagName, count, targetTagsOptions) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay active';
+            
+            const dropdownHtml = targetTagsOptions.map(t => `<option value="${t}">${t}</option>`).join('');
+            
+            overlay.innerHTML = `
+                <div class="modal-container" style="max-width: 500px;">
+                    <div class="modal-header">
+                        <h2>Tag Removal Check</h2>
+                        <button class="modal-close-btn">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <p style="margin-bottom: 16px; line-height: 1.5; font-size: 14px;">
+                            The tag <strong style="color: var(--accent);">${tagName}</strong> is used by <strong>${count}</strong> photos. 
+                            Removing it requires clean up. Please choose how you want to handle these photos:
+                        </p>
+                        <div class="placement-options">
+                            <label class="placement-option-label">
+                                <input type="radio" name="delete-opt" value="remove" checked>
+                                <span>Remove this tag from all affected photos</span>
+                            </label>
+                            <label class="placement-option-label">
+                                <input type="radio" name="delete-opt" value="move">
+                                <span>Move affected photos to another tag</span>
+                            </label>
+                        </div>
+                        <div id="move-tag-dropdown-container" style="display: none; padding-left: 24px; margin-top: 8px;">
+                            <select id="move-target-select" class="taxonomy-search-input" style="width: 100%;">
+                                <option value="">-- Select Target Tag --</option>
+                                ${dropdownHtml}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary btn-cancel">Cancel</button>
+                        <button class="btn btn-primary btn-confirm">Confirm</button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(overlay);
+            
+            const radioMove = overlay.querySelector('input[value="move"]');
+            const dropdownContainer = overlay.querySelector('#move-tag-dropdown-container');
+            
+            overlay.querySelectorAll('input[name="delete-opt"]').forEach(rad => {
+                rad.addEventListener('change', (e) => {
+                    dropdownContainer.style.display = e.target.value === 'move' ? 'block' : 'none';
+                });
+            });
+            
+            const close = (value) => {
+                overlay.className = 'modal-overlay';
+                setTimeout(() => overlay.remove(), 300);
+                resolve(value);
+            };
+            
+            overlay.querySelector('.modal-close-btn').onclick = () => close(null);
+            overlay.querySelector('.btn-cancel').onclick = () => close(null);
+            
+            overlay.querySelector('.btn-confirm').onclick = () => {
+                const selected = overlay.querySelector('input[name="delete-opt"]:checked').value;
+                if (selected === 'move') {
+                    const target = overlay.querySelector('#move-target-select').value;
+                    if (!target) {
+                        alert("Please select a target tag.");
+                        return;
+                    }
+                    close({ action: 'move', target_tag: target });
+                } else {
+                    close({ action: 'remove' });
+                }
+            };
+        });
+    }
+
+    async function resolveTagOrPerson(inputName, isPersonField = false) {
+        inputName = inputName.trim();
+        if (!inputName) return null;
+        
+        if (inputName.includes('/')) {
+            await fetch('/api/taxonomy/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: inputName })
+            });
+            await loadTaxonomy();
+            return inputName;
+        }
+        
+        const allRoots = taxonomyNodes.filter(n => n.parent_id === null);
+        const peopleRoots = allRoots.filter(r => r.is_people === 1);
+        const keywordRoots = allRoots.filter(r => r.is_people === 0);
+        
+        const matches = taxonomyNodes.filter(n => n.name.toLowerCase() === inputName.toLowerCase());
+        
+        if (isPersonField) {
+            if (matches.length > 0) {
+                const peopleMatches = matches.filter(m => {
+                    const parts = m.tag.split('/');
+                    const rootName = parts[0];
+                    const rootNode = allRoots.find(r => r.name.toLowerCase() === rootName.toLowerCase());
+                    return rootNode && rootNode.is_people === 1;
+                });
+                
+                if (peopleMatches.length === 1) {
+                    return peopleMatches[0].tag;
+                } else if (peopleMatches.length > 1) {
+                    const options = peopleMatches.map(m => m.tag);
+                    const res = await showPlacementModal(
+                        "Resolve Ambiguous Person",
+                        `Multiple folders exist for "${inputName}". Please select which one you mean:`,
+                        options,
+                        false
+                    );
+                    return res ? res.root : null;
+                }
+            }
+            
+            const peopleRootNames = peopleRoots.map(r => r.name);
+            if (peopleRootNames.length === 0) {
+                await fetch('/api/taxonomy/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: "People", is_people: 1 })
+                });
+                await loadTaxonomy();
+                return `People/${inputName}`;
+            } else if (peopleRootNames.length === 1) {
+                const targetPath = `${peopleRootNames[0]}/${inputName}`;
+                await fetch('/api/taxonomy/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: targetPath })
+                });
+                await loadTaxonomy();
+                return targetPath;
+            } else {
+                const res = await showPlacementModal(
+                    "Resolve New Person",
+                    `The person "${inputName}" is new. Please select which people folder to add them under:`,
+                    peopleRootNames,
+                    false
+                );
+                if (!res) return null;
+                const targetPath = `${res.root}/${inputName}`;
+                await fetch('/api/taxonomy/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: targetPath })
+                });
+                await loadTaxonomy();
+                return targetPath;
+            }
+        } else {
+            if (matches.length === 1) {
+                return matches[0].tag;
+            } else if (matches.length > 1) {
+                const options = matches.map(m => m.tag);
+                const res = await showPlacementModal(
+                    "Resolve Ambiguous Tag",
+                    `Multiple tag paths exist for "${inputName}". Please select which one you mean:`,
+                    options,
+                    false
+                );
+                return res ? res.root : null;
+            }
+            
+            const rootNames = allRoots.map(r => r.name);
+            const res = await showPlacementModal(
+                "Resolve New Tag",
+                `The tag "${inputName}" is new. Please specify which category it should be placed under, or create a new one:`,
+                rootNames,
+                true
+            );
+            if (!res) return null;
+            
+            let targetPath;
+            if (res.action === 'create_root') {
+                const rootRes = await fetch('/api/taxonomy/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: res.name, is_people: res.isPeople ? 1 : 0 })
+                }).then(r => r.json());
+                
+                if (!rootRes.success) {
+                    alert("Error creating root category: " + rootRes.error);
+                    return null;
+                }
+                targetPath = `${res.name}/${inputName}`;
+            } else {
+                targetPath = `${res.root}/${inputName}`;
+            }
+            
+            await fetch('/api/taxonomy/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: targetPath })
+            });
+            await loadTaxonomy();
+            return targetPath;
+        }
     }
 });
