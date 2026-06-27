@@ -139,6 +139,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             self.handle_get_tags()
         elif path == "/api/people":
             self.handle_get_people()
+        elif path == "/api/taxonomy/tree":
+            self.handle_get_taxonomy_tree()
         else:
             self.send_error(404, "File Not Found")
 
@@ -162,6 +164,16 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             self.handle_post_folder_time_shift()
         elif path == "/api/folder/rename-photos":
             self.handle_post_folder_rename_photos()
+        elif path == "/api/taxonomy/create":
+            self.handle_post_taxonomy_create()
+        elif path == "/api/taxonomy/update":
+            self.handle_post_taxonomy_update()
+        elif path == "/api/taxonomy/delete-check":
+            self.handle_post_taxonomy_delete_check()
+        elif path == "/api/taxonomy/delete-confirm":
+            self.handle_post_taxonomy_delete_confirm()
+        elif path == "/api/taxonomy/rename":
+            self.handle_post_taxonomy_rename()
         else:
             self.send_error(404, "Endpoint Not Found")
 
@@ -311,13 +323,35 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             # Also load from taxonomy file
             from taxonomy import TagTaxonomy
             tax_path = os.path.splitext(self.db_path)[0] + "_taxonomy.json"
-            if os.path.exists(tax_path):
-                taxonomy = TagTaxonomy(file_path=tax_path)
-                taxonomy.load()
-                for p in taxonomy.paths:
-                    db_tags.add(p)
-                    
-            self.send_json(sorted(list(db_tags)))
+            taxonomy = TagTaxonomy(file_path=tax_path)
+            taxonomy.load()
+            for p in taxonomy.paths:
+                db_tags.add(p)
+
+            # Filter out hidden tags
+            hidden_tags = set()
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
+            if cursor.fetchone():
+                cursor.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")
+                for row in cursor.fetchall():
+                    hidden_tags.add(row[0])
+            conn.close()
+
+            def is_tag_hidden(tag):
+                normalized = TagTaxonomy.normalize_tag(tag)
+                if not normalized:
+                    return False
+                parts = normalized.split("/")
+                for i in range(1, len(parts) + 1):
+                    ancestor = "/".join(parts[:i])
+                    if ancestor in hidden_tags:
+                        return True
+                return False
+
+            final_tags = [t for t in db_tags if not is_tag_hidden(t)]
+            self.send_json(sorted(final_tags))
         except Exception as e:
             self.send_json_error(500, str(e))
 
@@ -328,6 +362,38 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             cursor = conn.cursor()
             cursor.execute("SELECT DISTINCT name FROM faces WHERE name IS NOT NULL ORDER BY name")
             people = [row[0] for row in cursor.fetchall()]
+
+            # Filter out people hidden from autocomplete
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
+            if cursor.fetchone():
+                cursor.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")
+                hidden_tags = {row[0] for row in cursor.fetchall()}
+
+                from taxonomy import TagTaxonomy
+                def is_tag_hidden(tag):
+                    normalized = TagTaxonomy.normalize_tag(tag)
+                    if not normalized:
+                        return False
+                    parts = normalized.split("/")
+                    for i in range(1, len(parts) + 1):
+                        ancestor = "/".join(parts[:i])
+                        if ancestor in hidden_tags:
+                            return True
+                    return False
+
+                filtered_people = []
+                for p in people:
+                    cursor.execute("SELECT tag FROM tag_taxonomy WHERE name = ?", (p,))
+                    paths = [r[0] for r in cursor.fetchall()]
+                    hidden = False
+                    for path in paths:
+                        if is_tag_hidden(path):
+                            hidden = True
+                            break
+                    if not hidden:
+                        filtered_people.append(p)
+                people = filtered_people
+
             self.send_json(people)
         except Exception as e:
             self.send_json_error(500, str(e))
@@ -1228,6 +1294,521 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(content)
         except Exception as e:
             self.send_error(500, f"Internal error serving image: {e}")
+
+    def handle_get_taxonomy_tree(self):
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
+            if not cursor.fetchone():
+                from taxonomy import seed_taxonomy_from_db
+                seed_taxonomy_from_db(self.db_path)
+            
+            cursor.execute("SELECT id, tag, parent_id, name, is_people, hidden_from_autocomplete FROM tag_taxonomy ORDER BY tag")
+            rows = cursor.fetchall()
+            conn.close()
+            
+            counts = get_tag_usage_counts(self.db_path)
+            
+            tree_nodes = []
+            for row in rows:
+                node = {
+                    "id": row[0],
+                    "tag": row[1],
+                    "parent_id": row[2],
+                    "name": row[3],
+                    "is_people": row[4],
+                    "hidden_from_autocomplete": row[5],
+                    "usage_count": counts.get(row[1], 0)
+                }
+                tree_nodes.append(node)
+                
+            self.send_json(tree_nodes)
+        except Exception as e:
+            self.send_json_error(500, str(e))
+
+    def handle_post_taxonomy_create(self):
+        try:
+            data = self.read_json_body()
+            name = data.get("name", "").strip()
+            parent_id = data.get("parent_id")
+            is_people = data.get("is_people", 0)
+            
+            if not name:
+                self.send_json_error(400, "Tag name cannot be empty")
+                return
+                
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            
+            if parent_id:
+                cursor.execute("SELECT tag, is_people FROM tag_taxonomy WHERE id = ?", (parent_id,))
+                parent_row = cursor.fetchone()
+                if not parent_row:
+                    conn.close()
+                    self.send_json_error(404, "Parent tag not found")
+                    return
+                parent_path, parent_is_people = parent_row
+                tag_path = parent_path + "/" + name
+                is_people = parent_is_people
+            else:
+                tag_path = name
+                
+            from taxonomy import TagTaxonomy
+            tag_path = TagTaxonomy.normalize_tag(tag_path)
+            
+            cursor.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (tag_path,))
+            existing = cursor.fetchone()
+            if existing:
+                conn.close()
+                self.send_json({"success": True, "id": existing[0], "message": "Tag already exists"})
+                return
+                
+            cursor.execute(
+                "INSERT INTO tag_taxonomy (tag, parent_id, name, is_people) VALUES (?, ?, ?, ?)",
+                (tag_path, parent_id, name, is_people)
+            )
+            new_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            
+            taxonomy = TagTaxonomy(db_path=self.db_path)
+            taxonomy.load()
+            taxonomy.add_tag(tag_path)
+            taxonomy.save()
+            
+            self.send_json({"success": True, "id": new_id, "tag": tag_path})
+        except Exception as e:
+            self.send_json_error(500, str(e))
+
+    def handle_post_taxonomy_update(self):
+        try:
+            data = self.read_json_body()
+            tag_id = data.get("id")
+            is_people = data.get("is_people")
+            hidden_from_autocomplete = data.get("hidden_from_autocomplete")
+            
+            if tag_id is None:
+                self.send_json_error(400, "Missing 'id' parameter")
+                return
+                
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT tag, parent_id FROM tag_taxonomy WHERE id = ?", (tag_id,))
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                self.send_json_error(404, "Tag not found")
+                return
+            tag_path, parent_id = row
+            
+            if is_people is not None:
+                cursor.execute("UPDATE tag_taxonomy SET is_people = ? WHERE id = ?", (is_people, tag_id))
+                cursor.execute(
+                    "UPDATE tag_taxonomy SET is_people = ? WHERE tag = ? OR tag LIKE ?",
+                    (is_people, tag_path, tag_path + "/%")
+                )
+                
+            if hidden_from_autocomplete is not None:
+                cursor.execute("UPDATE tag_taxonomy SET hidden_from_autocomplete = ? WHERE id = ?", (hidden_from_autocomplete, tag_id))
+                cursor.execute(
+                    "UPDATE tag_taxonomy SET hidden_from_autocomplete = ? WHERE tag = ? OR tag LIKE ?",
+                    (hidden_from_autocomplete, tag_path, tag_path + "/%")
+                )
+                
+            conn.commit()
+            conn.close()
+            self.send_json({"success": True})
+        except Exception as e:
+            self.send_json_error(500, str(e))
+
+    def handle_post_taxonomy_delete_check(self):
+        try:
+            data = self.read_json_body()
+            tag_id = data.get("tag_id")
+            if tag_id is None:
+                self.send_json_error(400, "Missing 'tag_id' parameter")
+                return
+                
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT tag FROM tag_taxonomy WHERE id = ?", (tag_id,))
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                self.send_json_error(404, "Tag not found")
+                return
+            tag_path = row[0]
+            conn.close()
+            
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT path, tags FROM photos WHERE tags IS NOT NULL")
+            affected_photos = []
+            for path, tags_json in cursor.fetchall():
+                try:
+                    tags_list = json.loads(tags_json)
+                    for tag in tags_list:
+                        from taxonomy import TagTaxonomy
+                        normalized = TagTaxonomy.normalize_tag(tag)
+                        if normalized == tag_path or normalized.startswith(tag_path + "/"):
+                            affected_photos.append(path)
+                            break
+                except Exception:
+                    pass
+            conn.close()
+            
+            self.send_json({
+                "success": True,
+                "tag": tag_path,
+                "used": len(affected_photos) > 0,
+                "count": len(affected_photos),
+                "affected_photos": affected_photos[:100]
+            })
+        except Exception as e:
+            self.send_json_error(500, str(e))
+
+    def handle_post_taxonomy_delete_confirm(self):
+        try:
+            data = self.read_json_body()
+            tag_id = data.get("tag_id")
+            action = data.get("action")
+            target_tag = data.get("target_tag")
+            
+            if tag_id is None or not action:
+                self.send_json_error(400, "Missing parameters")
+                return
+                
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT tag FROM tag_taxonomy WHERE id = ?", (tag_id,))
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                self.send_json_error(404, "Tag not found")
+                return
+            tag_path = row[0]
+            conn.close()
+            
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT path, tags FROM photos WHERE tags IS NOT NULL")
+            affected_photos = []
+            for path, tags_json in cursor.fetchall():
+                try:
+                    tags_list = json.loads(tags_json)
+                    for tag in tags_list:
+                        from taxonomy import TagTaxonomy
+                        normalized = TagTaxonomy.normalize_tag(tag)
+                        if normalized == tag_path or normalized.startswith(tag_path + "/"):
+                            affected_photos.append(path)
+                            break
+                except Exception:
+                    pass
+            conn.close()
+            
+            if affected_photos:
+                executable = self.get_exiftool_path()
+                if action == "move":
+                    if not target_tag:
+                        self.send_json_error(400, "Target tag path is required for move action")
+                        return
+                    from taxonomy import TagTaxonomy
+                    target_tag = TagTaxonomy.normalize_tag(target_tag)
+                    conn = sqlite3.connect(self.db_path, timeout=10.0)
+                    cursor = conn.cursor()
+                    insert_tag_path_to_db(cursor, target_tag)
+                    conn.commit()
+                    conn.close()
+                    
+                    update_photo_metadata_tags(self.db_path, executable, affected_photos, tag_path, target_tag)
+                else:
+                    update_photo_metadata_tags(self.db_path, executable, affected_photos, tag_path, None)
+                    
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA foreign_keys = ON")
+            cursor.execute("DELETE FROM tag_taxonomy WHERE id = ?", (tag_id,))
+            conn.commit()
+            conn.close()
+            
+            from taxonomy import TagTaxonomy
+            taxonomy = TagTaxonomy(db_path=self.db_path)
+            taxonomy.load()
+            paths_to_remove = [p for p in taxonomy.paths if p == tag_path or p.startswith(tag_path + "/")]
+            for p in paths_to_remove:
+                taxonomy.paths.discard(p)
+            taxonomy.save()
+            
+            TagPupHTTPRequestHandler.folder_cache.clear()
+            self.send_json({"success": True})
+        except Exception as e:
+            self.send_json_error(500, str(e))
+
+    def handle_post_taxonomy_rename(self):
+        try:
+            data = self.read_json_body()
+            tag_id = data.get("tag_id")
+            new_name = data.get("new_name", "").strip()
+            
+            if tag_id is None or not new_name:
+                self.send_json_error(400, "Missing parameters")
+                return
+                
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT tag, parent_id, name FROM tag_taxonomy WHERE id = ?", (tag_id,))
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                self.send_json_error(404, "Tag not found")
+                return
+            old_tag_path, parent_id, current_name = row
+            
+            if current_name == new_name:
+                conn.close()
+                self.send_json({"success": True})
+                return
+                
+            # Compute new path
+            if parent_id is not None:
+                cursor.execute("SELECT tag FROM tag_taxonomy WHERE id = ?", (parent_id,))
+                parent_row = cursor.fetchone()
+                if not parent_row:
+                    conn.close()
+                    self.send_json_error(500, "Parent tag not found in DB")
+                    return
+                new_tag_path = parent_row[0] + "/" + new_name
+            else:
+                new_tag_path = new_name
+                
+            from taxonomy import TagTaxonomy
+            new_tag_path = TagTaxonomy.normalize_tag(new_tag_path)
+            
+            # Check for conflict
+            cursor.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (new_tag_path,))
+            conflict = cursor.fetchone()
+            if conflict:
+                conn.close()
+                self.send_json_error(400, f"A tag with path '{new_tag_path}' already exists.")
+                return
+                
+            # Retrieve descendants
+            cursor.execute("SELECT id, tag FROM tag_taxonomy WHERE tag LIKE ?", (old_tag_path + "/%",))
+            descendants = cursor.fetchall()
+            
+            # Update the node itself
+            cursor.execute("UPDATE tag_taxonomy SET name = ?, tag = ? WHERE id = ?", (new_name, new_tag_path, tag_id))
+            
+            # Update descendants paths
+            for desc_id, desc_tag in descendants:
+                new_desc_tag = new_tag_path + desc_tag[len(old_tag_path):]
+                cursor.execute("UPDATE tag_taxonomy SET tag = ? WHERE id = ?", (new_desc_tag, desc_id))
+                
+            conn.commit()
+            conn.close()
+            
+            # Find and update affected photos
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT path, tags FROM photos WHERE tags IS NOT NULL")
+            affected_photos = []
+            for path, tags_json in cursor.fetchall():
+                try:
+                    tags_list = json.loads(tags_json)
+                    for tag in tags_list:
+                        normalized = TagTaxonomy.normalize_tag(tag)
+                        if normalized == old_tag_path or normalized.startswith(old_tag_path + "/"):
+                            affected_photos.append(path)
+                            break
+                except Exception:
+                    pass
+            conn.close()
+            
+            if affected_photos:
+                executable = self.get_exiftool_path()
+                update_photo_metadata_tags(self.db_path, executable, affected_photos, old_tag_path, new_tag_path)
+                
+            # Update taxonomy fallback JSON
+            taxonomy = TagTaxonomy(db_path=self.db_path)
+            taxonomy.load()
+            
+            # Remove old paths
+            paths_to_remove = [p for p in taxonomy.paths if p == old_tag_path or p.startswith(old_tag_path + "/")]
+            for p in paths_to_remove:
+                taxonomy.paths.discard(p)
+                
+            # Add new paths
+            taxonomy.paths.add(new_tag_path)
+            for desc_id, desc_tag in descendants:
+                new_desc_tag = new_tag_path + desc_tag[len(old_tag_path):]
+                taxonomy.paths.add(new_desc_tag)
+                
+            taxonomy.save()
+            
+            TagPupHTTPRequestHandler.folder_cache.clear()
+            self.send_json({"success": True})
+        except Exception as e:
+            self.send_json_error(500, str(e))
+
+from typing import List, Optional
+def get_tag_usage_counts(db_path):
+    counts = {}
+    if not os.path.exists(db_path):
+        return counts
+    try:
+        conn = sqlite3.connect(db_path, timeout=10.0)
+        cursor = conn.cursor()
+        cursor.execute("SELECT tags FROM photos WHERE tags IS NOT NULL")
+        for row in cursor.fetchall():
+            try:
+                tags_list = json.loads(row[0])
+                for tag in tags_list:
+                    from taxonomy import TagTaxonomy
+                    normalized = TagTaxonomy.normalize_tag(tag)
+                    if not normalized:
+                        continue
+                    parts = normalized.split("/")
+                    for i in range(1, len(parts) + 1):
+                        ancestor = "/".join(parts[:i])
+                        counts[ancestor] = counts.get(ancestor, 0) + 1
+            except Exception:
+                pass
+        conn.close()
+    except Exception:
+        pass
+    return counts
+
+def insert_tag_path_to_db(cursor, path: str, is_people_root: bool = False) -> int:
+    from taxonomy import TagTaxonomy
+    normalized = TagTaxonomy.normalize_tag(path)
+    if not normalized:
+        return None
+    
+    parts = normalized.split("/")
+    parent_id = None
+    accumulated_path = ""
+    
+    for i, part in enumerate(parts):
+        if i == 0:
+            accumulated_path = part
+        else:
+            accumulated_path += "/" + part
+            
+        cursor.execute("SELECT id, is_people FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
+        row = cursor.fetchone()
+        if row:
+            parent_id = row[0]
+            current_is_people = row[1]
+            if i == 0 and is_people_root and not current_is_people:
+                cursor.execute("UPDATE tag_taxonomy SET is_people = 1 WHERE id = ?", (parent_id,))
+        else:
+            is_p = 0
+            if i == 0:
+                if is_people_root or part.lower() in ["people", "family", "friends"]:
+                    is_p = 1
+            else:
+                if parent_id is not None:
+                    cursor.execute("SELECT is_people FROM tag_taxonomy WHERE id = ?", (parent_id,))
+                    p_row = cursor.fetchone()
+                    if p_row:
+                        is_p = p_row[0]
+            
+            cursor.execute(
+                "INSERT INTO tag_taxonomy (tag, parent_id, name, is_people) VALUES (?, ?, ?, ?)",
+                (accumulated_path, parent_id, part, is_p)
+            )
+            parent_id = cursor.lastrowid
+            
+    return parent_id
+
+def update_photo_metadata_tags(db_path: str, exiftool_path: str, photo_paths: List[str], tag_to_remove: str, tag_to_add: Optional[str] = None):
+    import sqlite3
+    import json
+    import exiftool
+    from metadata import extract_people, extract_tags
+    from taxonomy import TagTaxonomy
+    
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    cursor = conn.cursor()
+    
+    batch_size = 50
+    with exiftool.ExifToolHelper(executable=exiftool_path) as et:
+        for i in range(0, len(photo_paths), batch_size):
+            batch = photo_paths[i:i+batch_size]
+            for path in batch:
+                cursor.execute("SELECT tags, raw_metadata FROM photos WHERE path = ?", (path,))
+                row = cursor.fetchone()
+                if not row:
+                    continue
+                try:
+                    current_tags = json.loads(row[0]) if row[0] else []
+                    raw_meta = json.loads(row[1]) if row[1] else {}
+                except Exception:
+                    continue
+                
+                new_tags = []
+                changed = False
+                for tag in current_tags:
+                    normalized = TagTaxonomy.normalize_tag(tag)
+                    if normalized == tag_to_remove or normalized.startswith(tag_to_remove + "/"):
+                        changed = True
+                        if tag_to_add:
+                            suffix = normalized[len(tag_to_remove):]
+                            new_tag = tag_to_add + suffix
+                            new_tags.append(new_tag)
+                    else:
+                        new_tags.append(tag)
+                        
+                if not changed:
+                    continue
+                    
+                new_flat_tags = []
+                new_hierarchical_tags = []
+                for tag in new_tags:
+                    new_flat_tags.append(tag)
+                    if "/" in tag:
+                        new_hierarchical_tags.append(tag)
+                        for part in tag.split("/"):
+                            new_flat_tags.append(part)
+                            
+                new_flat_tags = list(set(new_flat_tags))
+                new_hierarchical_tags = list(set(new_hierarchical_tags))
+                
+                params = {}
+                if new_flat_tags:
+                    params["XMP:Subject"] = new_flat_tags
+                    params["IPTC:Keywords"] = new_flat_tags
+                    params["EXIF:XPKeywords"] = ";".join(new_flat_tags)
+                else:
+                    params["XMP:Subject"] = []
+                    params["IPTC:Keywords"] = []
+                    params["EXIF:XPKeywords"] = ""
+                    
+                if new_hierarchical_tags:
+                    params["XMP:HierarchicalSubject"] = new_hierarchical_tags
+                else:
+                    params["XMP:HierarchicalSubject"] = []
+                    
+                try:
+                    et.set_tags([path], tags=params, params=["-overwrite_original"])
+                    
+                    raw_meta["XMP:Subject"] = new_flat_tags
+                    raw_meta["XMP:HierarchicalSubject"] = new_hierarchical_tags
+                    
+                    updated_tags = extract_tags(raw_meta)
+                    updated_people = extract_people(raw_meta, updated_tags, db_path=db_path)
+                    
+                    cursor.execute(
+                        "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE path = ?",
+                        (json.dumps(updated_tags), json.dumps(updated_people), json.dumps(raw_meta), path)
+                    )
+                except Exception as err:
+                    logger.error(f"Failed to update metadata on disk/db for {path}: {err}")
+                    
+    conn.commit()
+    conn.close()
 
 class ThreadedHTTPServer(ThreadingTCPServer):
     allow_reuse_address = True

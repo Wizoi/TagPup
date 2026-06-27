@@ -651,8 +651,40 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
                         
-            all_people = sorted([p for p in faces_names.union(photos_people) if p])
-            self.send_json(all_people)
+            all_people = faces_names.union(photos_people)
+
+            # Filter out people hidden from autocomplete
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
+            if cursor.fetchone():
+                cursor.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")
+                hidden_tags = {row[0] for row in cursor.fetchall()}
+
+                from taxonomy import TagTaxonomy
+                def is_tag_hidden(tag):
+                    normalized = TagTaxonomy.normalize_tag(tag)
+                    if not normalized:
+                        return False
+                    parts = normalized.split("/")
+                    for i in range(1, len(parts) + 1):
+                        ancestor = "/".join(parts[:i])
+                        if ancestor in hidden_tags:
+                            return True
+                    return False
+
+                filtered_people = []
+                for p in all_people:
+                    cursor.execute("SELECT tag FROM tag_taxonomy WHERE name = ?", (p,))
+                    paths = [r[0] for r in cursor.fetchall()]
+                    hidden = False
+                    for path in paths:
+                        if is_tag_hidden(path):
+                            hidden = True
+                            break
+                    if not hidden:
+                        filtered_people.append(p)
+                all_people = filtered_people
+
+            self.send_json(sorted([p for p in all_people if p]))
         except Exception as e:
             logger.error(f"Error fetching people: {e}")
             self.send_error(500, f"Database error: {e}")
@@ -1492,6 +1524,27 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             conn = sqlite3.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
+            
+            # Fetch hidden tags
+            hidden_tags = set()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
+            if cursor.fetchone():
+                cursor.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")
+                for row in cursor.fetchall():
+                    hidden_tags.add(row[0])
+            
+            from taxonomy import TagTaxonomy
+            def is_tag_hidden(tag):
+                normalized = TagTaxonomy.normalize_tag(tag)
+                if not normalized:
+                    return False
+                parts = normalized.split("/")
+                for i in range(1, len(parts) + 1):
+                    ancestor = "/".join(parts[:i])
+                    if ancestor in hidden_tags:
+                        return True
+                return False
+
             # Fetch people with matched counts
             cursor.execute("""
                 SELECT name, COUNT(*) as count
@@ -1501,7 +1554,21 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 ORDER BY count DESC
             """)
             rows = cursor.fetchall()
-            people_counts = [{"name": r[0], "count": r[1]} for r in rows]
+            
+            filtered_rows = []
+            for r in rows:
+                p = r[0]
+                cursor.execute("SELECT tag FROM tag_taxonomy WHERE name = ?", (p,))
+                paths = [row[0] for row in cursor.fetchall()]
+                hidden = False
+                for path in paths:
+                    if is_tag_hidden(path):
+                        hidden = True
+                        break
+                if not hidden:
+                    filtered_rows.append(r)
+                    
+            people_counts = [{"name": r[0], "count": r[1]} for r in filtered_rows]
 
             # Fetch unmatched count
             cursor.execute("""
@@ -2291,12 +2358,33 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
         try:
             from taxonomy import TagTaxonomy
             tax_path = os.path.splitext(self.db_path)[0] + "_taxonomy.json"
-            if os.path.exists(tax_path):
-                taxonomy = TagTaxonomy(file_path=tax_path)
-                taxonomy.load()
-                self.send_json(sorted(list(taxonomy.paths)))
-            else:
-                self.send_json([])
+            taxonomy = TagTaxonomy(file_path=tax_path)
+            taxonomy.load()
+            
+            # Filter out hidden tags
+            hidden_tags = set()
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
+            if cursor.fetchone():
+                cursor.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")
+                for row in cursor.fetchall():
+                    hidden_tags.add(row[0])
+            conn.close()
+
+            def is_tag_hidden(tag):
+                normalized = TagTaxonomy.normalize_tag(tag)
+                if not normalized:
+                    return False
+                parts = normalized.split("/")
+                for i in range(1, len(parts) + 1):
+                    ancestor = "/".join(parts[:i])
+                    if ancestor in hidden_tags:
+                        return True
+                return False
+                
+            final_paths = [p for p in taxonomy.paths if not is_tag_hidden(p)]
+            self.send_json(sorted(final_paths))
         except Exception as e:
             self.send_json_error(500, str(e))
 
