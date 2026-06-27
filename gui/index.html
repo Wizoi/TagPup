@@ -21,8 +21,9 @@
                 <div class="control-group">
                     <label for="tuner-mode">Tune target:</label>
                     <select id="tuner-mode" class="mode-select">
-                        <option value="unmatched">Unmatched Faces</option>
+                        <option value="folder-match">Folder Matches</option>
                         <option value="face-matching">Face Matching</option>
+                        <option value="unmatched-faces">Unmatched Faces</option>
                     </select>
                 </div>
                 <div class="control-group" id="show-matched-container">
@@ -123,7 +124,10 @@
                     <div class="matching-main-area">
                         <div class="matching-header-card">
                             <div>
-                                <h2 id="matching-person-name">Selected Name</h2>
+                                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px;">
+                                    <h2 id="matching-person-name">Selected Name</h2>
+                                    <button id="btn-rename-person" class="btn btn-secondary" style="padding: 2px 8px; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; margin-bottom: 0;" title="Rename this person tag">✏️ Rename</button>
+                                </div>
                                 <p id="matching-person-count">0 faces matched</p>
                             </div>
                             <div class="matching-actions" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
@@ -131,6 +135,7 @@
                                     <input type="text" id="input-reassign-name" placeholder="Assign to name..." list="people-datalist" style="padding: 6px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-secondary); color: var(--text-primary); outline: none; width: 180px;">
                                     <button id="btn-reassign-selected" class="btn btn-primary" style="padding: 6px 12px;" disabled>Assign Selected</button>
                                     <button id="btn-new-person" class="btn btn-secondary" style="padding: 6px 12px;" title="Create new person from selected face" disabled>👤+</button>
+                                    <button id="btn-matching-select-all" class="btn btn-secondary" style="padding: 6px 12px;" title="Select all faces in current tab">Select All</button>
                                 </div>
                                 <button id="btn-unmatch-selected" class="btn btn-danger" disabled>⚠️ Unmatch Selected (0)</button>
                             </div>
@@ -141,6 +146,7 @@
                                 <div class="matching-tabs" id="matching-tabs">
                                     <button id="tab-matches" class="tab-btn active">Matches</button>
                                     <button id="tab-outliers" class="tab-btn">Outliers</button>
+                                    <button id="tab-low-conf" class="tab-btn hidden">Low Confidence</button>
                                 </div>
                                 <h3 id="matching-static-title" class="hidden">Unmatched Faces</h3>
                                 <div style="font-size: 12px; color: var(--text-muted);">Click faces to select/deselect. Multi-selection is enabled.</div>
