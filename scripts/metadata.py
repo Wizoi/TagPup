@@ -97,7 +97,21 @@ def extract_tags(meta: Dict[str, Any]) -> List[str]:
         if t and t not in seen:
             seen.add(t)
             unique_tags.append(t)
-    return unique_tags
+            
+    # Clean up redundant flat leaf or prefix nodes of hierarchical tags
+    hierarchical_tags = [t for t in unique_tags if "/" in t]
+    to_remove = set()
+    for h in hierarchical_tags:
+        parts = h.split("/")
+        for part in parts:
+            to_remove.add(part.strip())
+            
+    cleaned_tags = []
+    for t in unique_tags:
+        if "/" in t or t not in to_remove:
+            cleaned_tags.append(t)
+            
+    return cleaned_tags
 
 def extract_people(meta: Dict[str, Any], tags: List[str]) -> List[str]:
     """Extract people tags from PersonInImage or RegionName, and also from hierarchical tags starting with Family/ or Friends/."""
@@ -171,7 +185,11 @@ class MetadataExtractor:
                     cleaned = {}
                     for k, v in meta.items():
                         # ExifTool returns keys like 'SourceFile', 'XMP:Subject', etc.
-                        cleaned[k] = clean_metadata_value(v)
+                        val_cleaned = clean_metadata_value(v)
+                        cleaned[k] = val_cleaned
+                        if ":" in k:
+                            base_key = k.split(":")[-1]
+                            cleaned[base_key] = val_cleaned
                     
                     # Extract high-level aggregated lists
                     tags = extract_tags(cleaned)
@@ -268,3 +286,131 @@ def parse_year_from_metadata(meta: Dict[str, Any]) -> Optional[int]:
                     return year
                     
     return None
+
+
+def build_photo_ui_record(path: str, meta: Dict[str, Any], mtime: float = 0.0, size: int = 0) -> Dict[str, Any]:
+    """Builds a standardized dictionary of photo attributes for the GUI frontend."""
+    tags = meta.get("tags", [])
+    people = meta.get("people", [])
+    raw_meta = meta.get("raw_metadata", {})
+    captions = meta.get("captions", [])
+    title = captions[0] if captions else ""
+
+    year = parse_year_from_metadata(meta)
+    year_str = str(year) if year is not None else "Unknown"
+
+    return {
+        "path": path,
+        "filename": os.path.basename(path),
+        "tags": tags,
+        "people": people,
+        "title": title,
+        "mtime": mtime,
+        "size": size,
+        "year": year_str,
+        "raw_metadata": raw_meta
+    }
+
+
+def rotate_image_file(photo_path: str, direction: str, exiftool_path: Optional[str] = None) -> None:
+    """Rotates the image at photo_path 90 degrees CCW (left) or CW (right)
+    and preserves EXIF data while resetting Orientation tag to 1."""
+    from PIL import Image, ImageOps
+    with Image.open(photo_path) as img:
+        exif_bytes = img.info.get('exif')
+        img_transposed = ImageOps.exif_transpose(img)
+        angle = 90 if direction == "left" else 270
+        rotated = img_transposed.rotate(angle, expand=True)
+        if exif_bytes:
+            rotated.save(photo_path, exif=exif_bytes, quality=95)
+        else:
+            rotated.save(photo_path, quality=95)
+
+    if exiftool_path:
+        import exiftool
+        try:
+            with exiftool.ExifToolHelper(executable=exiftool_path) as et:
+                et.set_tags([photo_path], tags={"Orientation": 1}, params=["-overwrite_original"])
+        except Exception:
+            pass
+
+
+def sanitize_filename(name: str) -> str:
+    """Removes or replaces invalid filesystem characters to make the filename safe."""
+    invalid_chars = '<>:"/\\|?*'
+    for c in invalid_chars:
+        name = name.replace(c, '_')
+    # Filter printable characters and strip
+    name = "".join(ch for ch in name if ch.isprintable())
+    return name.strip()
+
+
+def sync_title_to_filename(photo_path: str, new_title: str, exiftool_path: str) -> str:
+    """If the photo has an XMP-xmpMM:PreservedFileName tag set, automatically syncs 
+    any changes to the title back into the filename structure.
+    Returns the new path if renamed, or the original path if not renamed."""
+    if not os.path.exists(photo_path):
+        return photo_path
+
+    import exiftool
+    try:
+        with exiftool.ExifToolHelper(executable=exiftool_path) as et:
+            meta = et.get_tags([photo_path], tags=["XMP-xmpMM:PreservedFileName", "XMP:PreservedFileName"])
+            meta_dict = meta[0] if meta else {}
+            
+        preserved = meta_dict.get("XMP-xmpMM:PreservedFileName") or meta_dict.get("XMP:PreservedFileName")
+        if not preserved:
+            # Not renamed in this way, do nothing
+            return photo_path
+            
+        # Parse current filename structure
+        base_name, ext = os.path.splitext(os.path.basename(photo_path))
+        parts = [p.strip() for p in base_name.split(" - ")]
+        
+        if len(parts) >= 2:
+            grouping = parts[0]
+            index_str = parts[1]
+            
+            # Read format from config.ini
+            import configparser
+            config = configparser.ConfigParser()
+            config_path = "config.ini"
+            format_pattern = "{grouping} - {index} - {caption}"
+            if os.path.exists(config_path):
+                config.read(config_path)
+                if config.has_section("renaming") and config.has_option("renaming", "format"):
+                    format_pattern = config.get("renaming", "format")
+            
+            # Format new name
+            new_title_clean = str(new_title).strip()
+            new_base = format_pattern.replace("{grouping}", grouping).replace("{index}", index_str)
+            if new_title_clean:
+                new_base = new_base.replace("{caption}", new_title_clean)
+            else:
+                new_base = new_base.replace(" - {caption}", "").replace("- {caption}", "").replace("{caption}", "")
+                
+            # Sanitize
+            new_base = sanitize_filename(new_base)
+            new_name = new_base + ext
+            
+            new_path = os.path.join(os.path.dirname(photo_path), new_name)
+            
+            if photo_path != new_path:
+                # Handle potential collision
+                if os.path.exists(new_path):
+                    base_part, ext_part = os.path.splitext(new_name)
+                    counter = 1
+                    while os.path.exists(os.path.join(os.path.dirname(photo_path), f"{base_part}_{counter}{ext_part}")):
+                        counter += 1
+                    new_name = f"{base_part}_{counter}{ext_part}"
+                    new_path = os.path.join(os.path.dirname(photo_path), new_name)
+                
+                os.rename(photo_path, new_path)
+                return new_path
+                
+    except Exception as e:
+        import logging
+        logging.getLogger("metadata").error(f"Error syncing title to filename: {e}")
+        
+    return photo_path
+

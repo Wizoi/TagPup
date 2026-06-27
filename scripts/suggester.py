@@ -230,7 +230,10 @@ class TagSuggester:
         # 4b. Face recognition suggestions
         try:
             from faces import FaceProcessor
-            processor = FaceProcessor()
+            global _global_face_processor
+            if "_global_face_processor" not in globals():
+                _global_face_processor = FaceProcessor()
+            processor = _global_face_processor
             detected_faces = processor.detect_and_embed_faces(photo_path)
             
             if detected_faces:

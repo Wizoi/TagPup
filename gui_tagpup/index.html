@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TagPup GUI - Folder Tagging & Metadata Editor</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Top Navbar -->
+        <header class="app-header">
+            <div class="logo-container">
+                <span class="logo-icon">🐶</span>
+                <h1>TagPup GUI</h1>
+            </div>
+            <div class="header-status">
+                <span class="status-indicator-dot" id="status-dot"></span>
+                <span class="status-text" id="status-text">Ready</span>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="app-content">
+            <!-- Sidebar: Folder Control & File list -->
+            <aside class="sidebar">
+                <!-- Folder Picker -->
+                <div class="folder-control-panel">
+                    <h3>Select Image Folder</h3>
+                    <div class="folder-input-group">
+                        <input type="text" id="folder-path-input" placeholder="Select image folder..." autocomplete="off" list="folder-datalist">
+                        <button id="btn-browse-folder" class="btn btn-secondary">Browse...</button>
+                    </div>
+                    <div class="folder-action-buttons">
+                        <button id="btn-scan-folder" class="btn btn-primary">Scan Folder</button>
+                        <button id="btn-suggest-tags" class="btn btn-accent" disabled>Suggest Tags</button>
+                    </div>
+                    <!-- Background Progress Bar -->
+                    <div id="suggest-progress-container" class="suggest-progress-container hidden">
+                        <div class="progress-bar-bg">
+                            <div id="suggest-progress-bar" class="progress-bar-fill" style="width: 0%"></div>
+                        </div>
+                        <div id="suggest-progress-text" class="progress-text">Processing: 0 / 0 (0%)</div>
+                    </div>
+                </div>
+
+                <!-- Search -->
+                <div class="search-container">
+                    <input type="text" id="photo-search" placeholder="Filter files..." class="search-input">
+                    <span class="search-icon">🔍</span>
+                </div>
+
+                <div class="sidebar-header-row">
+                    <div class="list-stats" id="list-stats">0 files loaded</div>
+                    <button id="btn-refresh-list" class="btn btn-secondary btn-sm" title="Refresh files list">🔄 Refresh</button>
+                </div>
+
+                <!-- File List -->
+                <ul class="photo-list" id="photo-list">
+                    <li id="folder-view-header" class="photo-item folder-header-item hidden">
+                        <span class="folder-header-icon">📂</span> Folder View (Thumbnails)
+                    </li>
+                    <!-- Filenames will load dynamically here -->
+                </ul>
+            </aside>
+            <div class="sidebar-resizer" id="sidebar-resizer"></div>
+
+            <!-- Details Panel: Right Content Pane -->
+            <section class="details-panel" id="details-panel">
+                <!-- Empty State -->
+                <div class="empty-state" id="empty-state">
+                    <div class="empty-state-icon">📂</div>
+                    <h2>No Folder Scanned</h2>
+                    <p>Enter or browse for a folder path in the left sidebar and click "Scan Folder" to begin.</p>
+                </div>
+
+                <!-- Single Photo Content View -->
+                <div class="panel-content hidden" id="panel-content">
+                    <!-- Top section: Original Image -->
+                    <div class="image-section">
+                        <div class="card-header">
+                            <h3>Original Image</h3>
+                            <div class="image-rotation-controls">
+                                <button id="btn-rotate-left" class="btn btn-secondary btn-sm" title="Rotate 90° Left">🔄 Rotate Left</button>
+                                <button id="btn-rotate-right" class="btn btn-secondary btn-sm" title="Rotate 90° Right">🔄 Rotate Right</button>
+                            </div>
+                        </div>
+                        <div class="image-viewer">
+                            <img id="main-image" src="" alt="Selected Photo">
+                        </div>
+                    </div>
+
+                    <!-- Bottom section: Image Details and AI Suggestions -->
+                    <div class="details-and-suggestions-row">
+                        <div class="details-section">
+                            <div class="card-header">
+                                <h3>Image Details</h3>
+                            </div>
+                            <div class="details-grid">
+                                <div class="detail-item">
+                                    <span class="detail-label">File Path</span>
+                                    <span class="detail-value clickable" id="detail-path"></span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Date Taken</span>
+                                    <span class="detail-value" id="detail-date-taken"></span>
+                                </div>
+                                <div class="detail-item full-width">
+                                    <span class="detail-label">Title / Caption</span>
+                                    <div class="title-edit-container">
+                                        <input type="text" id="input-photo-title" placeholder="Set photo title/caption...">
+                                        <button id="btn-save-title" class="btn btn-secondary btn-sm">Save</button>
+                                        <button id="btn-suggest-title-wand" class="btn btn-secondary btn-sm wand-btn" title="No AI title suggested" disabled>🪄</button>
+                                    </div>
+                                </div>
+                                <div class="detail-item full-width">
+                                    <span class="detail-label">People Tags</span>
+                                    <div class="tags-edit-wrapper">
+                                        <div class="tags-container" id="detail-people">
+                                            <!-- People pills inserted here -->
+                                        </div>
+                                        <div class="add-tag-group">
+                                            <input type="text" id="input-add-person" placeholder="Add person..." list="people-datalist">
+                                            <button id="btn-add-person" class="btn btn-secondary btn-sm">Add Person</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="detail-item full-width">
+                                    <span class="detail-label">Keywords / Tags</span>
+                                    <div class="tags-edit-wrapper">
+                                        <div class="tags-container" id="detail-tags">
+                                            <!-- Tag pills inserted here -->
+                                        </div>
+                                        <div class="add-tag-group">
+                                            <input type="text" id="input-add-tag" placeholder="Add tag..." list="tags-datalist">
+                                            <button id="btn-add-tag" class="btn btn-secondary btn-sm">Add Tag</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- AI Suggestions Box -->
+                        <div id="suggestions-section" class="suggestions-section hidden">
+                            <div class="suggestions-header-row">
+                                <h3>🤖 AI Suggestions</h3>
+                                <button id="btn-apply-all-single-sugg" class="btn btn-secondary btn-sm">Apply All</button>
+                            </div>
+                            <div class="suggestions-content">
+                                <div class="suggestion-item">
+                                    <span class="suggestion-label">Suggested People</span>
+                                    <div id="suggested-people-container" class="suggestions-chips-container">
+                                        <!-- Chips here -->
+                                    </div>
+                                </div>
+                                <div class="suggestion-item">
+                                    <span class="suggestion-label">Suggested Tags</span>
+                                    <div id="suggested-tags-container" class="suggestions-chips-container">
+                                        <!-- Chips here -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Folder View Content -->
+                <div class="folder-view-content hidden" id="folder-view-content">
+                    <div class="folder-view-main" id="folder-view-main">
+                        <div class="folder-view-header-card">
+                            <div>
+                                <div class="folder-title-stats">
+                                    <h2 id="folder-view-title">Folder View</h2>
+                                    <span id="folder-view-stats" class="folder-stats-badge">0 photos</span>
+                                </div>
+                                <p class="folder-subtitle">Select images to batch edit tags, time shift, or cleanly rename.</p>
+                            </div>
+                            <div class="folder-view-actions">
+                                <div class="selection-actions">
+                                    <button id="btn-select-all-thumbnails" class="btn btn-secondary btn-sm">Select All</button>
+                                    <button id="btn-select-none-thumbnails" class="btn btn-secondary btn-sm">Select None</button>
+                                    <span id="selected-thumbnails-count" class="selected-count-label">Selected: 0</span>
+                                </div>
+                                <div class="thumbnail-size-toggle">
+                                    <button id="btn-size-small" class="btn-size-toggle" title="Small Thumbnails">Small</button>
+                                    <button id="btn-size-medium" class="btn-size-toggle active" title="Medium Thumbnails">Medium</button>
+                                    <button id="btn-size-large" class="btn-size-toggle" title="Large Thumbnails">Large</button>
+                                </div>
+                                <button id="btn-toggle-timeshift" class="btn btn-secondary btn-sm" title="Camera Time Shift" disabled>⏰</button>
+                                <button id="btn-toggle-rename" class="btn btn-secondary btn-sm" title="Smart Rename Files" disabled>🏷️ Smart Rename</button>
+                            </div>
+                        </div>
+
+                        <!-- Smart Rename Panel -->
+                        <div class="folder-view-timeshift-card hidden" id="rename-panel" style="margin-bottom: 16px;">
+                            <div class="timeshift-header-row">
+                                <div class="timeshift-title-group">
+                                    <span class="timeshift-icon">🏷️</span>
+                                    <h4>Smart Rename Files</h4>
+                                </div>
+                                <span class="timeshift-description">Rename selected files sequentially sorted by Date Taken. E.g., Grouping - 01 - Caption.jpg</span>
+                            </div>
+                            <div class="timeshift-controls-row">
+                                <div class="timeshift-field" style="flex: 1;">
+                                    <label for="rename-grouping-input">Grouping Name:</label>
+                                    <input type="text" id="rename-grouping-input" placeholder="e.g. Graduation Ceremony" style="width: 100%; max-width: 400px; padding: 6px 12px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);">
+                                </div>
+                                <button id="btn-apply-rename" class="btn btn-secondary btn-sm" disabled>Apply Smart Rename</button>
+                            </div>
+                        </div>
+
+                        <!-- Time Shift Panel -->
+                        <div class="folder-view-timeshift-card hidden" id="timeshift-panel">
+                            <div class="timeshift-header-row">
+                                <div class="timeshift-title-group">
+                                    <span class="timeshift-icon">⏰</span>
+                                    <h4>Camera Time Shift</h4>
+                                </div>
+                                <span class="timeshift-description">Shift Date Taken forward or backward to correct clock drift between multiple cameras.</span>
+                            </div>
+                            <div class="timeshift-controls-row">
+                                <div class="timeshift-field">
+                                    <label for="timeshift-camera-select">Camera Model:</label>
+                                    <select id="timeshift-camera-select">
+                                        <!-- Dynamically populated -->
+                                    </select>
+                                </div>
+                                <div class="timeshift-field">
+                                    <label for="timeshift-minutes-input">Shift (Minutes):</label>
+                                    <input type="number" id="timeshift-minutes-input" value="0" step="1" style="width: 80px;">
+                                </div>
+                                <button id="btn-apply-timeshift" class="btn btn-secondary btn-sm">Apply Time Shift</button>
+                            </div>
+                        </div>
+                        
+                        <!-- Thumbnails Grid -->
+                        <div class="thumbnails-grid" id="thumbnails-grid">
+                            <!-- Thumbnails loaded dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Selection Details / Bulk Editor Sidebar -->
+                    <div class="folder-view-sidebar hidden" id="folder-selection-sidebar">
+                        <div class="sidebar-card-header">
+                            <h3>Selection Details</h3>
+                            <span id="selection-summary-count" class="selected-count-badge">Selected: 0</span>
+                        </div>
+                        
+                        <div class="selection-summary-scroll">
+                            <div class="selection-date-group" id="selection-date-group" style="padding: 12px 20px; border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 4px;">
+                                <span class="detail-label" id="selection-date-label">Date Taken</span>
+                                <span class="detail-value" id="selection-date-value" style="font-size: 13px; font-weight: 500;">Unknown</span>
+                            </div>
+                            
+                            <div class="selection-summary-group">
+                                <span class="detail-label">People in Selection</span>
+                                <div id="selection-people-list" class="selection-summary-chips">
+                                    <!-- Rendered dynamically -->
+                                </div>
+                            </div>
+                            
+                            <div class="selection-summary-group">
+                                <span class="detail-label">Tags in Selection</span>
+                                <div id="selection-tags-list" class="selection-summary-chips">
+                                    <!-- Rendered dynamically -->
+                                </div>
+                            </div>
+
+                            <div class="selection-summary-group">
+                                <span class="detail-label">AI Suggested People (Selection)</span>
+                                <div id="selection-suggested-people-list" class="selection-summary-chips">
+                                    <!-- Rendered dynamically -->
+                                </div>
+                            </div>
+                            
+                            <div class="selection-summary-group">
+                                <span class="detail-label">AI Suggested Tags (Selection)</span>
+                                <div id="selection-suggested-tags-list" class="selection-summary-chips">
+                                    <!-- Rendered dynamically -->
+                                </div>
+                            </div>
+
+                            <div class="bulk-editor-divider"></div>
+
+                            <div class="bulk-edit-section">
+                                <h4>Bulk Editor</h4>
+                                <div class="bulk-edit-inputs">
+                                    <div class="bulk-input-group">
+                                        <span>Add People to Selection:</span>
+                                        <div class="bulk-add-row">
+                                            <input type="text" id="bulk-add-people-input" placeholder="Add person..." list="people-datalist">
+                                            <button id="btn-bulk-add-people" class="btn btn-secondary btn-sm">Add</button>
+                                        </div>
+                                    </div>
+                                    <div class="bulk-input-group">
+                                        <span>Add Tags to Selection:</span>
+                                        <div class="bulk-add-row">
+                                            <input type="text" id="bulk-add-tags-input" placeholder="Add tag..." list="tags-datalist">
+                                            <button id="btn-bulk-add-tags" class="btn btn-secondary btn-sm">Add</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div style="padding: 12px 20px; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
+                                <button id="btn-folder-auto-apply" class="btn btn-accent btn-sm" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;" disabled>🤖 Auto-Apply AI Suggestions</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Autocomplete lists -->
+    <datalist id="people-datalist"></datalist>
+    <datalist id="tags-datalist"></datalist>
+    <datalist id="folder-datalist"></datalist>
+    
+    <script src="app.js"></script>
+</body>
+</html>
