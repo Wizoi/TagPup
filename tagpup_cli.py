@@ -1,4 +1,4 @@
-# tagpup.py
+# tagpup_cli.py
 import os
 import sys
 import json
@@ -17,7 +17,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
-logger = logging.getLogger("tagpup")
+logger = logging.getLogger("tagpup_cli")
 
 # Suppress verbose faiss loader and huggingface logs
 logging.getLogger("faiss.loader").setLevel(logging.WARNING)
@@ -88,6 +88,12 @@ def get_exiftool_path(config) -> str:
     return path
 
 def get_db_paths(config, test_mode=False):
+    env_db = os.environ.get("TAGPUP_DB_PATH")
+    env_tax = os.environ.get("TAGPUP_TAXONOMY_PATH")
+    if env_db:
+        tax_path = env_tax or (os.path.splitext(env_db)[0] + "_taxonomy.json")
+        return env_db, tax_path
+
     data_dir = config.get("paths", "data_dir", fallback="data")
     prefix = "test_" if test_mode else ""
     return (
@@ -110,7 +116,7 @@ def scan_for_images(dir_path: str) -> List[str]:
 @click.option("--test", is_flag=True, help="Use test database paths to avoid cluttering production index.")
 @click.pass_context
 def cli(ctx, test):
-    """TagPup: AI-powered local photo tagging system."""
+    """TagpupCLI: AI-powered local photo tagging command-line interface."""
     ctx.ensure_object(dict)
     ctx.obj["test"] = test
 

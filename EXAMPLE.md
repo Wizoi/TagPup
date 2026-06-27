@@ -1,12 +1,12 @@
-# TagPup — Quick Start & Usage Examples
+# TagpupCLI — Quick Start & Usage Examples
 
-This guide walks you through setting up TagPup and running common photo organization workflows.
+This guide walks you through setting up TagpupCLI and running common photo organization workflows.
 
 ---
 
 ## 🚀 Key Commands Cheat Sheet
 
-Here is a quick reference table of the most common commands you will use in TagPup:
+Here is a quick reference table of the most common commands you will use in TagpupCLI:
 
 | Workflow / Task | Command | Description |
 | :--- | :--- | :--- |

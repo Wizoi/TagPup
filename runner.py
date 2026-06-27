@@ -19,7 +19,7 @@ from tuner_server import TunerHTTPRequestHandler, ThreadedHTTPServer
 class RunnerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("TagPup & TagTuner GUI Dashboard")
+        self.root.title("TagpupCLI & TagTuner GUI Dashboard")
         self.root.geometry("1150x780")
         self.root.minsize(1000, 700)
 
@@ -769,7 +769,7 @@ class RunnerApp:
             messagebox.showerror("Error", f"Selected directory does not exist:\n{directory}")
             return
 
-        cmd = [sys.executable, "tagpup.py"]
+        cmd = [sys.executable, "tagpup_cli.py"]
         if self.var_test_db.get():
             cmd.append("--test")
         cmd.extend(["index", directory])
@@ -792,7 +792,7 @@ class RunnerApp:
             messagebox.showerror("Error", f"Selected directory does not exist:\n{directory}")
             return
 
-        cmd = [sys.executable, "tagpup.py"]
+        cmd = [sys.executable, "tagpup_cli.py"]
         if self.var_test_db.get():
             cmd.append("--test")
         cmd.extend(["index-faces", directory])
@@ -800,7 +800,7 @@ class RunnerApp:
         self.execute_command(cmd)
 
     def run_clustering_action(self):
-        cmd = [sys.executable, "tagpup.py"]
+        cmd = [sys.executable, "tagpup_cli.py"]
         if self.var_test_db.get():
             cmd.append("--test")
         cmd.append("cluster-faces")
@@ -832,7 +832,7 @@ class RunnerApp:
             messagebox.showerror("Error", "Please specify a suggestions file output path.")
             return
 
-        cmd = [sys.executable, "tagpup.py"]
+        cmd = [sys.executable, "tagpup_cli.py"]
         if self.var_test_db.get():
             cmd.append("--test")
         cmd.extend(["suggest", directory, "--output", output_file])
@@ -856,7 +856,7 @@ class RunnerApp:
             messagebox.showerror("Error", f"Suggestions file not found:\n{suggestions_file}")
             return
 
-        cmd = [sys.executable, "tagpup.py", "write", suggestions_file]
+        cmd = [sys.executable, "tagpup_cli.py", "write", suggestions_file]
 
         min_score = self.ent_min_score.get().strip()
         if min_score:
@@ -886,7 +886,7 @@ class RunnerApp:
             self.log_text("LIVE write operation cancelled by user.\n", tag="warning")
             return
 
-        cmd = [sys.executable, "tagpup.py", "write", suggestions_file, "-Live"]
+        cmd = [sys.executable, "tagpup_cli.py", "write", suggestions_file, "-Live"]
 
         min_score = self.ent_min_score.get().strip()
         if min_score:

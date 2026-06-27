@@ -5,7 +5,7 @@ import logging
 from typing import List, Dict, Any, Optional
 import exiftool
 
-logger = logging.getLogger("tagpup.writer")
+logger = logging.getLogger("tagpup_cli.writer")
 
 def derive_caption_from_tags(tags: List[str]) -> Optional[str]:
     """Derive a clean, readable caption based directly on the hierarchical/flat tags."""
@@ -178,25 +178,50 @@ class MetadataWriter:
                         params = {}
                         
                         if tags:
-                            flat_tags = []
-                            hierarchical_tags = []
+                            new_flat_tags = []
+                            new_hierarchical_tags = []
                             for tag in tags:
-                                flat_tags.append(tag)
+                                new_flat_tags.append(tag)
                                 if "/" in tag:
-                                    hierarchical_tags.append(tag)
+                                    new_hierarchical_tags.append(tag)
                                     for part in tag.split("/"):
-                                        flat_tags.append(part)
+                                        new_flat_tags.append(part)
                                         
-                            flat_tags = sorted(list(set(flat_tags)))
-                            hierarchical_tags = sorted(list(set(hierarchical_tags)))
+                            new_flat_tags = list(set(new_flat_tags))
+                            new_hierarchical_tags = list(set(new_hierarchical_tags))
+
+                            # Read existing tags to merge them (emulating append without using "+" key suffix)
+                            existing_flat = []
+                            existing_hierarchical = []
+                            try:
+                                existing_records = et.get_tags([path], ["XMP:Subject", "IPTC:Keywords", "XMP:HierarchicalSubject"])
+                                if existing_records:
+                                    rec = existing_records[0]
+                                    
+                                    def get_as_list(key):
+                                        val = rec.get(key) or rec.get(key.split(":")[-1])
+                                        if not val:
+                                            return []
+                                        if isinstance(val, list):
+                                            return [str(v) for v in val]
+                                        return [str(val)]
+                                        
+                                    existing_flat.extend(get_as_list("XMP:Subject"))
+                                    existing_flat.extend(get_as_list("IPTC:Keywords"))
+                                    existing_hierarchical.extend(get_as_list("XMP:HierarchicalSubject"))
+                            except Exception as read_err:
+                                logger.warning(f"Could not read existing tags for merging on {path}: {read_err}")
+
+                            flat_tags = sorted(list(set(existing_flat + new_flat_tags)))
+                            hierarchical_tags = sorted(list(set(existing_hierarchical + new_hierarchical_tags)))
 
                             if flat_tags:
-                                params["XMP:Subject+"] = flat_tags
-                                params["IPTC:Keywords+"] = flat_tags
+                                params["XMP:Subject"] = flat_tags
+                                params["IPTC:Keywords"] = flat_tags
                                 # Windows-specific XPKeywords requires a semicolon-separated string
                                 params["EXIF:XPKeywords"] = ";".join(flat_tags)
                             if hierarchical_tags:
-                                params["XMP:HierarchicalSubject+"] = hierarchical_tags
+                                params["XMP:HierarchicalSubject"] = hierarchical_tags
                         
                         if caption:
                             params["XMP:Description"] = caption

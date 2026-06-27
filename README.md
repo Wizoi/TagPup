@@ -73,7 +73,7 @@ graph TD
 
 ## 📖 Command Reference & Workflows
 
-TagPup comes with a unified CLI entry point wrapper (`run.bat` / `run.ps1`) to automatically execute operations within the local environment.
+TagpupCLI comes with a unified CLI entry point wrapper (`run.bat` / `run.ps1`) to automatically execute operations within the local environment.
 
 > [!TIP]
 > **Testing Mode:** Prefix any command with the global `--test` option (e.g., `run.bat --test index ...`) to redirect database operations to a separate test index (`test_photo_index.db`). This allows you to experiment freely without altering your production data.
@@ -158,7 +158,7 @@ Start the interactive web interface in your browser to inspect metadata, tune ta
 ```
 
 ### 🎛️ 9. GUI Dashboard Runner
-TagPup includes a GUI dashboard that allows you to easily execute indexing commands, cluster faces, and start/stop the TagTuner web server from a graphical interface:
+TagpupCLI includes a GUI dashboard that allows you to easily execute indexing commands, cluster faces, and start/stop the TagTuner web server from a graphical interface:
 
 ```cmd
 # Launch the desktop GUI dashboard
@@ -170,7 +170,7 @@ TagPup includes a GUI dashboard that allows you to easily execute indexing comma
 ## 📚 Project Documentation
 
 For deeper details, refer to the following documentation files:
-- 🐶 [TagPup CLI & Backend Specification](SPEC_TAGPUP.md): Full technical description of visual embeddings (CLIP), face clustering (DBSCAN), hierarchical taxonomy calculations, and backend indexing/suggestion logic.
+- 🐶 [TagpupCLI & Backend Specification](SPEC_TAGPUP_CLI.md): Full technical description of visual embeddings (CLIP), face clustering (DBSCAN), hierarchical taxonomy calculations, and backend indexing/suggestion logic.
 - 🎯 [TagTuner UI Specification](SPEC_TAGTUNER.md): Interface guidelines, dynamic modal profiles workflow, grid sorting behavior, and complete list of server API routes.
 - 🗄️ [Database Specification](DATABASE.md): Detailed SQLite tables structure, foreign key relations, and ER schemas.
 - 📖 [Quick Start & Usage Examples](EXAMPLE.md): Step-by-step developer tutorials and command workflows.
