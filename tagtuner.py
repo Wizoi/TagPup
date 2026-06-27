@@ -62,7 +62,7 @@ def main():
     db_path = os.path.join(data_dir, "photo_index.db")
     
     if not os.path.exists(db_path):
-        logger.error(f"Database not found at {db_path}! Please run 'python tagpup.py index <dir>' first to index your photos.")
+        logger.error(f"Database not found at {db_path}! Please run 'python tagpup_cli.py index <dir>' first to index your photos.")
         sys.exit(1)
         
     port = find_available_port(8080)

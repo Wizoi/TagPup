@@ -17,7 +17,7 @@ from facenet_pytorch import MTCNN, InceptionResnetV1
 from sklearn.cluster import DBSCAN
 from tqdm import tqdm
 
-logger = logging.getLogger("tagpup.faces")
+logger = logging.getLogger("tagpup_cli.faces")
 
 class FaceProcessor:
     def __init__(self, device: str = None):

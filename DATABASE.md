@@ -102,10 +102,10 @@ The following diagram illustrates how different application workflows (CLI comma
 
 ```mermaid
 flowchart TD
-    subgraph CLI Commands [TagPup CLI Tool]
-        A["python tagpup.py index"]
-        B["python tagpup.py index-faces"]
-        C["python tagpup.py cluster-faces"]
+    subgraph CLI Commands [TagpupCLI Tool]
+        A["python tagpup_cli.py index"]
+        B["python tagpup_cli.py index-faces"]
+        C["python tagpup_cli.py cluster-faces"]
     end
 
     subgraph Web App [TagTuner Interface]

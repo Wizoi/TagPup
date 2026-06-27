@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Set, List, Dict, Union
 
-logger = logging.getLogger("tagpup.taxonomy")
+logger = logging.getLogger("tagpup_cli.taxonomy")
 
 class TagTaxonomy:
     def __init__(self, file_path: str = "data/photo_taxonomy.json"):

@@ -11,7 +11,7 @@ import torch
 import numpy as np
 import open_clip
 
-logger = logging.getLogger("tagpup.embedder")
+logger = logging.getLogger("tagpup_cli.embedder")
 
 def pad_to_square(image: Image.Image, background_color=(0, 0, 0)) -> Image.Image:
     """Pad the image to a square with a solid background color (default black) to preserve entire frame."""
