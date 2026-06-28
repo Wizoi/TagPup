@@ -12,9 +12,10 @@ import platform
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 
-# Add scripts directory to path to locate tuner_server
+# Add scripts directory to path to locate server handlers
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
-from tuner_server import TunerHTTPRequestHandler, ThreadedHTTPServer
+from tuner_server import TunerHTTPRequestHandler, ThreadedHTTPServer as TunerThreadedHTTPServer
+from tagpup_server import TagPupHTTPRequestHandler, ThreadedHTTPServer as TagPupThreadedHTTPServer
 
 class RunnerApp:
     def __init__(self, root):
@@ -42,8 +43,18 @@ class RunnerApp:
 
         # Process control state
         self.active_process = None
-        self.server_instance = None
-        self.server_thread = None
+        
+        # TagTuner server state
+        self.tuner_server_instance = None
+        self.tuner_server_thread = None
+        self.tuner_server_port = None
+        self.tuner_server_url = None
+
+        # TagPup GUI server state
+        self.tagpup_server_instance = None
+        self.tagpup_server_thread = None
+        self.tagpup_server_port = None
+        self.tagpup_server_url = None
 
         # Build UI layout
         self.setup_ui()
@@ -167,14 +178,14 @@ class RunnerApp:
         chk_test.pack(anchor="w", pady=5)
 
         # 2. TagTuner Server Panel
-        p_server = self.create_panel("1. TagTuner Web Server Control")
+        p_tuner_server = self.create_panel("1. TagTuner Web Server Control (Face Matching)")
         
-        server_btn_frame = tk.Frame(p_server, bg=self.BG_PANEL)
-        server_btn_frame.pack(fill="x", pady=5)
+        tuner_btn_frame = tk.Frame(p_tuner_server, bg=self.BG_PANEL)
+        tuner_btn_frame.pack(fill="x", pady=5)
 
-        self.btn_start_server = tk.Button(
-            server_btn_frame,
-            text="Start Web UI",
+        self.btn_start_tuner = tk.Button(
+            tuner_btn_frame,
+            text="Start TagTuner",
             bg=self.COLOR_SUCCESS,
             fg="white",
             activebackground="#1b5e20",
@@ -183,12 +194,12 @@ class RunnerApp:
             padx=12,
             pady=6,
             font=self.FONT_BOLD,
-            command=self.start_server_action
+            command=self.start_tuner_action
         )
-        self.btn_start_server.pack(side="left", padx=(0, 10))
+        self.btn_start_tuner.pack(side="left", padx=(0, 10))
 
-        self.btn_stop_server = tk.Button(
-            server_btn_frame,
+        self.btn_stop_tuner = tk.Button(
+            tuner_btn_frame,
             text="Stop Server",
             bg=self.COLOR_ERROR,
             fg="white",
@@ -198,13 +209,13 @@ class RunnerApp:
             padx=12,
             pady=6,
             font=self.FONT_BOLD,
-            command=self.stop_server_action,
+            command=self.stop_tuner_action,
             state=tk.DISABLED
         )
-        self.btn_stop_server.pack(side="left", padx=(0, 10))
+        self.btn_stop_tuner.pack(side="left", padx=(0, 10))
 
-        self.btn_open_browser = tk.Button(
-            server_btn_frame,
+        self.btn_open_tuner_browser = tk.Button(
+            tuner_btn_frame,
             text="Open Browser",
             bg=self.COLOR_ACCENT,
             fg="white",
@@ -214,13 +225,69 @@ class RunnerApp:
             padx=12,
             pady=6,
             font=self.FONT_BOLD,
-            command=self.open_browser_action,
+            command=self.open_tuner_browser_action,
             state=tk.DISABLED
         )
-        self.btn_open_browser.pack(side="left")
+        self.btn_open_tuner_browser.pack(side="left")
 
-        self.lbl_server_status = tk.Label(p_server, text="Status: Server Stopped", bg=self.BG_PANEL, fg=self.FG_MUTED, font=self.FONT_MAIN)
-        self.lbl_server_status.pack(anchor="w", pady=(5, 0))
+        self.lbl_tuner_status = tk.Label(p_tuner_server, text="Status: Server Stopped", bg=self.BG_PANEL, fg=self.FG_MUTED, font=self.FONT_MAIN)
+        self.lbl_tuner_status.pack(anchor="w", pady=(5, 0))
+
+        # 2b. TagPup GUI Server Panel
+        p_tagpup_server = self.create_panel("1b. TagPup GUI Web Server Control (Folder Tagging)")
+        
+        tagpup_btn_frame = tk.Frame(p_tagpup_server, bg=self.BG_PANEL)
+        tagpup_btn_frame.pack(fill="x", pady=5)
+
+        self.btn_start_tagpup = tk.Button(
+            tagpup_btn_frame,
+            text="Start TagPup GUI",
+            bg=self.COLOR_SUCCESS,
+            fg="white",
+            activebackground="#1b5e20",
+            relief=tk.FLAT,
+            bd=0,
+            padx=12,
+            pady=6,
+            font=self.FONT_BOLD,
+            command=self.start_tagpup_action
+        )
+        self.btn_start_tagpup.pack(side="left", padx=(0, 10))
+
+        self.btn_stop_tagpup = tk.Button(
+            tagpup_btn_frame,
+            text="Stop Server",
+            bg=self.COLOR_ERROR,
+            fg="white",
+            activebackground="#b71c1c",
+            relief=tk.FLAT,
+            bd=0,
+            padx=12,
+            pady=6,
+            font=self.FONT_BOLD,
+            command=self.stop_tagpup_action,
+            state=tk.DISABLED
+        )
+        self.btn_stop_tagpup.pack(side="left", padx=(0, 10))
+
+        self.btn_open_tagpup_browser = tk.Button(
+            tagpup_btn_frame,
+            text="Open Browser",
+            bg=self.COLOR_ACCENT,
+            fg="white",
+            activebackground="#0062a3",
+            relief=tk.FLAT,
+            bd=0,
+            padx=12,
+            pady=6,
+            font=self.FONT_BOLD,
+            command=self.open_tagpup_browser_action,
+            state=tk.DISABLED
+        )
+        self.btn_open_tagpup_browser.pack(side="left")
+
+        self.lbl_tagpup_status = tk.Label(p_tagpup_server, text="Status: Server Stopped", bg=self.BG_PANEL, fg=self.FG_MUTED, font=self.FONT_MAIN)
+        self.lbl_tagpup_status.pack(anchor="w", pady=(5, 0))
 
         # 3. Indexing Panel
         p_index = self.create_panel("2. Scans, Indexing & Face Detection")
@@ -601,8 +668,8 @@ class RunnerApp:
 
     # --- ACTIONS ---
 
-    def start_server_action(self):
-        if self.server_instance:
+    def start_tuner_action(self):
+        if self.tuner_server_instance:
             return
 
         def find_available_port(start_port=8080):
@@ -628,8 +695,8 @@ class RunnerApp:
         db_path = os.path.join("data", db_file)
 
         port = find_available_port(8080)
-        self.server_port = port
-        self.server_url = f"http://localhost:{port}/"
+        self.tuner_server_port = port
+        self.tuner_server_url = f"http://localhost:{port}/"
 
         # Apply schema check/migrations
         self.log_text(f"Starting TagTuner web server on port {port} using DB: {db_path}...\n", tag="info")
@@ -699,7 +766,7 @@ class RunnerApp:
             import tuner_server
             importlib.reload(tuner_server)
             globals()["TunerHTTPRequestHandler"] = tuner_server.TunerHTTPRequestHandler
-            globals()["ThreadedHTTPServer"] = tuner_server.ThreadedHTTPServer
+            globals()["TunerThreadedHTTPServer"] = tuner_server.ThreadedHTTPServer
         except Exception as reload_err:
             self.log_text(f"Warning: Could not reload tuner_server module: {reload_err}\n", tag="warning")
 
@@ -709,34 +776,34 @@ class RunnerApp:
             TunerHTTPRequestHandler.gui_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui")
 
             # Initialize server
-            self.server_instance = ThreadedHTTPServer(("", port), TunerHTTPRequestHandler)
+            self.tuner_server_instance = TunerThreadedHTTPServer(("", port), TunerHTTPRequestHandler)
             
             # Start in a background thread
-            self.server_thread = threading.Thread(target=self.server_instance.serve_forever, daemon=True)
-            self.server_thread.start()
+            self.tuner_server_thread = threading.Thread(target=self.tuner_server_instance.serve_forever, daemon=True)
+            self.tuner_server_thread.start()
 
             # Update UI controls
-            self.btn_start_server.config(state=tk.DISABLED)
-            self.btn_stop_server.config(state=tk.NORMAL)
-            self.btn_open_browser.config(state=tk.NORMAL)
-            self.lbl_server_status.config(text=f"Status: Server active on port {port}", fg="#a3e635")
-            self.log_text(f"TagTuner server active in background. Open browser at {self.server_url}\n", tag="success")
+            self.btn_start_tuner.config(state=tk.DISABLED)
+            self.btn_stop_tuner.config(state=tk.NORMAL)
+            self.btn_open_tuner_browser.config(state=tk.NORMAL)
+            self.lbl_tuner_status.config(text=f"Status: Server active on port {port}", fg="#a3e635")
+            self.log_text(f"TagTuner server active in background. Open browser at {self.tuner_server_url}\n", tag="success")
 
             # Automatically launch browser
-            webbrowser.open(self.server_url)
+            webbrowser.open(self.tuner_server_url)
 
         except Exception as e:
-            self.log_text(f"Failed to start server: {e}\n", tag="error")
-            self.server_instance = None
+            self.log_text(f"Failed to start TagTuner server: {e}\n", tag="error")
+            self.tuner_server_instance = None
 
-    def stop_server_action(self):
-        if not self.server_instance:
+    def stop_tuner_action(self):
+        if not self.tuner_server_instance:
             return
 
         try:
-            instance = self.server_instance
-            self.server_instance = None
-            self.server_thread = None
+            instance = self.tuner_server_instance
+            self.tuner_server_instance = None
+            self.tuner_server_thread = None
             
             def shutdown_worker():
                 try:
@@ -748,17 +815,130 @@ class RunnerApp:
             threading.Thread(target=shutdown_worker, daemon=True).start()
             
             # Update UI immediately to prevent GUI thread hang
-            self.btn_start_server.config(state=tk.NORMAL)
-            self.btn_stop_server.config(state=tk.DISABLED)
-            self.btn_open_browser.config(state=tk.DISABLED)
-            self.lbl_server_status.config(text="Status: Server Stopped", fg=self.FG_MUTED)
+            self.btn_start_tuner.config(state=tk.NORMAL)
+            self.btn_stop_tuner.config(state=tk.DISABLED)
+            self.btn_open_tuner_browser.config(state=tk.DISABLED)
+            self.lbl_tuner_status.config(text="Status: Server Stopped", fg=self.FG_MUTED)
             self.log_text("TagTuner server has been stopped.\n", tag="warning")
         except Exception as e:
-            self.log_text(f"Error stopping server: {e}\n", tag="error")
+            self.log_text(f"Error stopping TagTuner server: {e}\n", tag="error")
 
-    def open_browser_action(self):
-        if self.server_instance:
-            webbrowser.open(self.server_url)
+    def open_tuner_browser_action(self):
+        if self.tuner_server_instance:
+            webbrowser.open(self.tuner_server_url)
+
+    def start_tagpup_action(self):
+        if self.tagpup_server_instance:
+            return
+
+        def find_available_port(start_port=8090):
+            import socket
+            port = start_port
+            while True:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    try:
+                        s.connect(("127.0.0.1", port))
+                        port += 1
+                        continue
+                    except (ConnectionRefusedError, OSError):
+                        pass
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    try:
+                        s.bind(("", port))
+                        return port
+                    except OSError:
+                        port += 1
+
+        # Select correct database depending on global setting
+        db_file = "test_photo_index.db" if self.var_test_db.get() else "photo_index.db"
+        db_path = os.path.join("data", db_file)
+
+        port = find_available_port(8090)
+        self.tagpup_server_port = port
+        self.tagpup_server_url = f"http://localhost:{port}/"
+
+        self.log_text(f"Starting TagPup GUI web server on port {port} using DB: {db_path}...\n", tag="info")
+        
+        # Check if database exists, initialize it if it doesn't
+        if not os.path.exists(db_path):
+            self.log_text(f"Database not found at {db_path}. Initializing empty database with default categories...\n", tag="info")
+            try:
+                os.makedirs(os.path.dirname(db_path), exist_ok=True)
+                from index import PhotoIndex
+                from taxonomy import seed_taxonomy_from_db
+                photo_index = PhotoIndex(db_path=db_path)
+                photo_index.load()
+                seed_taxonomy_from_db(db_path)
+                self.log_text("Database initialized successfully.\n", tag="success")
+            except Exception as init_err:
+                self.log_text(f"Error initializing database: {init_err}\n", tag="error")
+
+        try:
+            # Dynamically reload tagpup_server to pick up any edits to tagpup_server.py
+            import importlib
+            import tagpup_server
+            importlib.reload(tagpup_server)
+            globals()["TagPupHTTPRequestHandler"] = tagpup_server.TagPupHTTPRequestHandler
+            globals()["TagPupThreadedHTTPServer"] = tagpup_server.ThreadedHTTPServer
+        except Exception as reload_err:
+            self.log_text(f"Warning: Could not reload tagpup_server module: {reload_err}\n", tag="warning")
+
+        try:
+            # Bind parameters to HTTP handler class
+            TagPupHTTPRequestHandler.db_path = db_path
+            TagPupHTTPRequestHandler.gui_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui_tagpup")
+
+            # Initialize server
+            self.tagpup_server_instance = TagPupThreadedHTTPServer(("", port), TagPupHTTPRequestHandler)
+            
+            # Start in a background thread
+            self.tagpup_server_thread = threading.Thread(target=self.tagpup_server_instance.serve_forever, daemon=True)
+            self.tagpup_server_thread.start()
+
+            # Update UI controls
+            self.btn_start_tagpup.config(state=tk.DISABLED)
+            self.btn_stop_tagpup.config(state=tk.NORMAL)
+            self.btn_open_tagpup_browser.config(state=tk.NORMAL)
+            self.lbl_tagpup_status.config(text=f"Status: Server active on port {port}", fg="#a3e635")
+            self.log_text(f"TagPup GUI server active in background. Open browser at {self.tagpup_server_url}\n", tag="success")
+
+            # Automatically launch browser
+            webbrowser.open(self.tagpup_server_url)
+
+        except Exception as e:
+            self.log_text(f"Failed to start TagPup GUI server: {e}\n", tag="error")
+            self.tagpup_server_instance = None
+
+    def stop_tagpup_action(self):
+        if not self.tagpup_server_instance:
+            return
+
+        try:
+            instance = self.tagpup_server_instance
+            self.tagpup_server_instance = None
+            self.tagpup_server_thread = None
+            
+            def shutdown_worker():
+                try:
+                    instance.shutdown()
+                    instance.server_close()
+                except Exception as e:
+                    self.log_text(f"Error in background server shutdown: {e}\n", tag="error")
+
+            threading.Thread(target=shutdown_worker, daemon=True).start()
+            
+            # Update UI immediately to prevent GUI thread hang
+            self.btn_start_tagpup.config(state=tk.NORMAL)
+            self.btn_stop_tagpup.config(state=tk.DISABLED)
+            self.btn_open_tagpup_browser.config(state=tk.DISABLED)
+            self.lbl_tagpup_status.config(text="Status: Server Stopped", fg=self.FG_MUTED)
+            self.log_text("TagPup GUI server has been stopped.\n", tag="warning")
+        except Exception as e:
+            self.log_text(f"Error stopping TagPup GUI server: {e}\n", tag="error")
+
+    def open_tagpup_browser_action(self):
+        if self.tagpup_server_instance:
+            webbrowser.open(self.tagpup_server_url)
 
     def run_indexing_action(self):
         directory = self.ent_index_dir.get().strip()

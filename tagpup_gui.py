@@ -51,7 +51,10 @@ def main():
     config = get_config()
     
     data_dir = config.get("paths", "data_dir", fallback="data")
-    db_path = os.path.join(data_dir, "photo_index.db")
+    db_name = "photo_index.db"
+    if len(sys.argv) > 1 and sys.argv[1].endswith(".db"):
+        db_name = sys.argv[1]
+    db_path = os.path.join(data_dir, db_name)
     
     if not os.path.exists(db_path):
         logger.info(f"Database not found at {db_path}. Initializing empty database with default categories...")
