@@ -357,7 +357,7 @@ class TagSuggester:
                         "is_new_recommendation": True
                     })
 
-        # Prune redundant ancestor tags and redundant leaf-only tags (e.g. remove 'Laurel Idzi' if 'Family/Immediate/Laurel Idzi' is suggested)
+        # Prune redundant ancestor tags and redundant leaf-only tags (e.g. remove 'Jane Doe' if 'Family/Immediate/Jane Doe' is suggested)
         pruned_tags = []
         # Sort by length descending to process the most specific leaf tags first
         sorted_by_len = sorted(suggested_tags, key=lambda x: len(x["tag"]), reverse=True)

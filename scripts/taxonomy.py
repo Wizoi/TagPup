@@ -8,16 +8,29 @@ from typing import Set, List, Dict, Union, Optional
 logger = logging.getLogger("tagpup_cli.taxonomy")
 
 class TagTaxonomy:
-    def __init__(self, file_path: str = "data/photo_taxonomy.json", db_path: Optional[str] = None):
-        self.file_path = file_path
-        if db_path is None:
-            if file_path.endswith("_taxonomy.json"):
+    def __init__(self, file_path: Optional[str] = None, db_path: Optional[str] = None):
+        if db_path is not None:
+            self.db_path = db_path
+            if file_path is None:
+                # e.g. data/photo_index.db -> data/photo_index_taxonomy.json
+                # if it is default data/photo_index.db, we want data/photo_taxonomy.json for compatibility
+                if os.path.basename(db_path) == "photo_index.db":
+                    self.file_path = os.path.join(os.path.dirname(db_path), "photo_taxonomy.json").replace("\\", "/")
+                else:
+                    self.file_path = (os.path.splitext(db_path)[0] + "_taxonomy.json").replace("\\", "/")
+            else:
+                self.file_path = file_path
+        else:
+            if file_path is None:
+                file_path = "data/photo_taxonomy.json"
+            self.file_path = file_path
+            if file_path.endswith("photo_taxonomy.json"):
+                self.db_path = os.path.join(os.path.dirname(file_path), "photo_index.db").replace("\\", "/")
+            elif file_path.endswith("_taxonomy.json"):
                 self.db_path = file_path.replace("_taxonomy.json", ".db")
             else:
-                self.db_path = "data/photo_index.db"
-        else:
-            self.db_path = db_path
-        # Store full paths of known hierarchical tags, e.g., {"Family/Immediate/Laurel Idzi", "Activity/Botanical Garden"}
+                self.db_path = os.path.splitext(file_path)[0] + ".db"
+        # Store full paths of known hierarchical tags, e.g., {"Family/Immediate/Jane Doe", "Activity/Botanical Garden"}
         self.paths: Set[str] = set()
 
     def load(self):
