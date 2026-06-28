@@ -47,7 +47,7 @@ class TagSuggester:
         people_candidates = []
         for path in self.taxonomy.paths:
             parts = path.split("/")
-            if len(parts) >= 2 and parts[0].lower() in ["family", "friends"]:
+            if len(parts) >= 2 and parts[0].lower() in ["family", "friends", "pets"]:
                 people_candidates.append(parts[-1])
                 
         # Merge and deduplicate candidates
@@ -93,7 +93,7 @@ class TagSuggester:
             is_person = False
             for path in self.taxonomy.paths:
                 parts = path.split("/")
-                if len(parts) >= 2 and parts[0].lower() in ["family", "friends"]:
+                if len(parts) >= 2 and parts[0].lower() in ["family", "friends", "pets"]:
                     if parts[-1].lower() == tag.lower() or path.lower() == tag.lower():
                         is_person = True
                         break
@@ -236,6 +236,24 @@ class TagSuggester:
             processor = _global_face_processor
             detected_faces = processor.detect_and_embed_faces(photo_path)
             
+            if not detected_faces and self.index and self.index.conn:
+                try:
+                    import json
+                    norm_path = os.path.normpath(photo_path).replace("\\", "/")
+                    cursor = self.index.conn.cursor()
+                    cursor.execute("SELECT box, embedding, prob FROM faces WHERE LOWER(photo_path) = LOWER(?)", (norm_path,))
+                    for row in cursor.fetchall():
+                        box_json, emb_bytes, prob = row
+                        box = json.loads(box_json)
+                        emb = np.frombuffer(emb_bytes, dtype=np.float32).tolist()
+                        detected_faces.append({
+                            "box": box,
+                            "embedding": emb,
+                            "prob": prob
+                        })
+                except Exception as db_err:
+                    logger.warning(f"Failed to query database faces fallback: {db_err}")
+            
             if detected_faces:
                 # Calculate areas and filter out tiny background/noise faces
                 face_areas = []
@@ -293,7 +311,7 @@ class TagSuggester:
                                 resolved_path = best_name
                                 for path in self.taxonomy.paths:
                                     parts = path.split("/")
-                                    if len(parts) >= 2 and parts[-1].lower() == best_name.lower() and parts[0].lower() in ["family", "friends"]:
+                                    if len(parts) >= 2 and parts[-1].lower() == best_name.lower() and parts[0].lower() in ["family", "friends", "pets"]:
                                         resolved_path = path
                                         break
                                 
@@ -309,7 +327,7 @@ class TagSuggester:
                                         "tag": resolved_path,
                                         "score": score,
                                         "source_count": 1,
-                                        "is_face_match": True
+                                        "has_face_match": True
                                     })
         except Exception as e:
             logger.warning(f"Failed to perform face matching suggestions for {photo_path}: {e}")

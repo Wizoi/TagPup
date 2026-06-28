@@ -12,3 +12,6 @@ suggestions.json
 
 # ExifTool backups
 *_original
+
+# Server log files
+*.log

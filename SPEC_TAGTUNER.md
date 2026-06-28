@@ -1,5 +1,9 @@
 # TagTuner UI Specification
 
+---
+[◀ Back to README](README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
+---
+
 This document records the design, specifications, prerequisites, and instructions for the TagTuner User Interface and its matching mechanics.
 
 ## Design and Visual Aesthetics
@@ -103,3 +107,6 @@ This document records the design, specifications, prerequisites, and instruction
 - `name` (TEXT)
 - `crop_image` (BLOB - JPEG thumbnail cache)
 - `prob` (REAL - MTCNN detection confidence score)
+
+---
+[◀ Back to README](README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)

@@ -93,7 +93,7 @@ class TagTaxonomy:
                     tag TEXT UNIQUE,
                     parent_id INTEGER,
                     name TEXT,
-                    is_people INTEGER DEFAULT 0,
+                    has_face INTEGER DEFAULT 0,
                     hidden_from_autocomplete INTEGER DEFAULT 0,
                     FOREIGN KEY(parent_id) REFERENCES tag_taxonomy(id) ON DELETE CASCADE
                 )
@@ -110,23 +110,23 @@ class TagTaxonomy:
                     else:
                         accumulated_path += "/" + part
                     
-                    cursor.execute("SELECT id, is_people FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
+                    cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
                     row = cursor.fetchone()
                     if row:
                         parent_id = row[0]
                     else:
                         is_p = 0
                         if i == 0:
-                            if part.lower() in ["people", "family", "friends"]:
+                            if part.lower() in ["people", "family", "friends", "pets"]:
                                 is_p = 1
                         else:
                             if parent_id is not None:
-                                cursor.execute("SELECT is_people FROM tag_taxonomy WHERE id = ?", (parent_id,))
+                                cursor.execute("SELECT has_face FROM tag_taxonomy WHERE id = ?", (parent_id,))
                                 p_row = cursor.fetchone()
                                 if p_row:
                                     is_p = p_row[0]
                         cursor.execute(
-                            "INSERT INTO tag_taxonomy (tag, parent_id, name, is_people) VALUES (?, ?, ?, ?)",
+                            "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
                             (accumulated_path, parent_id, part, is_p)
                         )
                         parent_id = cursor.lastrowid
@@ -211,7 +211,7 @@ def seed_taxonomy_from_db(db_path: str):
                 tag TEXT UNIQUE,
                 parent_id INTEGER,
                 name TEXT,
-                is_people INTEGER DEFAULT 0,
+                has_face INTEGER DEFAULT 0,
                 hidden_from_autocomplete INTEGER DEFAULT 0,
                 FOREIGN KEY(parent_id) REFERENCES tag_taxonomy(id) ON DELETE CASCADE
             )
@@ -228,10 +228,10 @@ def seed_taxonomy_from_db(db_path: str):
         default_categories = ["People", "Activity", "Pets", "School", "Trips"]
         category_ids = {}
         for category in default_categories:
-            is_p = 1 if category.lower() == "people" else 0
+            is_p = 1 if category.lower() in ["people", "pets"] else 0
             try:
                 cursor.execute(
-                    "INSERT INTO tag_taxonomy (tag, parent_id, name, is_people) VALUES (?, NULL, ?, ?)",
+                    "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, NULL, ?, ?)",
                     (category, category, is_p)
                 )
                 category_ids[category] = cursor.lastrowid
@@ -264,23 +264,23 @@ def seed_taxonomy_from_db(db_path: str):
                     else:
                         accumulated_path += "/" + part
                     
-                    cursor.execute("SELECT id, is_people FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
+                    cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
                     row = cursor.fetchone()
                     if row:
                         parent_id = row[0]
                     else:
                         is_p = 0
                         if i == 0:
-                            if part.lower() in ["people", "family", "friends"]:
+                            if part.lower() in ["people", "family", "friends", "pets"]:
                                 is_p = 1
                         else:
                             if parent_id is not None:
-                                cursor.execute("SELECT is_people FROM tag_taxonomy WHERE id = ?", (parent_id,))
+                                cursor.execute("SELECT has_face FROM tag_taxonomy WHERE id = ?", (parent_id,))
                                 p_row = cursor.fetchone()
                                 if p_row:
                                     is_p = p_row[0]
                         cursor.execute(
-                            "INSERT INTO tag_taxonomy (tag, parent_id, name, is_people) VALUES (?, ?, ?, ?)",
+                            "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
                             (accumulated_path, parent_id, part, is_p)
                         )
                         parent_id = cursor.lastrowid
@@ -304,7 +304,7 @@ def seed_taxonomy_from_db(db_path: str):
                 cursor.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (path,))
                 if not cursor.fetchone():
                     cursor.execute(
-                        "INSERT INTO tag_taxonomy (tag, parent_id, name, is_people) VALUES (?, ?, ?, 1)",
+                        "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, 1)",
                         (path, people_root_id, name)
                     )
                     
@@ -328,23 +328,23 @@ def seed_taxonomy_from_db(db_path: str):
                         else:
                             accumulated_path += "/" + part
                         
-                        cursor.execute("SELECT id, is_people FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
+                        cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
                         row = cursor.fetchone()
                         if row:
                             parent_id = row[0]
                         else:
                             is_p = 0
                             if i == 0:
-                                if part.lower() in ["people", "family", "friends"]:
+                                if part.lower() in ["people", "family", "friends", "pets"]:
                                     is_p = 1
                             else:
                                 if parent_id is not None:
-                                    cursor.execute("SELECT is_people FROM tag_taxonomy WHERE id = ?", (parent_id,))
+                                    cursor.execute("SELECT has_face FROM tag_taxonomy WHERE id = ?", (parent_id,))
                                     p_row = cursor.fetchone()
                                     if p_row:
                                         is_p = p_row[0]
                             cursor.execute(
-                                "INSERT INTO tag_taxonomy (tag, parent_id, name, is_people) VALUES (?, ?, ?, ?)",
+                                "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
                                 (accumulated_path, parent_id, part, is_p)
                             )
                             parent_id = cursor.lastrowid
