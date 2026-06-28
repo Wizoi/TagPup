@@ -125,7 +125,7 @@ def get_people_roots(db_path: Optional[str] = None) -> Set[str]:
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
             if cursor.fetchone():
-                cursor.execute("SELECT name FROM tag_taxonomy WHERE (parent_id IS NULL OR tag NOT LIKE '%/%') AND is_people = 1")
+                cursor.execute("SELECT name FROM tag_taxonomy WHERE (parent_id IS NULL OR tag NOT LIKE '%/%') AND has_face = 1")
                 for row in cursor.fetchall():
                     if row[0]:
                         roots.add(row[0].lower().strip())

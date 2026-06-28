@@ -82,6 +82,9 @@ The **AI CLI Engine** is the underlying machine learning backend that indexes vi
 
 ## 🚀 Getting Started
 
+> [!TIP]
+> For a conceptual, step-by-step walkthrough of how TagPup works—from importing photos to auto-matching faces and using AI suggestions—check out the [Getting Started Tutorial](TUTORIAL.md).
+
 ### 📋 Preconditions
 - **OS:** Windows 10 or 11
 - **Python:** Python 3.10+ added to your system PATH
@@ -122,12 +125,13 @@ The **AI CLI Engine** is the underlying machine learning backend that indexes vi
 
 ## 📚 Project Documentation Directory
 
-For deep technical specifications, schemas, and usage examples:
-*   🖥️ [TagPup GUI Specification](SPEC_TAGPUP_GUI.md): Interface design guidelines, folder browser actions, custom camera clocks, tag taxonomy tree manager, and metadata resolution prompts with visual screenshots.
-*   🎯 [TagTuner UI Specification](SPEC_TAGTUNER.md): Face tuning grid mechanics, name datalist autocompletes, DBSCAN identity matching, and profile workflows.
-*   🐶 [TagpupCLI & Backend Specification](SPEC_TAGPUP_CLI.md): Core machine learning architecture, CLIP embeddings, DBSCAN face clustering, consensus formulas, and detailed CLI command parameters.
-*   🗄️ [Database Specification](DATABASE.md): Detailed SQLite tables schema, index columns, and database ER relationships.
-*   📖 [Usage Tutorials & Examples](EXAMPLE.md): Step-by-step developer walkthroughs and photo indexing workflows.
+For guides, tutorials, specifications, and schemas:
+*   📖 [Getting Started Tutorial](TUTORIAL.md): High-level concept tutorial on building your photo taxonomy and utilizing confidence-based AI suggestions.
+*   💡 [Usage & CLI Examples](EXAMPLE.md): Practical commands cheat sheet, setup instructions, indexing, clustering, and searching walkthroughs.
+*   🖥️ [TagPup GUI Specification](SPEC_TAGPUP_GUI.md): Detailed design guidelines, folder browser actions, tag taxonomy tree manager, and metadata resolution prompts.
+*   🎯 [TagTuner UI Specification](SPEC_TAGTUNER.md): Face tuning grid mechanics, autocompletes, DBSCAN identity matching, and profile workflows.
+*   🐶 [AI CLI Engine Specification](SPEC_TAGPUP_CLI.md): Machine learning architecture, CLIP embeddings, consensus scoring formulas, and CLI parameters.
+*   🗄️ [Database Specification](DATABASE.md): SQLite schema table structures and visual Entity-Relationship/Data-Flow diagrams.
 
 ---
 

@@ -113,7 +113,7 @@ class PhotoIndex:
                 tag TEXT UNIQUE,
                 parent_id INTEGER,
                 name TEXT,
-                is_people INTEGER DEFAULT 0,
+                has_face INTEGER DEFAULT 0,
                 hidden_from_autocomplete INTEGER DEFAULT 0,
                 FOREIGN KEY(parent_id) REFERENCES tag_taxonomy(id) ON DELETE CASCADE
             )
@@ -147,6 +147,19 @@ class PhotoIndex:
                 logger.info("Migrating faces table: Adding prob column...")
                 cursor.execute("ALTER TABLE faces ADD COLUMN prob REAL")
                 self.conn.commit()
+            
+            # Migrate tag_taxonomy: is_people -> has_face
+            cursor.execute("PRAGMA table_info(tag_taxonomy)")
+            tax_columns = [info[1] for info in cursor.fetchall()]
+            if tax_columns:
+                if "has_face" not in tax_columns:
+                    logger.info("Migrating tag_taxonomy table: Adding has_face column...")
+                    cursor.execute("ALTER TABLE tag_taxonomy ADD COLUMN has_face INTEGER DEFAULT 0")
+                    if "is_people" in tax_columns:
+                        cursor.execute("UPDATE tag_taxonomy SET has_face = is_people")
+                    elif "is_face" in tax_columns:
+                        cursor.execute("UPDATE tag_taxonomy SET has_face = is_face")
+                    self.conn.commit()
             
             # Migrate 'Non Person' to NULL
             cursor.execute("UPDATE faces SET name = NULL WHERE name = 'Non Person'")

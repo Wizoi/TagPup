@@ -593,7 +593,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
                     for item in sugg.get("suggested_tags", []):
                         score = item.get("score", 0.0)
                         if score >= 0.6:
-                            if item.get("is_face_match"):
+                            if item.get("has_face_match"):
                                 suggested_people.append({"name": item["tag"], "score": score})
                             else:
                                 suggested_tags.append({"tag": item["tag"], "score": score})
@@ -629,7 +629,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
                         for item in sugg.get("suggested_tags", []):
                             score = item.get("score", 0.0)
                             if score >= 0.6:
-                                if item.get("is_face_match"):
+                                if item.get("has_face_match"):
                                     suggested_people.append({"name": item["tag"], "score": score})
                                 else:
                                     suggested_tags.append({"tag": item["tag"], "score": score})
@@ -1304,7 +1304,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
                 from taxonomy import seed_taxonomy_from_db
                 seed_taxonomy_from_db(self.db_path)
             
-            cursor.execute("SELECT id, tag, parent_id, name, is_people, hidden_from_autocomplete FROM tag_taxonomy ORDER BY tag")
+            cursor.execute("SELECT id, tag, parent_id, name, has_face, hidden_from_autocomplete FROM tag_taxonomy ORDER BY tag")
             rows = cursor.fetchall()
             conn.close()
             
@@ -1317,7 +1317,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
                     "tag": row[1],
                     "parent_id": row[2],
                     "name": row[3],
-                    "is_people": row[4],
+                    "has_face": row[4],
                     "hidden_from_autocomplete": row[5],
                     "usage_count": counts.get(row[1], 0)
                 }
@@ -1332,7 +1332,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             data = self.read_json_body()
             name = data.get("name", "").strip()
             parent_id = data.get("parent_id")
-            is_people = data.get("is_people", 0)
+            has_face = data.get("has_face", 0)
             
             if not name:
                 self.send_json_error(400, "Tag name cannot be empty")
@@ -1342,15 +1342,15 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             cursor = conn.cursor()
             
             if parent_id:
-                cursor.execute("SELECT tag, is_people FROM tag_taxonomy WHERE id = ?", (parent_id,))
+                cursor.execute("SELECT tag, has_face FROM tag_taxonomy WHERE id = ?", (parent_id,))
                 parent_row = cursor.fetchone()
                 if not parent_row:
                     conn.close()
                     self.send_json_error(404, "Parent tag not found")
                     return
-                parent_path, parent_is_people = parent_row
+                parent_path, parent_has_face = parent_row
                 tag_path = parent_path + "/" + name
-                is_people = parent_is_people
+                has_face = parent_has_face
             else:
                 tag_path = name
                 
@@ -1365,8 +1365,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
                 return
                 
             cursor.execute(
-                "INSERT INTO tag_taxonomy (tag, parent_id, name, is_people) VALUES (?, ?, ?, ?)",
-                (tag_path, parent_id, name, is_people)
+                "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
+                (tag_path, parent_id, name, has_face)
             )
             new_id = cursor.lastrowid
             conn.commit()
@@ -1385,7 +1385,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
         try:
             data = self.read_json_body()
             tag_id = data.get("id")
-            is_people = data.get("is_people")
+            has_face = data.get("has_face")
             hidden_from_autocomplete = data.get("hidden_from_autocomplete")
             
             if tag_id is None:
@@ -1403,11 +1403,11 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
                 return
             tag_path, parent_id = row
             
-            if is_people is not None:
-                cursor.execute("UPDATE tag_taxonomy SET is_people = ? WHERE id = ?", (is_people, tag_id))
+            if has_face is not None:
+                cursor.execute("UPDATE tag_taxonomy SET has_face = ? WHERE id = ?", (has_face, tag_id))
                 cursor.execute(
-                    "UPDATE tag_taxonomy SET is_people = ? WHERE tag = ? OR tag LIKE ?",
-                    (is_people, tag_path, tag_path + "/%")
+                    "UPDATE tag_taxonomy SET has_face = ? WHERE tag = ? OR tag LIKE ?",
+                    (has_face, tag_path, tag_path + "/%")
                 )
                 
             if hidden_from_autocomplete is not None:
@@ -1680,7 +1680,7 @@ def get_tag_usage_counts(db_path):
         pass
     return counts
 
-def insert_tag_path_to_db(cursor, path: str, is_people_root: bool = False) -> int:
+def insert_tag_path_to_db(cursor, path: str, has_face_root: bool = False) -> int:
     from taxonomy import TagTaxonomy
     normalized = TagTaxonomy.normalize_tag(path)
     if not normalized:
@@ -1696,27 +1696,27 @@ def insert_tag_path_to_db(cursor, path: str, is_people_root: bool = False) -> in
         else:
             accumulated_path += "/" + part
             
-        cursor.execute("SELECT id, is_people FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
+        cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
         row = cursor.fetchone()
         if row:
             parent_id = row[0]
-            current_is_people = row[1]
-            if i == 0 and is_people_root and not current_is_people:
-                cursor.execute("UPDATE tag_taxonomy SET is_people = 1 WHERE id = ?", (parent_id,))
+            current_has_face = row[1]
+            if i == 0 and has_face_root and not current_has_face:
+                cursor.execute("UPDATE tag_taxonomy SET has_face = 1 WHERE id = ?", (parent_id,))
         else:
             is_p = 0
             if i == 0:
-                if is_people_root or part.lower() in ["people", "family", "friends"]:
+                if has_face_root or part.lower() in ["people", "family", "friends", "pets"]:
                     is_p = 1
             else:
                 if parent_id is not None:
-                    cursor.execute("SELECT is_people FROM tag_taxonomy WHERE id = ?", (parent_id,))
+                    cursor.execute("SELECT has_face FROM tag_taxonomy WHERE id = ?", (parent_id,))
                     p_row = cursor.fetchone()
                     if p_row:
                         is_p = p_row[0]
             
             cursor.execute(
-                "INSERT INTO tag_taxonomy (tag, parent_id, name, is_people) VALUES (?, ?, ?, ?)",
+                "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
                 (accumulated_path, parent_id, part, is_p)
             )
             parent_id = cursor.lastrowid

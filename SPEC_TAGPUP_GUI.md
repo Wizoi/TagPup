@@ -1,5 +1,9 @@
 # TagPup GUI — Folder Tagging & Metadata Editor Specification
 
+---
+[◀ Back to README](README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
+---
+
 This document records the design, specifications, prerequisites, and instructions for the TagPup Graphical User Interface (Web Workspace) and its matching tag taxonomy mechanics.
 
 ## Design and Visual Aesthetics
@@ -44,14 +48,14 @@ This document records the design, specifications, prerequisites, and instruction
 - `/api/photo-file?path=<photo_path>`: Serves the photo image binary (supports resizing via `size` parameter).
 - `/api/tags`: Returns all autocomplete-visible tags.
 - `/api/people`: Returns all autocomplete-visible people names.
-- `/api/taxonomy/tree`: Returns the hierarchical tree nodes of tags with counts of photo usage and status attributes (`is_people`, `hidden_from_autocomplete`).
+- `/api/taxonomy/tree`: Returns the hierarchical tree nodes of tags with counts of photo usage and status attributes (`has_face`, `hidden_from_autocomplete`).
 
 ### `POST` Endpoints
 - `/api/photo/save-metadata`: Saves caption, people, and tags metadata directly to the image file via ExifTool and syncs the DB.
 - `/api/photos/bulk-tags`: Adds or removes tags in bulk across a selection of photo paths.
 - `/api/folder/time-shift`: Shifts timestamps recursively by camera model.
-- `/api/taxonomy/create`: Expects JSON body `{"name": string, "parent_id": int, "is_people": int}`. Creates a new tag path.
-- `/api/taxonomy/update`: Expects JSON body `{"id": int, "is_people": int, "hidden_from_autocomplete": int}`. Updates attributes for the tag and propagates to child nodes.
+- `/api/taxonomy/create`: Expects JSON body `{"name": string, "parent_id": int, "has_face": int}`. Creates a new tag path.
+- `/api/taxonomy/update`: Expects JSON body `{"id": int, "has_face": int, "hidden_from_autocomplete": int}`. Updates attributes for the tag and propagates to child nodes.
 - `/api/taxonomy/delete-check`: Expects JSON body `{"tag_id": int}`. Checks if a tag is used by any photo and returns the count of affected files.
 - `/api/taxonomy/delete-confirm`: Expects JSON body `{"tag_id": int, "action": string, "target_tag": string}`. Deletes the tag node, clearing or moving the tag on photos on disk/db.
 - `/api/taxonomy/rename`: Expects JSON body `{"tag_id": int, "new_name": string}`. Renames a tag node, cascades path updates to descendants, and updates photo metadata on disk/db.
@@ -63,7 +67,7 @@ This document records the design, specifications, prerequisites, and instruction
 - `tag` (TEXT UNIQUE)
 - `parent_id` (INTEGER, FOREIGN KEY)
 - `name` (TEXT)
-- `is_people` (INTEGER DEFAULT 0)
+- `has_face` (INTEGER DEFAULT 0)
 - `hidden_from_autocomplete` (INTEGER DEFAULT 0)
 
 ---
@@ -84,3 +88,6 @@ Triggers when entering a new keyword tag. Allows the user to select which catego
 Displays the primary tagging interface containing the scanned photo thumbnail grid, interactive selections, and the metadata editing panel on the right.
 
 ![TagPup GUI Main Screen](docs/images/tagpup_main_screen.png)
+
+---
+[◀ Back to README](README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)

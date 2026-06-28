@@ -355,15 +355,32 @@ document.addEventListener('DOMContentLoaded', () => {
     function isPersonTag(tag) {
         if (!tag) return false;
         const tagLower = tag.toLowerCase().trim();
-        if (tagLower === 'family' || tagLower === 'friends' || tagLower === 'people') {
+        if (tagLower === 'family' || tagLower === 'friends' || tagLower === 'people' || tagLower === 'pets') {
             return true;
         }
-        if (tag.startsWith('Family/') || tag.startsWith('Friends/') || tag.startsWith('People/')) {
+        if (tag.startsWith('Family/') || tag.startsWith('Friends/') || tag.startsWith('People/') || tag.startsWith('Pets/')) {
             return true;
         }
         const leaf = tag.includes('/') ? tag.split('/').pop().trim() : tag;
         if (knownPeople.includes(leaf)) {
             return true;
+        }
+        // Fallback: search taxonomyNodes dynamically for has_face flag
+        if (taxonomyNodes && Array.isArray(taxonomyNodes)) {
+            const foundNode = taxonomyNodes.find(n => n.tag === tag);
+            if (foundNode && foundNode.has_face === 1) {
+                return true;
+            }
+            if (tag.includes('/')) {
+                const parts = tag.split('/');
+                for (let i = 1; i <= parts.length; i++) {
+                    const ancestorTag = parts.slice(0, i).join('/');
+                    const ancestorNode = taxonomyNodes.find(n => n.tag === ancestorTag);
+                    if (ancestorNode && ancestorNode.has_face === 1) {
+                        return true;
+                    }
+                }
+            }
         }
         return false;
     }
@@ -399,7 +416,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const peopleSet = new Set(knownPeople);
         
         knownTags.forEach(t => {
-            if (t.startsWith('People/') || t.startsWith('Family/') || t.startsWith('Friends/')) {
+            if (isPersonTag(t)) {
                 const leaf = t.split('/').pop().trim();
                 peopleSet.add(leaf);
             }
@@ -1002,7 +1019,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const tags = photo.tags || [];
                 
                 tags.forEach(tag => {
-                    const isPerson = knownPeople.includes(tag) || photoPeople.includes(tag) || tag.startsWith('People/');
+                    const isPerson = isPersonTag(tag) || photoPeople.includes(tag);
                     if (isPerson) {
                         const leaf = tag.includes('/') ? tag.split('/').pop().trim() : tag;
                         peopleCounts[leaf] = (peopleCounts[leaf] || 0) + 1;
@@ -1117,7 +1134,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (sugg.tags) {
                         sugg.tags.forEach(t => {
                             const leaf = t.tag;
-                            const isPerson = knownPeople.includes(leaf) || leaf.startsWith('People/');
+                            const isPerson = isPersonTag(leaf);
                             const alreadyAdded = tags.includes(leaf);
                             if (!alreadyAdded) {
                                 if (isPerson) {
@@ -2352,8 +2369,8 @@ document.addEventListener('DOMContentLoaded', () => {
         btnTaxonomyAddRoot.addEventListener('click', () => {
             const name = prompt("Enter name of new root category:");
             if (name && name.trim()) {
-                const isPeople = confirm(`Is "${name}" a category for People?`);
-                createTaxonomyNode(name.trim(), null, isPeople ? 1 : 0);
+                const hasFace = confirm(`Enable Face Matching for "${name}" (e.g. for people or pets)?`);
+                createTaxonomyNode(name.trim(), null, hasFace ? 1 : 0);
             }
         });
         
@@ -2463,32 +2480,40 @@ document.addEventListener('DOMContentLoaded', () => {
         actions.className = 'taxonomy-node-actions';
         
         if (node.parent_id === null) {
-            const peopleLabel = document.createElement('label');
-            peopleLabel.style.display = 'inline-flex';
-            peopleLabel.style.alignItems = 'center';
-            peopleLabel.style.gap = '4px';
-            peopleLabel.style.fontSize = '12px';
-            peopleLabel.style.marginRight = '8px';
-            peopleLabel.title = "Designate this category as a People list";
-            
-            const peopleCheckbox = document.createElement('input');
-            peopleCheckbox.type = 'checkbox';
-            peopleCheckbox.checked = node.is_people === 1;
-            peopleCheckbox.onchange = (e) => {
-                updateTaxonomyNode(node.id, { is_people: e.target.checked ? 1 : 0 });
-            };
-            peopleLabel.appendChild(peopleCheckbox);
+            const faceMatchLabel = document.createElement('label');
+            faceMatchLabel.style.display = 'inline-flex';
+            faceMatchLabel.style.alignItems = 'center';
+            faceMatchLabel.style.gap = '6px';
+            faceMatchLabel.style.fontSize = '12px';
+            faceMatchLabel.style.marginRight = '12px';
+            faceMatchLabel.title = "Enable face matching for this category (People/Pets)";
             
             const labelText = document.createElement('span');
-            labelText.textContent = 'People';
-            peopleLabel.appendChild(labelText);
+            labelText.textContent = 'Face Matching:';
+            faceMatchLabel.appendChild(labelText);
             
-            actions.appendChild(peopleLabel);
+            const switchLabel = document.createElement('label');
+            switchLabel.className = 'switch';
+            
+            const faceCheckbox = document.createElement('input');
+            faceCheckbox.type = 'checkbox';
+            faceCheckbox.checked = node.has_face === 1;
+            faceCheckbox.onchange = (e) => {
+                updateTaxonomyNode(node.id, { has_face: e.target.checked ? 1 : 0 });
+            };
+            switchLabel.appendChild(faceCheckbox);
+            
+            const sliderSpan = document.createElement('span');
+            sliderSpan.className = 'slider';
+            switchLabel.appendChild(sliderSpan);
+            
+            faceMatchLabel.appendChild(switchLabel);
+            actions.appendChild(faceMatchLabel);
         } else {
-            if (node.is_people === 1) {
+            if (node.has_face === 1) {
                 const badge = document.createElement('span');
                 badge.className = 'taxonomy-node-badge badge-people';
-                badge.textContent = 'Person';
+                badge.textContent = 'Face Match';
                 actions.appendChild(badge);
             }
         }
@@ -2602,14 +2627,14 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function createTaxonomyNode(name, parentId = null, isPeople = 0) {
+    function createTaxonomyNode(name, parentId = null, hasFace = 0) {
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Creating tag...';
         
         fetch('/api/taxonomy/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, parent_id: parentId, is_people: isPeople })
+            body: JSON.stringify({ name, parent_id: parentId, has_face: hasFace })
         })
         .then(res => res.json())
         .then(data => {
@@ -2760,8 +2785,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div id="new-root-input-container" style="display: none; padding-left: 24px; margin-top: 8px; flex-direction: column; gap: 8px;">
                         <input type="text" id="new-root-name-input" placeholder="New root category name..." class="taxonomy-search-input">
                         <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary);">
-                            <input type="checkbox" id="new-root-is-people-checkbox">
-                            <span>This is a People category</span>
+                            <input type="checkbox" id="new-root-has-face-checkbox">
+                            <span>Enable face matching (People/Pets)</span>
                         </label>
                     </div>
                 `;
@@ -2812,12 +2837,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 const selected = overlay.querySelector('input[name="placement-opt"]:checked').value;
                 if (selected === '__new_root__') {
                     const name = overlay.querySelector('#new-root-name-input').value.trim();
-                    const isPeople = overlay.querySelector('#new-root-is-people-checkbox').checked;
+                    const hasFace = overlay.querySelector('#new-root-has-face-checkbox').checked;
                     if (!name) {
                         alert("Please enter a root category name.");
                         return;
                     }
-                    close({ action: 'create_root', name, isPeople });
+                    close({ action: 'create_root', name, hasFace });
                 } else {
                     close({ action: 'select', root: selected });
                 }
@@ -2918,8 +2943,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         const allRoots = taxonomyNodes.filter(n => n.parent_id === null);
-        const peopleRoots = allRoots.filter(r => r.is_people === 1);
-        const keywordRoots = allRoots.filter(r => r.is_people === 0);
+        const peopleRoots = allRoots.filter(r => r.has_face === 1);
+        const keywordRoots = allRoots.filter(r => r.has_face === 0);
         
         const matches = taxonomyNodes.filter(n => n.name.toLowerCase() === inputName.toLowerCase());
         
@@ -2929,7 +2954,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const parts = m.tag.split('/');
                     const rootName = parts[0];
                     const rootNode = allRoots.find(r => r.name.toLowerCase() === rootName.toLowerCase());
-                    return rootNode && rootNode.is_people === 1;
+                    return rootNode && rootNode.has_face === 1;
                 });
                 
                 if (peopleMatches.length === 1) {
@@ -2951,7 +2976,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 await fetch('/api/taxonomy/create', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: "People", is_people: 1 })
+                    body: JSON.stringify({ name: "People", has_face: 1 })
                 });
                 await loadTaxonomy();
                 return `People/${inputName}`;
@@ -3009,7 +3034,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const rootRes = await fetch('/api/taxonomy/create', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: res.name, is_people: res.isPeople ? 1 : 0 })
+                    body: JSON.stringify({ name: res.name, has_face: res.hasFace ? 1 : 0 })
                 }).then(r => r.json());
                 
                 if (!rootRes.success) {

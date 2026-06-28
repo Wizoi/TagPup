@@ -2597,7 +2597,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                     for item in sugg.get("suggested_tags", []):
                         score = item.get("score", 0.0)
                         if score >= 0.6:
-                            if item.get("is_face_match"):
+                            if item.get("has_face_match"):
                                 suggested_people.append({"name": item["tag"], "score": score})
                             else:
                                 suggested_tags.append({"tag": item["tag"], "score": score})
@@ -2633,7 +2633,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                         for item in sugg.get("suggested_tags", []):
                             score = item.get("score", 0.0)
                             if score >= 0.6:
-                                if item.get("is_face_match"):
+                                if item.get("has_face_match"):
                                     suggested_people.append({"name": item["tag"], "score": score})
                                 else:
                                     suggested_tags.append({"tag": item["tag"], "score": score})
