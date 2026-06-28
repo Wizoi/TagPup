@@ -79,3 +79,8 @@ Displays a clean, collapsed tree of tag hierarchies. Users can manage category a
 Triggers when entering a new keyword tag. Allows the user to select which category it belongs under or create a new root category.
 
 ![New Tag Resolution Prompt](docs/images/tag_resolution_prompt.png)
+
+### 3. TagPup GUI Workspace Main Screen
+Displays the primary tagging interface containing the scanned photo thumbnail grid, interactive selections, and the metadata editing panel on the right.
+
+![TagPup GUI Main Screen](docs/images/tagpup_main_screen.png)
