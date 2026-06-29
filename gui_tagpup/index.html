@@ -18,7 +18,7 @@
                 <h1>TagPup GUI</h1>
             </div>
             <div class="header-actions" style="margin-left: auto; margin-right: 20px;">
-                <button id="btn-manage-taxonomy" class="btn btn-secondary" style="display: flex; align-items: center; gap: 8px;">🏷️ Manage Tags Tree</button>
+                <button id="btn-manage-taxonomy" class="btn btn-secondary" style="display: flex; align-items: center; gap: 8px;">🏷️ Manage Tags</button>
             </div>
             <div class="header-status">
                 <span class="status-indicator-dot" id="status-dot"></span>
@@ -109,7 +109,10 @@
                                 </div>
                                 <div class="detail-item">
                                     <span class="detail-label">Date Taken</span>
-                                    <span class="detail-value" id="detail-date-taken"></span>
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <span class="detail-value" id="detail-date-taken"></span>
+                                        <button id="btn-edit-date-taken" class="btn btn-secondary btn-sm" style="padding: 2px 6px; font-size: 11px; line-height: 1;" title="Edit date taken">✏️</button>
+                                    </div>
                                 </div>
                                 <div class="detail-item full-width">
                                     <span class="detail-label">Title / Caption</span>
@@ -341,6 +344,27 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" id="btn-close-taxonomy-footer">Close</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Edit Date Taken Modal -->
+    <div id="date-taken-modal" class="modal-overlay">
+        <div class="modal-container" style="max-width: 400px;">
+            <div class="modal-header">
+                <h2>Edit Date Taken</h2>
+                <button class="modal-close-btn" id="btn-close-date-modal">&times;</button>
+            </div>
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 15px;">
+                <p style="font-size: 13px; color: var(--text-muted); margin: 0;">Specify the date and time when this photo was taken.</p>
+                <div class="form-group" style="display: flex; flex-direction: column; gap: 6px;">
+                    <label for="input-date-taken" style="font-weight: 500; font-size: 13px;">Date and Time</label>
+                    <input type="datetime-local" id="input-date-taken" step="1" style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-color); outline: none;">
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px;">
+                <button class="btn btn-secondary" id="btn-cancel-date-modal">Cancel</button>
+                <button class="btn btn-primary" id="btn-save-date-modal">Save</button>
             </div>
         </div>
     </div>

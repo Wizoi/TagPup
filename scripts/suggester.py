@@ -7,7 +7,11 @@ from typing import List, Dict, Any, Tuple, Set, Optional
 from taxonomy import TagTaxonomy
 from index import PhotoIndex
 
+import threading
 logger = logging.getLogger("tagpup_cli.suggester")
+
+_face_processor_lock = threading.Lock()
+_global_face_processor = None
 
 def extract_path_hints(file_path: str) -> List[str]:
     """Extract folder names from the file's path as hints."""
@@ -43,12 +47,9 @@ class TagSuggester:
         self.embedder = embedder
         
         user_candidates = candidate_tags or []
-        # Automatically extract people names from taxonomy as candidate tags
+        # Exclude face-matched folders/people names from candidate tags 
+        # to avoid redundant calculations and defer entirely to face matching.
         people_candidates = []
-        for path in self.taxonomy.paths:
-            parts = path.split("/")
-            if len(parts) >= 2 and parts[0].lower() in ["family", "friends", "pets"]:
-                people_candidates.append(parts[-1])
                 
         # Merge and deduplicate candidates
         seen = set()
@@ -68,14 +69,31 @@ class TagSuggester:
         if not self.embedder or not self.candidate_tags or self.candidate_embeddings:
             return
             
-        logger.info(f"Precomputing embeddings for {len(self.candidate_tags)} candidate tags...")
+        model_name = getattr(self.embedder, "model_name", "unknown")
+        pretrained = getattr(self.embedder, "pretrained", "unknown")
+        
+        needed_tags = []
         for tag in self.candidate_tags:
-            try:
-                # Prompts with templates like "a photo of a ..." improve CLIP zero-shot classification
-                prompt = f"a photo of a {tag.lower()}"
-                self.candidate_embeddings[tag] = self.embedder.embed_text(prompt)
-            except Exception as e:
-                logger.warning(f"Failed to embed candidate tag '{tag}': {e}")
+            prompt = f"a photo of a {tag.lower()}"
+            cached_emb = None
+            if self.index and hasattr(self.index, "get_tag_embedding"):
+                cached_emb = self.index.get_tag_embedding(tag, prompt, model_name, pretrained)
+                
+            if cached_emb is not None:
+                self.candidate_embeddings[tag] = cached_emb
+            else:
+                needed_tags.append((tag, prompt))
+                
+        if needed_tags:
+            logger.info(f"Precomputing embeddings for {len(needed_tags)} candidate tags...")
+            for tag, prompt in needed_tags:
+                try:
+                    emb = self.embedder.embed_text(prompt)
+                    self.candidate_embeddings[tag] = emb
+                    if self.index and hasattr(self.index, "save_tag_embedding"):
+                        self.index.save_tag_embedding(tag, prompt, model_name, pretrained, emb)
+                except Exception as e:
+                    logger.warning(f"Failed to embed candidate tag '{tag}': {e}")
 
     def _get_candidate_embeddings_for_year(self, year: Optional[int]) -> Dict[str, List[float]]:
         """Get standard or year-specific candidate embeddings."""
@@ -87,8 +105,11 @@ class TagSuggester:
         if year in self.year_candidate_embeddings:
             return self.year_candidate_embeddings[year]
             
-        logger.info(f"Computing era-aware candidate embeddings for year {year}...")
+        model_name = getattr(self.embedder, "model_name", "unknown")
+        pretrained = getattr(self.embedder, "pretrained", "unknown")
+        
         year_embeddings = {}
+        needed_tags = []
         for tag in self.candidate_tags:
             is_person = False
             for path in self.taxonomy.paths:
@@ -98,17 +119,33 @@ class TagSuggester:
                         is_person = True
                         break
             
-            try:
-                if is_person:
-                    prompt = f"a photo of {tag} in {year}"
-                else:
-                    prompt = f"a photo of a {tag.lower()} in {year}"
-                year_embeddings[tag] = self.embedder.embed_text(prompt)
-            except Exception as e:
-                logger.warning(f"Failed to embed era-aware candidate tag '{tag}' for year {year}: {e}")
-                if tag in self.candidate_embeddings:
-                    year_embeddings[tag] = self.candidate_embeddings[tag]
-                    
+            if is_person:
+                prompt = f"a photo of {tag} in {year}"
+            else:
+                prompt = f"a photo of a {tag.lower()} in {year}"
+                
+            cached_emb = None
+            if self.index and hasattr(self.index, "get_tag_embedding"):
+                cached_emb = self.index.get_tag_embedding(tag, prompt, model_name, pretrained)
+                
+            if cached_emb is not None:
+                year_embeddings[tag] = cached_emb
+            else:
+                needed_tags.append((tag, prompt))
+                
+        if needed_tags:
+            logger.info(f"Computing era-aware candidate embeddings for year {year} ({len(needed_tags)} tags needed)...")
+            for tag, prompt in needed_tags:
+                try:
+                    emb = self.embedder.embed_text(prompt)
+                    year_embeddings[tag] = emb
+                    if self.index and hasattr(self.index, "save_tag_embedding"):
+                        self.index.save_tag_embedding(tag, prompt, model_name, pretrained, emb)
+                except Exception as e:
+                    logger.warning(f"Failed to embed era-aware candidate tag '{tag}' for year {year}: {e}")
+                    if tag in self.candidate_embeddings:
+                        year_embeddings[tag] = self.candidate_embeddings[tag]
+                        
         self.year_candidate_embeddings[year] = year_embeddings
         return year_embeddings
 
@@ -229,17 +266,13 @@ class TagSuggester:
 
         # 4b. Face recognition suggestions
         try:
-            from faces import FaceProcessor
-            global _global_face_processor
-            if "_global_face_processor" not in globals():
-                _global_face_processor = FaceProcessor()
-            processor = _global_face_processor
-            detected_faces = processor.detect_and_embed_faces(photo_path)
+            detected_faces = []
+            norm_path = os.path.normpath(photo_path).replace("\\", "/")
             
-            if not detected_faces and self.index and self.index.conn:
+            # Check database cache first
+            if self.index and self.index.conn:
                 try:
                     import json
-                    norm_path = os.path.normpath(photo_path).replace("\\", "/")
                     cursor = self.index.conn.cursor()
                     cursor.execute("SELECT box, embedding, prob FROM faces WHERE LOWER(photo_path) = LOWER(?)", (norm_path,))
                     for row in cursor.fetchall():
@@ -252,7 +285,18 @@ class TagSuggester:
                             "prob": prob
                         })
                 except Exception as db_err:
-                    logger.warning(f"Failed to query database faces fallback: {db_err}")
+                    logger.warning(f"Failed to query database faces: {db_err}")
+            
+            # If not in database, detect and embed on-the-fly
+            if not detected_faces:
+                from faces import FaceProcessor
+                global _global_face_processor
+                if _global_face_processor is None:
+                    with _face_processor_lock:
+                        if _global_face_processor is None:
+                            _global_face_processor = FaceProcessor()
+                processor = _global_face_processor
+                detected_faces = processor.detect_and_embed_faces(photo_path)
             
             if detected_faces:
                 # Calculate areas and filter out tiny background/noise faces

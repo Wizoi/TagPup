@@ -10,12 +10,27 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-# Initialize Rich console and logging
+# Initialize Rich console and logging with colors for warnings and errors
 console = Console()
+class ColorFormatter(logging.Formatter):
+    RED = "\033[91m"
+    YELLOW = "\033[93m"
+    RESET = "\033[0m"
+    def format(self, record):
+        orig_levelname = record.levelname
+        if record.levelno >= logging.ERROR:
+            record.levelname = f"{self.RED}{orig_levelname}{self.RESET}"
+        elif record.levelno == logging.WARNING:
+            record.levelname = f"{self.YELLOW}{orig_levelname}{self.RESET}"
+        val = super().format(record)
+        record.levelname = orig_levelname
+        return val
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(ColorFormatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s"))
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[handler]
 )
 logger = logging.getLogger("tagpup_cli")
 
@@ -383,6 +398,15 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
         # Load candidate tags from config
         candidate_str = config.get("candidates", "tags", fallback="")
         candidate_tags = [t.strip() for t in candidate_str.split(",") if t.strip()]
+
+        # Merge non-people taxonomy tags into candidates
+        for path in taxonomy.paths:
+            parts = path.split("/")
+            if parts and parts[0].lower() in ["family", "friends", "pets"]:
+                continue
+            leaf = parts[-1].strip()
+            if leaf and leaf.lower() not in [t.lower() for t in candidate_tags]:
+                candidate_tags.append(leaf)
 
         preserve_full_frame = config.getboolean("model", "preserve_full_frame", fallback=False)
         max_aspect_ratio = config.getfloat("model", "max_aspect_ratio", fallback=2.0)

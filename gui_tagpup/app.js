@@ -126,6 +126,19 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function updateSuggestButtonState(status = null) {
+        if (!scannedFolder || folderPhotos.length === 0) {
+            btnSuggestTags.disabled = true;
+            return;
+        }
+        if (status === 'preparing' || status === 'running') {
+            btnSuggestTags.disabled = true;
+            return;
+        }
+        const hasUnprocessed = folderPhotos.some(photo => !folderSuggestions[photo.path]);
+        btnSuggestTags.disabled = !hasUnprocessed;
+    }
+
     // Load Datalists on Startup
     fetchKnownTagsAndPeople();
 
@@ -157,7 +170,7 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .catch(err => console.error("Error autocompleting folder:", err));
     });
-    btnScanFolder.addEventListener('click', () => scanFolder(false));
+    btnScanFolder.addEventListener('click', () => scanFolder(true));
     btnSuggestTags.addEventListener('click', startSuggestions);
     btnRefreshList.addEventListener('click', () => scanFolder(true));
     
@@ -509,7 +522,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         folderSuggestions = cacheEntry.suggestions || {};
                         listStats.textContent = `${folderPhotos.length} files loaded (Cached)`;
                         folderViewHeader.classList.remove('hidden');
-                        btnSuggestTags.disabled = false;
+                        updateSuggestButtonState();
                         btnToggleRename.disabled = false;
                         btnToggleTimeshift.disabled = false;
                         if (Object.keys(folderSuggestions).length > 0) {
@@ -584,7 +597,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 folderViewHeader.classList.remove('hidden');
                 
                 // Enable suggest tags button
-                btnSuggestTags.disabled = false;
+                updateSuggestButtonState();
                 btnToggleRename.disabled = false;
                 btnToggleTimeshift.disabled = false;
                 btnFolderAutoApply.disabled = true;
@@ -1682,12 +1695,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 suggestProgressContainer.classList.remove('hidden');
                 checkSuggestionsStatus(path);
             } else {
-                btnSuggestTags.disabled = false;
+                updateSuggestButtonState();
                 throw new Error(data.error);
             }
         })
         .catch(err => {
-            btnSuggestTags.disabled = false;
+            updateSuggestButtonState();
             console.error(err);
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = 'Error';
@@ -1702,14 +1715,19 @@ document.addEventListener('DOMContentLoaded', () => {
             fetch(`/api/folder/suggest-status?path=${encodeURIComponent(folderPath)}`)
                 .then(res => res.json())
                 .then(data => {
-                    if (data.status === 'running') {
+                    if (data.status === 'preparing' || data.status === 'running') {
                         suggestProgressContainer.classList.remove('hidden');
                         const total = data.total || 0;
                         const completed = data.completed || 0;
-                        const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
                         
-                        suggestProgressBar.style.width = `${pct}%`;
-                        suggestProgressText.textContent = `Processing: ${completed} / ${total} (${pct}%)`;
+                        if (data.status === 'preparing' || total === 0) {
+                            suggestProgressBar.style.width = `0%`;
+                            suggestProgressText.textContent = `Preparing AI models & scanning folder...`;
+                        } else {
+                            const pct = Math.round((completed / total) * 100);
+                            suggestProgressBar.style.width = `${pct}%`;
+                            suggestProgressText.textContent = `Processing: ${completed} / ${total} (${pct}%)`;
+                        }
                         
                         // Merge progressive suggestions
                         folderSuggestions = data.suggestions || {};
@@ -1719,13 +1737,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     else if (data.status === 'completed') {
                         clearInterval(progressTimer);
                         suggestProgressContainer.classList.add('hidden');
-                        btnSuggestTags.disabled = false;
                         
                         folderSuggestions = data.suggestions || {};
                         btnFolderAutoApply.disabled = false;
                         
                         renderFileList();
                         saveToLocalStorageCache();
+                        
+                        updateSuggestButtonState('completed');
                         
                         // If active photo selected, refresh suggestions pane
                         if (activePhotoPath) {
@@ -1738,7 +1757,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     else if (data.status === 'error' || data.status === 'not_started') {
                         clearInterval(progressTimer);
                         suggestProgressContainer.classList.add('hidden');
-                        btnSuggestTags.disabled = false;
+                        updateSuggestButtonState(data.status);
                         if (data.status === 'error') {
                             statusDot.className = 'status-indicator-dot';
                             statusText.textContent = 'Error';
@@ -2342,6 +2361,133 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 card.classList.remove('timeshift-highlighted');
             }
+        });
+    }
+
+    // Date Taken Editor Dialog Controls
+    const btnEditDateTaken = document.getElementById('btn-edit-date-taken');
+    const dateTakenModal = document.getElementById('date-taken-modal');
+    const btnCloseDateModal = document.getElementById('btn-close-date-modal');
+    const btnCancelDateModal = document.getElementById('btn-cancel-date-modal');
+    const btnSaveDateModal = document.getElementById('btn-save-date-modal');
+    const inputDateTaken = document.getElementById('input-date-taken');
+
+    function exifDateToIso(exifStr) {
+        if (!exifStr) return "";
+        // Match standard formats like YYYY:MM:DD HH:MM:SS or similar
+        const regex = /^(\d{4})[: -](\d{2})[: -](\d{2})\s+(\d{2}):(\d{2}):(\d{2})/;
+        const match = String(exifStr).trim().match(regex);
+        if (!match) return "";
+        
+        const year = match[1];
+        const month = match[2];
+        const day = match[3];
+        const hour = match[4];
+        const min = match[5];
+        const sec = match[6];
+        return `${year}-${month}-${day}T${hour}:${min}:${sec}`;
+    }
+
+    function getCurrentDateTimeIso() {
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const y = now.getFullYear();
+        const m = pad(now.getMonth() + 1);
+        const d = pad(now.getDate());
+        const h = pad(now.getHours());
+        const min = pad(now.getMinutes());
+        const s = pad(now.getSeconds());
+        return `${y}-${m}-${d}T${h}:${min}:${s}`;
+    }
+
+    if (btnEditDateTaken && dateTakenModal) {
+        btnEditDateTaken.addEventListener('click', () => {
+            const photo = folderPhotos.find(p => p.path === activePhotoPath);
+            if (!photo) return;
+            
+            let rawDate = null;
+            const rawMeta = photo.raw_metadata || {};
+            for (let k of DATE_KEYS) {
+                if (rawMeta[k]) {
+                    rawDate = rawMeta[k];
+                    break;
+                }
+            }
+            
+            const isoDate = exifDateToIso(rawDate) || getCurrentDateTimeIso();
+            inputDateTaken.value = isoDate;
+            dateTakenModal.classList.add('active');
+        });
+
+        const closeDateModal = () => {
+            dateTakenModal.classList.remove('active');
+        };
+        
+        btnCloseDateModal.addEventListener('click', closeDateModal);
+        btnCancelDateModal.addEventListener('click', closeDateModal);
+
+        btnSaveDateModal.addEventListener('click', () => {
+            const path = activePhotoPath;
+            if (!path) return;
+            
+            const photo = folderPhotos.find(p => p.path === path);
+            if (!photo) return;
+            
+            const newDateVal = inputDateTaken.value; // format: "YYYY-MM-DDTHH:MM:SS.sss"
+            if (!newDateVal) {
+                alert("Please enter a valid date and time.");
+                return;
+            }
+            
+            statusDot.className = 'status-indicator-dot busy';
+            statusText.textContent = 'Saving date taken...';
+            closeDateModal();
+            
+            fetch('/api/photo/save-metadata', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    path: path,
+                    title: photo.title,
+                    tags: photo.tags,
+                    date_taken: newDateVal
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    const formattedDate = newDateVal.replace("T", " ").replace(/-/g, ":");
+                    
+                    // Update in-memory record
+                    photo.raw_metadata = photo.raw_metadata || {};
+                    photo.raw_metadata["EXIF:DateTimeOriginal"] = formattedDate;
+                    photo.raw_metadata["XMP:DateTimeOriginal"] = formattedDate;
+                    photo.raw_metadata["EXIF:CreateDate"] = formattedDate;
+                    
+                    // Format and display in UI
+                    const localD = parseExifDateToLocalDate(formattedDate);
+                    if (localD) {
+                        const stats = getFolderDateStats();
+                        detailDateTaken.textContent = formatFriendlyDateSingle(localD, stats);
+                    } else {
+                        detailDateTaken.textContent = newDateVal;
+                    }
+                    
+                    statusDot.className = 'status-indicator-dot';
+                    statusText.textContent = 'Ready';
+                    saveToLocalStorageCache();
+                    renderFileList();
+                    renderThumbnails();
+                } else {
+                    throw new Error(data.error || 'Failed to save');
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                statusDot.className = 'status-indicator-dot';
+                statusText.textContent = 'Error';
+                alert("Error saving date taken: " + err.message);
+            });
         });
     }
 

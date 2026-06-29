@@ -17,6 +17,16 @@ import numpy as np
 
 logger = logging.getLogger("tagpup.server")
 
+def normalize_path(path):
+    if not path:
+        return ""
+    return os.path.abspath(path).lower().replace("\\", "/")
+
+def to_db_path(path):
+    if not path:
+        return ""
+    return os.path.abspath(path).replace("\\", "/")
+
 def make_json_serializable(obj):
     if isinstance(obj, dict):
         return {k: make_json_serializable(v) for k, v in obj.items()}
@@ -104,6 +114,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
     
     # Static Class-level caches
     model_lock = threading.Lock()
+    shared_embedder = None
     folder_cache = {}          # folder_path -> { photo_path: metadata_dict }
     suggest_status = {}        # folder_path -> { status, completed, total, suggestions }
     suggest_threads = {}       # folder_path -> Thread
@@ -415,10 +426,11 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             return
             
         folder_path = os.path.abspath(folder_path)
+        folder_path_norm = normalize_path(folder_path)
         
         # Check cache
-        if folder_path in TagPupHTTPRequestHandler.folder_cache and not force_refresh:
-            cached_data = list(TagPupHTTPRequestHandler.folder_cache[folder_path].values())
+        if folder_path_norm in TagPupHTTPRequestHandler.folder_cache and not force_refresh:
+            cached_data = list(TagPupHTTPRequestHandler.folder_cache[folder_path_norm].values())
             def get_date_taken_str(meta):
                 raw_meta = meta.get("raw_metadata", {})
                 for k in ["EXIF:DateTimeOriginal", "DateTimeOriginal", "XMP:DateTimeOriginal", "EXIF:CreateDate", "CreateDate"]:
@@ -445,47 +457,88 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_json([])
             return
             
+        # Query existing metadata from SQLite DB to avoid running ExifTool on unchanged files
+        db_records = {}
         try:
-            from metadata import MetadataExtractor
-            extractor = MetadataExtractor(exiftool_path=self.get_exiftool_path())
-            batch_size = 500
-            results = []
-            for i in range(0, len(image_files), batch_size):
-                batch = image_files[i:i+batch_size]
-                batch_meta = extractor.batch_read(batch)
-                results.extend(batch_meta)
-                
-            from metadata import build_photo_ui_record
-            folder_map = {}
-            for meta in results:
-                path = meta["path"]
-                folder_map[path] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
-                
-            TagPupHTTPRequestHandler.folder_cache[folder_path] = folder_map
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT path, mtime, size, tags, people, captions, raw_metadata FROM photos WHERE path LIKE ?",
+                (to_db_path(folder_path) + "/%",)
+            )
+            for row in cursor.fetchall():
+                p, mt, sz, t_json, pe_json, c_json, raw_json = row
+                db_records[normalize_path(p)] = {
+                    "path": p,
+                    "mtime": mt,
+                    "size": sz,
+                    "tags": json.loads(t_json) if t_json else [],
+                    "people": json.loads(pe_json) if pe_json else [],
+                    "captions": json.loads(c_json) if c_json else [],
+                    "raw_metadata": json.loads(raw_json) if raw_json else {}
+                }
+            conn.close()
+        except Exception as db_err:
+            logger.warning(f"Failed to query index DB for folder scan cache: {db_err}")
             
-            response_list = list(folder_map.values())
-            def get_date_taken_str(meta):
-                raw_meta = meta.get("raw_metadata", {})
-                for k in ["EXIF:DateTimeOriginal", "DateTimeOriginal", "XMP:DateTimeOriginal", "EXIF:CreateDate", "CreateDate"]:
-                    val = raw_meta.get(k)
-                    if val:
-                        if isinstance(val, list) and val:
-                            val = val[0]
-                        return str(val).strip()
-                return f"mtime_{meta.get('mtime', 0.0)}"
-            response_list.sort(key=get_date_taken_str)
-            self.send_json(response_list)
-            
-        except Exception as e:
-            logger.error(f"Error scanning folder {folder_path}: {e}", exc_info=True)
-            self.send_json_error(500, str(e))
+        # Resolve file metadata
+        folder_map = {}
+        files_to_read = []
+        
+        for file in image_files:
+            file_norm = normalize_path(file)
+            try:
+                stat = os.stat(file)
+                mtime = stat.st_mtime
+                size = stat.st_size
+            except Exception:
+                continue
+                
+            cached = db_records.get(file_norm)
+            if cached and abs(cached["mtime"] - mtime) < 0.1 and cached["size"] == size:
+                from metadata import build_photo_ui_record
+                folder_map[file_norm] = build_photo_ui_record(cached["path"], cached, mtime, size)
+            else:
+                files_to_read.append((file, mtime, size))
+                
+        # For new or modified files, run ExifTool
+        if files_to_read:
+            logger.info(f"Scan found {len(files_to_read)} new/modified files in {folder_path}. Running ExifTool...")
+            try:
+                from metadata import MetadataExtractor, build_photo_ui_record
+                extractor = MetadataExtractor(exiftool_path=self.get_exiftool_path())
+                batch_size = 500
+                for i in range(0, len(files_to_read), batch_size):
+                    batch = files_to_read[i:i+batch_size]
+                    batch_paths = [b[0] for b in batch]
+                    batch_meta = extractor.batch_read(batch_paths)
+                    for (file, mtime, size), meta in zip(batch, batch_meta):
+                        file_norm = normalize_path(file)
+                        folder_map[file_norm] = build_photo_ui_record(file, meta, mtime, size)
+            except Exception as e:
+                logger.error(f"Error running ExifTool during scan: {e}")
+                
+        TagPupHTTPRequestHandler.folder_cache[folder_path_norm] = folder_map
+        
+        response_list = list(folder_map.values())
+        def get_date_taken_str(meta):
+            raw_meta = meta.get("raw_metadata", {})
+            for k in ["EXIF:DateTimeOriginal", "DateTimeOriginal", "XMP:DateTimeOriginal", "EXIF:CreateDate", "CreateDate"]:
+                val = raw_meta.get(k)
+                if val:
+                    if isinstance(val, list) and val:
+                        val = val[0]
+                    return str(val).strip()
+            return f"mtime_{meta.get('mtime', 0.0)}"
+        response_list.sort(key=get_date_taken_str)
+        self.send_json(response_list)
 
     def handle_get_folder_suggest_status(self, query):
         folder_path_list = query.get("path")
         if not folder_path_list:
             self.send_json_error(400, "Missing 'path' parameter")
             return
-        folder_path = os.path.abspath(urllib.parse.unquote(folder_path_list[0]))
+        folder_path = normalize_path(urllib.parse.unquote(folder_path_list[0]))
         status_info = TagPupHTTPRequestHandler.suggest_status.get(folder_path, {"status": "idle"})
         self.send_json(status_info)
 
@@ -502,39 +555,137 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             return
             
         folder_path = os.path.abspath(folder_path)
+        folder_path_norm = normalize_path(folder_path)
         
-        status_info = TagPupHTTPRequestHandler.suggest_status.get(folder_path)
-        if status_info and status_info["status"] == "running":
-            self.send_json({"success": True, "status": "running"})
+        status_info = TagPupHTTPRequestHandler.suggest_status.get(folder_path_norm)
+        if status_info and status_info["status"] in ("preparing", "running"):
+            self.send_json({"success": True, "status": status_info["status"]})
             return
             
-        TagPupHTTPRequestHandler.suggest_status[folder_path] = {
-            "status": "running",
-            "completed": 0,
+        existing_suggestions = {}
+        if status_info:
+            existing_suggestions = status_info.get("suggestions", {})
+            
+        TagPupHTTPRequestHandler.suggest_status[folder_path_norm] = {
+            "status": "preparing",
+            "completed": len(existing_suggestions),
             "total": 0,
-            "suggestions": {}
+            "suggestions": existing_suggestions
         }
         
         t = threading.Thread(
             target=TagPupHTTPRequestHandler.run_folder_suggestions_thread,
             args=(folder_path, self.db_path),
+            name="FolderSuggestionsThread",
             daemon=True
         )
-        TagPupHTTPRequestHandler.suggest_threads[folder_path] = t
+        TagPupHTTPRequestHandler.suggest_threads[folder_path_norm] = t
         t.start()
         
         self.send_json({"success": True, "status": "running"})
 
     @classmethod
+    def load_suggestions_cache(cls, db_path):
+        cache_path = os.path.join(os.path.dirname(db_path), "gui_suggestions_cache.json")
+        if os.path.exists(cache_path):
+            try:
+                import json
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                # Clean up any active/running statuses to "idle"
+                for folder, status in data.items():
+                    if status.get("status") in ("running", "preparing"):
+                        status["status"] = "idle"
+                with cls.model_lock:
+                    cls.suggest_status.update(data)
+                logger.info(f"Loaded suggestions cache from {cache_path} with {len(data)} folders.")
+            except Exception as e:
+                logger.error(f"Error loading suggestions cache: {e}")
+
+    @classmethod
+    def save_suggestions_cache(cls, db_path):
+        cache_path = os.path.join(os.path.dirname(db_path), "gui_suggestions_cache.json")
+        try:
+            import json
+            with cls.model_lock:
+                serializable_data = make_json_serializable(cls.suggest_status)
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(serializable_data, f, indent=2)
+        except Exception as e:
+            logger.error(f"Error saving suggestions cache: {e}")
+
+    @classmethod
+    def rescan_folder_to_cache_classmethod(cls, folder_path):
+        valid_exts = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
+        image_files = []
+        for root, _, files in os.walk(folder_path):
+            for file in files:
+                ext = os.path.splitext(file)[1].lower()
+                if ext in valid_exts:
+                    image_files.append(os.path.join(root, file))
+        if not image_files:
+            cls.folder_cache[normalize_path(folder_path)] = {}
+            return
+            
+        import configparser
+        config = configparser.ConfigParser(interpolation=None)
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
+        exiftool_path = os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\Username"), r"AppData\Local\Programs\ExifTool\exiftool.exe")
+        if os.path.exists(config_path):
+            try:
+                config.read(config_path, encoding='utf-8')
+                path = config.get("paths", "exiftool", fallback=exiftool_path)
+                exiftool_path = os.path.expandvars(path)
+            except Exception:
+                pass
+
+        from metadata import MetadataExtractor, build_photo_ui_record
+        extractor = MetadataExtractor(exiftool_path=exiftool_path)
+        batch_size = 500
+        results = []
+        for i in range(0, len(image_files), batch_size):
+            batch = image_files[i:i+batch_size]
+            batch_meta = extractor.batch_read(batch)
+            results.extend(batch_meta)
+            
+        folder_map = {}
+        for meta in results:
+            path = meta["path"]
+            folder_map[normalize_path(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
+            
+        cls.folder_cache[normalize_path(folder_path)] = folder_map
+
+    @classmethod
     def run_folder_suggestions_thread(cls, folder_path, db_path):
+        folder_path = os.path.abspath(folder_path)
+        folder_path_norm = normalize_path(folder_path)
         try:
             import configparser
-            photos_dict = cls.folder_cache.get(folder_path, {})
+            import concurrent.futures
+            photos_dict = cls.folder_cache.get(folder_path_norm, {})
+            logger.info(f"run_folder_suggestions_thread started for {folder_path}. Found {len(photos_dict)} cached photos.")
             if not photos_dict:
+                logger.info(f"Folder cache empty for {folder_path}. Performing on-the-fly scan to populate cache...")
+                cls.rescan_folder_to_cache_classmethod(folder_path)
+                photos_dict = cls.folder_cache.get(folder_path_norm, {})
+                logger.info(f"On-the-fly scan completed. Found {len(photos_dict)} photos.")
+                
+            if not photos_dict:
+                logger.warning(f"No photos found in {folder_path} after scan. Returning early.")
+                if folder_path_norm in cls.suggest_status:
+                    cls.suggest_status[folder_path_norm]["status"] = "error"
                 return
                 
             photo_paths = list(photos_dict.keys())
-            cls.suggest_status[folder_path]["total"] = len(photo_paths)
+            existing_suggs = cls.suggest_status[folder_path_norm].get("suggestions", {})
+            unprocessed_paths = [p for p in photo_paths if photos_dict[p]["path"] not in existing_suggs]
+            
+            cls.suggest_status[folder_path_norm]["total"] = len(photo_paths)
+            cls.suggest_status[folder_path_norm]["completed"] = len(photo_paths) - len(unprocessed_paths)
+            cls.suggest_status[folder_path_norm]["status"] = "preparing"
+            
+            cls.save_suggestions_cache(db_path)
             
             config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
             config = configparser.ConfigParser(interpolation=None)
@@ -552,41 +703,59 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             from suggester import TagSuggester
             from embedder import ClipEmbedder
             
-            photo_index = PhotoIndex(db_path=db_path)
-            photo_index.load()
-            
             tax_path = os.path.splitext(db_path)[0] + "_taxonomy.json"
             taxonomy = TagTaxonomy(file_path=tax_path)
             taxonomy.load()
+            
+            # Merge non-people taxonomy tags into candidates
+            for path in taxonomy.paths:
+                parts = path.split("/")
+                if parts and parts[0].lower() in ["family", "friends", "pets"]:
+                    continue
+                leaf = parts[-1].strip()
+                if leaf and leaf.lower() not in [t.lower() for t in candidate_tags]:
+                    candidate_tags.append(leaf)
             
             preserve_full_frame = config.getboolean("model", "preserve_full_frame", fallback=False)
             max_aspect_ratio = config.getfloat("model", "max_aspect_ratio", fallback=2.0)
             force_image_size = config.get("model", "force_image_size", fallback=None)
             force_image_size = int(force_image_size) if force_image_size else None
             
-            embedder = ClipEmbedder(
-                model_name=model_name,
-                pretrained=pretrained,
-                cache_dir=cache_dir,
-                preserve_full_frame=preserve_full_frame,
-                max_aspect_ratio=max_aspect_ratio,
-                force_image_size=force_image_size,
-                photo_index=photo_index
-            )
+            if hasattr(cls, "shared_embedder") and cls.shared_embedder is not None:
+                embedder = cls.shared_embedder
+                photo_index = embedder.photo_index
+            else:
+                photo_index = PhotoIndex(db_path=db_path)
+                photo_index.load()
+                embedder = ClipEmbedder(
+                    model_name=model_name,
+                    pretrained=pretrained,
+                    cache_dir=cache_dir,
+                    preserve_full_frame=preserve_full_frame,
+                    max_aspect_ratio=max_aspect_ratio,
+                    force_image_size=force_image_size,
+                    photo_index=photo_index
+                )
             
             suggester = TagSuggester(photo_index, taxonomy, embedder=embedder, candidate_tags=candidate_tags)
+            # Precompute candidate text embeddings sequentially so they are cached before the parallel loop
+            suggester._precompute_candidates()
+            
+            # Transition to running state as we begin processing the images
+            with cls.model_lock:
+                cls.suggest_status[folder_path_norm]["status"] = "running"
+            cls.save_suggestions_cache(db_path)
             
             suggestions_list = []
-            for path in photo_paths:
-                if folder_path not in cls.suggest_status:
-                    break
+            
+            def process_single_photo(path):
+                if folder_path_norm not in cls.suggest_status:
+                    return None
                 try:
-                    with cls.model_lock:
-                        emb = embedder.embed_image(path)
-                        meta = photos_dict[path]
-                        sugg = suggester.suggest_for_photo(path, emb, k=15, min_sim=0.35, target_metadata=meta)
-                    
-                    suggestions_list.append(sugg)
+                    meta = photos_dict[path]
+                    orig_path = meta["path"]
+                    emb = embedder.embed_image(orig_path)
+                    sugg = suggester.suggest_for_photo(orig_path, emb, k=15, min_sim=0.35, target_metadata=meta)
                     
                     suggested_tags = []
                     suggested_people = []
@@ -602,24 +771,44 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
                     from writer import derive_caption_from_tags
                     suggested_title = derive_caption_from_tags(all_sugg_tags)
                     
-                    cls.suggest_status[folder_path]["suggestions"][path] = {
-                        "tags": suggested_tags,
-                        "people": suggested_people,
-                        "title": suggested_title,
-                        "raw_suggestions": sugg
-                    }
+                    with cls.model_lock:
+                        cls.suggest_status[folder_path_norm]["suggestions"][orig_path] = {
+                            "tags": suggested_tags,
+                            "people": suggested_people,
+                            "title": suggested_title,
+                            "raw_suggestions": sugg
+                        }
+                        cls.suggest_status[folder_path_norm]["completed"] += 1
+                    cls.save_suggestions_cache(db_path)
+                    return sugg
                 except Exception as e:
                     logger.error(f"Error suggesting for {path}: {e}")
-                    cls.suggest_status[folder_path]["suggestions"][path] = {
-                        "tags": [],
-                        "people": [],
-                        "title": None,
-                        "raw_suggestions": {"suggested_tags": []}
-                    }
-                cls.suggest_status[folder_path]["completed"] += 1
+                    meta = photos_dict.get(path, {})
+                    orig_path = meta.get("path", path)
+                    with cls.model_lock:
+                        cls.suggest_status[folder_path_norm]["suggestions"][orig_path] = {
+                            "tags": [],
+                            "people": [],
+                            "title": None,
+                            "raw_suggestions": {"suggested_tags": []}
+                        }
+                        cls.suggest_status[folder_path_norm]["completed"] += 1
+                    cls.save_suggestions_cache(db_path)
+                    return None
+
+            max_workers = min(4, os.cpu_count() or 1)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [executor.submit(process_single_photo, p) for p in unprocessed_paths]
+                for fut in concurrent.futures.as_completed(futures):
+                    res = fut.result()
+                    if res is not None:
+                        suggestions_list.append(res)
                 
+            cls.suggest_status[folder_path_norm]["status"] = "completed"
+            cls.save_suggestions_cache(db_path)
+            
             # Apply folder consensus
-            if len(suggestions_list) > 1 and folder_path in cls.suggest_status:
+            if len(suggestions_list) > 1 and folder_path_norm in cls.suggest_status:
                 try:
                     consensus_suggestions = suggester.apply_folder_consensus(suggestions_list)
                     for sugg in consensus_suggestions:
@@ -638,19 +827,21 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
                         from writer import derive_caption_from_tags
                         suggested_title = derive_caption_from_tags(all_sugg_tags)
                         
-                        if path in cls.suggest_status[folder_path]["suggestions"]:
-                            cls.suggest_status[folder_path]["suggestions"][path]["tags"] = suggested_tags
-                            cls.suggest_status[folder_path]["suggestions"][path]["people"] = suggested_people
-                            cls.suggest_status[folder_path]["suggestions"][path]["title"] = suggested_title
-                            cls.suggest_status[folder_path]["suggestions"][path]["raw_suggestions"] = sugg
+                        if path in cls.suggest_status[folder_path_norm]["suggestions"]:
+                            cls.suggest_status[folder_path_norm]["suggestions"][path]["tags"] = suggested_tags
+                            cls.suggest_status[folder_path_norm]["suggestions"][path]["people"] = suggested_people
+                            cls.suggest_status[folder_path_norm]["suggestions"][path]["title"] = suggested_title
+                            cls.suggest_status[folder_path_norm]["suggestions"][path]["raw_suggestions"] = sugg
                 except Exception as e:
                     logger.error(f"Error folder consensus: {e}")
                     
-            cls.suggest_status[folder_path]["status"] = "completed"
+            cls.suggest_status[folder_path_norm]["status"] = "completed"
+            cls.save_suggestions_cache(db_path)
         except Exception as e:
             logger.error(f"Error running suggestions thread: {e}")
-            if folder_path in cls.suggest_status:
-                cls.suggest_status[folder_path]["status"] = "error"
+            if folder_path_norm in cls.suggest_status:
+                cls.suggest_status[folder_path_norm]["status"] = "error"
+                cls.save_suggestions_cache(db_path)
 
     def handle_post_photo_open_explorer(self):
         try:
@@ -693,10 +884,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             rotate_image_file(photo_path, direction, executable)
                 
             # Update cache file stats
-            folder_path = os.path.dirname(photo_path)
+            folder_path = normalize_path(os.path.dirname(photo_path))
             if folder_path in TagPupHTTPRequestHandler.folder_cache:
                 stat = os.stat(photo_path)
-                photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(photo_path)
+                photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(normalize_path(photo_path))
                 if photo_entry:
                     photo_entry["mtime"] = stat.st_mtime
                     photo_entry["size"] = stat.st_size
@@ -716,6 +907,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
         photo_path = data.get("path")
         title = data.get("title")
         tags = data.get("tags", [])
+        date_taken = data.get("date_taken")
         
         if not photo_path or not os.path.exists(photo_path):
             self.send_json_error(400, "Invalid file path")
@@ -760,6 +952,28 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
                 params["EXIF:ImageDescription"] = ""
                 params["EXIF:XPComment"] = ""
                 
+            if date_taken:
+                # Normalize ISO T separator to space, and replace dash in date with colon
+                date_cleaned = str(date_taken).replace("T", " ").replace("-", ":").strip()
+                params["EXIF:DateTimeOriginal"] = date_cleaned
+                params["XMP:DateTimeOriginal"] = date_cleaned
+                params["EXIF:CreateDate"] = date_cleaned
+                
+                # Write subseconds explicitly if present (e.g. .123)
+                subsec_parts = date_cleaned.split(".")
+                if len(subsec_parts) > 1:
+                    subsec = subsec_parts[1]
+                    subsec_digits = ""
+                    for char in subsec:
+                        if char.isdigit():
+                            subsec_digits += char
+                        else:
+                            break
+                    if subsec_digits:
+                        params["EXIF:SubSecTimeOriginal"] = subsec_digits
+                        params["EXIF:SubSecTimeDigitized"] = subsec_digits
+                        params["EXIF:SubSecTime"] = subsec_digits
+
             executable = self.get_exiftool_path()
             import exiftool
             with exiftool.ExifToolHelper(executable=executable) as et:
@@ -768,23 +982,79 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             from metadata import sync_title_to_filename
             new_path = sync_title_to_filename(photo_path, title, executable)
             
-            # Update cache
-            folder_path = os.path.dirname(new_path)
+            # Update SQLite database
+            try:
+                # Get new file stats on disk
+                stat = os.stat(new_path)
+                mtime = stat.st_mtime
+                size = stat.st_size
+                
+                # Fetch new raw metadata from ExifTool
+                with exiftool.ExifToolHelper(executable=executable) as et:
+                    fresh_meta_list = et.get_tags([new_path], tags=METADATA_FIELDS)
+                    fresh_meta = fresh_meta_list[0] if fresh_meta_list else {}
+                    
+                # Clean metadata
+                from metadata import clean_metadata_value, extract_tags, extract_people
+                cleaned_meta = {k: clean_metadata_value(v) for k, v in fresh_meta.items()}
+                db_tags = extract_tags(cleaned_meta)
+                db_people = extract_people(cleaned_meta, db_tags, db_path=self.db_path)
+                db_captions = [title] if title else []
+                
+                conn = sqlite3.connect(self.db_path, timeout=10.0)
+                cursor = conn.cursor()
+                
+                # If renamed, delete old and insert new (preserving embedding if present)
+                if normalize_path(new_path) != normalize_path(photo_path):
+                    cursor.execute("SELECT embedding FROM photos WHERE path = ?", (to_db_path(photo_path),))
+                    row = cursor.fetchone()
+                    emb = row[0] if row else None
+                    
+                    cursor.execute("DELETE FROM photos WHERE path = ?", (to_db_path(photo_path),))
+                    cursor.execute(
+                        """
+                        INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (to_db_path(new_path), mtime, size, json.dumps(db_tags), json.dumps(db_people), json.dumps(db_captions), json.dumps(cleaned_meta), emb)
+                    )
+                    cursor.execute("UPDATE faces SET photo_path = ? WHERE photo_path = ?", (to_db_path(new_path), to_db_path(photo_path)))
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE photos 
+                        SET mtime = ?, size = ?, tags = ?, people = ?, captions = ?, raw_metadata = ?
+                        WHERE path = ?
+                        """,
+                        (mtime, size, json.dumps(db_tags), json.dumps(db_people), json.dumps(db_captions), json.dumps(cleaned_meta), to_db_path(new_path))
+                    )
+                conn.commit()
+                conn.close()
+            except Exception as db_err:
+                logger.warning(f"Failed to update SQLite database metadata for {new_path}: {db_err}")
+
+            # Update in-memory cache
+            folder_path = normalize_path(os.path.dirname(new_path))
             if folder_path in TagPupHTTPRequestHandler.folder_cache:
-                if new_path != photo_path:
-                    photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].pop(photo_path, None)
+                if normalize_path(new_path) != normalize_path(photo_path):
+                    photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].pop(normalize_path(photo_path), None)
                     if photo_entry:
                         photo_entry["path"] = new_path
                         photo_entry["filename"] = os.path.basename(new_path)
-                        TagPupHTTPRequestHandler.folder_cache[folder_path][new_path] = photo_entry
+                        TagPupHTTPRequestHandler.folder_cache[folder_path][normalize_path(new_path)] = photo_entry
                 else:
-                    photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(photo_path)
+                    photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(normalize_path(photo_path))
                     
                 if photo_entry:
                     from metadata import extract_tags
                     # Update raw_metadata tags
                     photo_entry["raw_metadata"]["XMP:Subject"] = new_flat_tags
                     photo_entry["raw_metadata"]["XMP:HierarchicalSubject"] = new_hierarchical_tags
+                    if date_taken:
+                        date_cleaned = str(date_taken).replace("T", " ").replace("-", ":").strip()
+                        photo_entry["raw_metadata"]["EXIF:DateTimeOriginal"] = date_cleaned
+                        photo_entry["raw_metadata"]["XMP:DateTimeOriginal"] = date_cleaned
+                        photo_entry["raw_metadata"]["EXIF:CreateDate"] = date_cleaned
                     photo_entry["tags"] = extract_tags(photo_entry["raw_metadata"])
                     photo_entry["captions"] = [title] if title else []
                     photo_entry["title"] = title
@@ -818,10 +1088,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
         try:
             with exiftool.ExifToolHelper(executable=executable) as et:
                 for path in paths:
-                    folder_path = os.path.dirname(path)
+                    folder_path = normalize_path(os.path.dirname(path))
                     photo_entry = None
                     if folder_path in TagPupHTTPRequestHandler.folder_cache:
-                        photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(path)
+                        photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(normalize_path(path))
                         
                     current_tags = photo_entry["tags"] if photo_entry else []
                     new_tags_set = set(current_tags)
@@ -878,7 +1148,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_json_error(400, "Invalid folder path")
             return
             
-        folder_path = os.path.abspath(folder_path)
+        folder_path = normalize_path(folder_path)
         status_info = TagPupHTTPRequestHandler.suggest_status.get(folder_path)
         if not status_info or "suggestions" not in status_info:
             self.send_json_error(400, "No suggestions found for this folder")
@@ -963,7 +1233,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_json({"success": True, "message": "No shift applied (0 minutes)"})
             return
             
-        folder_path = os.path.abspath(folder_path)
+        folder_path = normalize_path(folder_path)
         
         # Load from cache, or scan on the fly if missing
         if folder_path not in TagPupHTTPRequestHandler.folder_cache:
@@ -1048,7 +1318,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
                 if ext in valid_exts:
                     image_files.append(os.path.join(root, file))
         if not image_files:
-            TagPupHTTPRequestHandler.folder_cache[folder_path] = {}
+            TagPupHTTPRequestHandler.folder_cache[normalize_path(folder_path)] = {}
             return
             
         from metadata import MetadataExtractor, build_photo_ui_record
@@ -1063,9 +1333,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
         folder_map = {}
         for meta in results:
             path = meta["path"]
-            folder_map[path] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
+            folder_map[normalize_path(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
             
-        TagPupHTTPRequestHandler.folder_cache[folder_path] = folder_map
+        TagPupHTTPRequestHandler.folder_cache[normalize_path(folder_path)] = folder_map
 
     def handle_post_folder_rename_photos(self):
         try:
@@ -1078,10 +1348,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
         photo_paths = data.get("photo_paths", [])
         grouping = data.get("grouping", "").strip()
         
-        if folder_path:
-            folder_path = os.path.normpath(folder_path).replace("\\", "/")
+        folder_path = to_db_path(folder_path)
         if photo_paths:
-            photo_paths = [os.path.normpath(p).replace("\\", "/") for p in photo_paths]
+            photo_paths = [to_db_path(p) for p in photo_paths]
             
         if not folder_path or not os.path.exists(folder_path):
             self.send_json_error(400, "Invalid folder path")
@@ -1108,8 +1377,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             format_pattern = config.get("renaming", "format")
             
             # Sort the selected photo paths chronologically by Date Taken
-            cache = TagPupHTTPRequestHandler.folder_cache.get(folder_path, {})
-            cache = {os.path.normpath(k).replace("\\", "/"): v for k, v in cache.items()}
+            cache = TagPupHTTPRequestHandler.folder_cache.get(normalize_path(folder_path), {})
+            cache = {normalize_path(k): v for k, v in cache.items()}
             
             def get_date_taken_sort_key(p_path):
                 entry = cache.get(p_path)
@@ -1225,13 +1494,13 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
                     updated_paths_map[target_path] = target_path
                     
             # Clear old and scan new cache entries
-            if folder_path in TagPupHTTPRequestHandler.folder_cache:
-                del TagPupHTTPRequestHandler.folder_cache[folder_path]
+            if normalize_path(folder_path) in TagPupHTTPRequestHandler.folder_cache:
+                del TagPupHTTPRequestHandler.folder_cache[normalize_path(folder_path)]
                 
             self.rescan_folder_to_cache(folder_path)
             
             # Send updated photos sorted chronologically
-            updated_list = list(TagPupHTTPRequestHandler.folder_cache.get(folder_path, {}).values())
+            updated_list = list(TagPupHTTPRequestHandler.folder_cache.get(normalize_path(folder_path), {}).values())
             
             def get_date_taken_str(meta):
                 raw_meta = meta.get("raw_metadata", {})
@@ -1813,16 +2082,104 @@ def update_photo_metadata_tags(db_path: str, exiftool_path: str, photo_paths: Li
 class ThreadedHTTPServer(ThreadingTCPServer):
     allow_reuse_address = True
 
+def warmup_embedder_thread(embedder):
+    logger.info("Background thread starting CLIP model warmup...")
+    try:
+        embedder._init_model()
+        embedder.embed_text("warmup")
+        logger.info("Background CLIP model warmup completed successfully.")
+    except Exception as e:
+        logger.error(f"Error warming up CLIP model: {e}")
+
+    try:
+        logger.info("Background thread starting Face model warmup...")
+        from faces import FaceProcessor
+        import suggester
+        with suggester._face_processor_lock:
+            if suggester._global_face_processor is None:
+                suggester._global_face_processor = FaceProcessor()
+        logger.info("Background Face model warmup completed successfully.")
+    except Exception as e:
+        logger.error(f"Error warming up Face models: {e}")
+
 def start_server(port=8090, db_path="data/photo_index.db", gui_dir="gui_tagpup"):
     TagPupHTTPRequestHandler.db_path = db_path
     TagPupHTTPRequestHandler.gui_dir = gui_dir
 
+    # Instantiate the shared embedder and start background warmup in a background thread
+    def init_embedder_in_background():
+        try:
+            from index import PhotoIndex
+            from embedder import ClipEmbedder
+            import configparser
+            
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
+            config = configparser.ConfigParser(interpolation=None)
+            if os.path.exists(config_path):
+                config.read(config_path, encoding='utf-8')
+                
+            cache_dir = config.get("paths", "embedding_cache_dir", fallback="data/embedding_cache")
+            model_name = config.get("model", "name", fallback="ViT-B-32")
+            pretrained = config.get("model", "pretrained", fallback="laion2b_s34b_b79k")
+            preserve_full_frame = config.getboolean("model", "preserve_full_frame", fallback=False)
+            max_aspect_ratio = config.getfloat("model", "max_aspect_ratio", fallback=2.0)
+            force_image_size = config.get("model", "force_image_size", fallback=None)
+            force_image_size = int(force_image_size) if force_image_size else None
+            
+            photo_index = PhotoIndex(db_path=db_path)
+            # Load index asynchronously in the background so the HTTP server can bind instantly
+            threading.Thread(
+                target=photo_index.load,
+                name="LoadIndexThread",
+                daemon=True
+            ).start()
+            
+            shared_embedder = ClipEmbedder(
+                model_name=model_name,
+                pretrained=pretrained,
+                cache_dir=cache_dir,
+                preserve_full_frame=preserve_full_frame,
+                max_aspect_ratio=max_aspect_ratio,
+                force_image_size=force_image_size,
+                photo_index=photo_index
+            )
+            TagPupHTTPRequestHandler.shared_embedder = shared_embedder
+            # Load suggestions cache
+            TagPupHTTPRequestHandler.load_suggestions_cache(db_path)
+            
+            warmup_thread = threading.Thread(
+                target=warmup_embedder_thread,
+                args=(shared_embedder,),
+                name="WarmupEmbedderThread",
+                daemon=True
+            )
+            warmup_thread.start()
+        except Exception as e:
+            logger.error(f"Failed to initialize shared embedder for warmup: {e}")
+
+    threading.Thread(
+        target=init_embedder_in_background,
+        name="InitEmbedderThread",
+        daemon=True
+    ).start()
+
     server_address = ("", port)
-    server = ThreadedHTTPServer(server_address, TagPupHTTPRequestHandler)
+    server = None
+    import time
+    for attempt in range(5):
+        try:
+            server = ThreadedHTTPServer(server_address, TagPupHTTPRequestHandler)
+            break
+        except OSError as e:
+            if attempt == 4:
+                raise e
+            logger.info(f"Port {port} is busy, retrying in 0.5s (attempt {attempt + 1}/5)...")
+            time.sleep(0.5)
+
     logger.info(f"TagPup server started on port {port} using DB {db_path}...")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        logger.info("Server shutting down...")
+        logger.info(f"Server shutting down... (PID: {os.getpid()})")
         server.shutdown()
         server.server_close()

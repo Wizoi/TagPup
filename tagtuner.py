@@ -7,11 +7,26 @@ import webbrowser
 import threading
 import time
 
-# Set up logging to print to console
+# Set up logging with colors for warnings and errors
+class ColorFormatter(logging.Formatter):
+    RED = "\033[91m"
+    YELLOW = "\033[93m"
+    RESET = "\033[0m"
+    def format(self, record):
+        orig_levelname = record.levelname
+        if record.levelno >= logging.ERROR:
+            record.levelname = f"{self.RED}{orig_levelname}{self.RESET}"
+        elif record.levelno == logging.WARNING:
+            record.levelname = f"{self.YELLOW}{orig_levelname}{self.RESET}"
+        val = super().format(record)
+        record.levelname = orig_levelname
+        return val
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(ColorFormatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s"))
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[handler]
 )
 logger = logging.getLogger("tagtuner")
 
@@ -53,7 +68,62 @@ def find_available_port(start_port=8080):
             except OSError:
                 port += 1
 
+def cleanup_zombie_processes():
+    """Finds and terminates any other running python processes that are executing tagtuner.py or tuner_server.py."""
+    import subprocess
+    import json
+    try:
+        # Run PowerShell command to get python processes with command lines
+        cmd = [
+            "powershell", "-NoProfile", "-Command",
+            "Get-CimInstance Win32_Process -Filter \"Name = 'python.exe'\" | "
+            "Select-Object ProcessId, CommandLine | ConvertTo-Json"
+        ]
+        output = subprocess.check_output(
+            cmd, 
+            stderr=subprocess.DEVNULL, 
+            creationflags=0x08000000
+        ).decode("utf-8", errors="ignore").strip()
+        
+        if not output:
+            return
+            
+        try:
+            processes = json.loads(output)
+        except json.JSONDecodeError:
+            return
+            
+        if isinstance(processes, dict):
+            processes = [processes]
+            
+        my_pid = os.getpid()
+        my_ppid = os.getppid() if hasattr(os, "getppid") else None
+        
+        for proc in processes:
+            pid = proc.get("ProcessId")
+            cmdline = proc.get("CommandLine") or ""
+            
+            if pid and pid != my_pid and pid != my_ppid:
+                cmdline_lower = cmdline.lower()
+                # Check if it is running tagtuner
+                if ("tagtuner.py" in cmdline_lower or "tuner_server.py" in cmdline_lower):
+                    logger.info(f"Found existing TagTuner process (PID {pid}, cmdline: '{cmdline}'). Cleaning it up...")
+                    try:
+                        subprocess.Popen(
+                            ["taskkill", "/F", "/PID", str(pid)],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            creationflags=0x08000000
+                        )
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
 def main():
+    if not os.environ.get("TAGTUNER_RELOADED_CHILD"):
+        cleanup_zombie_processes()
+        
     logger.info("Initializing TagTuner...")
     config = get_config()
     
@@ -73,12 +143,31 @@ def main():
         seed_taxonomy_from_db(db_path)
         logger.info("Database initialized successfully.")
         
-    port = find_available_port(8080)
+    port_env = os.environ.get("TAGTUNER_PORT")
+    if port_env:
+        port = int(port_env)
+    else:
+        port = find_available_port(8080)
+        os.environ["TAGTUNER_PORT"] = str(port)
     url = f"http://localhost:{port}/"
     
     if not os.environ.get("TAGTUNER_RELOADED"):
-        logger.info(f"Opening TagTuner UI in browser at: {url}")
-        webbrowser.open(url)
+        import threading
+        def open_browser_when_ready(port):
+            import socket
+            import time
+            for _ in range(100):
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    try:
+                        s.connect(("127.0.0.1", port))
+                        logger.info(f"TagTuner server is ready. Opening browser...")
+                        webbrowser.open(f"http://localhost:{port}/")
+                        return
+                    except (ConnectionRefusedError, OSError):
+                        time.sleep(0.1)
+            webbrowser.open(f"http://localhost:{port}/")
+
+        threading.Thread(target=open_browser_when_ready, args=(port,), daemon=True).start()
         
     from reloader import start_reloader_thread
     start_reloader_thread("TAGTUNER_RELOADED")
@@ -92,7 +181,8 @@ def main():
         )
     except KeyboardInterrupt:
         pass
-    logger.info("TagTuner shut down cleanly.")
+    logger.info(f"TagTuner shut down cleanly. (PID: {os.getpid()})")
+    os._exit(0)
 
 if __name__ == "__main__":
     main()

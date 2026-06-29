@@ -13,9 +13,16 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
 from prepare_test_environment import main as prepare_env
 
 def run_screenshot_flow():
-    print("Preparing test environment database...")
-    prepare_env()
-    
+    refresh = os.environ.get("REFRESH_TUTORIAL") == "1" or "--refresh" in sys.argv
+    if refresh:
+        print("Preparing test environment database and copying pictures...")
+        prepare_env()
+    else:
+        print("Skipping test environment database and picture preparation (run with --refresh or REFRESH_TUTORIAL=1 to refresh).")
+        
+    print("Skipping Playwright screenshot generation (for now, as requested).")
+    return
+
     gui_proc = None
     tuner_proc = None
     
