@@ -77,15 +77,26 @@ This document records the design, specifications, prerequisites, and instruction
 - `/api/person-faces?name=<name>`: Returns matched/outlier faces for a person (outliers defined as similarity < 0.85).
 - `/api/face-matches?id=<face_id>`: Evaluates face similarity and returns the top 5 closest matched people.
 - `/api/face-matches-unmatched?id=<face_id>`: Returns other unmatched faces with cosine similarity $\ge 0.8$ for bulk profile creation.
+- `/api/unmatched-faces/people`: Returns unique names of people who have associated unmatched faces.
+- `/api/unmatched-faces/person-matches?id=<face_id>`: Evaluates face matches against people names.
+- `/api/browse-folder`: Invokes native folder dialog and returns selected path.
 
 ### `POST` Endpoints
 - `/api/face/match`: Expects JSON body `{"face_id": int, "person_name": string}`.
 - `/api/face/unmatch`: Expects JSON body `{"face_id": int}`.
 - `/api/faces/match-bulk`: Expects JSON body `{"face_ids": list, "person_name": string}`. Matches face IDs in bulk. Implements duplicate-tagging protection.
 - `/api/faces/unmatch-bulk`: Expects JSON body `{"face_ids": list}`. Unmatches face IDs in bulk.
+- `/api/person/rename`: Expects JSON body `{"old_name": string, "new_name": string}`. Renames a person in the database and updates photo tags.
+- `/api/faces/recluster`: Expects JSON body `{}`. Runs face clustering algorithm dynamically.
 - `/api/photo/unmatch-all`: Expects JSON body `{"photo_path": string}`.
 - `/api/photo/automatch`: Expects JSON body `{"photo_path": string}`. For each unmatched face in the photo, finds the closest resolved face in the DB. If similarity > 0.8, assigns the name and appends it to the photo's `people` array.
 - `/api/folder/automatch`: Expects JSON body `{"folder_path": string}`. Automatches unmatched faces across all photos in the folder recursively.
+- `/api/photo/rotate`: Expects JSON body `{"photo_path": string, "direction": string}`. Rotates a photo's visual thumbnail or raw representation on disk.
+- `/api/photo/open-explorer`: Expects JSON body `{"photo_path": string}`. Opens the photo's directory in Windows File Explorer and selects it.
+- `/api/photo/save-metadata`: Saves caption, people, and tags metadata directly to the image file via ExifTool and syncs the DB.
+- `/api/photos/bulk-tags`: Adds or removes tags in bulk across a selection of photo paths.
+- `/api/folder/time-shift`: Shifts timestamps recursively by camera model.
+- `/api/folder/rename-photos`: Expects JSON body `{"photo_paths": list, "grouping": string}`. Sequentially renames selected photos based on the custom pattern and grouping template.
 
 ## Database Schema (SQLite)
 

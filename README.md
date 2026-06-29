@@ -154,6 +154,14 @@ force_image_size = 512               # Input resolution size
 
 [candidates]
 tags = Landscape, Portrait, Nature, Urban, Sunset, Sunrise, Night, Ocean, Mountain, Forest, Animal, Cat, Dog, Food, Indoor, Outdoor, Vehicle, Flower, Architecture, Party, Wedding, Beach, Sports, Concert
+
+[faces]
+min_face_size = 20                   # Minimum width/height in pixels for face detection
+confidence_threshold = 0.85          # Minimum probability score for face detection
+mtcnn_thresholds = 0.6, 0.7, 0.7     # Detection thresholds for MTCNN stages
+
+[renaming]
+format = {grouping} - {index} - {caption}  # Custom template pattern for sequential renaming
 ```
 
 ---
