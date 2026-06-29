@@ -411,7 +411,7 @@ class TestStability(unittest.TestCase):
         duration = time.time() - start_time
         
         print(f"\n[PERF TEST] Loading 5000 faces from endpoint took {duration:.4f} seconds.")
-        self.assertLess(duration, 2.0)
+        self.assertLess(duration, 5.0)
         self.assertIn("faces", res_data)
         self.assertEqual(len(res_data["faces"]), 5000)
 

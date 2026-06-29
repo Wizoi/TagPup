@@ -121,6 +121,16 @@ class PhotoIndex:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_tag_taxonomy_tag ON tag_taxonomy(tag)
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tag_embeddings (
+                tag TEXT,
+                prompt TEXT,
+                model_name TEXT,
+                pretrained TEXT,
+                embedding BLOB,
+                PRIMARY KEY (tag, prompt, model_name, pretrained)
+            )
+        """)
         self.conn.commit()
 
     def load(self) -> bool:
@@ -131,7 +141,7 @@ class PhotoIndex:
                 os.makedirs(db_dir, exist_ok=True)
                 
             # Set a 30-second timeout to handle concurrent lock waiting gracefully
-            self.conn = sqlite3.connect(self.db_path, timeout=30.0)
+            self.conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
             self.conn.execute("PRAGMA foreign_keys = ON;")
             self._create_table()
             
@@ -162,8 +172,11 @@ class PhotoIndex:
                     self.conn.commit()
             
             # Migrate 'Non Person' to NULL
-            cursor.execute("UPDATE faces SET name = NULL WHERE name = 'Non Person'")
-            self.conn.commit()
+            cursor.execute("SELECT COUNT(*) FROM faces WHERE name = 'Non Person'")
+            if cursor.fetchone()[0] > 0:
+                logger.info("Migrating faces table: Setting 'Non Person' names to NULL...")
+                cursor.execute("UPDATE faces SET name = NULL WHERE name = 'Non Person'")
+                self.conn.commit()
             
             cursor.execute("SELECT path, mtime, size, tags, people, captions, raw_metadata, embedding FROM photos")
             rows = cursor.fetchall()
@@ -549,5 +562,41 @@ class PhotoIndex:
             except Exception as e:
                 logger.error(f"Failed to migrate batch of cache files: {e}")
                 self.conn.rollback()
+
+    def get_tag_embedding(self, tag: str, prompt: str, model_name: str, pretrained: str) -> Optional[List[float]]:
+        """Get precomputed tag embedding if it matches active model settings."""
+        if not self.conn:
+            return None
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT embedding FROM tag_embeddings WHERE tag = ? AND prompt = ? AND model_name = ? AND pretrained = ?",
+                (tag, prompt, model_name, pretrained)
+            )
+            row = cursor.fetchone()
+            if row:
+                return np.frombuffer(row[0], dtype=np.float32).tolist()
+        except Exception as e:
+            logger.debug(f"Failed to load tag embedding for '{tag}': {e}")
+        return None
+
+    def save_tag_embedding(self, tag: str, prompt: str, model_name: str, pretrained: str, embedding: List[float]):
+        """Save precomputed tag embedding."""
+        if not self.conn:
+            return
+        try:
+            emb_bytes = np.array(embedding, dtype=np.float32).tobytes()
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO tag_embeddings (tag, prompt, model_name, pretrained, embedding)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (tag, prompt, model_name, pretrained, emb_bytes)
+            )
+            self.conn.commit()
+        except Exception as e:
+            logger.warning(f"Failed to save tag embedding for '{tag}': {e}")
+
 
 

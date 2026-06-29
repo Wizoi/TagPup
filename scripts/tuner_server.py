@@ -15,6 +15,16 @@ import numpy as np
 
 logger = logging.getLogger("tagtuner.server")
 
+def normalize_path(path):
+    if not path:
+        return ""
+    return os.path.abspath(path).lower().replace("\\", "/")
+
+def to_db_path(path):
+    if not path:
+        return ""
+    return os.path.abspath(path).replace("\\", "/")
+
 import re
 
 YEAR_RE = re.compile(r"^(\d{4})")
@@ -133,6 +143,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
     
     # State cache and lock for folder tagging
     model_lock = threading.Lock()
+    shared_embedder = None
     folder_cache = {}           # folder_path -> { photo_path: metadata_dict }
     suggest_status = {}         # folder_path -> { status, completed, total, suggestions }
     suggest_threads = {}        # folder_path -> Thread
@@ -194,10 +205,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.handle_get_unmatched_faces_people()
         elif path == "/api/unmatched-faces/person-matches":
             self.handle_get_unmatched_faces_person_matches(query)
-        elif path == "/api/folder/scan":
-            self.handle_get_folder_scan(query)
-        elif path == "/api/folder/suggest-status":
-            self.handle_get_folder_suggest_status(query)
         elif path == "/api/browse-folder":
             self.handle_get_browse_folder()
         else:
@@ -229,8 +236,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.handle_post_automatch()
         elif path == "/api/folder/automatch":
             self.handle_post_folder_automatch()
-        elif path == "/api/folder/suggest-start":
-            self.handle_post_folder_suggest_start()
         elif path == "/api/photo/rotate":
             self.handle_post_photo_rotate()
         elif path == "/api/photo/open-explorer":
@@ -239,8 +244,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.handle_post_photo_save_metadata()
         elif path == "/api/photos/bulk-tags":
             self.handle_post_photos_bulk_tags()
-        elif path == "/api/folder/auto-apply":
-            self.handle_post_folder_auto_apply()
         elif path == "/api/folder/time-shift":
             self.handle_post_folder_time_shift()
         elif path == "/api/folder/rename-photos":
@@ -1152,7 +1155,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
         try:
             # Start background thread to avoid HTTP request timeouts on large databases
             TunerHTTPRequestHandler.clustering_in_progress = True
-            t = threading.Thread(target=run_recluster_bg, args=(self.db_path, reset, max_iterations), daemon=True)
+            t = threading.Thread(target=run_recluster_bg, args=(self.db_path, reset, max_iterations), name="ReclusterThread", daemon=True)
             t.start()
             self.send_json({
                 "success": True,
@@ -2388,273 +2391,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_error(500, str(e))
 
-    def handle_get_folder_scan(self, query):
-        folder_path_list = query.get("path")
-        if not folder_path_list:
-            self.send_json_error(400, "Missing 'path' parameter")
-            return
-            
-        folder_path = urllib.parse.unquote(folder_path_list[0])
-        force_refresh = query.get("force", ["false"])[0].lower() == "true"
-        
-        if not os.path.isdir(folder_path):
-            self.send_json_error(400, f"Path is not a valid directory: {folder_path}")
-            return
-            
-        folder_path = os.path.abspath(folder_path)
-        
-        # Check cache
-        if folder_path in TunerHTTPRequestHandler.folder_cache and not force_refresh:
-            cached_data = list(TunerHTTPRequestHandler.folder_cache[folder_path].values())
-            def get_date_taken_str(meta):
-                raw_meta = meta.get("raw_metadata", {})
-                for k in ["EXIF:DateTimeOriginal", "DateTimeOriginal", "XMP:DateTimeOriginal", "EXIF:CreateDate", "CreateDate"]:
-                    val = raw_meta.get(k)
-                    if val:
-                        if isinstance(val, list) and val:
-                            val = val[0]
-                        return str(val).strip()
-                return f"mtime_{meta.get('mtime', 0.0)}"
-            cached_data.sort(key=get_date_taken_str)
-            self.send_json(cached_data)
-            return
-            
-        # Scan folder for image files
-        valid_exts = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
-        image_files = []
-        for root, _, files in os.walk(folder_path):
-            for file in files:
-                ext = os.path.splitext(file)[1].lower()
-                if ext in valid_exts:
-                    image_files.append(os.path.join(root, file))
-                    
-        if not image_files:
-            self.send_json([])
-            return
-            
-        try:
-            from metadata import MetadataExtractor
-            extractor = MetadataExtractor(exiftool_path=self.get_exiftool_path())
-            batch_size = 500
-            results = []
-            for i in range(0, len(image_files), batch_size):
-                batch = image_files[i:i+batch_size]
-                batch_meta = extractor.batch_read(batch)
-                results.extend(batch_meta)
-                
-            folder_map = {}
-            for meta in results:
-                path = meta["path"]
-                from metadata import parse_year_from_metadata
-                year = parse_year_from_metadata(meta)
-                year_str = str(year) if year else "Unknown"
-                
-                title = None
-                if meta.get("captions"):
-                    title = meta["captions"][0]
-                    
-                folder_map[path] = {
-                    "path": path,
-                    "filename": os.path.basename(path),
-                    "tags": meta.get("tags", []),
-                    "people": meta.get("people", []),
-                    "title": title,
-                    "mtime": meta.get("mtime", 0.0),
-                    "size": meta.get("size", 0),
-                    "year": year_str,
-                    "raw_metadata": meta.get("raw_metadata", {})
-                }
-                
-            TunerHTTPRequestHandler.folder_cache[folder_path] = folder_map
-            
-            response_list = list(folder_map.values())
-            def get_date_taken_str(meta):
-                raw_meta = meta.get("raw_metadata", {})
-                for k in ["EXIF:DateTimeOriginal", "DateTimeOriginal", "XMP:DateTimeOriginal", "EXIF:CreateDate", "CreateDate"]:
-                    val = raw_meta.get(k)
-                    if val:
-                        if isinstance(val, list) and val:
-                            val = val[0]
-                        return str(val).strip()
-                return f"mtime_{meta.get('mtime', 0.0)}"
-            response_list.sort(key=get_date_taken_str)
-            self.send_json(response_list)
-            
-        except Exception as e:
-            logger.error(f"Error scanning folder {folder_path}: {e}", exc_info=True)
-            self.send_json_error(500, str(e))
 
-    def handle_get_folder_suggest_status(self, query):
-        folder_path_list = query.get("path")
-        if not folder_path_list:
-            self.send_json_error(400, "Missing 'path' parameter")
-            return
-        folder_path = os.path.abspath(urllib.parse.unquote(folder_path_list[0]))
-        status_info = TunerHTTPRequestHandler.suggest_status.get(folder_path, {"status": "idle"})
-        self.send_json(status_info)
-
-    def handle_post_folder_suggest_start(self):
-        try:
-            data = self.read_json_body()
-        except Exception:
-            self.send_json_error(400, "Invalid JSON payload")
-            return
-            
-        folder_path = data.get("folder_path")
-        if not folder_path or not os.path.isdir(folder_path):
-            self.send_json_error(400, "Invalid folder path")
-            return
-            
-        folder_path = os.path.abspath(folder_path)
-        
-        status_info = TunerHTTPRequestHandler.suggest_status.get(folder_path)
-        if status_info and status_info["status"] == "running":
-            self.send_json({"success": True, "status": "running"})
-            return
-            
-        TunerHTTPRequestHandler.suggest_status[folder_path] = {
-            "status": "running",
-            "completed": 0,
-            "total": 0,
-            "suggestions": {}
-        }
-        
-        t = threading.Thread(
-            target=TunerHTTPRequestHandler.run_folder_suggestions_thread,
-            args=(folder_path, self.db_path),
-            daemon=True
-        )
-        TunerHTTPRequestHandler.suggest_threads[folder_path] = t
-        t.start()
-        
-        self.send_json({"success": True, "status": "running"})
-
-    @classmethod
-    def run_folder_suggestions_thread(cls, folder_path, db_path):
-        try:
-            import configparser
-            photos_dict = cls.folder_cache.get(folder_path, {})
-            if not photos_dict:
-                return
-                
-            photo_paths = list(photos_dict.keys())
-            cls.suggest_status[folder_path]["total"] = len(photo_paths)
-            
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-            config = configparser.ConfigParser(interpolation=None)
-            if os.path.exists(config_path):
-                config.read(config_path, encoding='utf-8')
-                
-            cache_dir = config.get("paths", "embedding_cache_dir", fallback="data/embedding_cache")
-            model_name = config.get("model", "name", fallback="ViT-B-32")
-            pretrained = config.get("model", "pretrained", fallback="laion2b_s34b_b79k")
-            candidate_str = config.get("candidates", "tags", fallback="")
-            candidate_tags = [t.strip() for t in candidate_str.split(",") if t.strip()]
-            
-            from index import PhotoIndex
-            from taxonomy import TagTaxonomy
-            from suggester import TagSuggester
-            from embedder import ClipEmbedder
-            
-            photo_index = PhotoIndex(db_path=db_path)
-            photo_index.load()
-            
-            tax_path = os.path.splitext(db_path)[0] + "_taxonomy.json"
-            taxonomy = TagTaxonomy(file_path=tax_path)
-            taxonomy.load()
-            
-            preserve_full_frame = config.getboolean("model", "preserve_full_frame", fallback=False)
-            max_aspect_ratio = config.getfloat("model", "max_aspect_ratio", fallback=2.0)
-            force_image_size = config.get("model", "force_image_size", fallback=None)
-            force_image_size = int(force_image_size) if force_image_size else None
-            
-            embedder = ClipEmbedder(
-                model_name=model_name,
-                pretrained=pretrained,
-                cache_dir=cache_dir,
-                preserve_full_frame=preserve_full_frame,
-                max_aspect_ratio=max_aspect_ratio,
-                force_image_size=force_image_size,
-                photo_index=photo_index
-            )
-            
-            suggester = TagSuggester(photo_index, taxonomy, embedder=embedder, candidate_tags=candidate_tags)
-            
-            suggestions_list = []
-            for path in photo_paths:
-                if folder_path not in cls.suggest_status:
-                    break
-                try:
-                    with cls.model_lock:
-                        emb = embedder.embed_image(path)
-                        meta = photos_dict[path]
-                        sugg = suggester.suggest_for_photo(path, emb, k=15, min_sim=0.35, target_metadata=meta)
-                    
-                    suggestions_list.append(sugg)
-                    
-                    suggested_tags = []
-                    suggested_people = []
-                    for item in sugg.get("suggested_tags", []):
-                        score = item.get("score", 0.0)
-                        if score >= 0.6:
-                            if item.get("has_face_match"):
-                                suggested_people.append({"name": item["tag"], "score": score})
-                            else:
-                                suggested_tags.append({"tag": item["tag"], "score": score})
-                                
-                    all_sugg_tags = [t["tag"] for t in suggested_tags] + [p["name"] for p in suggested_people]
-                    from writer import derive_caption_from_tags
-                    suggested_title = derive_caption_from_tags(all_sugg_tags)
-                    
-                    cls.suggest_status[folder_path]["suggestions"][path] = {
-                        "tags": suggested_tags,
-                        "people": suggested_people,
-                        "title": suggested_title,
-                        "raw_suggestions": sugg
-                    }
-                except Exception as e:
-                    logger.error(f"Error suggesting for {path}: {e}")
-                    cls.suggest_status[folder_path]["suggestions"][path] = {
-                        "tags": [],
-                        "people": [],
-                        "title": None,
-                        "raw_suggestions": {"suggested_tags": []}
-                    }
-                cls.suggest_status[folder_path]["completed"] += 1
-                
-            # Apply folder consensus
-            if len(suggestions_list) > 1 and folder_path in cls.suggest_status:
-                try:
-                    consensus_suggestions = suggester.apply_folder_consensus(suggestions_list)
-                    for sugg in consensus_suggestions:
-                        path = sugg["path"]
-                        suggested_tags = []
-                        suggested_people = []
-                        for item in sugg.get("suggested_tags", []):
-                            score = item.get("score", 0.0)
-                            if score >= 0.6:
-                                if item.get("has_face_match"):
-                                    suggested_people.append({"name": item["tag"], "score": score})
-                                else:
-                                    suggested_tags.append({"tag": item["tag"], "score": score})
-                                    
-                        all_sugg_tags = [t["tag"] for t in suggested_tags] + [p["name"] for p in suggested_people]
-                        from writer import derive_caption_from_tags
-                        suggested_title = derive_caption_from_tags(all_sugg_tags)
-                        
-                        if path in cls.suggest_status[folder_path]["suggestions"]:
-                            cls.suggest_status[folder_path]["suggestions"][path]["tags"] = suggested_tags
-                            cls.suggest_status[folder_path]["suggestions"][path]["people"] = suggested_people
-                            cls.suggest_status[folder_path]["suggestions"][path]["title"] = suggested_title
-                            cls.suggest_status[folder_path]["suggestions"][path]["raw_suggestions"] = sugg
-                except Exception as e:
-                    logger.error(f"Error folder consensus: {e}")
-                    
-            cls.suggest_status[folder_path]["status"] = "completed"
-        except Exception as e:
-            logger.error(f"Error running suggestions thread: {e}")
-            if folder_path in cls.suggest_status:
-                cls.suggest_status[folder_path]["status"] = "error"
 
     def handle_post_photo_open_explorer(self):
         try:
@@ -2697,10 +2434,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             rotate_image_file(photo_path, direction, executable)
                 
             # Update cache file stats
-            folder_path = os.path.dirname(photo_path)
+            folder_path = normalize_path(os.path.dirname(photo_path))
             if folder_path in TunerHTTPRequestHandler.folder_cache:
                 stat = os.stat(photo_path)
-                photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].get(photo_path)
+                photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].get(normalize_path(photo_path))
                 if photo_entry:
                     photo_entry["mtime"] = stat.st_mtime
                     photo_entry["size"] = stat.st_size
@@ -2796,16 +2533,16 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 conn.close()
                 
             # Update cache
-            folder_path = os.path.dirname(new_path)
+            folder_path = normalize_path(os.path.dirname(new_path))
             if folder_path in TunerHTTPRequestHandler.folder_cache:
-                if new_path != photo_path:
-                    photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].pop(photo_path, None)
+                if normalize_path(new_path) != normalize_path(photo_path):
+                    photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].pop(normalize_path(photo_path), None)
                     if photo_entry:
                         photo_entry["path"] = new_path
                         photo_entry["filename"] = os.path.basename(new_path)
-                        TunerHTTPRequestHandler.folder_cache[folder_path][new_path] = photo_entry
+                        TunerHTTPRequestHandler.folder_cache[folder_path][normalize_path(new_path)] = photo_entry
                 else:
-                    photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].get(photo_path)
+                    photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].get(normalize_path(photo_path))
                     
                 if photo_entry:
                     from metadata import extract_tags
@@ -2844,10 +2581,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
         try:
             with exiftool.ExifToolHelper(executable=executable) as et:
                 for path in paths:
-                    folder_path = os.path.dirname(path)
+                    folder_path = normalize_path(os.path.dirname(path))
                     photo_entry = None
                     if folder_path in TunerHTTPRequestHandler.folder_cache:
-                        photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].get(path)
+                        photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].get(normalize_path(path))
                         
                     current_tags = photo_entry["tags"] if photo_entry else []
                     new_tags_set = set(current_tags)
@@ -2910,7 +2647,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_json_error(400, "Invalid folder path")
             return
             
-        folder_path = os.path.abspath(folder_path)
+        folder_path = normalize_path(folder_path)
         status_info = TunerHTTPRequestHandler.suggest_status.get(folder_path)
         if not status_info or "suggestions" not in status_info:
             self.send_json_error(400, "No suggestions found for this folder")
@@ -2936,10 +2673,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                     if not apply_tags:
                         continue
                         
-                    folder_path_dir = os.path.dirname(path)
+                    folder_path_dir = normalize_path(os.path.dirname(path))
                     photo_entry = None
                     if folder_path_dir in TunerHTTPRequestHandler.folder_cache:
-                        photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path_dir].get(path)
+                        photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path_dir].get(normalize_path(path))
                         
                     current_tags = photo_entry["tags"] if photo_entry else []
                     new_tags = list(set(current_tags + apply_tags))
@@ -3016,7 +2753,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 folder_map = {}
                 for meta in results:
                     path = meta["path"]
-                    folder_map[path] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
+                    folder_map[normalize_path(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
                 TunerHTTPRequestHandler.folder_cache[folder_path] = folder_map
             except Exception as scan_err:
                 logger.error(f"Error scanning folder on the fly for time shift: {scan_err}")
@@ -3080,7 +2817,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 if ext in valid_exts:
                     image_files.append(os.path.join(root, file))
         if not image_files:
-            TunerHTTPRequestHandler.folder_cache[folder_path] = {}
+            TunerHTTPRequestHandler.folder_cache[normalize_path(folder_path)] = {}
             return
             
         from metadata import MetadataExtractor, build_photo_ui_record
@@ -3095,9 +2832,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
         folder_map = {}
         for meta in results:
             path = meta["path"]
-            folder_map[path] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
+            folder_map[normalize_path(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
             
-        TunerHTTPRequestHandler.folder_cache[folder_path] = folder_map
+        TunerHTTPRequestHandler.folder_cache[normalize_path(folder_path)] = folder_map
 
     def handle_post_folder_rename_photos(self):
         try:
@@ -3110,10 +2847,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
         photo_paths = data.get("photo_paths", [])
         grouping = data.get("grouping", "").strip()
         
-        if folder_path:
-            folder_path = os.path.normpath(folder_path).replace("\\", "/")
+        folder_path = to_db_path(folder_path)
         if photo_paths:
-            photo_paths = [os.path.normpath(p).replace("\\", "/") for p in photo_paths]
+            photo_paths = [to_db_path(p) for p in photo_paths]
             
         if not folder_path or not os.path.exists(folder_path):
             self.send_json_error(400, "Invalid folder path")
@@ -3140,8 +2876,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             format_pattern = config.get("renaming", "format")
             
             # Sort the selected photo paths chronologically by Date Taken
-            cache = TunerHTTPRequestHandler.folder_cache.get(folder_path, {})
-            cache = {os.path.normpath(k).replace("\\", "/"): v for k, v in cache.items()}
+            cache = TunerHTTPRequestHandler.folder_cache.get(normalize_path(folder_path), {})
+            cache = {normalize_path(k): v for k, v in cache.items()}
             
             def get_date_taken_sort_key(p_path):
                 entry = cache.get(p_path)
@@ -3271,13 +3007,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                     updated_paths_map[target_path] = target_path
                     
             # Clear old and scan new cache entries
-            if folder_path in TunerHTTPRequestHandler.folder_cache:
-                del TunerHTTPRequestHandler.folder_cache[folder_path]
+            if normalize_path(folder_path) in TunerHTTPRequestHandler.folder_cache:
+                del TunerHTTPRequestHandler.folder_cache[normalize_path(folder_path)]
                 
             self.rescan_folder_to_cache(folder_path)
             
             # Send updated photos sorted chronologically
-            updated_list = list(TunerHTTPRequestHandler.folder_cache.get(folder_path, {}).values())
+            updated_list = list(TunerHTTPRequestHandler.folder_cache.get(normalize_path(folder_path), {}).values())
             
             def get_date_taken_str(meta):
                 raw_meta = meta.get("raw_metadata", {})
@@ -3337,11 +3073,22 @@ def start_server(port=8080, db_path="data/photo_index.db", gui_dir="gui"):
             conn.close()
 
     server_address = ("", port)
-    server = ThreadedHTTPServer(server_address, TunerHTTPRequestHandler)
+    server = None
+    import time
+    for attempt in range(5):
+        try:
+            server = ThreadedHTTPServer(server_address, TunerHTTPRequestHandler)
+            break
+        except OSError as e:
+            if attempt == 4:
+                raise e
+            logger.info(f"Port {port} is busy, retrying in 0.5s (attempt {attempt + 1}/5)...")
+            time.sleep(0.5)
+
     logger.info(f"TagTuner server started on port {port} using DB {db_path}...")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        logger.info("Server shutting down...")
+        logger.info(f"Server shutting down... (PID: {os.getpid()})")
         server.shutdown()
         server.server_close()

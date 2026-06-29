@@ -3,6 +3,7 @@ import os
 import json
 import hashlib
 import logging
+import threading
 from typing import List, Union, Optional, Any
 from PIL import Image
 # Disable Pillow image size check limit to support large photos / panoramas
@@ -42,44 +43,46 @@ class ClipEmbedder:
         self.model = None
         self.preprocess = None
         self.tokenizer = None
+        self.model_lock = threading.Lock()
         
         if not os.path.exists(self.cache_dir):
             os.makedirs(self.cache_dir, exist_ok=True)
 
     def _init_model(self):
         """Lazily load the CLIP model."""
-        if self.model is not None:
-            return
-            
-        logger.info(f"Loading CLIP model {self.model_name} (pretrained on {self.pretrained}) on {self.device.upper()}...")
-        try:
-            kwargs = {}
-            if self.force_image_size is not None:
-                kwargs["force_image_size"] = self.force_image_size
-            if self.device == "cuda":
-                kwargs["precision"] = "fp16"
-            model, _, preprocess = open_clip.create_model_and_transforms(
-                self.model_name, 
-                pretrained=self.pretrained, 
-                device=self.device,
-                **kwargs
-            )
-            self.model = model
-            self.preprocess = preprocess
-            self.tokenizer = open_clip.get_tokenizer(self.model_name)
-            self.model.eval()
-            
-            if self.device == "cuda" and os.name != "nt" and hasattr(torch, "compile"):
-                try:
-                    logger.info("Compiling CLIP model for CUDA acceleration...")
-                    self.model = torch.compile(self.model)
-                except Exception as compile_err:
-                    logger.warning(f"Failed to compile CLIP model: {compile_err}. Using standard model.")
-                    
-            logger.info("CLIP model loaded successfully.")
-        except Exception as e:
-            logger.error(f"Failed to load CLIP model: {e}", exc_info=True)
-            raise e
+        with self.model_lock:
+            if self.model is not None:
+                return
+                
+            logger.info(f"Loading CLIP model {self.model_name} (pretrained on {self.pretrained}) on {self.device.upper()}...")
+            try:
+                kwargs = {}
+                if self.force_image_size is not None:
+                    kwargs["force_image_size"] = self.force_image_size
+                if self.device == "cuda":
+                    kwargs["precision"] = "fp16"
+                model, _, preprocess = open_clip.create_model_and_transforms(
+                    self.model_name, 
+                    pretrained=self.pretrained, 
+                    device=self.device,
+                    **kwargs
+                )
+                self.model = model
+                self.preprocess = preprocess
+                self.tokenizer = open_clip.get_tokenizer(self.model_name)
+                self.model.eval()
+                
+                if self.device == "cuda" and os.name != "nt" and hasattr(torch, "compile"):
+                    try:
+                        logger.info("Compiling CLIP model for CUDA acceleration...")
+                        self.model = torch.compile(self.model)
+                    except Exception as compile_err:
+                        logger.warning(f"Failed to compile CLIP model: {compile_err}. Using standard model.")
+                        
+                logger.info("CLIP model loaded successfully.")
+            except Exception as e:
+                logger.error(f"Failed to load CLIP model: {e}", exc_info=True)
+                raise e
 
     def _get_cache_path(self, file_path: str) -> str:
         """Get the cache file path based on MD5 of absolute file path."""
@@ -216,11 +219,12 @@ class ClipEmbedder:
                 if self.device == "cuda":
                     image_input = image_input.half()
                 
-            with torch.no_grad():
-                image_features = self.model.encode_image(image_input)
-                # L2 normalize the features
-                image_features /= image_features.norm(dim=-1, keepdim=True)
-                embedding = image_features[0].cpu().numpy().tolist()
+            with self.model_lock:
+                with torch.no_grad():
+                    image_features = self.model.encode_image(image_input)
+                    # L2 normalize the features
+                    image_features /= image_features.norm(dim=-1, keepdim=True)
+                    embedding = image_features[0].cpu().numpy().tolist()
                 
             self.save_to_cache(file_path, embedding)
             return embedding
@@ -233,10 +237,11 @@ class ClipEmbedder:
         self._init_model()
         try:
             text_input = self.tokenizer([text]).to(self.device)
-            with torch.no_grad():
-                text_features = self.model.encode_text(text_input)
-                text_features /= text_features.norm(dim=-1, keepdim=True)
-                return text_features[0].cpu().numpy().tolist()
+            with self.model_lock:
+                with torch.no_grad():
+                    text_features = self.model.encode_text(text_input)
+                    text_features /= text_features.norm(dim=-1, keepdim=True)
+                    return text_features[0].cpu().numpy().tolist()
         except Exception as e:
             logger.error(f"Error embedding text '{text}': {e}")
             raise e
