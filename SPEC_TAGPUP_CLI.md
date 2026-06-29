@@ -143,5 +143,82 @@ To resolve individual image noise by leveraging event-level folder context, reco
 - **Match Suggestion Boost**: Untagged images undergo face detection. Detected faces are matched against resolved database faces. If a face yields a similarity $\ge 0.85$ to a known profile, the matching person's tag is automatically boosted to a confidence score of `1.0`.
 
 ---
+
+## 6. CLI Command Reference
+
+The `tagpup_cli.py` engine is accessed via `click` subcommands. 
+
+### Global Options
+- `--test`: Use test database paths (`test_photo_index.db` and `test_photo_taxonomy.json`) to avoid altering the production database.
+
+---
+
+### Subcommands
+
+#### 1. `index`
+Scans and indexes a photo library recursively.
+- **Usage**: `run.bat [global-options] index <DIRECTORY>`
+- **Options**:
+  - `--force-reembed`: Force recreation of all CLIP visual embeddings.
+  - `--reset`: Delete the existing SQLite database index and taxonomy files to start fresh.
+  - `--skip-faces`: Skip MTCNN face detection and FaceNet embedding extraction during indexing.
+
+#### 2. `suggest`
+Analyzes untagged photos and generates tag recommendations.
+- **Usage**: `run.bat [global-options] suggest <DIRECTORY>`
+- **Options**:
+  - `--k INTEGER`: Number of nearest neighbors to consider (default: `15`).
+  - `--min-sim FLOAT`: Cosine similarity cutoff (default: `0.35`).
+  - `--output TEXT`: Path to write the output suggestions JSON file (default: `suggestions.json`).
+
+#### 3. `write`
+Writes suggested tags and descriptions back to photo file metadata using ExifTool.
+- **Usage**: `run.bat [global-options] write <SUGGESTIONS_FILE>`
+- **Options**:
+  - `-Live`: Write tags to files for real (actually modifies image files on disk).
+  - `-MinScore FLOAT`: Write tags at or above this score threshold (default: `0.50`).
+  - `--nobackup`: Avoid creating backup copies (`_original` files) during write operations.
+
+#### 4. `search`
+Semantic natural language query against indexed visual vectors.
+- **Usage**: `run.bat [global-options] search <QUERY>`
+- **Options**:
+  - `--k INTEGER`: Number of search results to return (default: `10`).
+
+#### 5. `stats`
+Displays overall database metrics, unique tags count, unique people count, top tags, top people, and taxonomy coverage.
+- **Usage**: `run.bat [global-options] stats`
+
+#### 6. `inspect`
+Debugs and displays parsed metadata and raw read fields for a single photo file.
+- **Usage**: `run.bat inspect <PHOTO_PATH>`
+
+#### 7. `list-index`
+Lists all photo filenames currently stored in the index.
+- **Usage**: `run.bat [global-options] list-index`
+- **Options**:
+  - `--folder TEXT`: Filter list results to paths under this directory.
+
+#### 8. `remove`
+Deletes a photo or folder's indexed vector and metadata from the database.
+- **Usage**: `run.bat [global-options] remove`
+- **Options**:
+  - `--path TEXT`: Remove a specific image path from the index.
+  - `--folder TEXT`: Remove all indexed images under this directory recursively.
+
+#### 9. `index-faces`
+Manually scans photos and indexes face embeddings into the database.
+- **Usage**: `run.bat [global-options] index-faces <DIRECTORY>`
+- **Options**:
+  - `--force`: Force re-detection of faces on already processed images.
+
+#### 10. `cluster-faces`
+Runs self-tuning identity resolution to cluster face embeddings and assign names.
+- **Usage**: `run.bat [global-options] cluster-faces`
+- **Options**:
+  - `--reset`: Reset all face name assignments back to `NULL` before clustering.
+  - `--max-iterations INTEGER`: Maximum iterations for propagation loop (default: `5`, set to `0` for anchor-only).
+
+---
 [◀ Back to README](README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
 

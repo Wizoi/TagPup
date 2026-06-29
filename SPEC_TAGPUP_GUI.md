@@ -44,16 +44,23 @@ This document records the design, specifications, prerequisites, and instruction
 
 ### `GET` Endpoints
 - `/api/browse-folder`: Invokes native folder dialog and returns selected path.
+- `/api/autocomplete-folder?path=<path_prefix>`: Returns autocomplete folder path suggestions based on Windows folder hierarchies.
 - `/api/folder/scan?path=<path>`: Scans folder and returns JSON array of photos.
+- `/api/folder/suggest-status?folder_path=<path>`: Returns the status, counts, and computed suggestions of the background tag suggest thread.
 - `/api/photo-file?path=<photo_path>`: Serves the photo image binary (supports resizing via `size` parameter).
 - `/api/tags`: Returns all autocomplete-visible tags.
 - `/api/people`: Returns all autocomplete-visible people names.
 - `/api/taxonomy/tree`: Returns the hierarchical tree nodes of tags with counts of photo usage and status attributes (`has_face`, `hidden_from_autocomplete`).
 
 ### `POST` Endpoints
+- `/api/folder/suggest-start`: Expects JSON body `{"folder_path": string}`. Starts the background tagging suggest thread for a folder.
+- `/api/photo/rotate`: Expects JSON body `{"photo_path": string, "direction": string}`. Rotates a photo's visual thumbnail or raw representation on disk.
+- `/api/photo/open-explorer`: Expects JSON body `{"photo_path": string}`. Opens the photo's directory in Windows File Explorer and selects it.
 - `/api/photo/save-metadata`: Saves caption, people, and tags metadata directly to the image file via ExifTool and syncs the DB.
 - `/api/photos/bulk-tags`: Adds or removes tags in bulk across a selection of photo paths.
+- `/api/folder/auto-apply`: Expects JSON body `{"folder_path": string, "suggestions": list, "min_score": float}`. Applies all suggestions in a folder above a minimum score threshold.
 - `/api/folder/time-shift`: Shifts timestamps recursively by camera model.
+- `/api/folder/rename-photos`: Expects JSON body `{"photo_paths": list, "grouping": string}`. Sequentially renames selected photos based on the custom pattern and grouping template.
 - `/api/taxonomy/create`: Expects JSON body `{"name": string, "parent_id": int, "has_face": int}`. Creates a new tag path.
 - `/api/taxonomy/update`: Expects JSON body `{"id": int, "has_face": int, "hidden_from_autocomplete": int}`. Updates attributes for the tag and propagates to child nodes.
 - `/api/taxonomy/delete-check`: Expects JSON body `{"tag_id": int}`. Checks if a tag is used by any photo and returns the count of affected files.

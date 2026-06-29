@@ -10,7 +10,7 @@ TagPup uses an SQLite database (by default stored at `data/photo_index.db`) to m
 
 ## Database Schema
 
-The database consists of three primary tables: `photos`, `faces`, and `embedding_cache`.
+The database consists of five primary tables: `photos`, `faces`, `embedding_cache`, `tag_taxonomy`, and `tag_embeddings`.
 
 ### 1. `photos` Table
 Stores high-level image metadata, tags (keywords), captions, resolved people lists, and the primary visual embedding vector used for semantic searches.
@@ -54,6 +54,29 @@ Acts as a cache layer for photo visual embeddings to avoid recalculating heavy i
 | `force_image_size` | INTEGER | | Image dimension limit used for embedding calculation. |
 | `embedding` | BLOB | | Visual feature vector representation. |
 
+### 4. `tag_taxonomy` Table
+Stores the hierarchical tag relationships, autocomplete status, and person designations.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | Unique taxonomy node ID. |
+| `tag` | TEXT | UNIQUE | Full hierarchical path representing the tag (e.g., `Family/John Doe`). |
+| `parent_id` | INTEGER | FOREIGN KEY | References parent tag node. References `tag_taxonomy(id)` with `ON DELETE CASCADE`. |
+| `name` | TEXT | | Leaf name of the tag (e.g., `John Doe`). |
+| `has_face` | INTEGER | DEFAULT 0 | Flag (0 or 1) indicating if the branch represents a person/pet with a face. |
+| `hidden_from_autocomplete` | INTEGER | DEFAULT 0 | Flag (0 or 1) to hide the tag from autocomplete prompts. |
+
+### 5. `tag_embeddings` Table
+Stores cached visual embeddings of tag prompts to accelerate zero-shot tag consensus calculations.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `tag` | TEXT | PRIMARY KEY | Leaf tag name or path. |
+| `prompt` | TEXT | PRIMARY KEY | The prompt string run through CLIP (e.g. `a photo of John Doe in 2026`). |
+| `model_name` | TEXT | PRIMARY KEY | Name of the CLIP model used. |
+| `pretrained` | TEXT | PRIMARY KEY | Pretrained weights identifier of the model. |
+| `embedding` | BLOB | | Binary representation of float array for the prompt embedding. |
+
 ---
 
 ## Entity-Relationship (ER) Diagram
@@ -95,7 +118,25 @@ erDiagram
         BLOB embedding
     }
 
+    tag_taxonomy {
+        INTEGER id PK
+        TEXT tag UK
+        INTEGER parent_id FK
+        TEXT name
+        INTEGER has_face
+        INTEGER hidden_from_autocomplete
+    }
+
+    tag_embeddings {
+        TEXT tag PK
+        TEXT prompt PK
+        TEXT model_name PK
+        TEXT pretrained PK
+        BLOB embedding
+    }
+
     photos ||--o{ faces : "contains"
+    tag_taxonomy ||--o{ tag_taxonomy : "parent of"
 ```
 
 ---
