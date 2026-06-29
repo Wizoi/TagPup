@@ -57,6 +57,7 @@ class PhotoIndex:
         self.conn: Optional[sqlite3.Connection] = None
         self.index: Optional[faiss.Index] = None
         self.metadata: List[Dict[str, Any]] = []
+        self.indexed_metadata: List[Dict[str, Any]] = []
         self.dim = 512  # Default
 
     def _create_table(self):
@@ -182,6 +183,7 @@ class PhotoIndex:
             rows = cursor.fetchall()
             
             self.metadata = []
+            self.indexed_metadata = []
             embeddings = []
             
             for path, mtime, size, tags_json, people_json, captions_json, raw_meta_json, emb_bytes in rows:
@@ -194,7 +196,7 @@ class PhotoIndex:
                     tags, people, captions, raw_meta = [], [], [], {}
                     
                 has_emb = (emb_bytes is not None and len(emb_bytes) > 0)
-                self.metadata.append({
+                meta_item = {
                     "path": path,
                     "mtime": mtime,
                     "size": size,
@@ -203,11 +205,13 @@ class PhotoIndex:
                     "captions": captions,
                     "raw_metadata": raw_meta,
                     "has_embedding": has_emb
-                })
+                }
+                self.metadata.append(meta_item)
                 
                 if has_emb:
                     emb = np.frombuffer(emb_bytes, dtype=np.float32)
                     embeddings.append(emb)
+                    self.indexed_metadata.append(meta_item)
                 
             if embeddings:
                 self.dim = len(embeddings[0])
@@ -224,7 +228,7 @@ class PhotoIndex:
                         has_gpu = (faiss.get_num_gpus() > 0)
                     except Exception:
                         pass
-
+ 
                 if has_gpu:
                     try:
                         res = faiss.StandardGpuResources()
@@ -235,7 +239,7 @@ class PhotoIndex:
                         self.index = faiss.IndexFlatIP(self.dim)
                 else:
                     self.index = faiss.IndexFlatIP(self.dim)
-
+ 
                 self.index.add(embedding_matrix)
                 logger.info(f"Loaded {len(self.metadata)} index entries from SQLite.")
             else:
@@ -246,6 +250,7 @@ class PhotoIndex:
             logger.error(f"Error loading SQLite database: {e}", exc_info=True)
             self.index = None
             self.metadata = []
+            self.indexed_metadata = []
             return False
 
     def build_or_update(self, embeddings: List[List[float]], metas: List[Dict[str, Any]], dim: int = 512, reload: bool = True):
@@ -302,9 +307,9 @@ class PhotoIndex:
         
         results = []
         for sim, idx in zip(scores[0], indices[0]):
-            if idx == -1 or idx >= len(self.metadata):
+            if idx == -1 or idx >= len(self.indexed_metadata):
                 continue
-            results.append((float(sim), self.metadata[idx]))
+            results.append((float(sim), self.indexed_metadata[idx]))
             
         return results
 

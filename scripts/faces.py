@@ -5,7 +5,7 @@ import logging
 import io
 from typing import List, Dict, Any, Tuple, Optional
 from PIL import Image
-Image.MAX_IMAGE_PIXELS = None
+Image.MAX_IMAGE_PIXELS = 500000000
 import numpy as np
 import torch
 import configparser
@@ -180,6 +180,7 @@ class FaceProcessor:
         # Euclidean eps = sqrt(2 * 0.15) = sqrt(0.3) ≈ 0.547.
         # We use metric='euclidean' and eps=0.48. min_samples=1 so single faces can form their own cluster.
         try:
+            # pyrefly: ignore [missing-import] The codebase is written defensively to support both GPU and CPU execution. It wraps the import in a standard Python try/except ImportError block
             from cuml.cluster import DBSCAN as cuDBSCAN
             db = cuDBSCAN(eps=0.48, min_samples=1, metric='euclidean')
             labels = db.fit_predict(embeddings)
