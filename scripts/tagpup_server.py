@@ -273,13 +273,18 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
 
     def handle_get_browse_folder(self):
         try:
-            ps_cmd = (
-                "Add-Type -AssemblyName System.Windows.Forms; "
-                "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
-                "$f.Description = 'Select Image Folder'; "
-                "if ($f.ShowDialog() -eq 'OK') { $f.SelectedPath }"
+            import sys
+            python_cmd = (
+                "import tkinter as tk; "
+                "from tkinter import filedialog; "
+                "root = tk.Tk(); "
+                "root.withdraw(); "
+                "root.lift(); "
+                "root.focus_force(); "
+                "root.attributes('-topmost', True); "
+                "print(filedialog.askdirectory(title='Select Image Folder'))"
             )
-            cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd]
+            cmd = [sys.executable, "-c", python_cmd]
             res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=0x08000000)
             path = res.stdout.strip()
             self.send_json({"path": path})
