@@ -12,7 +12,7 @@ import configparser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingTCPServer
 from PIL import Image, ImageOps
-Image.MAX_IMAGE_PIXELS = None
+Image.MAX_IMAGE_PIXELS = 500000000
 import numpy as np
 
 logger = logging.getLogger("tagpup.server")
@@ -122,7 +122,27 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass # suppress request logs
 
+    def validate_request_origin(self) -> bool:
+        # Validate Host header to prevent DNS rebinding
+        host = self.headers.get("Host", "")
+        host_clean = host.split(":")[0].lower()
+        if host_clean not in ("localhost", "127.0.0.1", "[::1]"):
+            self.send_error(403, "Forbidden: Invalid Host Header")
+            return False
+
+        # Validate Origin header to prevent CSRF from external websites
+        origin = self.headers.get("Origin")
+        if origin:
+            parsed_origin = urllib.parse.urlparse(origin)
+            origin_host = parsed_origin.netloc.split(":")[0].lower()
+            if origin_host not in ("localhost", "127.0.0.1", "[::1]"):
+                self.send_error(403, "Forbidden: Cross-Origin Requests Denied")
+                return False
+        return True
+
     def do_GET(self):
+        if not self.validate_request_origin():
+            return
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
         query = urllib.parse.parse_qs(parsed_url.query)
@@ -156,6 +176,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_error(404, "File Not Found")
 
     def do_POST(self):
+        if not self.validate_request_origin():
+            return
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
 
@@ -858,7 +880,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
         try:
             import subprocess
             norm_path = os.path.normpath(photo_path)
-            subprocess.Popen(f'explorer.exe /select,"{norm_path}"')
+            subprocess.Popen(["explorer.exe", f"/select,{norm_path}"])
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error opening explorer for {photo_path}: {e}")
@@ -979,7 +1001,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             with exiftool.ExifToolHelper(executable=executable) as et:
                 et.set_tags([photo_path], tags=params, params=["-overwrite_original"])
                 
-            from metadata import sync_title_to_filename
+            from metadata import sync_title_to_filename, METADATA_FIELDS
             new_path = sync_title_to_filename(photo_path, title, executable)
             
             # Update SQLite database
@@ -1529,6 +1551,14 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_error(400, "Missing 'path' parameter")
             return
         photo_path = urllib.parse.unquote(photo_path_list[0])
+        
+        # Security check: Restrict serving to only standard image extensions
+        VALID_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff", ".tif", ".heic", ".heif"}
+        _, ext = os.path.splitext(photo_path.lower())
+        if ext not in VALID_IMAGE_EXTS:
+            self.send_error(400, "Forbidden: Invalid file type requested")
+            return
+
         if not os.path.exists(photo_path):
             self.send_error(404, f"Photo file not found: {photo_path}")
             return

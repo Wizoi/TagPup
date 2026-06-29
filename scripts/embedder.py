@@ -7,7 +7,7 @@ import threading
 from typing import List, Union, Optional, Any
 from PIL import Image
 # Disable Pillow image size check limit to support large photos / panoramas
-Image.MAX_IMAGE_PIXELS = None
+Image.MAX_IMAGE_PIXELS = 500000000
 import torch
 import numpy as np
 import open_clip

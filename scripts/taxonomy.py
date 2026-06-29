@@ -309,7 +309,11 @@ def seed_taxonomy_from_db(db_path: str):
                     )
                     
         # Check if taxonomy json file exists and seed from there too
-        tax_path = db_path.replace(".db", "_taxonomy.json")
+        if os.path.basename(db_path) == "photo_index.db":
+            tax_path = os.path.join(os.path.dirname(db_path), "photo_taxonomy.json").replace("\\", "/")
+        else:
+            tax_path = (os.path.splitext(db_path)[0] + "_taxonomy.json").replace("\\", "/")
+            
         if os.path.exists(tax_path):
             try:
                 with open(tax_path, "r", encoding="utf-8") as f:
