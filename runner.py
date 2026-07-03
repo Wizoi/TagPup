@@ -23,6 +23,7 @@ class RunnerApp:
         self.root.title("TagpupCLI & TagTuner GUI Dashboard")
         self.root.geometry("1150x780")
         self.root.minsize(1000, 700)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         # Style colors
         self.BG_MAIN = "#1e1e1e"
@@ -61,6 +62,31 @@ class RunnerApp:
 
         # Set up standard logging redirect
         self.setup_logging()
+
+    def on_closing(self):
+        # Shut down servers if running
+        if self.tagpup_server_instance:
+            try:
+                self.tagpup_server_instance.shutdown()
+                self.tagpup_server_instance.server_close()
+            except Exception:
+                pass
+        if self.tuner_server_instance:
+            try:
+                self.tuner_server_instance.shutdown()
+                self.tuner_server_instance.server_close()
+            except Exception:
+                pass
+        # Terminate any running subprocesses
+        if self.active_process:
+            try:
+                if platform.system() == "Windows":
+                    subprocess.call(["taskkill", "/F", "/T", "/PID", str(self.active_process.pid)])
+                else:
+                    self.active_process.terminate()
+            except Exception:
+                pass
+        self.root.destroy()
 
     def setup_ui(self):
         # Two main columns: Left for controls, Right for logs
@@ -690,9 +716,20 @@ class RunnerApp:
                     except OSError:
                         port += 1
 
-        # Select correct database depending on global setting
-        db_file = "test_photo_index.db" if self.var_test_db.get() else "photo_index.db"
-        db_path = os.path.join("data", db_file)
+        # Select correct database depending on global setting and config.ini
+        import configparser
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
+        config = configparser.ConfigParser(interpolation=None)
+        if os.path.exists(config_path):
+            config.read(config_path, encoding='utf-8')
+        default_db = config.get("paths", "default_db", fallback="photo_index.db")
+        if self.var_test_db.get():
+            if not default_db.startswith("test_"):
+                default_db = "test_" + default_db
+        else:
+            if default_db.startswith("test_"):
+                default_db = default_db[5:]
+        db_path = os.path.join("data", default_db)
 
         port = find_available_port(8080)
         self.tuner_server_port = port
@@ -849,9 +886,20 @@ class RunnerApp:
                     except OSError:
                         port += 1
 
-        # Select correct database depending on global setting
-        db_file = "test_photo_index.db" if self.var_test_db.get() else "photo_index.db"
-        db_path = os.path.join("data", db_file)
+        # Select correct database depending on global setting and config.ini
+        import configparser
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
+        config = configparser.ConfigParser(interpolation=None)
+        if os.path.exists(config_path):
+            config.read(config_path, encoding='utf-8')
+        default_db = config.get("paths", "default_db", fallback="photo_index.db")
+        if self.var_test_db.get():
+            if not default_db.startswith("test_"):
+                default_db = "test_" + default_db
+        else:
+            if default_db.startswith("test_"):
+                default_db = default_db[5:]
+        db_path = os.path.join("data", default_db)
 
         port = find_available_port(8090)
         self.tagpup_server_port = port

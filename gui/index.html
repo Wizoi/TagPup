@@ -18,6 +18,11 @@
                 <h1>TagTuner</h1>
             </div>
             <div class="controls-container">
+                <div class="control-group" style="display: flex; align-items: center; gap: 6px;">
+                    <label for="db-select">DB:</label>
+                    <select id="db-select" class="mode-select" style="min-width: 120px;"></select>
+                    <button id="btn-create-db" class="btn btn-secondary btn-sm" title="Create New Database" style="padding: 4px 8px; font-size: 12px; margin-left: 2px; cursor: pointer; background: var(--bg-card); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 4px; height: 32px;">➕</button>
+                </div>
                 <div class="control-group">
                     <label for="tuner-mode">Tune target:</label>
                     <select id="tuner-mode" class="mode-select">

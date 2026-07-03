@@ -110,10 +110,33 @@ def get_db_paths(config, test_mode=False):
         return env_db, tax_path
 
     data_dir = config.get("paths", "data_dir", fallback="data")
-    prefix = "test_" if test_mode else ""
+    default_db = config.get("paths", "default_db", fallback="photo_index.db")
+    
+    if test_mode:
+        if default_db.startswith("test_"):
+            db_name = default_db
+        else:
+            db_name = "test_" + default_db
+            
+        clean_db_name = db_name[5:] if db_name.startswith("test_") else db_name
+        if clean_db_name == "photo_index.db":
+            tax_name = "test_photo_taxonomy.json"
+        else:
+            tax_name = "test_" + os.path.splitext(clean_db_name)[0] + "_taxonomy.json"
+    else:
+        if default_db.startswith("test_"):
+            db_name = default_db[5:]
+        else:
+            db_name = default_db
+            
+        if db_name == "photo_index.db":
+            tax_name = "photo_taxonomy.json"
+        else:
+            tax_name = os.path.splitext(db_name)[0] + "_taxonomy.json"
+            
     return (
-        os.path.join(data_dir, f"{prefix}photo_index.db"),
-        os.path.join(data_dir, f"{prefix}photo_taxonomy.json")
+        os.path.join(data_dir, db_name),
+        os.path.join(data_dir, tax_name)
     )
 
 def scan_for_images(dir_path: str) -> List[str]:
