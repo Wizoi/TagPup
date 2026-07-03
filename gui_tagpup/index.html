@@ -17,7 +17,12 @@
                 <span class="logo-icon">🐶</span>
                 <h1>TagPup GUI</h1>
             </div>
-            <div class="header-actions" style="margin-left: auto; margin-right: 20px;">
+            <div class="header-actions" style="margin-left: auto; margin-right: 20px; display: flex; align-items: center; gap: 15px;">
+                <div class="db-selector-container" style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 13px; color: var(--text-muted);">Database:</span>
+                    <select id="db-select" class="btn btn-secondary" style="padding: 4px 8px; font-size: 13px; border-radius: 6px; cursor: pointer; height: 32px; background: var(--bg-card); color: var(--text-color); border: 1px solid var(--border-color);"></select>
+                    <button id="btn-create-db" class="btn btn-secondary btn-sm" title="Create New Database" style="padding: 4px 8px; font-size: 13px; height: 32px; display: flex; align-items: center; justify-content: center; width: 32px; cursor: pointer;">➕</button>
+                </div>
                 <button id="btn-manage-taxonomy" class="btn btn-secondary" style="display: flex; align-items: center; gap: 8px;">🏷️ Manage Tags</button>
             </div>
             <div class="header-status">
@@ -37,8 +42,9 @@
                         <input type="text" id="folder-path-input" placeholder="Select image folder..." autocomplete="off" list="folder-datalist">
                         <button id="btn-browse-folder" class="btn btn-secondary">Browse...</button>
                     </div>
-                    <div class="folder-action-buttons">
-                        <button id="btn-scan-folder" class="btn btn-primary">Scan Folder</button>
+                    <div class="folder-action-buttons" style="display: flex; gap: 8px;">
+                        <button id="btn-scan-folder" class="btn btn-primary" style="flex: 1;">Scan Folder</button>
+                        <button id="btn-index-folder" class="btn btn-secondary" title="Add folder to selected database & index" style="width: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; padding: 0; cursor: pointer;">💾</button>
                         <button id="btn-suggest-tags" class="btn btn-accent" disabled>Suggest Tags</button>
                     </div>
                     <!-- Background Progress Bar -->
@@ -47,6 +53,13 @@
                             <div id="suggest-progress-bar" class="progress-bar-fill" style="width: 0%"></div>
                         </div>
                         <div id="suggest-progress-text" class="progress-text">Processing: 0 / 0 (0%)</div>
+                    </div>
+                    <!-- Indexing Progress Bar -->
+                    <div id="index-progress-container" class="suggest-progress-container hidden" style="margin-top: 10px;">
+                        <div class="progress-bar-bg">
+                            <div id="index-progress-bar" class="progress-bar-fill" style="width: 0%; background-color: var(--badge-matched);"></div>
+                        </div>
+                        <div id="index-progress-text" class="progress-text">Indexing: Starting...</div>
                     </div>
                 </div>
 

@@ -108,16 +108,109 @@ def get_year_from_mtime_or_meta(mtime, raw_meta_json, path=None):
                     
     return parsed_year if parsed_year else "Unknown"
 
-class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
+_thread_local = threading.local()
+
+def set_active_db_path(db_path):
+    if db_path is None:
+        if hasattr(_thread_local, "active_db_path"):
+            delattr(_thread_local, "active_db_path")
+    else:
+        _thread_local.active_db_path = os.path.abspath(db_path).replace("\\", "/").lower()
+
+def get_active_db_path():
+    active_db = getattr(_thread_local, "active_db_path", None)
+    if active_db:
+        return active_db
+    handler_cls = globals().get("TagPupHTTPRequestHandler")
+    if handler_cls:
+        try:
+            return os.path.abspath(handler_cls.db_path).replace("\\", "/").lower()
+        except Exception:
+            pass
+    return "data/photo_index.db"
+
+class DatabaseIsolatedDict(dict):
+    def __init__(self, registry):
+        super().__init__()
+        self._registry = registry
+
+    def _get_current_dict(self):
+        active_db = get_active_db_path()
+        if active_db not in self._registry:
+            self._registry[active_db] = {}
+        return self._registry[active_db]
+
+    def __getitem__(self, key):
+        return self._get_current_dict()[key]
+
+    def __setitem__(self, key, value):
+        self._get_current_dict()[key] = value
+
+    def __delitem__(self, key):
+        del self._get_current_dict()[key]
+
+    def __contains__(self, key):
+        return key in self._get_current_dict()
+
+    def __len__(self):
+        return len(self._get_current_dict())
+
+    def __iter__(self):
+        return iter(self._get_current_dict())
+
+    def get(self, key, default=None):
+        return self._get_current_dict().get(key, default)
+
+    def pop(self, key, default=None):
+        return self._get_current_dict().pop(key, default)
+
+    def update(self, other):
+        self._get_current_dict().update(other)
+
+    def values(self):
+        return self._get_current_dict().values()
+
+    def keys(self):
+        return self._get_current_dict().keys()
+
+    def items(self):
+        return self._get_current_dict().items()
+
+    def clear(self):
+        self._get_current_dict().clear()
+
+class TagPupHTTPRequestHandlerMeta(type):
+    _shared_embedders = {}
+
+    @property
+    def shared_embedder(cls):
+        db_key = get_active_db_path()
+        return cls._shared_embedders.get(db_key)
+
+    @shared_embedder.setter
+    def shared_embedder(cls, val):
+        db_key = get_active_db_path()
+        cls._shared_embedders[db_key] = val
+
+class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPRequestHandlerMeta):
     db_path = "data/photo_index.db"
     gui_dir = "gui_tagpup"
     
     # Static Class-level caches
     model_lock = threading.Lock()
-    shared_embedder = None
-    folder_cache = {}          # folder_path -> { photo_path: metadata_dict }
-    suggest_status = {}        # folder_path -> { status, completed, total, suggestions }
-    suggest_threads = {}       # folder_path -> Thread
+    
+    # Database-specific registries
+    _db_folder_cache_registry = {}
+    _db_suggest_status_registry = {}
+    _db_suggest_threads_registry = {}
+    _db_index_status_registry = {}
+    _db_index_threads_registry = {}
+
+    folder_cache = DatabaseIsolatedDict(_db_folder_cache_registry)
+    suggest_status = DatabaseIsolatedDict(_db_suggest_status_registry)
+    suggest_threads = DatabaseIsolatedDict(_db_suggest_threads_registry)
+    index_status = DatabaseIsolatedDict(_db_index_status_registry)
+    index_threads = DatabaseIsolatedDict(_db_index_threads_registry)
 
     def log_message(self, format, *args):
         pass # suppress request logs
@@ -140,7 +233,68 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
                 return False
         return True
 
+    def resolve_db_from_url(self) -> bool:
+        parsed_url = urllib.parse.urlparse(self.path)
+        path = parsed_url.path
+        
+        config = configparser.ConfigParser(interpolation=None)
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
+        if os.path.exists(config_path):
+            config.read(config_path, encoding='utf-8')
+        data_dir = config.get("paths", "data_dir", fallback="data")
+        
+        # Determine if we are in test mode based on startup database
+        startup_db = os.path.basename(self.__class__.db_path)
+        test_mode = startup_db.startswith("test_")
+        
+        db_match = re.match(r"^/([^/]+)(/.*)?$", path)
+        if db_match:
+            potential_db = db_match.group(1)
+            subpath = db_match.group(2) or "/"
+            
+            RESERVED_PATHS = {"api", "gui", "gui_tagpup", "index.html", "style.css", "app.js", "favicon.ico", ""}
+            if potential_db not in RESERVED_PATHS and not potential_db.endswith((".css", ".js", ".html", ".png", ".jpg", ".jpeg", ".ico")):
+                db_name = potential_db + ".db"
+                
+                if test_mode:
+                    if not db_name.startswith("test_"):
+                        db_name = "test_" + db_name
+                else:
+                    if db_name.startswith("test_"):
+                        db_name = db_name[5:]
+                        
+                resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")
+                set_active_db_path(resolved_db_path)
+                self.db_path = resolved_db_path
+                
+                # Rewrite path
+                if parsed_url.query:
+                    self.path = subpath + "?" + parsed_url.query
+                else:
+                    self.path = subpath
+                return True
+            
+        # If path does not contain database subfolder, default to startup database (self.__class__.db_path)
+        db_name = startup_db
+        
+        if path in ["/", "/index.html", "/style.css", "/app.js"]:
+            clean_url_name = os.path.splitext(db_name)[0]
+            if clean_url_name.startswith("test_"):
+                clean_url_name = clean_url_name[5:]
+            new_path = f"/{clean_url_name}{self.path}"
+            self.send_response(302)
+            self.send_header("Location", new_path)
+            self.end_headers()
+            return False
+            
+        resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")
+        set_active_db_path(resolved_db_path)
+        self.db_path = resolved_db_path
+        return True
+
     def do_GET(self):
+        if not self.resolve_db_from_url():
+            return
         if not self.validate_request_origin():
             return
         parsed_url = urllib.parse.urlparse(self.path)
@@ -156,6 +310,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             self.serve_static_file("app.js", "application/javascript")
         
         # API Endpoints
+        elif path == "/api/databases":
+            self.handle_get_databases()
         elif path == "/api/browse-folder":
             self.handle_get_browse_folder()
         elif path == "/api/autocomplete-folder":
@@ -164,6 +320,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             self.handle_get_folder_scan(query)
         elif path == "/api/folder/suggest-status":
             self.handle_get_folder_suggest_status(query)
+        elif path == "/api/folder/index-status":
+            self.handle_get_folder_index_status(query)
         elif path == "/api/photo-file":
             self.handle_serve_photo_file(query)
         elif path == "/api/tags":
@@ -176,13 +334,21 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_error(404, "File Not Found")
 
     def do_POST(self):
+        if not self.resolve_db_from_url():
+            return
         if not self.validate_request_origin():
             return
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
 
-        if path == "/api/folder/suggest-start":
+        if path == "/api/databases/select":
+            self.handle_post_databases_select()
+        elif path == "/api/databases/create":
+            self.handle_post_databases_create()
+        elif path == "/api/folder/suggest-start":
             self.handle_post_folder_suggest_start()
+        elif path == "/api/folder/index-start":
+            self.handle_post_folder_index_start()
         elif path == "/api/photo/rotate":
             self.handle_post_photo_rotate()
         elif path == "/api/photo/open-explorer":
@@ -270,6 +436,275 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         post_data = self.rfile.read(content_length)
         return json.loads(post_data.decode("utf-8"))
+
+    def handle_get_databases(self):
+        config = configparser.ConfigParser(interpolation=None)
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
+        if os.path.exists(config_path):
+            config.read(config_path, encoding='utf-8')
+        data_dir = config.get("paths", "data_dir", fallback="data")
+        default_db = config.get("paths", "default_db", fallback="photo_index.db")
+        
+        if not os.path.isabs(data_dir):
+            data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), data_dir)
+            
+        startup_db = os.path.basename(self.__class__.db_path)
+        test_mode = startup_db.startswith("test_")
+        
+        EXCLUDED_DBS = {
+            "validation_index.db",
+            "validation_perf.db",
+            "multiple_db_startup.db",
+            "tag_emb_cache.db"
+        }
+        
+        databases = []
+        if os.path.exists(data_dir):
+            for file in os.listdir(data_dir):
+                if file.endswith(".db"):
+                    if file in EXCLUDED_DBS or file.startswith("test_tag_emb_cache.db"):
+                        continue
+                    if test_mode:
+                        if file.startswith("test_"):
+                            clean_name = file[5:]
+                            if clean_name in EXCLUDED_DBS:
+                                continue
+                            db_base = os.path.splitext(clean_name)[0]
+                            if db_base not in databases:
+                                databases.append(db_base)
+                    else:
+                        if not file.startswith("test_"):
+                            db_base = os.path.splitext(file)[0]
+                            if db_base not in databases:
+                                databases.append(db_base)
+                        
+        if not databases:
+            databases = ["photo_index"]
+            
+        clean_default_db = os.path.splitext(default_db)[0]
+        if clean_default_db.startswith("test_"):
+            clean_default_db = clean_default_db[5:]
+            
+        self.send_json({
+            "databases": sorted(databases),
+            "selected": clean_default_db
+        })
+
+    def handle_post_databases_select(self):
+        try:
+            data = self.read_json_body()
+        except Exception:
+            self.send_json_error(400, "Invalid JSON body")
+            return
+            
+        db_name = data.get("db_name")
+        if not db_name:
+            self.send_json_error(400, "Invalid database name")
+            return
+            
+        if not db_name.endswith(".db"):
+            db_name = db_name + ".db"
+            
+        if db_name.startswith("test_"):
+            db_name = db_name[5:]
+            
+        try:
+            config = configparser.ConfigParser(interpolation=None)
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
+            if os.path.exists(config_path):
+                config.read(config_path, encoding='utf-8')
+            else:
+                config.add_section("paths")
+                
+            if not config.has_section("paths"):
+                config.add_section("paths")
+                
+            config.set("paths", "default_db", db_name)
+            with open(config_path, "w", encoding="utf-8") as f:
+                config.write(f)
+                
+            self.send_json({"success": True})
+        except Exception as e:
+            self.send_json_error(500, f"Error saving default database: {e}")
+
+    def handle_post_databases_create(self):
+        try:
+            data = self.read_json_body()
+        except Exception:
+            self.send_json_error(400, "Invalid JSON body")
+            return
+            
+        db_name = data.get("db_name")
+        if not db_name:
+            self.send_json_error(400, "Invalid database name")
+            return
+            
+        if not db_name.endswith(".db"):
+            db_name = db_name + ".db"
+            
+        if db_name.startswith("test_"):
+            db_name = db_name[5:]
+            
+        import re
+        if not re.match(r"^[a-zA-Z0-9_\-]+\.db$", db_name):
+            self.send_json_error(400, "Invalid characters in database name")
+            return
+            
+        EXCLUDED_DBS = {
+            "validation_index.db",
+            "validation_perf.db",
+            "multiple_db_startup.db",
+            "tag_emb_cache.db"
+        }
+        if db_name in EXCLUDED_DBS:
+            self.send_json_error(400, "Cannot create database with reserved test name")
+            return
+            
+        startup_db = os.path.basename(self.__class__.db_path)
+        test_mode = startup_db.startswith("test_")
+        
+        fs_db_name = db_name
+        if test_mode:
+            fs_db_name = "test_" + db_name
+            
+        config = configparser.ConfigParser(interpolation=None)
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
+        if os.path.exists(config_path):
+            config.read(config_path, encoding='utf-8')
+            
+        data_dir = config.get("paths", "data_dir", fallback="data")
+        db_path = os.path.join(data_dir, fs_db_name).replace("\\", "/")
+        
+        try:
+            if not os.path.exists(db_path):
+                os.makedirs(os.path.dirname(db_path), exist_ok=True)
+                from index import PhotoIndex
+                from taxonomy import seed_taxonomy_from_db
+                photo_index = PhotoIndex(db_path=db_path)
+                photo_index.load()
+                seed_taxonomy_from_db(db_path)
+                
+            if not config.has_section("paths"):
+                config.add_section("paths")
+            config.set("paths", "default_db", db_name)
+            with open(config_path, "w", encoding="utf-8") as f:
+                config.write(f)
+                
+            self.send_json({"success": True, "db_name": os.path.splitext(db_name)[0]})
+        except Exception as e:
+            self.send_json_error(500, f"Error creating database: {e}")
+
+    def handle_get_folder_index_status(self, query):
+        path_list = query.get("path")
+        if not path_list:
+            self.send_json_error(400, "Missing path parameter")
+            return
+        folder_path = urllib.parse.unquote(path_list[0])
+        folder_path_norm = normalize_path(folder_path)
+        
+        status = self.index_status.get(folder_path_norm, {"status": "completed", "percent": 100, "message": "Ready"})
+        self.send_json(status)
+
+    def handle_post_folder_index_start(self):
+        try:
+            data = self.read_json_body()
+        except Exception:
+            self.send_json_error(400, "Invalid JSON payload")
+            return
+            
+        folder_path = data.get("folder_path")
+        if not folder_path or not os.path.isdir(folder_path):
+            self.send_json_error(400, "Invalid folder path")
+            return
+            
+        folder_path_norm = normalize_path(folder_path)
+        
+        current_status = self.index_status.get(folder_path_norm)
+        if current_status and current_status.get("status") == "running":
+            self.send_json({"success": True, "status": "running"})
+            return
+            
+        self.index_status[folder_path_norm] = {
+            "status": "running",
+            "percent": 0,
+            "message": "Starting indexing..."
+        }
+        
+        t = threading.Thread(
+            target=self.run_folder_index_thread,
+            args=(folder_path, self.db_path),
+            name="FolderIndexThread",
+            daemon=True
+        )
+        self.index_threads[folder_path_norm] = t
+        t.start()
+        
+        self.send_json({"success": True, "status": "running"})
+
+    @classmethod
+    def run_folder_index_thread(cls, folder_path, db_path):
+        folder_path_norm = normalize_path(folder_path)
+        status_dict = cls.index_status[folder_path_norm]
+        try:
+            import sys
+            import subprocess
+            import re
+            
+            cmd = [sys.executable, "tagpup_cli.py", "index", folder_path]
+            env = os.environ.copy()
+            env["TAGPUP_DB_PATH"] = db_path
+            
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+                bufsize=1
+            )
+            
+            for line in iter(proc.stdout.readline, ""):
+                clean_line = line.strip()
+                if clean_line:
+                    status_dict["message"] = clean_line
+                    # Parse percent E.g. "Indexing photos:  45%" and scale to 90%
+                    match = re.search(r"(\d+)%", clean_line)
+                    if match:
+                        status_dict["percent"] = int(float(match.group(1)) * 0.9)
+                        
+            proc.wait()
+            if proc.returncode == 0:
+                # Indexing succeeded! Now run cluster-faces automatically to resolve identities
+                status_dict["message"] = "Resolving and matching face identities..."
+                status_dict["percent"] = 95
+                
+                proc2 = subprocess.Popen(
+                    [sys.executable, "tagpup_cli.py", "cluster-faces"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    env=env,
+                    bufsize=1
+                )
+                for line in iter(proc2.stdout.readline, ""):
+                    clean_line = line.strip()
+                    if clean_line:
+                        status_dict["message"] = clean_line
+                proc2.wait()
+                
+                if folder_path_norm in cls.folder_cache:
+                    del cls.folder_cache[folder_path_norm]
+                status_dict["status"] = "completed"
+                status_dict["message"] = "Folder successfully added, indexed, and face matching resolved."
+                status_dict["percent"] = 100
+            else:
+                status_dict["status"] = "failed"
+                status_dict["message"] = f"Indexing failed with exit code {proc.returncode}."
+                status_dict["percent"] = 0
+        except Exception as e:
+            status_dict["status"] = "failed"
+            status_dict["message"] = f"Error: {e}"
+            status_dict["percent"] = 0
 
     def handle_get_browse_folder(self):
         try:
@@ -1601,6 +2036,80 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
 
     def handle_get_taxonomy_tree(self):
         try:
+            # Self-healing helper to resolve parent linkage for existing database entries
+            def heal_taxonomy_parents(db_path):
+                try:
+                    conn = sqlite3.connect(db_path, timeout=30.0)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
+                    if not cursor.fetchone():
+                        conn.close()
+                        return
+                        
+                    cursor.execute("SELECT id, tag, has_face FROM tag_taxonomy WHERE tag LIKE '%/%' AND parent_id IS NULL")
+                    orphans = cursor.fetchall()
+                    
+                    if orphans:
+                        logger.info(f"Taxonomy self-healing: found {len(orphans)} orphaned paths. Healing...")
+                        for node_id, tag_path, has_face in orphans:
+                            parts = [p.strip() for p in tag_path.split("/") if p.strip()]
+                            current_parent_id = None
+                            current_path = ""
+                            
+                            for i in range(len(parts) - 1):
+                                part = parts[i]
+                                if current_path:
+                                    current_path = current_path + "/" + part
+                                else:
+                                    current_path = part
+                                    
+                                cursor.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (current_path,))
+                                row = cursor.fetchone()
+                                if row:
+                                    current_parent_id = row[0]
+                                else:
+                                    parent_has_face = 1 if part.lower() in ("people", "family", "friends", "pets") else has_face
+                                    cursor.execute(
+                                        "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
+                                        (current_path, current_parent_id, part, parent_has_face)
+                                    )
+                                    current_parent_id = cursor.lastrowid
+                                    
+                            cursor.execute("UPDATE tag_taxonomy SET parent_id = ? WHERE id = ?", (current_parent_id, node_id))
+                        conn.commit()
+                        
+                    # Heal name column if it contains '/'
+                    cursor.execute("SELECT id, tag, name FROM tag_taxonomy WHERE name LIKE '%/%'")
+                    bad_names = cursor.fetchall()
+                    if bad_names:
+                        logger.info(f"Taxonomy self-healing: found {len(bad_names)} nodes with bad name values. Healing...")
+                        for node_id, tag_path, name in bad_names:
+                            leaf_name = tag_path.split("/")[-1].strip()
+                            cursor.execute("UPDATE tag_taxonomy SET name = ? WHERE id = ?", (leaf_name, node_id))
+                        conn.commit()
+                        
+                    # Heal has_face column for nodes nested under face-matching roots (People, Pets, Family, Friends)
+                    cursor.execute("SELECT id, tag FROM tag_taxonomy WHERE has_face = 0")
+                    zero_faces = cursor.fetchall()
+                    if zero_faces:
+                        healed_face_nodes = 0
+                        for node_id, tag_path in zero_faces:
+                            parts = tag_path.split("/")
+                            if len(parts) >= 2:
+                                root = parts[0].lower()
+                                if root in ("people", "family", "friends", "pets"):
+                                    cursor.execute("UPDATE tag_taxonomy SET has_face = 1 WHERE id = ?", (node_id,))
+                                    healed_face_nodes += 1
+                        if healed_face_nodes > 0:
+                            logger.info(f"Taxonomy self-healing: healed has_face flags for {healed_face_nodes} nodes.")
+                            conn.commit()
+                        
+                    conn.close()
+                except Exception as e:
+                    logger.error(f"Error healing taxonomy: {e}")
+
+            heal_taxonomy_parents(self.db_path)
+
             conn = sqlite3.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
@@ -1661,18 +2170,49 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler):
             from taxonomy import TagTaxonomy
             tag_path = TagTaxonomy.normalize_tag(tag_path)
             
-            cursor.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (tag_path,))
-            existing = cursor.fetchone()
-            if existing:
-                conn.close()
-                self.send_json({"success": True, "id": existing[0], "message": "Tag already exists"})
-                return
-                
-            cursor.execute(
-                "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
-                (tag_path, parent_id, name, has_face)
-            )
-            new_id = cursor.lastrowid
+            # Recursive build of hierarchy
+            parts = [p.strip() for p in tag_path.split("/") if p.strip()]
+            current_parent_id = None
+            current_path = ""
+            parent_has_face = has_face
+            new_id = None
+            
+            if parent_id:
+                current_parent_id = parent_id
+                cursor.execute("SELECT tag, has_face FROM tag_taxonomy WHERE id = ?", (parent_id,))
+                p_row = cursor.fetchone()
+                if p_row:
+                    current_path = p_row[0]
+                    parent_has_face = p_row[1]
+            
+            for i, part in enumerate(parts):
+                if parent_id and i == 0:
+                    if current_path and current_path.lower() == part.lower():
+                        continue
+                        
+                if current_path:
+                    if current_path.split("/")[-1].lower() == part.lower():
+                        continue
+                    current_path = current_path + "/" + part
+                else:
+                    current_path = part
+                    
+                cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (current_path,))
+                row = cursor.fetchone()
+                if row:
+                    current_parent_id = row[0]
+                    parent_has_face = row[1]
+                    new_id = row[0]
+                else:
+                    segment_has_face = parent_has_face if current_parent_id is not None else (1 if part.lower() in ("people", "family", "friends", "pets") else has_face)
+                    cursor.execute(
+                        "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
+                        (current_path, current_parent_id, part, segment_has_face)
+                    )
+                    current_parent_id = cursor.lastrowid
+                    new_id = current_parent_id
+                    parent_has_face = segment_has_face
+            
             conn.commit()
             conn.close()
             

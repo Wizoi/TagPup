@@ -29,6 +29,11 @@ def pad_to_square(image: Image.Image, background_color=(0, 0, 0)) -> Image.Image
         return result
 
 class ClipEmbedder:
+    _shared_model = None
+    _shared_preprocess = None
+    _shared_tokenizer = None
+    _shared_model_lock = threading.Lock()
+
     def __init__(self, model_name: str = "ViT-B-32", pretrained: str = "laion2b_s34b_b79k", cache_dir: str = "data/embedding_cache", preserve_full_frame: bool = False, max_aspect_ratio: float = 2.0, force_image_size: Optional[int] = None, photo_index: Optional[Any] = None):
         self.model_name = model_name
         self.pretrained = pretrained
@@ -43,15 +48,18 @@ class ClipEmbedder:
         self.model = None
         self.preprocess = None
         self.tokenizer = None
-        self.model_lock = threading.Lock()
+        self.model_lock = ClipEmbedder._shared_model_lock
         
         if not os.path.exists(self.cache_dir):
             os.makedirs(self.cache_dir, exist_ok=True)
 
     def _init_model(self):
         """Lazily load the CLIP model."""
-        with self.model_lock:
-            if self.model is not None:
+        with ClipEmbedder._shared_model_lock:
+            if ClipEmbedder._shared_model is not None:
+                self.model = ClipEmbedder._shared_model
+                self.preprocess = ClipEmbedder._shared_preprocess
+                self.tokenizer = ClipEmbedder._shared_tokenizer
                 return
                 
             logger.info(f"Loading CLIP model {self.model_name} (pretrained on {self.pretrained}) on {self.device.upper()}...")
@@ -67,18 +75,21 @@ class ClipEmbedder:
                     device=self.device,
                     **kwargs
                 )
-                self.model = model
-                self.preprocess = preprocess
-                self.tokenizer = open_clip.get_tokenizer(self.model_name)
-                self.model.eval()
+                ClipEmbedder._shared_model = model
+                ClipEmbedder._shared_preprocess = preprocess
+                ClipEmbedder._shared_tokenizer = open_clip.get_tokenizer(self.model_name)
+                ClipEmbedder._shared_model.eval()
                 
                 if self.device == "cuda" and os.name != "nt" and hasattr(torch, "compile"):
                     try:
                         logger.info("Compiling CLIP model for CUDA acceleration...")
-                        self.model = torch.compile(self.model)
+                        ClipEmbedder._shared_model = torch.compile(ClipEmbedder._shared_model)
                     except Exception as compile_err:
                         logger.warning(f"Failed to compile CLIP model: {compile_err}. Using standard model.")
                         
+                self.model = ClipEmbedder._shared_model
+                self.preprocess = ClipEmbedder._shared_preprocess
+                self.tokenizer = ClipEmbedder._shared_tokenizer
                 logger.info("CLIP model loaded successfully.")
             except Exception as e:
                 logger.error(f"Failed to load CLIP model: {e}", exc_info=True)

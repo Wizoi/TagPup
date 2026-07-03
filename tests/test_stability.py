@@ -89,6 +89,8 @@ class TestStability(unittest.TestCase):
         TunerHTTPRequestHandler.clustering_in_progress = False
 
     def tearDown(self):
+        from tuner_server import set_active_db_path
+        set_active_db_path(None)
         if os.path.exists(self.TEST_DB_PATH):
             try:
                 os.remove(self.TEST_DB_PATH)

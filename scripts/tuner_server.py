@@ -136,17 +136,215 @@ def get_year_from_mtime_or_meta(mtime, raw_meta_json, path=None):
     return year_str
 
 
-class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
+import threading
+import configparser
+_thread_local = threading.local()
+
+def set_active_db_path(db_path):
+    if db_path is None:
+        if hasattr(_thread_local, "active_db_path"):
+            delattr(_thread_local, "active_db_path")
+    else:
+        _thread_local.active_db_path = os.path.abspath(db_path).replace("\\", "/").lower()
+
+def get_active_db_path():
+    active_db = getattr(_thread_local, "active_db_path", None)
+    if active_db:
+        return active_db
+    handler_cls = globals().get("TunerHTTPRequestHandler")
+    if handler_cls:
+        try:
+            return os.path.abspath(handler_cls.db_path).replace("\\", "/").lower()
+        except Exception:
+            pass
+    return "data/photo_index.db"
+
+class DatabaseIsolatedDict(dict):
+    def __init__(self, registry):
+        super().__init__()
+        self._registry = registry
+
+    def _get_current_dict(self):
+        active_db = get_active_db_path()
+        if active_db not in self._registry:
+            self._registry[active_db] = {}
+        return self._registry[active_db]
+
+    def __getitem__(self, key):
+        return self._get_current_dict()[key]
+
+    def __setitem__(self, key, value):
+        self._get_current_dict()[key] = value
+
+    def __delitem__(self, key):
+        del self._get_current_dict()[key]
+
+    def __contains__(self, key):
+        return key in self._get_current_dict()
+
+    def __len__(self):
+        return len(self._get_current_dict())
+
+    def __iter__(self):
+        return iter(self._get_current_dict())
+
+    def get(self, key, default=None):
+        return self._get_current_dict().get(key, default)
+
+    def pop(self, key, default=None):
+        return self._get_current_dict().pop(key, default)
+
+    def update(self, other):
+        self._get_current_dict().update(other)
+
+    def values(self):
+        return self._get_current_dict().values()
+
+    def keys(self):
+        return self._get_current_dict().keys()
+
+    def items(self):
+        return self._get_current_dict().items()
+
+    def clear(self):
+        self._get_current_dict().clear()
+
+
+class TunerHTTPRequestHandlerMeta(type):
+    _clustering_in_progress = set()
+
+    @property
+    def clustering_in_progress(cls):
+        db_key = get_active_db_path()
+        return db_key in cls._clustering_in_progress
+
+    @clustering_in_progress.setter
+    def clustering_in_progress(cls, val):
+        db_key = get_active_db_path()
+        if val:
+            cls._clustering_in_progress.add(db_key)
+        else:
+            cls._clustering_in_progress.discard(db_key)
+
+
+class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequestHandlerMeta):
     db_path = "data/photo_index.db"
     gui_dir = "gui"
-    clustering_in_progress = False
     
     # State cache and lock for folder tagging
     model_lock = threading.Lock()
     shared_embedder = None
-    folder_cache = {}           # folder_path -> { photo_path: metadata_dict }
-    suggest_status = {}         # folder_path -> { status, completed, total, suggestions }
-    suggest_threads = {}        # folder_path -> Thread
+    
+    # Database-specific registries
+    _db_folder_cache_registry = {}
+    _db_suggest_status_registry = {}
+    _db_suggest_threads_registry = {}
+
+    folder_cache = DatabaseIsolatedDict(_db_folder_cache_registry)
+    suggest_status = DatabaseIsolatedDict(_db_suggest_status_registry)
+    suggest_threads = DatabaseIsolatedDict(_db_suggest_threads_registry)
+
+    @classmethod
+    def load_suggestions_cache(cls, db_path):
+        set_active_db_path(db_path)
+        db_basename = os.path.splitext(os.path.basename(db_path))[0]
+        if db_basename == "photo_index":
+            cache_path = os.path.join(os.path.dirname(db_path), "gui_suggestions_cache.json")
+        else:
+            cache_path = os.path.join(os.path.dirname(db_path), f"gui_suggestions_cache_{db_basename}.json")
+            
+        if os.path.exists(cache_path):
+            try:
+                import json
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                # Clean up any active/running statuses to "idle"
+                for folder, status in data.items():
+                    if status.get("status") in ("running", "preparing"):
+                        status["status"] = "idle"
+                with cls.model_lock:
+                    cls.suggest_status.update(data)
+                logger.info(f"Loaded suggestions cache from {cache_path} with {len(data)} folders.")
+            except Exception as e:
+                logger.error(f"Error loading suggestions cache: {e}")
+
+    @classmethod
+    def save_suggestions_cache(cls, db_path):
+        set_active_db_path(db_path)
+        db_basename = os.path.splitext(os.path.basename(db_path))[0]
+        if db_basename == "photo_index":
+            cache_path = os.path.join(os.path.dirname(db_path), "gui_suggestions_cache.json")
+        else:
+            cache_path = os.path.join(os.path.dirname(db_path), f"gui_suggestions_cache_{db_basename}.json")
+            
+        try:
+            import json
+            with cls.model_lock:
+                serializable_data = make_json_serializable(cls.suggest_status)
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(serializable_data, f, indent=2)
+        except Exception as e:
+            logger.error(f"Error saving suggestions cache: {e}")
+
+    def resolve_db_from_url(self) -> bool:
+        parsed_url = urllib.parse.urlparse(self.path)
+        path = parsed_url.path
+        
+        config = configparser.ConfigParser(interpolation=None)
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
+        if os.path.exists(config_path):
+            config.read(config_path, encoding='utf-8')
+        data_dir = config.get("paths", "data_dir", fallback="data")
+        
+        # Determine if we are in test mode based on startup database
+        startup_db = os.path.basename(self.__class__.db_path)
+        test_mode = startup_db.startswith("test_")
+        
+        db_match = re.match(r"^/([^/]+)(/.*)?$", path)
+        if db_match:
+            potential_db = db_match.group(1)
+            subpath = db_match.group(2) or "/"
+            
+            RESERVED_PATHS = {"api", "gui", "gui_tagpup", "index.html", "style.css", "app.js", "favicon.ico", ""}
+            if potential_db not in RESERVED_PATHS and not potential_db.endswith((".css", ".js", ".html", ".png", ".jpg", ".jpeg", ".ico")):
+                db_name = potential_db + ".db"
+                
+                if test_mode:
+                    if not db_name.startswith("test_"):
+                        db_name = "test_" + db_name
+                else:
+                    if db_name.startswith("test_"):
+                        db_name = db_name[5:]
+                        
+                resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")
+                set_active_db_path(resolved_db_path)
+                self.db_path = resolved_db_path
+                
+                # Rewrite path
+                if parsed_url.query:
+                    self.path = subpath + "?" + parsed_url.query
+                else:
+                    self.path = subpath
+                return True
+            
+        # If path does not contain database subfolder, default to startup database (self.__class__.db_path)
+        db_name = startup_db
+        
+        if path in ["/", "/index.html", "/style.css", "/app.js"]:
+            clean_url_name = os.path.splitext(db_name)[0]
+            if clean_url_name.startswith("test_"):
+                clean_url_name = clean_url_name[5:]
+            new_path = f"/{clean_url_name}{self.path}"
+            self.send_response(302)
+            self.send_header("Location", new_path)
+            self.end_headers()
+            return False
+            
+        resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")
+        set_active_db_path(resolved_db_path)
+        self.db_path = resolved_db_path
+        return True
 
     def log_message(self, format, *args):
         # Suppress request spam logging in console unless error
@@ -170,7 +368,168 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
                 return False
         return True
 
+    def handle_get_databases(self):
+        # List all .db files in the data directory
+        config = configparser.ConfigParser(interpolation=None)
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
+        if os.path.exists(config_path):
+            config.read(config_path, encoding='utf-8')
+        data_dir = config.get("paths", "data_dir", fallback="data")
+        default_db = config.get("paths", "default_db", fallback="photo_index.db")
+        
+        # Ensure data_dir is absolute
+        if not os.path.isabs(data_dir):
+            data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), data_dir)
+            
+        startup_db = os.path.basename(self.__class__.db_path)
+        test_mode = startup_db.startswith("test_")
+        
+        EXCLUDED_DBS = {
+            "validation_index.db",
+            "validation_perf.db",
+            "multiple_db_startup.db",
+            "tag_emb_cache.db"
+        }
+        
+        databases = []
+        if os.path.exists(data_dir):
+            for file in os.listdir(data_dir):
+                if file.endswith(".db"):
+                    if file in EXCLUDED_DBS or file.startswith("test_tag_emb_cache.db"):
+                        continue
+                    if test_mode:
+                        if file.startswith("test_"):
+                            clean_name = file[5:]
+                            if clean_name in EXCLUDED_DBS:
+                                continue
+                            db_base = os.path.splitext(clean_name)[0]
+                            if db_base not in databases:
+                                databases.append(db_base)
+                    else:
+                        if not file.startswith("test_"):
+                            db_base = os.path.splitext(file)[0]
+                            if db_base not in databases:
+                                databases.append(db_base)
+                        
+        if not databases:
+            databases = ["photo_index"]
+            
+        clean_default_db = os.path.splitext(default_db)[0]
+        if clean_default_db.startswith("test_"):
+            clean_default_db = clean_default_db[5:]
+            
+        self.send_json({
+            "databases": sorted(databases),
+            "selected": clean_default_db
+        })
+
+    def handle_post_databases_select(self):
+        try:
+            data = self.read_json_body()
+        except Exception:
+            self.send_json_error(400, "Invalid JSON body")
+            return
+            
+        db_name = data.get("db_name")
+        if not db_name:
+            self.send_json_error(400, "Invalid database name")
+            return
+            
+        if not db_name.endswith(".db"):
+            db_name = db_name + ".db"
+            
+        if db_name.startswith("test_"):
+            db_name = db_name[5:]
+            
+        try:
+            config = configparser.ConfigParser(interpolation=None)
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
+            if os.path.exists(config_path):
+                config.read(config_path, encoding='utf-8')
+            else:
+                config.add_section("paths")
+                
+            if not config.has_section("paths"):
+                config.add_section("paths")
+                
+            config.set("paths", "default_db", db_name)
+            with open(config_path, "w", encoding="utf-8") as f:
+                config.write(f)
+                
+            self.send_json({"success": True})
+        except Exception as e:
+            self.send_json_error(500, f"Error saving default database: {e}")
+
+    def handle_post_databases_create(self):
+        try:
+            data = self.read_json_body()
+        except Exception:
+            self.send_json_error(400, "Invalid JSON body")
+            return
+            
+        db_name = data.get("db_name")
+        if not db_name:
+            self.send_json_error(400, "Invalid database name")
+            return
+            
+        if not db_name.endswith(".db"):
+            db_name = db_name + ".db"
+            
+        if db_name.startswith("test_"):
+            db_name = db_name[5:]
+            
+        import re
+        if not re.match(r"^[a-zA-Z0-9_\-]+\.db$", db_name):
+            self.send_json_error(400, "Invalid characters in database name")
+            return
+            
+        EXCLUDED_DBS = {
+            "validation_index.db",
+            "validation_perf.db",
+            "multiple_db_startup.db",
+            "tag_emb_cache.db"
+        }
+        if db_name in EXCLUDED_DBS:
+            self.send_json_error(400, "Cannot create database with reserved test name")
+            return
+            
+        startup_db = os.path.basename(self.__class__.db_path)
+        test_mode = startup_db.startswith("test_")
+        
+        fs_db_name = db_name
+        if test_mode:
+            fs_db_name = "test_" + db_name
+            
+        config = configparser.ConfigParser(interpolation=None)
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
+        if os.path.exists(config_path):
+            config.read(config_path, encoding='utf-8')
+            
+        data_dir = config.get("paths", "data_dir", fallback="data")
+        db_path = os.path.join(data_dir, fs_db_name).replace("\\", "/")
+        
+        try:
+            if not os.path.exists(db_path):
+                os.makedirs(os.path.dirname(db_path), exist_ok=True)
+                from index import PhotoIndex
+                from taxonomy import seed_taxonomy_from_db
+                photo_index = PhotoIndex(db_path=db_path)
+                photo_index.load()
+                seed_taxonomy_from_db(db_path)
+                
+            if not config.has_section("paths"):
+                config.add_section("paths")
+            config.set("paths", "default_db", db_name)
+            with open(config_path, "w", encoding="utf-8") as f:
+                config.write(f)
+                
+            self.send_json({"success": True, "db_name": os.path.splitext(db_name)[0]})
+        except Exception as e:
+            self.send_json_error(500, f"Error creating database: {e}")
+
     def do_GET(self):
+        if not self.resolve_db_from_url():
+            return
         if not self.validate_request_origin():
             return
         parsed_url = urllib.parse.urlparse(self.path)
@@ -184,6 +543,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.serve_static_file("style.css", "text/css")
         elif path == "/app.js":
             self.serve_static_file("app.js", "application/javascript")
+            
+        # API Endpoints
+        elif path == "/api/databases":
+            self.handle_get_databases()
             
         # API: get list of photos with unmatched faces
         elif path == "/api/photos":
@@ -231,6 +594,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_error(404, "File Not Found")
 
     def do_POST(self):
+        if not self.resolve_db_from_url():
+            return
         if not self.validate_request_origin():
             return
         if TunerHTTPRequestHandler.clustering_in_progress:
@@ -240,7 +605,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
 
-        if path == "/api/face/match":
+        if path == "/api/databases/select":
+            self.handle_post_databases_select()
+        elif path == "/api/databases/create":
+            self.handle_post_databases_create()
+        elif path == "/api/face/match":
             self.handle_post_match()
         elif path == "/api/face/unmatch":
             self.handle_post_unmatch()
@@ -1106,6 +1475,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler):
             max_iterations = 5
         
         def run_recluster_bg(db_path, reset_db, max_iters):
+            set_active_db_path(db_path)
             photo_index = None
             try:
                 # Lazy imports to avoid startup dependencies

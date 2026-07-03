@@ -1,13 +1,157 @@
 // app.js - Standalone TagPup GUI Logic
+
+// Database Subfolder Routing Interceptor
+(function() {
+    const pathSegments = window.location.pathname.split('/');
+    let activeDbName = "";
+    const RESERVED = ["api", "gui", "gui_tagpup", "index.html", "style.css", "app.js", "favicon.ico"];
+    for (const segment of pathSegments) {
+        if (segment && !RESERVED.includes(segment) && !segment.includes('.')) {
+            activeDbName = segment;
+            break;
+        }
+    }
+    if (activeDbName) {
+        // Intercept fetch calls
+        const originalFetch = window.fetch;
+        window.fetch = function(input, init) {
+            if (typeof input === 'string' && input.startsWith('/api/')) {
+                input = '/' + activeDbName + input;
+            }
+            return originalFetch(input, init);
+        };
+
+        // Intercept image src assignments
+        const propDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+        if (propDesc && propDesc.set) {
+            const originalSrcSetter = propDesc.set;
+            Object.defineProperty(HTMLImageElement.prototype, 'src', {
+                set: function(val) {
+                    if (typeof val === 'string') {
+                        const idx = val.indexOf('/api/');
+                        if (idx !== -1) {
+                            const prefix = '/' + activeDbName + '/api/';
+                            if (!val.includes(prefix)) {
+                                val = val.substring(0, idx) + '/' + activeDbName + val.substring(idx);
+                            }
+                        }
+                    }
+                    originalSrcSetter.call(this, val);
+                },
+                get: propDesc.get,
+                configurable: true,
+                enumerable: true
+            });
+        }
+    }
+})();
+
 document.addEventListener('DOMContentLoaded', () => {
+    // Database selection logic
+    const dbSelect = document.getElementById('db-select');
+    const btnCreateDb = document.getElementById('btn-create-db');
+
+    function initDatabaseSelector() {
+        if (!dbSelect) return;
+        
+        const pathSegments = window.location.pathname.split('/');
+        let activeDb = "";
+        const RESERVED = ["api", "gui", "gui_tagpup", "index.html", "style.css", "app.js", "favicon.ico"];
+        for (const segment of pathSegments) {
+            if (segment && !RESERVED.includes(segment) && !segment.includes('.')) {
+                activeDb = segment;
+                break;
+            }
+        }
+        
+        fetch('api/databases')
+            .then(res => res.json())
+            .then(data => {
+                dbSelect.innerHTML = '';
+                const selectedDb = activeDb || data.selected || 'photo_index';
+                
+                data.databases.forEach(db => {
+                    const option = document.createElement('option');
+                    option.value = db;
+                    option.textContent = db;
+                    if (db === selectedDb) {
+                        option.selected = true;
+                    }
+                    dbSelect.appendChild(option);
+                });
+                
+                if (!activeDb && data.selected) {
+                    window.location.pathname = '/' + data.selected + '/';
+                }
+            })
+            .catch(err => console.error('Error fetching databases:', err));
+
+        dbSelect.addEventListener('change', () => {
+            const selectedDb = dbSelect.value;
+            fetch('api/databases/select', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ db_name: selectedDb + '.db' })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    const queryStr = window.location.search;
+                    window.location.href = '/' + selectedDb + '/' + queryStr;
+                } else {
+                    alert('Error selecting database: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => alert('Error selecting database: ' + err));
+        });
+
+        if (btnCreateDb) {
+            btnCreateDb.addEventListener('click', () => {
+                const dbName = prompt('Enter a name for the new database (alphanumeric characters, e.g. "vacation_2026"):');
+                if (!dbName) return;
+                
+                let cleanName = dbName.trim();
+                if (!cleanName) return;
+                if (cleanName.endsWith('.db')) {
+                    cleanName = cleanName.substring(0, cleanName.length - 3);
+                }
+                
+                if (!/^[a-zA-Z0-9_\-]+$/.test(cleanName)) {
+                    alert('Invalid name. Only letters, numbers, underscores, and hyphens are allowed.');
+                    return;
+                }
+                
+                fetch('api/databases/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ db_name: cleanName })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        window.location.href = '/' + cleanName + '/';
+                    } else {
+                        alert('Error creating database: ' + (data.error || 'Unknown error'));
+                    }
+                })
+                .catch(err => alert('Error creating database: ' + err));
+            });
+        }
+    }
+    initDatabaseSelector();
+
     // DOM Elements
     const folderPathInput = document.getElementById('folder-path-input');
     const btnBrowseFolder = document.getElementById('btn-browse-folder');
     const btnScanFolder = document.getElementById('btn-scan-folder');
+    const btnIndexFolder = document.getElementById('btn-index-folder');
     const btnSuggestTags = document.getElementById('btn-suggest-tags');
     const suggestProgressContainer = document.getElementById('suggest-progress-container');
     const suggestProgressBar = document.getElementById('suggest-progress-bar');
     const suggestProgressText = document.getElementById('suggest-progress-text');
+    const indexProgressContainer = document.getElementById('index-progress-container');
+    const indexProgressBar = document.getElementById('index-progress-bar');
+    const indexProgressText = document.getElementById('index-progress-text');
     
     const photoSearch = document.getElementById('photo-search');
     const photoList = document.getElementById('photo-list');
@@ -148,6 +292,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (initialPath) {
         folderPathInput.value = initialPath;
         scanFolder(false);
+        checkIndexingStatus(initialPath);
     }
 
     // Event Listeners setup
@@ -171,6 +316,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .catch(err => console.error("Error autocompleting folder:", err));
     });
     btnScanFolder.addEventListener('click', () => scanFolder(true));
+    btnIndexFolder.addEventListener('click', startIndexing);
     btnSuggestTags.addEventListener('click', startSuggestions);
     btnRefreshList.addEventListener('click', () => scanFolder(true));
     
@@ -1511,6 +1657,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 statusDot.className = 'status-indicator-dot';
                 statusText.textContent = 'Ready';
                 saveToLocalStorageCache();
+                fetchKnownTagsAndPeople();
             } else {
                 throw new Error(data.error || 'Failed to save');
             }
@@ -1564,6 +1711,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 statusDot.className = 'status-indicator-dot';
                 statusText.textContent = 'Ready';
                 saveToLocalStorageCache();
+                fetchKnownTagsAndPeople();
             } else {
                 throw new Error(data.error || 'Failed to save');
             }
@@ -1706,6 +1854,103 @@ document.addEventListener('DOMContentLoaded', () => {
             statusText.textContent = 'Error';
             alert("Error starting suggestions: " + err.message);
         });
+    }
+
+    let indexProgressTimer = null;
+
+    function startIndexing() {
+        const path = folderPathInput.value.trim();
+        if (!path) {
+            alert("Please select or enter a valid folder path to index.");
+            return;
+        }
+
+        btnScanFolder.disabled = true;
+        btnIndexFolder.disabled = true;
+        btnSuggestTags.disabled = true;
+
+        statusDot.className = 'status-indicator-dot busy';
+        statusText.textContent = 'Indexing...';
+
+        fetch('/api/folder/index-start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folder_path: path })
+        })
+        .then(res => {
+            if (!res.ok) return res.json().then(e => { throw new Error(e.error || 'Indexing start failed') });
+            return res.json();
+        })
+        .then(data => {
+            if (data.success) {
+                checkIndexingStatus(path);
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            btnScanFolder.disabled = false;
+            btnIndexFolder.disabled = false;
+            btnSuggestTags.disabled = false;
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Ready';
+            alert("Error starting indexing: " + err.message);
+        });
+    }
+
+    function checkIndexingStatus(folderPath) {
+        if (indexProgressTimer) clearInterval(indexProgressTimer);
+
+        function queryProgress() {
+            fetch(`/api/folder/index-status?path=${encodeURIComponent(folderPath)}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'running') {
+                        indexProgressContainer.classList.remove('hidden');
+                        const pct = data.percent || 0;
+                        indexProgressBar.style.width = `${pct}%`;
+                        indexProgressText.textContent = `${data.message || 'Indexing...'}`;
+                    }
+                    else if (data.status === 'completed') {
+                        clearInterval(indexProgressTimer);
+                        const wasVisible = !indexProgressContainer.classList.contains('hidden');
+                        indexProgressContainer.classList.add('hidden');
+                        
+                        btnScanFolder.disabled = false;
+                        btnIndexFolder.disabled = false;
+                        
+                        if (wasVisible) {
+                            fetchKnownTagsAndPeople();
+                            scanFolder(true);
+                            alert("Folder successfully added to the database and indexed!");
+                        }
+                        
+                        statusDot.className = 'status-indicator-dot';
+                        statusText.textContent = 'Ready';
+                    }
+                    else if (data.status === 'failed') {
+                        clearInterval(indexProgressTimer);
+                        const wasVisible = !indexProgressContainer.classList.contains('hidden');
+                        indexProgressContainer.classList.add('hidden');
+                        
+                        btnScanFolder.disabled = false;
+                        btnIndexFolder.disabled = false;
+                        updateSuggestButtonState();
+                        
+                        if (wasVisible) {
+                            alert("Indexing failed: " + (data.message || 'Unknown error'));
+                        }
+                        
+                        statusDot.className = 'status-indicator-dot';
+                        statusText.textContent = 'Error';
+                    }
+                })
+                .catch(err => {
+                    console.error("Error polling indexing progress:", err);
+                });
+        }
+
+        queryProgress();
+        indexProgressTimer = setInterval(queryProgress, 1000);
     }
 
     function checkSuggestionsStatus(folderPath) {
@@ -3166,7 +3411,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return res ? res.root : null;
             }
             
-            const rootNames = allRoots.map(r => r.name);
+            const rootNames = keywordRoots.map(r => r.name);
             const res = await showPlacementModal(
                 "Resolve New Tag",
                 `The tag "${inputName}" is new. Please specify which category it should be placed under, or create a new one:`,

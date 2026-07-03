@@ -129,7 +129,8 @@ def main():
     config = get_config()
     
     data_dir = config.get("paths", "data_dir", fallback="data")
-    db_name = "photo_index.db"
+    default_db = config.get("paths", "default_db", fallback="photo_index.db")
+    db_name = default_db
     if len(sys.argv) > 1 and sys.argv[1].endswith(".db"):
         db_name = sys.argv[1]
     db_path = os.path.join(data_dir, db_name)

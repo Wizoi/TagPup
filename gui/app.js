@@ -1,6 +1,145 @@
 // app.js
 
+// Database Subfolder Routing Interceptor
+(function() {
+    const pathSegments = window.location.pathname.split('/');
+    let activeDbName = "";
+    const RESERVED = ["api", "gui", "gui_tagpup", "index.html", "style.css", "app.js", "favicon.ico"];
+    for (const segment of pathSegments) {
+        if (segment && !RESERVED.includes(segment) && !segment.includes('.')) {
+            activeDbName = segment;
+            break;
+        }
+    }
+    if (activeDbName) {
+        // Intercept fetch calls
+        const originalFetch = window.fetch;
+        window.fetch = function(input, init) {
+            if (typeof input === 'string' && input.startsWith('/api/')) {
+                input = '/' + activeDbName + input;
+            }
+            return originalFetch(input, init);
+        };
+
+        // Intercept image src assignments
+        const propDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+        if (propDesc && propDesc.set) {
+            const originalSrcSetter = propDesc.set;
+            Object.defineProperty(HTMLImageElement.prototype, 'src', {
+                set: function(val) {
+                    if (typeof val === 'string') {
+                        const idx = val.indexOf('/api/');
+                        if (idx !== -1) {
+                            const prefix = '/' + activeDbName + '/api/';
+                            if (!val.includes(prefix)) {
+                                val = val.substring(0, idx) + '/' + activeDbName + val.substring(idx);
+                            }
+                        }
+                    }
+                    originalSrcSetter.call(this, val);
+                },
+                get: propDesc.get,
+                configurable: true,
+                enumerable: true
+            });
+        }
+    }
+})();
+
 document.addEventListener('DOMContentLoaded', () => {
+    // Database selection logic
+    const dbSelect = document.getElementById('db-select');
+    const btnCreateDb = document.getElementById('btn-create-db');
+
+    function initDatabaseSelector() {
+        if (!dbSelect) return;
+        
+        const pathSegments = window.location.pathname.split('/');
+        let activeDb = "";
+        const RESERVED = ["api", "gui", "gui_tagpup", "index.html", "style.css", "app.js", "favicon.ico"];
+        for (const segment of pathSegments) {
+            if (segment && !RESERVED.includes(segment) && !segment.includes('.')) {
+                activeDb = segment;
+                break;
+            }
+        }
+        
+        fetch('api/databases')
+            .then(res => res.json())
+            .then(data => {
+                dbSelect.innerHTML = '';
+                const selectedDb = activeDb || data.selected || 'photo_index';
+                
+                data.databases.forEach(db => {
+                    const option = document.createElement('option');
+                    option.value = db;
+                    option.textContent = db;
+                    if (db === selectedDb) {
+                        option.selected = true;
+                    }
+                    dbSelect.appendChild(option);
+                });
+                
+                if (!activeDb && data.selected) {
+                    window.location.pathname = '/' + data.selected + '/';
+                }
+            })
+            .catch(err => console.error('Error fetching databases:', err));
+
+        dbSelect.addEventListener('change', () => {
+            const selectedDb = dbSelect.value;
+            fetch('api/databases/select', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ db_name: selectedDb + '.db' })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    const queryStr = window.location.search;
+                    window.location.href = '/' + selectedDb + '/' + queryStr;
+                } else {
+                    alert('Error selecting database: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => alert('Error selecting database: ' + err));
+        });
+
+        if (btnCreateDb) {
+            btnCreateDb.addEventListener('click', () => {
+                const dbName = prompt('Enter a name for the new database (alphanumeric characters, e.g. "vacation_2026"):');
+                if (!dbName) return;
+                
+                let cleanName = dbName.trim();
+                if (!cleanName) return;
+                if (cleanName.endsWith('.db')) {
+                    cleanName = cleanName.substring(0, cleanName.length - 3);
+                }
+                
+                if (!/^[a-zA-Z0-9_\-]+$/.test(cleanName)) {
+                    alert('Invalid name. Only letters, numbers, underscores, and hyphens are allowed.');
+                    return;
+                }
+                
+                fetch('api/databases/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ db_name: cleanName })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        window.location.href = '/' + cleanName + '/';
+                    } else {
+                        alert('Error creating database: ' + (data.error || 'Unknown error'));
+                    }
+                })
+                .catch(err => alert('Error creating database: ' + err));
+            });
+        }
+    }
+    initDatabaseSelector();
+
     // DOM Elements
     const modeSelect = document.getElementById('tuner-mode');
     const photoSearch = document.getElementById('photo-search');
@@ -1063,6 +1202,11 @@ document.addEventListener('DOMContentLoaded', () => {
         // Category / Keyword tags
         const tagsList = details.tags || [];
         tagsList.forEach(tag => {
+            const cleanTag = tag.replace(/\\/g, '/');
+            const leaf = cleanTag.includes('/') ? cleanTag.split('/').pop().trim() : cleanTag.trim();
+            if (peopleList.some(p => p.toLowerCase() === leaf.toLowerCase())) {
+                return;
+            }
             const pill = document.createElement('span');
             pill.className = 'tag-pill';
             pill.textContent = tag;

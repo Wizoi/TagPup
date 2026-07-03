@@ -156,6 +156,28 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
             if root in people_roots:
                 # The leaf node of the tag path is the name of the person
                 people.append(parts[-1])
+
+    # Also resolve flat tags (e.g. "Clara Idzi") that exist in the taxonomy as a face category
+    if not db_path:
+        db_path = "data/photo_index.db"
+    if db_path and os.path.exists(db_path):
+        try:
+            import sqlite3
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
+            if cursor.fetchone():
+                cursor.execute("SELECT tag, name FROM tag_taxonomy WHERE has_face = 1")
+                people_tags = cursor.fetchall()
+                for tag in tags:
+                    norm = tag.replace("\\", "/").strip()
+                    for db_tag, db_name in people_tags:
+                        if norm.lower() == db_tag.lower() or norm.lower() == db_name.lower():
+                            people.append(db_name)
+                            break
+            conn.close()
+        except Exception as e:
+            logger.warning(f"Error resolving people from database taxonomy: {e}")
                 
     seen = set()
     unique_people = []
