@@ -205,6 +205,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const mainImage = document.getElementById('main-image');
     const btnRotateLeft = document.getElementById('btn-rotate-left');
     const btnRotateRight = document.getElementById('btn-rotate-right');
+    const btnDeletePhoto = document.getElementById('btn-delete-photo');
     const facesSection = document.getElementById('faces-section');
     
     const detailPath = document.getElementById('detail-path');
@@ -333,6 +334,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     btnRotateLeft.addEventListener('click', () => rotatePhoto('left'));
     btnRotateRight.addEventListener('click', () => rotatePhoto('right'));
+    btnDeletePhoto.addEventListener('click', deleteActivePhoto);
     
     btnSaveTitle.addEventListener('click', saveSingleTitle);
     btnAddPerson.addEventListener('click', saveSingleAddPerson);
@@ -572,17 +574,48 @@ document.addEventListener('DOMContentLoaded', () => {
     function updatePeopleDatalist() {
         peopleDatalist.innerHTML = '';
         
-        const peopleSet = new Set(knownPeople);
+        const peopleSet = new Set();
         
+        // Add all person tags from knownTags
         knownTags.forEach(t => {
             if (isPersonTag(t)) {
-                const leaf = t.split('/').pop().trim();
-                peopleSet.add(leaf);
+                peopleSet.add(t);
             }
         });
         
+        // Helper to resolve a flat name to a full person tag path
+        function resolveToPersonPath(name) {
+            // Find in knownTags first
+            const matchedTag = knownTags.find(t => {
+                if (!isPersonTag(t)) return false;
+                const leaf = t.split('/').pop().trim();
+                return leaf.toLowerCase() === name.toLowerCase();
+            });
+            if (matchedTag) return matchedTag;
+            
+            // Default fallback
+            return `People/${name}`;
+        }
+        
+        // Add from knownPeople
+        knownPeople.forEach(name => {
+            peopleSet.add(resolveToPersonPath(name));
+        });
+        
+        // Add from folderPhotos
         folderPhotos.forEach(p => {
-            if (p.people) p.people.forEach(name => peopleSet.add(name));
+            if (p.tags) {
+                p.tags.forEach(t => {
+                    if (isPersonTag(t)) {
+                        peopleSet.add(t);
+                    }
+                });
+            }
+            if (p.people) {
+                p.people.forEach(name => {
+                    peopleSet.add(resolveToPersonPath(name));
+                });
+            }
         });
 
         const sortedPeople = Array.from(peopleSet).sort();
@@ -1819,6 +1852,72 @@ document.addEventListener('DOMContentLoaded', () => {
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = 'Error';
             alert("Error rotating image: " + err.message);
+        });
+    }
+
+    // Move active photo to Windows Recycle Bin and update state
+    function deleteActivePhoto() {
+        const path = activePhotoPath;
+        if (!path) return;
+
+        const index = folderPhotos.findIndex(p => p.path === path);
+        if (index === -1) return;
+
+        const filename = folderPhotos[index].filename || 'this photo';
+        if (!confirm(`Are you sure you want to delete "${filename}" and move it to the Windows Recycle Bin?`)) {
+            return;
+        }
+
+        statusDot.className = 'status-indicator-dot busy';
+        statusText.textContent = 'Deleting...';
+
+        fetch('/api/photo/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                // Remove photo from client folderPhotos array
+                folderPhotos.splice(index, 1);
+
+                // Remove from selection array if selected
+                const selIndex = selectedThumbnails.indexOf(path);
+                if (selIndex !== -1) {
+                    selectedThumbnails.splice(selIndex, 1);
+                }
+
+                // Update cache
+                saveToLocalStorageCache();
+
+                // Update UI statistics
+                listStats.textContent = `${folderPhotos.length} files loaded`;
+                folderViewStats.textContent = `${folderPhotos.length} photos`;
+
+                // Re-render components
+                renderFileList();
+                renderThumbnails();
+
+                // Select the next photo or fall back to grid/folder view
+                if (folderPhotos.length === 0) {
+                    showFolderView();
+                } else {
+                    const nextPhoto = folderPhotos[index] || folderPhotos[index - 1];
+                    selectPhoto(nextPhoto.path);
+                }
+
+                statusDot.className = 'status-indicator-dot';
+                statusText.textContent = 'Ready';
+            } else {
+                throw new Error(data.error || 'Failed to delete photo');
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Error';
+            alert("Error deleting photo: " + err.message);
         });
     }
 

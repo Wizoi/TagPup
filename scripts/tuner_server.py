@@ -25,6 +25,52 @@ def to_db_path(path):
         return ""
     return os.path.abspath(path).replace("\\", "/")
 
+def send_to_recycle_bin(file_path):
+    import ctypes
+    from ctypes import wintypes
+    
+    file_path = os.path.abspath(file_path).replace('/', '\\')
+    if not os.path.exists(file_path):
+        return False
+        
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wintypes.HWND),
+            ("wFunc", wintypes.UINT),
+            ("pFrom", wintypes.LPCWSTR),
+            ("pTo", wintypes.LPCWSTR),
+            ("fFlags", wintypes.WORD),
+            ("fAnyOperationsAborted", wintypes.BOOL),
+            ("hNameMappings", wintypes.LPVOID),
+            ("lpszProgressTitle", wintypes.LPCWSTR),
+        ]
+        
+    FO_DELETE = 3
+    FOF_ALLOWUNDO = 0x0040
+    FOF_NOCONFIRMATION = 0x0010
+    FOF_NOERRORUI = 0x0400
+    FOF_SILENT = 0x0004
+    
+    pFrom = file_path + "\0\0"
+    
+    fileop = SHFILEOPSTRUCTW()
+    fileop.hwnd = None
+    fileop.wFunc = FO_DELETE
+    fileop.pFrom = pFrom
+    fileop.pTo = None
+    fileop.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT
+    fileop.fAnyOperationsAborted = False
+    fileop.hNameMappings = None
+    fileop.lpszProgressTitle = None
+    
+    SHFileOperationW = ctypes.windll.shell32.SHFileOperationW
+    SHFileOperationW.argtypes = [ctypes.POINTER(SHFILEOPSTRUCTW)]
+    SHFileOperationW.restype = ctypes.c_int
+    
+    res = SHFileOperationW(ctypes.byref(fileop))
+    return res == 0 and not fileop.fAnyOperationsAborted
+
+
 import re
 
 YEAR_RE = re.compile(r"^(\d{4})")
@@ -629,6 +675,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.handle_post_folder_automatch()
         elif path == "/api/photo/rotate":
             self.handle_post_photo_rotate()
+        elif path == "/api/photo/delete":
+            self.handle_post_photo_delete()
         elif path == "/api/photo/open-explorer":
             self.handle_post_photo_open_explorer()
         elif path == "/api/photo/save-metadata":
@@ -1074,13 +1122,12 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
                 filtered_people = []
                 for p in all_people:
-                    cursor.execute("SELECT tag FROM tag_taxonomy WHERE name = ?", (p,))
+                    cursor.execute("SELECT tag FROM tag_taxonomy WHERE name = ? AND has_face = 1", (p,))
                     paths = [r[0] for r in cursor.fetchall()]
-                    hidden = False
-                    for path in paths:
-                        if is_tag_hidden(path):
-                            hidden = True
-                            break
+                    if paths:
+                        hidden = all(is_tag_hidden(path) for path in paths)
+                    else:
+                        hidden = False
                     if not hidden:
                         filtered_people.append(p)
                 all_people = filtered_people
@@ -1960,13 +2007,12 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             filtered_rows = []
             for r in rows:
                 p = r[0]
-                cursor.execute("SELECT tag FROM tag_taxonomy WHERE name = ?", (p,))
+                cursor.execute("SELECT tag FROM tag_taxonomy WHERE name = ? AND has_face = 1", (p,))
                 paths = [row[0] for row in cursor.fetchall()]
-                hidden = False
-                for path in paths:
-                    if is_tag_hidden(path):
-                        hidden = True
-                        break
+                if paths:
+                    hidden = all(is_tag_hidden(path) for path in paths)
+                else:
+                    hidden = False
                 if not hidden:
                     filtered_rows.append(r)
                     
@@ -2059,20 +2105,90 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 cursor.execute("SELECT COUNT(*) FROM faces WHERE name = ?", (name,))
                 total_count = cursor.fetchone()[0]
 
-                # Fetch all embeddings for centroid calculation (from faces table directly)
-                cursor.execute("SELECT embedding FROM faces WHERE name = ?", (name,))
-                emb_rows = cursor.fetchall()
-                embeddings = []
-                for r in emb_rows:
-                    if r[0] is not None and len(r[0]) > 0:
-                        embeddings.append(np.frombuffer(r[0], dtype=np.float32))
+                # Fetch all resolved faces with metadata for era-aware centroid calculation
+                cursor.execute("""
+                    SELECT f.embedding, p.mtime, p.raw_metadata, f.photo_path
+                    FROM faces f
+                    LEFT JOIN photos p ON p.path = f.photo_path
+                    WHERE f.name = ? AND f.embedding IS NOT NULL
+                """, (name,))
+                all_matched_rows = cursor.fetchall()
+
+                all_matched_faces = []
+                for emb_bytes, mtime, raw_meta_json, photo_path in all_matched_rows:
+                    if emb_bytes and len(emb_bytes) > 0:
+                        year = get_year_from_mtime_or_meta(mtime, raw_meta_json, photo_path)
+                        # Ensure year is parsed to int or None
+                        try:
+                            year_int = int(year) if year is not None else None
+                        except (ValueError, TypeError):
+                            year_int = None
+                        emb = np.frombuffer(emb_bytes, dtype=np.float32)
+                        emb_norm = np.linalg.norm(emb)
+                        if emb_norm > 0:
+                            emb = emb / emb_norm
+                        all_matched_faces.append((emb, year_int))
+
+                matched_years = [y for _, y in all_matched_faces if y is not None]
+                y_min = min(matched_years) if matched_years else None
+
+                def compute_era_centroid(target_year):
+                    if not all_matched_faces:
+                        return None
+                    
+                    try:
+                        t_yr = int(target_year) if target_year is not None else None
+                    except (ValueError, TypeError):
+                        t_yr = None
+                    
+                    if y_min is not None and t_yr is not None:
+                        age = t_yr - y_min
+                    else:
+                        age = 99
                         
-                centroid = None
-                if len(embeddings) > 0:
-                    centroid = compute_geometric_median(embeddings)
+                    if age <= 4:
+                        w = 1
+                    elif age <= 12:
+                        w = 2
+                    elif age <= 16:
+                        w = 3
+                    elif age <= 20:
+                        w = 4
+                    else:
+                        w = 5
+                        
+                    window_embeddings = []
+                    if t_yr is not None:
+                        for emb, y in all_matched_faces:
+                            if y is not None and (t_yr - w) <= y <= (t_yr + w):
+                                window_embeddings.append(emb)
+                                
+                    current_w = w
+                    while len(window_embeddings) < 5 and current_w < 5:
+                        current_w += 1
+                        window_embeddings = []
+                        if t_yr is not None:
+                            for emb, y in all_matched_faces:
+                                if y is not None and (t_yr - current_w) <= y <= (t_yr + current_w):
+                                    window_embeddings.append(emb)
+                                    
+                    if len(window_embeddings) < 5:
+                        window_embeddings = [emb for emb, _ in all_matched_faces]
+                        
+                    if not window_embeddings:
+                        return None
+                        
+                    centroid = compute_geometric_median(window_embeddings)
                     norm = np.linalg.norm(centroid)
                     if norm > 0:
                         centroid /= norm
+                    return centroid
+
+                era_centroid_cache = {}
+                def get_era_centroid(target_year):
+                    if target_year not in era_centroid_cache:
+                        era_centroid_cache[target_year] = compute_era_centroid(target_year)
+                    return era_centroid_cache[target_year]
 
                 cursor.execute("""
                     SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata
@@ -2089,15 +2205,17 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     except Exception:
                         box = []
                         
-                    similarity = 1.0
-                    if centroid is not None and r[5] is not None and len(r[5]) > 0:
-                        emb = np.frombuffer(r[5], dtype=np.float32)
-                        emb_norm = np.linalg.norm(emb)
-                        if emb_norm > 0:
-                            emb = emb / emb_norm
-                        similarity = float(np.dot(emb, centroid))
-                        
                     year = get_year_from_mtime_or_meta(r[4], r[6], r[1])
+                    
+                    similarity = 1.0
+                    if r[5] is not None and len(r[5]) > 0:
+                        centroid = get_era_centroid(year)
+                        if centroid is not None:
+                            emb = np.frombuffer(r[5], dtype=np.float32)
+                            emb_norm = np.linalg.norm(emb)
+                            if emb_norm > 0:
+                                emb = emb / emb_norm
+                            similarity = float(np.dot(emb, centroid))
                     
                     faces.append({
                         "id": r[0],
@@ -2850,6 +2968,50 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         except Exception as e:
             logger.error(f"Error rotating image {photo_path}: {e}")
             self.send_json_error(500, str(e))
+
+    def handle_post_photo_delete(self):
+        try:
+            data = self.read_json_body()
+        except Exception:
+            self.send_json_error(400, "Invalid JSON payload")
+            return
+            
+        photo_path = data.get("path")
+        if not photo_path or not os.path.exists(photo_path):
+            self.send_json_error(400, "Invalid file path")
+            return
+            
+        try:
+            # First, send the file to the recycle bin
+            success = send_to_recycle_bin(photo_path)
+            if not success:
+                self.send_json_error(500, "Failed to move file to Recycle Bin")
+                return
+
+            # Delete the file record and faces from the active SQLite database
+            db_key = to_db_path(photo_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            try:
+                conn.execute("PRAGMA foreign_keys = ON;")
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM photos WHERE LOWER(path) = ?", (db_key.lower(),))
+                cursor.execute("DELETE FROM embedding_cache WHERE LOWER(path) = ?", (db_key.lower(),))
+                conn.commit()
+            finally:
+                conn.close()
+                
+            # Remove from local server folder cache
+            folder_path = normalize_path(os.path.dirname(photo_path))
+            if folder_path in TunerHTTPRequestHandler.folder_cache:
+                normalized_photo_path = normalize_path(photo_path)
+                if normalized_photo_path in TunerHTTPRequestHandler.folder_cache[folder_path]:
+                    del TunerHTTPRequestHandler.folder_cache[folder_path][normalized_photo_path]
+            
+            self.send_json({"success": True})
+        except Exception as e:
+            logger.error(f"Error deleting image {photo_path}: {e}")
+            self.send_json_error(500, str(e))
+
 
     def handle_post_photo_save_metadata(self):
         try:

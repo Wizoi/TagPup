@@ -27,6 +27,52 @@ def to_db_path(path):
         return ""
     return os.path.abspath(path).replace("\\", "/")
 
+def send_to_recycle_bin(file_path):
+    import ctypes
+    from ctypes import wintypes
+    
+    file_path = os.path.abspath(file_path).replace('/', '\\')
+    if not os.path.exists(file_path):
+        return False
+        
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wintypes.HWND),
+            ("wFunc", wintypes.UINT),
+            ("pFrom", wintypes.LPCWSTR),
+            ("pTo", wintypes.LPCWSTR),
+            ("fFlags", wintypes.WORD),
+            ("fAnyOperationsAborted", wintypes.BOOL),
+            ("hNameMappings", wintypes.LPVOID),
+            ("lpszProgressTitle", wintypes.LPCWSTR),
+        ]
+        
+    FO_DELETE = 3
+    FOF_ALLOWUNDO = 0x0040
+    FOF_NOCONFIRMATION = 0x0010
+    FOF_NOERRORUI = 0x0400
+    FOF_SILENT = 0x0004
+    
+    pFrom = file_path + "\0\0"
+    
+    fileop = SHFILEOPSTRUCTW()
+    fileop.hwnd = None
+    fileop.wFunc = FO_DELETE
+    fileop.pFrom = pFrom
+    fileop.pTo = None
+    fileop.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT
+    fileop.fAnyOperationsAborted = False
+    fileop.hNameMappings = None
+    fileop.lpszProgressTitle = None
+    
+    SHFileOperationW = ctypes.windll.shell32.SHFileOperationW
+    SHFileOperationW.argtypes = [ctypes.POINTER(SHFILEOPSTRUCTW)]
+    SHFileOperationW.restype = ctypes.c_int
+    
+    res = SHFileOperationW(ctypes.byref(fileop))
+    return res == 0 and not fileop.fAnyOperationsAborted
+
+
 def make_json_serializable(obj):
     if isinstance(obj, dict):
         return {k: make_json_serializable(v) for k, v in obj.items()}
@@ -351,6 +397,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.handle_post_folder_index_start()
         elif path == "/api/photo/rotate":
             self.handle_post_photo_rotate()
+        elif path == "/api/photo/delete":
+            self.handle_post_photo_delete()
         elif path == "/api/photo/open-explorer":
             self.handle_post_photo_open_explorer()
         elif path == "/api/photo/save-metadata":
@@ -856,13 +904,12 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
                 filtered_people = []
                 for p in people:
-                    cursor.execute("SELECT tag FROM tag_taxonomy WHERE name = ?", (p,))
+                    cursor.execute("SELECT tag FROM tag_taxonomy WHERE name = ? AND has_face = 1", (p,))
                     paths = [r[0] for r in cursor.fetchall()]
-                    hidden = False
-                    for path in paths:
-                        if is_tag_hidden(path):
-                            hidden = True
-                            break
+                    if paths:
+                        hidden = all(is_tag_hidden(path) for path in paths)
+                    else:
+                        hidden = False
                     if not hidden:
                         filtered_people.append(p)
                 people = filtered_people
@@ -1359,6 +1406,50 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             logger.error(f"Error rotating image {photo_path}: {e}")
             self.send_json_error(500, str(e))
 
+    def handle_post_photo_delete(self):
+        try:
+            data = self.read_json_body()
+        except Exception:
+            self.send_json_error(400, "Invalid JSON payload")
+            return
+            
+        photo_path = data.get("path")
+        if not photo_path or not os.path.exists(photo_path):
+            self.send_json_error(400, "Invalid file path")
+            return
+            
+        try:
+            # First, send the file to the recycle bin
+            success = send_to_recycle_bin(photo_path)
+            if not success:
+                self.send_json_error(500, "Failed to move file to Recycle Bin")
+                return
+
+            # Delete the file record and faces from the active SQLite database
+            db_key = to_db_path(photo_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            try:
+                conn.execute("PRAGMA foreign_keys = ON;")
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM photos WHERE LOWER(path) = ?", (db_key.lower(),))
+                cursor.execute("DELETE FROM embedding_cache WHERE LOWER(path) = ?", (db_key.lower(),))
+                conn.commit()
+            finally:
+                conn.close()
+                
+            # Remove from local server folder cache
+            folder_path = normalize_path(os.path.dirname(photo_path))
+            if folder_path in TagPupHTTPRequestHandler.folder_cache:
+                normalized_photo_path = normalize_path(photo_path)
+                if normalized_photo_path in TagPupHTTPRequestHandler.folder_cache[folder_path]:
+                    del TagPupHTTPRequestHandler.folder_cache[folder_path][normalized_photo_path]
+            
+            self.send_json({"success": True})
+        except Exception as e:
+            logger.error(f"Error deleting image {photo_path}: {e}")
+            self.send_json_error(500, str(e))
+
+
     def handle_post_photo_save_metadata(self):
         try:
             data = self.read_json_body()
@@ -1565,13 +1656,16 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     new_tags = list(new_tags_set)
                     
                     new_flat_tags = []
+                    new_hierarchical_tags = []
                     for tag in new_tags:
+                        new_flat_tags.append(tag)
                         if "/" in tag:
-                            new_flat_tags.append(tag.split("/")[-1].strip())
-                        else:
-                            new_flat_tags.append(tag.strip())
-                            
+                            new_hierarchical_tags.append(tag)
+                            for part in tag.split("/"):
+                                new_flat_tags.append(part)
+                                
                     new_flat_tags = list(set(new_flat_tags))
+                    new_hierarchical_tags = list(set(new_hierarchical_tags))
                     
                     params = {}
                     if new_flat_tags:
@@ -1583,13 +1677,16 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                         params["IPTC:Keywords"] = []
                         params["EXIF:XPKeywords"] = ""
                         
-                    params["XMP:HierarchicalSubject"] = []
+                    if new_hierarchical_tags:
+                        params["XMP:HierarchicalSubject"] = new_hierarchical_tags
+                    else:
+                        params["XMP:HierarchicalSubject"] = []
                         
                     et.set_tags([path], tags=params, params=["-overwrite_original"])
                     
                     if photo_entry:
-                        photo_entry["tags"] = new_flat_tags
-                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_flat_tags)
+                        photo_entry["tags"] = new_tags
+                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags)
                         
             self.send_json({"success": True})
         except Exception as e:
@@ -1645,13 +1742,16 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     new_tags = list(set(current_tags + apply_tags))
                     
                     new_flat_tags = []
+                    new_hierarchical_tags = []
                     for tag in new_tags:
+                        new_flat_tags.append(tag)
                         if "/" in tag:
-                            new_flat_tags.append(tag.split("/")[-1].strip())
-                        else:
-                            new_flat_tags.append(tag.strip())
-                            
+                            new_hierarchical_tags.append(tag)
+                            for part in tag.split("/"):
+                                new_flat_tags.append(part)
+                                
                     new_flat_tags = list(set(new_flat_tags))
+                    new_hierarchical_tags = list(set(new_hierarchical_tags))
                     
                     params = {}
                     if new_flat_tags:
@@ -1663,13 +1763,16 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                         params["IPTC:Keywords"] = []
                         params["EXIF:XPKeywords"] = ""
                         
-                    params["XMP:HierarchicalSubject"] = []
+                    if new_hierarchical_tags:
+                        params["XMP:HierarchicalSubject"] = new_hierarchical_tags
+                    else:
+                        params["XMP:HierarchicalSubject"] = []
                         
                     et.set_tags([path], tags=params, params=["-overwrite_original"])
                     
                     if photo_entry:
-                        photo_entry["tags"] = new_flat_tags
-                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_flat_tags)
+                        photo_entry["tags"] = new_tags
+                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags)
                             
             self.send_json({"success": True})
         except Exception as e:
@@ -2642,7 +2745,7 @@ def update_photo_metadata_tags(db_path: str, exiftool_path: str, photo_paths: Li
                     raw_meta["XMP:HierarchicalSubject"] = new_hierarchical_tags
                     
                     updated_tags = extract_tags(raw_meta)
-                    updated_people = extract_people(raw_meta, updated_tags, db_path=db_path)
+                    updated_people = extract_people(raw_meta, updated_tags, db_path=db_path, conn=conn)
                     
                     cursor.execute(
                         "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE path = ?",

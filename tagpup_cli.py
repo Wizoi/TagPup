@@ -102,7 +102,21 @@ def get_exiftool_path(config) -> str:
         
     return path
 
-def get_db_paths(config, test_mode=False):
+def get_db_paths(config, test_mode=False, cli_db=None):
+    if cli_db:
+        # If the user specified a custom db, use it!
+        # Make sure it ends in .db
+        db_name = cli_db if cli_db.endswith(".db") else (cli_db + ".db")
+        # Check if it is a path or just a name
+        if os.path.isabs(db_name) or "/" in db_name.replace("\\", "/"):
+            db_path = db_name
+            tax_path = os.path.splitext(db_path)[0] + "_taxonomy.json"
+        else:
+            data_dir = config.get("paths", "data_dir", fallback="data")
+            db_path = os.path.join(data_dir, db_name)
+            tax_path = os.path.join(data_dir, os.path.splitext(db_name)[0] + "_taxonomy.json")
+        return db_path, tax_path
+
     env_db = os.environ.get("TAGPUP_DB_PATH")
     env_tax = os.environ.get("TAGPUP_TAXONOMY_PATH")
     if env_db:
@@ -151,12 +165,14 @@ def scan_for_images(dir_path: str) -> List[str]:
     return images
 
 @click.group()
+@click.option("--db", type=str, help="Specify active database name or path (e.g. 'my_photos.db' or absolute path).")
 @click.option("--test", is_flag=True, help="Use test database paths to avoid cluttering production index.")
 @click.pass_context
-def cli(ctx, test):
+def cli(ctx, db, test):
     """TagpupCLI: AI-powered local photo tagging command-line interface."""
     ctx.ensure_object(dict)
     ctx.obj["test"] = test
+    ctx.obj["db"] = db
 
 @cli.command()
 @click.argument("directory", type=click.Path(exists=True, file_okay=False))
@@ -173,7 +189,8 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     pretrained = config.get("model", "pretrained", fallback="laion2b_s34b_b79k")
 
     test_mode = ctx.obj.get("test", False)
-    db_path, tax_path = get_db_paths(config, test_mode)
+    cli_db = ctx.obj.get("db")
+    db_path, tax_path = get_db_paths(config, test_mode, cli_db)
 
     # Handle reset flag
     if reset:
@@ -400,8 +417,8 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
     test_mode = ctx.obj.get("test", False)
     if test_mode and output == "suggestions.json":
         output = "test_suggestions.json"
-
-    db_path, tax_path = get_db_paths(config, test_mode)
+    cli_db = ctx.obj.get("db")
+    db_path, tax_path = get_db_paths(config, test_mode, cli_db)
 
     photo_index = PhotoIndex(db_path=db_path)
     if not photo_index.load():
@@ -583,7 +600,8 @@ def search(ctx, query: str, k: int):
 
     # Load Index
     test_mode = ctx.obj.get("test", False)
-    db_path, _ = get_db_paths(config, test_mode)
+    cli_db = ctx.obj.get("db")
+    db_path, _ = get_db_paths(config, test_mode, cli_db)
     photo_index = PhotoIndex(db_path=db_path)
     if not photo_index.load():
         console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
@@ -633,7 +651,8 @@ def stats(ctx):
     config = get_config()
     
     test_mode = ctx.obj.get("test", False)
-    db_path, tax_path = get_db_paths(config, test_mode)
+    cli_db = ctx.obj.get("db")
+    db_path, tax_path = get_db_paths(config, test_mode, cli_db)
 
     photo_index = PhotoIndex(db_path=db_path)
     if not photo_index.load():
@@ -729,7 +748,8 @@ def list_index(ctx, folder):
     config = get_config()
     
     test_mode = ctx.obj.get("test", False)
-    db_path, _ = get_db_paths(config, test_mode)
+    cli_db = ctx.obj.get("db")
+    db_path, _ = get_db_paths(config, test_mode, cli_db)
 
     photo_index = PhotoIndex(db_path=db_path)
     if not photo_index.load():
@@ -790,7 +810,8 @@ def remove(ctx, path, folder):
     config = get_config()
     
     test_mode = ctx.obj.get("test", False)
-    db_path, _ = get_db_paths(config, test_mode)
+    cli_db = ctx.obj.get("db")
+    db_path, _ = get_db_paths(config, test_mode, cli_db)
 
     photo_index = PhotoIndex(db_path=db_path)
     if not photo_index.load():
@@ -838,7 +859,8 @@ def index_faces(ctx, directory: str, force: bool):
     """Scan photos and extract/index face embeddings into the database."""
     config = get_config()
     test_mode = ctx.obj.get("test", False)
-    db_path, _ = get_db_paths(config, test_mode)
+    cli_db = ctx.obj.get("db")
+    db_path, _ = get_db_paths(config, test_mode, cli_db)
 
     photo_index = PhotoIndex(db_path=db_path)
     if not photo_index.load():
@@ -896,7 +918,8 @@ def cluster_faces(ctx, reset: bool, max_iterations: int):
     """Run self-tuning identity resolution to cluster and name faces using photo tags."""
     config = get_config()
     test_mode = ctx.obj.get("test", False)
-    db_path, tax_path = get_db_paths(config, test_mode)
+    cli_db = ctx.obj.get("db")
+    db_path, tax_path = get_db_paths(config, test_mode, cli_db)
 
     photo_index = PhotoIndex(db_path=db_path)
     if not photo_index.load():

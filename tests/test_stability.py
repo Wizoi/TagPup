@@ -969,5 +969,144 @@ class TestStability(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir)
 
+    def test_api_photo_delete(self):
+        import tempfile
+        import shutil
+        temp_dir = tempfile.mkdtemp().replace("\\", "/")
+        try:
+            p = os.path.join(temp_dir, "to_delete.jpg").replace("\\", "/")
+            with open(p, "wb") as f:
+                f.write(b"fake jpeg content")
+                
+            # Seed the database
+            conn = sqlite3.connect(self.TEST_DB_PATH)
+            c = conn.cursor()
+            c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags) VALUES (?, 1.0, 10, '[]')", (p,))
+            c.execute("INSERT OR REPLACE INTO embedding_cache (path, mtime, size, model_name, pretrained, preserve_full_frame, max_aspect_ratio, force_image_size, embedding) VALUES (?, 1.0, 10, 'm', 'p', 0, 1.0, 100, ?)", (p, b'\x00'*512))
+            c.execute("INSERT INTO faces (photo_path, box, name, prob) VALUES (?, '[]', 'John Doe', 1.0)", (p,))
+            conn.commit()
+            conn.close()
+            
+            # Populate server folder cache
+            from tuner_server import TunerHTTPRequestHandler, normalize_path
+            folder_path = normalize_path(temp_dir)
+            normalized_p = normalize_path(p)
+            TunerHTTPRequestHandler.folder_cache[folder_path] = {
+                normalized_p: {"path": p, "filename": "to_delete.jpg", "tags": []}
+            }
+            
+            # Send POST delete request
+            url = f"http://127.0.0.1:{self.TEST_PORT}/api/photo/delete"
+            req = urllib.request.Request(
+                url,
+                data=json.dumps({"path": p}).encode('utf-8'),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            response = urllib.request.urlopen(req)
+            data = json.loads(response.read().decode('utf-8'))
+            
+            self.assertTrue(data["success"])
+            
+            # Verify file is not on disk (moved to recycle bin)
+            self.assertFalse(os.path.exists(p))
+            
+            # Verify records are gone from DB
+            conn = sqlite3.connect(self.TEST_DB_PATH)
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM photos WHERE path = ?", (p,))
+            photos_count = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM embedding_cache WHERE path = ?", (p,))
+            cache_count = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM faces WHERE photo_path = ?", (p,))
+            faces_count = c.fetchone()[0]
+            conn.close()
+            
+            self.assertEqual(photos_count, 0)
+            self.assertEqual(cache_count, 0)
+            self.assertEqual(faces_count, 0)
+            
+            # Verify folder_cache entry is evicted
+            self.assertNotIn(normalized_p, TunerHTTPRequestHandler.folder_cache[folder_path])
+            
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_era_aware_face_centroids(self):
+        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index.load()
+        cursor = photo_index.conn.cursor()
+        
+        # Clear tables
+        cursor.execute("DELETE FROM faces")
+        cursor.execute("DELETE FROM photos")
+        
+        # We will create two eras:
+        # Era 1 (2010): 6 photos/faces of Clara as a child (embedding: [1.0, 0.0, 0.0, ...])
+        # Era 2 (2026): 6 photos/faces of Clara as a teen (embedding: [0.0, 1.0, 0.0, ...])
+        emb_child = np.zeros(512, dtype=np.float32)
+        emb_child[0] = 1.0
+        emb_child_bytes = emb_child.tobytes()
+        
+        emb_teen = np.zeros(512, dtype=np.float32)
+        emb_teen[1] = 1.0
+        emb_teen_bytes = emb_teen.tobytes()
+        
+        # Insert Era 1 child faces (2010)
+        for i in range(6):
+            path = f"C:/photos/2010_child_{i}.jpg"
+            raw_meta = {"EXIF:DateTimeOriginal": "2010:06:01 12:00:00"}
+            cursor.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, 1000.0, 10, '[]', '[\"Clara\"]', '[]', ?)", (path, json.dumps(raw_meta)))
+            cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, '[10, 10, 50, 50]', ?, 'Clara', 0.99)", (path, emb_child_bytes))
+            
+        # Insert Era 2 teen faces (2026)
+        for i in range(6):
+            path = f"C:/photos/2026_teen_{i}.jpg"
+            raw_meta = {"EXIF:DateTimeOriginal": "2026:06:01 12:00:00"}
+            cursor.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, 2000.0, 10, '[]', '[\"Clara\"]', '[]', ?)", (path, json.dumps(raw_meta)))
+            cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, '[10, 10, 50, 50]', ?, 'Clara', 0.99)", (path, emb_teen_bytes))
+            
+        photo_index.conn.commit()
+        
+        # Re-load photo_index metadata
+        photo_index.load()
+        
+        # Now run FaceProcessor.cluster_and_resolve_identities()
+        from faces import FaceProcessor
+        fp = FaceProcessor()
+        fp.cluster_and_resolve_identities(photo_index, None, max_iterations=2)
+        
+        # Verify that teen faces from 2026 were NOT unassigned
+        cursor.execute("SELECT photo_path, name FROM faces WHERE photo_path LIKE '%2026%'")
+        rows = cursor.fetchall()
+        for path, name in rows:
+            self.assertEqual(name, "Clara", f"Teen face {path} should remain resolved to Clara under era-aware centroids")
+            
+        # Verify `/api/person-faces` returns high similarity for both eras when queried
+        from tuner_server import TunerHTTPRequestHandler
+        import io
+        class MockHandler(TunerHTTPRequestHandler):
+            def __init__(self, db_path):
+                self.db_path = db_path
+                self.wfile = io.BytesIO()
+            def send_response(self, code):
+                self.code = code
+            def send_header(self, keyword, value):
+                pass
+            def end_headers(self):
+                pass
+                
+        handler = MockHandler(self.TEST_DB_PATH)
+        handler.handle_get_person_faces({"name": ["Clara"]})
+        handler.wfile.seek(0)
+        response_data = json.loads(handler.wfile.read().decode('utf-8'))
+        
+        faces = response_data["faces"]
+        self.assertEqual(len(faces), 12, "Should return all 12 faces")
+        for f in faces:
+            self.assertGreaterEqual(f["similarity"], 0.95, f"Similarity for face {f['photo_path']} should be high (>= 0.95) owing to era-aware centroids")
+            
+        photo_index.close()
+
 if __name__ == "__main__":
     unittest.main()

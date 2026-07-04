@@ -113,15 +113,11 @@ def extract_tags(meta: Dict[str, Any]) -> List[str]:
             
     return cleaned_tags
 
-def get_people_roots(db_path: Optional[str] = None) -> Set[str]:
+def get_people_roots(db_path: Optional[str] = None, conn: Any = None) -> Set[str]:
     """Retrieve lowercase names of all root categories marked as People from database."""
     roots = {"family", "friends", "people"}  # Default fallbacks
-    if not db_path:
-        db_path = "data/photo_index.db"
-    if db_path and os.path.exists(db_path):
+    if conn:
         try:
-            import sqlite3
-            conn = sqlite3.connect(db_path, timeout=5.0)
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
             if cursor.fetchone():
@@ -129,12 +125,25 @@ def get_people_roots(db_path: Optional[str] = None) -> Set[str]:
                 for row in cursor.fetchall():
                     if row[0]:
                         roots.add(row[0].lower().strip())
-            conn.close()
+        except Exception:
+            pass
+    elif db_path and os.path.exists(db_path):
+        try:
+            import sqlite3
+            conn_temp = sqlite3.connect(db_path, timeout=5.0)
+            cursor = conn_temp.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
+            if cursor.fetchone():
+                cursor.execute("SELECT name FROM tag_taxonomy WHERE (parent_id IS NULL OR tag NOT LIKE '%/%') AND has_face = 1")
+                for row in cursor.fetchall():
+                    if row[0]:
+                        roots.add(row[0].lower().strip())
+            conn_temp.close()
         except Exception:
             pass
     return roots
 
-def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str] = None) -> List[str]:
+def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str] = None, conn: Any = None) -> List[str]:
     """Extract people tags from PersonInImage or RegionName, and also from hierarchical tags starting with People/ or custom designated categories."""
     people = []
     for key in ["XMP:PersonInImage", "PersonInImage", "XMP:RegionName", "RegionName"]:
@@ -145,7 +154,7 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
             else:
                 people.append(str(val).strip())
                 
-    people_roots = get_people_roots(db_path)
+    people_roots = get_people_roots(db_path, conn=conn)
     
     # Extract person name from hierarchical tags starting with any people roots
     for tag in tags:
@@ -158,12 +167,8 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
                 people.append(parts[-1])
 
     # Also resolve flat tags (e.g. "Clara Idzi") that exist in the taxonomy as a face category
-    if not db_path:
-        db_path = "data/photo_index.db"
-    if db_path and os.path.exists(db_path):
+    if conn:
         try:
-            import sqlite3
-            conn = sqlite3.connect(db_path, timeout=5.0)
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
             if cursor.fetchone():
@@ -175,9 +180,29 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
                         if norm.lower() == db_tag.lower() or norm.lower() == db_name.lower():
                             people.append(db_name)
                             break
-            conn.close()
         except Exception as e:
             logger.warning(f"Error resolving people from database taxonomy: {e}")
+    else:
+        if not db_path:
+            db_path = "data/photo_index.db"
+        if db_path and os.path.exists(db_path):
+            try:
+                import sqlite3
+                conn_temp = sqlite3.connect(db_path, timeout=5.0)
+                cursor = conn_temp.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
+                if cursor.fetchone():
+                    cursor.execute("SELECT tag, name FROM tag_taxonomy WHERE has_face = 1")
+                    people_tags = cursor.fetchall()
+                    for tag in tags:
+                        norm = tag.replace("\\", "/").strip()
+                        for db_tag, db_name in people_tags:
+                            if norm.lower() == db_tag.lower() or norm.lower() == db_name.lower():
+                                people.append(db_name)
+                                break
+                conn_temp.close()
+            except Exception as e:
+                logger.warning(f"Error resolving people from database taxonomy: {e}")
                 
     seen = set()
     unique_people = []

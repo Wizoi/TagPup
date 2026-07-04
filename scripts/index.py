@@ -454,7 +454,7 @@ class PhotoIndex:
                 except Exception:
                     raw_meta = {}
                     tags = []
-                orig_people = extract_people(raw_meta, tags, db_path=self.db_path)
+                orig_people = extract_people(raw_meta, tags, db_path=self.db_path, conn=self.conn)
                 updates.append((json.dumps(orig_people), path))
                 
             if updates:
