@@ -379,26 +379,90 @@ class FaceProcessor:
         logger.info("Resolving multi-face photo conflicts and applying metadata consensus (iterative loop)...")
         refined_resolved_names = {}
         
+        from metadata import parse_year_from_metadata
+        photo_years = {}
+        for path, meta in meta_by_path.items():
+            photo_years[path] = parse_year_from_metadata(meta)
+            
         for iteration in range(max_iterations):
-            # 2a. Compute mean embeddings for current resolved names
+            # 2a. Group embeddings and their photo years by name
             # Prioritize direct anchors to build unpolluted centroids
-            mean_embeddings = {}
-            embeddings_by_name = {}
+            resolved_by_name = {}
             names_with_anchors = set(direct_anchors.values())
             for face in all_faces:
                 name = current_resolved_names.get(face["id"])
                 if name:
                     if name in names_with_anchors and face["id"] not in direct_anchors:
                         continue
-                    if name not in embeddings_by_name:
-                        embeddings_by_name[name] = []
-                    embeddings_by_name[name].append(face["embedding"])
+                    if name not in resolved_by_name:
+                        resolved_by_name[name] = []
+                    p_path = face["photo_path"]
+                    yr = photo_years.get(p_path)
+                    resolved_by_name[name].append((face["embedding"], yr))
                     
-            for name, embs in embeddings_by_name.items():
-                mean_embeddings[name] = np.mean(embs, axis=0)
-                norm = np.linalg.norm(mean_embeddings[name])
-                if norm > 0:
-                    mean_embeddings[name] /= norm
+            # Calculate minimum year (baseline) for each person
+            y_min_by_name = {}
+            for name, items in resolved_by_name.items():
+                years = [y for _, y in items if y is not None]
+                if years:
+                    y_min_by_name[name] = min(years)
+
+            era_centroid_cache = {}
+            def get_era_centroid(name, target_year):
+                cache_key = (name, target_year)
+                if cache_key in era_centroid_cache:
+                    return era_centroid_cache[cache_key]
+                    
+                items = resolved_by_name.get(name, [])
+                if not items:
+                    return None
+                    
+                y_min = y_min_by_name.get(name)
+                
+                if y_min is not None and target_year is not None:
+                    age = target_year - y_min
+                else:
+                    age = 99
+                    
+                if age <= 4:
+                    w = 1
+                elif age <= 12:
+                    w = 2
+                elif age <= 16:
+                    w = 3
+                elif age <= 20:
+                    w = 4
+                else:
+                    w = 5
+                    
+                window_embeddings = []
+                if target_year is not None:
+                    for emb, yr in items:
+                        if yr is not None and (target_year - w) <= yr <= (target_year + w):
+                            window_embeddings.append(emb)
+                            
+                current_w = w
+                while len(window_embeddings) < 5 and current_w < 5:
+                    current_w += 1
+                    window_embeddings = []
+                    if target_year is not None:
+                        for emb, yr in items:
+                            if yr is not None and (target_year - current_w) <= yr <= (target_year + current_w):
+                                window_embeddings.append(emb)
+                                
+                if len(window_embeddings) < 5:
+                    window_embeddings = [emb for emb, _ in items]
+                    
+                if not window_embeddings:
+                    centroid = None
+                else:
+                    centroid = np.mean(window_embeddings, axis=0)
+                    norm = np.linalg.norm(centroid)
+                    if norm > 0:
+                        centroid /= norm
+                        
+                era_centroid_cache[cache_key] = centroid
+                return centroid
 
             new_resolved_names = {}
             
@@ -410,13 +474,16 @@ class FaceProcessor:
                 # Map of face_id -> resolved_name in this photo
                 face_resolved = {f["id"]: current_resolved_names.get(f["id"]) for f in photo_faces}
                 
-                # Validate existing assignments against mean embeddings (clear if similarity < 0.80)
+                # Validate existing assignments against era-aware centroids (clear if similarity < 0.80)
                 for f in photo_faces:
                     name = face_resolved.get(f["id"])
-                    if name and name in mean_embeddings:
-                        dist = np.linalg.norm(np.array(f["embedding"]) - mean_embeddings[name])
-                        if dist >= 0.63246:  # Cosine similarity < 0.80
-                            face_resolved[f["id"]] = None
+                    if name and name in resolved_by_name:
+                        target_yr = photo_years.get(f["photo_path"])
+                        centroid = get_era_centroid(name, target_yr)
+                        if centroid is not None:
+                            dist = np.linalg.norm(np.array(f["embedding"]) - centroid)
+                            if dist >= 0.63246:  # Cosine similarity < 0.80
+                                face_resolved[f["id"]] = None
                 
                 # Calculate face areas and find maximum area
                 face_areas = []
@@ -462,8 +529,8 @@ class FaceProcessor:
                 
                 if unassigned_faces and unused_tags:
                     # Separate unused tags into known and unknown
-                    known_unused = [t for t in unused_tags if t in mean_embeddings]
-                    unknown_unused = [t for t in unused_tags if t not in mean_embeddings]
+                    known_unused = [t for t in unused_tags if t in resolved_by_name]
+                    unknown_unused = [t for t in unused_tags if t not in resolved_by_name]
                     
                     # 1. Match known tags using Hungarian algorithm
                     if known_unused:
@@ -474,7 +541,12 @@ class FaceProcessor:
                             f_emb = np.array(f["embedding"])
                             row_costs = []
                             for tag in known_unused:
-                                dist = np.linalg.norm(f_emb - mean_embeddings[tag])
+                                target_yr = photo_years.get(f["photo_path"])
+                                centroid = get_era_centroid(tag, target_yr)
+                                if centroid is not None:
+                                    dist = np.linalg.norm(f_emb - centroid)
+                                else:
+                                    dist = 2.0
                                 row_costs.append(dist)
                             cost_matrix.append(row_costs)
                         
@@ -493,7 +565,7 @@ class FaceProcessor:
                     unassigned_faces = [f for f in valid_photo_faces if face_resolved.get(f["id"]) is None]
                     assigned_names = {name for name in face_resolved.values() if name}
                     unused_tags = photo_tags - assigned_names
-                    unknown_unused = [t for t in unused_tags if t not in mean_embeddings]
+                    unknown_unused = [t for t in unused_tags if t not in resolved_by_name]
                     
                     # 2. Match unknown tags by process of elimination
                     if len(unassigned_faces) == 1 and len(unknown_unused) == 1:
@@ -552,24 +624,82 @@ class FaceProcessor:
         # Step 4: Build database updates and calculate final statistics
         # Compute mean embeddings for the final resolved names to classify remaining unassigned faces
         # Prioritize direct anchors to build unpolluted centroids
-        final_mean_embeddings = {}
-        final_embeddings_by_name = {}
+        final_resolved_by_name = {}
         names_with_anchors = set(direct_anchors.values())
         for face in all_faces:
             name = refined_resolved_names.get(face["id"])
             if name:
                 if name in names_with_anchors and face["id"] not in direct_anchors:
                     continue
-                if name not in final_embeddings_by_name:
-                    final_embeddings_by_name[name] = []
-                final_embeddings_by_name[name].append(face["embedding"])
+                if name not in final_resolved_by_name:
+                    final_resolved_by_name[name] = []
+                p_path = face["photo_path"]
+                yr = photo_years.get(p_path)
+                final_resolved_by_name[name].append((face["embedding"], yr))
+
+        # Calculate final y_min for each name
+        final_y_min_by_name = {}
+        for name, items in final_resolved_by_name.items():
+            years = [y for _, y in items if y is not None]
+            if years:
+                final_y_min_by_name[name] = min(years)
+
+        final_era_centroid_cache = {}
+        def get_final_era_centroid(name, target_year):
+            cache_key = (name, target_year)
+            if cache_key in final_era_centroid_cache:
+                return final_era_centroid_cache[cache_key]
                 
-        for name, embs in final_embeddings_by_name.items():
-            mean_emb = np.mean(embs, axis=0)
-            norm = np.linalg.norm(mean_emb)
-            if norm > 0:
-                mean_emb /= norm
-            final_mean_embeddings[name] = mean_emb
+            items = final_resolved_by_name.get(name, [])
+            if not items:
+                return None
+                
+            y_min = final_y_min_by_name.get(name)
+            
+            if y_min is not None and target_year is not None:
+                age = target_year - y_min
+            else:
+                age = 99
+                
+            if age <= 4:
+                w = 1
+            elif age <= 12:
+                w = 2
+            elif age <= 16:
+                w = 3
+            elif age <= 20:
+                w = 4
+            else:
+                w = 5
+                
+            window_embeddings = []
+            if target_year is not None:
+                for emb, yr in items:
+                    if yr is not None and (target_year - w) <= yr <= (target_year + w):
+                        window_embeddings.append(emb)
+                        
+            current_w = w
+            while len(window_embeddings) < 5 and current_w < 5:
+                current_w += 1
+                window_embeddings = []
+                if target_year is not None:
+                    for emb, yr in items:
+                        if yr is not None and (target_year - current_w) <= yr <= (target_year + current_w):
+                            window_embeddings.append(emb)
+                            
+            if len(window_embeddings) < 5:
+                window_embeddings = [emb for emb, _ in items]
+                
+            if not window_embeddings:
+                centroid = None
+            else:
+                centroid = np.mean(window_embeddings, axis=0)
+                norm = np.linalg.norm(centroid)
+                if norm > 0:
+                    centroid /= norm
+                    
+            final_era_centroid_cache[cache_key] = centroid
+            return centroid
 
         face_updates = []
         resolved_stats = {}
@@ -581,11 +711,14 @@ class FaceProcessor:
                 best_sim = -1.0
                 best_name = None
                 f_emb = np.array(face["embedding"])
-                for name, mean_emb in final_mean_embeddings.items():
-                    sim = np.dot(f_emb, mean_emb)
-                    if sim > best_sim:
-                        best_sim = sim
-                        best_name = name
+                target_yr = photo_years.get(face["photo_path"])
+                for name in final_resolved_by_name.keys():
+                    mean_emb = get_final_era_centroid(name, target_yr)
+                    if mean_emb is not None:
+                        sim = np.dot(f_emb, mean_emb)
+                        if sim > best_sim:
+                            best_sim = sim
+                            best_name = name
                 
                 # Check parent photo metadata for people tags
                 p_path = face["photo_path"]

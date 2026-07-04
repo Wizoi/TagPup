@@ -10,7 +10,7 @@ import webbrowser
 import logging
 import platform
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 # Add scripts directory to path to locate server handlers
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
@@ -59,6 +59,9 @@ class RunnerApp:
 
         # Build UI layout
         self.setup_ui()
+
+        # Initialize Working Database Selector
+        self.refresh_database_list()
 
         # Set up standard logging redirect
         self.setup_logging()
@@ -202,6 +205,34 @@ class RunnerApp:
             command=self.update_suggestions_path
         )
         chk_test.pack(anchor="w", pady=5)
+
+        db_frame = tk.Frame(p_global, bg=self.BG_PANEL)
+        db_frame.pack(anchor="w", fill="x", pady=5)
+        
+        lbl_db = tk.Label(
+            db_frame, 
+            text="Working Database:", 
+            bg=self.BG_PANEL, 
+            fg=self.FG_MAIN,
+            font=self.FONT_MAIN
+        )
+        lbl_db.pack(side="left", padx=(0, 5))
+        
+        self.combo_db = ttk.Combobox(db_frame, state="readonly", width=30)
+        self.combo_db.pack(side="left", padx=5)
+        self.combo_db.bind("<<ComboboxSelected>>", self.on_database_selected)
+        
+        btn_refresh = tk.Button(
+            db_frame,
+            text="🔄",
+            bg="#3c3c3c",
+            fg="white",
+            relief=tk.FLAT,
+            bd=0,
+            padx=5,
+            command=self.refresh_database_list
+        )
+        btn_refresh.pack(side="left", padx=5)
 
         # 2. TagTuner Server Panel
         p_tuner_server = self.create_panel("1. TagTuner Web Server Control (Face Matching)")
@@ -606,6 +637,110 @@ class RunnerApp:
             self.ent_suggest_file.insert(0, "test_suggestions.json")
         else:
             self.ent_suggest_file.insert(0, "suggestions.json")
+        self.sync_test_mode_db()
+        self.refresh_database_list()
+
+    def sync_test_mode_db(self):
+        import configparser
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
+        config = configparser.ConfigParser(interpolation=None)
+        if os.path.exists(config_path):
+            config.read(config_path, encoding='utf-8')
+        default_db = config.get("paths", "default_db", fallback="photo_index.db")
+        if self.var_test_db.get():
+            if not default_db.startswith("test_"):
+                default_db = "test_" + default_db
+        else:
+            if default_db.startswith("test_"):
+                default_db = default_db[5:]
+        if not config.has_section("paths"):
+            config.add_section("paths")
+        config.set("paths", "default_db", default_db)
+        with open(config_path, "w", encoding="utf-8") as f:
+            config.write(f)
+
+    def refresh_database_list(self):
+        import configparser
+        config = configparser.ConfigParser(interpolation=None)
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
+        if os.path.exists(config_path):
+            config.read(config_path, encoding='utf-8')
+        data_dir = config.get("paths", "data_dir", fallback="data")
+        default_db = config.get("paths", "default_db", fallback="photo_index.db")
+        
+        if not os.path.isabs(data_dir):
+            data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), data_dir)
+            
+        test_mode = self.var_test_db.get()
+        
+        EXCLUDED_DBS = {
+            "validation_index.db",
+            "validation_perf.db",
+            "multiple_db_startup.db",
+            "tag_emb_cache.db"
+        }
+        
+        databases = []
+        if os.path.exists(data_dir):
+            for file in os.listdir(data_dir):
+                if file.endswith(".db"):
+                    if file in EXCLUDED_DBS or file.startswith("test_tag_emb_cache.db"):
+                        continue
+                    
+                    if test_mode:
+                        if file.startswith("test_"):
+                            clean_name = file[5:]
+                            if clean_name in EXCLUDED_DBS:
+                                continue
+                            db_base = os.path.splitext(clean_name)[0]
+                            if db_base not in databases:
+                                databases.append(db_base)
+                    else:
+                        if not file.startswith("test_"):
+                            db_base = os.path.splitext(file)[0]
+                            if db_base not in databases:
+                                databases.append(db_base)
+                                
+        if not databases:
+            databases = ["photo_index"]
+            
+        # Sort and update combobox
+        databases = sorted(databases)
+        self.combo_db["values"] = databases
+        
+        # Determine currently selected
+        clean_default_db = os.path.splitext(default_db)[0]
+        if clean_default_db.startswith("test_"):
+            clean_default_db = clean_default_db[5:]
+            
+        if clean_default_db in databases:
+            self.combo_db.set(clean_default_db)
+        elif databases:
+            self.combo_db.set(databases[0])
+
+    def on_database_selected(self, event=None):
+        selected_name = self.combo_db.get()
+        if not selected_name:
+            return
+            
+        # Determine actual file name based on test mode
+        test_mode = self.var_test_db.get()
+        db_name = (("test_" if test_mode else "") + selected_name + ".db")
+        
+        # Save to config.ini
+        import configparser
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
+        config = configparser.ConfigParser(interpolation=None)
+        if os.path.exists(config_path):
+            config.read(config_path, encoding='utf-8')
+            
+        if not config.has_section("paths"):
+            config.add_section("paths")
+        config.set("paths", "default_db", db_name)
+        with open(config_path, "w", encoding="utf-8") as f:
+            config.write(f)
+            
+        self.log_text(f"Switched working database to: {db_name}\n", tag="info")
 
     def browse_directory(self, entry_widget):
         selected_dir = filedialog.askdirectory(initialdir=os.getcwd())
@@ -658,7 +793,7 @@ class RunnerApp:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.PIPE,
-                    bufsize=1,
+                    bufsize=-1,
                     creationflags=creationflags
                 )
 
@@ -1000,6 +1135,11 @@ class RunnerApp:
         cmd = [sys.executable, "tagpup_cli.py"]
         if self.var_test_db.get():
             cmd.append("--test")
+        db_val = self.combo_db.get()
+        if db_val:
+            db_name = ("test_" if self.var_test_db.get() else "") + db_val + ".db"
+            cmd.extend(["--db", db_name])
+            
         cmd.extend(["index", directory])
 
         if self.var_reset_index.get():
@@ -1023,6 +1163,11 @@ class RunnerApp:
         cmd = [sys.executable, "tagpup_cli.py"]
         if self.var_test_db.get():
             cmd.append("--test")
+        db_val = self.combo_db.get()
+        if db_val:
+            db_name = ("test_" if self.var_test_db.get() else "") + db_val + ".db"
+            cmd.extend(["--db", db_name])
+            
         cmd.extend(["index-faces", directory])
 
         self.execute_command(cmd)
@@ -1031,6 +1176,11 @@ class RunnerApp:
         cmd = [sys.executable, "tagpup_cli.py"]
         if self.var_test_db.get():
             cmd.append("--test")
+        db_val = self.combo_db.get()
+        if db_val:
+            db_name = ("test_" if self.var_test_db.get() else "") + db_val + ".db"
+            cmd.extend(["--db", db_name])
+            
         cmd.append("cluster-faces")
 
         if self.var_reset_cluster.get():
@@ -1063,6 +1213,11 @@ class RunnerApp:
         cmd = [sys.executable, "tagpup_cli.py"]
         if self.var_test_db.get():
             cmd.append("--test")
+        db_val = self.combo_db.get()
+        if db_val:
+            db_name = ("test_" if self.var_test_db.get() else "") + db_val + ".db"
+            cmd.extend(["--db", db_name])
+            
         cmd.extend(["suggest", directory, "--output", output_file])
 
         # Add parameters

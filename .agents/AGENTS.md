@@ -6,3 +6,7 @@ To prevent common errors, redundant operations, and improve execution speed, ple
 2. **Double-Check Line Ranges**: Always view exact line slices before editing with `replace_file_content` to match leading whitespaces perfectly.
 3. **Windows File Paths**: Standardize path strings with forward slashes `/` in ripgrep searches, and handle casing and backslash normalization (`replace(/\\/g, '/').toLowerCase()`) when comparing database path keys on Windows.
 4. **Taxonomy & Face Propagation**: Subnodes created under face-matching root categories (`People/`, `Pets/`, etc.) must have their `has_face` set to `1` in the database to be correctly processed by face clustering.
+5. **Null & Type Safety in Comparisons**: Database/metadata values can return string placeholders like `"Unknown"`. Always check types and cast safely before making numerical comparisons (`<`, `<=`). Validate lengths of structural lists (e.g. bounding boxes) before indexing to avoid `IndexError`.
+6. **No ArtifactMetadata on Repository Files**: Do not supply `ArtifactMetadata` when editing files outside the brain artifacts directory.
+7. **Reusing SQLite Connections**: To avoid 'database is locked' errors, any shared metadata parsing functions (like `extract_people` or `get_people_roots`) that query database tables must accept an optional connection (`conn`) parameter to reuse active connections when executed inside transaction blocks.
+
