@@ -3077,7 +3077,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             
             # Update SQLite database
             from metadata import extract_people
-            people_list = extract_people(params, tags)
+            people_list = extract_people(params, tags, db_path=self.db_path)
             
             if new_path != photo_path:
                 conn = sqlite3.connect(self.db_path, timeout=30.0)
@@ -3118,7 +3118,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     photo_entry["tags"] = extract_tags(photo_entry["raw_metadata"])
                     photo_entry["captions"] = [title] if title else []
                     photo_entry["title"] = title
-                    photo_entry["people"] = extract_people(photo_entry["raw_metadata"], tags)
+                    photo_entry["people"] = extract_people(photo_entry["raw_metadata"], tags, db_path=self.db_path)
                     
             self.send_json({"success": True, "new_path": new_path})
         except Exception as e:
@@ -3192,7 +3192,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     
                     if photo_entry:
                         photo_entry["tags"] = new_tags
-                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags)
+                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags, db_path=self.db_path)
                         
             self.send_json({"success": True})
         except Exception as e:
@@ -3271,7 +3271,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     
                     if photo_entry:
                         photo_entry["tags"] = new_tags
-                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags)
+                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags, db_path=self.db_path)
                             
             self.send_json({"success": True})
         except Exception as e:

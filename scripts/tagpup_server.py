@@ -1698,7 +1698,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     photo_entry["captions"] = [title] if title else []
                     photo_entry["title"] = title
                     from metadata import extract_people
-                    photo_entry["people"] = extract_people(photo_entry["raw_metadata"], tags)
+                    photo_entry["people"] = extract_people(photo_entry["raw_metadata"], tags, db_path=self.db_path)
                     
             self.send_json({"success": True, "new_path": new_path})
         except Exception as e:
@@ -1751,7 +1751,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
                     if photo_entry:
                         photo_entry["tags"] = new_tags
-                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags)
+                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags, db_path=self.db_path)
                         
             self.send_json({"success": True})
         except Exception as e:
@@ -1815,7 +1815,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
                     if photo_entry:
                         photo_entry["tags"] = new_tags
-                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags)
+                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags, db_path=self.db_path)
                             
             self.send_json({"success": True})
         except Exception as e:

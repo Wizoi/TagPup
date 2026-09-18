@@ -177,14 +177,19 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
                 for tag in tags:
                     norm = tag.replace("\\", "/").strip()
                     for db_tag, db_name in people_tags:
+                        # A face ROOT (People, Family, Pets, ...) is a category, not a person,
+                        # so a photo tagged plainly "Family" must not gain a name.
+                        if db_name and db_name.lower() in people_roots and "/" not in db_tag:
+                            continue
                         if norm.lower() == db_tag.lower() or norm.lower() == db_name.lower():
                             people.append(db_name)
                             break
         except Exception as e:
             logger.warning(f"Error resolving people from database taxonomy: {e}")
     else:
-        if not db_path:
-            db_path = "data/photo_index.db"
+        # No implicit fallback to a hard-coded database: silently resolving people
+        # against the default library would apply one database's taxonomy to another.
+        # Callers that need taxonomy resolution pass db_path or an open connection.
         if db_path and os.path.exists(db_path):
             try:
                 import sqlite3
@@ -197,6 +202,10 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
                     for tag in tags:
                         norm = tag.replace("\\", "/").strip()
                         for db_tag, db_name in people_tags:
+                            # A face ROOT (People, Family, Pets, ...) is a category, not a person,
+                            # so a photo tagged plainly "Family" must not gain a name.
+                            if db_name and db_name.lower() in people_roots and "/" not in db_tag:
+                                continue
                             if norm.lower() == db_tag.lower() or norm.lower() == db_name.lower():
                                 people.append(db_name)
                                 break
