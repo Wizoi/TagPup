@@ -222,53 +222,56 @@ class TestStrictTagEnforcement(FaceClusteringTestBase):
 
 
 class TestSameNameConflictInOnePhoto(FaceClusteringTestBase):
-    """The iterative loop clears same-name conflicts; the final pass can reinstate them."""
+    """One person cannot appear twice in a photo, at any stage of resolution."""
 
-    def test_the_iterative_loop_clears_a_duplicate_name(self):
+    def test_a_name_is_never_assigned_to_two_faces_of_one_photo(self):
         jane = identity_vector(1)
         anchor_photo = self.add_photo("anchor.jpg", people=["Jane Doe"])
         self.add_face(anchor_photo, jane)
 
-        conflict_photo = self.add_photo("conflict.jpg", people=["Jane Doe"])
-        face_a = self.add_face(conflict_photo, near(jane, 5), box=(0, 0, 100, 100))
-        face_b = self.add_face(conflict_photo, near(jane, 6), box=(200, 0, 300, 100))
-
-        self.resolve()
-        methods = {self.traces()[f]["resolution_method"] for f in (face_a, face_b)}
-        # One face keeps its propagated name; the other was cleared by the conflict
-        # rule and then re-matched by the final high-confidence pass.
-        self.assertTrue(
-            any(m.startswith("final_matching_tagged_photo") for m in methods),
-            f"expected the final pass to re-match a cleared face, got {methods}",
-        )
-
-    def test_known_inconsistency_the_final_pass_can_duplicate_a_name(self):
-        """Pins a real inconsistency in the resolution pipeline.
-
-        The iterative loop refuses to assign one name to two faces of the same photo,
-        because a person cannot appear twice. The final matching pass (step 4) then
-        re-examines every still-unresolved face and assigns the closest name that
-        appears in the photo's tags, without checking whether another face in that
-        same photo already holds it -- so the conflict the loop just resolved comes
-        back. TagTuner's manual /api/face/match guards against exactly this.
-
-        If the final pass learns to skip names already taken within a photo, this
-        test should fail and be replaced by one asserting at most one face per name.
-        """
-        jane = identity_vector(1)
-        anchor_photo = self.add_photo("anchor.jpg", people=["Jane Doe"])
-        self.add_face(anchor_photo, jane)
-
+        # Two near-identical faces in a photo tagged only with Jane. The iterative
+        # loop clears both; the final pass may re-match at most one of them.
         conflict_photo = self.add_photo("conflict.jpg", people=["Jane Doe"])
         face_a = self.add_face(conflict_photo, near(jane, 5), box=(0, 0, 100, 100))
         face_b = self.add_face(conflict_photo, near(jane, 6), box=(200, 0, 300, 100))
 
         self.resolve()
         named = [f for f in (face_a, face_b) if self.name_of(f) == "Jane Doe"]
-        self.assertEqual(
-            len(named), 2,
-            "the duplicate-name inconsistency appears to be fixed -- update this test",
+        self.assertLessEqual(
+            len(named), 1, "the same person was assigned to two faces in one photo"
         )
+
+    def test_the_second_face_is_left_unresolved_rather_than_mislabelled(self):
+        """Losing the contest must mean no name, not someone else's name."""
+        jane = identity_vector(1)
+        anchor_photo = self.add_photo("anchor.jpg", people=["Jane Doe"])
+        self.add_face(anchor_photo, jane)
+
+        conflict_photo = self.add_photo("conflict.jpg", people=["Jane Doe"])
+        face_a = self.add_face(conflict_photo, near(jane, 5), box=(0, 0, 100, 100))
+        face_b = self.add_face(conflict_photo, near(jane, 6), box=(200, 0, 300, 100))
+
+        self.resolve()
+        names = {self.name_of(face_a), self.name_of(face_b)}
+        self.assertTrue(
+            names <= {"Jane Doe", None},
+            f"a face was given an unrelated identity: {names}",
+        )
+
+    def test_a_genuine_second_person_still_gets_their_own_name(self):
+        """The guard must not starve a photo that really does contain two people."""
+        jane, bob = identity_vector(1), identity_vector(2)
+
+        self.add_face(self.add_photo("jane.jpg", people=["Jane Doe"]), jane)
+        self.add_face(self.add_photo("bob.jpg", people=["Bob Roe"]), bob)
+
+        pair = self.add_photo("pair.jpg", people=["Jane Doe", "Bob Roe"])
+        jane_face = self.add_face(pair, near(jane, 21), box=(0, 0, 200, 200))
+        bob_face = self.add_face(pair, near(bob, 22), box=(300, 0, 500, 200))
+
+        self.resolve()
+        self.assertEqual(self.name_of(jane_face), "Jane Doe")
+        self.assertEqual(self.name_of(bob_face), "Bob Roe")
 
 
 class TestBackgroundFaceFiltering(FaceClusteringTestBase):
@@ -294,19 +297,19 @@ class TestBackgroundFaceFiltering(FaceClusteringTestBase):
         )
 
     def test_a_tiny_face_can_still_be_matched_with_high_confidence(self):
-        """Documents the counterpart: the final pass ignores the size filter.
+        """The counterpart: the final pass ignores the size filter.
 
-        A small face that is both visually confident (>= 0.80) and confirmed by the
-        photo's own tags is still named, which is the desired outcome for someone
-        genuinely small in frame.
+        A small face that is visually confident (>= 0.80), confirmed by the photo's
+        own tags, and whose name is not already taken by another face is still named
+        -- the desired outcome for someone genuinely small in frame.
         """
-        jane = identity_vector(1)
-        anchor_photo = self.add_photo("anchor.jpg", people=["Jane Doe"])
-        self.add_face(anchor_photo, jane)
+        jane, bob = identity_vector(1), identity_vector(2)
+        self.add_face(self.add_photo("jane.jpg", people=["Jane Doe"]), jane)
+        self.add_face(self.add_photo("bob.jpg", people=["Bob Roe"]), bob)
 
-        photo = self.add_photo("crowd.jpg", people=["Jane Doe"])
-        self.add_face(photo, near(jane, 7), box=(0, 0, 400, 400))
-        tiny = self.add_face(photo, near(jane, 8), box=(0, 0, 20, 20))
+        photo = self.add_photo("crowd.jpg", people=["Jane Doe", "Bob Roe"])
+        self.add_face(photo, near(bob, 7), box=(0, 0, 400, 400))     # Bob, prominent
+        tiny = self.add_face(photo, near(jane, 8), box=(0, 0, 20, 20))  # Jane, distant
 
         self.resolve()
         self.assertEqual(self.name_of(tiny), "Jane Doe")

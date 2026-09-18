@@ -703,33 +703,49 @@ class FaceProcessor:
 
         face_updates = []
         resolved_stats = {}
+
+        # Names already spoken for in each photo. The iterative loop refuses to put one
+        # person on two faces of the same photo; without tracking that here, this final
+        # pass would hand the same name straight back to the face the loop just cleared.
+        assigned_names_by_photo = {}
+        for face in all_faces:
+            name = refined_resolved_names.get(face["id"])
+            if name:
+                assigned_names_by_photo.setdefault(face["photo_path"], set()).add(name)
+
         for face in all_faces:
             final_name = refined_resolved_names.get(face["id"])
-            
+
             if final_name is None:
-                # If unresolved, check similarity to all known resolved people
+                p_path = face["photo_path"]
+                names_taken_here = assigned_names_by_photo.setdefault(p_path, set())
+
+                # If unresolved, check similarity to all known resolved people, skipping
+                # anyone already matched to another face in this same photo.
                 best_sim = -1.0
                 best_name = None
                 f_emb = np.array(face["embedding"])
                 target_yr = photo_years.get(face["photo_path"])
                 for name in final_resolved_by_name.keys():
+                    if name in names_taken_here:
+                        continue
                     mean_emb = get_final_era_centroid(name, target_yr)
                     if mean_emb is not None:
                         sim = np.dot(f_emb, mean_emb)
                         if sim > best_sim:
                             best_sim = sim
                             best_name = name
-                
+
                 # Check parent photo metadata for people tags
-                p_path = face["photo_path"]
                 meta = meta_by_path.get(p_path)
                 photo_tags = set(meta.get("people", [])) if meta else set()
-                
+
                 if photo_tags:
                     # Photo is tagged with people. We only match if the best matching name is in those tags.
                     # Since we have confirmation via tags, we use a high confidence threshold (>= 0.80) to prevent false assignments in multi-face photos
                     if best_name in photo_tags and best_sim >= 0.80:
                         final_name = best_name
+                        names_taken_here.add(final_name)
                         traces[face["id"]] = {
                             "face_id": face["id"],
                             "photo_path": p_path,
