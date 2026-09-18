@@ -27,6 +27,74 @@ def to_db_path(path):
         return ""
     return os.path.abspath(path).replace("\\", "/")
 
+def expand_tag_fields(tags):
+    """Split a tag list into the flat and hierarchical keyword forms written to files."""
+    flat, hierarchical = [], []
+    for tag in tags:
+        flat.append(tag)
+        if "/" in tag:
+            hierarchical.append(tag)
+            for part in tag.split("/"):
+                flat.append(part)
+    return list(set(flat)), list(set(hierarchical))
+
+def write_keyword_fields(et, path, tags, extra_params=None):
+    """Write `tags` into a photo's keyword fields, clearing fields that end up empty.
+
+    ExifTool treats an empty list as "no change", so assigning [] silently leaves the
+    old keywords in place. Removing a photo's last tag therefore has to be expressed as
+    an explicit '-TAG=' deletion instead.
+    """
+    flat, hierarchical = expand_tag_fields(tags)
+
+    params = dict(extra_params or {})
+    clear_args = []
+
+    if flat:
+        params["XMP:Subject"] = flat
+        params["IPTC:Keywords"] = flat
+        params["EXIF:XPKeywords"] = ";".join(flat)
+    else:
+        params["EXIF:XPKeywords"] = ""
+        clear_args.extend(["-XMP:Subject=", "-IPTC:Keywords="])
+
+    if hierarchical:
+        params["XMP:HierarchicalSubject"] = hierarchical
+    else:
+        clear_args.append("-XMP:HierarchicalSubject=")
+
+    if params:
+        et.set_tags([path], tags=params, params=["-overwrite_original"])
+    if clear_args:
+        et.execute(*clear_args, "-overwrite_original", path)
+
+    return flat, hierarchical
+
+def indexed_tags_for_photo(db_path, photo_path):
+    """Tags recorded for a photo in the index, used when the folder cache is cold.
+
+    Bulk writes overwrite a photo's whole keyword set, so starting from an empty list
+    because nothing was cached would erase tags the photo already carries.
+    """
+    try:
+        conn = sqlite3.connect(db_path, timeout=10.0)
+        try:
+            row = conn.execute(
+                "SELECT tags FROM photos WHERE LOWER(path) = LOWER(?)",
+                (to_db_path(photo_path),),
+            ).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT tags FROM photos WHERE LOWER(path) = LOWER(?)", (photo_path,)
+                ).fetchone()
+        finally:
+            conn.close()
+        if row and row[0]:
+            return json.loads(row[0])
+    except Exception as e:
+        logger.warning(f"Could not read indexed tags for {photo_path}: {e}")
+    return []
+
 def send_to_recycle_bin(file_path):
     import ctypes
     from ctypes import wintypes
@@ -691,13 +759,20 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
     @classmethod
     def run_folder_index_thread(cls, folder_path, db_path):
+        # Restore the active database in this worker thread. The thread-local set during the
+        # request does not carry over, and the class-level fallback points at the startup
+        # database, which would resolve the isolated registries to the wrong database.
+        set_active_db_path(db_path)
         folder_path_norm = normalize_path(folder_path)
-        status_dict = cls.index_status[folder_path_norm]
+        status_dict = cls.index_status.get(folder_path_norm)
+        if status_dict is None:
+            status_dict = {"status": "running", "percent": 0, "message": "Starting indexing..."}
+            cls.index_status[folder_path_norm] = status_dict
         try:
             import sys
             import subprocess
             import re
-            
+
             cmd = [sys.executable, "tagpup_cli.py", "index", folder_path]
             env = os.environ.copy()
             env["TAGPUP_DB_PATH"] = db_path
@@ -750,6 +825,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 status_dict["message"] = f"Indexing failed with exit code {proc.returncode}."
                 status_dict["percent"] = 0
         except Exception as e:
+            logger.exception(f"Error running folder index thread for {folder_path}: {e}")
             status_dict["status"] = "failed"
             status_dict["message"] = f"Error: {e}"
             status_dict["percent"] = 0
@@ -1093,9 +1169,18 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         
         self.send_json({"success": True, "status": "running"})
 
+    @staticmethod
+    def _suggestions_cache_path(db_path):
+        """Resolve the per-database suggestions cache file (matches tuner_server naming)."""
+        db_basename = os.path.splitext(os.path.basename(db_path))[0]
+        if db_basename == "photo_index":
+            return os.path.join(os.path.dirname(db_path), "gui_suggestions_cache.json")
+        return os.path.join(os.path.dirname(db_path), f"gui_suggestions_cache_{db_basename}.json")
+
     @classmethod
     def load_suggestions_cache(cls, db_path):
-        cache_path = os.path.join(os.path.dirname(db_path), "gui_suggestions_cache.json")
+        set_active_db_path(db_path)
+        cache_path = cls._suggestions_cache_path(db_path)
         if os.path.exists(cache_path):
             try:
                 import json
@@ -1113,7 +1198,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
     @classmethod
     def save_suggestions_cache(cls, db_path):
-        cache_path = os.path.join(os.path.dirname(db_path), "gui_suggestions_cache.json")
+        set_active_db_path(db_path)
+        cache_path = cls._suggestions_cache_path(db_path)
         try:
             import json
             with cls.model_lock:
@@ -1167,6 +1253,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
     @classmethod
     def run_folder_suggestions_thread(cls, folder_path, db_path):
+        # Restore the active database in this worker thread (see run_folder_index_thread).
+        set_active_db_path(db_path)
         folder_path = os.path.abspath(folder_path)
         folder_path_norm = normalize_path(folder_path)
         try:
@@ -1182,11 +1270,19 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 
             if not photos_dict:
                 logger.warning(f"No photos found in {folder_path} after scan. Returning early.")
-                if folder_path_norm in cls.suggest_status:
-                    cls.suggest_status[folder_path_norm]["status"] = "error"
+                entry = cls.suggest_status.get(folder_path_norm) or {
+                    "completed": 0, "total": 0, "suggestions": {}
+                }
+                entry["status"] = "error"
+                entry["message"] = "No images found in this folder."
+                cls.suggest_status[folder_path_norm] = entry
                 return
                 
             photo_paths = list(photos_dict.keys())
+            if folder_path_norm not in cls.suggest_status:
+                cls.suggest_status[folder_path_norm] = {
+                    "status": "preparing", "completed": 0, "total": 0, "suggestions": {}
+                }
             existing_suggs = cls.suggest_status[folder_path_norm].get("suggestions", {})
             unprocessed_paths = [p for p in photo_paths if photos_dict[p]["path"] not in existing_suggs]
             
@@ -1258,6 +1354,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             suggestions_list = []
             
             def process_single_photo(path):
+                # Pool threads are separate threads again, so re-bind the active database.
+                set_active_db_path(db_path)
                 if folder_path_norm not in cls.suggest_status:
                     return None
                 try:
@@ -1347,10 +1445,16 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             cls.suggest_status[folder_path_norm]["status"] = "completed"
             cls.save_suggestions_cache(db_path)
         except Exception as e:
-            logger.error(f"Error running suggestions thread: {e}")
-            if folder_path_norm in cls.suggest_status:
-                cls.suggest_status[folder_path_norm]["status"] = "error"
-                cls.save_suggestions_cache(db_path)
+            logger.exception(f"Error running suggestions thread for {folder_path}: {e}")
+            # Always surface the failure, even if the status entry is missing, so the UI
+            # stops polling instead of spinning on "preparing" forever.
+            entry = cls.suggest_status.get(folder_path_norm) or {
+                "completed": 0, "total": 0, "suggestions": {}
+            }
+            entry["status"] = "error"
+            entry["message"] = str(e)
+            cls.suggest_status[folder_path_norm] = entry
+            cls.save_suggestions_cache(db_path)
 
     def handle_post_photo_open_explorer(self):
         try:
@@ -1382,11 +1486,17 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             
         photo_path = data.get("path")
         direction = data.get("direction")
-        
+
         if not photo_path or not os.path.exists(photo_path):
             self.send_json_error(400, "Invalid file path")
             return
-            
+
+        # Rotation re-encodes the image, so reject anything but an explicit direction
+        # rather than silently treating an unrecognised value as a right turn.
+        if direction not in ("left", "right"):
+            self.send_json_error(400, "Direction must be 'left' or 'right'")
+            return
+
         try:
             from metadata import rotate_image_file
             executable = self.get_exiftool_path()
@@ -1467,33 +1577,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             return
             
         try:
-            new_flat_tags = []
-            new_hierarchical_tags = []
-            for tag in tags:
-                new_flat_tags.append(tag)
-                if "/" in tag:
-                    new_hierarchical_tags.append(tag)
-                    for part in tag.split("/"):
-                        new_flat_tags.append(part)
-            
-            new_flat_tags = list(set(new_flat_tags))
-            new_hierarchical_tags = list(set(new_hierarchical_tags))
-            
+            new_flat_tags, new_hierarchical_tags = expand_tag_fields(tags)
+
             params = {}
-            if new_flat_tags:
-                params["XMP:Subject"] = new_flat_tags
-                params["IPTC:Keywords"] = new_flat_tags
-                params["EXIF:XPKeywords"] = ";".join(new_flat_tags)
-            else:
-                params["XMP:Subject"] = []
-                params["IPTC:Keywords"] = []
-                params["EXIF:XPKeywords"] = ""
-                
-            if new_hierarchical_tags:
-                params["XMP:HierarchicalSubject"] = new_hierarchical_tags
-            else:
-                params["XMP:HierarchicalSubject"] = []
-                
             if title:
                 params["XMP:Description"] = title
                 params["IPTC:Caption-Abstract"] = title
@@ -1530,7 +1616,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             executable = self.get_exiftool_path()
             import exiftool
             with exiftool.ExifToolHelper(executable=executable) as et:
-                et.set_tags([photo_path], tags=params, params=["-overwrite_original"])
+                write_keyword_fields(et, photo_path, tags, extra_params=params)
                 
             from metadata import sync_title_to_filename, METADATA_FIELDS
             new_path = sync_title_to_filename(photo_path, title, executable)
@@ -1646,44 +1732,23 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     if folder_path in TagPupHTTPRequestHandler.folder_cache:
                         photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(normalize_path(path))
                         
-                    current_tags = photo_entry["tags"] if photo_entry else []
+                    # This write replaces the photo's whole keyword set, so fall back to
+                    # the indexed tags when the folder was never scanned in this session.
+                    if photo_entry:
+                        current_tags = photo_entry["tags"]
+                    else:
+                        current_tags = indexed_tags_for_photo(self.db_path, path)
+
                     new_tags_set = set(current_tags)
                     for t in add_tags:
                         new_tags_set.add(t)
                     for t in remove_tags:
                         new_tags_set.discard(t)
-                        
+
                     new_tags = list(new_tags_set)
-                    
-                    new_flat_tags = []
-                    new_hierarchical_tags = []
-                    for tag in new_tags:
-                        new_flat_tags.append(tag)
-                        if "/" in tag:
-                            new_hierarchical_tags.append(tag)
-                            for part in tag.split("/"):
-                                new_flat_tags.append(part)
-                                
-                    new_flat_tags = list(set(new_flat_tags))
-                    new_hierarchical_tags = list(set(new_hierarchical_tags))
-                    
-                    params = {}
-                    if new_flat_tags:
-                        params["XMP:Subject"] = new_flat_tags
-                        params["IPTC:Keywords"] = new_flat_tags
-                        params["EXIF:XPKeywords"] = ";".join(new_flat_tags)
-                    else:
-                        params["XMP:Subject"] = []
-                        params["IPTC:Keywords"] = []
-                        params["EXIF:XPKeywords"] = ""
-                        
-                    if new_hierarchical_tags:
-                        params["XMP:HierarchicalSubject"] = new_hierarchical_tags
-                    else:
-                        params["XMP:HierarchicalSubject"] = []
-                        
-                    et.set_tags([path], tags=params, params=["-overwrite_original"])
-                    
+
+                    write_keyword_fields(et, path, new_tags)
+
                     if photo_entry:
                         photo_entry["tags"] = new_tags
                         photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags)
@@ -1733,43 +1798,21 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     if not apply_tags:
                         continue
                         
-                    folder_path_dir = os.path.dirname(path)
+                    # The folder cache is keyed by normalize_path; an un-normalized key
+                    # never matches on Windows and silently loses the existing tags.
+                    folder_path_dir = normalize_path(os.path.dirname(path))
                     photo_entry = None
                     if folder_path_dir in TagPupHTTPRequestHandler.folder_cache:
-                        photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path_dir].get(path)
-                        
-                    current_tags = photo_entry["tags"] if photo_entry else []
+                        photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path_dir].get(normalize_path(path))
+
+                    if photo_entry:
+                        current_tags = photo_entry["tags"]
+                    else:
+                        current_tags = indexed_tags_for_photo(self.db_path, path)
                     new_tags = list(set(current_tags + apply_tags))
-                    
-                    new_flat_tags = []
-                    new_hierarchical_tags = []
-                    for tag in new_tags:
-                        new_flat_tags.append(tag)
-                        if "/" in tag:
-                            new_hierarchical_tags.append(tag)
-                            for part in tag.split("/"):
-                                new_flat_tags.append(part)
-                                
-                    new_flat_tags = list(set(new_flat_tags))
-                    new_hierarchical_tags = list(set(new_hierarchical_tags))
-                    
-                    params = {}
-                    if new_flat_tags:
-                        params["XMP:Subject"] = new_flat_tags
-                        params["IPTC:Keywords"] = new_flat_tags
-                        params["EXIF:XPKeywords"] = ";".join(new_flat_tags)
-                    else:
-                        params["XMP:Subject"] = []
-                        params["IPTC:Keywords"] = []
-                        params["EXIF:XPKeywords"] = ""
-                        
-                    if new_hierarchical_tags:
-                        params["XMP:HierarchicalSubject"] = new_hierarchical_tags
-                    else:
-                        params["XMP:HierarchicalSubject"] = []
-                        
-                    et.set_tags([path], tags=params, params=["-overwrite_original"])
-                    
+
+                    write_keyword_fields(et, path, new_tags)
+
                     if photo_entry:
                         photo_entry["tags"] = new_tags
                         photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags)
@@ -2711,36 +2754,9 @@ def update_photo_metadata_tags(db_path: str, exiftool_path: str, photo_paths: Li
                 if not changed:
                     continue
                     
-                new_flat_tags = []
-                new_hierarchical_tags = []
-                for tag in new_tags:
-                    new_flat_tags.append(tag)
-                    if "/" in tag:
-                        new_hierarchical_tags.append(tag)
-                        for part in tag.split("/"):
-                            new_flat_tags.append(part)
-                            
-                new_flat_tags = list(set(new_flat_tags))
-                new_hierarchical_tags = list(set(new_hierarchical_tags))
-                
-                params = {}
-                if new_flat_tags:
-                    params["XMP:Subject"] = new_flat_tags
-                    params["IPTC:Keywords"] = new_flat_tags
-                    params["EXIF:XPKeywords"] = ";".join(new_flat_tags)
-                else:
-                    params["XMP:Subject"] = []
-                    params["IPTC:Keywords"] = []
-                    params["EXIF:XPKeywords"] = ""
-                    
-                if new_hierarchical_tags:
-                    params["XMP:HierarchicalSubject"] = new_hierarchical_tags
-                else:
-                    params["XMP:HierarchicalSubject"] = []
-                    
                 try:
-                    et.set_tags([path], tags=params, params=["-overwrite_original"])
-                    
+                    new_flat_tags, new_hierarchical_tags = write_keyword_fields(et, path, new_tags)
+
                     raw_meta["XMP:Subject"] = new_flat_tags
                     raw_meta["XMP:HierarchicalSubject"] = new_hierarchical_tags
                     

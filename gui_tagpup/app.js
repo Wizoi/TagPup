@@ -2098,13 +2098,18 @@ document.addEventListener('DOMContentLoaded', () => {
                         statusDot.className = 'status-indicator-dot';
                         statusText.textContent = 'Ready';
                     }
-                    else if (data.status === 'error' || data.status === 'not_started') {
+                    else {
+                        // 'idle' (never run), 'not_started', 'error', or anything unexpected:
+                        // stop polling rather than spinning on a status we cannot advance.
                         clearInterval(progressTimer);
                         suggestProgressContainer.classList.add('hidden');
                         updateSuggestButtonState(data.status);
                         if (data.status === 'error') {
                             statusDot.className = 'status-indicator-dot';
                             statusText.textContent = 'Error';
+                            if (data.message) {
+                                console.error("Suggestions failed:", data.message);
+                            }
                         }
                     }
                 })
