@@ -43,22 +43,28 @@ This document records the design, specifications, prerequisites, and instruction
 ## Backend APIs
 
 ### `GET` Endpoints
+- `/api/databases`: Returns `{"databases": list, "selected": string}` — the selectable database names (without the `.db` suffix) and the current default from `config.ini`. Test databases and internal ones (validation, startup, embedding-cache) are excluded.
+- `/api/folder/index-status?path=<folder_path>`: Returns the status of the background folder indexing thread as `{"status": string, "percent": int, "message": string}`. Status values are `running`, `completed`, or `failed`; a folder that has never been indexed in this session reports `completed`.
 - `/api/browse-folder`: Invokes native folder dialog and returns selected path.
 - `/api/autocomplete-folder?path=<path_prefix>`: Returns autocomplete folder path suggestions based on Windows folder hierarchies.
 - `/api/folder/scan?path=<path>`: Scans folder and returns JSON array of photos.
-- `/api/folder/suggest-status?folder_path=<path>`: Returns the status, counts, and computed suggestions of the background tag suggest thread.
+- `/api/folder/suggest-status?path=<folder_path>`: Returns the status, counts, and computed suggestions of the background tag suggest thread. Status values are `idle`, `preparing`, `running`, `completed`, or `error`.
 - `/api/photo-file?path=<photo_path>`: Serves the photo image binary (supports resizing via `size` parameter).
 - `/api/tags`: Returns all autocomplete-visible tags.
 - `/api/people`: Returns all autocomplete-visible people names.
 - `/api/taxonomy/tree`: Returns the hierarchical tree nodes of tags with counts of photo usage and status attributes (`has_face`, `hidden_from_autocomplete`).
 
 ### `POST` Endpoints
+- `/api/databases/select`: Expects JSON body `{"db_name": string}`. Persists the chosen database as `default_db` in `config.ini`, changing which database every subsequent launch opens by default.
+- `/api/databases/create`: Expects JSON body `{"db_name": string}`. Creates a new empty database file, seeded with the default taxonomy categories.
 - `/api/folder/suggest-start`: Expects JSON body `{"folder_path": string}`. Starts the background tagging suggest thread for a folder.
-- `/api/photo/rotate`: Expects JSON body `{"photo_path": string, "direction": string}`. Rotates a photo's visual thumbnail or raw representation on disk.
-- `/api/photo/open-explorer`: Expects JSON body `{"photo_path": string}`. Opens the photo's directory in Windows File Explorer and selects it.
+- `/api/folder/index-start`: Expects JSON body `{"folder_path": string}`. Starts a background thread that runs `tagpup_cli.py index` over the folder and then `cluster-faces`, streaming progress to `/api/folder/index-status`. Only photos that already carry a tag, person, or caption are added to the index.
+- `/api/photo/delete`: Expects JSON body `{"path": string}`. Sends the photo to the Windows Recycle Bin and removes it from the index.
+- `/api/photo/rotate`: Expects JSON body `{"path": string, "direction": string}`. Rotates the photo 90 degrees on disk. `direction` must be `"left"` or `"right"`; any other value is rejected with `400`.
+- `/api/photo/open-explorer`: Expects JSON body `{"path": string}`. Opens the photo's directory in Windows File Explorer and selects it.
 - `/api/photo/save-metadata`: Saves caption, people, and tags metadata directly to the image file via ExifTool and syncs the DB.
 - `/api/photos/bulk-tags`: Adds or removes tags in bulk across a selection of photo paths.
-- `/api/folder/auto-apply`: Expects JSON body `{"folder_path": string, "suggestions": list, "min_score": float}`. Applies all suggestions in a folder above a minimum score threshold.
+- `/api/folder/auto-apply`: Expects JSON body `{"folder_path": string, "threshold": float, "photo_paths": list (optional)}`. Applies the folder's computed suggestions scoring at or above `threshold` (default `0.75`). Suggestions are read from the server's in-memory results for that folder, not sent in the request; omit `photo_paths` to apply across the whole folder. Returns `400` if no suggestions have been computed.
 - `/api/folder/time-shift`: Shifts timestamps recursively by camera model.
 - `/api/folder/rename-photos`: Expects JSON body `{"photo_paths": list, "grouping": string}`. Sequentially renames selected photos based on the custom pattern and grouping template.
 - `/api/taxonomy/create`: Expects JSON body `{"name": string, "parent_id": int, "has_face": int}`. Creates a new tag path.

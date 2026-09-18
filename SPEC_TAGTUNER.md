@@ -39,7 +39,7 @@ This document records the design, specifications, prerequisites, and instruction
 - **Default State**: Folders start collapsed by default on initial page load.
 - **Photo Sorting**: Inside each folder group, photos are sorted alphabetically ascending by filename.
 - **Arrow Key Navigation**: Users can navigate up/down through visible sidebar entries using the arrow keys.
-- **Matched Photos Toggle**: A toggle checkbox controls whether photos with zero unmatched faces are displayed in the list.
+- **Matched Photos Toggle**: A toggle checkbox in `folder-match` mode is intended to control whether photos with zero unmatched faces are displayed. **Known limitation:** the toggle is currently inert. It re-requests `/api/photos` with a `show_matched` parameter, but the endpoint ignores that parameter and its query excludes fully-matched photos unconditionally, so they are never returned to the client.
 
 ### 3. Detected Faces Grid Sorting
 - Inside the details panel, the detected faces grid is sorted with **already matched faces at the top**, followed by unmatched faces.
@@ -68,7 +68,8 @@ This document records the design, specifications, prerequisites, and instruction
 ## Backend APIs
 
 ### `GET` Endpoints
-- `/api/photos?mode=unmatched&show_matched=<bool>`: Returns JSON array of photo records with unmatched face counts, file metadata, and folder paths.
+- `/api/databases`: Returns `{"databases": list, "selected": string}` — the selectable database names (without the `.db` suffix) and the current default from `config.ini`.
+- `/api/photos?mode=<mode>`: Returns JSON array of photo records with unmatched face counts, file metadata, and folder paths. Only photos having at least one unmatched face are returned (`HAVING unmatched > 0`). The UI also appends `show_matched`, but the server does not currently read it — see the known limitation under *Matched Photos Toggle*.
 - `/api/photo-details?path=<photo_path>`: Returns metadata details (path, filename, caption, people, tags, faces list with `max_similarity` scores).
 - `/api/photo-file?path=<photo_path>`: Serves the original image file (supports dynamic resizing via `size=<int>` parameter).
 - `/api/face-crop?id=<face_id>`: Dynamically crops the face from the original photo and returns it as a JPEG (caches the JPEG crop binary in the database).
@@ -78,10 +79,13 @@ This document records the design, specifications, prerequisites, and instruction
 - `/api/face-matches?id=<face_id>`: Evaluates face similarity and returns the top 5 closest matched people.
 - `/api/face-matches-unmatched?id=<face_id>`: Returns other unmatched faces with cosine similarity $\ge 0.8$ for bulk profile creation.
 - `/api/unmatched-faces/people`: Returns unique names of people who have associated unmatched faces.
-- `/api/unmatched-faces/person-matches?id=<face_id>`: Evaluates face matches against people names.
+- `/api/unmatched-faces/person-matches?name=<person_name>`: Returns the unmatched faces that are candidates for the given person name, as `{"faces": list, "total_count": int, "has_more": bool}`.
 - `/api/browse-folder`: Invokes native folder dialog and returns selected path.
 
 ### `POST` Endpoints
+- `/api/databases/select`: Expects JSON body `{"db_name": string}`. Persists the chosen database as `default_db` in `config.ini`.
+- `/api/databases/create`: Expects JSON body `{"db_name": string}`. Creates a new empty database file, seeded with the default taxonomy categories.
+- `/api/photo/delete`: Expects JSON body `{"path": string}`. Sends the photo to the Windows Recycle Bin and removes it from the index.
 - `/api/face/match`: Expects JSON body `{"face_id": int, "person_name": string}`.
 - `/api/face/unmatch`: Expects JSON body `{"face_id": int}`.
 - `/api/faces/match-bulk`: Expects JSON body `{"face_ids": list, "person_name": string}`. Matches face IDs in bulk. Implements duplicate-tagging protection.
@@ -91,8 +95,8 @@ This document records the design, specifications, prerequisites, and instruction
 - `/api/photo/unmatch-all`: Expects JSON body `{"photo_path": string}`.
 - `/api/photo/automatch`: Expects JSON body `{"photo_path": string}`. For each unmatched face in the photo, finds the closest resolved face in the DB. If similarity > 0.8, assigns the name and appends it to the photo's `people` array.
 - `/api/folder/automatch`: Expects JSON body `{"folder_path": string}`. Automatches unmatched faces across all photos in the folder recursively.
-- `/api/photo/rotate`: Expects JSON body `{"photo_path": string, "direction": string}`. Rotates a photo's visual thumbnail or raw representation on disk.
-- `/api/photo/open-explorer`: Expects JSON body `{"photo_path": string}`. Opens the photo's directory in Windows File Explorer and selects it.
+- `/api/photo/rotate`: Expects JSON body `{"path": string, "direction": string}`. Rotates the photo 90 degrees on disk. `direction` must be `"left"` or `"right"`.
+- `/api/photo/open-explorer`: Expects JSON body `{"path": string}`. Opens the photo's directory in Windows File Explorer and selects it.
 - `/api/photo/save-metadata`: Saves caption, people, and tags metadata directly to the image file via ExifTool and syncs the DB.
 - `/api/photos/bulk-tags`: Adds or removes tags in bulk across a selection of photo paths.
 - `/api/folder/time-shift`: Shifts timestamps recursively by camera model.
