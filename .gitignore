@@ -15,3 +15,7 @@ suggestions.json
 
 # Server log files
 *.log
+
+# Frontend test tooling (dev only; the apps ship no JS dependencies)
+node_modules/
+package-lock.json
