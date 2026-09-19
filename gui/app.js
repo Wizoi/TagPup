@@ -1832,14 +1832,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 activeTab = 'high';
                 if (tabMatches && tabOutliers && tabLowConf) {
                     tabMatches.classList.add('active');
-                    tabMatches.textContent = 'High Confidence';
+                    tabMatches.textContent = 'Likely';
                     tabOutliers.classList.remove('active');
-                    tabOutliers.textContent = 'Lower Confidence';
+                    tabOutliers.textContent = 'Possible';
                     tabLowConf.classList.remove('active');
                     tabLowConf.classList.add('hidden');
                 }
                 if (inputReassignName) {
-                    if (name !== 'Unknown Faces') {
+                    if (name !== 'Unknown Faces' && name !== 'Ungrouped') {
                         inputReassignName.value = name;
                     } else {
                         inputReassignName.value = '';
@@ -1849,9 +1849,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 activeTab = 'matches';
                 if (tabMatches && tabOutliers) {
                     tabMatches.classList.add('active');
-                    tabMatches.textContent = 'Matches';
+                    tabMatches.textContent = 'Confirmed';
                     tabOutliers.classList.remove('active');
-                    tabOutliers.textContent = 'Outliers';
+                    tabOutliers.textContent = 'Needs Review';
                 }
                 if (tabLowConf) {
                     tabLowConf.classList.add('hidden');
@@ -1864,14 +1864,14 @@ document.addEventListener('DOMContentLoaded', () => {
             // Even if keeping the tab, make sure tab text/visibility is correct for the mode
             if (mode === 'unmatched-faces') {
                 if (tabMatches && tabOutliers && tabLowConf) {
-                    tabMatches.textContent = 'High Confidence';
-                    tabOutliers.textContent = 'Lower Confidence';
+                    tabMatches.textContent = 'Likely';
+                    tabOutliers.textContent = 'Possible';
                     tabLowConf.classList.add('hidden');
                 }
             } else {
                 if (tabMatches && tabOutliers) {
-                    tabMatches.textContent = 'Matches';
-                    tabOutliers.textContent = 'Outliers';
+                    tabMatches.textContent = 'Confirmed';
+                    tabOutliers.textContent = 'Needs Review';
                 }
                 if (tabLowConf) {
                     tabLowConf.classList.add('hidden');
@@ -1886,7 +1886,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 matchingStaticTitle.textContent = 'Unmatched Faces';
             }
             if (btnRenamePerson) btnRenamePerson.classList.add('hidden');
-        } else if (name === 'Unknown Faces') {
+        } else if (name === 'Unknown Faces' || name === 'Ungrouped') {
             if (matchingTabs) matchingTabs.classList.remove('hidden');
             if (matchingStaticTitle) matchingStaticTitle.classList.add('hidden');
             if (btnRenamePerson) btnRenamePerson.classList.add('hidden');

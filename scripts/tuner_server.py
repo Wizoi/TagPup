@@ -285,8 +285,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
     _db_folder_cache_registry = {}
     _db_suggest_status_registry = {}
     _db_suggest_threads_registry = {}
+    _db_identify_cache_registry = {}
 
     folder_cache = DatabaseIsolatedDict(_db_folder_cache_registry)
+    # Cache for the Identify Faces views. Clustering a person's unmatched candidates is
+    # expensive (tens of thousands of 512-dimensional vectors for a large library), and
+    # the answer only changes when faces are added or named, so it is cached against a
+    # cheap fingerprint of the faces table rather than recomputed per request.
+    identify_cache = DatabaseIsolatedDict(_db_identify_cache_registry)
     suggest_status = DatabaseIsolatedDict(_db_suggest_status_registry)
     suggest_threads = DatabaseIsolatedDict(_db_suggest_threads_registry)
 
@@ -2018,18 +2024,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     
             people_counts = [{"name": r[0], "count": r[1]} for r in filtered_rows]
 
-            # Fetch unmatched count
-            cursor.execute("""
-                SELECT COUNT(*)
-                FROM faces
-                WHERE name IS NULL
-            """)
-            unmatched_row = cursor.fetchone()
-            unmatched_count = unmatched_row[0] if unmatched_row else 0
-
-            if unmatched_count > 0:
-                people_counts.insert(0, {"name": "Unmatched", "count": unmatched_count})
-
+            # This list is deliberately people only. An "Unmatched" pseudo-person used to
+            # be pinned at the top, which dropped a flat dump of every nameless face into
+            # a mode meant for auditing named people -- unordered and far too large to work
+            # through. Nameless faces belong to the Identify Faces queue, which groups them
+            # by the name their photo's tags suggest.
             self.send_json(people_counts)
         except Exception as e:
             logger.error(f"Error fetching people with counts: {e}")
@@ -2553,6 +2552,25 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             if conn:
                 conn.close()
 
+    def faces_fingerprint(self, conn):
+        """Cheap signature of the faces table; changes whenever a face is added or named."""
+        row = conn.execute(
+            "SELECT COUNT(*), COUNT(name), COALESCE(MAX(id), 0) FROM faces"
+        ).fetchone()
+        return tuple(row) if row else (0, 0, 0)
+
+    def identify_cache_get(self, key, fingerprint):
+        entry = TunerHTTPRequestHandler.identify_cache.get(key)
+        if entry and entry.get("fingerprint") == fingerprint:
+            return entry.get("value")
+        return None
+
+    def identify_cache_put(self, key, fingerprint, value):
+        TunerHTTPRequestHandler.identify_cache[key] = {
+            "fingerprint": fingerprint,
+            "value": value,
+        }
+
     def handle_get_unmatched_faces_people(self):
         if not os.path.exists(self.db_path):
             self.send_json([])
@@ -2562,6 +2580,12 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             conn = sqlite3.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
+
+            fingerprint = self.faces_fingerprint(conn)
+            cached = self.identify_cache_get("queue", fingerprint)
+            if cached is not None:
+                self.send_json(cached)
+                return
 
             # 1. Fetch all unmatched faces with their embeddings and people lists
             cursor.execute("""
@@ -2584,6 +2608,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             # Group candidate faces by unmatched tag
             tag_candidates = {}
             unknown_candidates = []
+            photo_unmatched_tags = {}
 
             for r in unmatched_rows:
                 photo_path = r[1]
@@ -2609,6 +2634,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 unmatched_tags = [p for p in people if p not in matched_names]
 
                 if unmatched_tags:
+                    photo_unmatched_tags.setdefault(photo_path, set()).update(unmatched_tags)
                     for tag in unmatched_tags:
                         if tag not in tag_candidates:
                             tag_candidates[tag] = []
@@ -2616,30 +2642,36 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 else:
                     unknown_candidates.append((photo_path, emb))
 
-            # Filter tags based on unmatched clusters and compute unique photo counts (min_samples=2)
+            # Counting only -- no clustering here.
+            #
+            # This endpoint used to run DBSCAN over every tag group and over the whole
+            # unknown group on each request. On a real library that is tens of thousands
+            # of 512-dimensional vectors per call (the same work a full cluster-faces run
+            # does), which made the queue effectively unopenable. Clustering is what the
+            # per-person view is for; the queue only needs to know who is waiting and how
+            # many photos they are waiting in.
             tag_photos = {}
-            from sklearn.cluster import DBSCAN
-
             for tag, candidates in tag_candidates.items():
                 if len(candidates) >= 2:
-                    embs = np.array([c[1] for c in candidates])
-                    db = DBSCAN(eps=0.48, min_samples=2, metric='euclidean', n_jobs=-1)
-                    labels = db.fit_predict(embs)
-                    for idx, label in enumerate(labels):
-                        if label >= 0: # Belongs to a cluster of size >= 2
-                            if tag not in tag_photos:
-                                tag_photos[tag] = set()
-                            tag_photos[tag].add(candidates[idx][0])
+                    tag_photos[tag] = {c[0] for c in candidates}
 
-            # For Unknown Faces: run DBSCAN with min_samples=2
-            unknown_photos = set()
-            if len(unknown_candidates) >= 2:
-                embs = np.array([c[1] for c in unknown_candidates])
-                db = DBSCAN(eps=0.48, min_samples=2, metric='euclidean', n_jobs=-1)
-                labels = db.fit_predict(embs)
-                for idx, label in enumerate(labels):
-                    if label >= 0:
-                        unknown_photos.add(unknown_candidates[idx][0])
+            # Tags with a single unmatched candidate cannot form a group of their own.
+            # They used to vanish from the UI entirely; they are surfaced under
+            # "Ungrouped" so that every nameless face stays reachable.
+            #
+            # A face only belongs here when EVERY unmatched tag on its photo is a
+            # single-candidate tag -- otherwise it is already reachable under the tag
+            # that does form a group. This matches the rule the detail view applies, so
+            # the count shown in the queue is the number of faces it will actually open.
+            single_candidate_tags = {t for t, c in tag_candidates.items() if len(c) == 1}
+            ungrouped_photos = set()
+            for tag in single_candidate_tags:
+                photo_path = tag_candidates[tag][0][0]
+                photo_tags = photo_unmatched_tags.get(photo_path, set())
+                if photo_tags and photo_tags <= single_candidate_tags:
+                    ungrouped_photos.add(photo_path)
+
+            unknown_photos = {c[0] for c in unknown_candidates}
 
             # Format the counts
             people_counts = []
@@ -2649,11 +2681,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
             # Sort descending by photo count
             people_counts.sort(key=lambda x: x["count"], reverse=True)
-            
-            # Put Unknown Faces first
+
+            # Put Unknown Faces first, then Ungrouped, as the two catch-all buckets.
             if len(unknown_photos) > 0:
                 people_counts.insert(0, {"name": "Unknown Faces", "count": len(unknown_photos)})
-            
+            if len(ungrouped_photos) > 0:
+                people_counts.append({"name": "Ungrouped", "count": len(ungrouped_photos)})
+
+            self.identify_cache_put("queue", fingerprint, people_counts)
             self.send_json(people_counts)
         except Exception as e:
             logger.error(f"Error fetching unmatched faces people: {e}")
@@ -2678,6 +2713,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
+            fingerprint = self.faces_fingerprint(conn)
+            cache_key = f"matches:{name}"
+            cached = self.identify_cache_get(cache_key, fingerprint)
+            if cached is not None:
+                self.send_json(cached)
+                return
+
             # 1. Fetch all unmatched faces in database
             cursor.execute("""
                 SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata, p.people
@@ -2700,6 +2742,19 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     matched_by_photo[p_path] = set()
                 matched_by_photo[p_path].add(m_name)
 
+            # How many unmatched candidates each tag has library-wide, so "Ungrouped" can
+            # recognise the tags that cannot form a group. Mirrors the queue listing.
+            tag_candidate_counts = {}
+            if name == "Ungrouped":
+                for r in unmatched_rows:
+                    try:
+                        r_people = json.loads(r[7] or "[]")
+                    except Exception:
+                        continue
+                    for tag in r_people:
+                        if tag not in matched_by_photo.get(r[1], set()):
+                            tag_candidate_counts[tag] = tag_candidate_counts.get(tag, 0) + 1
+
             # Filter candidate faces based on 'name'
             candidate_rows = []
             for r in unmatched_rows:
@@ -2720,6 +2775,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 if name == "Unknown Faces":
                     # Photos with no unmatched tags
                     if not unmatched_tags:
+                        candidate_rows.append(r)
+                elif name == "Ungrouped":
+                    # Faces whose photo names someone, but where that name has only this
+                    # one unmatched candidate in the whole library, so it can never form a
+                    # group of its own. Without this bucket these faces are unreachable.
+                    if unmatched_tags and all(
+                        tag_candidate_counts.get(tag, 0) <= 1 for tag in unmatched_tags
+                    ):
                         candidate_rows.append(r)
                 else:
                     # Photos where 'name' is an unmatched tag
@@ -2751,11 +2814,16 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             db = DBSCAN(eps=0.48, min_samples=2, metric='euclidean', n_jobs=-1)
             labels = db.fit_predict(embs)
 
-            # Group faces by cluster label (discard noise label == -1)
+            # Group faces by cluster label. Noise (label == -1) is kept rather than
+            # discarded: those faces are real and still need a name, and dropping them
+            # silently made them unreachable from anywhere in the UI. They are emitted
+            # last, as singletons, so the confident groups stay at the top.
             cluster_groups = {}
+            noise_indices = []
             for idx, label in enumerate(labels):
                 if label == -1:
-                    continue # Discard noise
+                    noise_indices.append(idx)
+                    continue
                 if label not in cluster_groups:
                     cluster_groups[label] = []
                 cluster_groups[label].append(idx)
@@ -2799,16 +2867,47 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         "cluster_name": cluster_name
                     })
 
+            # Append the unclustered faces, flagged so the UI can rank them lowest.
+            #
+            # These are capped: a person in many group photos can have tens of thousands
+            # of unclustered candidates, and rendering a card for each one locks up the
+            # browser. The cap keeps them reachable a screenful at a time; has_more tells
+            # the client there are further faces behind it.
+            UNCLUSTERED_LIMIT = 500
+            unclustered_total = len(noise_indices)
+            for global_idx in noise_indices[:UNCLUSTERED_LIMIT]:
+                r = valid_rows[global_idx]
+                try:
+                    box = json.loads(r[2]) if r[2] else []
+                except Exception:
+                    box = []
+                faces.append({
+                    "id": r[0],
+                    "photo_path": r[1],
+                    "filename": os.path.basename(r[1]),
+                    "box": box,
+                    "prob": r[3],
+                    "mtime": r[4] if r[4] is not None else 0.0,
+                    "year": get_year_from_mtime_or_meta(r[4], r[6], r[1]),
+                    "similarity": 0.0,
+                    "cluster_id": -1,
+                    "cluster_name": "Unclustered"
+                })
+
             # Sort by similarity descending
             faces.sort(key=lambda x: x["similarity"], reverse=True)
 
-            self.send_json({
+            payload = {
                 "faces": faces,
                 "total_count": len(faces),
-                "has_more": False,
+                "unclustered_total": unclustered_total,
+                "unclustered_shown": min(unclustered_total, UNCLUSTERED_LIMIT),
+                "has_more": unclustered_total > UNCLUSTERED_LIMIT,
                 "page": 1,
                 "limit": -1
-            })
+            }
+            self.identify_cache_put(cache_key, fingerprint, payload)
+            self.send_json(payload)
 
         except Exception as e:
             logger.error(f"Error fetching unmatched faces person matches: {e}")

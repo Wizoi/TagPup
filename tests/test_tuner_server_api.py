@@ -595,6 +595,91 @@ class TestPhotosListing(TunerAPITestBase):
         self.assertNotIn(matched, {r["path"] for r in with_flag})
 
 
+class TestIdentifyFacesQueue(TunerAPITestBase):
+    """The queue that groups nameless faces by the name their photo's tags suggest."""
+
+    def test_review_people_no_longer_lists_an_unmatched_pseudo_person(self):
+        """Nameless faces belong to the Identify queue, not the people audit list."""
+        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
+        self.add_face(photo, unit_vector(300), name="Jane Doe")
+        self.add_face(photo, unit_vector(301), name=None)
+
+        names = {e["name"] for e in self.get("/api/people-with-counts")}
+        self.assertIn("Jane Doe", names)
+        self.assertNotIn("Unmatched", names, "the flat dump is back in Review People")
+
+    def test_a_lone_candidate_surfaces_under_ungrouped(self):
+        """A name with a single unmatched candidate cannot form a group of its own."""
+        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Solo Person"])
+        self.add_face(photo, unit_vector(302), name=None)
+
+        entries = {e["name"]: e["count"] for e in self.get("/api/unmatched-faces/people")}
+        self.assertIn("Ungrouped", entries, "a lone candidate went missing entirely")
+        self.assertNotIn("Solo Person", entries, "a single candidate formed a group")
+
+    def test_the_ungrouped_count_matches_what_the_view_opens(self):
+        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Solo Person"])
+        self.add_face(photo, unit_vector(303), name=None)
+
+        entries = {e["name"]: e["count"] for e in self.get("/api/unmatched-faces/people")}
+        opened = self.get("/api/unmatched-faces/person-matches?name=Ungrouped")
+        self.assertEqual(
+            entries["Ungrouped"], opened["total_count"],
+            "the queue promises a different number of faces than it opens",
+        )
+
+    def test_a_face_reachable_under_a_real_group_is_not_also_ungrouped(self):
+        """Two tags on one photo, one of which groups: the face is not a stray."""
+        base = unit_vector(304)
+        for i in range(2):
+            p = self.add_photo(self.make_photo_file(f"g{i}.jpg"), people=["Grouped Person"])
+            self.add_face(p, blend(base, unit_vector(400 + i), 0.02), name=None)
+
+        photo = self.add_photo(
+            self.make_photo_file("mixed.jpg"), people=["Grouped Person", "Solo Person"]
+        )
+        self.add_face(photo, blend(base, unit_vector(402), 0.02), name=None)
+
+        opened = self.get("/api/unmatched-faces/person-matches?name=Ungrouped")
+        paths = {f["photo_path"] for f in opened["faces"]}
+        self.assertNotIn(photo, paths, "a face already reachable under a group was duplicated")
+
+    def test_unclustered_faces_are_offered_rather_than_discarded(self):
+        """Faces DBSCAN calls noise still need a name, so they must stay reachable."""
+        p1 = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
+        p2 = self.add_photo(self.make_photo_file("b.jpg"), people=["Jane Doe"])
+        # Two mutually dissimilar faces: neither forms a cluster with the other.
+        self.add_face(p1, unit_vector(310), name=None)
+        self.add_face(p2, unit_vector(311), name=None)
+
+        opened = self.get(
+            "/api/unmatched-faces/person-matches?name=" + urllib.parse.quote("Jane Doe")
+        )
+        self.assertEqual(opened["total_count"], 2, "unclustered candidates were dropped")
+        self.assertTrue(
+            all(f["cluster_id"] == -1 for f in opened["faces"]),
+            "expected both faces to be reported as unclustered",
+        )
+
+    def test_the_queue_is_served_from_cache_on_repeat_requests(self):
+        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
+        self.add_face(photo, unit_vector(320), name=None)
+
+        first = self.get("/api/unmatched-faces/people")
+        second = self.get("/api/unmatched-faces/people")
+        self.assertEqual(first, second)
+
+    def test_naming_a_face_invalidates_the_cache(self):
+        """The cache is keyed on a fingerprint of the faces table, not time."""
+        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
+        face_id = self.add_face(photo, unit_vector(321), name=None)
+        before = {e["name"] for e in self.get("/api/unmatched-faces/people")}
+
+        self.post("/api/face/match", {"face_id": face_id, "person_name": "Jane Doe"})
+        after = {e["name"] for e in self.get("/api/unmatched-faces/people")}
+        self.assertNotEqual(before, after, "the queue served a stale answer after a match")
+
+
 class TestRecluster(TunerAPITestBase):
     def test_recluster_starts_in_the_background(self):
         photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])

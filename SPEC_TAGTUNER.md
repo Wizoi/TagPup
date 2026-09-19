@@ -16,6 +16,26 @@ This document records the design, specifications, prerequisites, and instruction
 
 ## Features and Mechanics
 
+### 0. Tune Targets
+
+The **Tune target** selector chooses what is being worked on. The three targets are
+deliberately disjoint:
+
+| Target | Sidebar lists | Tabs | Answers |
+| :--- | :--- | :--- | :--- |
+| **Folder Matches** | Photos containing at least one unmatched face | — | *Who is in this picture?* |
+| **Identify Faces** | Names with unmatched candidates, plus `Unknown Faces` and `Ungrouped` | **Likely** / **Possible** | *Who are these nameless faces?* |
+| **Review People** | Named people, by face count | **Confirmed** / **Needs Review** | *Are this person's faces correct?* |
+
+The tab pairs are distinct on purpose. In **Review People** they split faces that already
+carry a name by how well each matches that person's visual centroid, so *Needs Review*
+means "named, but probably wrong" (similarity < 0.85). In **Identify Faces** they split
+faces that carry no name at all by how confident the suggestion is. Earlier versions
+labelled these *Matches/Outliers* and *High/Lower Confidence* and additionally offered an
+`Unmatched` pseudo-person inside Review People, which dropped a flat, unordered list of
+every nameless face into a mode meant for auditing named people. That entry has been
+removed; nameless faces are reached through **Identify Faces**, which groups them.
+
 ### 1. Interactive Face Tuning
 - Clicking on a face card in the "Detected Faces" grid selects it and expands it to show the editing panel.
 - **Deselection/Cancel**: Clicking "Cancel" or selecting another face card deselects the current face and hides the editing panel.
@@ -78,8 +98,8 @@ This document records the design, specifications, prerequisites, and instruction
 - `/api/person-faces?name=<name>`: Returns matched/outlier faces for a person (outliers defined as similarity < 0.85).
 - `/api/face-matches?id=<face_id>`: Evaluates face similarity and returns the top 5 closest matched people.
 - `/api/face-matches-unmatched?id=<face_id>`: Returns other unmatched faces with cosine similarity $\ge 0.8$ for bulk profile creation.
-- `/api/unmatched-faces/people`: Returns unique names of people who have associated unmatched faces.
-- `/api/unmatched-faces/person-matches?name=<person_name>`: Returns the unmatched faces that are candidates for the given person name, as `{"faces": list, "total_count": int, "has_more": bool}`.
+- `/api/unmatched-faces/people`: Returns the **Identify Faces** queue as `[{"name", "count"}]` — each name that has two or more unmatched candidates library-wide, plus two catch-all buckets: `Unknown Faces` (unmatched faces whose photo names nobody new) first, and `Ungrouped` last (faces whose every unmatched tag has only a single candidate, so no group can form). Counts are photo counts. The result is cached per database against a fingerprint of the `faces` table and recomputed when a face is added or named.
+- `/api/unmatched-faces/person-matches?name=<person_name>`: Returns the unmatched faces that are candidates for the given name, as `{"faces", "total_count", "unclustered_total", "unclustered_shown", "has_more"}`. Candidates are clustered with DBSCAN and ordered by similarity to their cluster centroid. Faces DBSCAN treats as noise are still returned, reported with `cluster_id: -1` and ranked last, capped at 500 per request so a person with tens of thousands of unclustered candidates does not lock up the browser. Accepts the two bucket names `Unknown Faces` and `Ungrouped` in place of a person. Cached like the queue above.
 - `/api/browse-folder`: Invokes native folder dialog and returns selected path.
 
 ### `POST` Endpoints

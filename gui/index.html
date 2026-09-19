@@ -27,8 +27,8 @@
                     <label for="tuner-mode">Tune target:</label>
                     <select id="tuner-mode" class="mode-select">
                         <option value="folder-match">Folder Matches</option>
-                        <option value="face-matching">Face Matching</option>
-                        <option value="unmatched-faces">Unmatched Faces</option>
+                        <option value="unmatched-faces">Identify Faces</option>
+                        <option value="face-matching">Review People</option>
                     </select>
                 </div>
                 <div class="control-group" id="show-matched-container">
@@ -149,11 +149,11 @@
                         <div class="matching-grid-card">
                             <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 20px;">
                                 <div class="matching-tabs" id="matching-tabs">
-                                    <button id="tab-matches" class="tab-btn active">Matches</button>
-                                    <button id="tab-outliers" class="tab-btn">Outliers</button>
+                                    <button id="tab-matches" class="tab-btn active">Confirmed</button>
+                                    <button id="tab-outliers" class="tab-btn">Needs Review</button>
                                     <button id="tab-low-conf" class="tab-btn hidden">Low Confidence</button>
                                 </div>
-                                <h3 id="matching-static-title" class="hidden">Unmatched Faces</h3>
+                                <h3 id="matching-static-title" class="hidden">Identify Faces</h3>
                                 <div style="font-size: 12px; color: var(--text-muted);">Click faces to select/deselect. Multi-selection is enabled.</div>
                             </div>
                             <div class="matching-faces-grid" id="matching-faces-grid">
