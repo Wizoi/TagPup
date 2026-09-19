@@ -297,7 +297,22 @@ class TagSuggester:
                             _global_face_processor = FaceProcessor()
                 processor = _global_face_processor
                 detected_faces = processor.detect_and_embed_faces(photo_path)
-            
+
+                # Keep what we just computed. Detection and embedding are the expensive
+                # part of this whole pipeline, and they were previously discarded when the
+                # request ended -- so a photo could be suggested for repeatedly and never
+                # contribute a single face to the database. Recording them means ordinary
+                # tagging feeds TagTuner's identify queue, and an unindexed folder still
+                # accumulates face data. Strictly additive: photos that already have face
+                # rows are left untouched, so manual names and exclusions are safe.
+                if detected_faces and self.index is not None:
+                    try:
+                        saved = self.index.save_faces_if_absent(photo_path, detected_faces)
+                        if saved:
+                            logger.info(f"Recorded {saved} newly detected face(s) for {photo_path}")
+                    except Exception as save_err:
+                        logger.warning(f"Could not record detected faces: {save_err}")
+
             if detected_faces:
                 # Calculate areas and filter out tiny background/noise faces
                 face_areas = []

@@ -100,6 +100,7 @@ removed; nameless faces are reached through **Identify Faces**, which groups the
 - `/api/face-matches-unmatched?id=<face_id>`: Returns other unmatched faces with cosine similarity $\ge 0.8$ for bulk profile creation.
 - `/api/unmatched-faces/people`: Returns the **Identify Faces** queue as `[{"name", "count"}]` — each name that has two or more unmatched candidates library-wide, plus two catch-all buckets: `Unknown Faces` (unmatched faces whose photo names nobody new) first, and `Ungrouped` last (faces whose every unmatched tag has only a single candidate, so no group can form). Counts are photo counts. The result is cached per database against a fingerprint of the `faces` table and recomputed when a face is added or named.
 - `/api/unmatched-faces/person-matches?name=<person_name>`: Returns the unmatched faces that are candidates for the given name, as `{"faces", "total_count", "unclustered_total", "unclustered_shown", "has_more"}`. Candidates are clustered with DBSCAN and ordered by similarity to their cluster centroid. Faces DBSCAN treats as noise are still returned, reported with `cluster_id: -1` and ranked last, capped at 500 per request so a person with tens of thousands of unclustered candidates does not lock up the browser. Accepts the two bucket names `Unknown Faces` and `Ungrouped` in place of a person. Cached like the queue above.
+- `/api/faces/excluded`: Returns `{"faces": list, "total_count": int}` for every face marked as not-a-person, each carrying its `reason`, so exclusions can be reviewed and undone.
 - `/api/browse-folder`: Invokes native folder dialog and returns selected path.
 
 ### `POST` Endpoints
@@ -110,6 +111,8 @@ removed; nameless faces are reached through **Identify Faces**, which groups the
 - `/api/face/unmatch`: Expects JSON body `{"face_id": int}`.
 - `/api/faces/match-bulk`: Expects JSON body `{"face_ids": list, "person_name": string}`. Matches face IDs in bulk. Implements duplicate-tagging protection.
 - `/api/faces/unmatch-bulk`: Expects JSON body `{"face_ids": list}`. Unmatches face IDs in bulk.
+- `/api/faces/exclude`: Expects JSON body `{"face_ids": list, "reason": string (optional)}` (a single `face_id` is also accepted). Marks faces as not-a-person. Any name they carried is cleared, and the person is dropped from the photo when no other face of theirs remains in it. Excluded faces take no part in clustering, match suggestions, or the Identify Faces queue.
+- `/api/faces/restore`: Expects JSON body `{"face_ids": list}`. Reverses an exclusion, returning the faces unnamed and unclaimed so they can be identified again.
 - `/api/person/rename`: Expects JSON body `{"old_name": string, "new_name": string}`. Renames a person in the database and updates photo tags.
 - `/api/faces/recluster`: Expects JSON body `{}`. Runs face clustering algorithm dynamically.
 - `/api/photo/unmatch-all`: Expects JSON body `{"photo_path": string}`.

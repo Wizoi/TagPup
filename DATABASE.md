@@ -39,6 +39,8 @@ Stores details of faces detected within photos, including face crop coordinates,
 | `crop_image` | BLOB | | Cache of the cropped face thumbnail (JPEG bytes). |
 | `prob` | REAL | | Detection confidence/probability score from MTCNN. |
 | `name_source` | TEXT | | Who decided `name`. `'manual'` marks a decision made by a person in TagTuner — including a deliberate unmatch, which is stored as `name = NULL` with this column set. `cluster-faces` re-derives every other name from scratch but preserves manual rows and uses them as anchors. `NULL` means the name was assigned automatically and may be revised. |
+| `excluded` | INTEGER | DEFAULT 0 | `1` marks a face as not-a-person: a passer-by in a crowd shot, or a detection that is not a face at all. Excluded faces are dropped before identity resolution runs, and are hidden from match suggestions and the Identify Faces queue, so they cannot cluster, vote, or pull a person's centroid around. Reversible. |
+| `excluded_reason` | TEXT | | Free text recorded alongside `excluded`, e.g. `stranger`, `bad crop`. |
 
 ### 3. `embedding_cache` Table
 Acts as a cache layer for photo visual embeddings to avoid recalculating heavy image representations when configuration profiles are modified.
@@ -106,6 +108,8 @@ erDiagram
         BLOB crop_image
         REAL prob
         TEXT name_source
+        INTEGER excluded
+        TEXT excluded_reason
     }
     
     embedding_cache {

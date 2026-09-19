@@ -87,6 +87,8 @@ class PhotoIndex:
                 crop_image BLOB,
                 prob REAL,
                 name_source TEXT,
+                excluded INTEGER DEFAULT 0,
+                excluded_reason TEXT,
                 FOREIGN KEY(photo_path) REFERENCES photos(path) ON DELETE CASCADE
             )
         """)
@@ -158,6 +160,15 @@ class PhotoIndex:
             if "prob" not in columns:
                 logger.info("Migrating faces table: Adding prob column...")
                 cursor.execute("ALTER TABLE faces ADD COLUMN prob REAL")
+                self.conn.commit()
+            if "excluded" not in columns:
+                # Faces deliberately kept out of identity work: passers-by, crowd noise,
+                # bad crops. An earlier attempt used the magic name 'Non Person', which
+                # this same load() still migrates away, because a name cannot survive
+                # re-clustering. A column can.
+                logger.info("Migrating faces table: Adding excluded columns...")
+                cursor.execute("ALTER TABLE faces ADD COLUMN excluded INTEGER DEFAULT 0")
+                cursor.execute("ALTER TABLE faces ADD COLUMN excluded_reason TEXT")
                 self.conn.commit()
             if "name_source" not in columns:
                 # Records who decided a face's name. 'manual' means a person chose it in
@@ -400,6 +411,61 @@ class PhotoIndex:
             logger.error(f"Error saving faces for {photo_path}: {e}")
             self.conn.rollback()
 
+    def save_faces_if_absent(self, photo_path: str, faces: List[Dict[str, Any]]) -> int:
+        """Record detected faces only when this photo has none yet. Returns rows inserted.
+
+        Unlike save_faces_for_path this never deletes: that one clears the photo's rows
+        first, which would discard manual names and exclusions. This is for callers that
+        detected faces as a side effect of doing something else (the tag suggester) and
+        want to keep the work without disturbing anything already recorded.
+
+        Uses its own short-lived connection: callers run inside worker pools, and sharing
+        one sqlite connection across threads is how "objects created in a thread" errors
+        and lock contention start.
+        """
+        if not faces:
+            return 0
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM faces WHERE LOWER(photo_path) = LOWER(?)", (photo_path,)
+            )
+            if cursor.fetchone()[0] > 0:
+                return 0  # already recorded; leave it alone
+
+            inserted = 0
+            for face in faces:
+                emb = face.get("embedding")
+                if emb is None:
+                    continue
+                cursor.execute(
+                    "INSERT INTO faces (photo_path, box, embedding, name, crop_image, prob)"
+                    " VALUES (?, ?, ?, NULL, ?, ?)",
+                    (
+                        photo_path,
+                        json.dumps(face.get("box", [])),
+                        np.array(emb, dtype=np.float32).tobytes(),
+                        face.get("crop_image"),
+                        face.get("prob"),
+                    ),
+                )
+                inserted += 1
+            conn.commit()
+            return inserted
+        except Exception as e:
+            logger.warning(f"Could not record detected faces for {photo_path}: {e}")
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            return 0
+        finally:
+            if conn:
+                conn.close()
+
     def get_manual_face_names(self) -> Dict[int, Optional[str]]:
         """face_id -> name for every face a person decided by hand.
 
@@ -415,6 +481,18 @@ class PhotoIndex:
         except Exception as e:
             logger.warning(f"Could not read manual face names: {e}")
             return {}
+
+    def get_excluded_face_ids(self) -> Set[int]:
+        """Faces marked as not-a-person, which must not influence identity resolution."""
+        if self.conn is None:
+            return set()
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT id FROM faces WHERE excluded = 1")
+            return {row[0] for row in cursor.fetchall()}
+        except Exception as e:
+            logger.warning(f"Could not read excluded faces: {e}")
+            return set()
 
     def get_all_faces(self) -> List[Dict[str, Any]]:
         """Retrieve all indexed face coordinates and embeddings from the DB."""

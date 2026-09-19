@@ -171,6 +171,20 @@ class FaceProcessor:
             logger.info("No face embeddings found in the index.")
             return {}
 
+        # Faces marked as not-a-person are dropped before anything else runs. They must
+        # not cluster, vote, seed a centroid, or be offered as a candidate -- the whole
+        # point is to stop crowd noise and bad crops polluting identity resolution.
+        excluded_ids = set()
+        if hasattr(photo_index, "get_excluded_face_ids"):
+            excluded_ids = photo_index.get_excluded_face_ids()
+        if excluded_ids:
+            before = len(all_faces)
+            all_faces = [f for f in all_faces if f["id"] not in excluded_ids]
+            logger.info(f"Excluding {before - len(all_faces)} face(s) marked as not-a-person.")
+            if not all_faces:
+                logger.info("Every face is excluded; nothing to resolve.")
+                return {}
+
         # Faces a person decided by hand. These are never overwritten here: re-clustering
         # re-derives every name from scratch, and without this a single run silently
         # discards every correction made in TagTuner. They are also the most reliable

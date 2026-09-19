@@ -55,6 +55,11 @@ def implemented_routes(server_path):
     out = {}
     for route, handler_name in routes.items():
         body = handlers.get(handler_name, "")
+        # Follow one level of `self._helper(...)` calls. Handlers legitimately share
+        # argument parsing, and a guard that only looked at the handler's own body would
+        # report a parameter as undocumented purely because it was factored out.
+        for helper in set(re.findall(r"self\.(_\w+)\(", body)):
+            body += "\n" + handlers.get(helper, "")
         out[route] = {
             "handler": handler_name,
             "body": set(BODY_PARAM.findall(body)),

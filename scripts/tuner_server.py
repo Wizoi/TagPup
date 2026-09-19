@@ -636,6 +636,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         elif path == "/api/face-matches-unmatched":
             self.handle_get_face_matches_unmatched(query)
             
+        elif path == "/api/faces/excluded":
+            self.handle_get_excluded_faces()
         elif path == "/api/unmatched-faces/people":
             self.handle_get_unmatched_faces_people()
         elif path == "/api/unmatched-faces/person-matches":
@@ -665,6 +667,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.handle_post_match()
         elif path == "/api/face/unmatch":
             self.handle_post_unmatch()
+        elif path == "/api/faces/exclude":
+            self.handle_post_faces_exclude()
+        elif path == "/api/faces/restore":
+            self.handle_post_faces_restore()
         elif path == "/api/faces/unmatch-bulk":
             self.handle_post_unmatch_bulk()
         elif path == "/api/faces/match-bulk":
@@ -1178,7 +1184,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             target_emb = np.frombuffer(target_emb_bytes, dtype=np.float32)
             
             # Fetch all resolved faces (excluding the current face if it's already resolved)
-            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL AND id != ?", (face_id,))
+            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL AND excluded = 0 AND id != ?", (face_id,))
             faces_rows = cursor.fetchall()
             
             if not faces_rows:
@@ -1252,7 +1258,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             target_emb = np.frombuffer(target_emb_bytes, dtype=np.float32)
             
             # Fetch all other unmatched faces
-            cursor.execute("SELECT id, photo_path, box, embedding FROM faces WHERE name IS NULL AND id != ?", (face_id,))
+            cursor.execute("SELECT id, photo_path, box, embedding FROM faces WHERE name IS NULL AND excluded = 0 AND id != ?", (face_id,))
             faces_rows = cursor.fetchall()
             
             if not faces_rows:
@@ -2085,7 +2091,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.name, p.raw_metadata
                     FROM faces f
                     LEFT JOIN photos p ON p.path = f.photo_path
-                    WHERE f.name IS NULL
+                    WHERE f.name IS NULL AND f.excluded = 0
                     LIMIT ? OFFSET ?
                 """, (limit, offset))
                 rows = cursor.fetchall()
@@ -2486,6 +2492,167 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             if conn:
                 conn.close()
 
+    def _read_face_ids(self, data):
+        """Accept either face_ids (list) or a single face_id, as ints."""
+        face_ids = data.get("face_ids")
+        if face_ids is None and data.get("face_id") is not None:
+            face_ids = [data.get("face_id")]
+        if not face_ids or not isinstance(face_ids, list):
+            return None
+        try:
+            return [int(x) for x in face_ids]
+        except (ValueError, TypeError):
+            return None
+
+    def handle_post_faces_exclude(self):
+        """Mark faces as not-a-person so they stop influencing identity work.
+
+        Crowd shots collect passers-by and a bad crop is not a person at all. Left in the
+        database they cluster, vote, and drag centroids around. Excluding is reversible
+        and keeps the row, so the face still exists on the photo -- it simply stops being
+        a candidate for anyone.
+        """
+        conn = None
+        try:
+            try:
+                data = self.read_json_body()
+            except Exception as json_err:
+                self.send_error(400, "Malformed JSON: %s" % json_err)
+                return
+
+            face_ids = self._read_face_ids(data)
+            if face_ids is None:
+                self.send_error(400, "Missing or invalid face_ids")
+                return
+
+            reason = data.get("reason") or "not a person"
+            if not os.path.exists(self.db_path):
+                self.send_error(404, "Database not found")
+                return
+
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            cursor = conn.cursor()
+            placeholders = ",".join("?" for _ in face_ids)
+
+            cursor.execute(
+                "SELECT id, photo_path, name FROM faces WHERE id IN (%s)" % placeholders,
+                face_ids,
+            )
+            affected = cursor.fetchall()
+
+            # Excluding retires any name the face carried. name_source stays 'manual'
+            # so re-clustering cannot quietly re-assign it.
+            cursor.execute(
+                "UPDATE faces SET excluded = 1, excluded_reason = ?, name = NULL,"
+                " name_source = 'manual' WHERE id IN (%s)" % placeholders,
+                [reason] + face_ids,
+            )
+
+            # Drop the person from the photo when no other face of theirs remains there.
+            for _face_id, photo_path, old_name in affected:
+                if not old_name:
+                    continue
+                cursor.execute(
+                    "SELECT COUNT(*) FROM faces WHERE photo_path = ? AND name = ? AND excluded = 0",
+                    (photo_path, old_name),
+                )
+                if cursor.fetchone()[0] == 0:
+                    cursor.execute("SELECT people FROM photos WHERE path = ?", (photo_path,))
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        try:
+                            people = [p for p in json.loads(row[0]) if p != old_name]
+                            cursor.execute(
+                                "UPDATE photos SET people = ? WHERE path = ?",
+                                (json.dumps(people), photo_path),
+                            )
+                        except Exception:
+                            pass
+
+            conn.commit()
+            self.send_json({"success": True, "excluded": len(face_ids)})
+        except Exception as e:
+            logger.error("Error excluding faces: %s" % e)
+            self.send_error(500, "Internal error: %s" % e)
+        finally:
+            if conn:
+                conn.close()
+
+    def handle_post_faces_restore(self):
+        """Bring excluded faces back into identity work, unnamed and unclaimed."""
+        conn = None
+        try:
+            try:
+                data = self.read_json_body()
+            except Exception as json_err:
+                self.send_error(400, "Malformed JSON: %s" % json_err)
+                return
+
+            face_ids = self._read_face_ids(data)
+            if face_ids is None:
+                self.send_error(400, "Missing or invalid face_ids")
+                return
+
+            if not os.path.exists(self.db_path):
+                self.send_error(404, "Database not found")
+                return
+
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            placeholders = ",".join("?" for _ in face_ids)
+            conn.execute(
+                "UPDATE faces SET excluded = 0, excluded_reason = NULL, name_source = NULL"
+                " WHERE id IN (%s)" % placeholders,
+                face_ids,
+            )
+            conn.commit()
+            self.send_json({"success": True, "restored": len(face_ids)})
+        except Exception as e:
+            logger.error("Error restoring faces: %s" % e)
+            self.send_error(500, "Internal error: %s" % e)
+        finally:
+            if conn:
+                conn.close()
+
+    def handle_get_excluded_faces(self):
+        """List excluded faces so they can be reviewed and restored."""
+        if not os.path.exists(self.db_path):
+            self.send_json({"faces": [], "total_count": 0})
+            return
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, p.raw_metadata,"
+                " f.excluded_reason FROM faces f"
+                " LEFT JOIN photos p ON p.path = f.photo_path"
+                " WHERE f.excluded = 1 ORDER BY f.id DESC"
+            )
+            faces = []
+            for r in cursor.fetchall():
+                try:
+                    box = json.loads(r[2]) if r[2] else []
+                except Exception:
+                    box = []
+                faces.append({
+                    "id": r[0],
+                    "photo_path": r[1],
+                    "filename": os.path.basename(r[1]) if r[1] else "",
+                    "box": box,
+                    "prob": r[3],
+                    "mtime": r[4] if r[4] is not None else 0.0,
+                    "year": get_year_from_mtime_or_meta(r[4], r[5], r[1]),
+                    "reason": r[6] or "not a person",
+                    "similarity": 0.0,
+                })
+            self.send_json({"faces": faces, "total_count": len(faces)})
+        except Exception as e:
+            logger.error("Error listing excluded faces: %s" % e)
+            self.send_error(500, "Database error: %s" % e)
+        finally:
+            if conn:
+                conn.close()
+
     def handle_post_person_rename(self):
         conn = None
         try:
@@ -2611,10 +2778,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
     def faces_fingerprint(self, conn):
         """Cheap signature of the faces table; changes whenever a face is added or named."""
+        # SUM(excluded) matters: excluding an unnamed face changes what the queue should
+        # show without changing the row count, the name count, or the maximum id, so
+        # leaving it out serves a stale queue after every exclusion.
         row = conn.execute(
-            "SELECT COUNT(*), COUNT(name), COALESCE(MAX(id), 0) FROM faces"
+            "SELECT COUNT(*), COUNT(name), COALESCE(MAX(id), 0), COALESCE(SUM(excluded), 0) FROM faces"
         ).fetchone()
-        return tuple(row) if row else (0, 0, 0)
+        return tuple(row) if row else (0, 0, 0, 0)
 
     def identify_cache_get(self, key, fingerprint):
         entry = TunerHTTPRequestHandler.identify_cache.get(key)
@@ -2649,7 +2819,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 SELECT f.id, f.photo_path, p.people, f.embedding
                 FROM faces f
                 LEFT JOIN photos p ON p.path = f.photo_path
-                WHERE f.name IS NULL
+                WHERE f.name IS NULL AND f.excluded = 0
             """)
             unmatched_rows = cursor.fetchall()
 
@@ -2782,7 +2952,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata, p.people
                 FROM faces f
                 LEFT JOIN photos p ON p.path = f.photo_path
-                WHERE f.name IS NULL
+                WHERE f.name IS NULL AND f.excluded = 0
             """)
             unmatched_rows = cursor.fetchall()
             
