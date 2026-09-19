@@ -90,11 +90,16 @@ class FaceClusteringTestBase(unittest.TestCase):
         conn.close()
         return path
 
-    def add_face(self, photo_path, embedding, box=(0, 0, 100, 100)):
+    def add_face(self, photo_path, embedding, box=(0, 0, 100, 100),
+                 manual_name=None, manual_cleared=False):
+        """Add a face. `manual_name` / `manual_cleared` mark it as a human decision."""
+        name = manual_name
+        source = "manual" if (manual_name is not None or manual_cleared) else None
         conn = sqlite3.connect(self.db_path)
         cur = conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, NULL, ?)",
-            (photo_path, json.dumps(list(box)), embedding.tobytes(), 0.99),
+            "INSERT INTO faces (photo_path, box, embedding, name, prob, name_source)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (photo_path, json.dumps(list(box)), embedding.tobytes(), name, 0.99, source),
         )
         face_id = cur.lastrowid
         conn.commit()
@@ -423,6 +428,90 @@ class TestResolutionOutputs(FaceClusteringTestBase):
 
         self.resolve(max_iterations=0)
         self.assertEqual(self.name_of(face), "Jane Doe")
+
+
+class TestManualOverridesSurviveClustering(FaceClusteringTestBase):
+    """Re-clustering re-derives every name; a person's own decisions must outlast it."""
+
+    def test_a_manual_assignment_is_not_overwritten(self):
+        jane, bob = identity_vector(1), identity_vector(2)
+        # Everything visual says Bob; the human says Jane.
+        self.add_face(self.add_photo("bob1.jpg", people=["Bob Roe"]), bob)
+        self.add_face(self.add_photo("bob2.jpg", people=["Bob Roe"]), near(bob, 30))
+
+        photo = self.add_photo("disputed.jpg", people=["Bob Roe", "Jane Doe"])
+        face = self.add_face(photo, near(bob, 31), manual_name="Jane Doe")
+
+        self.resolve()
+        self.assertEqual(self.name_of(face), "Jane Doe", "clustering overrode a person")
+
+    def test_a_manual_clear_is_not_refilled(self):
+        """Unmatching by hand means "not this person", and must stick."""
+        jane = identity_vector(1)
+        self.add_face(self.add_photo("anchor.jpg", people=["Jane Doe"]), jane)
+
+        photo = self.add_photo("cleared.jpg", people=["Jane Doe"])
+        face = self.add_face(photo, near(jane, 32), manual_cleared=True)
+
+        self.resolve()
+        self.assertIsNone(self.name_of(face), "a deliberate unmatch was undone")
+
+    def test_a_manual_assignment_acts_as_an_anchor_for_others(self):
+        """Naming one face by hand should pull that person's other photos in."""
+        lara = identity_vector(5)
+        seed_photo = self.add_photo("seed.jpg", people=["Lara Z"])
+        seed = self.add_face(seed_photo, lara, manual_name="Lara Z")
+
+        other_photo = self.add_photo("other.jpg", people=["Lara Z"])
+        other = self.add_face(other_photo, near(lara, 33))
+
+        self.resolve()
+        self.assertEqual(self.name_of(seed), "Lara Z")
+        self.assertEqual(
+            self.name_of(other), "Lara Z",
+            "a hand-matched face did not propagate to the person's other photos",
+        )
+
+    def test_the_trace_records_that_a_decision_was_preserved(self):
+        jane = identity_vector(1)
+        photo = self.add_photo("a.jpg", people=["Jane Doe"])
+        face = self.add_face(photo, jane, manual_name="Jane Doe")
+
+        self.resolve()
+        self.assertEqual(
+            self.traces()[face]["resolution_method"], "manual_override_preserved"
+        )
+
+    def test_automatic_assignments_are_still_revised(self):
+        """Only manual decisions are protected; inferred ones stay revisable."""
+        jane = identity_vector(1)
+        photo = self.add_photo("a.jpg", people=["Jane Doe"])
+        face = self.add_face(photo, jane)  # no manual marker
+
+        self.resolve()
+        self.assertEqual(self.name_of(face), "Jane Doe")
+        conn = sqlite3.connect(self.db_path)
+        source = conn.execute(
+            "SELECT name_source FROM faces WHERE id = ?", (face,)
+        ).fetchone()[0]
+        conn.close()
+        self.assertNotEqual(source, "manual", "clustering claimed a manual decision")
+
+    def test_a_manual_name_blocks_a_duplicate_in_the_same_photo(self):
+        """The duplicate guard must count manual names as already taken."""
+        jane = identity_vector(1)
+        self.add_face(self.add_photo("anchor.jpg", people=["Jane Doe"]), jane)
+
+        photo = self.add_photo("pair.jpg", people=["Jane Doe"])
+        manual = self.add_face(photo, near(jane, 34), box=(0, 0, 200, 200),
+                               manual_name="Jane Doe")
+        other = self.add_face(photo, near(jane, 35), box=(300, 0, 500, 200))
+
+        self.resolve()
+        self.assertEqual(self.name_of(manual), "Jane Doe")
+        self.assertIsNone(
+            self.name_of(other), "the name was given to a second face in the photo"
+        )
 
 
 class TestDistinctIdentitiesStaySeparate(FaceClusteringTestBase):

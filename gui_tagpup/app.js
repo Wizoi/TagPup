@@ -2020,7 +2020,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (wasVisible) {
                             fetchKnownTagsAndPeople();
                             scanFolder(true);
-                            alert("Folder successfully added to the database and indexed!");
+                            alert(data.message || "Folder successfully added to the database and indexed!");
                         }
                         
                         statusDot.className = 'status-indicator-dot';

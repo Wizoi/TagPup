@@ -86,6 +86,7 @@ class PhotoIndex:
                 name TEXT,
                 crop_image BLOB,
                 prob REAL,
+                name_source TEXT,
                 FOREIGN KEY(photo_path) REFERENCES photos(path) ON DELETE CASCADE
             )
         """)
@@ -157,6 +158,13 @@ class PhotoIndex:
             if "prob" not in columns:
                 logger.info("Migrating faces table: Adding prob column...")
                 cursor.execute("ALTER TABLE faces ADD COLUMN prob REAL")
+                self.conn.commit()
+            if "name_source" not in columns:
+                # Records who decided a face's name. 'manual' means a person chose it in
+                # TagTuner; those decisions survive re-clustering, which otherwise
+                # re-derives every name from scratch and discards corrections.
+                logger.info("Migrating faces table: Adding name_source column...")
+                cursor.execute("ALTER TABLE faces ADD COLUMN name_source TEXT")
                 self.conn.commit()
             
             # Migrate tag_taxonomy: is_people -> has_face
@@ -391,6 +399,22 @@ class PhotoIndex:
         except Exception as e:
             logger.error(f"Error saving faces for {photo_path}: {e}")
             self.conn.rollback()
+
+    def get_manual_face_names(self) -> Dict[int, Optional[str]]:
+        """face_id -> name for every face a person decided by hand.
+
+        A manual entry with a name of None is a deliberate "this is nobody I want
+        labelled" and is just as binding as a manual assignment.
+        """
+        if self.conn is None:
+            return {}
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT id, name FROM faces WHERE name_source = 'manual'")
+            return {row[0]: row[1] for row in cursor.fetchall()}
+        except Exception as e:
+            logger.warning(f"Could not read manual face names: {e}")
+            return {}
 
     def get_all_faces(self) -> List[Dict[str, Any]]:
         """Retrieve all indexed face coordinates and embeddings from the DB."""

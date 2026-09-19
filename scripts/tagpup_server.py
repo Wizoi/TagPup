@@ -746,9 +746,14 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             "message": "Starting indexing..."
         }
         
+        # Re-clustering rewrites every face name in the database from scratch and can
+        # discard manual corrections, so it is opt-in rather than a silent side effect
+        # of adding a folder. The UI does not request it.
+        run_clustering = bool(data.get("cluster", False))
+
         t = threading.Thread(
             target=self.run_folder_index_thread,
-            args=(folder_path, self.db_path),
+            args=(folder_path, self.db_path, run_clustering),
             name="FolderIndexThread",
             daemon=True
         )
@@ -758,7 +763,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         self.send_json({"success": True, "status": "running"})
 
     @classmethod
-    def run_folder_index_thread(cls, folder_path, db_path):
+    def run_folder_index_thread(cls, folder_path, db_path, run_clustering=False):
         # Restore the active database in this worker thread. The thread-local set during the
         # request does not carry over, and the class-level fallback points at the startup
         # database, which would resolve the isolated registries to the wrong database.
@@ -797,28 +802,35 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                         
             proc.wait()
             if proc.returncode == 0:
-                # Indexing succeeded! Now run cluster-faces automatically to resolve identities
-                status_dict["message"] = "Resolving and matching face identities..."
-                status_dict["percent"] = 95
-                
-                proc2 = subprocess.Popen(
-                    [sys.executable, "tagpup_cli.py", "cluster-faces"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    env=env,
-                    bufsize=1
-                )
-                for line in iter(proc2.stdout.readline, ""):
-                    clean_line = line.strip()
-                    if clean_line:
-                        status_dict["message"] = clean_line
-                proc2.wait()
-                
+                if run_clustering:
+                    # Only on explicit request: this re-derives every face name in the
+                    # database, not just the folder that was indexed.
+                    status_dict["message"] = "Resolving and matching face identities..."
+                    status_dict["percent"] = 95
+
+                    proc2 = subprocess.Popen(
+                        [sys.executable, "tagpup_cli.py", "cluster-faces"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        env=env,
+                        bufsize=1
+                    )
+                    for line in iter(proc2.stdout.readline, ""):
+                        clean_line = line.strip()
+                        if clean_line:
+                            status_dict["message"] = clean_line
+                    proc2.wait()
+
                 if folder_path_norm in cls.folder_cache:
                     del cls.folder_cache[folder_path_norm]
                 status_dict["status"] = "completed"
-                status_dict["message"] = "Folder successfully added, indexed, and face matching resolved."
+                status_dict["message"] = (
+                    "Folder successfully added, indexed, and face matching resolved."
+                    if run_clustering
+                    else "Folder successfully added and indexed. Faces detected; "
+                         "run Recluster separately to assign identities."
+                )
                 status_dict["percent"] = 100
             else:
                 status_dict["status"] = "failed"

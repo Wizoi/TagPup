@@ -1372,7 +1372,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 return
 
             # 2. Update faces table
-            cursor.execute("UPDATE faces SET name = ? WHERE id = ?", (person_name, face_id))
+            # A person chose this, so record it as a manual decision: re-clustering
+            # re-derives every name from scratch and must not discard it.
+            cursor.execute("UPDATE faces SET name = ?, name_source = 'manual' WHERE id = ?", (person_name, face_id))
 
             # 3. Update photos table people list
             cursor.execute("SELECT path, people FROM photos WHERE path = ?", (photo_path,))
@@ -1468,7 +1470,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 return
 
             # 2. Update faces table
-            cursor.execute("UPDATE faces SET name = NULL WHERE id = ?", (face_id,))
+            # A person chose this, so record it as a manual decision: re-clustering
+            # re-derives every name from scratch and must not discard it.
+            cursor.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE id = ?", (face_id,))
 
             # 3. Check if old name is no longer matched to any other faces in the photo
             cursor.execute("SELECT count(*) FROM faces WHERE photo_path = ? AND name = ? AND id != ?", (photo_path, old_name, face_id))
@@ -1650,8 +1654,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 matched_names = {row[0] for row in cursor.fetchall()}
 
             # 2. Update faces table: set name = NULL
-            cursor.execute("UPDATE faces SET name = NULL WHERE photo_path = ?", (photo_path,))
-            cursor.execute("UPDATE faces SET name = NULL WHERE photo_path LIKE ?", (photo_path,))
+            # A person chose this, so record it as a manual decision: re-clustering
+            # re-derives every name from scratch and must not discard it.
+            cursor.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE photo_path = ?", (photo_path,))
+            cursor.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE photo_path LIKE ?", (photo_path,))
 
             # 3. Update photos table: remove the matched names from people metadata
             if matched_names:
@@ -1772,6 +1778,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             newly_matched_names = set()
             for face_id, matched_name in proposed_matches.items():
                 if matched_name not in conflicting_names:
+                    # Automatch is a bulk guess, not a per-face human decision, so it is
+                    # left as an automatic assignment that re-clustering may revise.
                     cursor.execute("UPDATE faces SET name = ? WHERE id = ?", (matched_name, face_id))
                     newly_matched_names.add(matched_name)
                     matched_count += 1
@@ -2286,7 +2294,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         photos_to_check[photo_path].add(old_name)
 
             placeholders = ",".join("?" for _ in face_ids)
-            cursor.execute(f"UPDATE faces SET name = NULL WHERE id IN ({placeholders})", face_ids)
+            cursor.execute(f"UPDATE faces SET name = NULL, name_source = 'manual' WHERE id IN ({placeholders})", face_ids)
 
             for photo_path, old_names in photos_to_check.items():
                 cursor.execute("SELECT path, people FROM photos WHERE path = ?", (photo_path,))
@@ -2430,7 +2438,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
             # 2. Update faces table in one transaction
             placeholders = ",".join("?" for _ in face_ids)
-            cursor.execute(f"UPDATE faces SET name = ? WHERE id IN ({placeholders})", [person_name] + face_ids)
+            cursor.execute(f"UPDATE faces SET name = ?, name_source = 'manual' WHERE id IN ({placeholders})", [person_name] + face_ids)
 
             # 3. Update photos table people list for each affected photo
             for photo_path, old_names in photos_to_check.items():

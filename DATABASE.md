@@ -38,6 +38,7 @@ Stores details of faces detected within photos, including face crop coordinates,
 | `name` | TEXT | | The resolved name of the person (or `NULL` if unmatched). |
 | `crop_image` | BLOB | | Cache of the cropped face thumbnail (JPEG bytes). |
 | `prob` | REAL | | Detection confidence/probability score from MTCNN. |
+| `name_source` | TEXT | | Who decided `name`. `'manual'` marks a decision made by a person in TagTuner — including a deliberate unmatch, which is stored as `name = NULL` with this column set. `cluster-faces` re-derives every other name from scratch but preserves manual rows and uses them as anchors. `NULL` means the name was assigned automatically and may be revised. |
 
 ### 3. `embedding_cache` Table
 Acts as a cache layer for photo visual embeddings to avoid recalculating heavy image representations when configuration profiles are modified.
@@ -104,6 +105,7 @@ erDiagram
         TEXT name
         BLOB crop_image
         REAL prob
+        TEXT name_source
     }
     
     embedding_cache {

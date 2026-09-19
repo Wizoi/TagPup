@@ -171,6 +171,20 @@ class FaceProcessor:
             logger.info("No face embeddings found in the index.")
             return {}
 
+        # Faces a person decided by hand. These are never overwritten here: re-clustering
+        # re-derives every name from scratch, and without this a single run silently
+        # discards every correction made in TagTuner. They are also the most reliable
+        # evidence available, so they seed the anchor set rather than merely surviving.
+        manual_names = {}
+        if hasattr(photo_index, "get_manual_face_names"):
+            manual_names = photo_index.get_manual_face_names()
+        if manual_names:
+            logger.info(
+                f"Preserving {len(manual_names)} manually assigned face names "
+                f"({sum(1 for v in manual_names.values() if v)} named, "
+                f"{sum(1 for v in manual_names.values() if not v)} deliberately cleared)."
+            )
+
         # Prepare embeddings for clustering
         embeddings = np.array([f["embedding"] for f in all_faces], dtype=np.float32)
         
@@ -224,6 +238,13 @@ class FaceProcessor:
                 people = meta.get("people", [])
                 if face_counts_by_photo.get(p_path, 0) == 1 and len(people) == 1:
                     direct_anchors[face["id"]] = people[0]
+
+        # A human decision outranks an inferred one, so manual assignments are anchors
+        # too. This is what lets hand-matching a few faces of a sparsely sampled person
+        # pull the rest of their photos in on the next run.
+        for face_id, name in manual_names.items():
+            if name:
+                direct_anchors[face_id] = name
 
         # Phase 2: Cluster voting using direct anchors
         initial_resolved_names = {}
@@ -709,7 +730,7 @@ class FaceProcessor:
         # pass would hand the same name straight back to the face the loop just cleared.
         assigned_names_by_photo = {}
         for face in all_faces:
-            name = refined_resolved_names.get(face["id"])
+            name = manual_names.get(face["id"]) if face["id"] in manual_names                 else refined_resolved_names.get(face["id"])
             if name:
                 assigned_names_by_photo.setdefault(face["photo_path"], set()).add(name)
 
@@ -779,6 +800,19 @@ class FaceProcessor:
                         "trigger_photos": []
                     }
             
+            if face["id"] in manual_names:
+                # Keep the human's answer, including a deliberate "no name".
+                final_name = manual_names[face["id"]]
+                traces[face["id"]] = {
+                    "face_id": face["id"],
+                    "photo_path": face["photo_path"],
+                    "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
+                    "assigned_name": final_name,
+                    "resolution_method": "manual_override_preserved",
+                    "assignment_order": None,
+                    "trigger_photos": []
+                }
+
             face_updates.append((final_name, face["id"]))
             if final_name:
                 resolved_stats[final_name] = resolved_stats.get(final_name, 0) + 1
