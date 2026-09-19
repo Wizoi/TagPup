@@ -2551,7 +2551,56 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 if changed and updated_people != people:
                     cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(updated_people), path))
 
+            # Follow the rename into the tag taxonomy and the photo files themselves.
+            # Previously this endpoint only touched the faces and photos tables, so the
+            # taxonomy kept the old name and -- worse -- nothing was written to disk, so
+            # the next rescan of that folder restored the old name from the file.
+            cursor.execute(
+                "SELECT id, tag FROM tag_taxonomy WHERE name = ? AND has_face = 1", (old_name,)
+            )
+            person_nodes = cursor.fetchall()
+            renamed_paths = []
+            for node_id, node_tag in person_nodes:
+                parts = node_tag.split("/")
+                new_tag = "/".join(parts[:-1] + [new_name]) if len(parts) > 1 else new_name
+                cursor.execute(
+                    "SELECT id FROM tag_taxonomy WHERE tag = ? AND id != ?", (new_tag, node_id)
+                )
+                if cursor.fetchone():
+                    continue  # target already exists; leave the tree alone
+                cursor.execute(
+                    "UPDATE tag_taxonomy SET name = ?, tag = ? WHERE id = ?",
+                    (new_name, new_tag, node_id),
+                )
+                renamed_paths.append((node_tag, new_tag))
+
             conn.commit()
+
+            # Rewrite the keyword metadata on any photo carrying the old tag path.
+            if renamed_paths:
+                try:
+                    from tagpup_server import update_photo_metadata_tags
+
+                    executable = self.get_exiftool_path()
+                    for old_tag, new_tag in renamed_paths:
+                        cursor.execute("SELECT path, tags FROM photos WHERE tags IS NOT NULL")
+                        affected = []
+                        for p_path, tags_json in cursor.fetchall():
+                            try:
+                                for t in json.loads(tags_json or "[]"):
+                                    norm = t.replace("\\", "/").strip()
+                                    if norm == old_tag or norm.startswith(old_tag + "/"):
+                                        affected.append(p_path)
+                                        break
+                            except Exception:
+                                continue
+                        if affected:
+                            update_photo_metadata_tags(
+                                self.db_path, executable, affected, old_tag, new_tag
+                            )
+                except Exception as write_err:
+                    logger.error(f"Person rename: failed to update photo files: {write_err}")
+
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error in handle_post_person_rename: {e}")

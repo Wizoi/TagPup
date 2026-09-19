@@ -2631,7 +2631,51 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             if affected_photos:
                 executable = self.get_exiftool_path()
                 update_photo_metadata_tags(self.db_path, executable, affected_photos, old_tag_path, new_tag_path)
-                
+
+            # Resolved faces store the bare leaf name, so renaming a person in the tag
+            # tree has to follow through to the faces table. Without this the taxonomy,
+            # the photo files and the photos table all say the new name while every
+            # matched face still says the old one, and TagTuner keeps showing it.
+            old_leaf = old_tag_path.split("/")[-1]
+            new_leaf = new_tag_path.split("/")[-1]
+            if old_leaf != new_leaf:
+                conn = sqlite3.connect(self.db_path, timeout=10.0)
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT has_face FROM tag_taxonomy WHERE id = ?", (tag_id,)
+                )
+                row = cursor.fetchone()
+                is_person = bool(row and row[0])
+                renamed_faces = 0
+                if is_person:
+                    cursor.execute(
+                        "UPDATE faces SET name = ? WHERE name = ?", (new_leaf, old_leaf)
+                    )
+                    renamed_faces = cursor.rowcount
+                    # Keep the photos.people list in step with the faces it came from.
+                    cursor.execute("SELECT path, people FROM photos WHERE people LIKE ?", (f"%{old_leaf}%",))
+                    for p_path, people_json in cursor.fetchall():
+                        try:
+                            people = json.loads(people_json or "[]")
+                        except Exception:
+                            continue
+                        if old_leaf not in people:
+                            continue
+                        updated = [new_leaf if x == old_leaf else x for x in people]
+                        seen, deduped = set(), []
+                        for x in updated:
+                            if x not in seen:
+                                seen.add(x)
+                                deduped.append(x)
+                        cursor.execute(
+                            "UPDATE photos SET people = ? WHERE path = ?",
+                            (json.dumps(deduped), p_path),
+                        )
+                conn.commit()
+                conn.close()
+                if renamed_faces:
+                    logger.info(f"Tag rename also renamed {renamed_faces} resolved face(s) to '{new_leaf}'.")
+
             # Update taxonomy fallback JSON
             taxonomy = TagTaxonomy(db_path=self.db_path)
             taxonomy.load()

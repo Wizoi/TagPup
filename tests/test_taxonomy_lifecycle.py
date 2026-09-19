@@ -493,6 +493,59 @@ class TestTaxonomyRename(TaxonomyTestBase):
         self.assertIn("Nature/Hiking/Cascades", self.db_tags(photo))
         self.assertIn("Nature/Hiking/Cascades", self.disk_keywords(photo))
 
+    def test_renaming_a_person_also_renames_their_resolved_faces(self):
+        """Faces store the bare leaf name, so the rename must reach them too."""
+        people_id, _ = self.create_tag("People")
+        person_id, _ = self.create_tag("Jane Doe", parent_id=people_id)
+        photo = self.make_photo("a.jpg", ["People/Jane Doe"])
+
+        conn = sqlite3.connect(self.TEST_DB)
+        conn.execute(
+            "INSERT INTO faces (photo_path, box, embedding, name) VALUES (?, '[]', ?, ?)",
+            (photo, b"", "Jane Doe"),
+        )
+        conn.execute(
+            "UPDATE photos SET people = ? WHERE path = ?", ('["Jane Doe"]', photo)
+        )
+        conn.commit()
+        conn.close()
+
+        status, body = self.post(
+            "/api/taxonomy/rename", {"tag_id": person_id, "new_name": "Jane Smith"}
+        )
+        self.assertEqual(status, 200, body)
+
+        conn = sqlite3.connect(self.TEST_DB)
+        face_names = {r[0] for r in conn.execute("SELECT name FROM faces").fetchall()}
+        people = conn.execute(
+            "SELECT people FROM photos WHERE path = ?", (photo,)
+        ).fetchone()[0]
+        conn.close()
+        self.assertIn("Jane Smith", face_names, "resolved faces kept the old name")
+        self.assertNotIn("Jane Doe", face_names)
+        self.assertIn("Jane Smith", people)
+
+    def test_renaming_a_keyword_tag_does_not_touch_faces(self):
+        """Only face categories propagate to the faces table."""
+        parent_id, _ = self.create_tag("Activity")
+        child_id, _ = self.create_tag("Hiking", parent_id=parent_id)
+        photo = self.make_photo("a.jpg", ["Activity/Hiking"])
+
+        conn = sqlite3.connect(self.TEST_DB)
+        conn.execute(
+            "INSERT INTO faces (photo_path, box, embedding, name) VALUES (?, '[]', ?, ?)",
+            (photo, b"", "Hiking"),
+        )
+        conn.commit()
+        conn.close()
+
+        self.post("/api/taxonomy/rename", {"tag_id": child_id, "new_name": "Trekking"})
+
+        conn = sqlite3.connect(self.TEST_DB)
+        face_names = {r[0] for r in conn.execute("SELECT name FROM faces").fetchall()}
+        conn.close()
+        self.assertIn("Hiking", face_names, "a keyword rename leaked into the faces table")
+
     def test_rejects_unknown_tag(self):
         status, _ = self.post(
             "/api/taxonomy/rename", {"tag_id": 999999, "new_name": "Whatever"}

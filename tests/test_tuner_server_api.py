@@ -509,6 +509,56 @@ class TestPersonRename(TunerAPITestBase):
         status, _ = self.post("/api/person/rename", {"old_name": "Jane Doe"})
         self.assertEqual(status, 400)
 
+    def test_the_taxonomy_node_is_renamed_too(self):
+        """A rename that leaves the tag tree behind puts the two out of step."""
+        conn = sqlite3.connect(self.TEST_DB)
+        conn.execute(
+            "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, NULL, ?, 1)",
+            ("People", "People"),
+        )
+        people_id = conn.execute("SELECT id FROM tag_taxonomy WHERE tag='People'").fetchone()[0]
+        conn.execute(
+            "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, 1)",
+            ("People/Jane Doe", people_id, "Jane Doe"),
+        )
+        conn.commit()
+        conn.close()
+
+        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
+        self.add_face(photo, unit_vector(200), name="Jane Doe")
+
+        status, body = self.post(
+            "/api/person/rename", {"old_name": "Jane Doe", "new_name": "Jane Smith"}
+        )
+        self.assertEqual(status, 200, body)
+
+        conn = sqlite3.connect(self.TEST_DB)
+        tags = {r[0] for r in conn.execute("SELECT tag FROM tag_taxonomy").fetchall()}
+        names = {r[0] for r in conn.execute("SELECT name FROM tag_taxonomy").fetchall()}
+        conn.close()
+        self.assertIn("People/Jane Smith", tags, "the taxonomy kept the old path")
+        self.assertNotIn("People/Jane Doe", tags)
+        self.assertIn("Jane Smith", names)
+
+    def test_a_non_person_taxonomy_node_is_left_alone(self):
+        """Only face categories are people; a keyword that happens to match is not."""
+        conn = sqlite3.connect(self.TEST_DB)
+        conn.execute(
+            "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, NULL, ?, 0)",
+            ("Jane Doe", "Jane Doe"),
+        )
+        conn.commit()
+        conn.close()
+
+        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
+        self.add_face(photo, unit_vector(201), name="Jane Doe")
+        self.post("/api/person/rename", {"old_name": "Jane Doe", "new_name": "Jane Smith"})
+
+        conn = sqlite3.connect(self.TEST_DB)
+        tags = {r[0] for r in conn.execute("SELECT tag FROM tag_taxonomy").fetchall()}
+        conn.close()
+        self.assertIn("Jane Doe", tags, "a non-person keyword tag was renamed")
+
 
 class TestUnmatchedFacesQueue(TunerAPITestBase):
     def test_people_queue_lists_names_with_a_cluster_of_unmatched_faces(self):
