@@ -19,10 +19,27 @@ This document records the design, specifications, prerequisites, and instruction
 ### 0. Managing the Index
 
 TagTuner can bring folders into the current database and take them out again, using the
-**Add folder** and **Remove folder** controls in the header. This follows the division of
+**Add folders** and **Remove folder** controls in the header. This follows the division of
 labour between the two interfaces: TagTuner is where identities are established and
 confidence is raised, so it needs to be able to pull in new material directly rather than
 requiring the folder to be added in TagPup first.
+
+**Add folders** opens a picker rather than the native folder dialog. That dialog returns a
+single path and cannot multi-select, so adding a season of shoots meant opening it once per
+folder — and, while a second folder was refused outright, waiting beside the machine for
+each to finish before the next could be started. The picker browses to a parent, lists its
+subfolders with a recursive image count and how many of those images this database already
+holds, and queues every ticked folder in one request. Folders already fully indexed are
+listed unticked and can be hidden. A folder that holds images directly is offered as a row
+of its own ("this folder itself"), which is also what a leaf folder with no subfolders
+shows.
+
+Queued folders are indexed **one at a time** — that constraint has not changed, because
+indexing is GPU-bound — but the queue is drained without further asking. The header shows
+what is running and what is waiting behind it, and **Cancel queue** forgets everything that
+has not started. A folder that fails is reported and the rest of the queue carries on: one
+unreadable folder should not cost the other nine. **Add folders** stays enabled while
+indexing, because folders now queue rather than collide.
 
 Indexing runs in the background with a progress bar, and **does not re-cluster**: that
 would re-derive every name in the database, discarding corrections made here. Run
@@ -116,8 +133,9 @@ removed; nameless faces are reached through **Identify Faces**, which groups the
 - `/api/face-matches-unmatched?id=<face_id>`: Returns other unmatched faces with cosine similarity $\ge 0.8$ for bulk profile creation.
 - `/api/unmatched-faces/people`: Returns the **Identify Faces** queue as `[{"name", "count"}]` — each name that has two or more unmatched candidates library-wide, plus two catch-all buckets: `Unknown Faces` (unmatched faces whose photo names nobody new) first, and `Ungrouped` last (faces whose every unmatched tag has only a single candidate, so no group can form). Counts are photo counts. The result is cached per database against a fingerprint of the `faces` table and recomputed when a face is added or named.
 - `/api/unmatched-faces/person-matches?name=<person_name>`: Returns the unmatched faces that are candidates for the given name, as `{"faces", "total_count", "unclustered_total", "unclustered_shown", "has_more"}`. Candidates are clustered with DBSCAN and ordered by similarity to their cluster centroid. Faces DBSCAN treats as noise are still returned, reported with `cluster_id: -1` and ranked last, capped at 500 per request so a person with tens of thousands of unclustered candidates does not lock up the browser. Accepts the two bucket names `Unknown Faces` and `Ungrouped` in place of a person. Cached like the queue above.
-- `/api/folder/index-active`: Returns `{"busy": bool, "active": [{"folder", "percent", "message"}]}` for whatever is indexing right now. `index-status` can only answer about a folder the caller already knows about, so a freshly loaded page cannot use it to discover a job started before the page existed — it would show an idle, enabled **Add folder** button over a busy server. The page asks this on load and restores the progress bar and the disabled controls from the answer.
-- `/api/folder/index-status?path=<folder_path>`: Returns `{"status", "percent", "message"}` for the background folder indexer. Status values are `running`, `completed` or `failed`; a folder never indexed in this session reports `completed`.
+- `/api/folder/index-active`: Returns `{"busy": bool, "remaining": int, "active": [{"folder", "name", "percent", "message"}], "queued": [{"folder", "name"}]}` for whatever is indexing right now. `index-status` can only answer about a folder the caller already knows about, so a freshly loaded page cannot use it to discover a job started before the page existed — it would show an idle, enabled **Add folder** button over a busy server. The page asks this on load and restores the progress bar and the disabled controls from the answer.
+- `/api/folder/subfolders?path=<folder_path>`: Returns `{"parent", "own_images", "has_subfolders", "folders": [{"path", "name", "images", "has_subfolders", "indexed"}]}` — the immediate subfolders of a folder, each with a recursive count of indexable images and how many of them this database already holds. Indexing already recurses, so pointing it at a parent would work, but as one opaque job with a single progress bar for the lot; listing the children lets each be queued on its own, which is what makes progress legible and lets one folder be left out rather than sinking the run.
+- `/api/folder/index-status?path=<folder_path>`: Returns `{"status", "percent", "message"}` for the background folder indexer. Status values are `queued`, `running`, `completed` or `failed`; a folder never indexed in this session reports `completed`.
 - `/api/faces/excluded`: Returns `{"faces": list, "total_count": int}` for every face marked as not-a-person, each carrying its `reason`, so exclusions can be reviewed and undone.
 - `/api/browse-folder`: Invokes native folder dialog and returns selected path.
 
@@ -129,7 +147,8 @@ removed; nameless faces are reached through **Identify Faces**, which groups the
 - `/api/face/unmatch`: Expects JSON body `{"face_id": int}`.
 - `/api/faces/match-bulk`: Expects JSON body `{"face_ids": list, "person_name": string}`. Matches face IDs in bulk. Implements duplicate-tagging protection.
 - `/api/faces/unmatch-bulk`: Expects JSON body `{"face_ids": list}`. Unmatches face IDs in bulk.
-- `/api/folder/index-start`: Expects JSON body `{"folder_path": string, "cluster": bool (optional, default false)}`. Indexes a folder into the current database in a background thread so its faces can be identified here, without a trip through TagPup first. Clustering is opt-in because it re-derives every name in the database rather than only the folder being added Only one index runs at a time: a request for a *different* folder while one is running is refused with `409` naming the busy folder, since indexing is GPU-bound and a second job does not run alongside the first so much as halve it. Asking again for the folder already running is accepted as a no-op and reports `{"status": "running"}`.
+- `/api/folder/index-start`: Expects JSON body `{"folder_paths": [string], "cluster": bool (optional, default false)}`, or `{"folder_path": string}` for a single folder. Folders are **queued**, not run together: indexing is GPU-bound, so two at once do not go twice as fast so much as make each other crawl. A single worker drains the queue in order. Returns `{"queued": [], "already_queued": [], "invalid": [], "pending": int}`, so a folder that does not exist, or is already running or queued, is reported rather than silently dropped; the request is refused with `400` only when no requested path is a folder at all. A folder that fails is recorded against itself and the rest of the queue still runs. Clustering is opt-in because it re-derives every name in the database rather than only the folder being added.
+- `/api/folder/index-cancel`: Expects JSON body `{"all": true}` or `{"folder_paths": [string]}`. Drops folders that have **not started yet** and returns `{"cancelled": [], "pending": int}`. The folder currently being indexed is deliberately left alone: it owns a subprocess partway through writing rows, and killing that is a different and riskier operation than forgetting something that has not begun.
 - `/api/folder/remove`: Expects JSON body `{"folder_path": string}`. Removes every indexed photo under that folder, and their faces, from the current database. Returns `{"photos_removed", "faces_removed", "manual_lost", "excluded_lost"}` — the last two report how much curated face work the removal discarded, since those rows go with the photos. **The photo files themselves are never deleted.**
 - `/api/faces/exclude`: Expects JSON body `{"face_ids": list, "reason": string (optional)}` (a single `face_id` is also accepted). Marks faces as not-a-person. Any name they carried is cleared, and the person is dropped from the photo when no other face of theirs remains in it. Excluded faces take no part in clustering, match suggestions, or the Identify Faces queue.
 - `/api/faces/restore`: Expects JSON body `{"face_ids": list}`. Reverses an exclusion, returning the faces unnamed and unclaimed so they can be identified again.

@@ -676,17 +676,47 @@ document.addEventListener('DOMContentLoaded', () => {
     const indexProgressContainer = document.getElementById('index-progress-container');
     const indexProgressBar = document.getElementById('index-progress-bar');
     const indexProgressText = document.getElementById('index-progress-text');
+    const indexQueueSummary = document.getElementById('index-queue-summary');
+    const btnCancelQueue = document.getElementById('btn-cancel-queue');
+    const folderPickerModal = document.getElementById('folder-picker-modal');
+    const folderPickerList = document.getElementById('folder-picker-list');
+    const folderPickerListWrap = document.getElementById('folder-picker-list-wrap');
+    const folderPickerEmpty = document.getElementById('folder-picker-empty');
+    const folderPickerLoading = document.getElementById('folder-picker-loading');
+    const folderPickerParent = document.getElementById('folder-picker-parent');
+    const folderPickerSelection = document.getElementById('folder-picker-selection');
+    const btnFolderPickerBrowse = document.getElementById('btn-folder-picker-browse');
+    const btnFolderPickerCancel = document.getElementById('btn-folder-picker-cancel');
+    const btnFolderPickerQueue = document.getElementById('btn-folder-picker-queue');
+    const btnCloseFolderPicker = document.getElementById('btn-close-folder-picker');
+    const btnFolderSelectAll = document.getElementById('btn-folder-select-all');
+    const btnFolderSelectNone = document.getElementById('btn-folder-select-none');
+    const folderPickerHideIndexed = document.getElementById('folder-picker-hide-indexed');
+
+    // What the picker is currently offering, and which of it is ticked.
+    let pickerFolders = [];
+    let pickerSelected = new Set();
+
+    // The last folder whose poll reached a terminal status. index-active and
+    // index-status are two reads of state that moves between them, so the first can
+    // still name a folder the second has already called finished. Following that
+    // answer would start the poll again, which would finish again, with nothing
+    // between the two -- a spin, not a wait. Remembering the folder breaks it.
+    let lastFinishedFolder = null;
+    let followQueueTimer = null;
     let indexPollTimer = null;
 
     // The buttons carry the state rather than just greying out. A disabled control
     // with no explanation reads as broken -- which is exactly how it was reported.
     function setIndexingUI(busy, label) {
         if (btnAddFolder) {
-            btnAddFolder.disabled = busy;
-            btnAddFolder.textContent = busy ? (label || '\u23F3 Indexing...') : '\u2795 Add folder';
+            // Adding stays available while indexing: folders queue rather than
+            // collide. Only the label changes, so it is clear something is running.
+            btnAddFolder.disabled = false;
+            btnAddFolder.textContent = busy ? (label || '\u2795 Add to queue') : '\u2795 Add folders';
             btnAddFolder.title = busy
-                ? 'An index is already running. Only one runs at a time, because indexing is GPU-bound.'
-                : 'Index a folder into this database so its faces can be identified';
+                ? 'Folders you add now are queued behind the one being indexed.'
+                : 'Index folders into this database so their faces can be identified';
         }
         if (btnRemoveFolder) {
             btnRemoveFolder.disabled = busy;
@@ -696,11 +726,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // A freshly loaded page knows nothing about a job that started before it. Ask.
+    // A freshly loaded page knows nothing about a job that started before it, nor
+    // about anything queued behind it. Ask.
     function restoreIndexingState() {
         fetch('/api/folder/index-active')
-            .then(res => res.ok ? res.json() : { active: [] })
+            .then(res => res.ok ? res.json() : { active: [], queued: [] })
             .then(data => {
+                renderQueueSummary(data);
                 const job = (data.active || [])[0];
                 if (!job) return;
                 setIndexingUI(true);
@@ -712,6 +744,53 @@ document.addEventListener('DOMContentLoaded', () => {
             .catch(() => {});
     }
 
+    // Says what is running and what is behind it. Without this a queue of ten looks
+    // exactly like a queue of one that happens to be taking a while.
+    function renderQueueSummary(data) {
+        const queued = (data && data.queued) || [];
+        const active = (data && data.active) || [];
+        if (!indexQueueSummary) return;
+        if (!queued.length) {
+            indexQueueSummary.classList.add('hidden');
+            indexQueueSummary.textContent = '';
+            if (btnCancelQueue) btnCancelQueue.classList.add('hidden');
+            return;
+        }
+        const names = queued.slice(0, 3).map(f => f.name).join(', ');
+        const more = queued.length > 3 ? ` +${queued.length - 3} more` : '';
+        const nowOn = active.length ? `${active[0].name} \u2014 ` : '';
+        indexQueueSummary.textContent = `${nowOn}${queued.length} folder(s) waiting: ${names}${more}`;
+        indexQueueSummary.classList.remove('hidden');
+        if (btnCancelQueue) btnCancelQueue.classList.remove('hidden');
+    }
+
+    // Once the running folder finishes, the next one starts on the server without
+    // being asked. The page has to notice that and follow it.
+    function followQueue(delay) {
+        if (followQueueTimer) clearTimeout(followQueueTimer);
+        followQueueTimer = setTimeout(() => {
+            followQueueTimer = null;
+            fetch('/api/folder/index-active')
+                .then(res => res.ok ? res.json() : { active: [], queued: [] })
+                .then(data => {
+                    renderQueueSummary(data);
+                    const job = (data.active || [])[0];
+                    // Not the folder we just watched finish: that one is done
+                    // whatever this reply still says about it.
+                    if (job && job.folder !== lastFinishedFolder) {
+                        setIndexingUI(true);
+                        indexProgressContainer.classList.remove('hidden');
+                        pollIndexStatus(job.folder);
+                        return;
+                    }
+                    setIndexingUI(false);
+                    indexProgressContainer.classList.add('hidden');
+                    fetchPhotos();
+                })
+                .catch(() => {});
+        }, delay === undefined ? 400 : delay);
+    }
+
     function pickFolder() {
         return fetch('/api/browse-folder')
             .then(res => res.json())
@@ -720,6 +799,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function pollIndexStatus(folderPath) {
         if (indexPollTimer) clearInterval(indexPollTimer);
+        if (folderPath !== lastFinishedFolder) lastFinishedFolder = null;
 
         const query = () => {
             fetch(`/api/folder/index-status?path=${encodeURIComponent(folderPath)}`)
@@ -735,19 +815,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     // terminal is how a dead worker turns into a spinner that never ends.
                     clearInterval(indexPollTimer);
                     indexPollTimer = null;
-                    indexProgressContainer.classList.add('hidden');
-                    setIndexingUI(false);
+                    lastFinishedFolder = folderPath;
 
                     if (data.status === 'failed') {
-                        alert('Indexing failed: ' + (data.message || 'Unknown error'));
-                        return;
+                        // One bad folder must not stop the rest of the queue, so this
+                        // reports and moves on rather than tearing the whole run down.
+                        alert('Indexing failed for this folder: ' +
+                              (data.message || 'Unknown error'));
                     }
-                    alert(data.message || 'Folder indexed.');
                     // fetchPhotos dispatches on the selected mode. Calling
                     // fetchPeopleWithCounts directly rendered the people list into the
                     // sidebar whatever Tune target said, so finishing an index while in
                     // Folder Matches left the list and the dropdown disagreeing.
                     fetchPhotos();
+                    // Whatever was queued behind this folder is already starting.
+                    followQueue();
                 })
                 .catch(err => console.error('Error polling index status:', err));
         };
@@ -755,27 +837,207 @@ document.addEventListener('DOMContentLoaded', () => {
         indexPollTimer = setInterval(query, 1000);
     }
 
-    if (btnAddFolder) {
-        btnAddFolder.addEventListener('click', () => {
-            pickFolder().then(folderPath => {
-                if (!folderPath) return;
-                setIndexingUI(true, '\u23F3 Starting...');
-                indexProgressContainer.classList.remove('hidden');
-                indexProgressText.textContent = 'Starting...';
+    // ---------------------------------------------------------------- picker --
+    // The native folder dialog returns one path and cannot multi-select, so choosing
+    // a season of shoots meant opening it once per folder and waiting for each to
+    // finish. Browsing to the parent and ticking its children does it in one pass.
 
-                fetch('/api/folder/index-start', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ folder_path: folderPath })
-                })
-                .then(res => res.ok ? res.json() : res.json().then(e => { throw new Error(e.error || 'failed'); }))
-                .then(() => pollIndexStatus(folderPath))
-                .catch(err => {
-                    indexProgressContainer.classList.add('hidden');
-                    setIndexingUI(false);
-                    alert('Error starting indexing: ' + err.message);
-                });
+    function openFolderPicker() {
+        pickerFolders = [];
+        pickerSelected = new Set();
+        folderPickerParent.textContent = '';
+        folderPickerList.innerHTML = '';
+        folderPickerListWrap.classList.add('hidden');
+        folderPickerLoading.classList.add('hidden');
+        folderPickerEmpty.classList.remove('hidden');
+        updatePickerSelectionUI();
+        folderPickerModal.classList.remove('hidden');
+    }
+
+    function closeFolderPicker() {
+        folderPickerModal.classList.add('hidden');
+    }
+
+    function loadSubfolders(parent) {
+        folderPickerEmpty.classList.add('hidden');
+        folderPickerListWrap.classList.add('hidden');
+        folderPickerLoading.classList.remove('hidden');
+        folderPickerParent.textContent = parent;
+
+        fetch(`/api/folder/subfolders?path=${encodeURIComponent(parent)}`)
+            .then(res => res.ok ? res.json() : res.json().then(e => { throw new Error(e.error || 'failed'); }))
+            .then(data => {
+                folderPickerLoading.classList.add('hidden');
+                pickerFolders = [];
+
+                // The parent itself is offered whenever it holds images directly --
+                // a folder of folders usually holds none, and a leaf folder is the
+                // whole answer.
+                if (data.own_images > 0 || !data.folders.length) {
+                    pickerFolders.push({
+                        path: data.parent,
+                        name: `${basename(data.parent)}  (this folder itself)`,
+                        images: data.own_images,
+                        indexed: 0,
+                        isParent: true,
+                    });
+                }
+                (data.folders || []).forEach(f => pickerFolders.push(f));
+
+                // Nothing worth offering: say so rather than showing an empty box.
+                if (!pickerFolders.length) {
+                    folderPickerEmpty.textContent =
+                        'No subfolders and no images directly in that folder.';
+                    folderPickerEmpty.classList.remove('hidden');
+                    updatePickerSelectionUI();
+                    return;
+                }
+
+                // Preselect what has images and is not already fully indexed --
+                // the common case is "everything new under here".
+                pickerSelected = new Set(
+                    pickerFolders
+                        .filter(f => f.images > 0 && f.indexed < f.images)
+                        .map(f => f.path)
+                );
+                renderPickerList();
+                folderPickerListWrap.classList.remove('hidden');
+            })
+            .catch(err => {
+                folderPickerLoading.classList.add('hidden');
+                folderPickerEmpty.textContent = 'Could not read that folder: ' + err.message;
+                folderPickerEmpty.classList.remove('hidden');
             });
+    }
+
+    function basename(p) {
+        const parts = String(p).replace(/[\\/]+$/, '').split(/[\\/]/);
+        return parts[parts.length - 1] || p;
+    }
+
+    function renderPickerList() {
+        folderPickerList.innerHTML = '';
+        const hideIndexed = folderPickerHideIndexed && folderPickerHideIndexed.checked;
+
+        pickerFolders.forEach(folder => {
+            const fullyIndexed = folder.images > 0 && folder.indexed >= folder.images;
+            if (hideIndexed && fullyIndexed) return;
+
+            const row = document.createElement('label');
+            row.className = 'folder-picker-row' + (fullyIndexed ? ' already-indexed' : '');
+
+            const box = document.createElement('input');
+            box.type = 'checkbox';
+            box.checked = pickerSelected.has(folder.path);
+            box.addEventListener('change', () => {
+                if (box.checked) pickerSelected.add(folder.path);
+                else pickerSelected.delete(folder.path);
+                updatePickerSelectionUI();
+            });
+
+            const name = document.createElement('span');
+            name.className = 'folder-picker-name';
+            name.textContent = folder.name;
+
+            const meta = document.createElement('span');
+            meta.className = 'folder-picker-meta';
+            if (!folder.images) {
+                meta.textContent = 'no images';
+            } else if (fullyIndexed) {
+                meta.textContent = `${folder.images} image(s) \u2014 already indexed`;
+            } else if (folder.indexed) {
+                meta.textContent = `${folder.images} image(s), ${folder.indexed} already indexed`;
+            } else {
+                meta.textContent = `${folder.images} image(s)`;
+            }
+
+            row.appendChild(box);
+            row.appendChild(name);
+            row.appendChild(meta);
+            folderPickerList.appendChild(row);
+        });
+        updatePickerSelectionUI();
+    }
+
+    function updatePickerSelectionUI() {
+        const n = pickerSelected.size;
+        const images = pickerFolders
+            .filter(f => pickerSelected.has(f.path))
+            .reduce((sum, f) => sum + (f.images || 0), 0);
+        folderPickerSelection.textContent = n
+            ? `${n} folder(s), ${images} image(s)`
+            : 'Nothing selected';
+        btnFolderPickerQueue.disabled = n === 0;
+        btnFolderPickerQueue.textContent = n > 1 ? `Add ${n} folders to queue` : 'Add to queue';
+    }
+
+    function queueSelectedFolders() {
+        const folders = pickerFolders
+            .filter(f => pickerSelected.has(f.path))
+            .map(f => f.path);
+        if (!folders.length) return;
+
+        btnFolderPickerQueue.disabled = true;
+        fetch('/api/folder/index-start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folder_paths: folders })
+        })
+        .then(res => res.ok ? res.json() : res.json().then(e => { throw new Error(e.error || 'failed'); }))
+        .then(data => {
+            closeFolderPicker();
+            setIndexingUI(true, '\u2795 Add to queue');
+            indexProgressContainer.classList.remove('hidden');
+            indexProgressText.textContent = 'Starting...';
+            if ((data.already_queued || []).length) {
+                console.info('Already queued or running, skipped:', data.already_queued);
+            }
+            followQueue();
+        })
+        .catch(err => {
+            btnFolderPickerQueue.disabled = false;
+            alert('Could not queue those folders: ' + err.message);
+        });
+    }
+
+    if (btnAddFolder) {
+        btnAddFolder.addEventListener('click', openFolderPicker);
+    }
+    if (btnFolderPickerBrowse) {
+        btnFolderPickerBrowse.addEventListener('click', () => {
+            pickFolder().then(parent => { if (parent) loadSubfolders(parent); });
+        });
+    }
+    if (btnCloseFolderPicker) btnCloseFolderPicker.addEventListener('click', closeFolderPicker);
+    if (btnFolderPickerCancel) btnFolderPickerCancel.addEventListener('click', closeFolderPicker);
+    if (btnFolderPickerQueue) btnFolderPickerQueue.addEventListener('click', queueSelectedFolders);
+    if (btnFolderSelectAll) {
+        btnFolderSelectAll.addEventListener('click', () => {
+            pickerFolders.forEach(f => { if (f.images > 0) pickerSelected.add(f.path); });
+            renderPickerList();
+        });
+    }
+    if (btnFolderSelectNone) {
+        btnFolderSelectNone.addEventListener('click', () => {
+            pickerSelected = new Set();
+            renderPickerList();
+        });
+    }
+    if (folderPickerHideIndexed) {
+        folderPickerHideIndexed.addEventListener('change', renderPickerList);
+    }
+    if (btnCancelQueue) {
+        btnCancelQueue.addEventListener('click', () => {
+            if (!confirm('Forget the folders that have not started yet?\n\n' +
+                         'The folder being indexed now carries on.')) return;
+            fetch('/api/folder/index-cancel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ all: true })
+            })
+            .then(res => res.json())
+            .then(() => followQueue())
+            .catch(err => alert('Could not cancel the queue: ' + err.message));
         });
     }
 

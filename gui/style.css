@@ -1388,3 +1388,106 @@ body {
     text-overflow: ellipsis;
     max-width: 55%;
 }
+
+/* ---------------------------------------------------------- folder picker --
+   Browsing to a parent and ticking its children, rather than opening the native
+   dialog once per folder. The list can be long, so it scrolls inside the modal
+   and the footer keeps the running count in view. */
+.folder-picker-content {
+    max-width: 720px;
+    width: 90vw;
+}
+
+.folder-picker-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.folder-picker-parent {
+    font-size: 12px;
+    color: var(--text-muted);
+    word-break: break-all;
+}
+
+.folder-picker-empty {
+    padding: 24px 8px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.folder-picker-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 8px;
+}
+
+.folder-picker-skip {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.folder-picker-list {
+    max-height: 46vh;
+    overflow-y: auto;
+}
+
+.folder-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.folder-picker-row:hover {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+.folder-picker-row.already-indexed {
+    opacity: 0.55;
+}
+
+.folder-picker-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.folder-picker-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.folder-picker-selection {
+    margin-right: auto;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* What is waiting behind the folder currently being indexed. Without it, ten
+   queued folders look exactly like one that is taking a long time. */
+.index-queue-summary {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 40vw;
+}

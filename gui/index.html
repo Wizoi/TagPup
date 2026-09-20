@@ -25,7 +25,7 @@
                 </div>
                 <div class="control-group" id="index-controls" style="display: flex; align-items: center; gap: 6px;">
                     <label>Index:</label>
-                    <button id="btn-add-folder" class="btn btn-secondary btn-sm" title="Index a folder into this database so its faces can be identified">➕ Add folder</button>
+                    <button id="btn-add-folder" class="btn btn-secondary btn-sm" title="Index folders into this database so their faces can be identified">➕ Add folders</button>
                     <button id="btn-remove-folder" class="btn btn-secondary btn-sm" title="Remove a folder's photos and faces from this database (photo files are not deleted)">➖ Remove folder</button>
                 </div>
                 <div class="control-group">
@@ -49,6 +49,9 @@
                     <div id="index-progress-bar" class="index-progress-bar-inner"></div>
                 </div>
                 <span id="index-progress-text" class="index-progress-text"></span>
+                <span id="index-queue-summary" class="index-queue-summary hidden"></span>
+                <button id="btn-cancel-queue" class="btn btn-secondary btn-sm hidden"
+                        title="Forget the folders that have not started yet. The one being indexed now is left alone.">Cancel queue</button>
             </div>
 </header>
 
@@ -228,6 +231,45 @@
     </div>
     
     <!-- New Person Popup Modal -->
+
+    <!-- Choose folders to index. A parent can be expanded into its subfolders so each
+         is queued on its own, which is what makes progress legible over a season's
+         worth of shoots. -->
+    <div id="folder-picker-modal" class="modal hidden">
+        <div class="modal-content folder-picker-content">
+            <div class="modal-header">
+                <h3>Add folders to the index</h3>
+                <button id="btn-close-folder-picker" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="folder-picker-actions">
+                    <button id="btn-folder-picker-browse" class="btn btn-primary btn-sm">&#128193; Browse...</button>
+                    <span id="folder-picker-parent" class="folder-picker-parent"></span>
+                </div>
+                <div id="folder-picker-empty" class="folder-picker-empty">
+                    Browse to a folder. If it contains subfolders you can pick which of
+                    them to index, and each is queued separately.
+                </div>
+                <div id="folder-picker-list-wrap" class="folder-picker-list-wrap hidden">
+                    <div class="folder-picker-toolbar">
+                        <button id="btn-folder-select-all" class="btn btn-secondary btn-sm">Select all</button>
+                        <button id="btn-folder-select-none" class="btn btn-secondary btn-sm">Select none</button>
+                        <label class="folder-picker-skip">
+                            <input type="checkbox" id="folder-picker-hide-indexed">
+                            Hide folders already fully indexed
+                        </label>
+                    </div>
+                    <div id="folder-picker-list" class="folder-picker-list"></div>
+                </div>
+                <div id="folder-picker-loading" class="folder-picker-empty hidden">Reading folder...</div>
+            </div>
+            <div class="modal-footer">
+                <span id="folder-picker-selection" class="folder-picker-selection"></span>
+                <button id="btn-folder-picker-cancel" class="btn btn-secondary">Cancel</button>
+                <button id="btn-folder-picker-queue" class="btn btn-primary" disabled>Add to queue</button>
+            </div>
+        </div>
+    </div>
     <div id="new-person-modal" class="modal hidden">
         <div class="modal-content">
             <div class="modal-header">

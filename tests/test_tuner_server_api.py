@@ -97,15 +97,17 @@ class TunerAPITestBase(unittest.TestCase):
         conn.close()
 
     def clear_index_status(self):
-        """Forget any indexing job an earlier test left behind.
+        """Forget any indexing job or queue an earlier test left behind.
 
-        index_status lives on the handler class, so a test that plants a "running"
-        job to exercise the single-job guard leaves it there for every test after it.
-        The next one to call index-start then gets a 409 it never asked for.
+        index_status and index_queue live on the handler class, so a test that plants
+        a "running" job or queues folders leaves them there for every test after it.
+        The next test then sees a busy server it never asked for.
         """
         set_active_db_path(self.TEST_DB)
         try:
             TunerHTTPRequestHandler.index_status.clear()
+            TunerHTTPRequestHandler.index_queue["pending"] = []
+            TunerHTTPRequestHandler.index_queue["runner"] = None
         finally:
             set_active_db_path(None)
 
@@ -142,6 +144,16 @@ class TunerAPITestBase(unittest.TestCase):
             f"http://127.0.0.1:{self.TEST_PORT}{path}", timeout=60
         ) as r:
             return json.loads(r.read().decode("utf-8"))
+
+    def get_with_status(self, path):
+        """Like get(), but keeps the status so a refusal can be asserted on."""
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{self.TEST_PORT}{path}", timeout=60
+            ) as r:
+                return r.status, json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode("utf-8", errors="replace")
 
     def get_raw(self, path):
         with urllib.request.urlopen(
@@ -774,6 +786,334 @@ class TestRecluster(TunerAPITestBase):
             set_active_db_path(None)
 
 
+class TestFolderQueue(TunerAPITestBase):
+    """Several folders can be asked for at once; they are worked through in turn.
+
+    Indexing is GPU-bound, so folders still run one at a time -- but choosing a
+    season of shoots should be one action, not one native dialog per folder with a
+    wait beside the machine in between.
+    """
+
+    def tearDown(self):
+        self.clear_index_status()
+
+    def make_folders(self, n):
+        import tempfile
+        return [tempfile.mkdtemp(prefix="tuner_q%d_" % i) for i in range(n)]
+
+    def queue_state(self):
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
+        set_active_db_path(self.TEST_DB)
+        try:
+            return list(TunerHTTPRequestHandler.index_queue.get("pending", []))
+        finally:
+            set_active_db_path(None)
+
+    def post_start(self, folders, block_runner=True):
+        """Queue folders, with the worker stubbed out so the queue stays observable."""
+        from unittest.mock import patch
+        if block_runner:
+            with patch("tuner_server.TunerHTTPRequestHandler._ensure_queue_runner"):
+                return self.post("/api/folder/index-start", {"folder_paths": folders})
+        return self.post("/api/folder/index-start", {"folder_paths": folders})
+
+    def test_several_folders_are_all_queued(self):
+        folders = self.make_folders(3)
+        status, body = self.post_start(folders)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(len(body["queued"]), 3)
+        self.assertEqual(len(self.queue_state()), 3)
+
+    def test_the_queue_keeps_the_order_they_were_given_in(self):
+        folders = self.make_folders(3)
+        self.post_start(folders)
+        self.assertEqual([j["folder"] for j in self.queue_state()], folders)
+
+    def test_a_single_folder_path_is_still_accepted(self):
+        """The old one-folder shape must keep working."""
+        from unittest.mock import patch
+        import tempfile
+        folder = tempfile.mkdtemp(prefix="tuner_single_")
+        with patch("tuner_server.TunerHTTPRequestHandler._ensure_queue_runner"):
+            status, body = self.post("/api/folder/index-start", {"folder_path": folder})
+        self.assertEqual(status, 200, body)
+        self.assertEqual([j["folder"] for j in self.queue_state()], [folder])
+
+    def test_a_folder_asked_for_twice_is_queued_once(self):
+        folders = self.make_folders(1) * 2
+        self.post_start(folders)
+        self.assertEqual(len(self.queue_state()), 1)
+
+    def test_a_folder_already_queued_is_not_added_again(self):
+        folders = self.make_folders(1)
+        self.post_start(folders)
+        status, body = self.post_start(folders)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["queued"], [])
+        self.assertEqual(len(body["already_queued"]), 1)
+        self.assertEqual(len(self.queue_state()), 1)
+
+    def test_a_folder_being_indexed_now_is_not_queued_behind_itself(self):
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
+        folders = self.make_folders(1)
+        set_active_db_path(self.TEST_DB)
+        TunerHTTPRequestHandler.index_status[normalize_path(folders[0])] = {
+            "status": "running", "percent": 10, "message": "working",
+        }
+        set_active_db_path(None)
+
+        status, body = self.post_start(folders)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["queued"], [])
+        self.assertEqual(self.queue_state(), [])
+
+    def test_a_folder_that_does_not_exist_is_reported_not_queued(self):
+        folders = self.make_folders(1)
+        status, body = self.post_start(folders + ["D:/definitely/not/here"])
+        self.assertEqual(status, 200, body)
+        self.assertEqual(len(body["queued"]), 1)
+        self.assertEqual(len(body["invalid"]), 1)
+
+    def test_a_request_with_no_valid_folder_at_all_is_refused(self):
+        status, _ = self.post_start(["D:/nope", "D:/also/nope"])
+        self.assertEqual(status, 400)
+
+    def test_folder_paths_must_be_a_list(self):
+        status, _ = self.post("/api/folder/index-start", {"folder_paths": "not a list"})
+        self.assertEqual(status, 400)
+
+
+class TestQueueVisibility(TestFolderQueue):
+    """A queue of ten must not look like one folder taking a long time."""
+
+    def test_index_active_lists_what_is_waiting(self):
+        folders = self.make_folders(2)
+        self.post_start(folders)
+        body = self.get("/api/folder/index-active")
+        self.assertEqual(len(body["queued"]), 2)
+        self.assertTrue(body["busy"])
+        self.assertEqual(body["remaining"], 2)
+
+    def test_queued_entries_carry_a_readable_name(self):
+        folders = self.make_folders(1)
+        self.post_start(folders)
+        body = self.get("/api/folder/index-active")
+        self.assertEqual(body["queued"][0]["name"], os.path.basename(folders[0]))
+
+    def test_nothing_queued_reads_as_idle(self):
+        body = self.get("/api/folder/index-active")
+        self.assertFalse(body["busy"])
+        self.assertEqual(body["queued"], [])
+        self.assertEqual(body["remaining"], 0)
+
+    def test_a_queued_folder_reports_its_own_status_as_queued(self):
+        import urllib.parse
+        folders = self.make_folders(1)
+        self.post_start(folders)
+        body = self.get(
+            "/api/folder/index-status?path=%s" % urllib.parse.quote(folders[0])
+        )
+        self.assertEqual(body["status"], "queued")
+
+
+class TestQueueCancel(TestFolderQueue):
+    def test_cancel_all_empties_the_queue(self):
+        folders = self.make_folders(3)
+        self.post_start(folders)
+        status, body = self.post("/api/folder/index-cancel", {"all": True})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(len(body["cancelled"]), 3)
+        self.assertEqual(self.queue_state(), [])
+
+    def test_cancelling_one_folder_leaves_the_others(self):
+        folders = self.make_folders(3)
+        self.post_start(folders)
+        status, body = self.post(
+            "/api/folder/index-cancel", {"folder_paths": [folders[1]]}
+        )
+        self.assertEqual(status, 200, body)
+        self.assertEqual([j["folder"] for j in self.queue_state()],
+                         [folders[0], folders[2]])
+
+    def test_cancelling_does_not_touch_the_folder_being_indexed(self):
+        """That one owns a subprocess partway through writing rows."""
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
+        running = self.make_folders(1)[0]
+        queued = self.make_folders(1)
+        set_active_db_path(self.TEST_DB)
+        TunerHTTPRequestHandler.index_status[normalize_path(running)] = {
+            "status": "running", "percent": 30, "message": "working",
+        }
+        set_active_db_path(None)
+        self.post_start(queued)
+
+        self.post("/api/folder/index-cancel", {"all": True})
+        body = self.get("/api/folder/index-active")
+        self.assertEqual(len(body["active"]), 1)
+        self.assertEqual(body["queued"], [])
+
+    def test_cancelling_nothing_in_particular_is_refused(self):
+        status, _ = self.post("/api/folder/index-cancel", {})
+        self.assertEqual(status, 400)
+
+
+class TestQueueRunner(TestFolderQueue):
+    """The worker drains the queue, and one bad folder does not sink the rest."""
+
+    def test_every_queued_folder_is_indexed_in_order(self):
+        from unittest.mock import patch
+        from tuner_server import TunerHTTPRequestHandler
+        folders = self.make_folders(3)
+        self.post_start(folders)
+
+        seen = []
+        with patch.object(TunerHTTPRequestHandler, "run_folder_index_thread",
+                          side_effect=lambda f, db, c=False: seen.append(f)):
+            TunerHTTPRequestHandler.run_index_queue(self.TEST_DB)
+        self.assertEqual(seen, folders)
+        self.assertEqual(self.queue_state(), [])
+
+    def test_a_folder_that_throws_does_not_stop_the_queue(self):
+        from unittest.mock import patch
+        from tuner_server import TunerHTTPRequestHandler
+        folders = self.make_folders(3)
+        self.post_start(folders)
+
+        seen = []
+
+        def flaky(folder, db, cluster=False):
+            seen.append(folder)
+            if folder == folders[1]:
+                raise RuntimeError("that folder is unreadable")
+
+        with patch.object(TunerHTTPRequestHandler, "run_folder_index_thread",
+                          side_effect=flaky):
+            TunerHTTPRequestHandler.run_index_queue(self.TEST_DB)
+
+        self.assertEqual(seen, folders, "the queue stopped at the failing folder")
+
+    def test_the_failure_is_recorded_against_the_folder_that_failed(self):
+        from unittest.mock import patch
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
+        folders = self.make_folders(2)
+        self.post_start(folders)
+
+        def flaky(folder, db, cluster=False):
+            if folder == folders[0]:
+                raise RuntimeError("unreadable")
+
+        with patch.object(TunerHTTPRequestHandler, "run_folder_index_thread",
+                          side_effect=flaky):
+            TunerHTTPRequestHandler.run_index_queue(self.TEST_DB)
+
+        set_active_db_path(self.TEST_DB)
+        try:
+            failed = TunerHTTPRequestHandler.index_status.get(normalize_path(folders[0]))
+        finally:
+            set_active_db_path(None)
+        self.assertEqual(failed["status"], "failed")
+        self.assertIn("unreadable", failed["message"])
+
+    def test_the_runner_clears_itself_when_the_queue_empties(self):
+        from unittest.mock import patch
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
+        self.post_start(self.make_folders(1))
+        with patch.object(TunerHTTPRequestHandler, "run_folder_index_thread"):
+            TunerHTTPRequestHandler.run_index_queue(self.TEST_DB)
+        set_active_db_path(self.TEST_DB)
+        try:
+            self.assertIsNone(TunerHTTPRequestHandler.index_queue.get("runner"))
+        finally:
+            set_active_db_path(None)
+
+
+class TestSubfolderListing(TunerAPITestBase):
+    """Expanding a parent into its children is what lets each be queued on its own."""
+
+    def setUp(self):
+        super().setUp()
+        import tempfile
+        self.parent = tempfile.mkdtemp(prefix="tuner_parent_")
+        self.addCleanup(shutil.rmtree, self.parent, True)
+
+    def make_child(self, name, images=0, ext=".jpg"):
+        child = os.path.join(self.parent, name)
+        os.makedirs(child, exist_ok=True)
+        for i in range(images):
+            with open(os.path.join(child, "img%d%s" % (i, ext)), "wb") as f:
+                f.write(b"x")
+        return child
+
+    def list_subfolders(self):
+        import urllib.parse
+        return self.get(
+            "/api/folder/subfolders?path=%s" % urllib.parse.quote(self.parent)
+        )
+
+    def test_immediate_subfolders_are_listed(self):
+        self.make_child("b_shoot", images=2)
+        self.make_child("a_shoot", images=1)
+        body = self.list_subfolders()
+        self.assertEqual([f["name"] for f in body["folders"]], ["a_shoot", "b_shoot"])
+
+    def test_each_subfolder_reports_how_many_images_it_holds(self):
+        self.make_child("shoot", images=3)
+        body = self.list_subfolders()
+        self.assertEqual(body["folders"][0]["images"], 3)
+
+    def test_images_are_counted_recursively(self):
+        child = self.make_child("shoot", images=1)
+        deeper = os.path.join(child, "raw")
+        os.makedirs(deeper)
+        with open(os.path.join(deeper, "extra.jpg"), "wb") as f:
+            f.write(b"x")
+        body = self.list_subfolders()
+        self.assertEqual(body["folders"][0]["images"], 2)
+        self.assertTrue(body["folders"][0]["has_subfolders"])
+
+    def test_files_that_are_not_images_are_not_counted(self):
+        self.make_child("shoot", images=2, ext=".txt")
+        body = self.list_subfolders()
+        self.assertEqual(body["folders"][0]["images"], 0)
+
+    def test_images_sitting_in_the_parent_itself_are_reported(self):
+        with open(os.path.join(self.parent, "loose.jpg"), "wb") as f:
+            f.write(b"x")
+        self.make_child("shoot", images=1)
+        body = self.list_subfolders()
+        self.assertEqual(body["own_images"], 1)
+
+    def test_a_parent_of_only_folders_reports_no_images_of_its_own(self):
+        self.make_child("shoot", images=2)
+        body = self.list_subfolders()
+        self.assertEqual(body["own_images"], 0)
+        self.assertTrue(body["has_subfolders"])
+
+    def test_already_indexed_photos_are_counted_per_folder(self):
+        """So the picker can show what is already in rather than offering it as new."""
+        child = self.make_child("shoot", images=2)
+        conn = sqlite3.connect(self.TEST_DB)
+        conn.execute(
+            "INSERT INTO photos (path, tags, people, captions) VALUES (?, '[]', '[]', '[]')",
+            (os.path.join(child, "img0.jpg"),),
+        )
+        conn.commit()
+        conn.close()
+        body = self.list_subfolders()
+        self.assertEqual(body["folders"][0]["indexed"], 1)
+
+    def test_a_missing_path_is_refused(self):
+        status, _ = self.get_with_status("/api/folder/subfolders")
+        self.assertEqual(status, 400)
+
+    def test_a_path_that_is_not_a_folder_is_refused(self):
+        import urllib.parse
+        status, _ = self.get_with_status(
+            "/api/folder/subfolders?path=%s" % urllib.parse.quote("D:/definitely/not/here")
+        )
+        self.assertEqual(status, 400)
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -949,8 +1289,15 @@ class TestSingleIndexJob(TunerAPITestBase):
         self.assertEqual(body["active"][0]["percent"], 42)
         self.assertIn("42%", body["active"][0]["message"])
 
-    def test_a_second_folder_is_refused_while_one_runs(self):
-        """Indexing is GPU-bound; two at once make each other crawl."""
+    def test_a_second_folder_waits_its_turn_rather_than_being_refused(self):
+        """Indexing is GPU-bound: two at once make each other crawl.
+
+        That reason argues for running one at a time, not for turning the second
+        request away. It used to answer 409, which meant choosing a season of shoots
+        was one native dialog per folder with a wait beside the machine between each.
+        The folder is queued instead, and still nothing runs in parallel.
+        """
+        from unittest.mock import patch
         from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
         import tempfile
 
@@ -962,9 +1309,18 @@ class TestSingleIndexJob(TunerAPITestBase):
         }
         set_active_db_path(None)
 
-        status, body = self.post("/api/folder/index-start", {"folder_path": other_folder})
-        self.assertEqual(status, 409, body)
-        self.assertIn("Already indexing", str(body))
+        with patch("tuner_server.TunerHTTPRequestHandler._ensure_queue_runner"):
+            status, body = self.post(
+                "/api/folder/index-start", {"folder_path": other_folder}
+            )
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["queued"], [other_folder])
+
+        active = self.get("/api/folder/index-active")
+        self.assertEqual(len(active["active"]), 1, "two folders were running at once")
+        self.assertEqual(active["active"][0]["folder"], normalize_path(busy_folder))
+        self.assertEqual([q["name"] for q in active["queued"]],
+                         [os.path.basename(other_folder)])
 
     def test_restarting_the_same_folder_is_still_accepted(self):
         """Asking again for the folder already running is harmless, not an error."""

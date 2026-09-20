@@ -288,6 +288,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
     _db_identify_cache_registry = {}
     _db_index_status_registry = {}
     _db_index_threads_registry = {}
+    _db_index_queue_registry = {}
 
     folder_cache = DatabaseIsolatedDict(_db_folder_cache_registry)
     # Cache for the Identify Faces views. Clustering a person's unmatched candidates is
@@ -297,6 +298,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
     identify_cache = DatabaseIsolatedDict(_db_identify_cache_registry)
     index_status = DatabaseIsolatedDict(_db_index_status_registry)
     index_threads = DatabaseIsolatedDict(_db_index_threads_registry)
+    # Folders waiting their turn, under the key "pending", and the single worker
+    # draining them under "runner". Indexing is GPU-bound, so folders are worked
+    # through one at a time rather than in parallel -- but asking for ten of them
+    # should not mean standing over the machine to start each one.
+    index_queue = DatabaseIsolatedDict(_db_index_queue_registry)
     suggest_status = DatabaseIsolatedDict(_db_suggest_status_registry)
     suggest_threads = DatabaseIsolatedDict(_db_suggest_threads_registry)
 
@@ -642,6 +648,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             
         elif path == "/api/folder/index-active":
             self.handle_get_folder_index_active()
+        elif path == "/api/folder/subfolders":
+            self.handle_get_folder_subfolders(query)
         elif path == "/api/folder/index-status":
             self.handle_get_folder_index_status(query)
         elif path == "/api/faces/excluded":
@@ -677,6 +685,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.handle_post_unmatch()
         elif path == "/api/folder/index-start":
             self.handle_post_folder_index_start()
+        elif path == "/api/folder/index-cancel":
+            self.handle_post_folder_index_cancel()
         elif path == "/api/folder/remove":
             self.handle_post_folder_remove()
         elif path == "/api/faces/exclude":
@@ -2517,21 +2527,122 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             return None
 
     def handle_get_folder_index_active(self):
-        """Whatever is indexing right now, if anything.
+        """Whatever is indexing right now, and whatever is waiting behind it.
 
         The per-folder status endpoint can only answer about a folder you already know
         about. A page that has just loaded knows nothing, so without this it cannot tell
         that a job is in flight and shows an idle, enabled button over a busy server.
+        With a queue there is a second thing it cannot otherwise know: how much is left.
         """
         active = []
         for folder, status in list(TunerHTTPRequestHandler.index_status.items()):
             if isinstance(status, dict) and status.get("status") == "running":
                 active.append({
                     "folder": folder,
+                    "name": os.path.basename(folder.rstrip("/")),
                     "percent": status.get("percent", 0),
                     "message": status.get("message", ""),
                 })
-        self.send_json({"active": active, "busy": len(active) > 0})
+
+        pending = [
+            {"folder": job["folder"],
+             "name": os.path.basename(job["folder"].rstrip("/"))}
+            for job in TunerHTTPRequestHandler.index_queue.get("pending", [])
+        ]
+        self.send_json({
+            "active": active,
+            "queued": pending,
+            "busy": bool(active) or bool(pending),
+            "remaining": len(active) + len(pending),
+        })
+
+    def handle_get_folder_subfolders(self, query):
+        """The immediate subfolders of a folder, so a parent can be expanded.
+
+        Indexing already recurses, so pointing it at a parent would work -- but as one
+        opaque job with one progress bar for the lot. Listing the children lets each be
+        queued on its own, which is what makes progress legible and lets one bad folder
+        be left out rather than sinking the whole run.
+        """
+        path_list = query.get("path")
+        if not path_list:
+            self.send_json_error(400, "Missing path parameter")
+            return
+        parent = urllib.parse.unquote(path_list[0])
+        if not os.path.isdir(parent):
+            self.send_json_error(400, "Not a folder: %s" % parent)
+            return
+
+        try:
+            entries = sorted(
+                e for e in os.listdir(parent)
+                if os.path.isdir(os.path.join(parent, e))
+            )
+        except OSError as e:
+            self.send_json_error(500, "Could not read %s: %s" % (parent, e))
+            return
+
+        indexed_prefixes = self._indexed_folder_counts()
+        folders = []
+        for name in entries:
+            full = os.path.join(parent, name)
+            images, subdirs = self._count_images(full)
+            folders.append({
+                "path": full,
+                "name": name,
+                "images": images,
+                "has_subfolders": subdirs,
+                "indexed": indexed_prefixes.get(normalize_path(full), 0),
+            })
+
+        own_images, own_subdirs = self._count_images(parent, recursive=False)
+        self.send_json({
+            "parent": parent,
+            "folders": folders,
+            "own_images": own_images,
+            "has_subfolders": own_subdirs,
+        })
+
+    @staticmethod
+    def _count_images(folder, recursive=True):
+        """How many indexable images are under a folder, and has it subfolders."""
+        valid = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
+        count = 0
+        has_subdirs = False
+        try:
+            if recursive:
+                for root, dirs, files in os.walk(folder):
+                    if root == folder and dirs:
+                        has_subdirs = True
+                    for f in files:
+                        if os.path.splitext(f)[1].lower() in valid:
+                            count += 1
+            else:
+                for entry in os.listdir(folder):
+                    full = os.path.join(folder, entry)
+                    if os.path.isdir(full):
+                        has_subdirs = True
+                    elif os.path.splitext(entry)[1].lower() in valid:
+                        count += 1
+        except OSError:
+            pass
+        return count, has_subdirs
+
+    def _indexed_folder_counts(self):
+        """How many photos this database already holds, per folder.
+
+        Lets the picker show what is already in rather than offering it as if new.
+        """
+        counts = {}
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            for (photo_path,) in conn.execute("SELECT path FROM photos"):
+                counts[normalize_path(os.path.dirname(photo_path))] = \
+                    counts.get(normalize_path(os.path.dirname(photo_path)), 0) + 1
+            conn.close()
+        except Exception:
+            return {}
+        return counts
 
     def handle_get_folder_index_status(self, query):
         path_list = query.get("path")
@@ -2545,12 +2656,17 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         self.send_json(status)
 
     def handle_post_folder_index_start(self):
-        """Index a folder into this database so its faces can be identified.
+        """Queue one or more folders to be indexed into this database.
 
         TagTuner is where identity work happens, so it needs to be able to bring new
         material in rather than requiring a trip through TagPup first. Clustering is
         opt-in for the same reason it is there: it rewrites every name in the database,
         not just the folder being added.
+
+        Accepts `folder_path` (one) or `folder_paths` (several). Several are queued,
+        not run together: indexing is GPU-bound, so two at once do not go twice as fast
+        so much as make each other crawl. Asking for a season's worth of folders should
+        still be one action rather than a wait beside the machine between each.
         """
         try:
             data = self.read_json_body()
@@ -2558,43 +2674,152 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.send_json_error(400, "Invalid JSON payload")
             return
 
-        folder_path = data.get("folder_path")
-        if not folder_path or not os.path.isdir(folder_path):
-            self.send_json_error(400, "Invalid folder path")
+        requested = data.get("folder_paths")
+        if requested is None:
+            requested = [data.get("folder_path")] if data.get("folder_path") else []
+        if not isinstance(requested, list):
+            self.send_json_error(400, "folder_paths must be a list")
             return
 
         run_clustering = bool(data.get("cluster", False))
-        folder_norm = normalize_path(folder_path)
 
-        current = TunerHTTPRequestHandler.index_status.get(folder_norm)
-        if current and current.get("status") == "running":
-            self.send_json({"success": True, "status": "running"})
+        valid, invalid = [], []
+        seen = set()
+        for raw in requested:
+            if not raw or not isinstance(raw, str):
+                invalid.append(str(raw))
+                continue
+            if not os.path.isdir(raw):
+                invalid.append(raw)
+                continue
+            norm = normalize_path(raw)
+            if norm in seen:
+                continue
+            seen.add(norm)
+            valid.append((raw, norm))
+
+        if not valid:
+            self.send_json_error(
+                400,
+                "No valid folder path" + (": %s" % ", ".join(invalid[:3]) if invalid else ""),
+            )
             return
 
-        # One job at a time. Indexing is GPU-bound; a second folder started alongside
-        # the first does not run in parallel so much as make both crawl.
-        for other_folder, status in list(TunerHTTPRequestHandler.index_status.items()):
-            if other_folder != folder_norm and isinstance(status, dict) \
-                    and status.get("status") == "running":
-                self.send_json_error(
-                    409,
-                    "Already indexing %s. Wait for it to finish -- running two at once "
-                    "slows both down." % os.path.basename(other_folder.rstrip("/")),
-                )
-                return
+        queue = list(TunerHTTPRequestHandler.index_queue.get("pending", []))
+        queued_norms = {normalize_path(job["folder"]) for job in queue}
 
-        TunerHTTPRequestHandler.index_status[folder_norm] = {
-            "status": "running", "percent": 0, "message": "Starting indexing...",
-        }
+        accepted, already = [], []
+        for raw, norm in valid:
+            status = TunerHTTPRequestHandler.index_status.get(norm)
+            if status and status.get("status") == "running":
+                already.append(raw)
+                continue
+            if norm in queued_norms:
+                already.append(raw)
+                continue
+            queue.append({"folder": raw, "cluster": run_clustering})
+            queued_norms.add(norm)
+            TunerHTTPRequestHandler.index_status[norm] = {
+                "status": "queued", "percent": 0, "message": "Waiting to be indexed...",
+            }
+            accepted.append(raw)
+
+        TunerHTTPRequestHandler.index_queue["pending"] = queue
+        self._ensure_queue_runner()
+
+        self.send_json({
+            "success": True,
+            "status": "running",
+            "queued": accepted,
+            "already_queued": already,
+            "invalid": invalid,
+            "pending": len(queue),
+        })
+
+    def handle_post_folder_index_cancel(self):
+        """Drop folders that have not started yet.
+
+        The folder already being indexed is left alone: it owns a subprocess partway
+        through writing rows, and killing that is a different and riskier operation
+        than forgetting something that has not begun.
+        """
+        try:
+            data = self.read_json_body()
+        except Exception:
+            self.send_json_error(400, "Invalid JSON payload")
+            return
+
+        wanted = data.get("folder_paths")
+        if wanted is None and data.get("folder_path"):
+            wanted = [data.get("folder_path")]
+        cancel_all = bool(data.get("all"))
+        if not cancel_all and not wanted:
+            self.send_json_error(400, "Nothing to cancel")
+            return
+
+        targets = {normalize_path(p) for p in (wanted or []) if p}
+        queue = list(TunerHTTPRequestHandler.index_queue.get("pending", []))
+        kept, dropped = [], []
+        for job in queue:
+            norm = normalize_path(job["folder"])
+            if cancel_all or norm in targets:
+                dropped.append(job["folder"])
+                TunerHTTPRequestHandler.index_status.pop(norm, None)
+            else:
+                kept.append(job)
+
+        TunerHTTPRequestHandler.index_queue["pending"] = kept
+        self.send_json({"success": True, "cancelled": dropped, "pending": len(kept)})
+
+    def _ensure_queue_runner(self):
+        """Start the worker that drains the queue, unless one is already draining it."""
+        runner = TunerHTTPRequestHandler.index_queue.get("runner")
+        if runner is not None and runner.is_alive():
+            return
         t = threading.Thread(
-            target=TunerHTTPRequestHandler.run_folder_index_thread,
-            args=(folder_path, self.db_path, run_clustering),
-            name="TunerFolderIndexThread",
+            target=TunerHTTPRequestHandler.run_index_queue,
+            args=(self.db_path,),
+            name="TunerIndexQueueRunner",
             daemon=True,
         )
-        TunerHTTPRequestHandler.index_threads[folder_norm] = t
+        TunerHTTPRequestHandler.index_queue["runner"] = t
         t.start()
-        self.send_json({"success": True, "status": "running"})
+
+    @classmethod
+    def run_index_queue(cls, db_path):
+        """Work through the queued folders, one at a time, until it is empty.
+
+        Each folder is indexed by the same code path a single folder always used, so a
+        failure is recorded against that folder and the rest of the queue still runs --
+        one unreadable folder should not cost the other nine.
+        """
+        # A worker thread does not inherit the request's thread-local, and the
+        # class-level fallback points at the startup database.
+        set_active_db_path(db_path)
+        try:
+            while True:
+                queue = list(cls.index_queue.get("pending", []))
+                if not queue:
+                    return
+                job = queue.pop(0)
+                cls.index_queue["pending"] = queue
+
+                folder_norm = normalize_path(job["folder"])
+                cls.index_status[folder_norm] = {
+                    "status": "running", "percent": 0,
+                    "message": "Starting indexing...",
+                }
+                try:
+                    cls.run_folder_index_thread(
+                        job["folder"], db_path, job.get("cluster", False)
+                    )
+                except Exception as e:
+                    logger.exception("Queued index of %s failed: %s" % (job["folder"], e))
+                    cls.index_status[folder_norm] = {
+                        "status": "failed", "percent": 0, "message": "Error: %s" % e,
+                    }
+        finally:
+            cls.index_queue["runner"] = None
 
     @classmethod
     def run_folder_index_thread(cls, folder_path, db_path, run_clustering=False):
