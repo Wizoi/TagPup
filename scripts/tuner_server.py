@@ -2621,13 +2621,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             )
             from tagpup_server import summarize_indexer_line
 
-            for line in iter(proc.stdout.readline, ""):
-                clean = summarize_indexer_line(line)
-                if clean:
-                    status["message"] = clean
-                    match = re.search(r"(\d+)%", clean)
-                    if match:
-                        status["percent"] = int(float(match.group(1)) * 0.9)
+            with proc.stdout:
+                for line in iter(proc.stdout.readline, ""):
+                    clean = summarize_indexer_line(line)
+                    if clean:
+                        status["message"] = clean
+                        match = re.search(r"(\d+)%", clean)
+                        if match:
+                            status["percent"] = int(float(match.group(1)) * 0.9)
             proc.wait()
 
             if proc.returncode != 0:
@@ -2644,10 +2645,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, env=env, bufsize=1, cwd=workspace,
                 )
-                for line in iter(proc2.stdout.readline, ""):
-                    clean = summarize_indexer_line(line)
-                    if clean:
-                        status["message"] = clean
+                with proc2.stdout:
+                    for line in iter(proc2.stdout.readline, ""):
+                        clean = summarize_indexer_line(line)
+                        if clean:
+                            status["message"] = clean
                 proc2.wait()
 
             # The identify queue is cached against a fingerprint of the faces table,
