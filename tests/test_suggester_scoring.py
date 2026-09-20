@@ -493,3 +493,84 @@ class TestFolderConsensus(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUntaggedNeighboursDoNotDiluteScores(SuggesterTestBase):
+    """A neighbour with nothing to say must not take a share of the neighbourhood.
+
+    A tag's score is its share of the total similarity across neighbours. While only
+    tagged photos were indexed every neighbour carried signal, so counting them all was
+    harmless. Once untagged photos are indexed they join the neighbour set and, if
+    counted, inflate the denominator and push every score down in proportion to how many
+    turned up -- starving the 0.6 display and 0.75 auto-apply thresholds without any
+    visible failure.
+    """
+
+    def test_an_untagged_neighbour_does_not_lower_a_score(self):
+        tagged_only = [(0.9, photo_meta("n1.jpg", ["Holidays/Christmas"]))]
+        with_untagged = [
+            (0.9, photo_meta("n1.jpg", ["Holidays/Christmas"])),
+            (0.9, photo_meta("n2.jpg", [])),
+        ]
+        baseline = self.scores(
+            self.make_suggester(tagged_only).suggest_for_photo("/t.jpg", [1.0, 0.0, 0.0])
+        )
+        diluted = self.scores(
+            self.make_suggester(with_untagged).suggest_for_photo("/t.jpg", [1.0, 0.0, 0.0])
+        )
+        self.assertAlmostEqual(baseline["Holidays/Christmas"], 1.0, places=2)
+        self.assertAlmostEqual(
+            diluted["Holidays/Christmas"], 1.0, places=2,
+            msg="an untagged neighbour diluted the score",
+        )
+
+    def test_many_untagged_neighbours_still_do_not_dilute(self):
+        neighbors = [(0.9, photo_meta("tagged.jpg", ["Trips/Texas"]))]
+        neighbors += [(0.9, photo_meta(f"u{i}.jpg", [])) for i in range(14)]
+
+        result = self.make_suggester(neighbors).suggest_for_photo("/t.jpg", [1.0, 0.0, 0.0])
+        self.assertAlmostEqual(
+            self.scores(result)["Trips/Texas"], 1.0, places=2,
+            msg="14 untagged neighbours starved the score",
+        )
+
+    def test_the_share_between_tagged_neighbours_is_unchanged(self):
+        """The rule is unchanged for neighbours that do carry tags."""
+        neighbors = [
+            (0.9, photo_meta("n1.jpg", ["Holidays/Christmas"])),
+            (0.9, photo_meta("n2.jpg", ["Trips/Texas"])),
+            (0.9, photo_meta("n3.jpg", [])),
+        ]
+        scores = self.scores(
+            self.make_suggester(neighbors).suggest_for_photo("/t.jpg", [1.0, 0.0, 0.0])
+        )
+        self.assertAlmostEqual(scores["Holidays/Christmas"], 0.5, places=2)
+        self.assertAlmostEqual(scores["Trips/Texas"], 0.5, places=2)
+
+    def test_a_neighbour_tagged_only_with_people_does_not_dilute(self):
+        """People are deferred to face matching, so such a neighbour contributes nothing."""
+        neighbors = [
+            (0.9, photo_meta("n1.jpg", ["Holidays/Christmas"])),
+            (0.9, photo_meta("n2.jpg", ["Family/Immediate/Jane Doe"])),
+        ]
+        s = self.make_suggester(neighbors, taxonomy_paths=["Family/Immediate/Jane Doe"])
+        scores = self.scores(s.suggest_for_photo("/t.jpg", [1.0, 0.0, 0.0]))
+        self.assertAlmostEqual(
+            scores["Holidays/Christmas"], 1.0, places=2,
+            msg="a people-only neighbour took a share of the neighbourhood",
+        )
+
+    def test_a_neighbourhood_with_no_tags_at_all_suggests_nothing(self):
+        neighbors = [(0.9, photo_meta(f"u{i}.jpg", [])) for i in range(5)]
+        result = self.make_suggester(neighbors).suggest_for_photo("/t.jpg", [1.0, 0.0, 0.0])
+        self.assertEqual(result["suggested_tags"], [])
+
+    def test_untagged_neighbours_are_still_reported_as_neighbours(self):
+        """They are excluded from scoring, not from the record of what was near."""
+        neighbors = [
+            (0.9, photo_meta("tagged.jpg", ["Trips/Texas"])),
+            (0.8, photo_meta("untagged.jpg", [])),
+        ]
+        result = self.make_suggester(neighbors).suggest_for_photo("/t.jpg", [1.0, 0.0, 0.0])
+        paths = {n["path"] for n in result["nearest_neighbors"]}
+        self.assertIn("untagged.jpg", paths)

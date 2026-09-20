@@ -208,8 +208,7 @@ class TagSuggester:
                     weight = math.exp(-decay_lambda * diff_years)
             
             weighted_sim = sim * weight
-            total_sim += weighted_sim
-            
+
             # Only use non-people tags for propagation
             raw_tags = list(meta.get("tags", []))
             
@@ -230,6 +229,20 @@ class TagSuggester:
                         continue
                     expanded_tags.add(t)
             
+            # The denominator counts only neighbours that actually contribute a tag.
+            #
+            # A tag's score is its share of the neighbourhood's similarity, so a
+            # neighbour with nothing to say must not take a share. Counting every
+            # neighbour was harmless while only tagged photos were indexed, but once
+            # untagged photos are in the index they would join the neighbour set,
+            # inflate this sum, and push every score down in proportion to how many
+            # turned up -- quietly starving the 0.6 display and 0.75 auto-apply
+            # thresholds. A neighbour whose tags are all people also contributes
+            # nothing here, since those are deferred to face matching.
+            if not expanded_tags:
+                continue
+            total_sim += weighted_sim
+
             # Record similarities for each tag
             for tag in expanded_tags:
                 tag_sim_scores.setdefault(tag, []).append(weighted_sim)

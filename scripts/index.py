@@ -399,8 +399,12 @@ class PhotoIndex:
             self.conn.rollback()
 
     def save_faces_for_path(self, photo_path: str, faces: List[Dict[str, Any]]):
-        """Save a list of detected faces for a photo. 
-        Each face dict has keys: 'box' (list of float/int), 'embedding' (list of floats)."""
+        """Replace a photo's faces with freshly detected ones.
+
+        This discards any names, manual overrides, exclusions and cached crops on the
+        existing rows. Callers that merely want detection results recorded should use
+        save_faces_if_absent instead; this one is for explicit re-detection.
+        """
         if self.conn is None:
             return
         try:
@@ -581,14 +585,29 @@ class PhotoIndex:
             raise e
 
 
-    def save_faces_batch(self, batch_faces: Dict[str, List[Dict[str, Any]]]):
-        """Save detected faces for a batch of photos in a single transaction."""
+    def save_faces_batch(self, batch_faces: Dict[str, List[Dict[str, Any]]], overwrite: bool = False):
+        """Save detected faces for a batch of photos in a single transaction.
+
+        By default a photo that already has face rows is left alone. Those rows carry
+        assigned names, manual overrides, exclusions and cached crops, and re-detection
+        produces none of that -- so replacing them silently discards curation. Re-indexing
+        a folder used to do exactly that, which mattered little while only tagged photos
+        were indexed and matters a great deal now that every photo is.
+
+        Pass overwrite=True to force re-detection, accepting the loss.
+        """
         if self.conn is None or not batch_faces:
             return
         try:
             cursor = self.conn.cursor()
             cursor.execute("BEGIN TRANSACTION")
             for photo_path, faces in batch_faces.items():
+                if not overwrite:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM faces WHERE photo_path = ?", (photo_path,)
+                    )
+                    if cursor.fetchone()[0] > 0:
+                        continue
                 cursor.execute("DELETE FROM faces WHERE photo_path = ?", (photo_path,))
                 for face in faces:
                     box_json = json.dumps(face["box"])

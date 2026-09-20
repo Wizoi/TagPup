@@ -285,20 +285,34 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
         batch_meta = extractor.batch_read(batch)
         all_metadata.extend(batch_meta)
 
-    # Filter: Only index images with keywords/tags, people/faces, or captions/descriptions
-    to_index_meta = []
-    for meta in all_metadata:
-        if meta["tags"] or meta["people"] or meta["captions"]:
-            to_index_meta.append(meta)
+    # Every scanned photo is indexed, tagged or not.
+    #
+    # Indexing used to require an existing tag, person or caption, which made the index
+    # a record of what had already been organised rather than of the library. An
+    # untagged photo has exactly the things the rest of the system wants: a visual
+    # embedding that makes it findable by search and usable as a neighbour, and faces
+    # that TagTuner can group and identify. Requiring it to be tagged first inverted
+    # the order of work -- you had to label a photo before the tools that help you
+    # label it would look at it.
+    #
+    # Untagged photos contribute no tags when they turn up as a suggestion neighbour,
+    # and the scoring denominator counts only neighbours that do contribute, so they
+    # cannot dilute a suggestion.
+    to_index_meta = all_metadata
+    tagged_count = sum(1 for m in to_index_meta if m["tags"] or m["people"] or m["captions"])
 
-    console.print(f"Filtered to [bold green]{len(to_index_meta)}[/bold green] images with existing tags, people, or captions.")
-    
-    # If no images have metadata to index
+    console.print(
+        f"Indexing [bold green]{len(to_index_meta)}[/bold green] image(s) "
+        f"([bold]{tagged_count}[/bold] already tagged, "
+        f"[bold]{len(to_index_meta) - tagged_count}[/bold] untagged)."
+    )
+
+    # If there is nothing at all to index
     if not to_index_meta:
         if skipped_count > 0:
-            console.print("[green]No new tagged images found. Index remains current.[/green]")
+            console.print("[green]No new images found. Index remains current.[/green]")
         else:
-            console.print("[yellow]No photos with existing tags or metadata. Indexing skipped.[/yellow]")
+            console.print("[yellow]No photos found to index.[/yellow]")
         photo_index.close()
         return
 
@@ -351,7 +365,9 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
                     
                     # Save faces for the batch in a single transaction
                     if batch_faces:
-                        photo_index.save_faces_batch(batch_faces)
+                        # --force-reembed means redo the work; without it the
+                        # existing face rows, and the curation on them, are kept.
+                        photo_index.save_faces_batch(batch_faces, overwrite=force_reembed)
                         batch_faces.clear()
                     
                     taxonomy.save()
@@ -377,7 +393,7 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
             
             # Save the remaining face embeddings
             if batch_faces:
-                photo_index.save_faces_batch(batch_faces)
+                photo_index.save_faces_batch(batch_faces, overwrite=force_reembed)
                 batch_faces.clear()
             
             taxonomy.save()

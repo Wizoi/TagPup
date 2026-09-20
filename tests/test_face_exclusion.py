@@ -456,3 +456,88 @@ class TestExcludedBucketIsReachable(ExclusionTestBase):
             "Jane Doe", {e["name"] for e in self.get("/api/unmatched-faces/people")},
             "restoring did not put the faces back in the queue",
         )
+
+
+class TestReindexingPreservesFaceCuration(ExclusionTestBase):
+    """Re-indexing a photo must not discard the work done on its faces.
+
+    save_faces_batch replaces a photo's face rows wholesale. Those rows carry assigned
+    names, manual overrides, exclusions and cached crops; re-detection reproduces none
+    of that. This mattered little when only tagged photos were indexed and matters a
+    great deal now that every photo is, because far more photos get re-indexed.
+    """
+
+    def index(self):
+        pi = PhotoIndex(db_path=self.TEST_DB)
+        pi.load()
+        return pi
+
+    def detection(self, seed):
+        return {"box": [0, 0, 50, 50], "embedding": identity_vector(seed).tolist(), "prob": 0.99}
+
+    def test_a_manual_name_survives_reindexing(self):
+        photo = self.add_photo("a.jpg", people=["Jane Doe"])
+        face = self.add_face(photo, identity_vector(1), name="Jane Doe")
+        conn = sqlite3.connect(self.TEST_DB)
+        conn.execute("UPDATE faces SET name_source='manual' WHERE id=?", (face,))
+        conn.commit()
+        conn.close()
+
+        pi = self.index()
+        try:
+            pi.save_faces_batch({photo: [self.detection(2)]})
+        finally:
+            pi.close()
+
+        r = self.row(face)
+        self.assertEqual(r["name"], "Jane Doe", "re-indexing discarded a manual name")
+        self.assertEqual(r["source"], "manual")
+
+    def test_an_exclusion_survives_reindexing(self):
+        photo = self.add_photo("a.jpg")
+        face = self.add_face(photo, identity_vector(1))
+        self.post("/api/faces/exclude", {"face_ids": [face], "reason": "stranger"})
+
+        pi = self.index()
+        try:
+            pi.save_faces_batch({photo: [self.detection(2)]})
+        finally:
+            pi.close()
+
+        r = self.row(face)
+        self.assertEqual(r["excluded"], 1, "re-indexing cleared an exclusion")
+        self.assertEqual(r["reason"], "stranger")
+
+    def test_a_photo_with_no_faces_yet_is_still_populated(self):
+        photo = self.add_photo("new.jpg")
+        pi = self.index()
+        try:
+            pi.save_faces_batch({photo: [self.detection(3), self.detection(4)]})
+        finally:
+            pi.close()
+
+        conn = sqlite3.connect(self.TEST_DB)
+        count = conn.execute(
+            "SELECT COUNT(*) FROM faces WHERE photo_path = ?", (photo,)
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(count, 2, "a photo with no faces was skipped")
+
+    def test_overwrite_still_replaces_when_explicitly_asked(self):
+        """--force-reembed means redo the work, accepting the loss."""
+        photo = self.add_photo("a.jpg", people=["Jane Doe"])
+        self.add_face(photo, identity_vector(1), name="Jane Doe")
+
+        pi = self.index()
+        try:
+            pi.save_faces_batch({photo: [self.detection(5)]}, overwrite=True)
+        finally:
+            pi.close()
+
+        conn = sqlite3.connect(self.TEST_DB)
+        rows = conn.execute(
+            "SELECT name FROM faces WHERE photo_path = ?", (photo,)
+        ).fetchall()
+        conn.close()
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0][0], "forced re-detection kept a stale name")

@@ -115,26 +115,43 @@ class TestFunctionalCLI(unittest.TestCase):
         rows = c.fetchall()
         paths = [r[0] for r in rows]
         
-        # Only tagged photos (photo1, photo2) should be indexed; photo3 (untagged) must be skipped.
-        self.assertEqual(len(rows), 2)
+        # Every scanned photo is indexed, tagged or not. Indexing used to require an
+        # existing tag, which meant the tools that help you label a photo would not look
+        # at it until you had already labelled it. An untagged photo still carries a
+        # visual embedding and faces, which is what search, suggestions and TagTuner want.
+        self.assertEqual(len(rows), 3)
         self.assertTrue(any("photo1.jpg" in p for p in paths))
         self.assertTrue(any("photo2.jpg" in p for p in paths))
+        self.assertTrue(
+            any("photo3.jpg" in p for p in paths),
+            "the untagged photo was skipped",
+        )
+
+        # ...and it is indexed as genuinely untagged, not given borrowed metadata.
+        untagged = next(r for r in rows if "photo3.jpg" in r[0])
+        self.assertEqual(json.loads(untagged[1] or "[]"), [])
+        self.assertEqual(json.loads(untagged[2] or "[]"), [])
         
         # Check faces are indexed
         c.execute("SELECT photo_path, name FROM faces")
         face_rows = c.fetchall()
-        self.assertEqual(len(face_rows), 2) # Both photos got a mock face
+        # All three photos are indexed now, and face detection runs on each of them --
+        # which is the point: an untagged photo's faces are exactly what TagTuner needs
+        # in order to group and identify them.
+        self.assertEqual(len(face_rows), 3)
         conn.close()
 
         # --- 2. INCREMENTAL SKIP INDEXING COMMAND ---
         result = runner.invoke(cli, ["index", self.library_dir])
         self.assertEqual(result.exit_code, 0, f"incremental index failed: {result.output}")
-        self.assertIn("No new tagged images found. Index remains current.", result.output)
+        # Nothing changed on disk, so the incremental scan skips every file before
+        # any metadata is read -- the message comes from the skip path, not the filter.
+        self.assertIn("All images are up to date! Index is current.", result.output)
 
         # --- 3. STATS COMMAND ---
         result = runner.invoke(cli, ["stats"])
         self.assertEqual(result.exit_code, 0, f"stats command failed: {result.output}")
-        self.assertIn("Total Indexed Photos: 2", result.output)
+        self.assertIn("Total Indexed Photos: 3", result.output)
         self.assertIn("Nature", result.output)
         self.assertIn("Alice", result.output)
 
