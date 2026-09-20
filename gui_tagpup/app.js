@@ -156,6 +156,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const photoSearch = document.getElementById('photo-search');
     const photoList = document.getElementById('photo-list');
     const listStats = document.getElementById('list-stats');
+    const filterUntaggedOnly = document.getElementById('filter-untagged-only');
     const btnRefreshList = document.getElementById('btn-refresh-list');
     
     const sidebar = document.querySelector('.sidebar');
@@ -231,6 +232,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const statusDot = document.getElementById('status-dot');
     const statusText = document.getElementById('status-text');
+    const btnUndo = document.getElementById('btn-undo');
+    const btnCarryForward = document.getElementById('btn-carry-forward');
     
     const tagsDatalist = document.getElementById('tags-datalist');
     const peopleDatalist = document.getElementById('people-datalist');
@@ -260,6 +263,156 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Browser local storage cache configuration (30 minutes timeout)
     const CACHE_TTL_MS = 30 * 60 * 1000;
+
+    /**
+     * Say what just happened, without stopping the work to say it.
+     *
+     * The status line was already carrying this; the modals were stacked on top of
+     * it, so finishing a bulk rename meant dismissing a box to report that the thing
+     * you watched happen had happened. Modals are kept for the two cases that earn
+     * them: a question that must be answered before acting, and a failure that would
+     * otherwise pass unnoticed.
+     *
+     * `kind` is 'ready', 'busy' or 'error'. A 'ready' message with `transient` set
+     * falls back to Ready on its own, so the line does not keep claiming the result
+     * of something you did five minutes ago.
+     */
+    let statusResetTimer = null;
+    function setStatus(kind, message, { transient = true } = {}) {
+        if (statusResetTimer) {
+            clearTimeout(statusResetTimer);
+            statusResetTimer = null;
+        }
+        statusDot.className = kind === 'ready'
+            ? 'status-indicator-dot'
+            : `status-indicator-dot ${kind}`;
+        statusText.textContent = message;
+
+        if (kind === 'ready' && transient && message !== 'Ready') {
+            statusResetTimer = setTimeout(() => {
+                statusText.textContent = 'Ready';
+                statusResetTimer = null;
+            }, 6000);
+        }
+    }
+
+    /**
+     * Put a validation message beside the field it is about.
+     *
+     * "Please enter a grouping name" in a modal hides the form you need to correct.
+     * Said next to the field, it can be read and fixed in one motion.
+     */
+    function flagField(input, message) {
+        if (!input) {
+            setStatus('error', message, { transient: false });
+            return;
+        }
+        input.classList.add('field-invalid');
+        input.setAttribute('title', message);
+        setStatus('error', message, { transient: false });
+        input.focus();
+        const clear = () => {
+            input.classList.remove('field-invalid');
+            input.removeAttribute('title');
+            input.removeEventListener('input', clear);
+        };
+        input.addEventListener('input', clear);
+    }
+
+    /**
+     * The last undoable write, and how to put it back.
+     *
+     * One step deep on purpose. The mistake this catches is the one that actually
+     * happens -- a bulk write against the wrong selection, noticed immediately -- and
+     * a deeper stack would need the photo files to be the source of truth rather than
+     * this snapshot, which they are, since anything can edit them behind our back.
+     * Holding one step keeps that window short enough to be honest about.
+     */
+    let lastUndoable = null;
+
+    function recordUndo(entry) {
+        lastUndoable = entry;
+        updateUndoButton();
+    }
+
+    function updateUndoButton() {
+        if (!btnUndo) return;
+        btnUndo.disabled = !lastUndoable;
+        btnUndo.title = lastUndoable
+            ? `Undo: ${lastUndoable.label}  (Ctrl+Z)`
+            : 'Nothing to undo';
+    }
+
+    /**
+     * Put back the values captured before the last bulk write.
+     *
+     * Each photo is restored to the tags and title it had, rather than the change
+     * being reversed field by field: a snapshot cannot be confused about what an
+     * addition or a removal was, and the write path is the one already trusted.
+     */
+    function undoLastOperation() {
+        if (!lastUndoable) {
+            setStatus('ready', 'Nothing to undo');
+            return;
+        }
+        const entry = lastUndoable;
+        lastUndoable = null;
+        updateUndoButton();
+
+        setStatus('busy', `Undoing: ${entry.label}...`);
+        const writes = entry.photos.map(snapshot =>
+            fetch('/api/photo/save-metadata', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    path: snapshot.path,
+                    title: snapshot.title,
+                    tags: snapshot.tags,
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (!data.success) throw new Error(data.error || 'failed');
+                const photo = folderPhotos.find(p => p.path === snapshot.path);
+                if (photo) {
+                    photo.tags = snapshot.tags.slice();
+                    photo.title = snapshot.title;
+                }
+            })
+        );
+
+        Promise.allSettled(writes).then(results => {
+            const failed = results.filter(r => r.status === 'rejected').length;
+            renderFileList();
+            renderThumbnails();
+            if (activePhotoPath) {
+                const photo = folderPhotos.find(p => p.path === activePhotoPath);
+                if (photo) renderTags(photo.tags || []);
+            }
+            saveToLocalStorageCache();
+
+            if (failed) {
+                // Partly restored is worth saying plainly: the rest is as it was.
+                setStatus('error',
+                    `Undo restored ${results.length - failed} of ${results.length} photo(s)`,
+                    { transient: false });
+            } else {
+                setStatus('ready', `Undone: ${entry.label}`);
+            }
+        });
+    }
+
+    /** Snapshot the photos a bulk write is about to change. */
+    function snapshotPhotos(paths) {
+        return paths
+            .map(path => folderPhotos.find(p => p.path === path))
+            .filter(Boolean)
+            .map(photo => ({
+                path: photo.path,
+                tags: (photo.tags || []).slice(),
+                title: photo.title || '',
+            }));
+    }
 
     function saveToLocalStorageCache() {
         if (!scannedFolder) return;
@@ -347,6 +500,77 @@ document.addEventListener('DOMContentLoaded', () => {
     inputAddPerson.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveSingleAddPerson(); });
     inputAddTag.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveSingleAddTag(); });
 
+    /**
+     * Commit what was typed when a field is left, not only when Enter is pressed.
+     *
+     * These fields used to commit on Enter alone, and nothing tracked unsaved text.
+     * Typing a tag and then clicking the next photo discarded it silently:
+     * selectPhoto simply repopulated the panel. Each loss is small, which is what
+     * made it easy to miss and tiresome to keep hitting.
+     *
+     * Escape is the way out for text you have decided against -- it clears the field
+     * so that leaving it commits nothing.
+     */
+    function commitFieldOnBlur(input, save, isPersonField) {
+        input.addEventListener('blur', async () => {
+            if (input.dataset.abandoned === 'true') {
+                input.dataset.abandoned = '';
+                return;
+            }
+            const typed = input.value.trim();
+            if (!typed) return;
+
+            // Would saving this have to ask where the tag belongs? If so, leave it
+            // for Enter or the Add button: a modal about the photo you just left,
+            // raised while you are looking at the next one, is its own kind of lost
+            // work.
+            const parts = typed.split(',').map(t => t.trim()).filter(Boolean);
+            for (const part of parts) {
+                const resolved = await resolveTagOrPerson(part, isPersonField, { prompt: false });
+                if (!resolved) {
+                    setStatus('ready',
+                        `"${part}" is new \u2014 press Enter to say where it belongs`);
+                    return;
+                }
+            }
+            save();
+        });
+        input.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            // Mark before clearing: clearing moves focus in some browsers, and the
+            // blur handler must know this text was abandoned on purpose.
+            input.dataset.abandoned = 'true';
+            input.value = '';
+            input.blur();
+        });
+    }
+
+    commitFieldOnBlur(inputAddPerson, saveSingleAddPerson, true);
+    commitFieldOnBlur(inputAddTag, saveSingleAddTag, false);
+
+    /**
+     * Uncommitted text belongs to the photo it was typed for, and to no other.
+     *
+     * These fields were never cleared on changing photo, so text typed for one
+     * survived into the next and Enter there applied it to the wrong photo. Clearing
+     * it says what was dropped rather than doing either silently.
+     */
+    function clearPendingEntry() {
+        const dropped = [inputAddTag, inputAddPerson]
+            .filter(el => el && el.value.trim())
+            .map(el => {
+                const text = el.value.trim();
+                el.value = '';
+                return text;
+            });
+        if (dropped.length) {
+            setStatus('ready', `Not saved: ${dropped.join(', ')}`);
+        }
+    }
+    // The title field is not in this list on purpose: it is pre-filled with the
+    // photo's current title, so blurring it unchanged would re-save the same value
+    // on every pass through the panel. It commits on Enter and on its Save button.
+
     btnSuggestTitleWand.addEventListener('click', applySuggestedTitle);
     btnApplyAllSingleSugg.addEventListener('click', applyAllSingleSuggestions);
     detailPath.addEventListener('click', openPhotoInExplorer);
@@ -395,13 +619,13 @@ document.addEventListener('DOMContentLoaded', () => {
     btnApplyRename.addEventListener('click', () => {
         const grouping = renameGroupingInput.value.trim();
         if (!grouping) {
-            alert("Please enter a grouping name.");
-            renameGroupingInput.focus();
+            flagField(renameGroupingInput, 'Enter a grouping name to rename by');
             return;
         }
 
         if (selectedThumbnails.length === 0) {
-            alert("No photos selected for renaming.");
+            setStatus('error', 'Select some photos first \u2014 nothing is selected',
+                      { transient: false });
             return;
         }
 
@@ -440,59 +664,88 @@ document.addEventListener('DOMContentLoaded', () => {
             updateSelectedThumbnailsCount();
             saveToLocalStorageCache();
             
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Ready';
-            alert("Smart rename completed successfully!");
+            setStatus('ready', `Renamed ${selectedThumbnails.length} photo(s)`);
         })
         .catch(err => {
             console.error(err);
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Error';
+            setStatus('error', 'Smart rename failed', { transient: false });
             btnApplyRename.disabled = false;
             alert("Error during smart rename: " + err.message);
         });
     });
 
+    /**
+     * Move the selection through the list by a number of steps.
+     *
+     * The list order is the photo order, so this is what both the up/down keys and
+     * the left/right keys use -- "the row below" and "the next photo" are the same
+     * move, and someone flipping through a shoot should not have to know that.
+     */
+    function stepPhoto(delta) {
+        const items = Array.from(photoList.querySelectorAll('.photo-item-file'));
+        if (items.length === 0) return false;
+
+        const currentIndex = items.findIndex(
+            item => item.getAttribute('data-path') === activePhotoPath
+        );
+        let nextIndex;
+        if (currentIndex === -1) {
+            // Nothing selected yet: forwards starts at the top, backwards at the end.
+            nextIndex = delta > 0 ? 0 : items.length - 1;
+        } else {
+            nextIndex = Math.min(Math.max(currentIndex + delta, 0), items.length - 1);
+        }
+        if (nextIndex === currentIndex) return false;
+
+        selectPhoto(items[nextIndex].getAttribute('data-path'));
+        items[nextIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        return true;
+    }
+
+    /**
+     * Should a keystroke be left to the field the caret is in?
+     *
+     * Only where the keystroke means something to the text being typed. The filter
+     * box is not such a field: it is a search control, and the natural move is to
+     * narrow the list and then walk the results with the arrow keys. A blanket INPUT
+     * check used to catch it and return before preventDefault, so the browser
+     * scrolled the page instead -- the keys looked broken in the one place you most
+     * wanted them.
+     */
+    function keystrokeBelongsToField(el) {
+        if (!el) return false;
+        if (el === photoSearch) return false;
+        return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
+    }
+
     document.addEventListener('keydown', (e) => {
-        if (document.activeElement && (
-            document.activeElement.tagName === 'INPUT' || 
-            document.activeElement.tagName === 'TEXTAREA' || 
-            document.activeElement.isContentEditable
-        )) {
+        if (keystrokeBelongsToField(document.activeElement)) return;
+
+        // Ctrl+D copies the previous photo's tags onto this one, so that tagging a
+        // shoot is: tag the first, then arrow across and repeat. It is checked
+        // before the modifier guard below, which exists to leave browser shortcuts
+        // alone.
+        if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'd' || e.key === 'D')) {
+            e.preventDefault();
+            carryTagsForward();
             return;
         }
-
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'z' || e.key === 'Z')) {
             e.preventDefault();
-            
-            const items = Array.from(photoList.querySelectorAll('.photo-item-file'));
-            if (items.length === 0) return;
-            
-            let currentIndex = items.findIndex(item => item.getAttribute('data-path') === activePhotoPath);
-            let nextIndex = -1;
-            
-            if (e.key === 'ArrowDown') {
-                if (currentIndex === -1) {
-                    nextIndex = 0;
-                } else {
-                    nextIndex = Math.min(currentIndex + 1, items.length - 1);
-                }
-            } else if (e.key === 'ArrowUp') {
-                if (currentIndex === -1) {
-                    nextIndex = items.length - 1;
-                } else {
-                    nextIndex = Math.max(currentIndex - 1, 0);
-                }
-            }
-            
-            if (nextIndex !== -1 && nextIndex !== currentIndex) {
-                const targetPath = items[nextIndex].getAttribute('data-path');
-                selectPhoto(targetPath);
-                
-                // Scroll the selected item into view inside the sidebar
-                items[nextIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-            }
+            undoLastOperation();
+            return;
         }
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+        // Left/right are the same move as up/down. Up/down reads as "the row below"
+        // in the list; left/right reads as "the next photo" over the image. Both are
+        // offered because which one a person reaches for depends on where they are
+        // looking, and there is no reason to make them guess right.
+        const steps = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
+        if (!(e.key in steps)) return;
+
+        e.preventDefault();
+        stepPhoto(steps[e.key]);
     });
 
     // Dynamic Autocomplete loaders
@@ -685,7 +938,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function scanFolder(forceRefresh = false) {
         const path = folderPathInput.value.trim();
         if (!path) {
-            alert("Please select or enter a valid folder path.");
+            flagField(folderPathInput, 'Choose or type a folder to scan');
             return;
         }
 
@@ -703,7 +956,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         scannedFolder = path;
                         folderPhotos = cacheEntry.photos;
                         folderSuggestions = cacheEntry.suggestions || {};
-                        listStats.textContent = `${folderPhotos.length} files loaded (Cached)`;
+                        updateListStats('(cached)');
                         folderViewHeader.classList.remove('hidden');
                         updateSuggestButtonState();
                         btnToggleRename.disabled = false;
@@ -766,7 +1019,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .then(data => {
                 scannedFolder = path;
                 folderPhotos = data;
-                listStats.textContent = `${folderPhotos.length} files loaded`;
+                updateListStats();
                 
                 // Update URL search path parameter
                 const url = new URL(window.location);
@@ -818,28 +1071,97 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     }
 
+    /**
+     * Has this photo been tagged at all?
+     *
+     * Deliberately a low bar: one tag, one person, or a title counts. The question a
+     * tagging session asks is "have I been here yet", not "is this perfect", and a
+     * stricter test would mark honest work as unfinished.
+     */
+    function isPhotoTagged(photo) {
+        if (!photo) return false;
+        return (photo.tags || []).length > 0
+            || (photo.people || []).length > 0
+            || (photo.title || '').trim().length > 0;
+    }
+
+    /** How much of the loaded folder has been tagged. */
+    function taggedCounts() {
+        const total = folderPhotos.length;
+        const tagged = folderPhotos.filter(isPhotoTagged).length;
+        return { total, tagged, remaining: total - tagged };
+    }
+
+    /**
+     * The photos the sidebar and the grid should show.
+     *
+     * Both used to filter for themselves, with copies of the same predicate that had
+     * already drifted apart -- the grid read `photo.filename` directly where the list
+     * fell back to the path. One filter means the two panes cannot disagree about
+     * what you are looking at, and a new rule lands in both at once.
+     */
+    function visiblePhotos() {
+        const query = photoSearch.value.toLowerCase().trim();
+        const untaggedOnly = filterUntaggedOnly && filterUntaggedOnly.checked;
+        return folderPhotos.filter(photo => {
+            // Narrowing to what is left turns a folder into a work queue.
+            if (untaggedOnly && isPhotoTagged(photo)) return false;
+            if (!query) return true;
+            const fname = photo.filename || photo.path.split(/[/\\]/).pop() || '';
+            return fname.toLowerCase().includes(query)
+                || (photo.title && photo.title.toLowerCase().includes(query))
+                || (photo.tags || []).some(t => t.toLowerCase().includes(query));
+        });
+    }
+
+    /**
+     * The count line under the search box.
+     *
+     * "N files loaded" answered a question nobody was asking. What a person wants to
+     * know on returning to a folder is how much of it is left.
+     */
+    function updateListStats(suffix) {
+        const { total, tagged, remaining } = taggedCounts();
+        if (!total) {
+            listStats.textContent = suffix || '0 files loaded';
+            return;
+        }
+        const extra = suffix ? ` ${suffix}` : '';
+        listStats.textContent = remaining === 0
+            ? `${total} files, all tagged${extra}`
+            : `${tagged} of ${total} tagged, ${remaining} to go${extra}`;
+    }
+
     // Render list in Sidebar
     function renderFileList() {
         // Remove old files
         photoList.querySelectorAll('.photo-item-file').forEach(el => el.remove());
 
-        const query = photoSearch.value.toLowerCase().trim();
-        const filtered = folderPhotos.filter(photo => {
-            if (!query) return true;
-            const fname = photo.filename || photo.path.split(/[/\\]/).pop() || "";
-            return fname.toLowerCase().includes(query) || 
-                   (photo.title && photo.title.toLowerCase().includes(query)) ||
-                   photo.tags.some(t => t.toLowerCase().includes(query));
-        });
+        const filtered = visiblePhotos();
+        updateListStats();
 
         const fragment = document.createDocumentFragment();
         filtered.forEach(photo => {
             const li = document.createElement('li');
             li.className = 'photo-item photo-item-file';
+            // Reachable by Tab, and announced as a choice rather than decoration.
+            // Nothing in either list used to be focusable, which is why the arrow
+            // keys only worked while focus happened to be sitting on <body>.
+            li.tabIndex = 0;
+            li.setAttribute('role', 'option');
             if (activePhotoPath === photo.path) {
                 li.classList.add('active');
             }
             li.setAttribute('data-path', photo.path);
+            if (isPhotoTagged(photo)) li.classList.add('is-tagged');
+
+            // A dot rather than a word: it has to read at a glance down a long list,
+            // and it is the first thing scanned when picking up where you left off.
+            const doneDot = document.createElement('span');
+            doneDot.className = 'photo-item-done';
+            doneDot.textContent = isPhotoTagged(photo) ? '\u25CF' : '\u25CB';
+            doneDot.title = isPhotoTagged(photo) ? 'Tagged' : 'Not tagged yet';
+            li.appendChild(doneDot);
 
             const nameSpan = document.createElement('span');
             nameSpan.className = 'photo-item-name';
@@ -858,6 +1180,15 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             li.appendChild(nameSpan);
 
+            const tagCount = (photo.tags || []).length;
+            if (tagCount) {
+                const count = document.createElement('span');
+                count.className = 'photo-item-tagcount';
+                count.textContent = String(tagCount);
+                count.title = `${tagCount} tag(s)`;
+                li.appendChild(count);
+            }
+
             // Display a badge if suggestion is ready for this file
             if (folderSuggestions[photo.path]) {
                 const badge = document.createElement('span');
@@ -867,12 +1198,25 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             li.addEventListener('click', () => selectPhoto(photo.path));
+            li.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault();
+                    selectPhoto(photo.path);
+                }
+            });
             fragment.appendChild(li);
         });
         photoList.appendChild(fragment);
     }
 
     let searchTimeout = null;
+    if (filterUntaggedOnly) {
+        filterUntaggedOnly.addEventListener('change', () => {
+            renderFileList();
+            renderThumbnails();
+        });
+    }
+
     function filterFileList() {
         if (searchTimeout) clearTimeout(searchTimeout);
         searchTimeout = setTimeout(() => {
@@ -1080,13 +1424,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderThumbnails() {
         thumbnailsGrid.innerHTML = '';
 
-        const query = photoSearch.value.toLowerCase().trim();
-        const filtered = folderPhotos.filter(photo => {
-            if (!query) return true;
-            return photo.filename.toLowerCase().includes(query) || 
-                   (photo.title && photo.title.toLowerCase().includes(query)) ||
-                   photo.tags.some(t => t.toLowerCase().includes(query));
-        });
+        const filtered = visiblePhotos();
 
         if (filtered.length === 0) {
             thumbnailsGrid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 40px;">No photos found matching filter.</div>';
@@ -1693,6 +2031,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Select Single Photo View
     function selectPhoto(path) {
+        if (path !== activePhotoPath) clearPendingEntry();
         activePhotoPath = path;
 
         // Highlight sidebar element
@@ -1707,6 +2046,12 @@ document.addEventListener('DOMContentLoaded', () => {
         folderViewContent.classList.add('hidden');
         emptyState.classList.add('hidden');
         panelContent.classList.remove('hidden');
+
+        // Start at the top. The panel scrolls, and it used to keep its position
+        // across a change of photo, so moving on while reading the tag fields left
+        // you looking at another photo's fields with its image off-screen above.
+        if (detailsPanel) detailsPanel.scrollTop = 0;
+        updateCarryForwardState();
 
         renderPhotoFaces(path);
 
@@ -1734,6 +2079,145 @@ document.addEventListener('DOMContentLoaded', () => {
         
         renderTags(photo.tags);
         renderSuggestionsPanel(photo.path);
+    }
+
+    /**
+     * The tags on whichever photo sits before this one in the list.
+     *
+     * "Before" is list order rather than a history of what you visited, because that
+     * is what matches the way a shoot is worked: down the folder, in order. Reaching
+     * backwards from the first photo yields nothing rather than wrapping around.
+     */
+    function previousPhotoTags() {
+        const items = Array.from(photoList.querySelectorAll('.photo-item-file'));
+        const index = items.findIndex(
+            el => el.getAttribute('data-path') === activePhotoPath
+        );
+        if (index <= 0) return { tags: [], from: null };
+        const prevPath = items[index - 1].getAttribute('data-path');
+        const prev = folderPhotos.find(p => p.path === prevPath);
+        if (!prev) return { tags: [], from: null };
+        return {
+            tags: (prev.tags || []).slice(),
+            from: prev.filename || prevPath.split(/[/\\]/).pop(),
+        };
+    }
+
+    /** Is there anything to copy forward onto the current photo? */
+    function carryForwardCandidates() {
+        const { tags, from } = previousPhotoTags();
+        const photo = folderPhotos.find(p => p.path === activePhotoPath);
+        if (!photo) return { missing: [], from };
+        const have = new Set(photo.tags || []);
+        return { missing: tags.filter(t => !have.has(t)), from };
+    }
+
+    /**
+     * Copy the previous photo's tags onto this one.
+     *
+     * Additive on purpose: tags already here are kept, and only what is missing is
+     * added. Copying as a replacement would quietly undo work on a photo that had
+     * been partly tagged already, which is precisely the photo you are most likely
+     * to be standing on.
+     */
+    function carryTagsForward() {
+        const path = activePhotoPath;
+        if (!path) return;
+        const photo = folderPhotos.find(p => p.path === path);
+        if (!photo) return;
+
+        const { missing, from } = carryForwardCandidates();
+        if (!missing.length) {
+            setStatus('ready', from
+                ? `Nothing to carry over from ${from}`
+                : 'No previous photo to carry tags from');
+            return;
+        }
+
+        const updatedTags = Array.from(new Set([...(photo.tags || []), ...missing]));
+        const before = (photo.tags || []).slice();
+        setStatus('busy', `Copying ${missing.length} tag(s) from ${from}...`);
+
+        fetch('/api/photo/save-metadata', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, title: photo.title, tags: updatedTags })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) throw new Error(data.error || 'Failed to save');
+            photo.tags = updatedTags;
+            recordUndo({
+                label: `carry ${missing.length} tag(s) from ${from}`,
+                photos: [{ path, tags: before, title: photo.title }],
+            });
+            renderTags(updatedTags);
+            renderFileList();
+            renderThumbnails();
+            saveToLocalStorageCache();
+            setStatus('ready', `Copied ${missing.length} tag(s) from ${from}`);
+        })
+        .catch(err => {
+            console.error(err);
+            setStatus('error', 'Could not copy tags: ' + err.message);
+        });
+    }
+
+    /** Keep the carry-forward button honest about what it would do. */
+    function updateCarryForwardState() {
+        if (!btnCarryForward) return;
+        const { missing, from } = carryForwardCandidates();
+        btnCarryForward.disabled = missing.length === 0;
+        btnCarryForward.title = !from
+            ? 'No previous photo in the list to copy from'
+            : missing.length
+                ? `Copy ${missing.length} tag(s) from ${from}  (Ctrl+D)`
+                : `${from} has no tags this photo is missing`;
+    }
+
+    enableSwipeNavigation(mainImage);
+
+    if (btnCarryForward) btnCarryForward.addEventListener('click', carryTagsForward);
+    if (btnUndo) btnUndo.addEventListener('click', undoLastOperation);
+
+    /**
+     * Swipe or drag horizontally across the image to move between photos.
+     *
+     * Thresholds do the work: SWIPE_MIN_PX keeps a tap or a jitter from counting,
+     * and requiring the horizontal distance to exceed the vertical keeps a scroll
+     * that drifts sideways from flipping the photo. Right-to-left goes forwards,
+     * matching every photo viewer people already use.
+     */
+    const SWIPE_MIN_PX = 60;
+    function enableSwipeNavigation(surface) {
+        if (!surface) return;
+        let startX = null;
+        let startY = null;
+        let pointerId = null;
+
+        surface.addEventListener('pointerdown', (e) => {
+            // Primary button or touch only; ignore right-click and middle-click.
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
+            pointerId = e.pointerId;
+            startX = e.clientX;
+            startY = e.clientY;
+        });
+
+        const finish = (e) => {
+            if (pointerId === null || e.pointerId !== pointerId) return;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            pointerId = null;
+            startX = null;
+            startY = null;
+
+            if (Math.abs(dx) < SWIPE_MIN_PX) return;      // a tap, or a twitch
+            if (Math.abs(dx) <= Math.abs(dy)) return;      // a scroll that drifted
+            stepPhoto(dx < 0 ? 1 : -1);
+        };
+
+        surface.addEventListener('pointerup', finish);
+        surface.addEventListener('pointercancel', () => { pointerId = null; });
     }
 
     function renderTags(tags) {
@@ -2087,7 +2571,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 saveToLocalStorageCache();
 
                 // Update UI statistics
-                listStats.textContent = `${folderPhotos.length} files loaded`;
+                updateListStats();
                 folderViewStats.textContent = `${folderPhotos.length} photos`;
 
                 // Re-render components
@@ -2155,7 +2639,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function startIndexing() {
         const path = folderPathInput.value.trim();
         if (!path) {
-            alert("Please select or enter a valid folder path to index.");
+            flagField(folderPathInput, 'Choose or type a folder to index');
             return;
         }
 
@@ -2592,12 +3076,27 @@ document.addEventListener('DOMContentLoaded', () => {
         const folder = scannedFolder;
         if (!folder || selectedThumbnails.length === 0) return;
 
-        if (!confirm(`This will auto-apply all suggested tags and people across the ${selectedThumbnails.length} selected photos. Continue?`)) {
-            return;
-        }
+        // Say what will be written, and to how many photos that already carry work,
+        // before writing it. The common mistake is not misreading the button -- it is
+        // having the wrong selection, and a count of photos alone does not surface
+        // that. This is the last point at which it costs nothing.
+        const alreadyTagged = selectedThumbnails.filter(p => {
+            const photo = folderPhotos.find(x => x.path === p);
+            return photo && isPhotoTagged(photo);
+        }).length;
+        const scope = [
+            `Auto-apply AI suggestions to ${selectedThumbnails.length} selected photo(s)?`,
+            '',
+            alreadyTagged
+                ? `${alreadyTagged} of them already have tags. Suggestions are added to what is there; nothing is removed.`
+                : 'None of them are tagged yet.',
+            '',
+            'This writes keywords into the photo files. Undo restores the previous tags for this session only.',
+        ].join('\n');
+        if (!confirm(scope)) return;
 
-        statusDot.className = 'status-indicator-dot busy';
-        statusText.textContent = 'Applying Suggestions...';
+        const before = snapshotPhotos(selectedThumbnails);
+        setStatus('busy', `Applying suggestions to ${selectedThumbnails.length} photo(s)...`);
 
         fetch('/api/folder/auto-apply', {
             method: 'POST',
@@ -2611,9 +3110,12 @@ document.addEventListener('DOMContentLoaded', () => {
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                statusDot.className = 'status-indicator-dot';
-                statusText.textContent = 'Ready';
-                alert("AI suggestions auto-applied to selected photos!");
+                recordUndo({
+                    label: `auto-apply to ${before.length} photo(s)`,
+                    photos: before,
+                });
+                setStatus('ready',
+                    `Suggestions applied to ${before.length} photo(s) \u2014 Ctrl+Z to undo`);
                 scanFolder(true); // Rescan folder to load updated tags
             } else {
                 throw new Error(data.error);
@@ -2621,8 +3123,8 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         .catch(err => {
             console.error(err);
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Error';
+            // A failure that would otherwise pass unnoticed still earns a modal.
+            setStatus('error', 'Applying suggestions failed', { transient: false });
             alert("Error applying suggestions: " + err.message);
         });
     }
@@ -2689,8 +3191,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Group photos by camera model
         const modelCounts = {};
         folderPhotos.forEach(photo => {
-            const raw = photo.raw_metadata || {};
-            const model = raw["EXIF:Model"] || raw["Model"] || raw["EXIF:Make"] || raw["Make"] || "Unknown Camera";
+            const model = cameraModelOf(photo);
             modelCounts[model] = (modelCounts[model] || 0) + 1;
         });
 
@@ -2713,6 +3214,14 @@ document.addEventListener('DOMContentLoaded', () => {
         updateCameraHighlights();
     }
 
+    /** The camera a photo came from, as the time-shift dropdown labels it. */
+    function cameraModelOf(photo) {
+        const raw = (photo && photo.raw_metadata) || {};
+        return raw["EXIF:Model"] || raw["Model"]
+            || raw["EXIF:Make"] || raw["Make"]
+            || "Unknown Camera";
+    }
+
     function applyTimeShift() {
         const folder = scannedFolder;
         if (!folder) return;
@@ -2721,17 +3230,29 @@ document.addEventListener('DOMContentLoaded', () => {
         const minutes = parseInt(timeshiftMinutesInput.value, 10);
         
         if (isNaN(minutes) || minutes === 0) {
-            alert("Please enter a non-zero shift in minutes.");
+            // Beside the field, where it can be read and fixed in one motion.
+            flagField(timeshiftMinutesInput, 'Enter a shift in minutes (not zero)');
             return;
         }
-        
-        const promptMsg = `This will shift the Date Taken of all photos for camera "${cameraModel}" by ${minutes} minutes. Continue?`;
-        if (!confirm(promptMsg)) {
-            return;
-        }
-        
-        statusDot.className = 'status-indicator-dot busy';
-        statusText.textContent = 'Applying time shift...';
+
+        // How many photos this is actually about. "All photos for camera X" does not
+        // say whether that is four or four hundred, and the two deserve different
+        // amounts of hesitation.
+        const affected = cameraModel === 'All Cameras'
+            ? folderPhotos.length
+            : folderPhotos.filter(p => cameraModelOf(p) === cameraModel).length;
+        const direction = minutes > 0 ? 'later' : 'earlier';
+        const promptMsg = [
+            `Shift Date Taken by ${Math.abs(minutes)} minute(s) ${direction}?`,
+            '',
+            `Camera: ${cameraModel}`,
+            `Photos affected: ${affected}`,
+            '',
+            'This rewrites the timestamp inside each photo file and CANNOT be undone from here.',
+        ].join('\n');
+        if (!confirm(promptMsg)) return;
+
+        setStatus('busy', `Shifting ${affected} photo(s) by ${minutes} minute(s)...`);
         
         fetch('/api/folder/time-shift', {
             method: 'POST',
@@ -2749,10 +3270,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     folderPhotos = data.updated_photos;
                 }
                 
-                statusDot.className = 'status-indicator-dot';
-                statusText.textContent = 'Ready';
-                alert("Time shift applied successfully!");
-                
+                setStatus('ready', `Time shift applied to ${affected} photo(s)`);
+
                 renderFileList();
                 renderThumbnails();
                 updateTagsDatalist();
@@ -2765,8 +3284,7 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         .catch(err => {
             console.error(err);
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Error';
+            setStatus('error', 'Time shift failed', { transient: false });
             alert("Error shifting time: " + err.message);
         });
         timeshiftMinutesInput.value = 0; // reset
@@ -3073,7 +3591,16 @@ document.addEventListener('DOMContentLoaded', () => {
         return fetch('/api/taxonomy/tree')
             .then(res => res.json())
             .then(data => {
-                taxonomyNodes = data;
+                // An error reply is an object, not the list of nodes. Storing it
+                // raw made the next tag you typed throw a TypeError out of
+                // resolveTagOrPerson, so the add just did nothing. Callers already
+                // guard with Array.isArray in places, which is the same bug noticed
+                // once and patched at the wrong end.
+                taxonomyNodes = Array.isArray(data) ? data : [];
+            })
+            .catch(err => {
+                console.error('Could not load the taxonomy:', err);
+                taxonomyNodes = [];
             });
     }
 
@@ -3618,9 +4145,19 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    async function resolveTagOrPerson(inputName, isPersonField = false) {
+    /**
+     * Turn typed text into a taxonomy path, asking where it belongs if need be.
+     *
+     * With `prompt: false` it will not ask: anything that needs a decision returns
+     * null instead of opening the placement modal. That is what lets a blur commit
+     * the unambiguous cases and leave the rest alone, rather than deciding when to
+     * ask by predicting this function's behaviour -- a copy that would drift.
+     */
+    async function resolveTagOrPerson(inputName, isPersonField = false, { prompt = true } = {}) {
         inputName = inputName.trim();
         if (!inputName) return null;
+
+        const askWhereItGoes = (...args) => (prompt ? showPlacementModal(...args) : null);
         
         if (inputName.includes('/')) {
             await fetch('/api/taxonomy/create', {
@@ -3651,7 +4188,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     return peopleMatches[0].tag;
                 } else if (peopleMatches.length > 1) {
                     const options = peopleMatches.map(m => m.tag);
-                    const res = await showPlacementModal(
+                    const res = await askWhereItGoes(
                         "Resolve Ambiguous Person",
                         `Multiple folders exist for "${inputName}". Please select which one you mean:`,
                         options,
@@ -3680,7 +4217,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 await loadTaxonomy();
                 return targetPath;
             } else {
-                const res = await showPlacementModal(
+                const res = await askWhereItGoes(
                     "Resolve New Person",
                     `The person "${inputName}" is new. Please select which people folder to add them under:`,
                     peopleRootNames,
@@ -3701,7 +4238,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return matches[0].tag;
             } else if (matches.length > 1) {
                 const options = matches.map(m => m.tag);
-                const res = await showPlacementModal(
+                const res = await askWhereItGoes(
                     "Resolve Ambiguous Tag",
                     `Multiple tag paths exist for "${inputName}". Please select which one you mean:`,
                     options,
@@ -3711,7 +4248,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             const rootNames = keywordRoots.map(r => r.name);
-            const res = await showPlacementModal(
+            const res = await askWhereItGoes(
                 "Resolve New Tag",
                 `The tag "${inputName}" is new. Please specify which category it should be placed under, or create a new one:`,
                 rootNames,

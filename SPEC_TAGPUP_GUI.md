@@ -13,6 +13,91 @@ This document records the design, specifications, prerequisites, and instruction
 
 ## Features and Mechanics
 
+### 0. The Tagging Loop
+
+The work TagPup exists for is: look at a photo, tag it, move to the next one. These
+behaviours serve that loop and are specified together because they depend on each
+other.
+
+**Moving between photos.** `ArrowDown`/`ArrowRight` go forwards, `ArrowUp`/`ArrowLeft`
+go back; both pairs do the same thing, because which one a person reaches for depends
+on whether they are looking at the list or at the image. Movement stops at either end
+rather than wrapping. A horizontal swipe or drag across the main image does the same,
+right-to-left for forwards, matching every photo viewer people already use; the
+gesture must clear 60px **and** exceed its own vertical movement, so a tap and a
+scroll that drifts sideways are both ignored. Modifier combinations are left to the
+browser.
+
+Arrow keys are ignored while the caret is in a field where they mean something to the
+text being typed — but **not** in the filter box, which is a search control. A blanket
+check on `INPUT` used to catch it and return before `preventDefault`, so the browser
+scrolled instead: the keys appeared dead in the one place you most want them, right
+after narrowing the list.
+
+**Knowing where you are.** Each sidebar row carries a filled or hollow dot for tagged
+or not, and a tag count where it has any. The count line reads `38 of 80 tagged, 42 to
+go` rather than `80 files loaded` — on returning to a folder, the question is how much
+is left. **Only show what still needs tagging** narrows both the list and the grid to
+untagged photos, turning a folder into a work queue. A photo counts as tagged if it
+has any tag, any person, or a title: the question is "have I been here yet", not "is
+this perfect".
+
+Selecting a photo resets the details panel to the top, so each one starts at its own
+image rather than mid-panel at the previous photo's scroll position.
+
+**Carrying tags forward.** **Same as previous** (`Ctrl+D`) copies the tags of the
+photo above in the list onto the current one. It is additive — tags already present
+are kept and only what is missing is added — because replacing would quietly undo work
+on a partly tagged photo, which is the one you are most likely to be standing on. It
+is offered only when the previous photo has something this one lacks, and the button
+says what it would copy and from where.
+
+**Not losing what was typed.** The tag and person fields commit when they lose focus,
+not only on Enter. Two limits:
+- Only text that resolves **without a question** is committed this way. A brand-new
+  bare tag needs a placement decision, and raising that modal about the photo you just
+  left, while you are looking at the next one, is its own kind of lost work — so it
+  waits for Enter or the Add button, where a modal is expected.
+- Uncommitted text is cleared when the photo changes, and the status line says what was
+  dropped. The fields were previously cleared only on a successful save, so text typed
+  for one photo survived into the next and Enter there applied it to **the wrong
+  photo**.
+
+`Escape` abandons what is in a field, so leaving it commits nothing. The title field
+is deliberately excluded from blur-commit: it is pre-filled with the current title, so
+blurring it unchanged would re-save the same value on every pass.
+
+### 0.1 Feedback, Scope and Undo
+
+**One status channel.** Results and validation go to the status line, which was
+already carrying them. Modals are kept for exactly two cases: a question that must be
+answered before acting, and a failure that would otherwise pass unnoticed. Success
+confirmations were removed — stopping the work to report that the work worked is
+worst precisely during bulk operations, when you are moving fastest. Validation
+messages appear beside the field they are about, which is marked, rather than in a box
+that hides the form you need to correct.
+
+**Scope before irreversible writes.** Auto-apply states how many photos it will write
+to, how many of those already carry tags, that suggestions are added rather than
+replacing, and that it writes into the photo files. The common mistake is not
+misreading the button — it is having the wrong selection, which a bare count does not
+surface. Camera time-shift states the number of photos affected, resolving
+`All Cameras` to a real count, and says plainly that it **cannot be undone**, because
+it rewrites EXIF timestamps that the undo below does not cover.
+
+**Undo.** One step deep, covering the last bulk tag write (`Ctrl+Z`). Photos are
+restored from a snapshot of the tags and title they had before the write, rather than
+by reversing the change field by field: a snapshot cannot be confused about what an
+addition or a removal was. It is one step on purpose — the mistake it catches is a
+bulk write against the wrong selection, noticed immediately, and a deeper stack would
+imply a guarantee this cannot make, since the photo files are the source of truth and
+anything can edit them behind the app's back. A partial restore says so.
+
+**Keyboard reachability.** Sidebar rows are focusable and carry `role="option"`;
+`Enter` or `Space` opens the focused row, and focus is visible. Previously nothing in
+the list was focusable, which is why the arrow keys worked only while focus happened
+to be sitting on `<body>`.
+
 ### 1. Folder Browser & Grid Selection
 - **Directory Tree**: Scans image folders and lists subfolders grouped chronologically by capture year. Folder structures start collapsed on page boot.
 - **Thumbnails sizes**: Segment buttons dynamically switch card sizes between **Small**, **Medium**, and **Large**.

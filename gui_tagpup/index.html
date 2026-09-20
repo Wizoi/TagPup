@@ -28,6 +28,7 @@
             <div class="header-status">
                 <span class="status-indicator-dot" id="status-dot"></span>
                 <span class="status-text" id="status-text">Ready</span>
+                <button id="btn-undo" class="btn btn-secondary btn-sm" disabled>&#8630; Undo</button>
             </div>
         </header>
 
@@ -68,6 +69,11 @@
                     <input type="text" id="photo-search" placeholder="Filter files..." class="search-input">
                     <span class="search-icon">🔍</span>
                 </div>
+
+                <label class="untagged-filter" title="Show only photos that have no tags, people or title yet">
+                    <input type="checkbox" id="filter-untagged-only">
+                    Only show what still needs tagging
+                </label>
 
                 <div class="sidebar-header-row">
                     <div class="list-stats" id="list-stats">0 files loaded</div>
@@ -157,6 +163,7 @@
                                         <div class="add-tag-group">
                                             <input type="text" id="input-add-tag" placeholder="Add tag..." list="tags-datalist">
                                             <button id="btn-add-tag" class="btn btn-secondary btn-sm">Add Tag</button>
+                                            <button id="btn-carry-forward" class="btn btn-secondary btn-sm" disabled title="Copy the previous photo's tags onto this one (Ctrl+D)">&#8676; Same as previous</button>
                                         </div>
                                     </div>
                                 </div>
