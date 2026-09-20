@@ -89,11 +89,25 @@ class TunerAPITestBase(unittest.TestCase):
         # Writes are rejected with 409 while clustering runs, so make sure no earlier
         # test has left a background clustering pass holding the lock.
         self.wait_for_clustering_to_finish()
+        self.clear_index_status()
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM photos")
         conn.commit()
         conn.close()
+
+    def clear_index_status(self):
+        """Forget any indexing job an earlier test left behind.
+
+        index_status lives on the handler class, so a test that plants a "running"
+        job to exercise the single-job guard leaves it there for every test after it.
+        The next one to call index-start then gets a 409 it never asked for.
+        """
+        set_active_db_path(self.TEST_DB)
+        try:
+            TunerHTTPRequestHandler.index_status.clear()
+        finally:
+            set_active_db_path(None)
 
     def wait_for_clustering_to_finish(self, timeout=30.0):
         set_active_db_path(self.TEST_DB)
@@ -906,3 +920,84 @@ class TestTunerFolderRemoval(TunerAPITestBase):
     def test_rejects_a_missing_folder_path(self):
         status, _ = self.post("/api/folder/remove", {})
         self.assertEqual(status, 400)
+
+
+class TestSingleIndexJob(TunerAPITestBase):
+    """Only one index runs at a time, and a page can find out that one is running."""
+
+    def tearDown(self):
+        self.clear_index_status()
+
+    def test_nothing_active_when_idle(self):
+        body = self.get("/api/folder/index-active")
+        self.assertFalse(body["busy"])
+        self.assertEqual(body["active"], [])
+
+    def test_a_running_job_is_reported(self):
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
+        import tempfile
+
+        folder = tempfile.mkdtemp(prefix="tuner_active_")
+        set_active_db_path(self.TEST_DB)
+        TunerHTTPRequestHandler.index_status[normalize_path(folder)] = {
+            "status": "running", "percent": 42, "message": "Generating embeddings: 42% (21/50)",
+        }
+        set_active_db_path(None)
+
+        body = self.get("/api/folder/index-active")
+        self.assertTrue(body["busy"], "a running job was not reported")
+        self.assertEqual(body["active"][0]["percent"], 42)
+        self.assertIn("42%", body["active"][0]["message"])
+
+    def test_a_second_folder_is_refused_while_one_runs(self):
+        """Indexing is GPU-bound; two at once make each other crawl."""
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
+        import tempfile
+
+        busy_folder = tempfile.mkdtemp(prefix="tuner_busy_")
+        other_folder = tempfile.mkdtemp(prefix="tuner_other_")
+        set_active_db_path(self.TEST_DB)
+        TunerHTTPRequestHandler.index_status[normalize_path(busy_folder)] = {
+            "status": "running", "percent": 10, "message": "working",
+        }
+        set_active_db_path(None)
+
+        status, body = self.post("/api/folder/index-start", {"folder_path": other_folder})
+        self.assertEqual(status, 409, body)
+        self.assertIn("Already indexing", str(body))
+
+    def test_restarting_the_same_folder_is_still_accepted(self):
+        """Asking again for the folder already running is harmless, not an error."""
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
+        import tempfile
+
+        folder = tempfile.mkdtemp(prefix="tuner_same_")
+        set_active_db_path(self.TEST_DB)
+        TunerHTTPRequestHandler.index_status[normalize_path(folder)] = {
+            "status": "running", "percent": 10, "message": "working",
+        }
+        set_active_db_path(None)
+
+        status, body = self.post("/api/folder/index-start", {"folder_path": folder})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body.get("status"), "running")
+
+    def test_a_finished_job_does_not_block_the_next_one(self):
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
+        from unittest.mock import patch, MagicMock
+        import tempfile
+
+        done_folder = tempfile.mkdtemp(prefix="tuner_done_")
+        next_folder = tempfile.mkdtemp(prefix="tuner_next_")
+        set_active_db_path(self.TEST_DB)
+        TunerHTTPRequestHandler.index_status[normalize_path(done_folder)] = {
+            "status": "completed", "percent": 100, "message": "done",
+        }
+        set_active_db_path(None)
+
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.stdout.readline.side_effect = ["done\n", ""]
+        with patch("subprocess.Popen", return_value=proc):
+            status, body = self.post("/api/folder/index-start", {"folder_path": next_folder})
+        self.assertEqual(status, 200, body)

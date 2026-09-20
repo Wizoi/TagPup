@@ -245,6 +245,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     fetchPhotos();
     fetchKnownPeople();
+    restoreIndexingState();
 
     // Event Listeners
     modeSelect.addEventListener('change', () => {
@@ -677,6 +678,40 @@ document.addEventListener('DOMContentLoaded', () => {
     const indexProgressText = document.getElementById('index-progress-text');
     let indexPollTimer = null;
 
+    // The buttons carry the state rather than just greying out. A disabled control
+    // with no explanation reads as broken -- which is exactly how it was reported.
+    function setIndexingUI(busy, label) {
+        if (btnAddFolder) {
+            btnAddFolder.disabled = busy;
+            btnAddFolder.textContent = busy ? (label || '\u23F3 Indexing...') : '\u2795 Add folder';
+            btnAddFolder.title = busy
+                ? 'An index is already running. Only one runs at a time, because indexing is GPU-bound.'
+                : 'Index a folder into this database so its faces can be identified';
+        }
+        if (btnRemoveFolder) {
+            btnRemoveFolder.disabled = busy;
+            btnRemoveFolder.title = busy
+                ? 'Unavailable while indexing'
+                : "Remove a folder's photos and faces from this database (photo files are not deleted)";
+        }
+    }
+
+    // A freshly loaded page knows nothing about a job that started before it. Ask.
+    function restoreIndexingState() {
+        fetch('/api/folder/index-active')
+            .then(res => res.ok ? res.json() : { active: [] })
+            .then(data => {
+                const job = (data.active || [])[0];
+                if (!job) return;
+                setIndexingUI(true);
+                indexProgressContainer.classList.remove('hidden');
+                indexProgressBar.style.width = `${job.percent || 0}%`;
+                indexProgressText.textContent = job.message || 'Indexing...';
+                pollIndexStatus(job.folder);
+            })
+            .catch(() => {});
+    }
+
     function pickFolder() {
         return fetch('/api/browse-folder')
             .then(res => res.json())
@@ -701,15 +736,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     clearInterval(indexPollTimer);
                     indexPollTimer = null;
                     indexProgressContainer.classList.add('hidden');
-                    if (btnAddFolder) btnAddFolder.disabled = false;
-                    if (btnRemoveFolder) btnRemoveFolder.disabled = false;
+                    setIndexingUI(false);
 
                     if (data.status === 'failed') {
                         alert('Indexing failed: ' + (data.message || 'Unknown error'));
                         return;
                     }
                     alert(data.message || 'Folder indexed.');
-                    fetchPeopleWithCounts(true);
+                    // fetchPhotos dispatches on the selected mode. Calling
+                    // fetchPeopleWithCounts directly rendered the people list into the
+                    // sidebar whatever Tune target said, so finishing an index while in
+                    // Folder Matches left the list and the dropdown disagreeing.
+                    fetchPhotos();
                 })
                 .catch(err => console.error('Error polling index status:', err));
         };
@@ -721,8 +759,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnAddFolder.addEventListener('click', () => {
             pickFolder().then(folderPath => {
                 if (!folderPath) return;
-                btnAddFolder.disabled = true;
-                if (btnRemoveFolder) btnRemoveFolder.disabled = true;
+                setIndexingUI(true, '\u23F3 Starting...');
                 indexProgressContainer.classList.remove('hidden');
                 indexProgressText.textContent = 'Starting...';
 
@@ -735,8 +772,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 .then(() => pollIndexStatus(folderPath))
                 .catch(err => {
                     indexProgressContainer.classList.add('hidden');
-                    btnAddFolder.disabled = false;
-                    if (btnRemoveFolder) btnRemoveFolder.disabled = false;
+                    setIndexingUI(false);
                     alert('Error starting indexing: ' + err.message);
                 });
             });
@@ -767,7 +803,6 @@ document.addEventListener('DOMContentLoaded', () => {
                                `and ${data.excluded_lost} exclusion(s).`;
                     }
                     alert(msg);
-                    fetchPeopleWithCounts(true);
                     fetchPhotos();
                 })
                 .catch(err => alert('Error removing folder: ' + err.message))

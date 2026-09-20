@@ -640,6 +640,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         elif path == "/api/face-matches-unmatched":
             self.handle_get_face_matches_unmatched(query)
             
+        elif path == "/api/folder/index-active":
+            self.handle_get_folder_index_active()
         elif path == "/api/folder/index-status":
             self.handle_get_folder_index_status(query)
         elif path == "/api/faces/excluded":
@@ -2514,6 +2516,23 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         except (ValueError, TypeError):
             return None
 
+    def handle_get_folder_index_active(self):
+        """Whatever is indexing right now, if anything.
+
+        The per-folder status endpoint can only answer about a folder you already know
+        about. A page that has just loaded knows nothing, so without this it cannot tell
+        that a job is in flight and shows an idle, enabled button over a busy server.
+        """
+        active = []
+        for folder, status in list(TunerHTTPRequestHandler.index_status.items()):
+            if isinstance(status, dict) and status.get("status") == "running":
+                active.append({
+                    "folder": folder,
+                    "percent": status.get("percent", 0),
+                    "message": status.get("message", ""),
+                })
+        self.send_json({"active": active, "busy": len(active) > 0})
+
     def handle_get_folder_index_status(self, query):
         path_list = query.get("path")
         if not path_list:
@@ -2551,6 +2570,18 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         if current and current.get("status") == "running":
             self.send_json({"success": True, "status": "running"})
             return
+
+        # One job at a time. Indexing is GPU-bound; a second folder started alongside
+        # the first does not run in parallel so much as make both crawl.
+        for other_folder, status in list(TunerHTTPRequestHandler.index_status.items()):
+            if other_folder != folder_norm and isinstance(status, dict) \
+                    and status.get("status") == "running":
+                self.send_json_error(
+                    409,
+                    "Already indexing %s. Wait for it to finish -- running two at once "
+                    "slows both down." % os.path.basename(other_folder.rstrip("/")),
+                )
+                return
 
         TunerHTTPRequestHandler.index_status[folder_norm] = {
             "status": "running", "percent": 0, "message": "Starting indexing...",
