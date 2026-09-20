@@ -402,3 +402,57 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
 
         names = {e["name"] for e in self.get("/api/unmatched-faces/people")}
         self.assertIn("Jane Doe", names, "recorded faces never reached the queue")
+
+
+class TestExcludedBucketIsReachable(ExclusionTestBase):
+    """An exclusion must be reviewable, or it is a one-way door."""
+
+    def test_the_queue_offers_an_excluded_bucket_once_something_is_excluded(self):
+        photo = self.add_photo("a.jpg")
+        face = self.add_face(photo, identity_vector(1))
+        before = {e["name"] for e in self.get("/api/unmatched-faces/people")}
+        self.assertNotIn("Excluded", before, "empty bucket was advertised")
+
+        self.post("/api/faces/exclude", {"face_ids": [face]})
+        after = {e["name"]: e["count"] for e in self.get("/api/unmatched-faces/people")}
+        self.assertIn("Excluded", after, "no way to reach the excluded faces")
+        self.assertEqual(after["Excluded"], 1)
+
+    def test_the_bucket_count_tracks_exclusions(self):
+        photo = self.add_photo("crowd.jpg")
+        ids = [self.add_face(photo, identity_vector(i), box=(i * 60, 0, i * 60 + 50, 50))
+               for i in range(3)]
+        self.post("/api/faces/exclude", {"face_ids": ids})
+        entries = {e["name"]: e["count"] for e in self.get("/api/unmatched-faces/people")}
+        self.assertEqual(entries["Excluded"], 3)
+
+        self.post("/api/faces/restore", {"face_ids": ids[:1]})
+        entries = {e["name"]: e["count"] for e in self.get("/api/unmatched-faces/people")}
+        self.assertEqual(entries["Excluded"], 2)
+
+    def test_the_bucket_disappears_when_everything_is_restored(self):
+        photo = self.add_photo("a.jpg")
+        face = self.add_face(photo, identity_vector(1))
+        self.post("/api/faces/exclude", {"face_ids": [face]})
+        self.post("/api/faces/restore", {"face_ids": [face]})
+        names = {e["name"] for e in self.get("/api/unmatched-faces/people")}
+        self.assertNotIn("Excluded", names)
+
+    def test_a_restored_face_returns_to_the_identify_queue(self):
+        """The round trip has to actually work, not just clear the flag."""
+        base = identity_vector(80)
+        ids = []
+        for i in range(2):
+            p = self.add_photo(f"p{i}.jpg", people=["Jane Doe"])
+            ids.append(self.add_face(p, near(base, 90 + i)))
+
+        self.post("/api/faces/exclude", {"face_ids": ids})
+        self.assertNotIn(
+            "Jane Doe", {e["name"] for e in self.get("/api/unmatched-faces/people")}
+        )
+
+        self.post("/api/faces/restore", {"face_ids": ids})
+        self.assertIn(
+            "Jane Doe", {e["name"] for e in self.get("/api/unmatched-faces/people")},
+            "restoring did not put the faces back in the queue",
+        )

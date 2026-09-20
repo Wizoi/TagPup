@@ -2915,6 +2915,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             if len(ungrouped_photos) > 0:
                 people_counts.append({"name": "Ungrouped", "count": len(ungrouped_photos)})
 
+            # Excluded faces take no part in identifying, but the bucket has to be
+            # reachable from somewhere or an exclusion could never be reviewed or undone.
+            cursor.execute("SELECT COUNT(*) FROM faces WHERE excluded = 1")
+            excluded_count = cursor.fetchone()[0]
+            if excluded_count:
+                people_counts.append({"name": "Excluded", "count": excluded_count})
+
             self.identify_cache_put("queue", fingerprint, people_counts)
             self.send_json(people_counts)
         except Exception as e:

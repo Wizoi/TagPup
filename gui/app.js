@@ -208,6 +208,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let allPeopleWithCounts = [];
     let activePersonName = null;
     let lastLoadedPersonName = null;
+    const btnExcludeSelected = document.getElementById('btn-exclude-selected');
+    const btnRestoreSelected = document.getElementById('btn-restore-selected');
     let selectedFaceIds = [];
     let activePersonFaces = [];
     let activeTab = 'matches'; // 'matches' or 'outliers'
@@ -1839,7 +1841,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     tabLowConf.classList.add('hidden');
                 }
                 if (inputReassignName) {
-                    if (name !== 'Unknown Faces' && name !== 'Ungrouped') {
+                    if (name !== 'Unknown Faces' && name !== 'Ungrouped' && name !== 'Excluded') {
                         inputReassignName.value = name;
                     } else {
                         inputReassignName.value = '';
@@ -1879,7 +1881,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         
-        if (name === 'Unknown Faces' || name === 'Ungrouped') {
+        if (name === 'Unknown Faces' || name === 'Ungrouped' || name === 'Excluded') {
             if (matchingTabs) matchingTabs.classList.remove('hidden');
             if (matchingStaticTitle) matchingStaticTitle.classList.add('hidden');
             if (btnRenamePerson) btnRenamePerson.classList.add('hidden');
@@ -1923,9 +1925,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         detailsAbortController = new AbortController();
 
-        const apiPath = (mode === 'unmatched-faces')
-            ? `/api/unmatched-faces/person-matches?name=${encodeURIComponent(name)}`
-            : `/api/person-faces?name=${encodeURIComponent(name)}&limit=-1`;
+        // The Excluded bucket is not a person and has its own listing.
+        const apiPath = (name === 'Excluded')
+            ? '/api/faces/excluded'
+            : (mode === 'unmatched-faces')
+                ? `/api/unmatched-faces/person-matches?name=${encodeURIComponent(name)}`
+                : `/api/person-faces?name=${encodeURIComponent(name)}&limit=-1`;
 
         fetch(apiPath, { signal: detailsAbortController.signal })
             .then(res => {
@@ -2427,6 +2432,101 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Update reassign and unmatch buttons text and disabled status
+
+    // ---- Excluding faces ---------------------------------------------------
+    // A race photograph is mostly strangers, and detection occasionally returns
+    // something that is not a face. Left in the database they cluster, vote, and drag
+    // a person's centroid around. Excluding keeps the row and the crop but takes the
+    // face out of identity work entirely; it is reversible from the Excluded bucket.
+    const EXCLUDE_REASONS = ['not a person', 'stranger', 'bad crop', 'duplicate'];
+
+    function postExcludeBulk(faceIds) {
+        if (!faceIds.length) return;
+        const reason = prompt(
+            `Exclude ${faceIds.length} face(s) from matching.\n\n` +
+            `Reason (${EXCLUDE_REASONS.join(' / ')}):`,
+            EXCLUDE_REASONS[0]
+        );
+        if (reason === null) return;   // cancelled
+
+        if (btnExcludeSelected) {
+            btnExcludeSelected.disabled = true;
+            btnExcludeSelected.textContent = 'Excluding...';
+        }
+        fetch('/api/faces/exclude', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ face_ids: faceIds, reason: reason.trim() || 'not a person' })
+        })
+        .then(res => {
+            if (!res.ok) throw new Error('Exclude failed');
+            return res.json();
+        })
+        .then(() => {
+            faceIds.forEach(id => {
+                const card = matchingFacesGrid.querySelector(`[data-face-id="${id}"]`);
+                if (card) card.remove();
+            });
+            activePersonFaces = activePersonFaces.filter(f => !faceIds.includes(f.id));
+            selectedFaceIds = [];
+            renderPersonFaces(activePersonFaces);
+            updateTabLabels();
+            updateMatchingSelectionUI();
+            clearFaceDetails();
+            fetchPeopleWithCounts(true);
+        })
+        .catch(err => {
+            console.error(err);
+            alert('Error excluding faces: ' + err.message);
+        })
+        .finally(() => updateMatchingSelectionUI());
+    }
+
+    function postRestoreBulk(faceIds) {
+        if (!faceIds.length) return;
+        if (btnRestoreSelected) {
+            btnRestoreSelected.disabled = true;
+            btnRestoreSelected.textContent = 'Restoring...';
+        }
+        fetch('/api/faces/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ face_ids: faceIds })
+        })
+        .then(res => {
+            if (!res.ok) throw new Error('Restore failed');
+            return res.json();
+        })
+        .then(() => {
+            faceIds.forEach(id => {
+                const card = matchingFacesGrid.querySelector(`[data-face-id="${id}"]`);
+                if (card) card.remove();
+            });
+            activePersonFaces = activePersonFaces.filter(f => !faceIds.includes(f.id));
+            selectedFaceIds = [];
+            renderPersonFaces(activePersonFaces);
+            updateMatchingSelectionUI();
+            clearFaceDetails();
+            fetchPeopleWithCounts(true);
+        })
+        .catch(err => {
+            console.error(err);
+            alert('Error restoring faces: ' + err.message);
+        })
+        .finally(() => updateMatchingSelectionUI());
+    }
+
+    if (btnExcludeSelected) {
+        btnExcludeSelected.addEventListener('click', () => {
+            if (selectedFaceIds.length) postExcludeBulk(selectedFaceIds);
+        });
+    }
+    if (btnRestoreSelected) {
+        btnRestoreSelected.addEventListener('click', () => {
+            if (selectedFaceIds.length) postRestoreBulk(selectedFaceIds);
+        });
+    }
+
     function updateMatchingSelectionUI() {
         if (!btnUnmatchSelected) return;
         const count = selectedFaceIds.length;
@@ -2439,6 +2539,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (btnNewPerson) {
             btnNewPerson.disabled = count !== 1;
+        }
+
+        // In the Excluded bucket the useful action is the opposite one, so the two
+        // buttons swap rather than sitting side by side offering a contradiction.
+        const viewingExcluded = activePersonName === 'Excluded';
+        if (btnExcludeSelected) {
+            btnExcludeSelected.classList.toggle('hidden', viewingExcluded);
+            btnExcludeSelected.textContent = `🚫 Exclude (${count})`;
+            btnExcludeSelected.disabled = count === 0;
+        }
+        if (btnRestoreSelected) {
+            btnRestoreSelected.classList.toggle('hidden', !viewingExcluded);
+            btnRestoreSelected.textContent = `↩️ Restore (${count})`;
+            btnRestoreSelected.disabled = count === 0;
+        }
+        if (btnUnmatchSelected) {
+            btnUnmatchSelected.classList.toggle('hidden', viewingExcluded);
         }
 
         const btnMatchingSelectAll = document.getElementById('btn-matching-select-all');
