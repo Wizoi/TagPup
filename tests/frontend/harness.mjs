@@ -65,7 +65,12 @@ export class FakeServer {
       }
       self.calls.push({ url, method: (init && init.method) || "GET", body });
 
-      const route = self.routes.find((r) => url.includes(r.match));
+      // Match on the path regardless of a leading slash: the apps issue both
+      // absolute ("/api/x") and relative ("api/x") URLs, and a relative one would
+      // otherwise fall through to the default empty reply.
+      const route = self.routes.find(
+        (r) => url.includes(r.match) || url.includes(r.match.replace(/^\//, ""))
+      );
       const payload = route ? route.body : [];
       const status = route ? route.status : 200;
       return Promise.resolve({
@@ -126,6 +131,19 @@ export async function loadApp(appName, { url, server = new FakeServer(), t } = {
   });
 
   const { window } = dom;
+
+  // jsdom does not implement CSS.escape, and the apps use it to build attribute
+  // selectors. Without it selectPhoto throws before it can open the details panel,
+  // which looks like an application bug and is purely an environment gap.
+  if (!window.CSS) window.CSS = {};
+  if (typeof window.CSS.escape !== "function") {
+    // Enough of the spec for building attribute selectors: backslash-escape
+    // every character that is not a safe identifier character. Non-ASCII is
+    // left alone, as the real CSS.escape does.
+    window.CSS.escape = (value) =>
+      String(value).replace(/[^\w\u00A0-\uFFFF-]/g, (ch) => "\\" + ch);
+  }
+
   openWindows.add(window);
   if (t && typeof t.after === "function") {
     t.after(() => {

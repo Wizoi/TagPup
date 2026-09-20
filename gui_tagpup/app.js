@@ -174,6 +174,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectedThumbnailsCount = document.getElementById('selected-thumbnails-count');
     const btnFolderAutoApply = document.getElementById('btn-folder-auto-apply');
     const folderSelectionSidebar = document.getElementById('folder-selection-sidebar');
+    const selectionEmptyHint = document.getElementById('selection-empty-hint');
+    const selectionSummaryScroll = document.querySelector('.selection-summary-scroll');
     const selectionSummaryCount = document.getElementById('selection-summary-count');
     const selectionPeopleList = document.getElementById('selection-people-list');
     const selectionTagsList = document.getElementById('selection-tags-list');
@@ -899,6 +901,100 @@ document.addEventListener('DOMContentLoaded', () => {
         updateSelectedThumbnailsCount();
     }
 
+
+    // ---- Grid context menu -------------------------------------------------
+    // The selection toolbar lives in a header that scrolls out of view in a long
+    // folder, which made "select none" hard to reach at exactly the moment it is
+    // wanted. A right-click menu puts the selection actions where the cursor is.
+    const gridContextMenu = document.getElementById('grid-context-menu');
+
+    function hideGridContextMenu() {
+        if (gridContextMenu) gridContextMenu.classList.add('hidden');
+    }
+
+    function showGridContextMenu(x, y, pathUnderCursor) {
+        if (!gridContextMenu) return;
+        const count = selectedThumbnails.length;
+        const total = folderPhotos.length;
+
+        gridContextMenu.querySelectorAll('[data-requires-selection]').forEach(el => {
+            el.classList.toggle('disabled', count === 0);
+        });
+        const countLabel = gridContextMenu.querySelector('#context-menu-count');
+        if (countLabel) {
+            countLabel.textContent = count === 0
+                ? `No photos selected (${total} in folder)`
+                : `${count} of ${total} selected`;
+        }
+
+        gridContextMenu.dataset.path = pathUnderCursor || '';
+        gridContextMenu.classList.remove('hidden');
+
+        // Keep the menu inside the viewport rather than letting it run off the edge.
+        gridContextMenu.style.left = '0px';
+        gridContextMenu.style.top = '0px';
+        const rect = gridContextMenu.getBoundingClientRect();
+        const left = Math.min(x, window.innerWidth - rect.width - 8);
+        const top = Math.min(y, window.innerHeight - rect.height - 8);
+        gridContextMenu.style.left = `${Math.max(8, left)}px`;
+        gridContextMenu.style.top = `${Math.max(8, top)}px`;
+    }
+
+    function invertThumbnailSelection() {
+        const all = folderPhotos.map(p => p.path);
+        const next = all.filter(p => !selectedThumbnails.includes(p));
+        selectedThumbnails.length = 0;
+        next.forEach(p => selectedThumbnails.push(p));
+        renderThumbnails();
+        updateSelectedThumbnailsCount();
+    }
+
+    function selectRangeToCursor(path) {
+        if (!path) return;
+        handleCardSelectionClick(path, true, null, true);
+    }
+
+    if (thumbnailsGrid) {
+        thumbnailsGrid.addEventListener('contextmenu', (e) => {
+            const card = e.target.closest('.thumbnail-card');
+            e.preventDefault();
+            showGridContextMenu(e.clientX, e.clientY, card ? card.getAttribute('data-path') : '');
+        });
+    }
+
+    document.addEventListener('click', (e) => {
+        if (gridContextMenu && !gridContextMenu.contains(e.target)) hideGridContextMenu();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') hideGridContextMenu();
+    });
+    window.addEventListener('scroll', hideGridContextMenu, true);
+
+    if (gridContextMenu) {
+        gridContextMenu.addEventListener('click', (e) => {
+            const item = e.target.closest('[data-action]');
+            if (!item || item.classList.contains('disabled')) return;
+            const action = item.getAttribute('data-action');
+            const pathUnderCursor = gridContextMenu.dataset.path;
+            hideGridContextMenu();
+
+            if (action === 'select-all') selectAllThumbnails();
+            else if (action === 'select-none') selectNoneThumbnails();
+            else if (action === 'invert') invertThumbnailSelection();
+            else if (action === 'select-range') selectRangeToCursor(pathUnderCursor);
+            else if (action === 'open') { if (pathUnderCursor) selectPhoto(pathUnderCursor); }
+            else if (action === 'explorer') {
+                if (pathUnderCursor) {
+                    fetch('/api/photo/open-explorer', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: pathUnderCursor })
+                    }).catch(err => console.error('open-explorer failed', err));
+                }
+            }
+        });
+    }
+
     // Render Grid Thumbnails
     function renderThumbnails() {
         thumbnailsGrid.innerHTML = '';
@@ -1165,8 +1261,18 @@ document.addEventListener('DOMContentLoaded', () => {
         selectedThumbnailsCount.textContent = `Selected: ${selectedThumbnails.length}`;
         selectionSummaryCount.textContent = `Selected: ${selectedThumbnails.length}`;
         
+        // The panel stays mounted whether or not anything is selected. It used to be
+        // hidden on an empty selection, so clearing and re-selecting made the whole
+        // right-hand column collapse and reflow on every click.
+        folderSelectionSidebar.classList.remove('hidden');
+        if (selectionEmptyHint) {
+            selectionEmptyHint.classList.toggle('hidden', selectedThumbnails.length > 0);
+        }
+        if (selectionSummaryScroll) {
+            selectionSummaryScroll.classList.toggle('hidden', selectedThumbnails.length === 0);
+        }
+
         if (selectedThumbnails.length > 0) {
-            folderSelectionSidebar.classList.remove('hidden');
             
             // Gather statistics
             const selectedPhotos = folderPhotos.filter(p => selectedThumbnails.includes(p.path));
@@ -1385,7 +1491,13 @@ document.addEventListener('DOMContentLoaded', () => {
             btnApplyRename.disabled = false;
             updateFolderAutoApplyState();
         } else {
-            folderSelectionSidebar.classList.add('hidden');
+            // Empty selection: keep the panel, clear what it was showing.
+            selectionDateLabel.textContent = 'Date Taken';
+            selectionDateValue.textContent = '--';
+            if (selectionPeopleList) selectionPeopleList.innerHTML = '';
+            if (selectionTagsList) selectionTagsList.innerHTML = '';
+            if (selectionSuggestedPeopleList) selectionSuggestedPeopleList.innerHTML = '';
+            if (selectionSuggestedTagsList) selectionSuggestedTagsList.innerHTML = '';
             btnApplyRename.disabled = true;
             updateFolderAutoApplyState();
         }

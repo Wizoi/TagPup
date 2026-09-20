@@ -269,6 +269,11 @@
                             <span id="selection-summary-count" class="selected-count-badge">Selected: 0</span>
                         </div>
                         
+                        <div class="selection-empty-hint hidden" id="selection-empty-hint">
+                            <p>No photos selected.</p>
+                            <p class="hint-detail">Click a thumbnail to select it, Shift-click for a range, or right-click the grid for selection actions.</p>
+                        </div>
+
                         <div class="selection-summary-scroll">
                             <div class="selection-date-group" id="selection-date-group" style="padding: 12px 20px; border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 4px;">
                                 <span class="detail-label" id="selection-date-label">Date Taken</span>
@@ -336,6 +341,21 @@
     </div>
 
     <!-- Autocomplete lists -->
+
+    <!-- Right-click menu for the thumbnail grid. The selection toolbar scrolls out of
+         view in a long folder; this keeps the actions reachable at the cursor. -->
+    <div class="context-menu hidden" id="grid-context-menu">
+        <div class="context-menu-header" id="context-menu-count">No photos selected</div>
+        <div class="context-menu-item" data-action="select-all">Select all</div>
+        <div class="context-menu-item" data-action="select-none">Select none</div>
+        <div class="context-menu-item" data-action="invert">Invert selection</div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" data-action="select-range">Extend selection to here</div>
+        <div class="context-menu-item" data-action="open">Open in details panel</div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" data-action="explorer">Show in File Explorer</div>
+    </div>
+
     <datalist id="people-datalist"></datalist>
     <datalist id="tags-datalist"></datalist>
     <datalist id="folder-datalist"></datalist>
