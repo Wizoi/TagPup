@@ -173,6 +173,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnSelectNoneThumbnails = document.getElementById('btn-select-none-thumbnails');
     const selectedThumbnailsCount = document.getElementById('selected-thumbnails-count');
     const btnFolderAutoApply = document.getElementById('btn-folder-auto-apply');
+    const facesStrip = document.getElementById('faces-strip');
+    const facesSummary = document.getElementById('faces-summary');
     const folderSelectionSidebar = document.getElementById('folder-selection-sidebar');
     const selectionEmptyHint = document.getElementById('selection-empty-hint');
     const selectionSummaryScroll = document.querySelector('.selection-summary-scroll');
@@ -884,6 +886,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Select Folder Thumbnail View
     function showFolderView() {
         activePhotoPath = null;
+        facesRequestToken++;               // abandon any in-flight face lookup
+        if (facesSection) facesSection.classList.add('hidden');
         
         // Highlight folder view item in list
         photoList.querySelectorAll('.photo-item').forEach(el => el.classList.remove('active'));
@@ -993,6 +997,83 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         });
+    }
+
+
+    // ---- Detected faces ----------------------------------------------------
+    // Face recognition already ran for this photo -- the suggester needs it to propose
+    // people -- but nothing ever showed it. Without the crops you learn that a face went
+    // unrecognised only later, in TagTuner. This puts that in front of you while tagging.
+    let facesRequestToken = 0;
+
+    function renderPhotoFaces(photoPath) {
+        if (!facesSection || !facesStrip) return;
+        const token = ++facesRequestToken;
+
+        facesStrip.innerHTML = '';
+        facesSection.classList.add('hidden');
+        if (facesSummary) facesSummary.textContent = '';
+
+        fetch(`/api/photo-faces?path=${encodeURIComponent(photoPath)}`)
+            .then(res => res.ok ? res.json() : { faces: [] })
+            .then(data => {
+                // A slower reply for a previously selected photo must not overwrite
+                // the strip for the one now on screen.
+                if (token !== facesRequestToken) return;
+                const faces = data.faces || [];
+                if (faces.length === 0) return;
+
+                facesSection.classList.remove('hidden');
+                if (facesSummary) {
+                    const unmatched = data.unmatched || 0;
+                    facesSummary.textContent = unmatched
+                        ? `${faces.length} detected, ${unmatched} unidentified`
+                        : `${faces.length} detected, all identified`;
+                }
+
+                faces.forEach(face => {
+                    const card = document.createElement('div');
+                    card.className = 'face-card';
+                    if (face.excluded) card.classList.add('excluded');
+                    else if (!face.name) card.classList.add('unmatched');
+
+                    const img = document.createElement('img');
+                    img.className = 'face-card-img';
+                    img.src = `/api/face-crop?id=${face.id}`;
+                    img.alt = face.name || 'Unidentified face';
+                    card.appendChild(img);
+
+                    const label = document.createElement('span');
+                    label.className = 'face-card-label';
+                    if (face.excluded) {
+                        label.textContent = face.excluded_reason || 'excluded';
+                        card.title = 'Excluded from face matching';
+                    } else if (face.name) {
+                        label.textContent = face.name;
+                        card.title = face.name;
+                    } else if (face.suggestion) {
+                        const pct = Math.round((face.similarity || 0) * 100);
+                        label.textContent = `${face.suggestion}? ${pct}%`;
+                        card.title = `Closest match: ${face.suggestion} (${pct}%). Not assigned.`;
+                        label.classList.add('face-card-suggestion');
+                    } else {
+                        label.textContent = 'Unidentified';
+                        card.title = 'No similar face in this database yet';
+                    }
+                    card.appendChild(label);
+
+                    // Clicking a suggestion adds that person to the photo, which is the
+                    // small correction TagPup is meant for; deeper work is TagTuner's.
+                    if (!face.name && face.suggestion) {
+                        card.classList.add('face-card-actionable');
+                        card.addEventListener('click', () => {
+                            applySuggestedTagDirect(face.suggestion, true);
+                        });
+                    }
+                    facesStrip.appendChild(card);
+                });
+            })
+            .catch(err => console.error('Error loading faces:', err));
     }
 
     // Render Grid Thumbnails
@@ -1626,6 +1707,8 @@ document.addEventListener('DOMContentLoaded', () => {
         folderViewContent.classList.add('hidden');
         emptyState.classList.add('hidden');
         panelContent.classList.remove('hidden');
+
+        renderPhotoFaces(path);
 
         // Fetch photo data from local array
         const photo = folderPhotos.find(p => p.path === path);

@@ -1879,14 +1879,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         
-        if (name === 'Unmatched') {
-            if (matchingTabs) matchingTabs.classList.add('hidden');
-            if (matchingStaticTitle) {
-                matchingStaticTitle.classList.remove('hidden');
-                matchingStaticTitle.textContent = 'Unmatched Faces';
-            }
-            if (btnRenamePerson) btnRenamePerson.classList.add('hidden');
-        } else if (name === 'Unknown Faces' || name === 'Ungrouped') {
+        if (name === 'Unknown Faces' || name === 'Ungrouped') {
             if (matchingTabs) matchingTabs.classList.remove('hidden');
             if (matchingStaticTitle) matchingStaticTitle.classList.add('hidden');
             if (btnRenamePerson) btnRenamePerson.classList.add('hidden');
@@ -1908,12 +1901,6 @@ document.addEventListener('DOMContentLoaded', () => {
         updateMatchingSelectionUI();
         clearFaceDetails();
 
-        const toggleGroup = document.getElementById('notperson-toggle-group');
-        if (name === 'Unmatched') {
-            if (toggleGroup) toggleGroup.classList.remove('hidden');
-        } else {
-            if (toggleGroup) toggleGroup.classList.add('hidden');
-        }
 
         // Switch views
         emptyState.classList.add('hidden');

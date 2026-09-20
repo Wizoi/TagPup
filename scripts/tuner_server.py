@@ -3955,8 +3955,8 @@ def start_server(port=8080, db_path="data/photo_index.db", gui_dir="gui"):
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_faces_name ON faces(name)")
         conn.commit()
 
-        # Migrate 'Non Person' to NULL
-        cursor.execute("UPDATE faces SET name = NULL WHERE name = 'Non Person'")
+        # ('Non Person' is migrated onto the excluded column by PhotoIndex.load,
+        #  which every entry point calls; it is not duplicated here.)
         conn.commit()
     except Exception as e:
         logger.error(f"Error checking/migrating database schema: {e}")

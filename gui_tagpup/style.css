@@ -1656,3 +1656,66 @@ input:checked + .slider:before {
     line-height: 1.5;
     opacity: 0.8;
 }
+
+
+/* ---- Detected faces strip ---------------------------------------------- */
+.faces-section {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.faces-section-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.faces-summary {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.faces-strip {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding-bottom: 6px;
+}
+
+.face-card {
+    flex: 0 0 auto;
+    width: 72px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.face-card-img {
+    width: 72px;
+    height: 72px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background: var(--bg-card);
+}
+
+.face-card.unmatched .face-card-img { border-color: var(--accent-color, #e0a030); }
+.face-card.excluded .face-card-img { opacity: 0.4; border-color: var(--border-color); }
+
+.face-card-label {
+    max-width: 72px;
+    font-size: 10px;
+    line-height: 1.3;
+    text-align: center;
+    color: var(--text-color);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.face-card-suggestion { color: var(--accent-color, #e0a030); }
+
+.face-card-actionable { cursor: pointer; }
+.face-card-actionable:hover .face-card-img { border-color: var(--text-color); }

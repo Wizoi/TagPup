@@ -436,6 +436,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.handle_get_folder_suggest_status(query)
         elif path == "/api/folder/index-status":
             self.handle_get_folder_index_status(query)
+        elif path == "/api/photo-faces":
+            self.handle_get_photo_faces(query)
+        elif path == "/api/face-crop":
+            self.handle_serve_face_crop(query)
         elif path == "/api/photo-file":
             self.handle_serve_photo_file(query)
         elif path == "/api/tags":
@@ -913,6 +917,196 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             pass
             
         self.send_json(suggestions[:15])
+
+    def handle_get_photo_faces(self, query):
+        """Faces detected on one photo, with the best identity guess for each.
+
+        TagPup previously ran face recognition invisibly: the suggester matched faces
+        and surfaced only a name pill, so there was no way to see which face was
+        unrecognised while tagging. This backs the face strip in the details panel.
+
+        The similarity reported is to the nearest single resolved face of that person,
+        which is the same measure TagTuner's suggestion list uses -- deliberately, so
+        the two interfaces agree on how confident a match looks.
+        """
+        path_list = query.get("path")
+        if not path_list:
+            self.send_json_error(400, "Missing 'path' parameter")
+            return
+        photo_path = urllib.parse.unquote(path_list[0])
+
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, box, name, prob, embedding, excluded, excluded_reason"
+                " FROM faces WHERE LOWER(photo_path) = LOWER(?) ORDER BY id",
+                (photo_path,),
+            )
+            rows = cursor.fetchall()
+            if not rows:
+                self.send_json({"faces": [], "total": 0})
+                return
+
+            # Resolved faces elsewhere in the library, for suggesting a name.
+            cursor.execute(
+                "SELECT name, embedding FROM faces"
+                " WHERE name IS NOT NULL AND excluded = 0 AND LOWER(photo_path) != LOWER(?)",
+                (photo_path,),
+            )
+            known_names, known_vectors = [], []
+            for name, emb in cursor.fetchall():
+                if not emb:
+                    continue
+                vec = np.frombuffer(emb, dtype=np.float32)
+                norm = np.linalg.norm(vec)
+                if norm > 0:
+                    known_names.append(name)
+                    known_vectors.append(vec / norm)
+            known_matrix = np.array(known_vectors, dtype=np.float32) if known_vectors else None
+
+            faces = []
+            for face_id, box_json, name, prob, emb, excluded, reason in rows:
+                try:
+                    box = json.loads(box_json) if box_json else []
+                except Exception:
+                    box = []
+
+                # Below this the nearest name is not a suggestion, it is just the
+                # least-bad of a bad set. Offering "Jane Doe? 4%" for a stranger is
+                # worse than saying nothing: it invites a wrong click.
+                SUGGESTION_FLOOR = 0.5
+
+                suggestion, similarity = None, None
+                if known_matrix is not None and emb and not excluded:
+                    vec = np.frombuffer(emb, dtype=np.float32)
+                    norm = np.linalg.norm(vec)
+                    if norm > 0:
+                        sims = known_matrix @ (vec / norm)
+                        best = int(np.argmax(sims))
+                        best_sim = float(sims[best])
+                        if best_sim >= SUGGESTION_FLOOR:
+                            suggestion = known_names[best]
+                            similarity = round(best_sim, 4)
+
+                area = (box[2] - box[0]) * (box[3] - box[1]) if len(box) >= 4 else 0
+                faces.append({
+                    "id": face_id,
+                    "box": box,
+                    "area": area,
+                    "name": name,
+                    "prob": prob,
+                    "excluded": bool(excluded),
+                    "excluded_reason": reason,
+                    "suggestion": suggestion if name is None else None,
+                    "similarity": similarity if name is None else None,
+                })
+
+            # Named first, then by how confident the guess is, then largest first: the
+            # faces needing attention are the ones the eye should land on.
+            faces.sort(key=lambda f: (
+                f["name"] is None,
+                -(f["similarity"] or 0.0),
+                -f["area"],
+            ))
+            self.send_json({
+                "faces": faces,
+                "total": len(faces),
+                "unmatched": sum(1 for f in faces if f["name"] is None and not f["excluded"]),
+            })
+        except Exception as e:
+            logger.error("Error listing faces for %s: %s" % (photo_path, e))
+            self.send_json_error(500, str(e))
+        finally:
+            if conn:
+                conn.close()
+
+    def handle_serve_face_crop(self, query):
+        """Serve a face thumbnail, cropping from the original when not cached."""
+        face_id_list = query.get("id")
+        if not face_id_list:
+            self.send_json_error(400, "Missing 'id' parameter")
+            return
+        try:
+            face_id = int(face_id_list[0])
+        except (ValueError, TypeError):
+            self.send_json_error(400, "Invalid 'id' parameter")
+            return
+
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT photo_path, box, crop_image FROM faces WHERE id = ?", (face_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                self.send_json_error(404, "Face not found")
+                return
+
+            photo_path, box_str, crop_image = row
+            if crop_image:
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(crop_image)))
+                self.end_headers()
+                self.wfile.write(crop_image)
+                return
+
+            if not photo_path or not os.path.exists(photo_path):
+                self.send_json_error(404, "Original photo not found")
+                return
+
+            try:
+                box = json.loads(box_str) if box_str else []
+            except Exception:
+                box = []
+            if len(box) < 4:
+                self.send_json_error(500, "Invalid bounding box")
+                return
+
+            with Image.open(photo_path) as img:
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                width, height = img.size
+                x1, y1 = max(0, int(box[0])), max(0, int(box[1]))
+                x2, y2 = min(width, int(box[2])), min(height, int(box[3]))
+                if (x2 - x1) <= 0 or (y2 - y1) <= 0:
+                    crop_img = Image.new("RGB", (100, 100), color=(50, 50, 50))
+                else:
+                    crop_img = img.crop((x1, y1, x2, y2))
+                if max(crop_img.size) > 256:
+                    try:
+                        resample = Image.Resampling.LANCZOS
+                    except AttributeError:
+                        resample = Image.LANCZOS
+                    crop_img.thumbnail((256, 256), resample)
+                buffer = io.BytesIO()
+                crop_img.save(buffer, format="JPEG", quality=90)
+                crop_bytes = buffer.getvalue()
+
+            try:
+                cursor.execute(
+                    "UPDATE faces SET crop_image = ? WHERE id = ?",
+                    (sqlite3.Binary(crop_bytes), face_id),
+                )
+                conn.commit()
+            except Exception as cache_err:
+                logger.warning("Could not cache face crop %s: %s" % (face_id, cache_err))
+
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(crop_bytes)))
+            self.end_headers()
+            self.wfile.write(crop_bytes)
+        except Exception as e:
+            logger.error("Error serving face crop %s: %s" % (face_id, e))
+            self.send_json_error(500, str(e))
+        finally:
+            if conn:
+                conn.close()
 
     def handle_get_tags(self):
         try:

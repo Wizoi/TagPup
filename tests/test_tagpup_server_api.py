@@ -72,6 +72,7 @@ class TagPupAPITestBase(unittest.TestCase):
         self.addCleanup(set_active_db_path, None)
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute("DELETE FROM photos")
+        conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM tag_taxonomy")
         conn.commit()
         conn.close()
@@ -575,3 +576,144 @@ class TestBrowseFolder(TagPupAPITestBase):
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 self.get("/api/browse-folder")
         self.assertEqual(ctx.exception.code, 500)
+
+
+class TestPhotoFaces(TagPupAPITestBase):
+    """TagPup exposes the faces on a photo so tagging can show what is unidentified."""
+
+    def add_face(self, photo, seed, name=None, box=(0, 0, 50, 50), excluded=0, reason=None):
+        import numpy as np
+
+        rng = np.random.default_rng(seed)
+        vec = rng.standard_normal(512).astype("float32")
+        vec = vec / np.linalg.norm(vec)
+        conn = sqlite3.connect(self.TEST_DB)
+        cur = conn.execute(
+            "INSERT INTO faces (photo_path, box, embedding, name, prob, excluded, excluded_reason)"
+            " VALUES (?, ?, ?, ?, 0.99, ?, ?)",
+            (photo, json.dumps(list(box)), vec.tobytes(), name, excluded, reason),
+        )
+        fid = cur.lastrowid
+        conn.commit()
+        conn.close()
+        return fid
+
+    def test_reports_no_faces_for_an_unknown_photo(self):
+        body = self.get(f"/api/photo-faces?path={urllib.parse.quote('D:/nope.jpg')}")
+        self.assertEqual(body["faces"], [])
+
+    def test_lists_the_faces_on_a_photo(self):
+        photo = self.make_photo("a.jpg", [])
+        a = self.add_face(photo, 1, name="Jane Doe")
+        b = self.add_face(photo, 2, box=(60, 0, 110, 50))
+
+        body = self.get(f"/api/photo-faces?path={urllib.parse.quote(photo)}")
+        self.assertEqual(body["total"], 2)
+        self.assertEqual({f["id"] for f in body["faces"]}, {a, b})
+        self.assertEqual(body["unmatched"], 1)
+
+    def test_suggests_a_name_for_an_unidentified_face(self):
+        """The suggestion comes from resolved faces elsewhere in the library."""
+        known = self.make_photo("known.jpg", [])
+        self.add_face(known, 10, name="Jane Doe")
+
+        target = self.make_photo("target.jpg", [])
+        face = self.add_face(target, 10)  # same seed: identical embedding
+
+        body = self.get(f"/api/photo-faces?path={urllib.parse.quote(target)}")
+        entry = next(f for f in body["faces"] if f["id"] == face)
+        self.assertEqual(entry["suggestion"], "Jane Doe")
+        self.assertGreater(entry["similarity"], 0.9)
+
+    def test_a_named_face_carries_no_suggestion(self):
+        photo = self.make_photo("a.jpg", [])
+        self.add_face(photo, 1, name="Jane Doe")
+        body = self.get(f"/api/photo-faces?path={urllib.parse.quote(photo)}")
+        self.assertIsNone(body["faces"][0]["suggestion"])
+
+    def test_excluded_faces_are_reported_but_not_counted_as_unidentified(self):
+        photo = self.make_photo("a.jpg", [])
+        self.add_face(photo, 1, excluded=1, reason="stranger")
+
+        body = self.get(f"/api/photo-faces?path={urllib.parse.quote(photo)}")
+        self.assertEqual(body["total"], 1)
+        self.assertEqual(body["unmatched"], 0, "an excluded face counted as work to do")
+        self.assertTrue(body["faces"][0]["excluded"])
+        self.assertEqual(body["faces"][0]["excluded_reason"], "stranger")
+
+    def test_an_excluded_face_is_never_used_as_a_suggestion(self):
+        known = self.make_photo("known.jpg", [])
+        self.add_face(known, 20, name="Jane Doe", excluded=1)
+
+        target = self.make_photo("target.jpg", [])
+        self.add_face(target, 20)
+
+        body = self.get(f"/api/photo-faces?path={urllib.parse.quote(target)}")
+        self.assertIsNone(body["faces"][0]["suggestion"])
+
+    def test_named_faces_are_listed_before_unidentified_ones(self):
+        photo = self.make_photo("a.jpg", [])
+        self.add_face(photo, 2, box=(60, 0, 110, 50))
+        self.add_face(photo, 1, name="Jane Doe")
+
+        body = self.get(f"/api/photo-faces?path={urllib.parse.quote(photo)}")
+        self.assertIsNotNone(body["faces"][0]["name"], "unidentified face sorted first")
+
+    def test_rejects_a_missing_path(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.get("/api/photo-faces")
+        self.assertEqual(ctx.exception.code, 400)
+
+
+class TestTagPupFaceCrop(TagPupAPITestBase):
+    @requires_exiftool
+    def test_serves_a_crop_and_caches_it(self):
+        import numpy as np
+
+        photo = self.make_photo("a.jpg", [])
+        rng = np.random.default_rng(1)
+        vec = (rng.standard_normal(512).astype("float32"))
+        vec = vec / np.linalg.norm(vec)
+        conn = sqlite3.connect(self.TEST_DB)
+        cur = conn.execute(
+            "INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, NULL, 0.9)",
+            (photo, json.dumps([0, 0, 20, 20]), vec.tobytes()),
+        )
+        face_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.TEST_PORT}/api/face-crop?id={face_id}"
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            self.assertEqual(r.status, 200)
+            self.assertTrue(r.headers.get("Content-Type").startswith("image/"))
+            self.assertGreater(len(r.read()), 0)
+
+        conn = sqlite3.connect(self.TEST_DB)
+        cached = conn.execute(
+            "SELECT crop_image FROM faces WHERE id = ?", (face_id,)
+        ).fetchone()[0]
+        conn.close()
+        self.assertTrue(cached, "crop was not cached back into the row")
+
+    def test_rejects_an_unknown_face(self):
+        status, _ = 0, None
+        try:
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{self.TEST_PORT}/api/face-crop?id=999999", timeout=30
+            )
+        except urllib.error.HTTPError as e:
+            status = e.code
+        self.assertEqual(status, 404)
+
+    def test_rejects_a_non_numeric_id(self):
+        status = 0
+        try:
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{self.TEST_PORT}/api/face-crop?id=abc", timeout=30
+            )
+        except urllib.error.HTTPError as e:
+            status = e.code
+        self.assertEqual(status, 400)

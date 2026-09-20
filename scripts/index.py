@@ -191,11 +191,21 @@ class PhotoIndex:
                         cursor.execute("UPDATE tag_taxonomy SET has_face = is_face")
                     self.conn.commit()
             
-            # Migrate 'Non Person' to NULL
+            # Migrate the old 'Non Person' marker onto the excluded column.
+            #
+            # Storing it as a name never worked -- re-clustering rewrites names, so the
+            # marker could not survive -- and the previous migration simply cleared it to
+            # NULL, which threw the information away: those faces went straight back into
+            # the matching pool as ordinary unidentified faces. They meant exactly what
+            # excluded now means, so carry the intent across rather than dropping it.
             cursor.execute("SELECT COUNT(*) FROM faces WHERE name = 'Non Person'")
             if cursor.fetchone()[0] > 0:
-                logger.info("Migrating faces table: Setting 'Non Person' names to NULL...")
-                cursor.execute("UPDATE faces SET name = NULL WHERE name = 'Non Person'")
+                logger.info("Migrating faces table: converting 'Non Person' to excluded...")
+                cursor.execute(
+                    "UPDATE faces SET name = NULL, excluded = 1,"
+                    " excluded_reason = 'migrated from Non Person'"
+                    " WHERE name = 'Non Person'"
+                )
                 self.conn.commit()
             
             cursor.execute("SELECT path, mtime, size, tags, people, captions, raw_metadata, embedding FROM photos")
