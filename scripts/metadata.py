@@ -260,54 +260,98 @@ class MetadataExtractor:
                 
                 # Check mapping to return formatted info
                 for path, meta in zip(file_paths, batch_meta):
-                    # Clean all fields
-                    cleaned = {}
-                    for k, v in meta.items():
-                        # ExifTool returns keys like 'SourceFile', 'XMP:Subject', etc.
-                        val_cleaned = clean_metadata_value(v)
-                        cleaned[k] = val_cleaned
-                        if ":" in k:
-                            base_key = k.split(":")[-1]
-                            cleaned[base_key] = val_cleaned
-                    
-                    # Extract high-level aggregated lists
-                    tags = extract_tags(cleaned)
-                    people = extract_people(cleaned, tags, db_path=db_path)
-                    captions = extract_captions(cleaned)
-                    
-                    # Retrieve file stats for change detection
-                    try:
-                        stat = os.stat(path)
-                        mtime = stat.st_mtime
-                        size = stat.st_size
-                    except Exception:
-                        mtime = 0.0
-                        size = 0
-
-                    # Create structured output
-                    structured = {
-                        "path": path,
-                        "mtime": mtime,
-                        "size": size,
-                        "tags": tags,
-                        "people": people,
-                        "captions": captions,
-                        "raw_metadata": cleaned
-                    }
-                    results.append(structured)
+                    results.append(self._structure(path, meta, db_path))
         except Exception as e:
-            logger.error(f"Error reading metadata from batch: {e}", exc_info=True)
-            # Return empty skeleton configs for files that failed to read so we don't break downstream flow
-            for path in file_paths:
-                results.append({
-                    "path": path,
-                    "tags": [],
-                    "people": [],
-                    "captions": [],
-                    "raw_metadata": {}
-                })
-        
+            # ExifTool exits non-zero if *any* file in the batch is unreadable, and
+            # pyexiftool raises on that status, so a single corrupt or unsupported
+            # file used to cost every other file in the batch its metadata -- 500 at
+            # a time, recorded as having no tags, people or captions at all. Read them
+            # one at a time instead, so the damage is limited to the file that caused it.
+            logger.warning(
+                f"Batch metadata read failed ({e}); retrying {len(file_paths)} file(s) "
+                f"individually so one bad file does not blank the rest."
+            )
+            results = self._read_one_by_one(file_paths, executable, db_path)
+
         return results
+
+    def _structure(self, path, meta, db_path):
+        """Turn one ExifTool record into the shape the rest of the pipeline expects."""
+        cleaned = {}
+        for k, v in meta.items():
+            # ExifTool returns keys like 'SourceFile', 'XMP:Subject', etc.
+            val_cleaned = clean_metadata_value(v)
+            cleaned[k] = val_cleaned
+            if ":" in k:
+                cleaned[k.split(":")[-1]] = val_cleaned
+
+        tags = extract_tags(cleaned)
+        people = extract_people(cleaned, tags, db_path=db_path)
+        captions = extract_captions(cleaned)
+
+        # Retrieve file stats for change detection
+        try:
+            stat = os.stat(path)
+            mtime, size = stat.st_mtime, stat.st_size
+        except Exception:
+            mtime, size = 0.0, 0
+
+        return {
+            "path": path,
+            "mtime": mtime,
+            "size": size,
+            "tags": tags,
+            "people": people,
+            "captions": captions,
+            "raw_metadata": cleaned,
+        }
+
+    def _read_one_by_one(self, file_paths, executable, db_path):
+        """Fallback for a failed batch: read each file on its own.
+
+        A file that fails here is genuinely unreadable rather than merely unlucky in
+        its batch, so it gets the empty skeleton -- but it still carries its mtime and
+        size, or every later run would see it as changed and re-index it forever.
+        """
+        results = []
+        try:
+            et = exiftool.ExifToolHelper(executable=executable)
+            et.run()
+        except Exception as e:
+            logger.error(f"Could not start ExifTool for the per-file retry: {e}")
+            return [self._empty(path) for path in file_paths]
+
+        try:
+            for path in file_paths:
+                try:
+                    meta = et.get_tags([path], tags=METADATA_FIELDS)
+                    results.append(self._structure(path, meta[0], db_path))
+                except Exception as e:
+                    logger.error(f"Unreadable metadata, indexing without it: {path} ({e})")
+                    results.append(self._empty(path))
+        finally:
+            try:
+                et.terminate()
+            except Exception:
+                pass
+        return results
+
+    @staticmethod
+    def _empty(path):
+        try:
+            stat = os.stat(path)
+            mtime, size = stat.st_mtime, stat.st_size
+        except Exception:
+            mtime, size = 0.0, 0
+        return {
+            "path": path,
+            "mtime": mtime,
+            "size": size,
+            "tags": [],
+            "people": [],
+            "captions": [],
+            "raw_metadata": {},
+        }
 
 def parse_year_from_metadata(meta: Dict[str, Any]) -> Optional[int]:
     """Extract a 4-digit numeric year from EXIF/XMP date tags, or fallback to filename/folder."""

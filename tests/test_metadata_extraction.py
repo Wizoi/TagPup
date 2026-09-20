@@ -14,8 +14,10 @@ import os
 import sys
 import json
 import sqlite3
+import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
@@ -385,6 +387,132 @@ class TestDeriveCaptionFromTags(unittest.TestCase):
     def test_duplicate_tags_appear_once(self):
         caption = derive_caption_from_tags(["Family/Jane Doe", "Family/Jane Doe"])
         self.assertEqual(caption, "Jane Doe")
+
+
+class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
+    """One unreadable file must not cost its batch-mates their metadata.
+
+    ExifTool exits non-zero if any file in the batch is unreadable, and pyexiftool
+    raises on that status. The handler used to hand every file in the batch an empty
+    skeleton, so a single corrupt file blanked the tags, people and captions of up to
+    499 good ones -- and indexed them as untagged. It also dropped their mtime and
+    size, so change detection saw them as new on every later run.
+    """
+
+    def setUp(self):
+        from metadata import MetadataExtractor
+
+        self.tmpdir = tempfile.mkdtemp(prefix="meta_batch_")
+        self.addCleanup(shutil.rmtree, self.tmpdir, True)
+        self.paths = []
+        for i in range(3):
+            p = os.path.join(self.tmpdir, f"photo_{i}.jpg")
+            with open(p, "wb") as fh:
+                fh.write(b"x" * (100 + i))
+            self.paths.append(p)
+        self.bad = self.paths[1]
+        self.extractor = MetadataExtractor()
+
+    def _tags_for(self, path):
+        return {"SourceFile": path, "XMP:Subject": ["Beach", "Sunset"]}
+
+    def _fake_helper(self, fail_whole_batch=True):
+        """An ExifTool stand-in that refuses any call containing the bad file."""
+        outer = self
+
+        class FakeHelper:
+            def __init__(self, executable=None):
+                self.running = False
+
+            def run(self):
+                self.running = True
+
+            def terminate(self):
+                self.running = False
+
+            def __enter__(self):
+                self.run()
+                return self
+
+            def __exit__(self, *exc):
+                self.terminate()
+                return False
+
+            def get_tags(self, files, tags=None):
+                if outer.bad in files:
+                    raise RuntimeError("execute returned a non-zero exit status: 1")
+                return [outer._tags_for(f) for f in files]
+
+        return FakeHelper
+
+    def test_the_good_files_keep_their_metadata(self):
+        import metadata
+
+        with mock.patch.object(metadata.exiftool, "ExifToolHelper", self._fake_helper()):
+            results = self.extractor.batch_read(self.paths)
+
+        self.assertEqual([r["path"] for r in results], self.paths)
+        by_path = {r["path"]: r for r in results}
+        for good in (self.paths[0], self.paths[2]):
+            self.assertEqual(
+                by_path[good]["tags"], ["Beach", "Sunset"],
+                f"{os.path.basename(good)} lost its tags to a different file's failure",
+            )
+
+    def test_the_bad_file_is_the_only_one_blanked(self):
+        import metadata
+
+        with mock.patch.object(metadata.exiftool, "ExifToolHelper", self._fake_helper()):
+            results = self.extractor.batch_read(self.paths)
+
+        bad = next(r for r in results if r["path"] == self.bad)
+        self.assertEqual(bad["tags"], [])
+        self.assertEqual(bad["people"], [])
+        self.assertEqual(bad["captions"], [])
+
+    def test_every_file_keeps_its_stats_so_it_is_not_re_indexed_forever(self):
+        import metadata
+
+        with mock.patch.object(metadata.exiftool, "ExifToolHelper", self._fake_helper()):
+            results = self.extractor.batch_read(self.paths)
+
+        for r in results:
+            stat = os.stat(r["path"])
+            self.assertEqual(r["mtime"], stat.st_mtime, r["path"])
+            self.assertEqual(r["size"], stat.st_size, r["path"])
+
+    def test_a_clean_batch_still_reads_in_one_call(self):
+        """The retry is the exception; a healthy batch must not pay for it."""
+        import metadata
+
+        calls = []
+        fake = self._fake_helper()
+        original = fake.get_tags
+
+        def counting(self_, files, tags=None):
+            calls.append(list(files))
+            return original(self_, files, tags=tags)
+
+        fake.get_tags = counting
+        good_only = [self.paths[0], self.paths[2]]
+        with mock.patch.object(metadata.exiftool, "ExifToolHelper", fake):
+            results = self.extractor.batch_read(good_only)
+
+        self.assertEqual(len(calls), 1, f"took {len(calls)} ExifTool calls for a clean batch")
+        self.assertEqual([r["tags"] for r in results], [["Beach", "Sunset"]] * 2)
+
+    def test_exiftool_failing_to_start_at_all_still_returns_a_row_per_file(self):
+        import metadata
+
+        class DeadHelper:
+            def __init__(self, executable=None):
+                raise OSError("exiftool not found")
+
+        with mock.patch.object(metadata.exiftool, "ExifToolHelper", DeadHelper):
+            results = self.extractor.batch_read(self.paths)
+
+        self.assertEqual([r["path"] for r in results], self.paths)
+        self.assertTrue(all(r["tags"] == [] for r in results))
 
 
 if __name__ == "__main__":
