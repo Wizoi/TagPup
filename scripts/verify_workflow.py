@@ -153,12 +153,14 @@ def main():
             print(f"  cleaning up indexer PID {pid}")
             kill_tree(pid)
         if not args.keep:
-            time.sleep(0.5)
+            # The servers run in daemon threads that hold their connections open for as
+            # long as this process lives, so on Windows the copy usually cannot be
+            # deleted from inside it. That is why the next run clears it on startup.
             for leftover in (work_db, work_db.replace(".db", "_taxonomy.json")):
                 try:
                     os.remove(leftover)
                 except OSError:
-                    print(f"  (left {leftover} behind; it was still open)")
+                    print(f"  ({leftover} is still open; the next run will clear it)")
         else:
             print(f"\ncopy kept at {work_db}")
 
@@ -170,6 +172,14 @@ def db(work_db, query, args=()):
     try:
         row = conn.execute(query, args).fetchone()
         return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def db_all(work_db, query, args=()):
+    conn = sqlite3.connect(f"file:{work_db}?mode=ro", uri=True)
+    try:
+        return [r[0] for r in conn.execute(query, args).fetchall()]
     finally:
         conn.close()
 
@@ -231,9 +241,22 @@ def run_checks(report, work_db, args):
                  f"{(time.time() - t0) * 1000:.0f}ms warm")
 
     print("\nTagTuner: exclude a face, then restore it")
-    face = db(work_db, "SELECT id FROM faces WHERE name IS NULL AND excluded = 0 ORDER BY id DESC LIMIT 1")
+    # Pick the face out of somebody's candidate list rather than taking whichever face
+    # has the highest id. The check below is that an excluded face stops being offered;
+    # a face nobody was being offered in the first place passes it without testing it.
+    peer, face, offered_before = None, None, set()
+    for candidate in db_all(
+        work_db,
+        "SELECT id FROM faces WHERE name IS NULL AND excluded = 0 ORDER BY id DESC LIMIT 40",
+    ):
+        _, cand = call(TUNER_PORT, f"/api/face-matches-unmatched?id={candidate}")
+        ids = {m["id"] for m in cand.get("matches", [])} if isinstance(cand, dict) else set()
+        if ids:
+            peer, offered_before, face = candidate, ids, max(ids)
+            break
     if face is None:
-        report.check("a face was available to exclude", False, "no unnamed face in the copy")
+        report.check("a face was available to exclude", False,
+                     "no unnamed face is offered as a candidate to any other")
     else:
         status, body = call(TUNER_PORT, "/api/faces/exclude",
                             {"face_ids": [face], "reason": "stranger"})
@@ -245,13 +268,14 @@ def run_checks(report, work_db, args):
         report.check("bucket shows the reason",
                      any(f["id"] == face and f["reason"] == "stranger"
                          for f in listing.get("faces", [])))
-        peer = db(work_db, "SELECT id FROM faces WHERE name IS NULL AND excluded = 0"
-                           " AND id != ? ORDER BY id DESC LIMIT 1", (face,))
-        if peer:
-            _, offered = call(TUNER_PORT, f"/api/face-matches-unmatched?id={peer}")
-            ids = {m["id"] for m in offered.get("matches", [])}
-            report.check("excluded face is not offered to anyone", face not in ids,
-                         f"{len(ids)} candidates offered for face {peer}")
+        _, offered = call(TUNER_PORT, f"/api/face-matches-unmatched?id={peer}")
+        ids = {m["id"] for m in offered.get("matches", [])} if isinstance(offered, dict) else set()
+        report.check(
+            "excluded face is not offered to anyone",
+            face not in ids,
+            f"face {peer} was offered {len(offered_before)} candidate(s) including {face}, "
+            f"now {len(ids)}",
+        )
         call(TUNER_PORT, "/api/faces/restore", {"face_ids": [face]})
         report.check("restore leaves no residue",
                      db(work_db, "SELECT excluded FROM faces WHERE id = ?", (face,)) == 0)
