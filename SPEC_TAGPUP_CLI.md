@@ -97,9 +97,29 @@ Tags and captions are written back using ExifTool:
 ## 5. Algorithmic Rules
 
 ### A. Indexing Rule
-- Only photos containing at least one flat tag/keyword, person tag, or caption/description are added to the search index.
+- **Every photo is indexed.** Indexing once required a photo to carry at least one flat tag, person tag or caption, which made the index a record of what had already been organised rather than of the library. An untagged photo could not be searched for, suggested against, or have its faces identified -- precisely the photos that needed the tool most.
 - **Smart Skipping (Incremental Indexing)**: On subsequent indexing runs, the system compares each scanned file's modification time (`mtime`) and file size (`size`) with the values stored in the database. If both match, the file is skipped entirely from metadata parsing and embedding generation, drastically speeding up catalog updates.
 - **Single-Pass Face Indexing**: Unless `--skip-faces` is passed, the indexer automatically triggers face detection and embeddings extraction in the same loop, writing results to the `faces` table after the parent photo row has been committed.
+- **Per-Photo Locking**: A photo is locked for the duration of its processing by creating a
+  file in `data/locks/`, named for the MD5 of its absolute path -- exclusive creation makes this
+  atomic between processes. The lock records the holding process's pid, host and acquisition
+  time. A lock whose holder is demonstrably gone (dead pid on this host, or older than six
+  hours regardless) is **taken over**, not obeyed. Locks are released once per batch of 100
+  photos, so a live holder never approaches the age limit.
+
+  This matters because release happens in a `finally`, which a hard kill skips, and nothing
+  else cleans up another process's lock. Before takeover existed, every killed run left its
+  in-flight photos permanently unindexable, skipped in silence by every later run; 348 such
+  locks had accumulated over three months. Two deliberate refusals: a lock belonging to
+  another host is never stolen on a pid comparison (pids are not comparable across machines,
+  and libraries may live on a network share), and no lock is stolen because a liveness check
+  failed to answer. A photo skipped because a live process holds its lock is reported at the
+  end of the run with its path -- never dropped silently.
+- **Metadata Batch Resilience**: Metadata is read in batches of 500. ExifTool exits non-zero if
+  *any* file in a batch is unreadable and pyexiftool raises on that status, so a failed batch is
+  re-read one file at a time. Only the file that actually fails is recorded with empty tags,
+  people and captions; it keeps its `mtime` and `size` so that change detection does not treat
+  it as new on every later run. A clean batch still costs exactly one ExifTool call.
 - **Reset Option**: The CLI accepts a `--reset` option which deletes the existing database file (`photo_index.db`) and taxonomy configuration (`photo_taxonomy.json`), enabling developers and users to start a clean index scan.
 
 ### B. Similarity & Scoring
