@@ -286,6 +286,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
     _db_suggest_status_registry = {}
     _db_suggest_threads_registry = {}
     _db_identify_cache_registry = {}
+    _db_index_status_registry = {}
+    _db_index_threads_registry = {}
 
     folder_cache = DatabaseIsolatedDict(_db_folder_cache_registry)
     # Cache for the Identify Faces views. Clustering a person's unmatched candidates is
@@ -293,6 +295,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
     # the answer only changes when faces are added or named, so it is cached against a
     # cheap fingerprint of the faces table rather than recomputed per request.
     identify_cache = DatabaseIsolatedDict(_db_identify_cache_registry)
+    index_status = DatabaseIsolatedDict(_db_index_status_registry)
+    index_threads = DatabaseIsolatedDict(_db_index_threads_registry)
     suggest_status = DatabaseIsolatedDict(_db_suggest_status_registry)
     suggest_threads = DatabaseIsolatedDict(_db_suggest_threads_registry)
 
@@ -636,6 +640,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         elif path == "/api/face-matches-unmatched":
             self.handle_get_face_matches_unmatched(query)
             
+        elif path == "/api/folder/index-status":
+            self.handle_get_folder_index_status(query)
         elif path == "/api/faces/excluded":
             self.handle_get_excluded_faces()
         elif path == "/api/unmatched-faces/people":
@@ -667,6 +673,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.handle_post_match()
         elif path == "/api/face/unmatch":
             self.handle_post_unmatch()
+        elif path == "/api/folder/index-start":
+            self.handle_post_folder_index_start()
+        elif path == "/api/folder/remove":
+            self.handle_post_folder_remove()
         elif path == "/api/faces/exclude":
             self.handle_post_faces_exclude()
         elif path == "/api/faces/restore":
@@ -2503,6 +2513,198 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             return [int(x) for x in face_ids]
         except (ValueError, TypeError):
             return None
+
+    def handle_get_folder_index_status(self, query):
+        path_list = query.get("path")
+        if not path_list:
+            self.send_json_error(400, "Missing path parameter")
+            return
+        folder_norm = normalize_path(urllib.parse.unquote(path_list[0]))
+        status = TunerHTTPRequestHandler.index_status.get(
+            folder_norm, {"status": "completed", "percent": 100, "message": "Ready"}
+        )
+        self.send_json(status)
+
+    def handle_post_folder_index_start(self):
+        """Index a folder into this database so its faces can be identified.
+
+        TagTuner is where identity work happens, so it needs to be able to bring new
+        material in rather than requiring a trip through TagPup first. Clustering is
+        opt-in for the same reason it is there: it rewrites every name in the database,
+        not just the folder being added.
+        """
+        try:
+            data = self.read_json_body()
+        except Exception:
+            self.send_json_error(400, "Invalid JSON payload")
+            return
+
+        folder_path = data.get("folder_path")
+        if not folder_path or not os.path.isdir(folder_path):
+            self.send_json_error(400, "Invalid folder path")
+            return
+
+        run_clustering = bool(data.get("cluster", False))
+        folder_norm = normalize_path(folder_path)
+
+        current = TunerHTTPRequestHandler.index_status.get(folder_norm)
+        if current and current.get("status") == "running":
+            self.send_json({"success": True, "status": "running"})
+            return
+
+        TunerHTTPRequestHandler.index_status[folder_norm] = {
+            "status": "running", "percent": 0, "message": "Starting indexing...",
+        }
+        t = threading.Thread(
+            target=TunerHTTPRequestHandler.run_folder_index_thread,
+            args=(folder_path, self.db_path, run_clustering),
+            name="TunerFolderIndexThread",
+            daemon=True,
+        )
+        TunerHTTPRequestHandler.index_threads[folder_norm] = t
+        t.start()
+        self.send_json({"success": True, "status": "running"})
+
+    @classmethod
+    def run_folder_index_thread(cls, folder_path, db_path, run_clustering=False):
+        # Re-bind the active database: a worker thread does not inherit the request's
+        # thread-local, and the class-level fallback points at the startup database.
+        set_active_db_path(db_path)
+        folder_norm = normalize_path(folder_path)
+        status = cls.index_status.get(folder_norm)
+        if status is None:
+            status = {"status": "running", "percent": 0, "message": "Starting indexing..."}
+            cls.index_status[folder_norm] = status
+        try:
+            import sys
+            import subprocess
+
+            env = os.environ.copy()
+            env["TAGPUP_DB_PATH"] = db_path
+            workspace = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+            proc = subprocess.Popen(
+                [sys.executable, "tagpup_cli.py", "index", folder_path],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, env=env, bufsize=1, cwd=workspace,
+            )
+            for line in iter(proc.stdout.readline, ""):
+                clean = line.strip()
+                if clean:
+                    status["message"] = clean
+                    match = re.search(r"(\d+)%", clean)
+                    if match:
+                        status["percent"] = int(float(match.group(1)) * 0.9)
+            proc.wait()
+
+            if proc.returncode != 0:
+                status["status"] = "failed"
+                status["message"] = "Indexing failed with exit code %s." % proc.returncode
+                status["percent"] = 0
+                return
+
+            if run_clustering:
+                status["message"] = "Resolving and matching face identities..."
+                status["percent"] = 95
+                proc2 = subprocess.Popen(
+                    [sys.executable, "tagpup_cli.py", "cluster-faces"],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, env=env, bufsize=1, cwd=workspace,
+                )
+                for line in iter(proc2.stdout.readline, ""):
+                    clean = line.strip()
+                    if clean:
+                        status["message"] = clean
+                proc2.wait()
+
+            # The identify queue is cached against a fingerprint of the faces table,
+            # which the new rows change, so it recomputes on its own.
+            status["status"] = "completed"
+            status["percent"] = 100
+            status["message"] = (
+                "Folder indexed and identities resolved."
+                if run_clustering
+                else "Folder indexed. Faces detected; run Recluster to assign identities."
+            )
+        except Exception as e:
+            logger.exception("Error indexing folder %s: %s" % (folder_path, e))
+            status["status"] = "failed"
+            status["message"] = "Error: %s" % e
+            status["percent"] = 0
+
+    def handle_post_folder_remove(self):
+        """Remove a folder's photos and faces from this database.
+
+        Only the index is touched: the photo files themselves are never deleted. This
+        does discard face work for those photos -- manual names and exclusions included
+        -- because the rows holding them go away, so the caller is told what it cost.
+        """
+        try:
+            data = self.read_json_body()
+        except Exception:
+            self.send_json_error(400, "Invalid JSON payload")
+            return
+
+        folder_path = data.get("folder_path")
+        if not folder_path:
+            self.send_json_error(400, "Missing folder_path")
+            return
+
+        conn = None
+        try:
+            prefix = to_db_path(folder_path).rstrip("/") + "/"
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
+            cursor = conn.cursor()
+
+            # Compare on normalised paths: rows are written by several components with
+            # different separators and casing.
+            cursor.execute("SELECT path FROM photos")
+            targets = [
+                p for (p,) in cursor.fetchall()
+                if to_db_path(p).lower().startswith(prefix.lower())
+            ]
+            if not targets:
+                self.send_json({"success": True, "photos_removed": 0, "faces_removed": 0,
+                                "manual_lost": 0, "excluded_lost": 0})
+                return
+
+            placeholders = ",".join("?" for _ in targets)
+            faces_removed = cursor.execute(
+                "SELECT COUNT(*) FROM faces WHERE photo_path IN (%s)" % placeholders, targets
+            ).fetchone()[0]
+            manual_lost = cursor.execute(
+                "SELECT COUNT(*) FROM faces WHERE photo_path IN (%s) AND name_source = 'manual'"
+                % placeholders, targets
+            ).fetchone()[0]
+            excluded_lost = cursor.execute(
+                "SELECT COUNT(*) FROM faces WHERE photo_path IN (%s) AND excluded = 1"
+                % placeholders, targets
+            ).fetchone()[0]
+
+            # Delete faces explicitly rather than relying on the cascade, which is only
+            # active when foreign keys are enabled on this particular connection.
+            cursor.execute("DELETE FROM faces WHERE photo_path IN (%s)" % placeholders, targets)
+            cursor.execute("DELETE FROM photos WHERE path IN (%s)" % placeholders, targets)
+            conn.commit()
+
+            logger.info(
+                "Removed %d photo(s) and %d face(s) under %s"
+                % (len(targets), faces_removed, folder_path)
+            )
+            self.send_json({
+                "success": True,
+                "photos_removed": len(targets),
+                "faces_removed": faces_removed,
+                "manual_lost": manual_lost,
+                "excluded_lost": excluded_lost,
+            })
+        except Exception as e:
+            logger.error("Error removing folder %s: %s" % (folder_path, e))
+            self.send_json_error(500, str(e))
+        finally:
+            if conn:
+                conn.close()
 
     def handle_post_faces_exclude(self):
         """Mark faces as not-a-person so they stop influencing identity work.

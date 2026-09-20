@@ -664,6 +664,118 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+
+    // ---- Folder indexing ---------------------------------------------------
+    // TagTuner owns identity work, so it has to be able to bring new material in
+    // rather than requiring a trip through TagPup first. Clustering is deliberately
+    // not requested here: it rewrites every name in the database, not just the folder
+    // being added, and would discard corrections made here.
+    const btnAddFolder = document.getElementById('btn-add-folder');
+    const btnRemoveFolder = document.getElementById('btn-remove-folder');
+    const indexProgressContainer = document.getElementById('index-progress-container');
+    const indexProgressBar = document.getElementById('index-progress-bar');
+    const indexProgressText = document.getElementById('index-progress-text');
+    let indexPollTimer = null;
+
+    function pickFolder() {
+        return fetch('/api/browse-folder')
+            .then(res => res.json())
+            .then(data => (data && data.path) ? data.path : null);
+    }
+
+    function pollIndexStatus(folderPath) {
+        if (indexPollTimer) clearInterval(indexPollTimer);
+
+        const query = () => {
+            fetch(`/api/folder/index-status?path=${encodeURIComponent(folderPath)}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'running') {
+                        indexProgressContainer.classList.remove('hidden');
+                        indexProgressBar.style.width = `${data.percent || 0}%`;
+                        indexProgressText.textContent = data.message || 'Indexing...';
+                        return;
+                    }
+                    // Any terminal status stops the poll. Treating only 'completed' as
+                    // terminal is how a dead worker turns into a spinner that never ends.
+                    clearInterval(indexPollTimer);
+                    indexPollTimer = null;
+                    indexProgressContainer.classList.add('hidden');
+                    if (btnAddFolder) btnAddFolder.disabled = false;
+                    if (btnRemoveFolder) btnRemoveFolder.disabled = false;
+
+                    if (data.status === 'failed') {
+                        alert('Indexing failed: ' + (data.message || 'Unknown error'));
+                        return;
+                    }
+                    alert(data.message || 'Folder indexed.');
+                    fetchPeopleWithCounts(true);
+                })
+                .catch(err => console.error('Error polling index status:', err));
+        };
+        query();
+        indexPollTimer = setInterval(query, 1000);
+    }
+
+    if (btnAddFolder) {
+        btnAddFolder.addEventListener('click', () => {
+            pickFolder().then(folderPath => {
+                if (!folderPath) return;
+                btnAddFolder.disabled = true;
+                if (btnRemoveFolder) btnRemoveFolder.disabled = true;
+                indexProgressContainer.classList.remove('hidden');
+                indexProgressText.textContent = 'Starting...';
+
+                fetch('/api/folder/index-start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folder_path: folderPath })
+                })
+                .then(res => res.ok ? res.json() : res.json().then(e => { throw new Error(e.error || 'failed'); }))
+                .then(() => pollIndexStatus(folderPath))
+                .catch(err => {
+                    indexProgressContainer.classList.add('hidden');
+                    btnAddFolder.disabled = false;
+                    if (btnRemoveFolder) btnRemoveFolder.disabled = false;
+                    alert('Error starting indexing: ' + err.message);
+                });
+            });
+        });
+    }
+
+    if (btnRemoveFolder) {
+        btnRemoveFolder.addEventListener('click', () => {
+            pickFolder().then(folderPath => {
+                if (!folderPath) return;
+                if (!confirm(
+                    `Remove every photo under\n\n${folderPath}\n\nfrom this database?\n\n` +
+                    `The photo files are NOT deleted, but any face work on them -- assigned ` +
+                    `names and exclusions -- is discarded with the rows.`
+                )) return;
+
+                btnRemoveFolder.disabled = true;
+                fetch('/api/folder/remove', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folder_path: folderPath })
+                })
+                .then(res => res.ok ? res.json() : res.json().then(e => { throw new Error(e.error || 'failed'); }))
+                .then(data => {
+                    let msg = `Removed ${data.photos_removed} photo(s) and ${data.faces_removed} face(s).`;
+                    if (data.manual_lost || data.excluded_lost) {
+                        msg += `\n\nThat included ${data.manual_lost} manually assigned name(s) ` +
+                               `and ${data.excluded_lost} exclusion(s).`;
+                    }
+                    alert(msg);
+                    fetchPeopleWithCounts(true);
+                    fetchPhotos();
+                })
+                .catch(err => alert('Error removing folder: ' + err.message))
+                .finally(() => { btnRemoveFolder.disabled = false; });
+            });
+        });
+    }
+
     // Sidebar Resizing Logic
     if (sidebar && sidebarResizer) {
         let isResizing = false;

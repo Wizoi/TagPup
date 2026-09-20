@@ -762,3 +762,147 @@ class TestRecluster(TunerAPITestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTunerFolderIndexing(TunerAPITestBase):
+    """TagTuner owns identity work, so it can bring folders in and take them out."""
+
+    def test_status_for_an_unindexed_folder_reads_ready(self):
+        import tempfile
+        folder = tempfile.mkdtemp(prefix="tuner_idx_")
+        body = self.get(
+            f"/api/folder/index-status?path={urllib.parse.quote(folder)}"
+        )
+        self.assertEqual(body["status"], "completed")
+
+    def test_index_start_rejects_a_folder_that_does_not_exist(self):
+        status, _ = self.post(
+            "/api/folder/index-start", {"folder_path": "D:/definitely/not/here"}
+        )
+        self.assertEqual(status, 400)
+
+    def test_index_start_launches_a_worker_and_reports_completion(self):
+        from unittest.mock import patch, MagicMock
+        import tempfile
+
+        folder = tempfile.mkdtemp(prefix="tuner_idx_")
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.stdout.readline.side_effect = ["Indexing photos: 100%\n", ""]
+
+        with patch("subprocess.Popen", return_value=proc) as popen:
+            status, body = self.post(
+                "/api/folder/index-start", {"folder_path": folder}
+            )
+            self.assertEqual(status, 200, body)
+
+            q = urllib.parse.quote(folder)
+            deadline = time.time() + 20
+            final = {}
+            while time.time() < deadline:
+                final = self.get(f"/api/folder/index-status?path={q}")
+                if final.get("status") in ("completed", "failed"):
+                    break
+                time.sleep(0.1)
+
+        self.assertEqual(final.get("status"), "completed", final)
+        self.assertTrue(popen.called, "the indexer subprocess never started")
+
+    def test_indexing_does_not_cluster_unless_asked(self):
+        """Clustering rewrites every name in the database, so it is never implicit."""
+        from unittest.mock import patch, MagicMock
+        import tempfile
+
+        folder = tempfile.mkdtemp(prefix="tuner_idx_")
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.stdout.readline.side_effect = ["done\n", ""]
+
+        with patch("subprocess.Popen", return_value=proc) as popen:
+            self.post("/api/folder/index-start", {"folder_path": folder})
+            q = urllib.parse.quote(folder)
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                if self.get(f"/api/folder/index-status?path={q}").get("status") != "running":
+                    break
+                time.sleep(0.1)
+
+        commands = [call.args[0] for call in popen.call_args_list]
+        self.assertFalse(
+            any("cluster-faces" in c for c in commands),
+            f"indexing clustered without being asked: {commands}",
+        )
+
+
+class TestTunerFolderRemoval(TunerAPITestBase):
+    def seed_folder(self, name="removeme"):
+        import tempfile
+        folder = tempfile.mkdtemp(prefix=f"tuner_{name}_")
+        photo = os.path.join(folder, "a.jpg").replace("\\", "/")
+        from PIL import Image
+        Image.new("RGB", (16, 16)).save(photo, "JPEG")
+
+        conn = sqlite3.connect(self.TEST_DB)
+        conn.execute(
+            "INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
+            " VALUES (?, 1.0, 1, '[]', '[]', '[]', '{}')",
+            (photo,),
+        )
+        conn.execute(
+            "INSERT INTO faces (photo_path, box, embedding, name, name_source) VALUES (?, '[]', ?, ?, 'manual')",
+            (photo, unit_vector(500).tobytes(), "Jane Doe"),
+        )
+        conn.execute(
+            "INSERT INTO faces (photo_path, box, embedding, name, excluded) VALUES (?, '[]', ?, NULL, 1)",
+            (photo, unit_vector(501).tobytes()),
+        )
+        conn.commit()
+        conn.close()
+        return folder, photo
+
+    def counts(self):
+        conn = sqlite3.connect(self.TEST_DB)
+        photos = conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
+        faces = conn.execute("SELECT COUNT(*) FROM faces").fetchone()[0]
+        conn.close()
+        return photos, faces
+
+    def test_removes_photos_and_their_faces(self):
+        folder, _ = self.seed_folder()
+        self.assertEqual(self.counts(), (1, 2))
+
+        status, body = self.post("/api/folder/remove", {"folder_path": folder})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["photos_removed"], 1)
+        self.assertEqual(body["faces_removed"], 2)
+        self.assertEqual(self.counts(), (0, 0))
+
+    def test_reports_the_face_work_that_was_discarded(self):
+        """Removal throws away manual names and exclusions; say so rather than not."""
+        folder, _ = self.seed_folder()
+        _, body = self.post("/api/folder/remove", {"folder_path": folder})
+        self.assertEqual(body["manual_lost"], 1)
+        self.assertEqual(body["excluded_lost"], 1)
+
+    def test_leaves_the_photo_files_on_disk(self):
+        folder, photo = self.seed_folder()
+        self.post("/api/folder/remove", {"folder_path": folder})
+        self.assertTrue(os.path.exists(photo), "removal deleted the actual photo file")
+
+    def test_leaves_other_folders_alone(self):
+        keep_folder, _ = self.seed_folder("keep")
+        drop_folder, _ = self.seed_folder("drop")
+        self.assertEqual(self.counts(), (2, 4))
+
+        self.post("/api/folder/remove", {"folder_path": drop_folder})
+        self.assertEqual(self.counts(), (1, 2), "removal reached outside its folder")
+
+    def test_an_unknown_folder_removes_nothing(self):
+        self.seed_folder()
+        _, body = self.post("/api/folder/remove", {"folder_path": "D:/nowhere/at/all"})
+        self.assertEqual(body["photos_removed"], 0)
+        self.assertEqual(self.counts(), (1, 2))
+
+    def test_rejects_a_missing_folder_path(self):
+        status, _ = self.post("/api/folder/remove", {})
+        self.assertEqual(status, 400)

@@ -23,6 +23,11 @@
                     <select id="db-select" class="mode-select" style="min-width: 120px;"></select>
                     <button id="btn-create-db" class="btn btn-secondary btn-sm" title="Create New Database" style="padding: 4px 8px; font-size: 12px; margin-left: 2px; cursor: pointer; background: var(--bg-card); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 4px; height: 32px;">➕</button>
                 </div>
+                <div class="control-group" id="index-controls" style="display: flex; align-items: center; gap: 6px;">
+                    <label>Index:</label>
+                    <button id="btn-add-folder" class="btn btn-secondary btn-sm" title="Index a folder into this database so its faces can be identified">➕ Add folder</button>
+                    <button id="btn-remove-folder" class="btn btn-secondary btn-sm" title="Remove a folder's photos and faces from this database (photo files are not deleted)">➖ Remove folder</button>
+                </div>
                 <div class="control-group">
                     <label for="tuner-mode">Tune target:</label>
                     <select id="tuner-mode" class="mode-select">
@@ -39,7 +44,13 @@
                     </label>
                 </div>
             </div>
-        </header>
+                    <div id="index-progress-container" class="index-progress-container hidden">
+                <div class="index-progress-bar-outer">
+                    <div id="index-progress-bar" class="index-progress-bar-inner"></div>
+                </div>
+                <span id="index-progress-text" class="index-progress-text"></span>
+            </div>
+</header>
 
         <!-- Main Content Area -->
         <main class="app-content">

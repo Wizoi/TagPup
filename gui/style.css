@@ -1353,3 +1353,38 @@ body {
     color: var(--text-primary) !important;
     font-family: var(--font-body) !important;
 }
+
+
+/* ---- Folder indexing progress ------------------------------------------ */
+.index-progress-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 20px;
+    border-top: 1px solid var(--border-color);
+}
+
+.index-progress-bar-outer {
+    flex: 1;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--bg-card);
+    overflow: hidden;
+}
+
+.index-progress-bar-inner {
+    height: 100%;
+    width: 0%;
+    border-radius: 3px;
+    background: var(--accent-color, #5b8cff);
+    transition: width 0.3s ease;
+}
+
+.index-progress-text {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 55%;
+}

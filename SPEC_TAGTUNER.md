@@ -16,7 +16,23 @@ This document records the design, specifications, prerequisites, and instruction
 
 ## Features and Mechanics
 
-### 0. Tune Targets
+### 0. Managing the Index
+
+TagTuner can bring folders into the current database and take them out again, using the
+**Add folder** and **Remove folder** controls in the header. This follows the division of
+labour between the two interfaces: TagTuner is where identities are established and
+confidence is raised, so it needs to be able to pull in new material directly rather than
+requiring the folder to be added in TagPup first.
+
+Indexing runs in the background with a progress bar, and **does not re-cluster**: that
+would re-derive every name in the database, discarding corrections made here. Run
+Recluster deliberately when it is wanted.
+
+Removing a folder deletes index rows only — the photo files are untouched — but the face
+rows go with the photos, so any assigned names and exclusions on them are discarded. The
+confirmation says so, and the result reports how many of each were lost.
+
+### 0.1 Tune Targets
 
 The **Tune target** selector chooses what is being worked on. The three targets are
 deliberately disjoint:
@@ -100,6 +116,7 @@ removed; nameless faces are reached through **Identify Faces**, which groups the
 - `/api/face-matches-unmatched?id=<face_id>`: Returns other unmatched faces with cosine similarity $\ge 0.8$ for bulk profile creation.
 - `/api/unmatched-faces/people`: Returns the **Identify Faces** queue as `[{"name", "count"}]` — each name that has two or more unmatched candidates library-wide, plus two catch-all buckets: `Unknown Faces` (unmatched faces whose photo names nobody new) first, and `Ungrouped` last (faces whose every unmatched tag has only a single candidate, so no group can form). Counts are photo counts. The result is cached per database against a fingerprint of the `faces` table and recomputed when a face is added or named.
 - `/api/unmatched-faces/person-matches?name=<person_name>`: Returns the unmatched faces that are candidates for the given name, as `{"faces", "total_count", "unclustered_total", "unclustered_shown", "has_more"}`. Candidates are clustered with DBSCAN and ordered by similarity to their cluster centroid. Faces DBSCAN treats as noise are still returned, reported with `cluster_id: -1` and ranked last, capped at 500 per request so a person with tens of thousands of unclustered candidates does not lock up the browser. Accepts the two bucket names `Unknown Faces` and `Ungrouped` in place of a person. Cached like the queue above.
+- `/api/folder/index-status?path=<folder_path>`: Returns `{"status", "percent", "message"}` for the background folder indexer. Status values are `running`, `completed` or `failed`; a folder never indexed in this session reports `completed`.
 - `/api/faces/excluded`: Returns `{"faces": list, "total_count": int}` for every face marked as not-a-person, each carrying its `reason`, so exclusions can be reviewed and undone.
 - `/api/browse-folder`: Invokes native folder dialog and returns selected path.
 
@@ -111,6 +128,8 @@ removed; nameless faces are reached through **Identify Faces**, which groups the
 - `/api/face/unmatch`: Expects JSON body `{"face_id": int}`.
 - `/api/faces/match-bulk`: Expects JSON body `{"face_ids": list, "person_name": string}`. Matches face IDs in bulk. Implements duplicate-tagging protection.
 - `/api/faces/unmatch-bulk`: Expects JSON body `{"face_ids": list}`. Unmatches face IDs in bulk.
+- `/api/folder/index-start`: Expects JSON body `{"folder_path": string, "cluster": bool (optional, default false)}`. Indexes a folder into the current database in a background thread so its faces can be identified here, without a trip through TagPup first. Clustering is opt-in because it re-derives every name in the database rather than only the folder being added.
+- `/api/folder/remove`: Expects JSON body `{"folder_path": string}`. Removes every indexed photo under that folder, and their faces, from the current database. Returns `{"photos_removed", "faces_removed", "manual_lost", "excluded_lost"}` — the last two report how much curated face work the removal discarded, since those rows go with the photos. **The photo files themselves are never deleted.**
 - `/api/faces/exclude`: Expects JSON body `{"face_ids": list, "reason": string (optional)}` (a single `face_id` is also accepted). Marks faces as not-a-person. Any name they carried is cleared, and the person is dropped from the photo when no other face of theirs remains in it. Excluded faces take no part in clustering, match suggestions, or the Identify Faces queue.
 - `/api/faces/restore`: Expects JSON body `{"face_ids": list}`. Reverses an exclusion, returning the faces unnamed and unclaimed so they can be identified again.
 - `/api/person/rename`: Expects JSON body `{"old_name": string, "new_name": string}`. Renames a person in the database and updates photo tags.
