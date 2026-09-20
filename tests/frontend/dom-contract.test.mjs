@@ -85,6 +85,22 @@ describe("retired concepts stay retired", () => {
     );
   });
 
+  test("no code still branches on the retired 'Unmatched' person", () => {
+    // These comparisons sat in the Review People path, where activePersonName comes
+    // from the people list. Once the pseudo-person was removed from that list none of
+    // them could ever be true, so they were dead branches that read as live ones --
+    // nine of them, each implying a mode the app no longer has.
+    const js = fs.readFileSync(path.join(REPO_ROOT, "gui", "app.js"), "utf8");
+    const comparisons = [...js.matchAll(/[!=]==\s*['"]Unmatched['"]/g)];
+    assert.equal(
+      comparisons.length,
+      0,
+      `${comparisons.length} comparison(s) against 'Unmatched' are back. Nameless ` +
+        `faces are reached through Identify Faces, whose buckets are named ` +
+        `'Unknown Faces', 'Ungrouped' and 'Excluded'.`
+    );
+  });
+
   test("the 'Non Person' marker is carried onto the excluded column, not discarded", () => {
     // The old migration cleared these to NULL, which returned deliberately rejected
     // faces to the matching pool. They mean what `excluded` means.

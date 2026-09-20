@@ -326,7 +326,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (btnRenamePerson) {
         btnRenamePerson.addEventListener('click', () => {
-            if (!activePersonName || activePersonName === 'Unmatched') return;
+            if (!activePersonName) return;
             const newName = prompt(`Rename person "${activePersonName}" to:`, activePersonName);
             if (newName === null) return;
             const trimmed = newName.trim();
@@ -2118,8 +2118,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 tabLowConf.classList.add('hidden');
             }
         } else {
-            const standards = filteredFaces.filter(f => activePersonName === 'Unmatched' || f.similarity === undefined || f.similarity >= 0.85);
-            const outliers = filteredFaces.filter(f => activePersonName !== 'Unmatched' && f.similarity !== undefined && f.similarity < 0.85);
+            const standards = filteredFaces.filter(f => f.similarity === undefined || f.similarity >= 0.85);
+            const outliers = filteredFaces.filter(f => f.similarity !== undefined && f.similarity < 0.85);
             
             tabMatches.textContent = `Matches (${standards.length})`;
             tabOutliers.textContent = `Outliers (${outliers.length})`;
@@ -2153,14 +2153,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     lower.push(face);
                 }
             } else {
-                if (activePersonName === 'Unmatched') {
-                    standards.push(face);
+                if (face.similarity !== undefined && face.similarity < 0.85) {
+                    outliers.push(face);
                 } else {
-                    if (face.similarity !== undefined && face.similarity < 0.85) {
-                        outliers.push(face);
-                    } else {
-                        standards.push(face);
-                    }
+                    standards.push(face);
                 }
             }
         });
@@ -2180,9 +2176,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             displayedCount = targetFaces.length;
         } else {
-            if (activeTab === 'matches' || activePersonName === 'Unmatched') {
+            if (activeTab === 'matches') {
                 targetFaces = standards;
-                unmatchedText = activePersonName === 'Unmatched' ? 'unmatched' : 'matched';
+                unmatchedText = 'matched';
             } else {
                 targetFaces = outliers;
                 unmatchedText = 'outlier';
@@ -2200,9 +2196,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (modeSelect.value === 'unmatched-faces') {
                 emptyGrid.textContent = `No potential ${activeTab} confidence matches found.`;
             } else {
-                if (activePersonName === 'Unmatched') {
-                    emptyGrid.textContent = 'No unmatched faces found.';
-                } else if (activeTab === 'matches') {
+                if (activeTab === 'matches') {
                     emptyGrid.textContent = 'No matching faces found for this person.';
                 } else {
                     emptyGrid.textContent = 'No outliers found for this person.';
@@ -2771,7 +2765,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 clearFaceDetails();
 
                 // Check if the person is going to be removed after unmatching
-                const willBeRemoved = (activePersonName !== 'Unmatched' && activePersonFaces.length === 0);
+                const willBeRemoved = (activePersonFaces.length === 0);
                 if (willBeRemoved) {
                     let priorName = null;
                     if (allPeopleWithCounts && allPeopleWithCounts.length > 0) {
@@ -2871,7 +2865,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 clearFaceDetails();
 
                 // Check if the person is going to be removed after matching
-                const willBeRemoved = (activePersonName !== 'Unmatched' && activePersonFaces.length === 0);
+                const willBeRemoved = (activePersonFaces.length === 0);
                 if (willBeRemoved) {
                     let priorName = null;
                     if (allPeopleWithCounts && allPeopleWithCounts.length > 0) {
