@@ -329,12 +329,17 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
         batch_faces = {}  # Map path -> faces list
         paths_to_remove = set()
         total_new_indexed = 0
+        locked_out = []
 
         for meta in tqdm(to_index_meta, desc="Generating embeddings"):
             path = meta["path"]
             
-            # Acquire path-level lock to prevent duplicate concurrent work
+            # Acquire path-level lock to prevent duplicate concurrent work.
+            # A skip here means another live process has the photo. It used to be
+            # silent, which is how 348 photos held by long-dead runs stayed out of
+            # the index for three months without anyone noticing.
             if not locker.acquire(path):
+                locked_out.append(path)
                 continue
                 
             try:
@@ -400,6 +405,22 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
             for saved_meta in batch_metas:
                 locker.release(saved_meta["path"])
             total_new_indexed += len(batch_embeddings)
+
+        if locked_out:
+            console.print(
+                f"[bold yellow]{len(locked_out)} photo(s) were skipped because another "
+                f"process holds their lock.[/bold yellow] They are NOT in the index. "
+                f"If no other indexer is running, these locks are stale -- rerun to take "
+                f"them over."
+            )
+            for p in locked_out[:5]:
+                console.print(f"  [yellow]-[/yellow] {p}")
+            if len(locked_out) > 5:
+                console.print(f"  [dim]... and {len(locked_out) - 5} more[/dim]")
+        if getattr(locker, "stolen", 0):
+            console.print(
+                f"[cyan]Recovered {locker.stolen} lock(s) abandoned by a previous run.[/cyan]"
+            )
 
         if total_new_indexed > 0:
             console.print("[bold green]Indexing successfully completed![/bold green]")

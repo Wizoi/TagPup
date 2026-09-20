@@ -1,9 +1,12 @@
 # index.py
 import os
 import json
+import socket
 import sqlite3
 import logging
 import hashlib
+import subprocess
+import time
 from typing import List, Dict, Any, Tuple, Optional, Set
 import numpy as np
 import faiss
@@ -11,30 +14,117 @@ import faiss
 logger = logging.getLogger("tagpup_cli.index")
 
 class PathLocker:
-    def __init__(self, lock_dir: str = "data/locks"):
+    """Stops two indexers working the same photo at once.
+
+    The lock is a file created exclusively, which is atomic even across processes.
+    The hazard is what happens when a holder dies without releasing: nothing else
+    ever cleaned up another process's lock, so a killed run left its in-flight
+    photos permanently unindexable. They were then skipped in silence by every
+    later run -- 348 of them had accumulated over three months before anyone
+    counted the photos actually in the index against the photos on disk.
+
+    So a lock now records who holds it and since when, and a lock whose holder is
+    gone is taken over rather than obeyed.
+    """
+
+    #: A lock older than this is assumed abandoned. Locks are released once per
+    #: batch of 100 photos, so a live holder should never come close.
+    MAX_LOCK_AGE_SECONDS = 6 * 60 * 60
+
+    def __init__(self, lock_dir: str = "data/locks", max_age: float = None):
         self.lock_dir = lock_dir
         os.makedirs(self.lock_dir, exist_ok=True)
         self.locked_paths = set()
+        self.max_age = self.MAX_LOCK_AGE_SECONDS if max_age is None else max_age
+        self.stolen = 0
+        self._alive_cache = {}
 
     def _get_lock_path(self, path: str) -> str:
         abs_path = os.path.abspath(path)
         path_hash = hashlib.md5(abs_path.encode('utf-8')).hexdigest()
         return os.path.join(self.lock_dir, f"{path_hash}.lock")
 
+    def _write_lock(self, lock_file: str, path: str):
+        with open(lock_file, "x", encoding="utf-8") as f:
+            json.dump({
+                "path": os.path.abspath(path),
+                "pid": os.getpid(),
+                "host": socket.gethostname(),
+                "acquired": time.time(),
+            }, f)
+
+    def _process_alive(self, pid: int) -> bool:
+        """Best effort. When in doubt, say alive -- never steal a live lock."""
+        if pid in self._alive_cache:
+            return self._alive_cache[pid]
+        alive = True
+        try:
+            if os.name == "nt":
+                out = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {int(pid)}", "/NH"],
+                    capture_output=True, text=True, timeout=10,
+                ).stdout
+                alive = str(int(pid)) in out
+            else:
+                os.kill(int(pid), 0)
+                alive = True
+        except ProcessLookupError:
+            alive = False
+        except Exception:
+            alive = True
+        self._alive_cache[pid] = alive
+        return alive
+
+    def _is_abandoned(self, lock_file: str) -> bool:
+        """Is this lock's holder gone?"""
+        try:
+            age = time.time() - os.path.getmtime(lock_file)
+        except OSError:
+            return False
+        if age > self.max_age:
+            return True
+        try:
+            with open(lock_file, encoding="utf-8") as f:
+                info = json.load(f)
+        except Exception:
+            # Locks written before this format carried only a path, so age is all
+            # there is to go on -- and the age check above already had its say.
+            return False
+        if info.get("host") and info["host"] != socket.gethostname():
+            return False  # another machine's lock; only age may retire it
+        pid = info.get("pid")
+        return bool(pid) and not self._process_alive(pid)
+
     def acquire(self, path: str) -> bool:
-        """Try to acquire a lock for a specific photo path. Returns True if acquired, False if already locked."""
+        """Take the lock for a photo. False means somebody live is working on it."""
         lock_file = self._get_lock_path(path)
         try:
-            # Exclusive file creation serves as an atomic lock
-            with open(lock_file, "x", encoding="utf-8") as f:
-                f.write(os.path.abspath(path))
+            self._write_lock(lock_file, path)
             self.locked_paths.add(path)
             return True
         except FileExistsError:
-            return False
+            pass
         except Exception as e:
             logger.warning(f"Failed to create lock for {path}: {e}")
             return False
+
+        if not self._is_abandoned(lock_file):
+            return False
+
+        # The holder is gone. Take it over rather than skipping the photo forever.
+        try:
+            os.remove(lock_file)
+            self._write_lock(lock_file, path)
+        except FileExistsError:
+            return False  # somebody beat us to it, which is fine
+        except Exception as e:
+            logger.warning(f"Could not take over the abandoned lock for {path}: {e}")
+            return False
+
+        self.locked_paths.add(path)
+        self.stolen += 1
+        logger.info(f"Took over an abandoned lock for {path}")
+        return True
 
     def release(self, path: str):
         """Release the lock for a specific photo path."""
