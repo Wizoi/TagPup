@@ -2585,7 +2585,8 @@ document.addEventListener('DOMContentLoaded', () => {
             updateTabLabels();
             updateMatchingSelectionUI();
             clearFaceDetails();
-            fetchPeopleWithCounts(true);
+            // Go through the mode dispatcher so the sidebar always matches Tune target.
+            fetchPhotos();
         })
         .catch(err => {
             console.error(err);
@@ -2619,7 +2620,8 @@ document.addEventListener('DOMContentLoaded', () => {
             renderPersonFaces(activePersonFaces);
             updateMatchingSelectionUI();
             clearFaceDetails();
-            fetchPeopleWithCounts(true);
+            // Go through the mode dispatcher so the sidebar always matches Tune target.
+            fetchPhotos();
         })
         .catch(err => {
             console.error(err);

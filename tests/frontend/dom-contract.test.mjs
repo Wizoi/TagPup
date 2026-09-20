@@ -97,3 +97,30 @@ describe("retired concepts stay retired", () => {
     );
   });
 });
+
+describe("sidebar refreshes follow the selected mode", () => {
+  test("no handler bypasses the mode dispatcher", () => {
+    // fetchPhotos() reads the Tune target and dispatches; fetchPeopleWithCounts()
+    // renders the people list unconditionally. Calling the latter after a background
+    // job finished put the people list in the sidebar while the dropdown still said
+    // "Folder Matches" -- the two disagreeing about what you were looking at.
+    const js = fs.readFileSync(path.join(REPO_ROOT, "gui", "app.js"), "utf8");
+    const direct = [...js.matchAll(/fetchPeopleWithCounts\(\s*true\s*\)/g)];
+    assert.equal(
+      direct.length,
+      0,
+      `${direct.length} call(s) to fetchPeopleWithCounts(true) bypass fetchPhotos(), ` +
+        `which is what keeps the sidebar and the Tune target dropdown in agreement.`
+    );
+  });
+
+  test("the dispatcher still dispatches", () => {
+    const js = fs.readFileSync(path.join(REPO_ROOT, "gui", "app.js"), "utf8");
+    const body = js.slice(js.indexOf("function fetchPhotos()"));
+    assert.match(
+      body.slice(0, 900),
+      /mode === 'face-matching' \|\| mode === 'unmatched-faces'/,
+      "fetchPhotos no longer branches on the mode"
+    );
+  });
+});
