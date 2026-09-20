@@ -2588,8 +2588,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, env=env, bufsize=1, cwd=workspace,
             )
+            from tagpup_server import summarize_indexer_line
+
             for line in iter(proc.stdout.readline, ""):
-                clean = line.strip()
+                clean = summarize_indexer_line(line)
                 if clean:
                     status["message"] = clean
                     match = re.search(r"(\d+)%", clean)
@@ -2612,7 +2614,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     text=True, env=env, bufsize=1, cwd=workspace,
                 )
                 for line in iter(proc2.stdout.readline, ""):
-                    clean = line.strip()
+                    clean = summarize_indexer_line(line)
                     if clean:
                         status["message"] = clean
                 proc2.wait()

@@ -27,6 +27,35 @@ def to_db_path(path):
         return ""
     return os.path.abspath(path).replace("\\", "/")
 
+_INDEXER_LOG_LINE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+\s+\[")
+_INDEXER_TQDM = re.compile(r"^(.*?):\s*(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
+
+
+def summarize_indexer_line(line):
+    """Turn one line of indexer output into progress text, or None to ignore it.
+
+    The indexer's stdout carries three kinds of line: console output written for a
+    person, tqdm progress bars, and library logging. Only the first two say anything
+    about progress. Showing every line put things like
+
+        2026-09-19 21:31:50,515 [INFO] root - Instantiating...
+
+    in the progress bar, where it is both meaningless and too long to read.
+    """
+    if not line:
+        return None
+    # tqdm redraws with carriage returns; only the newest frame matters.
+    clean = line.split("\r")[-1].strip()
+    if not clean or _INDEXER_LOG_LINE.match(clean):
+        return None
+
+    match = _INDEXER_TQDM.match(clean)
+    if match:
+        label, percent, done, total = match.groups()
+        return f"{label.strip()}: {percent}% ({done}/{total})"
+    return clean
+
+
 def expand_tag_fields(tags):
     """Split a tag list into the flat and hierarchical keyword forms written to files."""
     flat, hierarchical = [], []
@@ -796,7 +825,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             )
             
             for line in iter(proc.stdout.readline, ""):
-                clean_line = line.strip()
+                clean_line = summarize_indexer_line(line)
                 if clean_line:
                     status_dict["message"] = clean_line
                     # Parse percent E.g. "Indexing photos:  45%" and scale to 90%
@@ -821,7 +850,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                         bufsize=1
                     )
                     for line in iter(proc2.stdout.readline, ""):
-                        clean_line = line.strip()
+                        clean_line = summarize_indexer_line(line)
                         if clean_line:
                             status_dict["message"] = clean_line
                     proc2.wait()

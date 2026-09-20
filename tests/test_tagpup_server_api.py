@@ -717,3 +717,57 @@ class TestTagPupFaceCrop(TagPupAPITestBase):
         except urllib.error.HTTPError as e:
             status = e.code
         self.assertEqual(status, 400)
+
+
+class TestIndexerProgressText(unittest.TestCase):
+    """What the indexing progress bar is allowed to say.
+
+    The indexer's stdout carries console output, tqdm bars and library logging. Showing
+    every line put things like "2026-09-19 21:31:50,515 [INFO] root - Instantiating..."
+    in the progress bar, where it means nothing to the person watching and is too long
+    to read anyway.
+    """
+
+    def summarize(self, line):
+        from tagpup_server import summarize_indexer_line
+
+        return summarize_indexer_line(line)
+
+    def test_library_logging_is_suppressed(self):
+        for line in (
+            "2026-09-19 21:31:50,515 [INFO] root - Instantiating model from config",
+            "2026-09-19 21:31:50,515 [WARNING] httpx - HTTP Request: HEAD https://x/y",
+            "2026-09-19 07:39:12,235 [INFO] tagpup_cli.index - Loaded 56959 entries",
+        ):
+            self.assertIsNone(self.summarize(line), f"log line leaked: {line[:50]}")
+
+    def test_a_progress_bar_becomes_readable_progress(self):
+        out = self.summarize("Generating embeddings:  71%|#######1  | 35/49 [01:16<01:03,  4.52s/it]")
+        self.assertEqual(out, "Generating embeddings: 71% (35/49)")
+
+    def test_console_output_is_passed_through(self):
+        for line in ("Found 49 image(s) total.",
+                     "Indexing 49 image(s) (24 already tagged, 25 untagged)."):
+            self.assertEqual(self.summarize(line), line)
+
+    def test_blank_lines_are_ignored(self):
+        self.assertIsNone(self.summarize(""))
+        self.assertIsNone(self.summarize("   \n"))
+        self.assertIsNone(self.summarize(None))
+
+    def test_only_the_newest_tqdm_frame_is_kept(self):
+        """tqdm redraws with carriage returns; the last frame is the current one."""
+        out = self.summarize(
+            "Generating embeddings:  10%|#  | 5/49 [00:10<01:00]\r"
+            "Generating embeddings:  20%|##  | 10/49 [00:20<01:00]"
+        )
+        self.assertIn("20%", out)
+        self.assertNotIn("10%", out)
+
+    def test_the_percentage_is_still_parseable_for_the_bar(self):
+        """The caller scrapes a percent out of the message to drive the bar width."""
+        import re
+
+        out = self.summarize("Generating embeddings:  45%|####  | 22/49 [00:30<00:40]")
+        self.assertIsNotNone(re.search(r"(\d+)%", out))
+        self.assertEqual(re.search(r"(\d+)%", out).group(1), "45")
