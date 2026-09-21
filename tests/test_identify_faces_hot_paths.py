@@ -30,6 +30,7 @@ import threading
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import numpy as np
@@ -433,4 +434,127 @@ class TestTheSharedNamedFaceMatrix(MatchingTestBase):
         self.assertIn(
             "Halvard Nilsen", names,
             "the shared matrix was served stale after a face was named",
+        )
+
+
+class TestRemovingFacesKeepsTheGridWarm(MatchingTestBase):
+    """Naming ten faces removes ten cards; it does not change the other hundred thousand.
+
+    The per-person grid is cached against a fingerprint of the faces table, and that
+    fingerprint moves the moment anything is named or excluded. So every assignment and
+    every ignored cluster threw away a payload that costs the better part of a minute
+    to rebuild on a real library, and the next click paid for it again -- which is why
+    ignoring clusters felt like the slowest thing on the screen.
+
+    A removal is now applied to the cached payload instead. These tests pin that the
+    result is the same one a rebuild would have produced.
+    """
+
+    def matches(self, name):
+        url = "http://127.0.0.1:%d/api/unmatched-faces/person-matches?name=%s" % (
+            self.TEST_PORT, urllib.parse.quote(name))
+        with urllib.request.urlopen(url, timeout=60) as r:
+            return json.loads(r.read().decode("utf-8"))
+
+    def a_grid_of(self, count, tag=None):
+        """`count` nameless faces that all resemble each other, so they cluster."""
+        people = [tag] if tag else []
+        base = unit_vector(31)
+        conn = sqlite3.connect(self.TEST_DB)
+        ids = []
+        for i in range(count):
+            photo = os.path.join(self.tmpdir, "IMG_%04d.jpg" % i).replace("\\", "/")
+            conn.execute(
+                "INSERT OR REPLACE INTO photos (path, mtime, size, tags, people,"
+                " captions, raw_metadata) VALUES (?, 1.0, 1, '[]', ?, '[]', '{}')",
+                (photo, json.dumps(people)),
+            )
+            jitter = unit_vector(900 + i) * 0.02
+            vec = base + jitter
+            vec = (vec / np.linalg.norm(vec)).astype(np.float32)
+            cur = conn.execute(
+                "INSERT INTO faces (photo_path, box, embedding, name, prob)"
+                " VALUES (?, '[0,0,10,10]', ?, NULL, 0.99)",
+                (photo, vec.tobytes()),
+            )
+            ids.append(cur.lastrowid)
+        conn.commit()
+        conn.close()
+        return ids
+
+    def test_excluding_leaves_the_rest_of_the_grid_in_place(self):
+        ids = self.a_grid_of(6)
+        before = self.matches("Unknown Faces")
+        self.assertEqual(6, len(before["faces"]))
+
+        status, _body = self.post(
+            "/api/faces/exclude", {"face_ids": ids[:2], "reason": "not a person"})
+        self.assertEqual(200, status)
+
+        after = self.matches("Unknown Faces")
+        self.assertEqual(
+            4, len(after["faces"]), "the grid did not lose exactly the excluded faces")
+        self.assertEqual(4, after["total_count"])
+        self.assertEqual(
+            set(ids[2:]), {f["id"] for f in after["faces"]},
+            "the wrong faces were left behind",
+        )
+
+    def test_the_cached_grid_is_kept_rather_than_thrown_away(self):
+        """The point of the exercise: the payload survives the write."""
+        import tuner_server
+
+        ids = self.a_grid_of(6)
+        self.matches("Unknown Faces")
+
+        cache = tuner_server.TunerHTTPRequestHandler.identify_cache
+        key = "matches:Unknown Faces"
+        self.assertIn(key, cache.keys(), "the grid was never cached to begin with")
+        stamp_before = cache.get(key)["fingerprint"]
+
+        status, _body = self.post(
+            "/api/faces/exclude", {"face_ids": ids[:1], "reason": "not a person"})
+        self.assertEqual(200, status)
+
+        entry = cache.get(key)
+        self.assertIsNotNone(
+            entry, "excluding a face threw the whole cached grid away")
+        self.assertNotEqual(
+            stamp_before, entry["fingerprint"],
+            "the entry was left stamped with the old table state, so it would be"
+            " treated as stale and rebuilt anyway",
+        )
+        self.assertEqual(
+            5, len(entry["value"]["faces"]),
+            "the excluded face is still sitting in the cached payload",
+        )
+
+    def test_assigning_a_name_also_leaves_the_grid_in_place(self):
+        ids = self.a_grid_of(6)
+        self.assertEqual(6, len(self.matches("Unknown Faces")["faces"]))
+
+        status, _body = self.post(
+            "/api/faces/match-bulk",
+            {"face_ids": [ids[0]], "person_name": "Bryn Aldersgate"},
+        )
+        self.assertEqual(200, status)
+
+        after = self.matches("Unknown Faces")
+        self.assertEqual(5, len(after["faces"]))
+        self.assertNotIn(ids[0], {f["id"] for f in after["faces"]})
+
+    def test_restoring_a_face_rebuilds_rather_than_guessing_where_it_goes(self):
+        """A face coming back has no cluster to belong to. Only removals are applied."""
+        ids = self.a_grid_of(6)
+        self.post("/api/faces/exclude", {"face_ids": ids[:2], "reason": "not a person"})
+        self.assertEqual(4, len(self.matches("Unknown Faces")["faces"]))
+
+        status, _body = self.post("/api/faces/restore", {"face_ids": ids[:2]})
+        self.assertEqual(200, status)
+
+        after = self.matches("Unknown Faces")
+        self.assertEqual(
+            6, len(after["faces"]),
+            "restored faces never came back to the grid; the cache was reused when it"
+            " should have been rebuilt",
         )

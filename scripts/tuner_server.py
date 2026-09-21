@@ -6,13 +6,14 @@ import json
 import sqlite3
 try:
     from . import db as tagpup_db
+    from . import localserver
 except ImportError:  # imported as a top-level module
     import db as tagpup_db
+    import localserver
 import urllib.parse
 import io
 import logging
 from http.server import BaseHTTPRequestHandler
-from socketserver import ThreadingTCPServer
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = 500000000
 import numpy as np
@@ -437,22 +438,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         pass
 
     def validate_request_origin(self) -> bool:
-        # Validate Host header to prevent DNS rebinding
-        host = self.headers.get("Host", "")
-        host_clean = host.split(":")[0].lower()
-        if host_clean not in ("localhost", "127.0.0.1", "[::1]"):
-            self.send_error(403, "Forbidden: Invalid Host Header")
-            return False
-
-        # Validate Origin header to prevent CSRF from external websites
-        origin = self.headers.get("Origin")
-        if origin:
-            parsed_origin = urllib.parse.urlparse(origin)
-            origin_host = parsed_origin.netloc.split(":")[0].lower()
-            if origin_host not in ("localhost", "127.0.0.1", "[::1]"):
-                self.send_error(403, "Forbidden: Cross-Origin Requests Denied")
-                return False
-        return True
+        # Only this machine, and only pages this server served. See localserver.
+        return localserver.is_local_request(self)
 
     def handle_get_databases(self):
         # List all .db files in the data directory
@@ -1780,9 +1767,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             people_json = json.dumps(people)
             cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (people_json, actual_photo_path))
 
-            conn.commit()
+            with tagpup_db.writing(self.db_path, label="name a face"):
+                conn.commit()
+                # This face has left the identify pool; take it out of the cached
+                # views rather than making the next click rebuild them.
+                self.identify_cache_forget_faces(conn, [face_id])
             self.send_json({"success": True})
-            
+
         except Exception as e:
             logger.error(f"Error in handle_post_match: {e}")
             self.send_error(500, f"Internal error: {e}")
@@ -2843,7 +2834,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     if updated_people != people:
                         cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(updated_people), actual_photo_path))
 
-            conn.commit()
+            with tagpup_db.writing(self.db_path, label="name faces in bulk"):
+                conn.commit()
+                self.identify_cache_forget_faces(conn, face_ids)
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error in handle_post_match_bulk: {e}")
@@ -3369,7 +3362,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         except Exception:
                             pass
 
-            conn.commit()
+            with tagpup_db.writing(self.db_path, label="exclude faces"):
+                conn.commit()
+                # Ignoring a cluster is the single most expensive thing to have
+                # invalidated the grid, and it is pure removal.
+                self.identify_cache_forget_faces(conn, face_ids)
             self.send_json({"success": True, "excluded": len(face_ids)})
         except Exception as e:
             logger.error("Error excluding faces: %s" % e)
@@ -3597,6 +3594,79 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             "fingerprint": fingerprint,
             "value": value,
         }
+
+    def identify_cache_forget_faces(self, conn, face_ids):
+        """Take faces out of the cached Identify Faces views instead of discarding them.
+
+        The per-person grid costs about fifty seconds to build on a real library,
+        almost all of it DBSCAN over a hundred thousand candidates. It is cached
+        against a fingerprint of the faces table -- which moves the instant anything is
+        named or excluded, so every assignment and every ignored cluster threw the
+        whole grid away and the next click paid for it again. That is the wrong shape
+        for what actually happened: naming ten faces does not change what the other
+        hundred thousand look like, it removes ten cards.
+
+        So a removal is applied to the cached payloads, which are then re-stamped with
+        the fingerprint the table now carries. Removals only -- a restored or unnamed
+        face comes back into the pool with no cluster to belong to, and working out
+        where it lands is the clustering pass itself, so those still invalidate.
+
+        Two things are deliberately left to rebuild on their own: the queue listing,
+        now 1.4s, and the named-face matrix, which genuinely changes when somebody is
+        named. The suggestions already on the remaining cards keep the scores they were
+        drawn with until the next full build; they were computed against a set of named
+        faces that has since grown by the handful just assigned, which moves a score in
+        the third decimal and never changes which card is in front of you.
+
+        Must be called with the write lock held, so the fingerprint read here cannot
+        pick up another thread's write and stamp it as though it were accounted for.
+        """
+        removed = {int(fid) for fid in face_ids}
+        if not removed:
+            return
+
+        fingerprint = self.faces_fingerprint(conn)
+        cache = TunerHTTPRequestHandler.identify_cache
+
+        for key in list(cache.keys()):
+            if not key.startswith("matches:"):
+                continue
+            entry = cache.get(key)
+            value = entry.get("value") if entry else None
+            if not isinstance(value, dict) or not isinstance(value.get("faces"), list):
+                continue
+
+            faces = value["faces"]
+            kept = [f for f in faces if f.get("id") not in removed]
+            if len(kept) == len(faces):
+                # This person's grid is untouched, but the table moved. Re-stamp it so
+                # it stays usable rather than being rebuilt for somebody else's edit.
+                cache[key] = {"fingerprint": fingerprint, "value": value}
+                continue
+
+            shown_unclustered = sum(1 for f in kept if f.get("cluster_id") == -1)
+            gone_unclustered = sum(
+                1 for f in faces
+                if f.get("id") in removed and f.get("cluster_id") == -1)
+            total_unclustered = max(
+                0, int(value.get("unclustered_total") or 0) - gone_unclustered)
+
+            # Unclustered faces are capped, so there can be more of them waiting behind
+            # the ones on screen. Thinning the visible end of that queue without
+            # bringing the next ones forward would quietly shrink the grid towards
+            # empty while faces still needed a name. Rebuild instead -- it is the one
+            # case where the cached answer is genuinely no longer the right answer.
+            if total_unclustered > shown_unclustered:
+                cache.pop(key, None)
+                continue
+
+            updated = dict(value)
+            updated["faces"] = kept
+            updated["total_count"] = len(kept)
+            updated["unclustered_total"] = total_unclustered
+            updated["unclustered_shown"] = shown_unclustered
+            updated["has_more"] = False
+            cache[key] = {"fingerprint": fingerprint, "value": updated}
 
     def named_face_matrix(self, conn, fingerprint):
         """Every face that carries a name, as unit vectors, with the names beside them.
@@ -4952,8 +5022,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             logger.error(f"Error smart renaming photos: {e}", exc_info=True)
             self.send_json_error(500, str(e))
 
-class ThreadedHTTPServer(ThreadingTCPServer):
-    allow_reuse_address = True
+#: Listens on IPv4 and IPv6 alike -- see scripts/localserver.py for why that is
+#: worth two seconds on every click.
+ThreadedHTTPServer = localserver.ThreadedHTTPServer
 
 def start_server(port=8080, db_path="data/photo_index.db", gui_dir="gui"):
     TunerHTTPRequestHandler.db_path = db_path
