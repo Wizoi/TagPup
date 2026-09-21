@@ -2379,10 +2379,18 @@ document.addEventListener('DOMContentLoaded', () => {
             const high = filteredFaces.filter(f => f.similarity !== undefined && f.similarity >= 0.9);
             const lower = filteredFaces.filter(f => f.similarity !== undefined && f.similarity >= 0.8 && f.similarity < 0.9);
             
-            tabMatches.textContent = `High Confidence (${high.length})`;
-            tabOutliers.textContent = `Lower Confidence (${lower.length})`;
+            // Everything the server sent that clustered with nothing. It ranks these
+            // last rather than withholding them, because a face that forms no group
+            // is still a face somebody may recognise -- often the only ones there are.
+            const unclustered = filteredFaces.filter(
+                f => f.similarity === undefined || f.similarity < 0.8
+            );
+
+            tabMatches.textContent = `Likely (${high.length})`;
+            tabOutliers.textContent = `Possible (${lower.length})`;
             if (tabLowConf) {
-                tabLowConf.classList.add('hidden');
+                tabLowConf.textContent = `Ungrouped (${unclustered.length})`;
+                tabLowConf.classList.toggle('hidden', unclustered.length === 0);
             }
         } else {
             const standards = filteredFaces.filter(f => f.similarity === undefined || f.similarity >= 0.85);
@@ -2391,6 +2399,23 @@ document.addEventListener('DOMContentLoaded', () => {
             tabMatches.textContent = `Matches (${standards.length})`;
             tabOutliers.textContent = `Outliers (${outliers.length})`;
         }
+    }
+
+    /**
+     * Move the highlight to whichever Identify Faces tab is being shown.
+     *
+     * The tabs carry their own click handlers; this is for when the code picks the
+     * tab instead of the person, so the highlight cannot disagree with the grid.
+     */
+    function syncIdentifyTabHighlight(tab) {
+        const els = {
+            high: document.getElementById('tab-matches'),
+            lower: document.getElementById('tab-outliers'),
+            low: document.getElementById('tab-low-conf'),
+        };
+        Object.entries(els).forEach(([name, el]) => {
+            if (el) el.classList.toggle('active', name === tab);
+        });
     }
 
     // Render face match items in grid
@@ -2409,6 +2434,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const high = [];
         const lower = [];
+        const unclustered = [];
         const standards = [];
         const outliers = [];
 
@@ -2418,6 +2444,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     high.push(face);
                 } else if (face.similarity !== undefined && face.similarity >= 0.8) {
                     lower.push(face);
+                } else {
+                    // Previously fell off the end of this chain and was dropped.
+                    unclustered.push(face);
                 }
             } else {
                 if (face.similarity !== undefined && face.similarity < 0.85) {
@@ -2434,12 +2463,30 @@ document.addEventListener('DOMContentLoaded', () => {
         let unmatchedText = '';
         
         if (modeSelect.value === 'unmatched-faces') {
+            // Land on a tab that has faces in it. The default is the most confident
+            // one, but when nothing clustered -- which is the common case for a face
+            // seen once or twice -- every candidate is ungrouped, and opening on an
+            // empty tab is indistinguishable from the person having no candidates at
+            // all. That is what "the sidebar says 2 and the panel shows nothing" was.
+            const buckets = { high, lower, low: unclustered };
+            if (!buckets[activeTab] || buckets[activeTab].length === 0) {
+                const firstWithFaces = ['high', 'lower', 'low']
+                    .find(name => buckets[name].length > 0);
+                if (firstWithFaces) {
+                    activeTab = firstWithFaces;
+                    syncIdentifyTabHighlight(activeTab);
+                }
+            }
+
             if (activeTab === 'high') {
                 targetFaces = high;
-                unmatchedText = 'high confidence potential';
+                unmatchedText = 'likely';
+            } else if (activeTab === 'low') {
+                targetFaces = unclustered;
+                unmatchedText = 'ungrouped';
             } else {
                 targetFaces = lower;
-                unmatchedText = 'lower confidence potential';
+                unmatchedText = 'possible';
             }
             displayedCount = targetFaces.length;
         } else {
@@ -2461,7 +2508,11 @@ document.addEventListener('DOMContentLoaded', () => {
             emptyGrid.style.padding = '40px';
             emptyGrid.style.color = 'var(--text-muted)';
             if (modeSelect.value === 'unmatched-faces') {
-                emptyGrid.textContent = `No potential ${activeTab} confidence matches found.`;
+                emptyGrid.textContent = {
+                    high: 'No likely matches for this name.',
+                    lower: 'No possible matches for this name.',
+                    low: 'No ungrouped candidates for this name.',
+                }[activeTab] || 'No candidates for this name.';
             } else {
                 if (activeTab === 'matches') {
                     emptyGrid.textContent = 'No matching faces found for this person.';

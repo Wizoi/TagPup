@@ -144,6 +144,14 @@ export async function loadApp(appName, { url, server = new FakeServer(), t } = {
       String(value).replace(/[^\w\u00A0-\uFFFF-]/g, (ch) => "\\" + ch);
   }
 
+  // jsdom has no scrollIntoView, and both apps call it after moving the selection.
+  // Unshimmed it throws, and where that call sits inside a promise chain the rejection
+  // is caught by an outer .catch and surfaces as "Error loading people" -- an
+  // environment gap wearing the costume of an application bug.
+  if (typeof window.Element.prototype.scrollIntoView !== "function") {
+    window.Element.prototype.scrollIntoView = function () {};
+  }
+
   openWindows.add(window);
   if (t && typeof t.after === "function") {
     t.after(() => {
