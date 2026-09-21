@@ -3903,24 +3903,47 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 rows = [i for i, n in enumerate(known_names) if n == person]
                 return known_matrix[rows] if rows else None
 
-            def suggest_for(cluster_embeddings):
-                """Who does this face, or group of faces, most resemble?
+            def suggest_for_all(centroids):
+                """Who does each of these groups most resemble?
 
                 Scored against the best single named face, matching the diagnostics
                 panel exactly, so the badge on a card and the number in the panel
                 cannot disagree.
+
+                Answered for every group in one pass. The per-group version of this
+                ran a (35,758 x 512) matrix against one vector at a time, once per
+                cluster: on this library 6,151 of those, measured at 8.4s, to do
+                arithmetic BLAS does in a fraction of a second when handed the whole
+                batch. The numbers that come out are the same ones.
+
+                Chunked, because the full product is groups x named faces and that is
+                a matrix nobody needs all of at once -- only its row maxima.
                 """
-                if known_matrix is None or not len(cluster_embeddings):
-                    return None, 0.0
-                centroid = np.mean(cluster_embeddings, axis=0)
-                norm = np.linalg.norm(centroid)
-                if norm == 0:
-                    return None, 0.0
-                sims = np.dot(known_matrix, centroid / norm)
-                best = int(np.argmax(sims))
-                if float(sims[best]) < SUGGEST_FLOOR:
-                    return None, float(sims[best])
-                return known_names[best], float(sims[best])
+                results = [(None, 0.0)] * len(centroids)
+                if known_matrix is None or not len(centroids):
+                    return results
+
+                block = np.asarray(centroids, dtype=np.float32)
+                norms = np.linalg.norm(block, axis=1)
+                usable = norms > 0
+                block = np.where(usable[:, None], block / np.where(norms > 0, norms, 1)[:, None], block)
+
+                CHUNK = 512
+                for start in range(0, len(block), CHUNK):
+                    stop = min(start + CHUNK, len(block))
+                    sims = np.dot(block[start:stop], known_matrix.T)
+                    best = np.argmax(sims, axis=1)
+                    scores = sims[np.arange(stop - start), best]
+                    for offset in range(stop - start):
+                        i = start + offset
+                        if not usable[i]:
+                            continue
+                        score = float(scores[offset])
+                        results[i] = (
+                            known_names[int(best[offset])] if score >= SUGGEST_FLOOR else None,
+                            score,
+                        )
+                return results
 
             # Which other people each candidate's photo still has no face for. A photo
             # naming two unaccounted people offers both its faces under both names,
@@ -3971,23 +3994,29 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             # Sort cluster groups by size descending
             sorted_labels = sorted(cluster_groups.keys(), key=lambda l: len(cluster_groups[l]), reverse=True)
 
+            # Each cluster's centre, and how much each of its members looks like it.
+            cluster_centroids = []
+            cluster_sims_by_label = {}
+            for label in sorted_labels:
+                cluster_embs = embs[cluster_groups[label]]
+                centroid = np.mean(cluster_embs, axis=0)
+                cnorm = np.linalg.norm(centroid)
+                if cnorm > 0:
+                    centroid = centroid / cnorm
+                cluster_centroids.append(centroid)
+                cluster_sims_by_label[label] = np.dot(cluster_embs, centroid)
+
+            # Who each group looks like, from the faces already named, for every group
+            # at once. The queue itself is keyword-driven and can only offer a name the
+            # photo mentions, which is no help at all for a photo naming nobody.
+            cluster_suggestions = suggest_for_all(cluster_centroids)
+
             faces = []
             for cluster_idx, label in enumerate(sorted_labels):
                 indices = cluster_groups[label]
                 cluster_name = f"Cluster {cluster_idx + 1}"
-                
-                # Compute the centroid of this cluster to get similarities
-                cluster_embs = embs[indices]
-                cluster_centroid = np.mean(cluster_embs, axis=0)
-                cnorm = np.linalg.norm(cluster_centroid)
-                if cnorm > 0:
-                    cluster_centroid /= cnorm
-                cluster_sims = np.dot(cluster_embs, cluster_centroid)
-
-                # Who this group looks like, from the faces already named. The queue
-                # itself is keyword-driven and can only offer a name the photo
-                # mentions, which is no help at all for a photo naming nobody.
-                suggested_name, suggested_sim = suggest_for(cluster_embs)
+                cluster_sims = cluster_sims_by_label[label]
+                suggested_name, suggested_sim = cluster_suggestions[cluster_idx]
 
                 for local_idx, global_idx in enumerate(indices):
                     r = valid_rows[global_idx]
@@ -4054,9 +4083,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 order = np.argsort(-against_person)
                 ranked = [ranked[i] for i in order]
 
-            for global_idx in ranked[:UNCLUSTERED_LIMIT]:
+            # Each unclustered face is its own group of one, so its centroid is itself.
+            shown_unclustered = ranked[:UNCLUSTERED_LIMIT]
+            lone_suggestions = suggest_for_all(
+                [embs[i] for i in shown_unclustered]) if shown_unclustered else []
+
+            for position, global_idx in enumerate(shown_unclustered):
                 r = valid_rows[global_idx]
-                lone_name, lone_sim = suggest_for(embs[global_idx:global_idx + 1])
+                lone_name, lone_sim = lone_suggestions[position]
                 try:
                     box = json.loads(r[2]) if r[2] else []
                 except Exception:
