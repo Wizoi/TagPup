@@ -67,6 +67,10 @@ Some tests exist to stop a whole class of mistake rather than to cover a feature
 - `tests/test_path_locker.py` covers locks left behind by a killed process.
 - `tests/test_person_tag_duplication.py` covers a tag being written whole rather than
   scattered into its segments.
+- `tests/frontend/person-tag-form.test.mjs` covers a person being written as the tag
+  they are filed under. Face recognition and the suggester both speak in leaf names, so
+  every path that accepts one has to resolve it before writing; the ones that did not
+  added a person a second time, bare, beside the `People/<name>` already there.
 
 ## Traps
 
@@ -113,6 +117,7 @@ All of these are dry-run by default and take `--apply` to write. Take a backup f
 | --- | --- |
 | `scripts/verify_workflow.py` | End-to-end pass over both apps against a throwaway copy of a database. |
 | `scripts/merge_duplicate_person_tags.py` | Removes a bare person tag where a `People/<name>` already names them. |
+| `scripts/repair_bare_person_tags.py` | Rewrites a photo's keywords so a person carries their full path, not a bare leaf. |
 | `scripts/restore_face_names.py` | Restores face names from a JSON snapshot. |
 
 ## Things that were true and are worth not re-learning
