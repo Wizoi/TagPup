@@ -172,17 +172,26 @@ describe("suggestion progress polling", () => {
 });
 
 describe("indexing progress polling", () => {
-  /** Press "add folder to index", which is what starts the index poller. */
-  async function startIndexing(ctx) {
-    ctx.document.getElementById("btn-index-folder").click();
+  /**
+   * The index poller is no longer started by a button -- TagPup has no Index button,
+   * because adding a folder to a database is TagTuner's job. It starts when the page
+   * opens on a folder, so that an index running elsewhere still shows its progress
+   * here. That is the path these drive.
+   */
+  async function openOnAFolder(t, sequence) {
+    const server = baseRoutes(new ScriptedServer("/api/folder/index-status", sequence));
+    const ctx = await loadApp("tagpup", { t,
+      url: "http://localhost:8090/photo_index/?path=" + encodeURIComponent(FOLDER),
+      server,
+    });
     await flush(ctx.window, 6);
+    return ctx;
   }
 
   test("a folder never indexed reports ready and stops", async (t) => {
-    const ctx = await loadWithStatus(t, "/api/folder/index-status", [
+    const ctx = await openOnAFolder(t, [
       { status: "completed", percent: 100, message: "Ready" },
     ]);
-    await startIndexing(ctx);
     await waitMs(200);
     const settled = ctx.server.statusCalls;
     assert.ok(settled > 0, "the index poller never ran");
@@ -192,10 +201,9 @@ describe("indexing progress polling", () => {
   });
 
   test("a running index reports its message and percentage", async (t) => {
-    const ctx = await loadWithStatus(t, "/api/folder/index-status", [
+    const ctx = await openOnAFolder(t, [
       { status: "running", percent: 45, message: "Indexing photos: 50%" },
     ]);
-    await startIndexing(ctx);
     await waitMs(60);
 
     const container = ctx.document.getElementById("index-progress-container");
@@ -207,20 +215,26 @@ describe("indexing progress polling", () => {
     );
   });
 
-  test("a failed index stops polling and re-enables the buttons", async (t) => {
-    const ctx = await loadWithStatus(t, "/api/folder/index-status", [
+  test("a failed index stops polling rather than spinning", async (t) => {
+    const ctx = await openOnAFolder(t, [
       { status: "failed", percent: 0, message: "Indexing failed with exit code 1." },
     ]);
-    await startIndexing(ctx);
     await waitMs(200);
     const settled = ctx.server.statusCalls;
     await waitMs(200);
 
     assert.equal(ctx.server.statusCalls, settled, "poller kept running after failure");
+    assert.ok(
+      ctx.document.getElementById("index-progress-container").classList.contains("hidden"),
+      "the progress bar was left up after a failure"
+    );
+  });
+
+  test("there is no Index button to press", async (t) => {
+    const ctx = await openOnAFolder(t, [{ status: "completed", percent: 100 }]);
     assert.equal(
-      ctx.document.getElementById("btn-index-folder").disabled,
-      false,
-      "the index button was left disabled after a failure"
+      ctx.document.getElementById("btn-index-folder"), null,
+      "the Index button is back; adding folders belongs to TagTuner"
     );
   });
 });

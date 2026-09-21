@@ -82,65 +82,68 @@ describe("the tag vocabulary is used, not reinvented", () => {
   });
 });
 
-describe("a variable is declared before anything can reach it", () => {
-  test("state used during startup is declared above the startup code", () => {
-    // scanFolder() runs during init when the page carries a ?path=, roughly 900 lines
-    // above where facesRequestToken used to be declared with `let`. Reaching a `let`
-    // before its declaration has run throws "Cannot access X before initialization",
-    // and inside scanFolder's promise chain that surfaced as "Error scanning folder"
-    // -- leaving the folder unopenable and looking nothing like its cause.
-    const startupLine = LINES.findIndex((l) => /^\s*scanFolder\(false\);/.test(l));
-    assert.ok(startupLine > 0, "startup no longer scans on a ?path=; update this test");
+describe("the app starts itself last", () => {
+  /**
+   * This one is worth the trouble, because its failures name the wrong line.
+   *
+   * Opening the ?path= folder on load calls into most of the app. Run from the middle
+   * of the closure, it reaches `let` bindings declared further down, and a `let`
+   * reached early does not read as undefined -- it throws, taking the rest of the
+   * closure's body with it. Every binding below that point is then permanently
+   * uninitialised, so the error a user sees comes from some later, unrelated line.
+   *
+   * That is exactly what happened: checkIndexingStatus touched indexProgressTimer and
+   * threw, so facesRequestToken was never initialised either, and the visible failure
+   * was "Error scanning folder: Cannot access 'facesRequestToken' before
+   * initialization" -- two removes from the line at fault. Which is why the rule is
+   * positional rather than a hunt for which bindings are safe: nothing runs the app
+   * until everything is defined.
+   */
+  const anchor = LINES.findIndex((l) =>
+    /^ {4}const params = new URLSearchParams\(window\.location\.search\);/.test(l)
+  );
+  // Declared in the startup block itself, so below the anchor by definition.
+  const OWN = new Set(["params", "initialPath"]);
 
-    // Once the app starts itself, any closure-level binding declared further down is
-    // only safe if nothing above it reads it -- because a function defined above can
-    // be *called* from startup long before the body reaches the declaration. That is
-    // the invariant that broke, so it is checked directly: a binding declared after
-    // startup must not be named on any earlier line.
+  test("the startup block is still where this guard expects it", () => {
+    assert.ok(anchor > 0, "the startup block moved or changed shape; update this guard");
+    assert.ok(
+      LINES.slice(anchor).some((l) => l.includes("checkIndexingStatus(initialPath)")),
+      "startup no longer picks up a running index; update this guard"
+    );
+  });
+
+  test("no closure-level state is declared after it", () => {
     const offenders = [];
     LINES.forEach((line, i) => {
-      if (i <= startupLine) return;
+      if (i <= anchor) return;
       const declared = line.match(/^ {4}(?:let|const)\s+(\w+)\s*=/);
-      if (!declared) return;
-      const name = declared[1];
-      const pattern = new RegExp(`\\b${name}\\b`);
-      const usedAbove = LINES.slice(0, i).some(
-        (earlier) => pattern.test(earlier) && !/^\s*(\/\/|\*|\/\*)/.test(earlier)
-      );
-      if (usedAbove) offenders.push(`app.js:${i + 1}: ${name}`);
+      if (declared && !OWN.has(declared[1])) {
+        offenders.push(`app.js:${i + 1}: ${declared[1]}`);
+      }
     });
 
     assert.deepEqual(
       offenders,
       [],
-      "read above the line that declares them, while the app starts itself further " +
-        "up -- reaching one of these before its declaration runs throws 'Cannot " +
-        "access X before initialization'. Declare them with the other state at the " +
-        "top:\n" + offenders.join("\n")
+      "declared after the app starts itself, so startup can reach them before this " +
+        "line has run: " + offenders.join(", ")
     );
   });
-});
 
-describe("the vocabulary behaves", () => {
-  // Driven through the real app so these test the shipped helpers, not a copy.
-  async function app(t) {
-    const ctx = await loadApp("tagpup", {
-      t,
-      server: new FakeServer()
-        .on("/api/tags", [])
-        .on("/api/people", [])
-        .on("/api/taxonomy/tree", [])
-        .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" }),
-    });
-    await flush(ctx.window, 2);
-    return ctx;
-  }
+  test("nothing but the closing brace follows it", () => {
+    const end = LINES.findIndex((l, i) => i > anchor && /^ {4}\}$/.test(l));
+    assert.ok(end > anchor, "could not find the end of the startup block");
 
-  test("the app starts without a startup error", async (t) => {
-    const ctx = await app(t);
-    const bad = ctx.consoleErrors.filter((e) =>
-      String(e).includes("before initialization")
+    const after = LINES.slice(end + 1)
+      .map((l, i) => [l.trim(), end + i + 2])
+      .filter(([text]) => text && text !== "}" && text !== "});" && !text.startsWith("//"));
+
+    assert.deepEqual(
+      after.map(([text, line]) => `app.js:${line}: ${text}`),
+      [],
+      "code runs after the app has started itself; move the startup block back to " +
+        "the very end of the closure"
     );
-    assert.deepEqual(bad, [], `startup threw: ${bad.join("; ")}`);
   });
 });

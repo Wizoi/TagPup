@@ -143,7 +143,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // DOM Elements
     const folderPathInput = document.getElementById('folder-path-input');
     const btnBrowseFolder = document.getElementById('btn-browse-folder');
-    const btnIndexFolder = document.getElementById('btn-index-folder');
     const btnSuggestTags = document.getElementById('btn-suggest-tags');
     const suggestProgressContainer = document.getElementById('suggest-progress-container');
     const suggestProgressBar = document.getElementById('suggest-progress-bar');
@@ -452,15 +451,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load Datalists on Startup
     fetchKnownTagsAndPeople();
 
-    // Check for folder path in URL on startup
-    const params = new URLSearchParams(window.location.search);
-    const initialPath = params.get('path');
-    if (initialPath) {
-        folderPathInput.value = initialPath;
-        scanFolder(false);
-        checkIndexingStatus(initialPath);
-    }
-
     // Event Listeners setup
     btnBrowseFolder.addEventListener('click', browseFolder);
     folderPathInput.addEventListener('input', () => {
@@ -488,7 +478,6 @@ document.addEventListener('DOMContentLoaded', () => {
     folderPathInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); openChosenFolder(); }
     });
-    btnIndexFolder.addEventListener('click', startIndexing);
     btnSuggestTags.addEventListener('click', startSuggestions);
     btnRefreshList.addEventListener('click', () => scanFolder(true));
     
@@ -2801,42 +2790,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let indexProgressTimer = null;
 
-    function startIndexing() {
-        const path = folderPathInput.value.trim();
-        if (!path) {
-            flagField(folderPathInput, 'Choose or type a folder to index');
-            return;
-        }
-
-        btnIndexFolder.disabled = true;
-        btnSuggestTags.disabled = true;
-
-        statusDot.className = 'status-indicator-dot busy';
-        statusText.textContent = 'Indexing...';
-
-        fetch('/api/folder/index-start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ folder_path: path })
-        })
-        .then(res => {
-            if (!res.ok) return res.json().then(e => { throw new Error(e.error || 'Indexing start failed') });
-            return res.json();
-        })
-        .then(data => {
-            if (data.success) {
-                checkIndexingStatus(path);
-            }
-        })
-        .catch(err => {
-            console.error(err);
-            btnIndexFolder.disabled = false;
-            btnSuggestTags.disabled = false;
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Ready';
-            alert("Error starting indexing: " + err.message);
-        });
-    }
+    // There is no Index button any more. Adding a folder to a database is TagTuner's
+    // job -- it queues folders and survives a page refresh -- and the other half of
+    // what this button was for, telling the index about keywords TagPup had just
+    // written, is done by the writers themselves now. checkIndexingStatus stays, so
+    // an index started elsewhere still shows its progress here.
 
     function checkIndexingStatus(folderPath) {
         if (indexProgressTimer) clearInterval(indexProgressTimer);
@@ -2856,7 +2814,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         const wasVisible = !indexProgressContainer.classList.contains('hidden');
                         indexProgressContainer.classList.add('hidden');
                         
-                                    btnIndexFolder.disabled = false;
                         
                         if (wasVisible) {
                             fetchKnownTagsAndPeople();
@@ -2872,7 +2829,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         const wasVisible = !indexProgressContainer.classList.contains('hidden');
                         indexProgressContainer.classList.add('hidden');
                         
-                                    btnIndexFolder.disabled = false;
                         updateSuggestButtonState();
                         
                         if (wasVisible) {
@@ -4476,5 +4432,29 @@ document.addEventListener('DOMContentLoaded', () => {
             await loadTaxonomy();
             return targetPath;
         }
+    }
+
+    // ---- Start ------------------------------------------------------------
+    //
+    // Last, deliberately. This opens the folder in the ?path= and picks up an index
+    // already running on it, which means it calls into most of the app. Doing that
+    // from the middle of this closure reaches `let` bindings declared further down
+    // before their declarations have run, and a `let` reached early does not read as
+    // undefined -- it throws.
+    //
+    // It did: checkIndexingStatus touched indexProgressTimer, threw, and took the
+    // rest of this closure's body with it, so facesRequestToken was never initialised
+    // either. The scan that followed then failed on *that*, and the message said
+    // "Error scanning folder: Cannot access 'facesRequestToken' before
+    // initialization" -- two removes from the line at fault.
+    //
+    // Nothing runs the app before this point. tests/frontend/tag-vocabulary.test.mjs
+    // keeps it that way.
+    const params = new URLSearchParams(window.location.search);
+    const initialPath = params.get('path');
+    if (initialPath) {
+        folderPathInput.value = initialPath;
+        scanFolder(false);
+        checkIndexingStatus(initialPath);
     }
 });
