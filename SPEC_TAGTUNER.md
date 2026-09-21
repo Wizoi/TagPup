@@ -117,10 +117,30 @@ is one:
 
 That second case is why a plainly recognisable person can sit in Unknown Faces: the
 keyword mechanism has no name to file them under, however obvious they are. So each
-cluster is additionally compared against the **faces already named**, and offers
-"Looks like Emory Kade (93%)" when it clears 0.75. The similarity is always shown, and
-the suggestion only fills the name box -- assigning stays a separate, deliberate act.
-Against the kr-track library this names 65 of 234 unknown clusters, at 0.92 and above.
+cluster is additionally compared against the **faces already named**.
+
+- At **0.85 and above** the pill reads "Looks like Emory Kade (93%)".
+- Between **0.70 and 0.85** it reads "Possibly Emory Kade (72%)", styled down and
+  saying to check the faces first. The floor sits at 0.70 rather than higher because
+  a weak guess is still a shortlist of one, and confirming or rejecting it costs a
+  glance -- which beats reading a nameless grid.
+
+The similarity is always shown, so the judgement stays with the person. The pill's
+label fills the name box without committing; its **Assign** button commits the whole
+cluster immediately, with no confirmation, because a prompt on every cluster is the
+friction the button exists to remove. What makes that fair is the undo offered
+straight afterwards.
+
+**Clusters are ordered by confidence**, then by size. Sorting by size alone put the
+biggest puzzles at the top and scattered the easy wins, so the page opened on the
+hardest thing on it. Within a confidence band size still decides, because a bigger
+cluster is more work resolved by the same click.
+
+**Ignoring a cluster** asks once, through a real dialog rather than `confirm()` --
+a native one cannot carry the "don't ask again" checkbox that somebody clicking
+through hundreds of clusters needs. The preference is remembered across sessions.
+With the question off it acts immediately, and either way the result is offered back:
+an assignment is undone by unmatching, an exclusion by restoring.
 
 ### 1. Interactive Face Tuning
 - Clicking on a face card in the "Detected Faces" grid selects it and expands it to show the editing panel.

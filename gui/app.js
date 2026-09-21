@@ -210,6 +210,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let lastLoadedPersonName = null;
     const btnExcludeSelected = document.getElementById('btn-exclude-selected');
     const matchingDetailCrop = document.getElementById('matching-detail-crop');
+    const ignoreConfirmModal = document.getElementById('ignore-confirm-modal');
+    const ignoreConfirmText = document.getElementById('ignore-confirm-text');
+    const ignoreConfirmDontAsk = document.getElementById('ignore-confirm-dont-ask');
+    const btnIgnoreConfirmOk = document.getElementById('btn-ignore-confirm-ok');
+    const btnIgnoreConfirmCancel = document.getElementById('btn-ignore-confirm-cancel');
+    const btnIgnoreConfirmClose = document.getElementById('btn-ignore-confirm-close');
     const assignUndoBar = document.getElementById('assign-undo-bar');
     const assignUndoText = document.getElementById('assign-undo-text');
     const btnAssignUndo = document.getElementById('btn-assign-undo');
@@ -2570,10 +2576,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     // you want to look before you leap, or edit it first.
                     const guessLabel = document.createElement('button');
                     guessLabel.className = 'cluster-suggestion-label';
-                    guessLabel.textContent = `Looks like ${guessName} (${pct}%)`;
+                    // A guess at 0.72 and one at 0.95 deserve different words. Both
+                    // are worth showing -- a weak guess is still a shortlist of one --
+                    // but only one of them should read as an answer.
+                    const isConfident = suggestion.suggestion_strength !== 'possible';
+                    guess.classList.add(isConfident ? 'is-likely' : 'is-possible');
+                    guessLabel.textContent = isConfident
+                        ? `Looks like ${guessName} (${pct}%)`
+                        : `Possibly ${guessName} (${pct}%)`;
                     guessLabel.title = `Compared against the faces already named `
-                        + `${guessName}. Click to put the name in the box without `
-                        + `assigning anything.`;
+                        + `${guessName}. `
+                        + (isConfident ? '' : 'A weaker match, so check the faces first. ')
+                        + `Click to put the name in the box without assigning anything.`;
                     guessLabel.addEventListener('click', (e) => {
                         e.stopPropagation();
                         if (inputReassignName) {
@@ -2597,7 +2611,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         guessAccept.disabled = true;
                         guessAccept.textContent = 'Assigning...';
                         postMatchBulk(ids, guessName);
-                        offerAssignUndo(ids, guessName);
+                        offerAssignUndo(ids, guessName, 'assign');
                     });
 
                     guess.appendChild(guessLabel);
@@ -2674,15 +2688,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     + 'Excluded bucket and can be put back.';
                 ignoreBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
+                    const ids = groupFaces.map(f => f.id);
                     const numPhotos = new Set(groupFaces.map(f => f.photo_path)).size;
-                    const ok = confirm(
-                        `Ignore ${groupFaces.length} face(s) from ${numPhotos} photo(s)?\n\n`
-                        + 'They will stop being offered as a match for anyone. '
-                        + 'Nothing is deleted -- they move to the Excluded bucket, '
-                        + 'where you can put them back.'
-                    );
-                    if (!ok) return;
-                    postExcludeBulk(groupFaces.map(f => f.id), 'ignored cluster');
+                    askBeforeIgnoring(ids.length, numPhotos, () => {
+                        postExcludeBulk(ids, 'ignored cluster');
+                        offerAssignUndo(ids, null, 'ignore');
+                    });
                 });
                 header.appendChild(ignoreBtn);
             }
@@ -2805,9 +2816,23 @@ This photo also names ${face.other_names.join(', ')}. `
                 yearHeader.textContent = `Year: ${year}`;
                 yearContainer.appendChild(yearHeader);
 
-                // Sort clusters inside this year by size descending
+                // Clusters you can act on, first. A named guess is one click from
+                // done; a nameless cluster is a puzzle. Sorting by size put the
+                // biggest puzzles at the top and scattered the easy wins, so the page
+                // opened on the hardest thing on it.
+                //
+                // Within each band size still decides, because a bigger cluster is
+                // more work resolved by the same click.
                 const clusters = yearClusters[year];
-                clusters.sort((a, b) => b.faces.length - a.faces.length);
+                const confidenceOf = (cluster) => {
+                    const withGuess = cluster.faces.find(f => f.suggested_name);
+                    return withGuess ? (withGuess.suggested_similarity || 0) : 0;
+                };
+                clusters.sort((a, b) => {
+                    const diff = confidenceOf(b) - confidenceOf(a);
+                    if (Math.abs(diff) > 0.0001) return diff;
+                    return b.faces.length - a.faces.length;
+                });
 
                 clusters.forEach(cluster => {
                     const section = renderGroupSection(cluster.name, cluster.faces, true);
@@ -3276,15 +3301,65 @@ This photo also names ${face.other_names.join(', ')}. `
      * itself after a while, because an undo offered forever starts to read as an
      * unfinished job rather than a safety net.
      */
+    //: Remembered across sessions: this is clicked constantly, and being asked every
+    //: time is the friction the undo exists to make unnecessary.
+    const IGNORE_CONFIRM_KEY = 'tagtuner.confirmIgnoreCluster';
+
+    function shouldConfirmIgnore() {
+        try {
+            return localStorage.getItem(IGNORE_CONFIRM_KEY) !== 'never';
+        } catch (e) {
+            return true;   // no storage: keep asking, which is the safe direction
+        }
+    }
+
+    let pendingIgnore = null;
+    function askBeforeIgnoring(faceCount, photoCount, proceed) {
+        if (!shouldConfirmIgnore() || !ignoreConfirmModal) {
+            proceed();
+            return;
+        }
+        pendingIgnore = proceed;
+        ignoreConfirmText.textContent =
+            `${faceCount} face${faceCount !== 1 ? 's' : ''} from `
+            + `${photoCount} photo${photoCount !== 1 ? 's' : ''} will stop being offered `
+            + `as a match for anyone.`;
+        if (ignoreConfirmDontAsk) ignoreConfirmDontAsk.checked = false;
+        ignoreConfirmModal.classList.remove('hidden');
+    }
+
+    function closeIgnoreConfirm() {
+        if (ignoreConfirmModal) ignoreConfirmModal.classList.add('hidden');
+        pendingIgnore = null;
+    }
+
+    if (btnIgnoreConfirmOk) {
+        btnIgnoreConfirmOk.addEventListener('click', () => {
+            if (ignoreConfirmDontAsk && ignoreConfirmDontAsk.checked) {
+                try {
+                    localStorage.setItem(IGNORE_CONFIRM_KEY, 'never');
+                } catch (e) { /* the preference just will not stick */ }
+            }
+            const proceed = pendingIgnore;
+            closeIgnoreConfirm();
+            if (proceed) proceed();
+        });
+    }
+    if (btnIgnoreConfirmCancel) btnIgnoreConfirmCancel.addEventListener('click', closeIgnoreConfirm);
+    if (btnIgnoreConfirmClose) btnIgnoreConfirmClose.addEventListener('click', closeIgnoreConfirm);
+
     let assignUndoTimer = null;
-    function offerAssignUndo(faceIds, name) {
+    function offerAssignUndo(faceIds, name, kind) {
         if (!assignUndoBar) return;
         if (assignUndoTimer) clearTimeout(assignUndoTimer);
 
-        assignUndoText.textContent =
-            `Assigned ${faceIds.length} face${faceIds.length !== 1 ? 's' : ''} to ${name}`;
+        const n = faceIds.length;
+        assignUndoText.textContent = kind === 'ignore'
+            ? `Ignored ${n} face${n !== 1 ? 's' : ''}`
+            : `Assigned ${n} face${n !== 1 ? 's' : ''} to ${name}`;
         assignUndoBar.classList.remove('hidden');
         assignUndoBar.dataset.faceIds = JSON.stringify(faceIds);
+        assignUndoBar.dataset.undoKind = kind || 'assign';
 
         assignUndoTimer = setTimeout(() => {
             assignUndoBar.classList.add('hidden');
@@ -3306,8 +3381,13 @@ This photo also names ${face.other_names.join(', ')}. `
             try {
                 ids = JSON.parse(assignUndoBar.dataset.faceIds || '[]');
             } catch (e) { /* nothing to undo */ }
+            const kind = assignUndoBar.dataset.undoKind || 'assign';
             hideAssignUndo();
-            if (ids.length) postUnmatchBulk(ids);
+            if (!ids.length) return;
+            // Each action has its own way back: an assignment is unmatched, an
+            // exclusion is restored. Getting this wrong would quietly do nothing.
+            if (kind === 'ignore') postRestoreBulk(ids);
+            else postUnmatchBulk(ids);
         });
     }
     if (btnAssignUndoDismiss) {

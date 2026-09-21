@@ -50,7 +50,11 @@ function serverWith(faces, count = 2) {
 }
 
 async function openPerson(t, faces) {
-  const server = serverWith(faces).on("/api/faces/exclude", { success: true, excluded: faces.length });
+  const server = serverWith(faces)
+    .on("/api/faces/exclude", { success: true, excluded: faces.length })
+    .on("/api/faces/restore", { success: true, restored: faces.length })
+    .on("/api/faces/unmatch-bulk", { success: true })
+    .on("/api/faces/match-bulk", { success: true, matched: faces.length });
   const { window, document } = await loadApp("tagtuner", {
     server,
     url: `http://localhost:8080/kr-track/?mode=unmatched-faces&person=${encodeURIComponent(NAME)}`,
@@ -156,17 +160,39 @@ describe("a name with no candidates at all", () => {
 
 describe("ignoring a cluster", () => {
   // Exclusion already meant "never offer this face to anyone", but reaching it
-  // required ticking every face in the group. A cluster of a stranger at a meet
-  // can be thirty faces, which is thirty clicks to say one thing.
-  const cluster = [
-    face(10, 0.95, 0),
-    face(11, 0.94, 0),
-    face(12, 0.92, 0),
-  ];
+  // required ticking every face in the group. A cluster of a stranger at a meet can
+  // be thirty faces, which is thirty clicks to say one thing.
+  //
+  // The confirmation is a real dialog rather than confirm(), because a native one
+  // cannot carry the checkbox that lets somebody clicking through hundreds of
+  // clusters say "stop asking me".
+  const cluster = [face(10, 0.95, 0), face(11, 0.94, 0), face(12, 0.92, 0)];
 
   function ignoreButton(document) {
     return [...document.querySelectorAll(".matching-group-header button")]
       .find((b) => /Ignore Cluster/.test(b.textContent));
+  }
+
+  function dialog(document) {
+    return document.getElementById("ignore-confirm-modal");
+  }
+
+  async function clickIgnore(t, { confirmIt = true, dontAskAgain = false } = {}) {
+    const { document, window, server } = await openPerson(t, cluster);
+    try {
+      window.localStorage.clear();
+    } catch (e) { /* no storage in this environment */ }
+    ignoreButton(document).click();
+    await new Promise((r) => window.setTimeout(r, 20));
+
+    if (!dialog(document).classList.contains("hidden")) {
+      if (dontAskAgain) document.getElementById("ignore-confirm-dont-ask").checked = true;
+      document.getElementById(
+        confirmIt ? "btn-ignore-confirm-ok" : "btn-ignore-confirm-cancel"
+      ).click();
+    }
+    await new Promise((r) => window.setTimeout(r, 40));
+    return { document, window, server };
   }
 
   test("every cluster offers it, beside Assign Cluster", async (t) => {
@@ -174,45 +200,111 @@ describe("ignoring a cluster", () => {
     assert.ok(ignoreButton(document), "no way to ignore a cluster");
   });
 
-  test("it excludes every face in the cluster at once", async (t) => {
+  test("it asks before excluding anything", async (t) => {
     const { document, window, server } = await openPerson(t, cluster);
-    window.confirm = () => true;
     ignoreButton(document).click();
-    await new Promise((r) => window.setTimeout(r, 40));
+    await new Promise((r) => window.setTimeout(r, 20));
 
-    const body = server.lastBody("/api/faces/exclude");
-    assert.deepEqual(body.face_ids, [10, 11, 12]);
+    assert.ok(!dialog(document).classList.contains("hidden"), "it did not ask");
+    assert.equal(server.lastBody("/api/faces/exclude"), undefined,
+                 "it excluded before the question was answered");
   });
 
-  test("it asks first, and declining changes nothing", async (t) => {
-    const { document, window, server } = await openPerson(t, cluster);
-    window.confirm = () => false;
+  test("the question says how much it covers", async (t) => {
+    const { document, window } = await openPerson(t, cluster);
     ignoreButton(document).click();
-    await new Promise((r) => window.setTimeout(r, 40));
+    await new Promise((r) => window.setTimeout(r, 20));
+    assert.match(document.getElementById("ignore-confirm-text").textContent,
+                 /3 faces from 2 photos/);
+  });
 
+  test("confirming excludes every face in the cluster", async (t) => {
+    const { server } = await clickIgnore(t);
+    assert.deepEqual(server.lastBody("/api/faces/exclude").face_ids, [10, 11, 12]);
+  });
+
+  test("cancelling changes nothing", async (t) => {
+    const { server } = await clickIgnore(t, { confirmIt: false });
     assert.equal(server.lastBody("/api/faces/exclude"), undefined);
   });
 
   test("it does not ask twice for the same decision", async (t) => {
-    // The bulk path prompts for a reason; asking again after a confirm that
-    // already stated the scope is the friction that stops a feature being used.
+    // The bulk path prompts for a reason; asking again after a dialog that already
+    // stated the scope is the friction that stops a feature being used.
     const { document, window, server } = await openPerson(t, cluster);
     let prompted = false;
-    window.confirm = () => true;
     window.prompt = () => { prompted = true; return "x"; };
     ignoreButton(document).click();
+    await new Promise((r) => window.setTimeout(r, 20));
+    document.getElementById("btn-ignore-confirm-ok").click();
     await new Promise((r) => window.setTimeout(r, 40));
 
     assert.equal(prompted, false, "a second modal appeared for the same decision");
+    assert.ok(server.lastBody("/api/faces/exclude"));
   });
 
   test("the reason it records says where it came from", async (t) => {
+    const { server } = await clickIgnore(t);
+    assert.match(server.lastBody("/api/faces/exclude").reason, /cluster/);
+  });
+
+  test("it offers the exclusion back", async (t) => {
+    const { document } = await clickIgnore(t);
+    const bar = document.getElementById("assign-undo-bar");
+    assert.ok(!bar.classList.contains("hidden"), "no way back was offered");
+    assert.match(document.getElementById("assign-undo-text").textContent,
+                 /Ignored 3 faces/);
+  });
+
+  test("undoing an ignore restores rather than unmatches", async (t) => {
+    // Each action has its own way back. Calling the wrong one would quietly do
+    // nothing, which is worse than failing.
+    const { document, window, server } = await clickIgnore(t);
+    document.getElementById("btn-assign-undo").click();
+    await new Promise((r) => window.setTimeout(r, 40));
+
+    assert.deepEqual(server.lastBody("/api/faces/restore").face_ids, [10, 11, 12]);
+    assert.equal(server.lastBody("/api/faces/unmatch-bulk"), undefined,
+                 "it tried to unmatch faces that were never assigned");
+  });
+
+  test("ticking don't ask again records the preference", async (t) => {
+    const { window, server } = await clickIgnore(t, { dontAskAgain: true });
+    assert.ok(server.lastBody("/api/faces/exclude"), "the first one did not go through");
+    assert.equal(
+      window.localStorage.getItem("tagtuner.confirmIgnoreCluster"),
+      "never",
+      "the choice was not remembered, so it will ask again next time"
+    );
+  });
+
+  test("not ticking it leaves the question in place", async (t) => {
+    const { window } = await clickIgnore(t);
+    assert.equal(window.localStorage.getItem("tagtuner.confirmIgnoreCluster"), null);
+  });
+
+  test("with the preference stored, it acts without asking", async (t) => {
+    // Each jsdom window has its own storage, so the preference is set directly
+    // rather than carried from a previous window the way a browser would.
     const { document, window, server } = await openPerson(t, cluster);
-    window.confirm = () => true;
+    window.localStorage.setItem("tagtuner.confirmIgnoreCluster", "never");
+
     ignoreButton(document).click();
     await new Promise((r) => window.setTimeout(r, 40));
 
-    assert.match(server.lastBody("/api/faces/exclude").reason, /cluster/);
+    assert.ok(dialog(document).classList.contains("hidden"), "it asked anyway");
+    assert.deepEqual(server.lastBody("/api/faces/exclude").face_ids, [10, 11, 12]);
+  });
+
+  test("with the question off, the undo is still offered", async (t) => {
+    // Acting without asking is only reasonable because the way back is one click.
+    const { document, window } = await openPerson(t, cluster);
+    window.localStorage.setItem("tagtuner.confirmIgnoreCluster", "never");
+
+    ignoreButton(document).click();
+    await new Promise((r) => window.setTimeout(r, 40));
+
+    assert.ok(!document.getElementById("assign-undo-bar").classList.contains("hidden"));
   });
 });
 
@@ -531,5 +623,78 @@ describe("the cluster header keeps still", () => {
     const { document } = await openPerson(t, withSuggestion);
     const title = document.querySelector(".matching-group-title");
     assert.ok(title, "the title has no class to constrain it with");
+  });
+});
+
+describe("weaker guesses, and what comes first", () => {
+  // The floor was lowered to 0.70: a weak guess is still a shortlist of one, and
+  // confirming or rejecting it costs a glance -- which beats reading a nameless grid.
+  // But a guess at 0.72 and one at 0.95 must not read the same.
+  function cluster(id, sim, strength, size = 2) {
+    return Array.from({ length: size }, (_, i) => ({
+      ...face(id + i, 0.95, id),
+      cluster_name: `Cluster ${id}`,
+      suggested_name: strength ? `Person ${id}` : null,
+      suggested_similarity: sim,
+      suggestion_strength: strength,
+    }));
+  }
+
+  test("a confident guess reads as an answer", async (t) => {
+    const { document } = await openPerson(t, cluster(100, 0.93, "likely"));
+    const pill = document.querySelector(".cluster-suggestion");
+    assert.match(pill.textContent, /Looks like Person 100 \(93%\)/);
+    assert.ok(pill.classList.contains("is-likely"));
+  });
+
+  test("a weaker guess reads as a maybe", async (t) => {
+    const { document } = await openPerson(t, cluster(200, 0.72, "possible"));
+    const pill = document.querySelector(".cluster-suggestion");
+    assert.match(pill.textContent, /Possibly Person 200 \(72%\)/);
+    assert.ok(pill.classList.contains("is-possible"));
+  });
+
+  test("a weaker guess says to check first", async (t) => {
+    const { document } = await openPerson(t, cluster(200, 0.72, "possible"));
+    assert.match(
+      document.querySelector(".cluster-suggestion-label").title,
+      /weaker match, so check the faces first/
+    );
+  });
+
+  test("a weaker guess can still be accepted in one click", async (t) => {
+    const { document, window, server } = await openPerson(t, cluster(200, 0.72, "possible"));
+    document.querySelector(".cluster-suggestion-assign").click();
+    await new Promise((r) => window.setTimeout(r, 40));
+    assert.equal(server.lastBody("/api/faces/match-bulk").person_name, "Person 200");
+  });
+
+  test("clusters you can act on come first", async (t) => {
+    // Sorting by size put the biggest puzzles at the top and scattered the easy
+    // wins, so the page opened on the hardest thing on it.
+    const faces = [
+      ...cluster(300, 0, null, 6),          // big, nameless
+      ...cluster(400, 0.72, "possible", 2), // small, weak guess
+      ...cluster(500, 0.95, "likely", 2),   // small, strong guess
+    ];
+    const { document } = await openPerson(t, faces);
+    const titles = [...document.querySelectorAll(".matching-group-title")]
+      .map((el) => el.textContent);
+
+    assert.match(titles[0], /Cluster 500/, "the confident one is not first");
+    assert.match(titles[1], /Cluster 400/, "the weak guess is not second");
+    assert.match(titles[2], /Cluster 300/, "the nameless one is not last");
+  });
+
+  test("among equals the bigger cluster still wins", async (t) => {
+    // Same confidence, so size decides: more work resolved by the same click.
+    const faces = [
+      ...cluster(600, 0, null, 2),
+      ...cluster(700, 0, null, 5),
+    ];
+    const { document } = await openPerson(t, faces);
+    const titles = [...document.querySelectorAll(".matching-group-title")]
+      .map((el) => el.textContent);
+    assert.match(titles[0], /Cluster 700/);
   });
 });

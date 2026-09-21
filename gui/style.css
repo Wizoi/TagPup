@@ -1706,3 +1706,52 @@ body {
         width: auto;
     }
 }
+
+/* A guess at 0.72 and one at 0.95 deserve different weight on the page. Both are
+   shown -- a weak guess is still a shortlist of one -- but only one reads as an
+   answer. */
+.cluster-suggestion.is-possible {
+    border-color: rgba(148, 163, 184, 0.45);
+}
+
+.cluster-suggestion.is-possible .cluster-suggestion-label {
+    background: rgba(148, 163, 184, 0.14);
+    color: var(--text-muted);
+}
+
+.cluster-suggestion.is-possible .cluster-suggestion-label:hover {
+    background: rgba(148, 163, 184, 0.24);
+}
+
+.cluster-suggestion.is-possible .cluster-suggestion-assign {
+    background: rgba(148, 163, 184, 0.4);
+    border-left-color: rgba(148, 163, 184, 0.45);
+}
+
+.cluster-suggestion.is-possible .cluster-suggestion-assign:hover {
+    background: rgba(148, 163, 184, 0.55);
+}
+
+/* Asked once, then remembered. A native confirm() cannot carry the checkbox that
+   makes "stop asking me" possible, and this is clicked constantly. */
+.ignore-confirm-content {
+    max-width: 460px;
+}
+
+.ignore-confirm-note {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.6;
+}
+
+.ignore-confirm-remember {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+}

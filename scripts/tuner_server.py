@@ -3523,9 +3523,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     mats.append(centroid / norm)
                 return names, (np.vstack(mats) if mats else None)
 
-            #: Below this a suggestion is more distraction than help. The number is
-            #: always shown alongside, so the judgement stays with the person.
-            SUGGEST_FLOOR = 0.75
+            #: Below this a suggestion is more distraction than help. Set at 0.70
+            #: rather than higher because a weaker guess is still a shortlist of one,
+            #: and confirming or rejecting it costs a glance -- which beats reading a
+            #: nameless grid. The number is always shown, and a guess under
+            #: SUGGEST_CONFIDENT is labelled as the weaker thing it is.
+            SUGGEST_FLOOR = 0.70
+            SUGGEST_CONFIDENT = 0.85
             known_names, known_matrix = person_centroids()
 
             def suggest_for(cluster_embeddings):
@@ -3632,7 +3636,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         "cluster_name": cluster_name,
                         "other_names": other_unaccounted_names(r),
                         "suggested_name": suggested_name,
-                        "suggested_similarity": round(suggested_sim, 3)
+                        "suggested_similarity": round(suggested_sim, 3),
+                        "suggestion_strength": (
+                            "likely" if suggested_sim >= SUGGEST_CONFIDENT else "possible"
+                        ) if suggested_name else None
                     })
 
             # Append the unclustered faces, flagged so the UI can rank them lowest.
@@ -3663,7 +3670,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     "cluster_name": "Unclustered",
                     "other_names": other_unaccounted_names(r),
                     "suggested_name": lone_name,
-                    "suggested_similarity": round(lone_sim, 3)
+                    "suggested_similarity": round(lone_sim, 3),
+                    "suggestion_strength": (
+                        "likely" if lone_sim >= SUGGEST_CONFIDENT else "possible"
+                    ) if lone_name else None
                 })
 
             # Sort by similarity descending

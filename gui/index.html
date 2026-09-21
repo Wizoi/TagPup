@@ -247,6 +247,32 @@
     <!-- Choose folders to index. A parent can be expanded into its subfolders so each
          is queued on its own, which is what makes progress legible over a season's
          worth of shoots. -->
+    <!-- Asked once, then remembered. A native confirm() cannot carry the checkbox
+         that makes "stop asking me" possible, and this is clicked constantly. -->
+    <div id="ignore-confirm-modal" class="modal hidden">
+        <div class="modal-content ignore-confirm-content">
+            <div class="modal-header">
+                <h3>Ignore this cluster?</h3>
+                <button id="btn-ignore-confirm-close" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="ignore-confirm-text"></p>
+                <p class="ignore-confirm-note">
+                    Nothing is deleted. The faces move to the <strong>Excluded</strong>
+                    bucket and can be put back at any time.
+                </p>
+                <label class="ignore-confirm-remember">
+                    <input type="checkbox" id="ignore-confirm-dont-ask">
+                    Don't ask again &mdash; just ignore, and offer me an undo
+                </label>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-ignore-confirm-cancel" class="btn btn-secondary">Cancel</button>
+                <button id="btn-ignore-confirm-ok" class="btn btn-primary">Ignore cluster</button>
+            </div>
+        </div>
+    </div>
+
     <div id="folder-picker-modal" class="modal hidden">
         <div class="modal-content folder-picker-content">
             <div class="modal-header">
