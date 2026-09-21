@@ -3489,20 +3489,26 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_json({"faces": [], "total_count": 0, "has_more": False})
                 return
 
-            def person_centroids():
-                """One averaged, normalised embedding per already-named person.
+            def named_faces():
+                """Every face that carries a name, with the name beside it.
 
-                Built from the faces that carry a name, which is the only evidence
-                the database has about what somebody looks like. Cached with the rest
-                of this response, against the faces-table fingerprint, so naming a
-                face recomputes it and nothing else does.
+                Not one averaged face per person: the diagnostics panel scores a
+                candidate against the best single named face, and a suggestion that
+                scored the same pair differently would be two numbers for one
+                comparison on one screen. Averaging is also the more cautious of the
+                two -- it drags down when somebody's named faces vary in light and
+                angle, which at a cross-country meet they always do -- and that
+                caution was costing real matches.
+
+                Cached with the rest of this response, against the faces-table
+                fingerprint, so naming a face recomputes it and nothing else does.
                 """
                 cur = conn.cursor()
                 cur.execute(
                     "SELECT name, embedding FROM faces "
                     "WHERE name IS NOT NULL AND embedding IS NOT NULL AND excluded = 0"
                 )
-                by_name = {}
+                names, vecs = [], []
                 for person, blob in cur.fetchall():
                     try:
                         vec = np.frombuffer(blob, dtype=np.float32)
@@ -3511,17 +3517,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     norm = np.linalg.norm(vec)
                     if norm == 0:
                         continue
-                    by_name.setdefault(person, []).append(vec / norm)
-
-                names, mats = [], []
-                for person, vecs in by_name.items():
-                    centroid = np.mean(vecs, axis=0)
-                    norm = np.linalg.norm(centroid)
-                    if norm == 0:
-                        continue
                     names.append(person)
-                    mats.append(centroid / norm)
-                return names, (np.vstack(mats) if mats else None)
+                    vecs.append(vec / norm)
+                return names, (np.vstack(vecs) if vecs else None)
 
             #: Below this a suggestion is more distraction than help. Set at 0.70
             #: rather than higher because a weaker guess is still a shortlist of one,
@@ -3530,24 +3528,27 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             #: SUGGEST_CONFIDENT is labelled as the weaker thing it is.
             SUGGEST_FLOOR = 0.70
             SUGGEST_CONFIDENT = 0.85
-            known_names, known_matrix = person_centroids()
+            known_names, known_matrix = named_faces()
 
-            def reference_centroid(person):
-                """What this person looks like, from the faces already named as them.
+            def reference_faces(person):
+                """Every face already named as this person.
 
-                None when nobody has been named yet -- which is the ordinary case for
-                somebody you are identifying for the first time, and the reason this
-                cannot simply replace the queue.
+                None when nobody has been named yet -- the ordinary case for somebody
+                being identified for the first time, and the reason this cannot simply
+                replace the keyword queue.
                 """
                 if known_matrix is None:
                     return None
-                try:
-                    return known_matrix[known_names.index(person)]
-                except ValueError:
-                    return None
+                rows = [i for i, n in enumerate(known_names) if n == person]
+                return known_matrix[rows] if rows else None
 
             def suggest_for(cluster_embeddings):
-                """Who does this group of faces most resemble, if anyone?"""
+                """Who does this face, or group of faces, most resemble?
+
+                Scored against the best single named face, matching the diagnostics
+                panel exactly, so the badge on a card and the number in the panel
+                cannot disagree.
+                """
                 if known_matrix is None or not len(cluster_embeddings):
                     return None, 0.0
                 centroid = np.mean(cluster_embeddings, axis=0)
@@ -3700,11 +3701,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             # Ranked, not filtered. Two candidates can both be genuinely this person in
             # different photos (measured here: 0.826 and 0.822 for one), so a cutoff
             # would discard a real match to tidy the list.
-            seeking = reference_centroid(name)
+            seeking = reference_faces(name)
             if seeking is not None:
                 for face in faces:
+                    # Against the best of this person's faces, not their average: a
+                    # candidate matching any one of them well is a candidate worth
+                    # looking at, and the panel scores it the same way.
                     face["person_similarity"] = round(
-                        float(np.dot(embs[face.pop("_emb_idx")], seeking)), 3
+                        float(np.max(np.dot(seeking, embs[face.pop("_emb_idx")]))), 3
                     )
                 faces.sort(key=lambda x: x["person_similarity"], reverse=True)
             else:

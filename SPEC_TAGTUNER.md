@@ -142,7 +142,31 @@ cluster immediately, with no confirmation, because a prompt on every cluster is 
 friction the button exists to remove. What makes that fair is the undo offered
 straight afterwards.
 
-The **third tab is named for what it holds**, which depends on whether there is
+**Every face carries its own suggestion, and the bucket is ordered by it.** A cluster
+cannot hold a suggestion on behalf of faces that resemble nothing, but each of those
+faces can hold its own -- and Unknown Faces is full of exactly that. Each card shows
+the name and score where one clears 0.70, clicking the badge selects the face and fills
+the name box (assigning still takes **Assign Selected**), and faces are ordered by their
+best match to anyone already named -- *including* the ones below the floor, whose score
+the server reports even while withholding the name. Ordering only the named ones left
+470 of 500 in arrival order, which is no order at all.
+
+Suggestions are scored against the **best single named face**, which is exactly what the
+diagnostics panel under a selected face reports. They were briefly scored against the
+average of a person's faces instead, which put two different numbers for one comparison
+on one screen -- and averaging is the more cautious of the two, dragging down when
+somebody's named faces vary in light and angle, as they always do at a meet. That
+caution was costing real matches.
+
+The selection controls -- **Select All**, **Assign Selected**, **Exclude** -- are shown for
+every view including Unknown Faces. They were once hidden there, on the assumption that
+each cluster's own **Assign Cluster** button was enough; once the Unclustered section
+correctly lost its cluster-wide buttons, that left the bucket with no way to act on
+anything. The count line also says when the list is a window rather than a total
+("first 500 of 800, more appear as you clear these"), because a cap presented as a total
+makes the remainder look lost.
+
+The **third tab is named for what it holds**,which depends on whether there is
 anybody to rank against. Where the person has reference faces it is **Unlikely** --
 candidates in photos naming them that do not resemble the faces already named as them
 (under 0.60). Most of a crowd photo lands there, and that is the point: it is what is

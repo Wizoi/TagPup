@@ -209,6 +209,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let allPeopleWithCounts = [];
     let activePersonName = null;
     let lastLoadedPersonName = null;
+    //: How many unclustered faces exist when the response only carries the first
+    //: 500 of them. Null when the list is complete.
+    let activeFacesTotal = null;
     const btnExcludeSelected = document.getElementById('btn-exclude-selected');
     const matchingDetailCrop = document.getElementById('matching-detail-crop');
     const ignoreConfirmModal = document.getElementById('ignore-confirm-modal');
@@ -2374,11 +2377,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const matchingActions = document.querySelector('.matching-actions');
         if (matchingActions) {
-            if (name === 'Unknown Faces' && mode === 'unmatched-faces') {
-                matchingActions.classList.add('hidden');
-            } else {
-                matchingActions.classList.remove('hidden');
-            }
+            // Shown for every view, Unknown Faces included. It used to be hidden
+            // there on the assumption that each cluster's own Assign Cluster button
+            // was enough -- but the Unclustered section has no such button, and
+            // cannot have one, because its faces have nothing in common. Selecting
+            // the ones you recognise and assigning them is the only way through it.
+            matchingActions.classList.remove('hidden');
         }
 
         updateMatchingSelectionUI();
@@ -2421,6 +2425,11 @@ document.addEventListener('DOMContentLoaded', () => {
             .then(data => {
                 activePersonFaces = data.faces;
                 lastLoadedPersonName = name;
+                // A capped list presented as a total makes the remainder look lost.
+                activeFacesTotal = (data.unclustered_total !== undefined
+                        && data.unclustered_total > (data.unclustered_shown || 0))
+                    ? data.unclustered_total
+                    : null;
                 
                 // Update tab counts
                 updateTabLabels();
@@ -2605,7 +2614,15 @@ document.addEventListener('DOMContentLoaded', () => {
             displayedCount = targetFaces.length;
         }
 
-        matchingPersonCount.textContent = `${displayedCount} ${unmatchedText} face${displayedCount !== 1 ? 's' : ''}`;
+        // The window, when it is one: these 500 are the first of 800, and the next
+        // appear as these are dealt with.
+        const windowNote = (activeFacesTotal && activeTab === 'low')
+            ? ` \u2014 first ${displayedCount} of ${activeFacesTotal}, more appear as `
+              + `you clear these`
+            : '';
+        matchingPersonCount.textContent =
+            `${displayedCount} ${unmatchedText} face${displayedCount !== 1 ? 's' : ''}`
+            + windowNote;
 
         if (displayedCount === 0) {
             const emptyGrid = document.createElement('div');
@@ -2837,6 +2854,34 @@ This photo also names ${face.other_names.join(', ')}. `
                       + `offered for them.`
                     : '';
                 if (competingHere) item.classList.add('has-competing-names');
+                // This face's own guess, from the faces already named. A cluster
+                // cannot carry one on behalf of faces that resemble nothing, but each
+                // face can carry its own -- and that is exactly what this bucket is
+                // full of.
+                if (face.suggested_name) {
+                    const guess = document.createElement('button');
+                    guess.className = 'face-guess'
+                        + (face.suggestion_strength === 'possible' ? ' is-possible' : '');
+                    const pct = Math.round((face.suggested_similarity || 0) * 100);
+                    guess.textContent = `${face.suggested_name} ${pct}%`;
+                    guess.title = `Resembles the faces already named ${face.suggested_name}`
+                        + ` (${pct}%). Click to select this face and put the name in the `
+                        + `box, then Assign Selected.`;
+                    guess.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        if (!selectedFaceIds.includes(face.id)) {
+                            selectedFaceIds.push(face.id);
+                            item.classList.add('selected');
+                        }
+                        if (inputReassignName) {
+                            inputReassignName.value = face.suggested_name;
+                        }
+                        updateMatchingSelectionUI();
+                        showFaceDetails(face.id);
+                    });
+                    item.appendChild(guess);
+                }
+
                 if (face.person_similarity !== undefined) {
                     const badge = document.createElement('span');
                     badge.className = 'face-resemblance';
@@ -2899,9 +2944,26 @@ This photo also names ${face.other_names.join(', ')}. `
                 clusterMap[clusterName].push(face);
             });
 
-            // Sort faces within each cluster descending by similarity
+            // Faces the database can put a name to come first. In a bucket of 500
+            // strangers the handful it recognises are the whole reason to look, and
+            // burying them in arrival order means never finding them.
             Object.keys(clusterMap).forEach(cName => {
-                clusterMap[cName].sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+                clusterMap[cName].sort((a, b) => {
+                    // By how much each face resembles the nearest person the database
+                    // knows -- every face, not only the ones over the floor. The
+                    // server reports that number even when it withholds the name, so
+                    // the near-misses land next and the true strangers last. Sorting
+                    // only the named ones left 470 of 500 in arrival order, which is
+                    // no order at all.
+                    const bestA = a.suggested_similarity;
+                    const bestB = b.suggested_similarity;
+                    if (bestA !== undefined && bestB !== undefined && bestA !== bestB) {
+                        return bestB - bestA;
+                    }
+                    if (bestA !== undefined && bestB === undefined) return -1;
+                    if (bestB !== undefined && bestA === undefined) return 1;
+                    return (b.similarity || 0) - (a.similarity || 0);
+                });
             });
 
             // 2. Map each cluster to its most recent year

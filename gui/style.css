@@ -1795,3 +1795,37 @@ body {
     border-radius: 6px;
     cursor: pointer;
 }
+
+/* A face's own guess, from the faces already named. In a bucket of strangers the few
+   the database recognises are the whole reason to look, so they say so on the card. */
+.face-guess {
+    position: absolute;
+    left: 3px;
+    right: 3px;
+    bottom: 3px;
+    padding: 2px 4px;
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1.3;
+    border: 0;
+    border-radius: 4px;
+    background: rgba(99, 102, 241, 0.88);
+    color: #fff;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.face-guess:hover {
+    background: rgba(99, 102, 241, 1);
+}
+
+/* A weaker guess should not shout as loudly as a confident one. */
+.face-guess.is-possible {
+    background: rgba(100, 116, 139, 0.88);
+}
+
+.face-guess.is-possible:hover {
+    background: rgba(100, 116, 139, 1);
+}

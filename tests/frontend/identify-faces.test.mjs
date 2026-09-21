@@ -932,3 +932,197 @@ describe("ordering the people list", () => {
     assert.equal(window.localStorage.getItem("tagtuner.peopleSort"), "name");
   });
 });
+
+describe("working through Unknown Faces", () => {
+  // Reported: what happened to the buttons to assign? Two correct changes met badly.
+  // The selection controls were hidden for Unknown Faces, on the assumption that each
+  // cluster's own Assign Cluster button was enough -- and then the Unclustered section
+  // lost its cluster-wide buttons, correctly, because its faces have nothing in
+  // common. Together they left the bucket with no way to act on anything.
+  const NAME_BUCKET = "Unknown Faces";
+
+  async function openBucket(t, faces, extra = {}) {
+    const server = new FakeServer()
+      .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
+      .on("/api/unmatched-faces/people", [{ name: NAME_BUCKET, count: faces.length }])
+      .on("/api/unmatched-faces/person-matches", {
+        faces, total_count: faces.length, has_more: false, page: 1, limit: -1, ...extra,
+      })
+      .on("/api/faces/match-bulk", { success: true, matched: 1 })
+      .on("/api/faces/exclude", { success: true, excluded: faces.length })
+      .on("/api/people-with-counts", [])
+      .on("/api/people", []);
+    const { window, document } = await loadApp("tagtuner", {
+      server,
+      url: `http://localhost:8080/kr-track/?mode=unmatched-faces&person=${encodeURIComponent(NAME_BUCKET)}`,
+      t,
+    });
+    await new Promise((r) => window.setTimeout(r, 120));
+    return { window, document, server };
+  }
+
+  const strangers = [face(1201, 0.0, -1), face(1202, 0.0, -1), face(1203, 0.0, -1)];
+
+  test("the selection controls are available", async (t) => {
+    const { document } = await openBucket(t, strangers);
+    const actions = document.querySelector(".matching-actions");
+    assert.ok(!actions.classList.contains("hidden"),
+              "there is no way to assign anything in this bucket");
+  });
+
+  test("Select All takes the faces on show", async (t) => {
+    const { document, window } = await openBucket(t, strangers);
+    document.getElementById("btn-matching-select-all").click();
+    await new Promise((r) => window.setTimeout(r, 30));
+    assert.match(document.getElementById("btn-exclude-selected").textContent, /\(3\)/);
+  });
+
+  test("the ones you recognise can be assigned", async (t) => {
+    const { document, window, server } = await openBucket(t, strangers);
+    window.confirm = () => true;
+    document.querySelector(".face-match-item").click();
+    const nameBox = document.getElementById("input-reassign-name");
+    nameBox.value = "Jasper Keel";
+    // The button enables on input, not on the value changing behind its back.
+    nameBox.dispatchEvent(new window.Event("input"));
+    await new Promise((r) => window.setTimeout(r, 20));
+    document.getElementById("btn-reassign-selected").click();
+    await new Promise((r) => window.setTimeout(r, 40));
+
+    const body = server.lastBody("/api/faces/match-bulk");
+    assert.equal(body.person_name, "Jasper Keel");
+    assert.deepEqual(body.face_ids, [1201]);
+  });
+
+  test("and the rest excluded", async (t) => {
+    const { document, window, server } = await openBucket(t, strangers);
+    document.getElementById("btn-matching-select-all").click();
+    await new Promise((r) => window.setTimeout(r, 30));
+    window.prompt = () => "not a person";
+    document.getElementById("btn-exclude-selected").click();
+    await new Promise((r) => window.setTimeout(r, 40));
+
+    assert.deepEqual(server.lastBody("/api/faces/exclude").face_ids, [1201, 1202, 1203]);
+  });
+
+  test("a capped list says it is only the first of more", async (t) => {
+    // 500 shown out of 800 read as though 500 were the total, which makes the other
+    // 300 look lost. They are not: the next appear as these are cleared.
+    const { document } = await openBucket(t, strangers, {
+      unclustered_total: 800, unclustered_shown: 3, has_more: true,
+    });
+    assert.match(document.getElementById("matching-person-count").textContent,
+                 /first 3 of 800/);
+  });
+
+  test("a complete list says nothing about a cap", async (t) => {
+    const { document } = await openBucket(t, strangers, {
+      unclustered_total: 3, unclustered_shown: 3, has_more: false,
+    });
+    assert.ok(!/first \d+ of/.test(document.getElementById("matching-person-count").textContent));
+  });
+});
+
+describe("a face's own suggestion", () => {
+  // Asked twice: face 1408 sits in Unknown Faces while its own diagnostics panel says
+  // Jia Yun Teoh, 0.830. Membership there is decided by keywords alone -- that photo
+  // has no tags, so there is no name to file it under. But the resemblance was
+  // computed and shown one panel away, and the grid ignored it.
+  //
+  // A cluster cannot carry a suggestion on behalf of faces that resemble nothing.
+  // Each face can carry its own, and this bucket is full of exactly that.
+  const mixed = [
+    { ...face(1301, 0.0, -1), suggested_name: null, suggested_similarity: 0.2 },
+    { ...face(1302, 0.0, -1), suggested_name: "Jia Yun Teoh", suggested_similarity: 0.83, suggestion_strength: "possible" },
+    { ...face(1303, 0.0, -1), suggested_name: "Kelsey Nordin", suggested_similarity: 0.87, suggestion_strength: "likely" },
+  ];
+
+  test("a recognisable face says who it looks like", async (t) => {
+    const { document } = await openPerson(t, mixed);
+    const guesses = [...document.querySelectorAll(".face-guess")].map((b) => b.textContent);
+    assert.ok(guesses.some((g) => /Jia Yun Teoh 83%/.test(g)), guesses.join(" | "));
+  });
+
+  test("faces the database recognises come first", async (t) => {
+    // In a bucket of 500 strangers the handful it knows are the whole reason to
+    // look, and arrival order buries them.
+    const { document } = await openPerson(t, mixed);
+    const cards = [...document.querySelectorAll(".face-match-item")];
+    const first = cards[0].querySelector(".face-guess");
+    assert.ok(first, "the first card carries no suggestion");
+    assert.match(first.textContent, /Kelsey Nordin/, "the strongest guess is not first");
+  });
+
+  test("a face resembling nobody carries no badge", async (t) => {
+    const { document } = await openPerson(t, mixed);
+    assert.equal(document.querySelectorAll(".face-guess").length, 2);
+  });
+
+  test("a weaker guess is styled down", async (t) => {
+    const { document } = await openPerson(t, mixed);
+    const weak = [...document.querySelectorAll(".face-guess")]
+      .find((b) => /Jia Yun Teoh/.test(b.textContent));
+    assert.ok(weak.classList.contains("is-possible"));
+  });
+
+  test("clicking it selects the face and fills the name", async (t) => {
+    // One click to stage it; Assign Selected still commits, because a suggestion is
+    // a shortlist of one rather than an answer.
+    const { document, window, server } = await openPerson(t, mixed);
+    [...document.querySelectorAll(".face-guess")]
+      .find((b) => /Kelsey Nordin/.test(b.textContent)).click();
+    await new Promise((r) => window.setTimeout(r, 30));
+
+    assert.equal(document.getElementById("input-reassign-name").value, "Kelsey Nordin");
+    assert.match(document.getElementById("btn-reassign-selected").textContent, /Assign/);
+    assert.equal(server.lastBody("/api/faces/match-bulk"), undefined,
+                 "it assigned without being told to");
+  });
+
+  test("clicking the badge does not toggle the card off", async (t) => {
+    const { document, window } = await openPerson(t, mixed);
+    const card = [...document.querySelectorAll(".face-match-item")]
+      .find((c) => /Kelsey Nordin/.test(c.textContent));
+    card.querySelector(".face-guess").click();
+    await new Promise((r) => window.setTimeout(r, 30));
+    assert.ok(card.classList.contains("selected"), "the badge click bubbled and deselected it");
+  });
+});
+
+describe("ordering a bucket of strangers", () => {
+  // Sorting only the faces over the suggestion floor left the other 470 of 500 in
+  // arrival order, which is no order at all. The server reports the best match even
+  // when it withholds the name, so every face can be placed.
+  const bucket = [
+    { ...face(1401, 0.0, -1), suggested_name: null, suggested_similarity: 0.31 },
+    { ...face(1402, 0.0, -1), suggested_name: null, suggested_similarity: 0.66 },
+    { ...face(1403, 0.0, -1), suggested_name: "Kelsey Nordin", suggested_similarity: 0.87, suggestion_strength: "likely" },
+    { ...face(1404, 0.0, -1), suggested_name: null, suggested_similarity: 0.48 },
+  ];
+
+  function order(document) {
+    return [...document.querySelectorAll(".face-match-item")]
+      .map((el) => Number(el.getAttribute("data-face-id")));
+  }
+
+  test("every face is placed by its best match, named or not", async (t) => {
+    const { document } = await openPerson(t, bucket);
+    assert.deepEqual(order(document), [1403, 1402, 1404, 1401]);
+  });
+
+  test("the near-misses come before the strangers", async (t) => {
+    const { document } = await openPerson(t, bucket);
+    const placed = order(document);
+    assert.ok(placed.indexOf(1402) < placed.indexOf(1401),
+              "a 0.66 near-miss sorted below a 0.31 stranger");
+  });
+
+  test("faces with no score at all fall to the end", async (t) => {
+    const withNone = [
+      face(1410, 0.0, -1),
+      { ...face(1411, 0.0, -1), suggested_similarity: 0.4 },
+    ];
+    const { document } = await openPerson(t, withNone);
+    assert.deepEqual(order(document), [1411, 1410]);
+  });
+});
