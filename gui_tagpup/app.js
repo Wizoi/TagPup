@@ -1988,7 +1988,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 photoAlreadyHas(photo, p.name)
                                 || photoPeople.some(n => samePerson(n, leaf));
                             if (!alreadyAdded) {
-                                suggPeopleCounts[leaf] = (suggPeopleCounts[leaf] || 0) + 1;
+                                noteSuggestion(suggPeopleCounts, leaf, photo.path, p.score);
                             }
                         });
                     }
@@ -2005,56 +2005,18 @@ document.addEventListener('DOMContentLoaded', () => {
                             if (isPerson) {
                                 const cleanLeaf = leafOf(leaf);
                                 if (photoPeople.some(n => samePerson(n, cleanLeaf))) return;
-                                suggPeopleCounts[cleanLeaf] = (suggPeopleCounts[cleanLeaf] || 0) + 1;
+                                noteSuggestion(suggPeopleCounts, cleanLeaf, photo.path, t.score);
                             } else {
-                                suggTagCounts[leaf] = (suggTagCounts[leaf] || 0) + 1;
+                                noteSuggestion(suggTagCounts, leaf, photo.path, t.score);
                             }
                         });
                     }
                 }
             });
             
-            // Render Suggested People List
-            selectionSuggestedPeopleList.innerHTML = '';
-            const suggPeopleKeys = Object.keys(suggPeopleCounts).sort();
-            if (suggPeopleKeys.length === 0) {
-                selectionSuggestedPeopleList.innerHTML = '<span style="color: var(--text-muted); font-size: 12px; padding: 4px 0;">None</span>';
-            } else {
-                suggPeopleKeys.forEach(p => {
-                    const count = suggPeopleCounts[p];
-                    const chip = document.createElement('span');
-                    chip.className = 'suggestion-chip';
-                    chip.style.cursor = 'pointer';
-                    chip.textContent = `${p} (${count})`;
-                    chip.title = `Click to apply "${p}" to all selected photos`;
-                    chip.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        applyTagToAllSelected(p, true);
-                    });
-                    selectionSuggestedPeopleList.appendChild(chip);
-                });
-            }
-            
-            // Render Suggested Tags List
-            selectionSuggestedTagsList.innerHTML = '';
-            const suggTagKeys = Object.keys(suggTagCounts).sort();
-            if (suggTagKeys.length === 0) {
-                selectionSuggestedTagsList.innerHTML = '<span style="color: var(--text-muted); font-size: 12px; padding: 4px 0;">None</span>';
-            } else {
-                suggTagKeys.forEach(t => {
-                    const count = suggTagCounts[t];
-                    const chip = document.createElement('span');
-                    chip.className = 'suggestion-chip';
-                    chip.style.cursor = 'pointer';
-                    chip.textContent = `${t} (${count})`;
-                    chip.title = `Click to apply "${t}" to all selected photos`;
-                    chip.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        applyTagToAllSelected(t, false);
-                    });
-                    selectionSuggestedTagsList.appendChild(chip);
-                });
-            }
+            renderSuggestionChips(selectionSuggestedPeopleList, suggPeopleCounts, true);
+            renderSuggestionChips(selectionSuggestedTagsList, suggTagCounts, false);
+
             btnApplyRename.disabled = false;
             updateFolderAutoApplyState();
         } else {
@@ -2070,8 +2032,69 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    //: Auto-apply writes a suggestion only at or above this score. The panel lists
+    //: every suggestion, so the ones below it stay on screen after Apply All -- which
+    //: looks like the button failed unless the panel says why.
+    const AUTO_APPLY_THRESHOLD = 0.75;
+
+    /** Record a suggestion, remembering which photos asked for it and how strongly. */
+    function noteSuggestion(into, key, photoPath, score) {
+        const entry = into[key] || (into[key] = { count: 0, paths: [], score: 0 });
+        entry.count++;
+        if (!entry.paths.includes(photoPath)) entry.paths.push(photoPath);
+        entry.score = Math.max(entry.score, Number(score) || 0);
+    }
+
+    /**
+     * Render one list of suggestion chips.
+     *
+     * Each chip carries its confidence and applies to the photos that actually asked
+     * for it. It used to apply to the whole selection: clicking "Anh Tran (1)" with
+     * 77 photos selected put her on all 77, which is the opposite of what a suggestion
+     * for one photo means.
+     */
+    function renderSuggestionChips(container, counts, isPerson) {
+        container.innerHTML = '';
+        const keys = Object.keys(counts).sort();
+        if (keys.length === 0) {
+            container.innerHTML = '<span style="color: var(--text-muted); font-size: 12px; padding: 4px 0;">None</span>';
+            return;
+        }
+        keys.forEach(name => {
+            const { count, paths, score } = counts[name];
+            const pct = Math.round(score * 100);
+            const belowBar = score < AUTO_APPLY_THRESHOLD;
+
+            const chip = document.createElement('span');
+            chip.className = 'suggestion-chip' + (belowBar ? ' suggestion-chip-unsure' : '');
+            chip.style.cursor = 'pointer';
+            chip.textContent = `${name} (${count}) · ${pct}%`;
+            chip.title = belowBar
+                ? `${pct}% confident — below the ${Math.round(AUTO_APPLY_THRESHOLD * 100)}% bar, `
+                  + `so Auto-Apply left it. Click to add it to ${count} photo(s) anyway.`
+                : `${pct}% confident. Click to add to ${count} photo(s).`;
+            chip.addEventListener('click', (e) => {
+                e.stopPropagation();
+                applyTagToPhotos(name, isPerson, paths);
+            });
+            container.appendChild(chip);
+        });
+    }
+
+    /** Apply a tag to every selected photo. */
     function applyTagToAllSelected(tag, isPerson) {
-        if (selectedThumbnails.length === 0) return;
+        return applyTagToPhotos(tag, isPerson, selectedThumbnails);
+    }
+
+    /**
+     * Apply a tag to a given set of photos.
+     *
+     * A suggestion belongs to the photos that produced it, not to whatever happens to
+     * be selected at the time.
+     */
+    function applyTagToPhotos(tag, isPerson, paths) {
+        const targets = (paths || []).filter(Boolean);
+        if (targets.length === 0) return;
         
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Applying tag...';
@@ -2079,13 +2102,13 @@ document.addEventListener('DOMContentLoaded', () => {
         fetch('/api/photos/bulk-tags', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: selectedThumbnails, add_tags: [tag], remove_tags: [] })
+            body: JSON.stringify({ paths: targets, add_tags: [tag], remove_tags: [] })
         })
         .then(res => res.json())
         .then(data => {
             if (data.success) {
                 // Update tags in cache
-                selectedThumbnails.forEach(path => {
+                targets.forEach(path => {
                     const photo = folderPhotos.find(p => p.path === path);
                     if (photo) {
                         if (!photo.tags.includes(tag)) {

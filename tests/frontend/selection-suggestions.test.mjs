@@ -201,3 +201,66 @@ describe("the panel says what the lists mean", () => {
     );
   });
 });
+
+describe("a suggestion says how sure it is, and lands where it was asked for", () => {
+  // Reported as "I clicked Apply All and these are still listed". They were: the panel
+  // lists every suggestion, while Auto-Apply writes only those at 0.75 or above. The
+  // leftovers were real and correctly skipped, but nothing on screen said so.
+  const twoPhotos = [
+    photoRecord({ filename: "a.jpg", tags: ["Cross Country"], people: [] }),
+    photoRecord({ filename: "b.jpg", tags: ["Cross Country"], people: [] }),
+  ];
+
+  function suggestOnFirstOnly(photos, score) {
+    return {
+      status: "completed",
+      suggestions: {
+        [photos[0].path]: { people: [{ name: "Anh Tran", score }], tags: [] },
+      },
+    };
+  }
+
+  test("the chip carries its confidence", async (t) => {
+    const ctx = await loadSelected(t, twoPhotos, suggestOnFirstOnly(twoPhotos, 0.63));
+    const chip = suggestedPeople(ctx).find((c) => c.includes("Anh Tran"));
+    assert.ok(chip, "the suggestion was not rendered");
+    assert.match(chip, /63%/, `confidence not shown: ${chip}`);
+  });
+
+  test("one below the auto-apply bar is marked as such", async (t) => {
+    const ctx = await loadSelected(t, twoPhotos, suggestOnFirstOnly(twoPhotos, 0.63));
+    const el = [...ctx.document.querySelectorAll("#selection-suggested-people-list .suggestion-chip")]
+      .find((c) => c.textContent.includes("Anh Tran"));
+    assert.ok(
+      el.classList.contains("suggestion-chip-unsure"),
+      "a suggestion Auto-Apply skipped looked identical to one it would write"
+    );
+    assert.match(el.title, /below/i, `the tooltip does not explain why: ${el.title}`);
+  });
+
+  test("one above the bar is not marked", async (t) => {
+    const ctx = await loadSelected(t, twoPhotos, suggestOnFirstOnly(twoPhotos, 0.92));
+    const el = [...ctx.document.querySelectorAll("#selection-suggested-people-list .suggestion-chip")]
+      .find((c) => c.textContent.includes("Anh Tran"));
+    assert.ok(!el.classList.contains("suggestion-chip-unsure"));
+  });
+
+  test("clicking it applies only to the photo that suggested it", async (t) => {
+    // It used to apply to the whole selection: a suggestion for one photo, written
+    // onto all 77 selected, is the opposite of what the suggestion meant.
+    const ctx = await loadSelected(t, twoPhotos, suggestOnFirstOnly(twoPhotos, 0.63));
+    const el = [...ctx.document.querySelectorAll("#selection-suggested-people-list .suggestion-chip")]
+      .find((c) => c.textContent.includes("Anh Tran"));
+
+    click(ctx.window, el);
+    await flush(ctx.window, 6);
+
+    const body = ctx.server.lastBody("/api/photos/bulk-tags");
+    assert.ok(body, "clicking the suggestion sent nothing");
+    assert.deepEqual(
+      body.paths, [twoPhotos[0].path],
+      `applied to photos that never suggested it: ${JSON.stringify(body.paths)}`
+    );
+    assert.deepEqual(body.add_tags, ["Anh Tran"]);
+  });
+});

@@ -1784,3 +1784,11 @@ input:checked + .slider:before {
 .field-invalid {
     border-color: var(--badge-error, #f87171) !important;
 }
+
+/* A suggestion the auto-apply pass left alone because it was not confident enough.
+   Without this the panel showed low-confidence leftovers identically to everything
+   else, so Apply All looked like it had silently skipped them. */
+.suggestion-chip-unsure {
+    opacity: 0.75;
+    border-style: dashed;
+}
