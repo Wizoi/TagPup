@@ -2184,7 +2184,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             return
             
         folder_path = data.get("folder_path")
-        threshold = data.get("threshold", 0.75)
+        # No floor of its own. The list this writes has already been filtered to what
+        # the page was shown; a second threshold here could only take away some of
+        # what was offered, which is the behaviour that made Apply All ambiguous.
+        threshold = data.get("threshold", 0.0)
         
         if not folder_path or not os.path.isdir(folder_path):
             self.send_json_error(400, "Invalid folder path")
@@ -2209,10 +2212,24 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         try:
             with exiftool.ExifToolHelper(executable=executable) as et:
                 for path, sugg_info in suggestions_map.items():
-                    raw_sugg = sugg_info.get("raw_suggestions", {})
-                    suggested_tags = raw_sugg.get("suggested_tags", [])
-                    
-                    apply_tags = [t["tag"] for t in suggested_tags if t.get("score", 0.0) >= threshold]
+                    # Apply exactly what the panel offered.
+                    #
+                    # This used to read `raw_suggestions`, which is everything the
+                    # suggester produced down to its own floor, while the panel shows
+                    # only what scored 0.6 or better. The two lists were built in
+                    # different places and drifted: a photo came back from Apply All
+                    # carrying two people the panel had never mentioned, and the
+                    # suggestions it *had* listed were still sitting there unapplied.
+                    #
+                    # One list, two consumers. `tags` and `people` are what the page
+                    # was shown, so they are what gets written.
+                    offered = list(sugg_info.get("tags") or [])
+                    offered_people = list(sugg_info.get("people") or [])
+
+                    apply_tags = [t["tag"] for t in offered
+                                  if t.get("score", 0.0) >= threshold]
+                    apply_tags += [p["name"] for p in offered_people
+                                   if p.get("score", 0.0) >= threshold]
                     if not apply_tags:
                         continue
                         
