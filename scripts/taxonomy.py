@@ -217,14 +217,24 @@ class TagTaxonomy:
         return None
 
     def find_by_leaf(self, name: str) -> Optional[str]:
-        """An existing path whose last segment is this name, if there is one."""
+        """The one existing path whose last segment is this name.
+
+        None when the taxonomy has no such path, and also when it has two: a leaf
+        under both "Trips/Boston MA" and "School/Boston MA" cannot be resolved without
+        guessing which was meant, and a wrong guess files a photo under the wrong
+        branch where nobody will look for it.
+        """
         wanted = self.normalize_tag(name).split("/")[-1].strip().lower()
         if not wanted:
             return None
+        found = None
         for path in self.paths:
-            if path.split("/")[-1].strip().lower() == wanted:
-                return path
-        return None
+            if path.split("/")[-1].strip().lower() != wanted:
+                continue
+            if found is not None and found != path:
+                return None
+            found = path
+        return found
 
     def people_root(self) -> str:
         """The root this library files people under.

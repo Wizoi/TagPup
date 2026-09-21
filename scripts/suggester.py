@@ -477,6 +477,19 @@ class TagSuggester:
                 "similarity": round(sim, 3)
             })
             
+        # Propose a tag by the path it is filed under.
+        #
+        # A keyword's hierarchy is most of its worth: "Activity/Cross Country" says
+        # where the photo belongs in a way "Cross Country" does not. Zero-shot
+        # candidates arrive as bare words, so a photo already tagged
+        # "Activity/Cross Country" was offered "Cross Country" as though it were
+        # something new -- the suggestion could not match what was there, and taking
+        # it would have added a second, flatter copy.
+        #
+        # People are left alone here: they are resolved at the write boundary, against
+        # the people roots specifically, and that path already works.
+        suggested_tags = self._with_taxonomy_paths(suggested_tags)
+
         return {
             "path": photo_path,
             "suggested_tags": suggested_tags,
@@ -485,6 +498,34 @@ class TagSuggester:
             "path_hints": path_hints,
             "nearest_neighbors": neighbors_output
         }
+
+    def _with_taxonomy_paths(self, items):
+        """Rewrite each suggested tag as the taxonomy path it belongs to.
+
+        A bare name the taxonomy files under exactly one path becomes that path. One
+        it files under two is left alone rather than guessed at, and one it does not
+        know stays as it is -- a suggestion for a tag that does not exist yet is still
+        a useful suggestion.
+        """
+        seen = {}
+        for item in items:
+            tag = item.get("tag")
+            if not tag:
+                continue
+            if "/" not in tag:
+                resolved = None
+                try:
+                    resolved = self.taxonomy.find_by_leaf(tag)
+                except Exception:
+                    resolved = None
+                if resolved:
+                    item = dict(item, tag=resolved)
+            # Resolving can collide two suggestions onto one path; keep the stronger.
+            existing = seen.get(item["tag"])
+            if existing is None or item.get("score", 0.0) > existing.get("score", 0.0):
+                seen[item["tag"]] = item
+        return sorted(seen.values(),
+                      key=lambda i: (-i.get("score", 0.0), i.get("tag", "")))
 
     def apply_folder_consensus(self, suggestions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Group suggestions by folder and adjust scores based on tag consensus across the folder."""
