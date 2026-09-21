@@ -160,6 +160,7 @@ All of these are dry-run by default and take `--apply` to write. Take a backup f
 | `scripts/repair_bare_person_tags.py` | Rewrites a photo's keywords so a person carries their full path, not a bare leaf. |
 | `scripts/backfill_document_ids.py` | Gives already-indexed photos the identity new ones get. Resumable. |
 | `scripts/relink_renamed_photos.py` | Re-points index rows at photos renamed under them, by identity then `PreservedFileName`. |
+| `scripts/tidy_exclusion_reasons.py` | Folds free-text exclusion reasons into the four the app offers. |
 | `scripts/restore_face_names.py` | Restores face names from a JSON snapshot. |
 
 ## Things that were true and are worth not re-learning
