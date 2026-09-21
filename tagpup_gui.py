@@ -152,7 +152,19 @@ def main():
         os.environ["TAGPUP_PORT"] = str(port)
     url = f"http://localhost:{port}/"
     
-    if not os.environ.get("TAGPUP_RELOADED"):
+    # Open the browser once, from the process that actually serves.
+    #
+    # The reloader runs a parent supervisor and a child; the child is the one
+    # with the server. This guard was on TAGPUP_RELOADED alone, which is unset
+    # in both on a first start -- so the supervisor opened a tab and the child
+    # opened a second. It looked right after a reload, where the parent sets
+    # TAGPUP_RELOADED on the child, which is why it only ever showed at startup.
+    #
+    # _CHILD means "I am the server"; _RELOADED means "this is a restart, they
+    # already have a tab open".
+    serving = bool(os.environ.get("TAGPUP_RELOADED_CHILD"))
+    restarting = bool(os.environ.get("TAGPUP_RELOADED"))
+    if serving and not restarting:
         import threading
         def open_browser_when_ready(port):
             import socket
