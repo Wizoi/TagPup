@@ -226,6 +226,10 @@ document.addEventListener('DOMContentLoaded', () => {
     //: How many unclustered faces exist when the response only carries the first
     //: 500 of them. Null when the list is complete.
     let activeFacesTotal = null;
+    //: Which band the grid is currently showing -- 'likely', 'possible', 'ungrouped',
+    //: 'matched', 'outlier'. Kept so the heading can be recounted after faces leave
+    //: without re-deriving every face's band.
+    let activeFacesLabel = '';
     const btnExcludeSelected = document.getElementById('btn-exclude-selected');
     const matchingDetailCrop = document.getElementById('matching-detail-crop');
     const ignoreConfirmModal = document.getElementById('ignore-confirm-modal');
@@ -2625,6 +2629,79 @@ ${summary}${note}`)) {
     }
 
     // Render face match items in grid
+    /** Recount the heading from what is actually on screen, after faces have left. */
+    function updateFacesHeadingCount() {
+        if (!matchingPersonCount) return;
+        const shown = matchingFacesGrid.querySelectorAll('[data-face-id]').length;
+        const windowNote = (activeFacesTotal && activeTab === 'low')
+            ? ` — first ${shown} of ${activeFacesTotal}, more appear as you clear these`
+            : '';
+        matchingPersonCount.textContent =
+            `${shown} ${activeFacesLabel} face${shown !== 1 ? 's' : ''}` + windowNote;
+    }
+
+    function groupHeadingText(title, isUnclustered, numFaces, numPhotos) {
+        const faceWord = `${numFaces} face${numFaces !== 1 ? 's' : ''}`;
+        const photoWord = `${numPhotos} photo${numPhotos !== 1 ? 's' : ''}`;
+        return isUnclustered
+            ? `Unclustered — ${faceWord} that resembled nothing else, from ${photoWord}`
+            : `${title} (${faceWord} in ${photoWord})`;
+    }
+
+    /**
+     * Take faces out of the grid that is already on screen.
+     *
+     * Assigning or ignoring used to remove the handful of cards involved and then call
+     * renderPersonFaces, which throws the whole grid away and builds it again -- for
+     * Unknown Faces that is twenty-four thousand cards, every one of them cleared,
+     * destroyed and recreated to account for five leaving. Ignoring one cluster of five
+     * took about ten seconds, all of it in the browser.
+     *
+     * Nothing about the other cards changed, so nothing about them needs rebuilding.
+     * What does change is the heading of any group that lost faces, and whether that
+     * group still has any, so that is all this touches.
+     */
+    function removeFacesFromGrid(faceIds) {
+        const leaving = new Set(faceIds);
+        const touched = new Set();
+
+        leaving.forEach(id => {
+            const card = matchingFacesGrid.querySelector(`[data-face-id="${id}"]`);
+            if (!card) return;
+            const section = card.closest('.matching-group-section');
+            card.remove();
+            if (section) touched.add(section);
+        });
+
+        touched.forEach(section => {
+            const cards = section.querySelectorAll('[data-face-id]');
+            if (!cards.length) {
+                // Nobody left in this group. The heading, its Assign Cluster button
+                // and its Ignore Cluster button have nothing to act on.
+                section.remove();
+                return;
+            }
+            const titleSpan = section.querySelector('.matching-group-title');
+            if (!titleSpan || modeSelect.value !== 'unmatched-faces') return;
+
+            const note = titleSpan.querySelector('.not-a-cluster-note');
+            const photos = new Set();
+            cards.forEach(card => photos.add(card.dataset.photoPath || ''));
+            titleSpan.textContent = groupHeadingText(
+                section.dataset.groupTitle || '',
+                Boolean(section.dataset.unclustered),
+                cards.length,
+                photos.size);
+            if (note) titleSpan.appendChild(note);
+        });
+
+        renderedFaceOrder = renderedFaceOrder.filter(id => !leaving.has(id));
+        selectedFaceIds = selectedFaceIds.filter(id => !leaving.has(id));
+        leaving.forEach(id => suggestionByFaceId.delete(id));
+        updateMatchingSelectionUI();
+        updateFacesHeadingCount();
+    }
+
     function renderPersonFaces(faces) {
         // Cancel any pending face-crop image requests in the grid
         const activeImgs = matchingFacesGrid.querySelectorAll('img');
@@ -2725,6 +2802,7 @@ ${summary}${note}`)) {
             ? ` \u2014 first ${displayedCount} of ${activeFacesTotal}, more appear as `
               + `you clear these`
             : '';
+        activeFacesLabel = unmatchedText;
         matchingPersonCount.textContent =
             `${displayedCount} ${unmatchedText} face${displayedCount !== 1 ? 's' : ''}`
             + windowNote;
@@ -2776,11 +2854,11 @@ ${summary}${note}`)) {
             if (modeSelect.value === 'unmatched-faces') {
                 const numFaces = groupFaces.length;
                 const numPhotos = new Set(groupFaces.map(f => f.photo_path)).size;
-                titleSpan.textContent = isUnclustered
-                    ? `Unclustered \u2014 ${numFaces} face${numFaces !== 1 ? 's' : ''} that `
-                      + `resembled nothing else, from ${numPhotos} photo`
-                      + `${numPhotos !== 1 ? 's' : ''}`
-                    : `${title} (${numFaces} face${numFaces !== 1 ? 's' : ''} in ${numPhotos} photo${numPhotos !== 1 ? 's' : ''})`;
+                // Recorded so the heading can be rewritten when faces leave the group,
+                // without rebuilding the grid to find out what it used to say.
+                section.dataset.groupTitle = title;
+                section.dataset.unclustered = isUnclustered ? '1' : '';
+                titleSpan.textContent = groupHeadingText(title, isUnclustered, numFaces, numPhotos);
 
                 if (isUnclustered) {
                     const note = document.createElement('span');
@@ -3012,6 +3090,8 @@ This photo also names ${face.other_names.join(', ')}. `
                 }
                 item.title = face.photo_path + competingHere;
                 item.setAttribute('data-face-id', face.id);
+                // So a group's heading can be recounted from the cards still in it.
+                item.dataset.photoPath = face.photo_path || '';
 
                 if (selectedFaceIds.includes(face.id)) {
                     item.classList.add('selected');
@@ -3438,15 +3518,12 @@ This photo also names ${face.other_names.join(', ')}. `
             return res.json();
         })
         .then(() => {
-            faceIds.forEach(id => {
-                const card = matchingFacesGrid.querySelector(`[data-face-id="${id}"]`);
-                if (card) card.remove();
-            });
-            activePersonFaces = activePersonFaces.filter(f => !faceIds.includes(f.id));
-            selectedFaceIds = [];
-            renderPersonFaces(activePersonFaces);
+            const excluded = new Set(faceIds);
+            activePersonFaces = activePersonFaces.filter(f => !excluded.has(f.id));
+            // In place. Rebuilding the grid to account for a handful of cards leaving
+            // meant recreating every card on screen -- ten seconds for Unknown Faces.
+            removeFacesFromGrid(faceIds);
             updateTabLabels();
-            updateMatchingSelectionUI();
             clearFaceDetails();
             // Go through the mode dispatcher so the sidebar always matches Tune target.
             fetchPhotos();
@@ -3892,32 +3969,17 @@ This photo also names ${face.other_names.join(', ')}. `
         })
         .then(data => {
             if (data.success) {
-                // In-place DOM removal of selected cards
-                faceIds.forEach(id => {
-                    const card = matchingFacesGrid.querySelector(`[data-face-id="${id}"]`);
-                    if (card) {
-                        const grid = card.parentElement;
-                        card.remove();
-                        if (grid && grid.children.length === 0) {
-                            const section = grid.parentElement;
-                            if (section && section.classList.contains('matching-group-section')) {
-                                section.remove();
-                            }
-                        }
-                    }
-                });
-
-                // Update activePersonFaces
-                activePersonFaces = activePersonFaces.filter(f => !faceIds.includes(f.id));
+                const assigned = new Set(faceIds);
+                activePersonFaces = activePersonFaces.filter(f => !assigned.has(f.id));
 
                 // Update tab counts
                 updateTabLabels();
 
-                // Render remaining faces inline immediately
-                renderPersonFaces(activePersonFaces);
+                // In place: the cards that left are the only ones that changed, and
+                // rebuilding the rest cost ten seconds on a grid this size.
+                removeFacesFromGrid(faceIds);
 
-                // Clear selection and reassign name field
-                selectedFaceIds = [];
+                // Clear the reassign name field
                 if (inputReassignName) {
                     if (modeSelect.value !== 'unmatched-faces') {
                         inputReassignName.value = '';
