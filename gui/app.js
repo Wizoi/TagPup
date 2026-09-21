@@ -249,6 +249,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let renderedFaceOrder = [];
     //: Where a Shift range measures from: the last face clicked on its own.
     let selectionAnchorId = null;
+    //: The faces a badge-filled name was meant for. A name typed by hand is the
+    //: user's and is left alone; one put there by clicking a badge belongs to
+    //: that face, and must not quietly follow a later, different selection.
+    let nameFilledForFaceIds = null;
     let activePersonFaces = [];
     let activeTab = 'matches'; // 'matches' or 'outliers'
     let modalSelectedFaceIds = [];
@@ -335,7 +339,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     if (inputReassignName) {
-        inputReassignName.addEventListener('input', updateMatchingSelectionUI);
+        inputReassignName.addEventListener('input', () => {
+            // Typed over: the name is the user's now, and stops being tied to
+            // whichever face's badge put it there.
+            nameFilledForFaceIds = null;
+            updateMatchingSelectionUI();
+        });
     }
     if (btnReassignSelected) {
         btnReassignSelected.addEventListener('click', () => {
@@ -352,14 +361,33 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (!byName.has(person)) byName.set(person, []);
                     byName.get(person).push(id);
                 });
+                if (byName.size === 0) return;
+
                 const summary = [...byName.entries()]
                     .map(([person, ids]) => `${ids.length} to ${person}`).join(', ');
+                const unmatched = selectedFaceIds.length
+                    - [...byName.values()].reduce((n, ids) => n + ids.length, 0);
+                const note = unmatched
+                    ? `
+
+${unmatched} selected face(s) resemble nobody yet and are left alone.`
+                    : '';
                 if (!confirm(`Assign each face to the person it matches?
 
-${summary}`)) {
+${summary}${note}`)) {
                     return;
                 }
-                byName.forEach((ids, person) => postMatchBulk(ids, person));
+
+                // One at a time. Each assignment rebuilds the grid and clears the
+                // selection on success, so sending them together had them racing --
+                // the first to return wiped the state the others were working from.
+                const runs = [...byName.entries()];
+                const next = (i) => {
+                    if (i >= runs.length) return;
+                    const [person, ids] = runs[i];
+                    Promise.resolve(postMatchBulk(ids, person)).then(() => next(i + 1));
+                };
+                next(0);
                 return;
             }
 
@@ -2955,6 +2983,7 @@ This photo also names ${face.other_names.join(', ')}. `
                         }
                         if (inputReassignName) {
                             inputReassignName.value = face.suggested_name;
+                            nameFilledForFaceIds = [...selectedFaceIds];
                         }
                         updateMatchingSelectionUI();
                         showFaceDetails(face.id);
@@ -3458,6 +3487,7 @@ This photo also names ${face.other_names.join(', ')}. `
 
     /** Paint the selection onto the grid, and show the face just acted on. */
     function applyFaceSelection(focusFaceId) {
+        forgetStaleBadgeName();
         const chosen = new Set(selectedFaceIds);
         matchingFacesGrid.querySelectorAll('.face-match-item').forEach(item => {
             const id = Number(item.dataset.faceId);
@@ -3475,6 +3505,23 @@ This photo also names ${face.other_names.join(', ')}. `
         showFaceDetails(show);
     }
 
+    /**
+     * Forget a badge-filled name once it no longer describes the selection.
+     *
+     * Clicking a badge puts that person in the box. Select some other faces afterwards
+     * and the name stays behind, so Assign Selected would send all of them to whoever
+     * the first badge named -- silently, because the box looks the same whether a name
+     * was typed or filled in. A name the user typed is theirs and is left alone.
+     */
+    function forgetStaleBadgeName() {
+        if (!nameFilledForFaceIds || !inputReassignName) return;
+        const same = nameFilledForFaceIds.length === selectedFaceIds.length
+            && nameFilledForFaceIds.every(id => selectedFaceIds.includes(id));
+        if (same) return;
+        inputReassignName.value = '';
+        nameFilledForFaceIds = null;
+    }
+
     function updateMatchingSelectionUI() {
         if (!btnUnmatchSelected) return;
         const count = selectedFaceIds.length;
@@ -3488,8 +3535,12 @@ This photo also names ${face.other_names.join(', ')}. `
             .map(id => suggestionByFaceId.get(id))
             .filter(Boolean);
         const distinct = new Set(suggested);
+        // Not every selected face needs a badge. The Unclustered bucket is mostly
+        // faces that resemble nothing, so requiring all of them to carry a suggestion
+        // meant this never appeared in the one place it was for: a single unmatched
+        // face in the selection disabled the button outright.
         const assignByBadge = count > 1 && distinct.size > 1
-            && suggested.length === count && !inputReassignName.value.trim();
+            && !inputReassignName.value.trim();
 
         if (inputReassignName) {
             inputReassignName.placeholder = assignByBadge
@@ -3502,7 +3553,7 @@ This photo also names ${face.other_names.join(', ')}. `
             btnReassignSelected.disabled = count === 0
                 || (!inputReassignName.value.trim() && !assignByBadge);
             btnReassignSelected.textContent = assignByBadge
-                ? `Assign ${count} to their matches`
+                ? `Assign ${suggested.length} to their matches`
                 : 'Assign Selected';
             btnReassignSelected.title = assignByBadge
                 ? 'Each selected face goes to the person its badge names'
@@ -3741,7 +3792,9 @@ This photo also names ${face.other_names.join(', ')}. `
         const originalText = btnReassignSelected.textContent;
         btnReassignSelected.textContent = 'Assigning...';
 
-        fetch('/api/faces/match-bulk', {
+        // Returned so a caller assigning several people can wait for one before
+        // starting the next; each success rebuilds the grid underneath them.
+        return fetch('/api/faces/match-bulk', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'

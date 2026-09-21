@@ -306,3 +306,134 @@ describe("picking faces the way a file list does", () => {
     assert.match(ctx.document.body.textContent, /Shift-click for a range/);
   });
 });
+
+describe("a selection the machine only half recognises", () => {
+  // The Unclustered bucket is mostly faces that resemble nothing. Requiring every
+  // selected face to carry a badge meant the by-badge button never appeared in the
+  // one place it was for: a single unmatched face in the selection disabled it.
+  const partly = [
+    face(1, "Rory Olwen", 0.96),
+    face(2, "Kira Bao", 0.93),
+    face(3, null, 0),
+  ];
+
+  async function selectAll(t) {
+    const ctx = await open(t, [{ name: NAME, count: 3, unit: "face" }], partly);
+    const cards = [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
+    cards.forEach((card) => click(ctx.window, card, { ctrlKey: true }));
+    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    return ctx;
+  }
+
+  test("a face with no match does not disable the button", async (t) => {
+    const ctx = await selectAll(t);
+    const button = ctx.document.getElementById("btn-reassign-selected");
+    assert.equal(button.disabled, false, "one unmatched face disabled the whole gesture");
+  });
+
+  test("the button counts only the ones it can place", async (t) => {
+    const ctx = await selectAll(t);
+    assert.match(
+      ctx.document.getElementById("btn-reassign-selected").textContent,
+      /Assign 2 to their matches/);
+  });
+
+  test("the ones it cannot place are named in the confirmation", async (t) => {
+    const ctx = await selectAll(t);
+    let asked = "";
+    ctx.window.confirm = (message) => { asked = message; return false; };
+    ctx.document.getElementById("btn-reassign-selected").click();
+    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    assert.match(asked, /1 selected face\(s\) resemble nobody yet and are left alone/);
+  });
+
+  test("only the recognised ones are sent", async (t) => {
+    const ctx = await selectAll(t);
+    ctx.window.confirm = () => true;
+    ctx.document.getElementById("btn-reassign-selected").click();
+    await new Promise((r) => ctx.window.setTimeout(r, 120));
+
+    const sent = ctx.server.calls
+      .filter((c) => c.url.includes("/api/faces/match-bulk") && c.body);
+    const ids = sent.flatMap((c) => c.body.face_ids).sort();
+    assert.deepEqual(ids, [1, 2], `sent: ${JSON.stringify(sent.map((c) => c.body))}`);
+  });
+
+  test("the assignments go one at a time", async (t) => {
+    // Each success rebuilds the grid and clears the selection, so sending them
+    // together had them racing the state the others were working from.
+    const ctx = await selectAll(t);
+    ctx.window.confirm = () => true;
+    ctx.document.getElementById("btn-reassign-selected").click();
+    await new Promise((r) => ctx.window.setTimeout(r, 120));
+
+    const sent = ctx.server.calls.filter((c) => c.url.includes("/api/faces/match-bulk"));
+    assert.equal(sent.length, 2, "expected one call per person");
+  });
+});
+
+describe("a name put there by a badge", () => {
+  // Clicking a badge puts that person in the box. Select other faces afterwards and
+  // the name stayed behind, so Assign Selected would send all of them to whoever the
+  // first badge named -- silently, because the box looks the same whether a name was
+  // typed or filled in.
+  const several = [
+    face(1, "Rory Olwen", 0.96),
+    face(2, "Kira Bao", 0.93),
+    face(3, "Rory Olwen", 0.9),
+  ];
+
+  async function clickFirstBadge(t) {
+    const ctx = await open(t, [{ name: NAME, count: 3, unit: "face" }], several);
+    const badge = ctx.document.querySelector("#matching-faces-grid .face-guess");
+    assert.ok(badge, "no badge rendered");
+    click(ctx.window, badge);
+    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    ctx.cards = () =>
+      [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
+    ctx.input = () => ctx.document.getElementById("input-reassign-name");
+    return ctx;
+  }
+
+  test("clicking it fills the box", async (t) => {
+    const ctx = await clickFirstBadge(t);
+    assert.equal(ctx.input().value, "Rory Olwen");
+  });
+
+  test("selecting a different face clears it", async (t) => {
+    const ctx = await clickFirstBadge(t);
+    click(ctx.window, ctx.cards()[1]);
+    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    assert.equal(ctx.input().value, "",
+      "the previous badge's name followed the new selection");
+  });
+
+  test("adding faces to the selection clears it", async (t) => {
+    // The reported case: a badge, then a multi-select, and the stale name still there.
+    const ctx = await clickFirstBadge(t);
+    click(ctx.window, ctx.cards()[1], { ctrlKey: true });
+    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    assert.equal(ctx.input().value, "");
+  });
+
+  test("with it cleared, the selection is assigned by its own badges", async (t) => {
+    const ctx = await clickFirstBadge(t);
+    click(ctx.window, ctx.cards()[1], { ctrlKey: true });
+    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    assert.match(
+      ctx.document.getElementById("btn-reassign-selected").textContent,
+      /to their matches/);
+  });
+
+  test("a name typed by hand is not taken away", async (t) => {
+    const ctx = await clickFirstBadge(t);
+    const input = ctx.input();
+    input.value = "Someone Else";
+    input.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+    await new Promise((r) => ctx.window.setTimeout(r, 30));
+
+    click(ctx.window, ctx.cards()[1], { ctrlKey: true });
+    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    assert.equal(input.value, "Someone Else", "the user's own typing was discarded");
+  });
+});
