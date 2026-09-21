@@ -27,32 +27,55 @@ def to_db_path(path):
         return ""
     return os.path.abspath(path).replace("\\", "/")
 
-_INDEXER_LOG_LINE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+\s+\[")
 _INDEXER_TQDM = re.compile(r"^(.*?):\s*(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
+
+#: Longest message worth putting on a progress bar. Past this it is ellipsised in
+#: the page anyway, so a truncated sentence is all anyone can read.
+_INDEXER_MAX_MESSAGE = 90
+
+#: The shapes library chatter arrives in. These are forms, not particular messages:
+#: blacklisting the text of one warning only waits for the next library to add one.
+_INDEXER_NOISE = (
+    # "2026-09-19 21:31:50,515 [INFO] root - Instantiating..."
+    re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+\s+\["),
+    # "WARNING:huggingface_hub.utils._http:Warning: You are sending..."
+    re.compile(r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL):[\w.]+:"),
+    # "Warning: You are sending unauthenticated requests to the HF Hub."
+    # Printed bare, with no prefix at all, which is how it reached the progress bar.
+    re.compile(r"^(User|Future|Deprecation|Runtime|Import|Resource)?Warning:", re.I),
+    # warnings.warn's source line, and the echoed statement under it.
+    re.compile(r"^.*:\d+:\s*\w*Warning:"),
+    re.compile(r"^\s*warnings\.warn\("),
+    # A bare traceback frame, which without its exception says nothing useful here.
+    # The line is stripped before matching, so its indentation is already gone.
+    re.compile(r"^File \".*\", line \d+"),
+)
 
 
 def summarize_indexer_line(line):
     """Turn one line of indexer output into progress text, or None to ignore it.
 
     The indexer's stdout carries three kinds of line: console output written for a
-    person, tqdm progress bars, and library logging. Only the first two say anything
-    about progress. Showing every line put things like
-
-        2026-09-19 21:31:50,515 [INFO] root - Instantiating...
-
-    in the progress bar, where it is both meaningless and too long to read.
+    person, tqdm progress bars, and library chatter. Only the first two say anything
+    about progress, and the third is the bulk of it -- model loading alone logs
+    dozens of lines nobody watching a progress bar wants.
     """
     if not line:
         return None
     # tqdm redraws with carriage returns; only the newest frame matters.
     clean = line.split("\r")[-1].strip()
-    if not clean or _INDEXER_LOG_LINE.match(clean):
+    if not clean:
+        return None
+    if any(pattern.match(clean) for pattern in _INDEXER_NOISE):
         return None
 
     match = _INDEXER_TQDM.match(clean)
     if match:
         label, percent, done, total = match.groups()
         return f"{label.strip()}: {percent}% ({done}/{total})"
+
+    if len(clean) > _INDEXER_MAX_MESSAGE:
+        return clean[:_INDEXER_MAX_MESSAGE - 1].rstrip() + "\u2026"
     return clean
 
 

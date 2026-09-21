@@ -1490,4 +1490,13 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 40vw;
+    /* A flex item will not shrink below its content without this, so the ellipsis
+       never got a chance -- the text simply ran off the end of the bar instead. */
+    min-width: 0;
+    flex: 0 1 auto;
+}
+
+.index-progress-text {
+    min-width: 0;
+    flex: 0 1 auto;
 }

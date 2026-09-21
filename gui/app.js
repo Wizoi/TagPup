@@ -756,10 +756,15 @@ document.addEventListener('DOMContentLoaded', () => {
             if (btnCancelQueue) btnCancelQueue.classList.add('hidden');
             return;
         }
-        const names = queued.slice(0, 3).map(f => f.name).join(', ');
-        const more = queued.length > 3 ? ` +${queued.length - 3} more` : '';
-        const nowOn = active.length ? `${active[0].name} \u2014 ` : '';
-        indexQueueSummary.textContent = `${nowOn}${queued.length} folder(s) waiting: ${names}${more}`;
+        // The folder being worked on, and how many are behind it -- nothing else.
+        // Listing what was waiting made a line too long to read, which ran off the
+        // edge of the bar and buried the one number anybody wants. The names are
+        // still there on hover, where their length costs nothing.
+        const parts = [];
+        if (active.length) parts.push(active[0].name);
+        parts.push(`${queued.length} more waiting`);
+        indexQueueSummary.textContent = parts.join('  \u00B7  ');
+        indexQueueSummary.title = 'Waiting:\n' + queued.map(f => f.name).join('\n');
         indexQueueSummary.classList.remove('hidden');
         if (btnCancelQueue) btnCancelQueue.classList.remove('hidden');
     }

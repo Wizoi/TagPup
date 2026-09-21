@@ -719,6 +719,79 @@ class TestTagPupFaceCrop(TagPupAPITestBase):
         self.assertEqual(status, 400)
 
 
+class TestIndexerNoiseFiltering(unittest.TestCase):
+    """Library chatter must not reach the progress bar.
+
+    Reported from the running app: huggingface_hub prints
+
+        Warning: You are sending unauthenticated requests to the HF Hub...
+
+    as a bare line with no prefix, so it passed the logging-format filter, stuck on
+    the progress bar and read as though something had gone wrong. These match the
+    *shapes* chatter arrives in -- blacklisting one library's wording only waits for
+    the next library to add some.
+    """
+
+    def summarize(self, line):
+        from tagpup_server import summarize_indexer_line
+        return summarize_indexer_line(line)
+
+    def test_the_bare_huggingface_warning_is_dropped(self):
+        self.assertIsNone(self.summarize(
+            "Warning: You are sending unauthenticated requests to the HF Hub. "
+            "Please set a HF_TOKEN to enable higher rate limits and faster downloads."
+        ))
+
+    def test_the_logger_form_of_the_same_warning_is_dropped(self):
+        self.assertIsNone(self.summarize(
+            "WARNING:huggingface_hub.utils._http:Warning: You are sending "
+            "unauthenticated requests to the HF Hub."
+        ))
+
+    def test_timestamped_library_logging_is_dropped(self):
+        self.assertIsNone(self.summarize(
+            "2026-09-19 22:55:30,914 [INFO] httpx - HTTP Request: HEAD https://x"
+        ))
+
+    def test_every_logging_level_in_the_logger_form_is_dropped(self):
+        for level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+            self.assertIsNone(
+                self.summarize("%s:some.module:a message" % level), level
+            )
+
+    def test_a_warnings_warn_source_line_is_dropped(self):
+        self.assertIsNone(self.summarize(
+            r"C:\x\y.py:42: UserWarning: something happened"
+        ))
+
+    def test_the_echoed_warn_statement_is_dropped(self):
+        self.assertIsNone(self.summarize("  warnings.warn("))
+
+    def test_a_bare_traceback_frame_is_dropped(self):
+        self.assertIsNone(self.summarize('  File "C:/x/y.py", line 3, in f'))
+
+    def test_the_progress_bar_still_gets_through(self):
+        self.assertEqual(
+            self.summarize("Generating embeddings:  42%|####  | 21/50 [00:12<00:16]"),
+            "Generating embeddings: 42% (21/50)",
+        )
+
+    def test_the_indexer_own_console_output_still_gets_through(self):
+        for line in ("Scanning directory: D:/Training/Pictures",
+                     "Found 68083 image(s) total.",
+                     "Indexing successfully completed!"):
+            self.assertEqual(self.summarize(line), line)
+
+    def test_a_very_long_message_is_trimmed_rather_than_cut_off_mid_screen(self):
+        long_line = "Indexing " + ("x" * 300)
+        out = self.summarize(long_line)
+        self.assertLessEqual(len(out), 90)
+        self.assertTrue(out.endswith("…"), out[-5:])
+
+    def test_a_message_that_fits_is_left_alone(self):
+        self.assertEqual(self.summarize("Found 42 image(s)."), "Found 42 image(s).")
+
+
 class TestIndexerProgressText(unittest.TestCase):
     """What the indexing progress bar is allowed to say.
 
