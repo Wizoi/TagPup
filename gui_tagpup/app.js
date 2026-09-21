@@ -788,7 +788,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (tag.startsWith('Family/') || tag.startsWith('Friends/') || tag.startsWith('People/') || tag.startsWith('Pets/')) {
             return true;
         }
-        const leaf = tag.includes('/') ? tag.split('/').pop().trim() : tag;
+        const leaf = leafOf(tag);
         if (knownPeople.includes(leaf)) {
             return true;
         }
@@ -799,9 +799,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return true;
             }
             if (tag.includes('/')) {
-                const parts = tag.split('/');
-                for (let i = 1; i <= parts.length; i++) {
-                    const ancestorTag = parts.slice(0, i).join('/');
+                for (const ancestorTag of ancestorsOf(tag)) {
                     const ancestorNode = taxonomyNodes.find(n => n.tag === ancestorTag);
                     if (ancestorNode && ancestorNode.has_face === 1) {
                         return true;
@@ -812,27 +810,79 @@ document.addEventListener('DOMContentLoaded', () => {
         return false;
     }
 
-    /** The last segment of a tag path, which is the name a person is known by. */
+    // ---- Talking about a tag ------------------------------------------------
+    //
+    // A person has two shapes in this app and they are not interchangeable. Their
+    // identity is a leaf -- "Hazel Brookmire" -- which is what the faces table, the
+    // suggester and photo.people all speak in. Their tag is a path --
+    // "People/Hazel Brookmire" -- which is what the keywords must hold and what the
+    // server matches on, exactly.
+    //
+    // Every bug in this area has been a site that converted between the two by hand
+    // and got it slightly wrong, and they all look different on the surface:
+    //
+    //   - clicking a recognised face added the person a second time, bare, because
+    //     the duplicate check compared a leaf against a path;
+    //   - the x on a selection chip removed nothing, because it sent the leaf to a
+    //     server that removes by exact match -- and rewrote every selected file to
+    //     achieve it;
+    //   - a suggested "Activity/Cross Country" was written as "Cross Country",
+    //     because the same line that reduced people to leaves reduced keywords too.
+    //
+    // So the conversions live here and nowhere else. `tests/frontend/tag-vocabulary.
+    // test.mjs` fails on a raw `.split('/')` elsewhere in this file, the same way
+    // tests/test_db_access.py fails on a raw sqlite3.connect.
+
+    /** The last segment of a tag path: the name a person is known by. */
     function leafOf(tag) {
         if (!tag) return '';
-        return tag.includes('/') ? tag.split('/').pop().trim() : tag.trim();
+        const text = String(tag);
+        return text.includes('/') ? text.split('/').pop().trim() : text.trim();
+    }
+
+    /** The first segment of a tag path: the category it is filed under. */
+    function rootOf(tag) {
+        if (!tag) return '';
+        return String(tag).split('/')[0].trim();
+    }
+
+    /** Each tag on the way down to this one: People, then People/Hazel Brookmire. */
+    function ancestorsOf(tag) {
+        const parts = String(tag || '').split('/');
+        return parts.map((_part, i) => parts.slice(0, i + 1).join('/'));
+    }
+
+    /** Do these two tags name the same person, however each is spelled? */
+    function samePerson(a, b) {
+        const left = leafOf(a).toLowerCase();
+        return Boolean(left) && left === leafOf(b).toLowerCase();
+    }
+
+    /**
+     * Of two tags naming one person, the one to keep.
+     *
+     * The pathed form wins: it says where the person belongs, and a bare name is what
+     * you get when that was lost.
+     */
+    function preferPathed(a, b) {
+        if (!a) return b;
+        if (!b) return a;
+        if (a.includes('/') === b.includes('/')) return a;
+        return a.includes('/') ? a : b;
     }
 
     /**
      * Does this photo already carry this tag, or this same person under another name?
      *
-     * A person belongs in the keywords as a path, "People/Hazel Brookmire". But face
-     * recognition and the tag suggester both speak in leaf names, so a plain
-     * `tags.includes()` compared "Hazel Brookmire" against "People/Hazel Brookmire",
-     * found no match, and wrote the person in a second time as a bare leaf. Identity is
-     * the leaf; the path is only where they are filed.
+     * A plain `tags.includes()` compared "Hazel Brookmire" against
+     * "People/Hazel Brookmire", found no match, and wrote the person in a second
+     * time. Identity is the leaf; the path is only where they are filed.
      */
     function photoAlreadyHas(photo, tag) {
         const tags = (photo && photo.tags) || [];
         if (tags.includes(tag)) return true;
         if (!isPersonTag(tag)) return false;
-        const leaf = leafOf(tag).toLowerCase();
-        return tags.some(t => isPersonTag(t) && leafOf(t).toLowerCase() === leaf);
+        return tags.some(t => isPersonTag(t) && samePerson(t, tag));
     }
 
     function updateTagsDatalist() {
@@ -877,8 +927,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Find in knownTags first
             const matchedTag = knownTags.find(t => {
                 if (!isPersonTag(t)) return false;
-                const leaf = t.split('/').pop().trim();
-                return leaf.toLowerCase() === name.toLowerCase();
+                return samePerson(t, name);
             });
             if (matchedTag) return matchedTag;
             
@@ -917,12 +966,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // what you get when that was lost.
         const byPerson = new Map();
         Array.from(peopleSet).forEach(tag => {
-            const leaf = tag.split('/').pop().trim().toLowerCase();
+            const leaf = leafOf(tag).toLowerCase();
             if (!leaf) return;
-            const existing = byPerson.get(leaf);
-            if (!existing || (!existing.includes('/') && tag.includes('/'))) {
-                byPerson.set(leaf, tag);
-            }
+            byPerson.set(leaf, preferPathed(byPerson.get(leaf), tag));
         });
 
         Array.from(byPerson.values()).sort().forEach(p => {
@@ -1918,7 +1964,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             const alreadyAdded = tags.includes(leaf);
                             if (!alreadyAdded) {
                                 if (isPerson) {
-                                    const cleanLeaf = leaf.includes('/') ? leaf.split('/').pop().trim() : leaf;
+                                    const cleanLeaf = leafOf(leaf);
                                     suggPeopleCounts[cleanLeaf] = (suggPeopleCounts[cleanLeaf] || 0) + 1;
                                 } else {
                                     suggTagCounts[leaf] = (suggTagCounts[leaf] || 0) + 1;
@@ -2437,7 +2483,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 if (!photo.people) photo.people = [];
                 resolvedPeople.forEach(p => {
-                    const leaf = p.includes('/') ? p.split('/').pop().trim() : p;
+                    const leaf = leafOf(p);
                     if (!photo.people.includes(leaf)) photo.people.push(leaf);
                 });
                 
@@ -3096,7 +3142,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (!photo.people) photo.people = [];
                         resolvedPeople.forEach(p => {
                             if (!photo.tags.includes(p)) photo.tags.push(p);
-                            const leaf = p.includes('/') ? p.split('/').pop().trim() : p;
+                            const leaf = leafOf(p);
                             if (!photo.people.includes(leaf)) photo.people.push(leaf);
                         });
                     }
@@ -4290,8 +4336,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (isPersonField) {
             if (matches.length > 0) {
                 const peopleMatches = matches.filter(m => {
-                    const parts = m.tag.split('/');
-                    const rootName = parts[0];
+                    const rootName = rootOf(m.tag);
                     const rootNode = allRoots.find(r => r.name.toLowerCase() === rootName.toLowerCase());
                     return rootNode && rootNode.has_face === 1;
                 });
