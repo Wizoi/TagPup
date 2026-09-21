@@ -191,6 +191,56 @@ def resolve_people_tags(tags, db_path):
     return resolved
 
 
+def record_tags_in_index(db_path, photo_path, tags, flat=None, hierarchical=None):
+    """Tell the index what a photo's keywords now are.
+
+    Saving one photo has always done this; the bulk writers did not, so tagging fifty
+    photos left fifty index rows describing what they used to hold. Nothing in the app
+    showed the difference -- the folder cache was updated, so the screen was right --
+    which is how it went unnoticed until a repair script, planning from the index,
+    reported nothing to do on a folder that had just been tagged wholesale.
+
+    `flat` and `hierarchical` are what was actually written to the file, as
+    write_keyword_fields returns them, so raw_metadata keeps agreeing with the photo.
+    """
+    from metadata import extract_people
+
+    def store(conn):
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT raw_metadata FROM photos WHERE path = ?", (to_db_path(photo_path),)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return False   # never indexed; adding it here would be an index, not an edit
+
+        try:
+            raw_meta = json.loads(row[0]) if row[0] else {}
+        except Exception:
+            raw_meta = {}
+        if flat is not None:
+            raw_meta["XMP:Subject"] = flat
+        if hierarchical is not None:
+            raw_meta["XMP:HierarchicalSubject"] = hierarchical
+
+        people = extract_people(raw_meta, tags, db_path=db_path)
+        cursor.execute(
+            "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE path = ?",
+            (json.dumps(tags), json.dumps(people), json.dumps(raw_meta),
+             to_db_path(photo_path)),
+        )
+        return True
+
+    try:
+        return tagpup_db.write_with_connection(
+            db_path, store, label="index row for %s" % os.path.basename(photo_path)
+        )
+    except Exception as e:
+        # The file is already written and correct; a stale index row is recoverable.
+        logger.warning("Could not update the index for %s: %s", photo_path, e)
+        return False
+
+
 def write_keyword_fields(et, path, tags, extra_params=None, db_path=None):
     """Write `tags` into a photo's keyword fields, clearing fields that end up empty.
 
@@ -2113,12 +2163,14 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     new_tags = list(new_tags_set)
 
                     new_tags = resolve_people_tags(new_tags, self.db_path)
-                    write_keyword_fields(et, path, new_tags, db_path=self.db_path)
+                    flat, hierarchical = write_keyword_fields(
+                        et, path, new_tags, db_path=self.db_path)
+                    record_tags_in_index(self.db_path, path, new_tags, flat, hierarchical)
 
                     if photo_entry:
                         photo_entry["tags"] = new_tags
                         photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags, db_path=self.db_path)
-                        
+
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error in bulk tags write: {e}")
@@ -2180,12 +2232,14 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     # Apply All writes whatever the suggester proposed, and the
                     # suggester deals in leaf names. Resolve before writing.
                     new_tags = resolve_people_tags(new_tags, self.db_path)
-                    write_keyword_fields(et, path, new_tags, db_path=self.db_path)
+                    flat, hierarchical = write_keyword_fields(
+                        et, path, new_tags, db_path=self.db_path)
+                    record_tags_in_index(self.db_path, path, new_tags, flat, hierarchical)
 
                     if photo_entry:
                         photo_entry["tags"] = new_tags
                         photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags, db_path=self.db_path)
-                            
+
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error auto-applying suggestions: {e}")
