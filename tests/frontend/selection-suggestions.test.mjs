@@ -227,15 +227,15 @@ describe("a suggestion says how sure it is, and lands where it was asked for", (
     assert.match(chip, /63%/, `confidence not shown: ${chip}`);
   });
 
-  test("one below the auto-apply bar is marked as such", async (t) => {
+  test("a low-confidence one is drawn differently", async (t) => {
+    // It still gets applied -- Apply All writes everything offered -- but how sure the
+    // machine was is worth seeing before pressing a button that writes to every
+    // selected photo.
     const ctx = await loadSelected(t, twoPhotos, suggestOnFirstOnly(twoPhotos, 0.63));
     const el = [...ctx.document.querySelectorAll("#selection-suggested-people-list .suggestion-chip")]
       .find((c) => c.textContent.includes("Anh Tran"));
-    assert.ok(
-      el.classList.contains("suggestion-chip-unsure"),
-      "a suggestion Auto-Apply skipped looked identical to one it would write"
-    );
-    assert.match(el.title, /below/i, `the tooltip does not explain why: ${el.title}`);
+    assert.ok(el.classList.contains("suggestion-chip-unsure"));
+    assert.match(el.title, /Apply All/i, `the tooltip does not say it will be applied: ${el.title}`);
   });
 
   test("one above the bar is not marked", async (t) => {
@@ -262,5 +262,45 @@ describe("a suggestion says how sure it is, and lands where it was asked for", (
       `applied to photos that never suggested it: ${JSON.stringify(body.paths)}`
     );
     assert.deepEqual(body.add_tags, ["Anh Tran"]);
+  });
+});
+
+describe("Apply All applies all of it", () => {
+  // Reported as ambiguity, and it was: the panel offered 153 suggestions, the button
+  // wrote the 141 scoring 0.75 or above, and the 12 it left were indistinguishable
+  // from the ones it took. A button called Apply All that applies most of them is
+  // worse than one that asks. What is offered is now what gets written.
+  const photos = [photoRecord({ filename: "a.jpg", tags: [], people: [] })];
+
+  async function applyAll(t, score) {
+    const ctx = await loadSelected(t, photos, {
+      status: "completed",
+      suggestions: {
+        [photos[0].path]: { people: [], tags: [{ tag: "Regatta", score }] },
+      },
+    });
+    ctx.server.on("/api/folder/auto-apply", { success: true });
+    ctx.window.confirm = () => true;
+    ctx.document.getElementById("btn-folder-auto-apply").click();
+    await flush(ctx.window, 6);
+    return ctx;
+  }
+
+  test("it asks the server for every suggestion, not the confident ones", async (t) => {
+    const ctx = await applyAll(t, 0.9);
+    const body = ctx.server.lastBody("/api/folder/auto-apply");
+    assert.ok(body, "Apply All sent nothing");
+    assert.equal(body.threshold, 0.0,
+      `a threshold was still sent, so some suggestions would be skipped: ${body.threshold}`);
+  });
+
+  test("a low-confidence suggestion still enables the button", async (t) => {
+    // It used to stay disabled when everything on offer was below the bar, which
+    // looked like there was nothing to apply when the panel plainly listed things.
+    const ctx = await applyAll(t, 0.31);
+    assert.equal(
+      ctx.document.getElementById("btn-folder-auto-apply").disabled, false,
+      "the button was disabled while suggestions were on screen"
+    );
   });
 });

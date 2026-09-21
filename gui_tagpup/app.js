@@ -2074,10 +2074,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    //: Auto-apply writes a suggestion only at or above this score. The panel lists
-    //: every suggestion, so the ones below it stay on screen after Apply All -- which
-    //: looks like the button failed unless the panel says why.
-    const AUTO_APPLY_THRESHOLD = 0.75;
+    //: Auto-apply writes everything the panel offers, so there is no bar to be below
+    //: any more. The score is still shown, because how sure the machine was is worth
+    //: knowing before you press a button that writes to every selected photo -- but it
+    //: no longer decides anything, and a suggestion left on screen after Apply All
+    //: would now be a bug rather than a threshold.
+    const CONFIDENT_ENOUGH_TO_LOOK_SURE = 0.75;
 
     /** Record a suggestion, remembering which photos asked for it and how strongly. */
     function noteSuggestion(into, key, photoPath, score) {
@@ -2105,16 +2107,14 @@ document.addEventListener('DOMContentLoaded', () => {
         keys.forEach(name => {
             const { count, paths, score } = counts[name];
             const pct = Math.round(score * 100);
-            const belowBar = score < AUTO_APPLY_THRESHOLD;
+            const unsure = score < CONFIDENT_ENOUGH_TO_LOOK_SURE;
 
             const chip = document.createElement('span');
-            chip.className = 'suggestion-chip' + (belowBar ? ' suggestion-chip-unsure' : '');
+            chip.className = 'suggestion-chip' + (unsure ? ' suggestion-chip-unsure' : '');
             chip.style.cursor = 'pointer';
             chip.textContent = `${name} (${count}) · ${pct}%`;
-            chip.title = belowBar
-                ? `${pct}% confident — below the ${Math.round(AUTO_APPLY_THRESHOLD * 100)}% bar, `
-                  + `so Auto-Apply left it. Click to add it to ${count} photo(s) anyway.`
-                : `${pct}% confident. Click to add to ${count} photo(s).`;
+            chip.title = `${pct}% confident— click to add it to ${count} photo(s) now, `
+                + `or leave it for Apply All, which writes everything here.`;
             chip.addEventListener('click', (e) => {
                 e.stopPropagation();
                 applyTagToPhotos(name, isPerson, paths);
@@ -3332,7 +3332,11 @@ document.addEventListener('DOMContentLoaded', () => {
             body: JSON.stringify({ 
                 folder_path: folder, 
                 photo_paths: selectedThumbnails,
-                threshold: 0.75 
+                // Apply everything the panel is showing. A button called Apply All
+                // that applied 141 of 153 suggestions and left 12 on screen read as
+                // a failure, and the 12 it skipped were indistinguishable from the
+                // ones it wrote. What is offered is what gets applied.
+                threshold: 0.0 
             })
         })
         .then(res => res.json())
@@ -3378,11 +3382,9 @@ document.addEventListener('DOMContentLoaded', () => {
             // Check general tags suggestions
             if (sugg.tags) {
                 for (let t of sugg.tags) {
-                    if (t.score >= 0.75) {
-                        if (!currentTags.includes(t.tag)) {
-                            hasSomethingToApply = true;
-                            break;
-                        }
+                    if (!currentTags.includes(t.tag)) {
+                        hasSomethingToApply = true;
+                        break;
                     }
                 }
             }
@@ -3393,13 +3395,11 @@ document.addEventListener('DOMContentLoaded', () => {
             // otherwise the button offers to add someone who is already there.
             if (sugg.people) {
                 for (let p of sugg.people) {
-                    if (p.score >= 0.75) {
-                        const leaf = leafOf(p.name);
-                        if (!photoAlreadyHas(photo, p.name)
-                            && !photoPeople.some(n => leafOf(n).toLowerCase() === leaf.toLowerCase())) {
-                            hasSomethingToApply = true;
-                            break;
-                        }
+                    const leaf = leafOf(p.name);
+                    if (!photoAlreadyHas(photo, p.name)
+                        && !photoPeople.some(n => leafOf(n).toLowerCase() === leaf.toLowerCase())) {
+                        hasSomethingToApply = true;
+                        break;
                     }
                 }
             }
