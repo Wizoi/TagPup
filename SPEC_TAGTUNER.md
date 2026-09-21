@@ -239,6 +239,22 @@ disagree and nothing is typed, the button reads *Assign N to their matches* and 
 each face to the person its own badge names, after stating the split. Typing a name
 still overrides them, because sometimes the machine is wrong about all of them.
 
+### 0.4.2 Excluding a face
+
+Excluding keeps the row and the crop but takes the face out of identity work entirely,
+and is reversible from the **Excluded** bucket.
+
+**The reason is picked, not typed.** Four buttons — *not a person*, *stranger*, *bad
+crop*, *duplicate* — cover every exclusion in this library. It was a free-text prompt,
+which produced "fuzzy" and "wrong person" beside "bad crop" (three ways of recording two
+things) and cost a typed answer on the fastest action in the app. Cancelling excludes
+nothing.
+
+**The reason is shown on the face** in the Excluded bucket. It had been recorded since
+exclusions existed and never displayed, so the one place it could be useful — reviewing
+what you ruled out and why — did not have it. It takes no part in matching; only the
+`excluded` flag does.
+
 ### 0.5 Review Tags
 
 A third mode beside Folder Matches and Identify Faces, for the word tags face curation

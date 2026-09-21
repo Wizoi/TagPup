@@ -282,6 +282,28 @@
          worth of shoots. -->
     <!-- Asked once, then remembered. A native confirm() cannot carry the checkbox
          that makes "stop asking me" possible, and this is clicked constantly. -->
+    <!-- Why a face is being excluded. A picker rather than a text box: the reason is
+         only ever read back as a label, the same four answers cover everything, and
+         typing one of them hundreds of times is a tax on the fastest action here. -->
+    <div id="exclude-reason-modal" class="modal hidden">
+        <div class="modal-content ignore-confirm-content">
+            <div class="modal-header">
+                <h3 id="exclude-reason-title">Why exclude these faces?</h3>
+                <button id="btn-exclude-reason-close" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="ignore-confirm-note">
+                    Nothing is deleted. The faces move to the <strong>Excluded</strong>
+                    bucket, stop being offered as matches, and can be put back at any time.
+                </p>
+                <div class="exclude-reason-choices" id="exclude-reason-choices"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-exclude-reason-cancel" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <div id="ignore-confirm-modal" class="modal hidden">
         <div class="modal-content ignore-confirm-content">
             <div class="modal-header">

@@ -2950,6 +2950,17 @@ ${summary}${note}`)) {
                 item.className = 'face-match-item';
                 item.dataset.faceId = String(face.id);
                 renderedFaceOrder.push(face.id);
+
+                // Why this face was ruled out, on the face. It has been recorded since
+                // exclusions existed and never shown, so the one place it could be
+                // useful -- reviewing what you ruled out and why -- did not have it.
+                if (face.reason) {
+                    const why = document.createElement('span');
+                    why.className = 'face-exclusion-reason';
+                    why.textContent = face.reason;
+                    why.title = `Excluded as "${face.reason}"`;
+                    item.appendChild(why);
+                }
                 // Why this face is here: its photo names somebody else too, and
                 // neither has a face yet, so both faces are offered under both names.
                 // Saying so turns a confusing grid into a clear task.
@@ -3346,19 +3357,72 @@ This photo also names ${face.other_names.join(', ')}. `
     // face out of identity work entirely; it is reversible from the Excluded bucket.
     const EXCLUDE_REASONS = ['not a person', 'stranger', 'bad crop', 'duplicate'];
 
+    /**
+     * Ask why, with buttons rather than a text box.
+     *
+     * The reason takes no part in matching -- it is only ever read back as a label --
+     * and these four answers cover every exclusion in this library. Typing one of them
+     * hundreds of times is a tax on the fastest action in the app, and free text
+     * produced "fuzzy" and "wrong person" beside "bad crop": three ways of recording
+     * two things.
+     *
+     * Resolves to a reason, or null if the question was declined.
+     */
+    function askExcludeReason(count) {
+        const modal = document.getElementById('exclude-reason-modal');
+        const choices = document.getElementById('exclude-reason-choices');
+        const title = document.getElementById('exclude-reason-title');
+        if (!modal || !choices) {
+            // Nothing to ask with; fall back rather than block the exclusion.
+            return Promise.resolve(EXCLUDE_REASONS[0]);
+        }
+
+        if (title) {
+            title.textContent = count === 1
+                ? 'Why exclude this face?'
+                : `Why exclude these ${count} faces?`;
+        }
+
+        return new Promise(resolve => {
+            let settled = false;
+            const finish = (value) => {
+                if (settled) return;
+                settled = true;
+                modal.classList.add('hidden');
+                resolve(value);
+            };
+
+            choices.innerHTML = '';
+            EXCLUDE_REASONS.forEach(reason => {
+                const button = document.createElement('button');
+                button.className = 'exclude-reason-choice';
+                button.dataset.reason = reason;
+                button.textContent = reason;
+                button.addEventListener('click', () => finish(reason));
+                choices.appendChild(button);
+            });
+
+            const cancel = document.getElementById('btn-exclude-reason-cancel');
+            const close = document.getElementById('btn-exclude-reason-close');
+            if (cancel) cancel.onclick = () => finish(null);
+            if (close) close.onclick = () => finish(null);
+            modal.onclick = (e) => { if (e.target === modal) finish(null); };
+
+            modal.classList.remove('hidden');
+        });
+    }
+
     function postExcludeBulk(faceIds, presetReason) {
         if (!faceIds.length) return;
         // A caller that has already asked the question passes the reason in, rather
         // than putting a second modal in front of the same decision.
-        let reason = presetReason;
-        if (reason === undefined) {
-            reason = prompt(
-                `Exclude ${faceIds.length} face(s) from matching.\n\n` +
-                `Reason (${EXCLUDE_REASONS.join(' / ')}):`,
-                EXCLUDE_REASONS[0]
-            );
-            if (reason === null) return;   // cancelled
+        if (presetReason === undefined) {
+            return askExcludeReason(faceIds.length).then(chosen => {
+                if (chosen === null) return;   // declined
+                return postExcludeBulk(faceIds, chosen);
+            });
         }
+        const reason = presetReason;
 
         if (btnExcludeSelected) {
             btnExcludeSelected.disabled = true;
@@ -3367,7 +3431,7 @@ This photo also names ${face.other_names.join(', ')}. `
         fetch('/api/faces/exclude', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ face_ids: faceIds, reason: reason.trim() || 'not a person' })
+            body: JSON.stringify({ face_ids: faceIds, reason: (reason || '').trim() || 'not a person' })
         })
         .then(res => {
             if (!res.ok) throw new Error('Exclude failed');

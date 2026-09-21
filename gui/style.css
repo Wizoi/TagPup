@@ -1949,3 +1949,46 @@ body {
 .matching-faces-grid {
     user-select: none;
 }
+
+/* Picking why a face is excluded. One button per reason, because the reason is only
+   ever read back as a label and the same four answers cover everything -- typing one
+   of them hundreds of times is a tax on the fastest action in this app. */
+.exclude-reason-choices {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.exclude-reason-choice {
+    padding: 10px 12px;
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.exclude-reason-choice:hover {
+    border-color: var(--accent);
+    background: rgba(99, 102, 241, 0.12);
+}
+
+/* Why a face was excluded, on the face. It was recorded and never shown, so the one
+   place it could have been useful -- reviewing what you ruled out -- did not have it. */
+.face-exclusion-reason {
+    position: absolute;
+    left: 4px;
+    bottom: 4px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 8px;
+    background: rgba(9, 13, 22, 0.8);
+    color: var(--badge-unmatched);
+    pointer-events: none;
+}

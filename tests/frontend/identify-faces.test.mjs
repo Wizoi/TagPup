@@ -998,11 +998,17 @@ describe("working through Unknown Faces", () => {
     const { document, window, server } = await openBucket(t, strangers);
     document.getElementById("btn-matching-select-all").click();
     await new Promise((r) => window.setTimeout(r, 30));
-    window.prompt = () => "not a person";
     document.getElementById("btn-exclude-selected").click();
+    await new Promise((r) => window.setTimeout(r, 30));
+
+    // The reason is picked from buttons now, not typed into a prompt.
+    const choice = document.querySelector('.exclude-reason-choice[data-reason="stranger"]');
+    assert.ok(choice, "the reason picker did not open");
+    choice.click();
     await new Promise((r) => window.setTimeout(r, 40));
 
     assert.deepEqual(server.lastBody("/api/faces/exclude").face_ids, [1201, 1202, 1203]);
+    assert.equal(server.lastBody("/api/faces/exclude").reason, "stranger");
   });
 
   test("a capped list says it is only the first of more", async (t) => {

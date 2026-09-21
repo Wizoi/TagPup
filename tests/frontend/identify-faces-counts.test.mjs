@@ -55,11 +55,13 @@ function build(people, faces) {
     .on("/api/faces/match-bulk", { success: true, matched: 1 });
 }
 
-async function open(t, people, faces) {
-  const { window, document, server } = await loadApp("tagtuner", {
+async function open(t, people, faces, extra = (s) => s, person = NAME) {
+  const server = build(people, faces);
+  extra(server);
+  const { window, document } = await loadApp("tagtuner", {
     t,
-    server: build(people, faces),
-    url: `http://localhost:8080/kr-track/?mode=unmatched-faces&person=${encodeURIComponent(NAME)}`,
+    server,
+    url: `http://localhost:8080/kr-track/?mode=unmatched-faces&person=${encodeURIComponent(person)}`,
   });
   await new Promise((r) => window.setTimeout(r, 140));
   return { window, document, server };
@@ -520,5 +522,94 @@ describe("a selection that agrees who it is", () => {
     click(ctx.window, cards[1], { ctrlKey: true });
     await new Promise((r) => ctx.window.setTimeout(r, 40));
     assert.equal(input.value, "Someone Else");
+  });
+});
+
+describe("saying why a face is excluded", () => {
+  // It was a free-text prompt, which produced "fuzzy" and "wrong person" beside "bad
+  // crop" -- three ways of recording two things -- and cost a typed answer on the
+  // fastest action in the app. And the reason, once recorded, was never shown: the
+  // one place it could be useful, reviewing what you ruled out, did not have it.
+  const strangers = [face(1, null, 0), face(2, null, 0)];
+
+  async function startExcluding(t) {
+    const ctx = await open(t,
+      [{ name: NAME, count: 2, unit: "face" }],
+      strangers);
+    ctx.server.on("/api/faces/exclude", { success: true, excluded: 2 });
+    const cards = [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
+    cards.forEach((c) => click(ctx.window, c, { ctrlKey: true }));
+    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    ctx.document.getElementById("btn-exclude-selected").click();
+    await new Promise((r) => ctx.window.setTimeout(r, 30));
+    return ctx;
+  }
+
+  const choices = (ctx) =>
+    [...ctx.document.querySelectorAll(".exclude-reason-choice")].map((b) => b.dataset.reason);
+
+  test("the four reasons are offered as buttons", async (t) => {
+    const ctx = await startExcluding(t);
+    assert.deepEqual(choices(ctx), ["not a person", "stranger", "bad crop", "duplicate"]);
+  });
+
+  test("nothing is sent until one is picked", async (t) => {
+    const ctx = await startExcluding(t);
+    assert.equal(
+      ctx.server.calls.filter((c) => c.url.includes("/api/faces/exclude")).length, 0);
+  });
+
+  test("picking one sends it", async (t) => {
+    const ctx = await startExcluding(t);
+    ctx.document.querySelector('.exclude-reason-choice[data-reason="bad crop"]').click();
+    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    const body = ctx.server.lastBody("/api/faces/exclude");
+    assert.equal(body.reason, "bad crop");
+    assert.deepEqual(body.face_ids.sort(), [1, 2]);
+  });
+
+  test("cancelling excludes nothing", async (t) => {
+    const ctx = await startExcluding(t);
+    ctx.document.getElementById("btn-exclude-reason-cancel").click();
+    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    assert.equal(
+      ctx.server.calls.filter((c) => c.url.includes("/api/faces/exclude")).length, 0);
+  });
+
+  test("the dialog closes once answered", async (t) => {
+    const ctx = await startExcluding(t);
+    ctx.document.querySelector('.exclude-reason-choice[data-reason="stranger"]').click();
+    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    assert.ok(
+      ctx.document.getElementById("exclude-reason-modal").classList.contains("hidden"));
+  });
+
+  test("it says how many faces it is about", async (t) => {
+    const ctx = await startExcluding(t);
+    assert.match(
+      ctx.document.getElementById("exclude-reason-title").textContent,
+      /Why exclude these 2 faces/);
+  });
+});
+
+describe("reviewing what was excluded", () => {
+  test("each face says why it was ruled out", async (t) => {
+    // Recorded since exclusions existed, and never once shown.
+    const excluded = [
+      { ...face(1, null, 0), reason: "stranger" },
+      { ...face(2, null, 0), reason: "bad crop" },
+    ];
+    // The Excluded bucket has its own endpoint rather than the person-matches one.
+    const ctx = await open(t, [{ name: "Excluded", count: 2, unit: "face" }], excluded,
+      (s) => s.on("/api/faces/excluded", { faces: excluded, total_count: 2 }),
+      "Excluded");
+    const shown = [...ctx.document.querySelectorAll(".face-exclusion-reason")]
+      .map((el) => el.textContent);
+    assert.deepEqual(shown.sort(), ["bad crop", "stranger"]);
+  });
+
+  test("a face with no reason carries no label", async (t) => {
+    const ctx = await open(t, [{ name: NAME, count: 1, unit: "face" }], [face(1, null, 0)]);
+    assert.equal(ctx.document.querySelector(".face-exclusion-reason"), null);
   });
 });
