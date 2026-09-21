@@ -3542,6 +3542,20 @@ This photo also names ${face.other_names.join(', ')}. `
         const assignByBadge = count > 1 && distinct.size > 1
             && !inputReassignName.value.trim();
 
+        // When the selection agrees about who it is, say so in the box. Selecting
+        // four faces all badged with one name left it empty and the button dead --
+        // the easiest case in the bucket, and the only one that needed typing, while
+        // a selection of four different people worked by itself.
+        //
+        // Filled rather than assumed: it is visible, it is editable, and it clears
+        // when the selection changes, like any other badge-filled name.
+        if (inputReassignName && count > 0 && distinct.size === 1
+            && !inputReassignName.value.trim()) {
+            inputReassignName.value = [...distinct][0];
+            nameFilledForFaceIds = [...selectedFaceIds];
+        }
+
+        const agreed = count > 0 && distinct.size === 1;
         if (inputReassignName) {
             inputReassignName.placeholder = assignByBadge
                 ? `Multiple (${distinct.size} people) — or type one name for all`
@@ -3554,7 +3568,7 @@ This photo also names ${face.other_names.join(', ')}. `
                 || (!inputReassignName.value.trim() && !assignByBadge);
             btnReassignSelected.textContent = assignByBadge
                 ? `Assign ${suggested.length} to their matches`
-                : 'Assign Selected';
+                : (agreed ? `Assign ${count} to ${[...distinct][0]}` : 'Assign Selected');
             btnReassignSelected.title = assignByBadge
                 ? 'Each selected face goes to the person its badge names'
                 : '';
