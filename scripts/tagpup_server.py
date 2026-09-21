@@ -2524,6 +2524,40 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 else:
                     updated_paths_map[target_path] = target_path
                     
+            # Tell the index where the photos went.
+            #
+            # Renaming on disk without this leaves a row naming a file that no longer
+            # exists, while the photo itself looks unindexed. The row is the valuable
+            # half: it carries the photo's embedding and its faces, names included. In
+            # this library one such rename stranded 78 rows holding 234 faces, 88 of
+            # them named by hand -- work that only survived because the renamer records
+            # where each file came from and the rows could be matched back.
+            #
+            # Saving a single photo has always done this. This is the bulk path, and
+            # it did not, which is the same shape as the bulk tag writes fixed earlier:
+            # the screen was right and the database was not.
+            renamed = {old: new for old, new in updated_paths_map.items() if old != new}
+            if renamed:
+                def move_rows(conn):
+                    cursor = conn.cursor()
+                    for old_path, new_path in renamed.items():
+                        cursor.execute(
+                            "UPDATE photos SET path = ? WHERE path = ?",
+                            (to_db_path(new_path), to_db_path(old_path)))
+                        cursor.execute(
+                            "UPDATE faces SET photo_path = ? WHERE photo_path = ?",
+                            (to_db_path(new_path), to_db_path(old_path)))
+                    return len(renamed)
+                try:
+                    tagpup_db.write_with_connection(
+                        self.db_path, move_rows,
+                        label="index rows for %d renamed photo(s)" % len(renamed))
+                except Exception as e:
+                    # The files are renamed either way; a stranded row is recoverable
+                    # with scripts/relink_renamed_photos.py.
+                    logger.error("Renamed %d photo(s) but could not move their index "
+                                 "rows: %s", len(renamed), e)
+
             # Clear old and scan new cache entries
             if normalize_path(folder_path) in TagPupHTTPRequestHandler.folder_cache:
                 del TagPupHTTPRequestHandler.folder_cache[normalize_path(folder_path)]
