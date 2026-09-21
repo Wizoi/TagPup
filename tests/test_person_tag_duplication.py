@@ -128,5 +128,83 @@ class TestTheIndexerUsesIt(unittest.TestCase):
         self.assertNotIn('taxonomy.add_tags(meta["people"])', source)
 
 
+
+class TestNewPeopleKeepTheLibrarysDepth(TaxonomyTestBase):
+    """A library whose people live three levels deep must not gain a shallower home.
+
+    The main gallery files people at Family/Immediate/<name> -- 4,830 three-level tags
+    and 58 at four. Filing somebody new at Family/<name> would put a second, shallower
+    home for people beside the real one, which is the bare-root fault wearing different
+    clothes.
+    """
+
+    def test_a_new_person_joins_the_existing_parent(self):
+        tax = self.taxonomy([
+            "Family/Immediate/Cora Ingersoll",
+            "Family/Immediate/Delphine Ingersoll",
+        ])
+        tax.add_people(["Marisol Ingersoll"])
+        self.assertIn("Family/Immediate/Marisol Ingersoll", tax.paths)
+        self.assertNotIn("Family/Marisol Ingersoll", tax.paths)
+
+    def test_the_commonest_parent_wins(self):
+        tax = self.taxonomy([
+            "Family/Immediate/Cora Ingersoll",
+            "Family/Immediate/Delphine Ingersoll",
+            "Family/Extended/Someone Else",
+        ])
+        tax.add_people(["Marisol Ingersoll"])
+        self.assertIn("Family/Immediate/Marisol Ingersoll", tax.paths)
+
+    def test_a_flat_library_still_files_people_at_the_root(self):
+        tax = self.taxonomy(["People/Ada Lovelace"])
+        tax.add_people(["Grace Hopper"])
+        self.assertIn("People/Grace Hopper", tax.paths)
+
+    def test_an_empty_library_falls_back_to_the_people_root(self):
+        tax = self.taxonomy()
+        tax.add_people(["Ada Lovelace"])
+        self.assertIn("People/Ada Lovelace", tax.paths)
+
+    def test_non_people_depth_does_not_decide_where_people_go(self):
+        # Activity/Sport/Running is three deep, but it says nothing about people.
+        tax = self.taxonomy(["Activity/Sport/Running", "People/Ada Lovelace"])
+        tax.add_people(["Grace Hopper"])
+        self.assertIn("People/Grace Hopper", tax.paths)
+
+
+class TestKeywordsKeepTheirLevels(unittest.TestCase):
+    """The levels are the keyword. Its fragments are not keywords."""
+
+    def fields(self, tags):
+        sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
+        from tagpup_server import expand_tag_fields
+        return expand_tag_fields(tags)
+
+    def test_a_deep_tag_is_written_whole(self):
+        flat, hierarchical = self.fields(["Family/Immediate/Cora Ingersoll"])
+        self.assertEqual(flat, ["Family/Immediate/Cora Ingersoll"])
+        self.assertEqual(hierarchical, ["Family/Immediate/Cora Ingersoll"])
+
+    def test_its_pieces_are_not_written_beside_it(self):
+        flat, _ = self.fields(["Family/Immediate/Cora Ingersoll"])
+        for fragment in ("Family", "Immediate", "Cora Ingersoll"):
+            self.assertNotIn(fragment, flat)
+
+    def test_a_tag_with_no_levels_is_left_as_it_is(self):
+        flat, hierarchical = self.fields(["Sunset"])
+        self.assertEqual(flat, ["Sunset"])
+        self.assertEqual(hierarchical, [])
+
+    def test_order_is_kept_so_a_rewrite_does_not_churn_the_file(self):
+        tags = ["Family/Immediate/Cora Ingersoll", "Activity/Running", "Sunset"]
+        flat, _ = self.fields(tags)
+        self.assertEqual(flat, tags)
+
+    def test_a_repeated_tag_is_written_once(self):
+        flat, hierarchical = self.fields(["Activity/Running", "Activity/Running"])
+        self.assertEqual(flat, ["Activity/Running"])
+        self.assertEqual(hierarchical, ["Activity/Running"])
+
 if __name__ == "__main__":
     unittest.main()

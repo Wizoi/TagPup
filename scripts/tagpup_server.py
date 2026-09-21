@@ -80,15 +80,25 @@ def summarize_indexer_line(line):
 
 
 def expand_tag_fields(tags):
-    """Split a tag list into the flat and hierarchical keyword forms written to files."""
+    """Split a tag list into the flat and hierarchical keyword forms written to files.
+
+    A tag is written whole. It used to be written whole *and* broken into its
+    segments, so "Family/Immediate/Cora Ingersoll" became four keywords -- the path plus
+    "Family", "Immediate" and "Cora Ingersoll". That buries a deliberate hierarchy under
+    its own fragments, and the bare leaf is the form that gave one person two entries
+    in the Add Person list.
+
+    The convention comes from the library rather than from a default: of 18,502
+    keyword values in this one, 18,364 are full paths separated by "/" and none are
+    bare leaves.
+    """
     flat, hierarchical = [], []
     for tag in tags:
-        flat.append(tag)
-        if "/" in tag:
+        if tag not in flat:
+            flat.append(tag)
+        if "/" in tag and tag not in hierarchical:
             hierarchical.append(tag)
-            for part in tag.split("/"):
-                flat.append(part)
-    return list(set(flat)), list(set(hierarchical))
+    return flat, hierarchical
 
 def write_keyword_fields(et, path, tags, extra_params=None):
     """Write `tags` into a photo's keyword fields, clearing fields that end up empty.

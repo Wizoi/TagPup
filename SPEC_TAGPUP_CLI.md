@@ -100,7 +100,16 @@ Tags and captions are written back using ExifTool:
 - **Every photo is indexed.** Indexing once required a photo to carry at least one flat tag, person tag or caption, which made the index a record of what had already been organised rather than of the library. An untagged photo could not be searched for, suggested against, or have its faces identified -- precisely the photos that needed the tool most.
 - **Smart Skipping (Incremental Indexing)**: On subsequent indexing runs, the system compares each scanned file's modification time (`mtime`) and file size (`size`) with the values stored in the database. If both match, the file is skipped entirely from metadata parsing and embedding generation, drastically speeding up catalog updates.
 - **Single-Pass Face Indexing**: Unless `--skip-faces` is passed, the indexer automatically triggers face detection and embeddings extraction in the same loop, writing results to the `faces` table after the parent photo row has been committed.
-- **People Enter The Taxonomy Under A People Root**: `extract_people()` returns *leaf*
+- **A Tag Is Written Whole**: keyword fields carry the full path -- `Family/Immediate/
+  Cora Ingersoll` -- and never its fragments. Writing used to emit the path *and* each of
+  its segments, so one three-level person tag became four keywords: the path plus
+  `Family`, `Immediate` and `Cora Ingersoll`. That buries a deliberate hierarchy under its
+  own pieces, and the bare leaf is exactly the form that gave one person two entries in
+  the Add Person list. The convention is read from the library rather than assumed: of
+  18,502 keyword values in the main gallery, 18,364 are full paths separated by `/` and
+  none are bare leaves. Levels are preserved on every write; a photo's existing depth is
+  never flattened.
+- **People Enter The Taxonomy Under A People Root**:`extract_people()` returns *leaf*
   names -- `photos.people` is the flattened view used for display and matching -- so
   passing that list to `taxonomy.add_tags()` treated each leaf as a whole path and
   minted a bare root node per person, beside the `People/<name>` the hierarchical
@@ -109,7 +118,11 @@ Tags and captions are written back using ExifTool:
   `Family`, `Friends`, or one marked `has_face`) and does nothing at all when that
   person is already in the taxonomy somewhere.
 
-  `add_tag()` additionally refuses to create a bare root that an existing **people**
+  A newly seen person is filed at the depth the library already uses: where people live
+  at `Family/Immediate/<name>`, a new one joins them there rather than appearing at
+  `Family/<name>`, which would be a second and shallower home for people.
+
+  `add_tag()` additionally refusesto create a bare root that an existing **people**
   path already claims: photo files carry both forms in the wild, and a file saying
   `Cora Ingersoll` beside a taxonomy saying `People/Cora Ingersoll` gave that person two homes.
   Only people are folded this way -- `Kentridge` beside `School/Kentridge` is left

@@ -223,16 +223,38 @@ class TestSaveMetadata(TagPupAPITestBase):
         self.assertEqual(self.disk_field(photo, "XMP:Description"), "A day out")
 
     @requires_exiftool
-    def test_saves_tags_to_file_as_flat_and_hierarchical(self):
+    def test_saves_a_tag_whole_rather_than_in_pieces(self):
+        """A tag's levels are the keyword; its fragments are not keywords.
+
+        This used to write the path AND each of its segments, so
+        "Family/Immediate/Cora Ingersoll" became four keywords. In a library whose
+        keywords are full paths -- 18,364 of 18,502 values in this one, none bare --
+        that buries a deliberate hierarchy under its own pieces, and the bare leaf is
+        the form that gave one person two entries in the Add Person list.
+        """
         photo = self.make_photo("a.jpg", [])
         self.post(
             "/api/photo/save-metadata",
             {"path": photo, "title": "", "tags": ["Activity/Hiking"]},
         )
         on_disk = self.disk_keywords(photo)
-        self.assertIn("Activity/Hiking", on_disk, "hierarchical form missing")
-        self.assertIn("Hiking", on_disk, "flat leaf missing")
-        self.assertIn("Activity", on_disk, "flat ancestor missing")
+        self.assertIn("Activity/Hiking", on_disk, "the tag itself is missing")
+        self.assertNotIn("Hiking", on_disk, "the leaf was scattered beside the path")
+        self.assertNotIn("Activity", on_disk, "the root was scattered beside the path")
+
+    @requires_exiftool
+    def test_a_deep_tag_keeps_every_level(self):
+        photo = self.make_photo("deep.jpg", [])
+        self.post(
+            "/api/photo/save-metadata",
+            {"path": photo, "title": "",
+             "tags": ["Family/Immediate/Cora Ingersoll", "Activity/Running"]},
+        )
+        on_disk = self.disk_keywords(photo)
+        self.assertIn("Family/Immediate/Cora Ingersoll", on_disk, "levels were flattened")
+        self.assertIn("Activity/Running", on_disk)
+        for fragment in ("Family", "Immediate", "Cora Ingersoll", "Running"):
+            self.assertNotIn(fragment, on_disk, "%r was written as its own keyword" % fragment)
 
     @requires_exiftool
     def test_clearing_tags_removes_them_from_file(self):

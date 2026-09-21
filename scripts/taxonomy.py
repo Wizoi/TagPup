@@ -235,6 +235,31 @@ class TagTaxonomy:
                 return root
         return self.DEFAULT_PEOPLE_ROOTS[0]
 
+    def people_parent(self) -> str:
+        """Where a newly seen person belongs, at the depth this library already uses.
+
+        A library whose people live at Family/Immediate/<name> should not gain a
+        Family/<name> beside them the first time somebody new turns up: that is a
+        second, shallower home for people, which is the same fault as a bare root
+        wearing different clothes. The commonest existing parent wins; the plain root
+        is the fallback for a library with nobody in it yet.
+        """
+        roots = self.people_roots()
+        parents = {}
+        for path in self.paths:
+            parts = path.split("/")
+            if len(parts) < 2:
+                continue
+            if parts[0].strip().lower() not in roots:
+                continue
+            parent = "/".join(parts[:-1])
+            parents[parent] = parents.get(parent, 0) + 1
+        if not parents:
+            return self.people_root()
+        # Deepest among the most common, so a tie does not silently flatten.
+        best = max(parents.items(), key=lambda kv: (kv[1], kv[0].count("/")))
+        return best[0]
+
     def add_people(self, names: List[str]):
         """Record people in the taxonomy, under a people root.
 
@@ -248,7 +273,7 @@ class TagTaxonomy:
         A name already somewhere in the taxonomy is left where it is: the point is to
         avoid a second home for it, not to move the first one.
         """
-        root = self.people_root()
+        root = self.people_parent()
         for name in names:
             normalized = self.normalize_tag(name)
             if not normalized:
