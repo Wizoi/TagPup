@@ -129,6 +129,41 @@ def write(target, operation, label="database write"):
         return retry_when_busy(operation, label=label)
 
 
+def write_with_connection(target, operation, label="database write"):
+    """Run a write on a connection of its own, with other writers held back.
+
+    A connection has one transaction state, and this program shares connections
+    across threads (`check_same_thread=False`). Two threads writing through one
+    connection interleave into each other's implicit transaction, and the loser is
+    told the database is locked -- immediately, without the busy timeout applying,
+    because there is nothing to wait for.
+
+    That is why recording faces, which has always opened its own connection, kept
+    succeeding in the same instant the embedding cache on the shared connection
+    failed. A writer gets a connection to itself.
+
+    `operation` is called with the connection and its result returned; the commit,
+    rollback and close are handled here. It may be called more than once, so it
+    should not carry state between attempts.
+    """
+    def attempt():
+        conn = connect(target)
+        try:
+            result = operation(conn)
+            conn.commit()
+            return result
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            conn.close()
+
+    return write(target, attempt, label=label)
+
+
 @contextmanager
 def writing(target, label="database write"):
     """Hold the write lock for a block that writes.

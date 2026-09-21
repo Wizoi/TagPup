@@ -34,8 +34,17 @@ either: a connection holding an open read transaction that then tries to write m
 upgrade its lock, and SQLite refuses that immediately **without calling the busy
 handler**, so a 30-second timeout expires instantly.
 
+**A writer gets a connection to itself.** A connection has one transaction state, and
+the index's main connection is opened `check_same_thread=False` and handed to a thread
+pool. Two threads writing through it interleave into each other's implicit transaction,
+and the loser is told the database is locked -- immediately, with the busy timeout never
+applying, because there is nothing to wait for. That is why the embedding cache kept
+failing in the same instant that recording faces succeeded: faces had always opened a
+connection of their own. Concurrent writers use `db.write_with_connection()`, which
+takes the lock, opens a connection, commits and closes it.
+
 The lock cannot see another process or a checkpoint, so writes also retry with a short
-backoff. Recording faces reports an **error** when it finally gives up.Those faces are lost until the photo is indexed again, which is not a
+backoff.Recording faces reports an **error** when it finally gives up.Those faces are lost until the photo is indexed again, which is not a
 warning-shaped event.
 
 Any new connection should go through `configure_connection()`.

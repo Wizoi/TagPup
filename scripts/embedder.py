@@ -165,10 +165,9 @@ class ClipEmbedder:
             
             # Try database cache first if photo_index is available
             if self.photo_index is not None and self.photo_index.conn is not None:
-                def store():
+                def store(conn):
                     emb_bytes = np.array(embedding, dtype=np.float32).tobytes()
-                    cursor = self.photo_index.conn.cursor()
-                    cursor.execute("""
+                    conn.execute("""
                         INSERT OR REPLACE INTO embedding_cache (
                             path, mtime, size, model_name, pretrained,
                             preserve_full_frame, max_aspect_ratio, force_image_size, embedding
@@ -184,15 +183,17 @@ class ClipEmbedder:
                         self.force_image_size,
                         emb_bytes
                     ))
-                    self.photo_index.conn.commit()
 
-                # Every worker in the suggestion pool writes its embedding through
-                # this one shared connection, so they take their turn.
-                writer = getattr(self.photo_index, "write", None)
+                # On a connection of its own. Every worker in the suggestion pool
+                # writes its embedding here, and they were all going through the
+                # index's shared connection -- whose single transaction state they
+                # interleaved into, telling the loser the database was locked.
+                writer = getattr(self.photo_index, "write_on_own_connection", None)
                 if writer is not None:
                     writer(store, label="embedding cache for %s" % os.path.basename(file_path))
                 else:
-                    store()
+                    store(self.photo_index.conn)
+                    self.photo_index.conn.commit()
                 return
 
             # Fallback to disk-based cache

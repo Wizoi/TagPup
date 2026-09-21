@@ -180,5 +180,115 @@ class TestBusyIsRetriedAndOtherFailuresAreNot(unittest.TestCase):
             tagpup_db.retry_when_busy(always_locked, attempts=3, first_delay=0.001)
 
 
+
+class TestAWriterGetsAConnectionToItself(unittest.TestCase):
+    """Sharing one connection across writing threads is what kept failing.
+
+    A connection has a single transaction state. This program opens its main one with
+    `check_same_thread=False` and hands it to a thread pool, so two threads writing
+    through it interleave into each other's implicit transaction and the loser is told
+    the database is locked -- immediately, with the busy timeout never applying, because
+    there is nothing to wait for.
+
+    It showed in the log as the embedding cache failing in the same instant that
+    recording faces succeeded: faces had always opened a connection of their own.
+    """
+
+    def setUp(self):
+        import tempfile
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        conn = tagpup_db.connect(self.path)
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, who TEXT)")
+        conn.commit()
+        conn.close()
+
+        def cleanup():
+            for suffix in ("", "-wal", "-shm"):
+                target = self.path + suffix
+                if os.path.exists(target):
+                    try:
+                        os.remove(target)
+                    except OSError:
+                        pass
+        self.addCleanup(cleanup)
+
+    def test_many_threads_writing_at_once_all_succeed(self):
+        errors = []
+
+        def worker(worker_id):
+            for i in range(25):
+                try:
+                    tagpup_db.write_with_connection(
+                        self.path,
+                        lambda conn, w=worker_id, n=i: conn.execute(
+                            "INSERT INTO t (who) VALUES (?)", ("%s-%d" % (w, n),)
+                        ),
+                    )
+                except Exception as e:
+                    errors.append("%s: %s" % (worker_id, e))
+
+        threads = [threading.Thread(target=worker, args=(w,)) for w in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(errors, [], "writes failed under concurrency")
+
+        conn = tagpup_db.connect(self.path)
+        self.addCleanup(conn.close)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM t").fetchone()[0], 200)
+
+    def test_readers_do_not_stop_the_writers(self):
+        """The situation the app is always in: the page is read while work is written."""
+        stop = threading.Event()
+        errors = []
+
+        def reader():
+            conn = tagpup_db.connect(self.path)
+            try:
+                while not stop.is_set():
+                    conn.execute("SELECT COUNT(*) FROM t").fetchone()
+            except Exception as e:
+                errors.append("reader: %s" % e)
+            finally:
+                conn.close()
+
+        readers = [threading.Thread(target=reader) for _ in range(4)]
+        for r in readers:
+            r.start()
+        try:
+            for i in range(40):
+                tagpup_db.write_with_connection(
+                    self.path,
+                    lambda conn, n=i: conn.execute(
+                        "INSERT INTO t (who) VALUES (?)", ("w%d" % n,)
+                    ),
+                )
+        except Exception as e:
+            errors.append("writer: %s" % e)
+        finally:
+            stop.set()
+            for r in readers:
+                r.join()
+
+        self.assertEqual(errors, [])
+
+    def test_a_failed_write_leaves_nothing_behind(self):
+        import sqlite3
+
+        def half_written(conn):
+            conn.execute("INSERT INTO t (who) VALUES ('first')")
+            raise sqlite3.IntegrityError("something went wrong after the first row")
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            tagpup_db.write_with_connection(self.path, half_written)
+
+        conn = tagpup_db.connect(self.path)
+        self.addCleanup(conn.close)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM t").fetchone()[0], 0,
+                         "a failed write was left committed")
+
 if __name__ == "__main__":
     unittest.main()

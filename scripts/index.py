@@ -529,6 +529,15 @@ class PhotoIndex:
             logger.error(f"Error saving faces for {photo_path}: {e}")
             self.conn.rollback()
 
+    def write_on_own_connection(self, operation, label="database write"):
+        """Run a write on a connection of its own.
+
+        Preferred over write() for anything that runs from a thread pool or a
+        background thread: the shared connection has one transaction state, and
+        threads writing through it interleave into each other's.
+        """
+        return tagpup_db.write_with_connection(self.db_path, operation, label=label)
+
     def write(self, operation, label="database write"):
         """Run a write with every other writer to this database held back.
 
@@ -847,20 +856,18 @@ class PhotoIndex:
         """Save precomputed tag embedding."""
         if not self.conn:
             return
-        def store():
+        def store(conn):
             emb_bytes = np.array(embedding, dtype=np.float32).tobytes()
-            cursor = self.conn.cursor()
-            cursor.execute(
+            conn.execute(
                 """
                 INSERT OR REPLACE INTO tag_embeddings (tag, prompt, model_name, pretrained, embedding)
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 (tag, prompt, model_name, pretrained, emb_bytes)
             )
-            self.conn.commit()
 
         try:
-            self.write(store, label="tag embedding for '%s'" % tag)
+            self.write_on_own_connection(store, label="tag embedding for '%s'" % tag)
         except Exception as e:
             # Losing a tag embedding costs the next suggestion run the time to
             # recompute it. Not data loss, so this stays a warning.
