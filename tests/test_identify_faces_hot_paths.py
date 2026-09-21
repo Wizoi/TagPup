@@ -705,6 +705,158 @@ class TestTheCappedTailRule(unittest.TestCase):
             "it was kept but left stale-stamped, which rebuilds it on the next click")
 
 
+class TestAGroupOfOneIsNotAGroup(unittest.TestCase):
+    """What happens to a cluster's last survivor when the rest are taken away.
+
+    Grouping needs min_samples faces that resemble each other -- two, here. Naming or
+    ignoring some of a group can leave one behind, and re-running the clustering to
+    notice is the whole minute the cached payload exists to avoid.
+
+    It matters because of what the screen does with a group: its own heading, and a
+    button that assigns every face under it to one person in a click. The Unclustered
+    pile instead carries a warning that these resembled nothing and must be handled one
+    at a time. A survivor still flying its old group's colours gets the first treatment
+    while being, by the rule that built the group, the second thing.
+
+    Measured on the real library, removing a tenth of the clustered faces: 139 groups
+    stranded this way, and -- in the same runs, across removals of 10%, 30% and 50% --
+    not one merge and not one face pulled in from the unclustered pile. Shrinking is
+    the only direction available, which is what makes fixing this up by hand sound.
+    """
+
+    def setUp(self):
+        self.handler = object.__new__(tuner_server.TunerHTTPRequestHandler)
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.execute(
+            "CREATE TABLE faces (id INTEGER PRIMARY KEY, name TEXT,"
+            " excluded INTEGER DEFAULT 0)")
+        self.conn.executemany(
+            "INSERT INTO faces (id, name, excluded) VALUES (?, NULL, 0)",
+            [(i,) for i in range(1, 1200)])
+        self.conn.commit()
+        self.addCleanup(self.conn.close)
+        cache = tuner_server.TunerHTTPRequestHandler.identify_cache
+        for key in list(cache.keys()):
+            cache.pop(key, None)
+        self.cache = cache
+
+    def forget(self, ids):
+        """Remove faces the way a real request does: write first, then update the cache.
+
+        The pre-write fingerprint is what decides whether a cached entry can be carried
+        forward, so a test that never moves the table is not testing anything.
+        """
+        before = self.fingerprint()
+        self.conn.execute(
+            "UPDATE faces SET excluded = 1 WHERE id IN (%s)" % ",".join("?" * len(ids)),
+            list(ids))
+        self.conn.commit()
+        self.handler.identify_cache_forget_faces(self.conn, list(ids), before)
+
+    def fingerprint(self):
+        """The table state the cached grid was built against."""
+        return self.handler.faces_fingerprint(self.conn)
+
+    def cache_a_grid(self, faces, unclustered_total=0):
+        self.cache["matches:Unknown Faces"] = {
+            "fingerprint": self.fingerprint(),
+            "value": {
+                "faces": faces,
+                "total_count": len(faces),
+                "unclustered_total": unclustered_total,
+                "unclustered_shown": sum(1 for f in faces if f["cluster_id"] == -1),
+                "has_more": False,
+            },
+        }
+
+    def faces_now(self):
+        return self.cache.get("matches:Unknown Faces")["value"]
+
+    def test_the_last_face_of_a_cluster_joins_the_unclustered_pile(self):
+        self.cache_a_grid([
+            {"id": 1, "cluster_id": 4, "cluster_name": "Cluster 1", "similarity": 0.9},
+            {"id": 2, "cluster_id": 4, "cluster_name": "Cluster 1", "similarity": 0.9},
+            {"id": 3, "cluster_id": 4, "cluster_name": "Cluster 1", "similarity": 0.8},
+        ])
+
+        self.forget([1, 2])
+
+        value = self.faces_now()
+        survivor = value["faces"][0]
+        self.assertEqual(3, survivor["id"])
+        self.assertEqual(
+            -1, survivor["cluster_id"],
+            "one face was left presented as a cluster, so the screen still offers"
+            " 'assign this whole cluster' on a group of one",
+        )
+        self.assertEqual("Unclustered", survivor["cluster_name"])
+        self.assertEqual(
+            0.0, survivor["similarity"],
+            "it still reports how much it resembles the centre of a group that is gone",
+        )
+        self.assertEqual(1, value["unclustered_shown"])
+        self.assertEqual(
+            1, value["unclustered_total"],
+            "a face that fell out of a cluster has to count towards the unclustered"
+            " pool it just joined",
+        )
+
+    def test_a_cluster_that_keeps_two_faces_stays_a_cluster(self):
+        """min_samples is 2. Two is still a group."""
+        self.cache_a_grid([
+            {"id": 1, "cluster_id": 4, "cluster_name": "Cluster 1", "similarity": 0.9},
+            {"id": 2, "cluster_id": 4, "cluster_name": "Cluster 1", "similarity": 0.9},
+            {"id": 3, "cluster_id": 4, "cluster_name": "Cluster 1", "similarity": 0.8},
+        ])
+
+        self.forget([1])
+
+        value = self.faces_now()
+        self.assertTrue(
+            all(f["cluster_id"] == 4 for f in value["faces"]),
+            "a group of two was dissolved; min_samples is 2, not 3",
+        )
+        self.assertEqual(0, value["unclustered_total"])
+
+    def test_other_clusters_are_left_alone(self):
+        self.cache_a_grid([
+            {"id": 1, "cluster_id": 4, "cluster_name": "Cluster 1", "similarity": 0.9},
+            {"id": 2, "cluster_id": 4, "cluster_name": "Cluster 1", "similarity": 0.9},
+            {"id": 3, "cluster_id": 7, "cluster_name": "Cluster 2", "similarity": 0.9},
+            {"id": 4, "cluster_id": 7, "cluster_name": "Cluster 2", "similarity": 0.9},
+            {"id": 5, "cluster_id": 7, "cluster_name": "Cluster 2", "similarity": 0.8},
+        ])
+
+        self.forget([1])
+
+        by_id = {f["id"]: f for f in self.faces_now()["faces"]}
+        self.assertEqual(-1, by_id[2]["cluster_id"], "the stranded face was not demoted")
+        for fid in (3, 4, 5):
+            self.assertEqual(
+                7, by_id[fid]["cluster_id"],
+                "an untouched cluster was dissolved along with the stranded one")
+
+    def test_an_already_unclustered_face_is_not_counted_twice(self):
+        self.cache_a_grid(
+            [
+                {"id": 1, "cluster_id": 4, "cluster_name": "Cluster 1", "similarity": 0.9},
+                {"id": 2, "cluster_id": 4, "cluster_name": "Cluster 1", "similarity": 0.9},
+                {"id": 8, "cluster_id": -1, "cluster_name": "Unclustered", "similarity": 0.0},
+                {"id": 9, "cluster_id": -1, "cluster_name": "Unclustered", "similarity": 0.0},
+            ],
+            unclustered_total=2,
+        )
+
+        self.forget([1])
+
+        value = self.faces_now()
+        self.assertEqual(3, value["unclustered_shown"])
+        self.assertEqual(
+            3, value["unclustered_total"],
+            "the pool should have gained exactly the one stranded face",
+        )
+
+
 class TestSomethingElseChangedThePoolInBetween(unittest.TestCase):
     """A cached grid may only be carried forward over the change it was told about.
 
