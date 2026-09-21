@@ -71,6 +71,9 @@ Some tests exist to stop a whole class of mistake rather than to cover a feature
   they are filed under. Face recognition and the suggester both speak in leaf names, so
   every path that accepts one has to resolve it before writing; the ones that did not
   added a person a second time, bare, beside the `People/<name>` already there.
+- `tests/frontend/tag-vocabulary.test.mjs` fails on a raw `.split('/')` in
+  `gui_tagpup/app.js` outside the helper block, and on a closure-level `let` declared
+  after the startup call but read above it. See the next section for why both exist.
 
 ## Traps
 
@@ -87,6 +90,25 @@ scripts with a file-writing tool rather than a heredoc, or locate lines by index
 patch scripts failed on their last assertion, silently discarding the earlier edits that
 had already succeeded in memory. If a patch reports a failure, re-check every part of it,
 not only the part that failed.
+
+**Never convert between a person's name and their tag by hand.** A person has two
+shapes and they are not interchangeable: their identity is a leaf (`Hazel Brookmire`),
+which is what the faces table, the suggester and `photo.people` speak in, and their tag
+is a path (`People/Hazel Brookmire`), which is what the keywords must hold and what the
+server matches on, exactly. Use `leafOf`, `rootOf`, `ancestorsOf`, `samePerson`,
+`preferPathed` and `photoAlreadyHas` in `gui_tagpup/app.js`, and
+`taxonomy.find_person_path()` in Python.
+
+Every bug in this area was a site doing the conversion itself, and none of them looked
+related: clicking a recognised face added the person a second time in the bare form;
+the `×` on a selection chip removed nothing while still rewriting every selected file;
+a suggested `Activity/Cross Country` was written as `Cross Country`.
+
+**The app starts itself from the middle of `app.js`.** A `?path=` in the URL calls
+`scanFolder()` around line 459, so any closure-level `let` or `const` declared below
+that and read above it can be reached before its declaration runs — which throws
+`Cannot access X before initialization`, and inside a promise chain surfaces as
+something unrelated ("Error scanning folder"). Declare state at the top with the rest.
 
 **Never call `sqlite3.connect` directly — use `scripts/db.py`.** This program is always
 a reader and a writer at once, from many threads: both servers handle each request on
