@@ -142,7 +142,15 @@ cluster immediately, with no confirmation, because a prompt on every cluster is 
 friction the button exists to remove. What makes that fair is the undo offered
 straight afterwards.
 
-The **Unclustered** section is not a cluster: it holds the faces grouping could not
+The **third tab is named for what it holds**, which depends on whether there is
+anybody to rank against. Where the person has reference faces it is **Unlikely** --
+candidates in photos naming them that do not resemble the faces already named as them
+(under 0.60). Most of a crowd photo lands there, and that is the point: it is what is
+left once the likely ones are lifted out. Where the person has no named faces it is
+**Unclustered** -- the faces grouping could not place. One tab, two meanings, so it
+carries two names rather than one misleading one.
+
+The **Unclustered** section is not a cluster:it holds the faces grouping could not
 place, which resemble each other no more than they resemble anything. It is therefore
 denied every cluster-wide action -- no **Assign Cluster**, no **Ignore Cluster**, and no
 cluster-level name suggestion, since one member's guess says nothing about the rest. It
@@ -161,6 +169,18 @@ a native one cannot carry the "don't ask again" checkbox that somebody clicking
 through hundreds of clusters needs. The preference is remembered across sessions.
 With the question off it acts immediately, and either way the result is offered back:
 an assignment is undone by unmatching, an exclusion by restoring.
+
+### 0.4 Ordering the people list
+
+The sidebar orders people by how many photos are waiting, which puts the most work
+first. **Name (A-Z)** is offered alongside, because finding one person among twenty-two
+ordered by count means reading all of them, and you usually already know the name. The
+comparison ignores case, so a lower-case name does not sort after every capitalised one.
+The choice is remembered across sessions.
+
+The buckets -- `Unknown Faces`, `Ungrouped`, `Excluded` -- stay pinned to the top in
+either order. They are not people, and sorting them into the alphabet would bury them
+between two names.
 
 ### 1. Interactive Face Tuning
 - Clicking on a face card in the "Detected Faces" grid selects it and expands it to show the editing panel.

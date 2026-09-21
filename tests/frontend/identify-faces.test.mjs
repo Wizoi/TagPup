@@ -794,7 +794,9 @@ describe("ranking a person's candidates against that person", () => {
   test("the tabs use resemblance to the person, not to the crowd", async (t) => {
     const { document } = await openPerson(t, crowd);
     assert.match(document.getElementById("tab-outliers").textContent, /Possible \(2\)/);
-    assert.match(document.getElementById("tab-low-conf").textContent, /Unclustered \(2\)/);
+    // Named for what it holds: these are being ranked against a person, so the
+    // leftovers are the ones that do not look like them.
+    assert.match(document.getElementById("tab-low-conf").textContent, /Unlikely \(2\)/);
   });
 
   test("a strong resemblance lands in Likely", async (t) => {
@@ -834,5 +836,99 @@ describe("ranking a person's candidates against that person", () => {
     document.getElementById("tab-outliers").click();
     await new Promise((r) => window.setTimeout(r, 30));
     assert.equal(document.querySelectorAll(".face-match-item").length, 2);
+  });
+});
+
+describe("the third tab is named for what it holds", () => {
+  // Asked: what does Unclustered mean for each person, and why does one hold 170
+  // while another holds 4? Because the label had stopped describing the contents.
+  // The tab held faces that formed no cluster -- a fact about grouping -- and then
+  // candidate ranking turned it into "does not look much like them" while keeping
+  // the old name. Two meanings, one word, depending on whether the person happens
+  // to have reference faces.
+  function ranked(id, sim) {
+    return { ...face(id, 0.0, -1), person_similarity: sim };
+  }
+
+  test("when ranking against somebody it is Unlikely", async (t) => {
+    const { document } = await openPerson(t, [ranked(1101, 0.8), ranked(1102, 0.3)]);
+    assert.match(document.getElementById("tab-low-conf").textContent, /Unlikely \(1\)/);
+  });
+
+  test("it explains that most of a crowd photo lands there", async (t) => {
+    const { document } = await openPerson(t, [ranked(1103, 0.8), ranked(1104, 0.3)]);
+    assert.match(document.getElementById("tab-low-conf").title, /Most of\s+a crowd photo/);
+  });
+
+  test("with nobody to rank against it is Unclustered", async (t) => {
+    const { document } = await openPerson(t, [face(1105, 0.0, -1), face(1106, 0.0, -1)]);
+    assert.match(document.getElementById("tab-low-conf").textContent, /Unclustered \(2\)/);
+  });
+
+  test("and then it says why there is nothing to rank against", async (t) => {
+    const { document } = await openPerson(t, [face(1107, 0.0, -1)]);
+    assert.match(document.getElementById("tab-low-conf").title, /Nobody is named/);
+  });
+});
+
+describe("ordering the people list", () => {
+  const people = [
+    { name: "Unknown Faces", count: 765 },
+    { name: "Zoe Abbott", count: 3 },
+    { name: "Alba Castellan", count: 8 },
+    { name: "bram nordquist", count: 40 },
+  ];
+
+  async function sidebar(t, order) {
+    const server = new FakeServer()
+      .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
+      .on("/api/unmatched-faces/people", people)
+      .on("/api/unmatched-faces/person-matches", { faces: [], total_count: 0, has_more: false })
+      .on("/api/people-with-counts", [])
+      .on("/api/people", []);
+    const { window, document } = await loadApp("tagtuner", {
+      server, url: "http://localhost:8080/kr-track/?mode=unmatched-faces", t,
+    });
+    await new Promise((r) => window.setTimeout(r, 60));
+
+    if (order) {
+      const select = document.getElementById("people-sort");
+      select.value = order;
+      select.dispatchEvent(new window.Event("change"));
+      await new Promise((r) => window.setTimeout(r, 30));
+    }
+    return { document, window };
+  }
+
+  function names(document) {
+    return [...document.querySelectorAll("#photo-list .photo-title")].map((el) => el.textContent);
+  }
+
+  test("it defaults to the most photos first", async (t) => {
+    const { document } = await sidebar(t);
+    assert.deepEqual(names(document).slice(1), ["bram nordquist", "Alba Castellan", "Zoe Abbott"]);
+  });
+
+  test("it can be ordered by name instead", async (t) => {
+    const { document } = await sidebar(t, "name");
+    assert.deepEqual(names(document).slice(1), ["Alba Castellan", "bram nordquist", "Zoe Abbott"]);
+  });
+
+  test("the name order ignores case", async (t) => {
+    // Otherwise a lower-case name sorts after every capitalised one.
+    const { document } = await sidebar(t, "name");
+    assert.equal(names(document)[2], "bram nordquist");
+  });
+
+  test("the buckets stay pinned to the top either way", async (t) => {
+    // Unknown Faces is not a person, and sorting it into the alphabet would bury it
+    // somewhere between two names.
+    const { document } = await sidebar(t, "name");
+    assert.equal(names(document)[0], "Unknown Faces");
+  });
+
+  test("the choice is remembered", async (t) => {
+    const { window } = await sidebar(t, "name");
+    assert.equal(window.localStorage.getItem("tagtuner.peopleSort"), "name");
   });
 });

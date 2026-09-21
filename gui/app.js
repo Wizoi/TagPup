@@ -145,6 +145,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const photoSearch = document.getElementById('photo-search');
     const photoList = document.getElementById('photo-list');
     const listStats = document.getElementById('list-stats');
+    const peopleSort = document.getElementById('people-sort');
     const emptyState = document.getElementById('empty-state');
     const panelContent = document.getElementById('panel-content');
     
@@ -2159,6 +2160,60 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     }
 
+    //: Remembered, because it is a standing preference about how you read the list
+    //: rather than a per-visit decision.
+    const PEOPLE_SORT_KEY = 'tagtuner.peopleSort';
+
+    function currentPeopleSort() {
+        if (peopleSort && peopleSort.value) return peopleSort.value;
+        try {
+            return localStorage.getItem(PEOPLE_SORT_KEY) || 'count';
+        } catch (e) {
+            return 'count';
+        }
+    }
+
+    /**
+     * The people list in the chosen order.
+     *
+     * The buckets stay pinned to the top whichever order is chosen: Unknown Faces,
+     * Ungrouped and Excluded are not people, and sorting them into the alphabet
+     * would bury them somewhere between two names.
+     */
+    const PINNED_BUCKETS = ['Unknown Faces', 'Ungrouped', 'Excluded'];
+    function sortedPeople() {
+        const people = (allPeopleWithCounts || []).slice();
+        const rank = (p) => {
+            const at = PINNED_BUCKETS.indexOf(p.name);
+            return at === -1 ? PINNED_BUCKETS.length : at;
+        };
+        const byName = currentPeopleSort() === 'name';
+        people.sort((a, b) => {
+            const pinned = rank(a) - rank(b);
+            if (pinned !== 0) return pinned;
+            if (byName) {
+                return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+            }
+            return (b.count || 0) - (a.count || 0);
+        });
+        return people;
+    }
+
+    if (peopleSort) {
+        try {
+            const saved = localStorage.getItem(PEOPLE_SORT_KEY);
+            if (saved) peopleSort.value = saved;
+        } catch (e) { /* the preference just will not stick */ }
+
+        peopleSort.addEventListener('change', () => {
+            try {
+                localStorage.setItem(PEOPLE_SORT_KEY, peopleSort.value);
+            } catch (e) { /* as above */ }
+            // Keep the tab, so re-ordering the list does not throw away the view.
+            renderPeopleList(true);
+        });
+    }
+
     // Render unique people with counts in the sidebar
     function renderPeopleList(keepTab = false) {
         const savedScrollTop = photoList.scrollTop;
@@ -2174,7 +2229,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Apply filter directly in case search has value
         const query = photoSearch.value.toLowerCase();
 
-        allPeopleWithCounts.forEach(person => {
+        sortedPeople().forEach(person => {
             const li = document.createElement('li');
             li.className = 'photo-item';
             li.personName = person.name;
@@ -2411,14 +2466,23 @@ document.addEventListener('DOMContentLoaded', () => {
             tabMatches.textContent = `Likely (${high.length})`;
             tabOutliers.textContent = `Possible (${lower.length})`;
             if (tabLowConf) {
-                // "Unclustered", not "Ungrouped": the sidebar already has a bucket
-                // called Ungrouped and it means something else entirely -- faces whose
-                // photo names somebody who has only that one candidate in the whole
-                // library. Two different ideas under one word on one screen.
-                tabLowConf.textContent = `Unclustered (${unclustered.length})`;
-                tabLowConf.title = 'Faces that resembled nothing else, so grouping left '
-                    + 'them on their own. Not the same as the Ungrouped bucket in the '
-                    + 'sidebar.';
+                // Named for what it holds, which depends on whether there is anyone
+                // to rank these faces against. Neither name is "Ungrouped": the
+                // sidebar already has a bucket by that name meaning something else
+                // entirely -- faces whose photo names somebody who has only that one
+                // candidate in the whole library.
+                const isRanked = filteredFaces.some(f => f.person_similarity !== undefined);
+                tabLowConf.textContent = isRanked
+                    ? `Unlikely (${unclustered.length})`
+                    : `Unclustered (${unclustered.length})`;
+                tabLowConf.title = isRanked
+                    ? 'These are in photos that name this person, but they do not look '
+                      + 'much like the faces already named as them (under 60%). Most of '
+                      + 'a crowd photo lands here, and that is the point -- it is what '
+                      + 'is left after the likely ones are lifted out.'
+                    : 'Faces that resembled nothing else, so grouping left them on '
+                      + 'their own. Nobody is named for this person yet, so there is '
+                      + 'nothing to rank them against.';
                 tabLowConf.classList.toggle('hidden', unclustered.length === 0);
             }
         } else {
@@ -2552,7 +2616,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 emptyGrid.textContent = {
                     high: 'No likely matches for this name.',
                     lower: 'No possible matches for this name.',
-                    low: 'No ungrouped candidates for this name.',
+                    low: 'Nothing left over for this name.',
                 }[activeTab] || 'No candidates for this name.';
             } else {
                 if (activeTab === 'matches') {
