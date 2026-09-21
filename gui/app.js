@@ -2547,6 +2547,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 const competing = [...new Set(
                     groupFaces.flatMap(f => f.other_names || [])
                 )];
+                // Who the already-named faces say this group is. The queue can only
+                // offer a name the photo mentions, which is no help for the photos
+                // that name nobody -- and those are most of Unknown Faces.
+                const suggestion = groupFaces.find(f => f.suggested_name);
+                if (suggestion) {
+                    const pct = Math.round((suggestion.suggested_similarity || 0) * 100);
+                    const guess = document.createElement('button');
+                    guess.className = 'cluster-suggestion';
+                    guess.textContent = `Looks like ${suggestion.suggested_name} (${pct}%)`;
+                    guess.title = `Compared against the faces already named `
+                        + `${suggestion.suggested_name}. Click to put the name in the `
+                        + `box, then use Assign Cluster — nothing is assigned by `
+                        + `this alone.`;
+                    guess.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        if (inputReassignName) {
+                            inputReassignName.value = suggestion.suggested_name;
+                            inputReassignName.focus();
+                        }
+                    });
+                    titleSpan.appendChild(guess);
+                }
+
                 if (competing.length) {
                     const note = document.createElement('span');
                     note.className = 'competing-names-note';

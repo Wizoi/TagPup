@@ -1558,3 +1558,22 @@ body {
     background: var(--badge-warning, #fbbf24);
     pointer-events: none;
 }
+
+/* Who the already-named faces say a cluster is. A button rather than a label: it
+   puts the name in the box, and assigning is still a separate, deliberate act. */
+.cluster-suggestion {
+    margin-left: 10px;
+    padding: 2px 9px;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: none;
+    color: var(--text-primary);
+    background: rgba(99, 102, 241, 0.18);
+    border: 1px solid rgba(99, 102, 241, 0.45);
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+.cluster-suggestion:hover {
+    background: rgba(99, 102, 241, 0.3);
+}

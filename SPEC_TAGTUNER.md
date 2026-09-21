@@ -99,6 +99,29 @@ more doubt. The box overlay carries a large spread shadow to dim everything outs
 so it is positioned directly when the preview image is already cached rather than only
 from its load event -- otherwise the whole preview sat dimmed behind a zero-sized box.
 
+### 0.3 Why a face appears where it does
+
+The queue is **keyword-driven**. A face is offered under a name when its photo's
+keywords mention that name and no face in that photo is linked to it yet. Two
+consequences are worth stating, because both have been reported as bugs and neither
+is one:
+
+- A photo naming two people who both still lack a face offers **both** its faces under
+  **both** names. The tool cannot know which is which -- that is the question being
+  asked. Assigning one removes it from the other's list. Candidates now carry the other
+  names their photo is missing, and the group header says "also names Miko Zellweg".
+- **Unknown Faces** holds unnamed faces whose photo leaves no name unaccounted for --
+  either it names nobody, or every name it carries already has a face. In practice most
+  of these are photos with no people keywords at all: of 6,393 such faces in the
+  kr-track library, 5,464 are in photos naming nobody.
+
+That second case is why a plainly recognisable person can sit in Unknown Faces: the
+keyword mechanism has no name to file them under, however obvious they are. So each
+cluster is additionally compared against the **faces already named**, and offers
+"Looks like Emory Kade (93%)" when it clears 0.75. The similarity is always shown, and
+the suggestion only fills the name box -- assigning stays a separate, deliberate act.
+Against the kr-track library this names 65 of 234 unknown clusters, at 0.92 and above.
+
 ### 1. Interactive Face Tuning
 - Clicking on a face card in the "Detected Faces" grid selects it and expands it to show the editing panel.
 - **Deselection/Cancel**: Clicking "Cancel" or selecting another face card deselects the current face and hides the editing panel.

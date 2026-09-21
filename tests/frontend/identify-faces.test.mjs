@@ -334,3 +334,49 @@ describe("saying why a face is offered", () => {
     assert.equal(document.querySelector(".competing-names-note"), null);
   });
 });
+
+describe("suggesting who an unknown cluster is", () => {
+  // Unknown Faces holds unnamed faces whose photo leaves no name unaccounted for,
+  // and in this library most of those photos name nobody at all -- so the
+  // keyword-driven queue has nothing to offer them under, however recognisable the
+  // person. The answer is in the database: the faces already named.
+  const cluster = [
+    { ...face(51, 0.96, 0), suggested_name: "Emory Kade", suggested_similarity: 0.933 },
+    { ...face(52, 0.95, 0), suggested_name: "Emory Kade", suggested_similarity: 0.933 },
+  ];
+
+  function suggestionButton(document) {
+    return document.querySelector(".cluster-suggestion");
+  }
+
+  test("the cluster says who it looks like, with the number", async (t) => {
+    const { document } = await openPerson(t, cluster);
+    const btn = suggestionButton(document);
+    assert.ok(btn, "no suggestion was offered");
+    assert.match(btn.textContent, /Looks like Emory Kade \(93%\)/);
+  });
+
+  test("clicking it fills the name box rather than assigning", async (t) => {
+    // Assigning is a separate, deliberate act: a suggestion at 93% is still a guess.
+    const { document, window, server } = await openPerson(t, cluster);
+    suggestionButton(document).click();
+    await new Promise((r) => window.setTimeout(r, 30));
+
+    assert.equal(document.getElementById("input-reassign-name").value, "Emory Kade");
+    assert.equal(server.lastBody("/api/faces/match-bulk"), undefined, "it assigned on its own");
+  });
+
+  test("it explains that it compared against named faces", async (t) => {
+    const { document } = await openPerson(t, cluster);
+    assert.match(suggestionButton(document).title, /already named Emory Kade/);
+  });
+
+  test("a cluster resembling nobody offers nothing", async (t) => {
+    const anon = [
+      { ...face(61, 0.96, 0), suggested_name: null, suggested_similarity: 0.41 },
+      { ...face(62, 0.95, 0), suggested_name: null, suggested_similarity: 0.41 },
+    ];
+    const { document } = await openPerson(t, anon);
+    assert.equal(suggestionButton(document), null, "it guessed at somebody anyway");
+  });
+});

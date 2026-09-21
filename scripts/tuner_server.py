@@ -3489,6 +3489,59 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_json({"faces": [], "total_count": 0, "has_more": False})
                 return
 
+            def person_centroids():
+                """One averaged, normalised embedding per already-named person.
+
+                Built from the faces that carry a name, which is the only evidence
+                the database has about what somebody looks like. Cached with the rest
+                of this response, against the faces-table fingerprint, so naming a
+                face recomputes it and nothing else does.
+                """
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT name, embedding FROM faces "
+                    "WHERE name IS NOT NULL AND embedding IS NOT NULL AND excluded = 0"
+                )
+                by_name = {}
+                for person, blob in cur.fetchall():
+                    try:
+                        vec = np.frombuffer(blob, dtype=np.float32)
+                    except Exception:
+                        continue
+                    norm = np.linalg.norm(vec)
+                    if norm == 0:
+                        continue
+                    by_name.setdefault(person, []).append(vec / norm)
+
+                names, mats = [], []
+                for person, vecs in by_name.items():
+                    centroid = np.mean(vecs, axis=0)
+                    norm = np.linalg.norm(centroid)
+                    if norm == 0:
+                        continue
+                    names.append(person)
+                    mats.append(centroid / norm)
+                return names, (np.vstack(mats) if mats else None)
+
+            #: Below this a suggestion is more distraction than help. The number is
+            #: always shown alongside, so the judgement stays with the person.
+            SUGGEST_FLOOR = 0.75
+            known_names, known_matrix = person_centroids()
+
+            def suggest_for(cluster_embeddings):
+                """Who does this group of faces most resemble, if anyone?"""
+                if known_matrix is None or not len(cluster_embeddings):
+                    return None, 0.0
+                centroid = np.mean(cluster_embeddings, axis=0)
+                norm = np.linalg.norm(centroid)
+                if norm == 0:
+                    return None, 0.0
+                sims = np.dot(known_matrix, centroid / norm)
+                best = int(np.argmax(sims))
+                if float(sims[best]) < SUGGEST_FLOOR:
+                    return None, float(sims[best])
+                return known_names[best], float(sims[best])
+
             # Which other people each candidate's photo still has no face for. A photo
             # naming two unaccounted people offers both its faces under both names,
             # which is right but reads as noise until you are told why.
@@ -3551,6 +3604,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     cluster_centroid /= cnorm
                 cluster_sims = np.dot(cluster_embs, cluster_centroid)
 
+                # Who this group looks like, from the faces already named. The queue
+                # itself is keyword-driven and can only offer a name the photo
+                # mentions, which is no help at all for a photo naming nobody.
+                suggested_name, suggested_sim = suggest_for(cluster_embs)
+
                 for local_idx, global_idx in enumerate(indices):
                     r = valid_rows[global_idx]
                     similarity = float(cluster_sims[local_idx])
@@ -3572,7 +3630,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         "similarity": similarity,
                         "cluster_id": int(label),
                         "cluster_name": cluster_name,
-                        "other_names": other_unaccounted_names(r)
+                        "other_names": other_unaccounted_names(r),
+                        "suggested_name": suggested_name,
+                        "suggested_similarity": round(suggested_sim, 3)
                     })
 
             # Append the unclustered faces, flagged so the UI can rank them lowest.
@@ -3585,6 +3645,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             unclustered_total = len(noise_indices)
             for global_idx in noise_indices[:UNCLUSTERED_LIMIT]:
                 r = valid_rows[global_idx]
+                lone_name, lone_sim = suggest_for(embs[global_idx:global_idx + 1])
                 try:
                     box = json.loads(r[2]) if r[2] else []
                 except Exception:
@@ -3600,7 +3661,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     "similarity": 0.0,
                     "cluster_id": -1,
                     "cluster_name": "Unclustered",
-                    "other_names": other_unaccounted_names(r)
+                    "other_names": other_unaccounted_names(r),
+                    "suggested_name": lone_name,
+                    "suggested_similarity": round(lone_sim, 3)
                 })
 
             # Sort by similarity descending
