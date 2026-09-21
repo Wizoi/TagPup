@@ -2731,43 +2731,43 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
-            # Filter out face IDs that are already assigned to person_name in the database (case-insensitive)
-            filtered_face_ids = []
-            for face_id in face_ids:
-                cursor.execute("SELECT name FROM faces WHERE id = ?", (face_id,))
-                row = cursor.fetchone()
-                if row and row[0] and row[0].strip().lower() == person_name.lower():
-                    continue # Already matched, skip
-                filtered_face_ids.append(face_id)
-            
-            face_ids = filtered_face_ids
+            # Read the selected faces once.
+            #
+            # Their path and current name were fetched three times over, one query per
+            # face per pass: to drop the ones already named this person, to note the
+            # names being displaced, and to group them by photo. A selection of fifty
+            # was a hundred and fifty round trips for fifty rows.
+            selected = {}
+            for start in range(0, len(face_ids), 500):
+                chunk = face_ids[start:start + 500]
+                cursor.execute(
+                    "SELECT id, photo_path, name FROM faces WHERE id IN (%s)"
+                    % ",".join("?" * len(chunk)), chunk)
+                for row_id, photo_path, current_name in cursor.fetchall():
+                    selected[row_id] = (photo_path, current_name)
+
+            # Faces already assigned to this person are nothing to do (case-insensitive).
+            face_ids = [
+                fid for fid in face_ids
+                if not (selected.get(fid, (None, None))[1] or "").strip().lower()
+                == person_name.lower()
+            ]
             if not face_ids:
                 self.send_json({"success": True})
                 return
 
             photos_to_check = {}
-
-            # 1. Fetch photo details for each face_id to check if previous names are unused now
-            for face_id in face_ids:
-                cursor.execute("SELECT photo_path, name FROM faces WHERE id = ?", (face_id,))
-                row = cursor.fetchone()
-                if row:
-                    photo_path, old_name = row
-                    if photo_path not in photos_to_check:
-                        photos_to_check[photo_path] = set()
-                    if old_name and old_name != person_name:
-                        photos_to_check[photo_path].add(old_name)
-
-            # Group selected face IDs by photo_path to detect duplicates and verify existing matches
+            # Group selected face IDs by photo_path to detect duplicates and verify
+            # existing matches, and note which names this assignment displaces.
             photo_to_selected_fids = {}
             for face_id in face_ids:
-                cursor.execute("SELECT photo_path FROM faces WHERE id = ?", (face_id,))
-                row = cursor.fetchone()
-                if row:
-                    p_path = row[0]
-                    if p_path not in photo_to_selected_fids:
-                        photo_to_selected_fids[p_path] = []
-                    photo_to_selected_fids[p_path].append(face_id)
+                if face_id not in selected:
+                    continue
+                photo_path, old_name = selected[face_id]
+                photos_to_check.setdefault(photo_path, set())
+                if old_name and old_name != person_name:
+                    photos_to_check[photo_path].add(old_name)
+                photo_to_selected_fids.setdefault(photo_path, []).append(face_id)
 
             # Check conflicts for each photo
             for photo_path, fids in photo_to_selected_fids.items():
