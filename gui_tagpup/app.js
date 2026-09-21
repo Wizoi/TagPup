@@ -257,7 +257,16 @@ document.addEventListener('DOMContentLoaded', () => {
     let knownTags = [];
     let knownPeople = [];
     let taxonomyNodes = [];
-    
+
+    // Declared here with the rest of the state rather than beside renderPhotoFaces,
+    // which is where it is used. showFolderView() reads it to abandon an in-flight
+    // face lookup, and restoring a cached folder on page load calls showFolderView
+    // while the closure body is still running -- before a `let` further down has been
+    // initialised. That threw "Cannot access 'facesRequestToken' before
+    // initialization", inside scanFolder's promise chain, where it surfaced as
+    // "Error scanning folder" and left the folder unopenable until the cache expired.
+    let facesRequestToken = 0;
+
     // Abort controller for scan fetches
     let scanAbortController = null;
 
@@ -1388,7 +1397,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Face recognition already ran for this photo -- the suggester needs it to propose
     // people -- but nothing ever showed it. Without the crops you learn that a face went
     // unrecognised only later, in TagTuner. This puts that in front of you while tagging.
-    let facesRequestToken = 0;
+    // facesRequestToken is declared with the other state at the top; see the note there.
 
     function renderPhotoFaces(photoPath) {
         if (!facesSection || !facesStrip) return;
