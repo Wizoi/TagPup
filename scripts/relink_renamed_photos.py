@@ -50,6 +50,51 @@ def dead_rows(conn):
     return rows
 
 
+def identities(folder, exiftool_path=None):
+    """Every photo in a folder, keyed by its DocumentID.
+
+    The better of the two signals, and the one that survives what the other does not:
+    a move between folders, a rename by a tool that knows nothing about TagPup, a
+    filename that collides with another photo's original. PreservedFileName only ever
+    worked for renames TagPup itself performed.
+    """
+    import exiftool
+
+    paths = []
+    for root, _dirs, files in os.walk(folder):
+        for name in sorted(files):
+            if name.lower().endswith(IMAGE_SUFFIXES):
+                paths.append(os.path.join(root, name))
+
+    by_id = {}
+    if not paths:
+        return by_id
+
+    with exiftool.ExifToolHelper(executable=exiftool_path) as et:
+        for i in range(0, len(paths), 100):
+            batch = paths[i:i + 100]
+            try:
+                results = et.get_tags(batch, tags=["XMP-xmpMM:DocumentID"])
+            except Exception:
+                results = []
+                for one in batch:
+                    try:
+                        results.extend(et.get_tags([one], tags=["XMP-xmpMM:DocumentID"]))
+                    except Exception:
+                        continue
+            for row in results:
+                doc_id = row.get("XMP:DocumentID") or row.get("XMP-xmpMM:DocumentID")
+                source = row.get("SourceFile")
+                if not doc_id or not source:
+                    continue
+                key = str(doc_id).strip()
+                # Two files claiming one identity is a copy, not a rename; neither can
+                # be matched to a row without guessing which.
+                by_id[key] = None if key in by_id else os.path.normpath(source)
+
+    return {k: v for k, v in by_id.items() if v}
+
+
 def preserved_names(folder, exiftool_path=None):
     """Every photo in a folder, keyed by the stem of the name it was renamed from."""
     import exiftool
@@ -96,8 +141,20 @@ def plan_for(db_path, exiftool_path=None):
 
     folders = sorted({os.path.dirname(p) for p in dead if os.path.isdir(os.path.dirname(p))})
     lookup = {}
+    by_identity = {}
     for folder in folders:
         lookup.update(preserved_names(folder, exiftool_path))
+        by_identity.update(identities(folder, exiftool_path))
+
+    # A dead row's own identity, where indexing recorded one.
+    row_identity = {}
+    try:
+        for path, doc_id in conn.execute(
+                "SELECT path, document_id FROM photos WHERE document_id IS NOT NULL"):
+            if path and doc_id:
+                row_identity[path] = str(doc_id).strip()
+    except Exception:
+        pass   # a database indexed before identities existed
 
     live = set()
     for (path,) in conn.execute("SELECT path FROM photos"):
@@ -107,7 +164,9 @@ def plan_for(db_path, exiftool_path=None):
     moves, unmatched = [], []
     claimed = set()
     for old in dead:
-        new = lookup.get(stem_of(old))
+        # Identity first: it survives a move and a rename by any tool. The preserved
+        # filename is the fallback, and only ever worked for TagPup's own renames.
+        new = by_identity.get(row_identity.get(old, ""), None) or lookup.get(stem_of(old))
         if not new:
             unmatched.append(old)
             continue

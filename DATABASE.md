@@ -66,6 +66,7 @@ Stores high-level image metadata, tags (keywords), captions, resolved people lis
 | `captions` | TEXT | | JSON-serialized array of caption/description strings. |
 | `raw_metadata` | TEXT | | JSON-serialized key-value dictionary of raw EXIF/IPTC properties. |
 | `embedding` | BLOB | | FAISS / visual feature vector representation (binary representation of float array). |
+| `document_id` | TEXT | INDEXED | The photo's identity, independent of its path: `XMP-xmpMM:DocumentID`. Read from the file where present — most photos already carry one, written by Lightroom or Camera Raw — and minted as `xmp.did:<uuid>` where absent. A path is a bad name for a photo: rename it and the row describes something that no longer exists, while the photo looks unindexed. `scripts/relink_renamed_photos.py` matches on this first. NULL on rows indexed before this column existed; they fill in as those photos are re-indexed. |
 
 ### 2. `faces` Table
 Stores details of faces detected within photos, including face crop coordinates, resolved name identities, confidence scores, and raw crop images.

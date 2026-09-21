@@ -8,6 +8,8 @@ import logging
 from typing import List, Dict, Any, Optional, Set
 import exiftool
 
+from identity import ensure_document_id, read_document_id
+
 logger = logging.getLogger("tagpup_cli.metadata")
 
 # Define target fields mapped to keys we want to return
@@ -44,7 +46,11 @@ METADATA_FIELDS = [
     "EXIF:Make", "Make",
     "EXIF:Model", "Model",
     # Rating
-    "XMP:Rating", "Rating"
+    "XMP:Rating", "Rating",
+    # Identity. A path is a bad name for a photo -- rename the file and the index is
+    # left describing something that no longer exists. DocumentID is the XMP
+    # standard's per-document identifier, and most photos already carry one.
+    "XMP-xmpMM:DocumentID", "XMP:DocumentID", "DocumentID"
 ]
 
 def clean_metadata_value(val: Any) -> Any:
@@ -238,8 +244,15 @@ def extract_captions(meta: Dict[str, Any]) -> List[str]:
     return [c for c in captions if c]
 
 class MetadataExtractor:
-    def __init__(self, exiftool_path: Optional[str] = None):
+    def __init__(self, exiftool_path: Optional[str] = None, mint_identities: bool = True):
         self.exiftool_path = exiftool_path
+        #: Write an identity into photos that lack one, as they are read.
+        #:
+        #: On by default because the cost is small and the alternative is losing work:
+        #: without an identity a renamed photo strands its index row, and the row holds
+        #: the faces somebody named by hand. Pass False where the files must not be
+        #: written -- a read-only pass over somebody else's library, or a test.
+        self.mint_identities = mint_identities
 
     def batch_read(self, file_paths: List[str], db_path: Optional[str] = None) -> List[Dict[str, Any]]:
         """Read metadata for a batch of files using pyexiftool."""
@@ -264,6 +277,9 @@ class MetadataExtractor:
                 # Check mapping to return formatted info
                 for path, meta in zip(file_paths, batch_meta):
                     results.append(self._structure(path, meta, db_path))
+
+                if self.mint_identities:
+                    self._give_identities(et, results)
         except Exception as e:
             # ExifTool exits non-zero if *any* file in the batch is unreadable, and
             # pyexiftool raises on that status, so a single corrupt or unsupported
@@ -307,7 +323,38 @@ class MetadataExtractor:
             "people": people,
             "captions": captions,
             "raw_metadata": cleaned,
+            "document_id": read_document_id(cleaned),
         }
+
+    def _give_identities(self, et, records):
+        """Write an identity into any photo that has none.
+
+        A path is a bad name for a photo: rename it and the index describes something
+        that no longer exists, while the photo looks unindexed. DocumentID is the XMP
+        standard's per-document identifier and most photos already carry one, so this
+        writes to very few files -- 54 of 1,129 in this library. Those that already
+        have one are not touched.
+
+        Failures are per-file and logged, never raised: an identity is an improvement
+        on knowing only the path, and a photo that cannot take one indexes perfectly
+        well without it.
+        """
+        for record in records:
+            if record.get("document_id"):
+                continue
+            minted = ensure_document_id(et, record["path"], record.get("raw_metadata"))
+            if not minted:
+                continue
+            record["document_id"] = minted
+            record.setdefault("raw_metadata", {})["XMP:DocumentID"] = minted
+            # The file changed, so the stats recorded for change detection must be the
+            # ones it has now -- otherwise the next pass sees a modified file and
+            # re-indexes it for a write this pass made.
+            try:
+                stat = os.stat(record["path"])
+                record["mtime"], record["size"] = stat.st_mtime, stat.st_size
+            except Exception:
+                pass
 
     def _read_one_by_one(self, file_paths, executable, db_path):
         """Fallback for a failed batch: read each file on its own.

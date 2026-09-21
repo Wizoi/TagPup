@@ -274,6 +274,23 @@ class PhotoIndex:
                 cursor.execute("ALTER TABLE faces ADD COLUMN excluded INTEGER DEFAULT 0")
                 cursor.execute("ALTER TABLE faces ADD COLUMN excluded_reason TEXT")
                 self.conn.commit()
+            # A photo's identity, independent of where it sits on disk.
+            #
+            # Renaming or moving a file leaves its row describing something that no
+            # longer exists, and the row is the valuable half: it holds the embedding
+            # and the faces, names included. DocumentID is the XMP standard's
+            # per-document identifier and most photos already carry one, so this is
+            # mostly a matter of recording what is already there.
+            cursor.execute("PRAGMA table_info(photos)")
+            photo_columns = [info[1] for info in cursor.fetchall()]
+            if "document_id" not in photo_columns:
+                logger.info("Migrating photos table: Adding document_id column...")
+                cursor.execute("ALTER TABLE photos ADD COLUMN document_id TEXT")
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_photos_document_id "
+                    "ON photos(document_id)")
+                self.conn.commit()
+
             if "name_source" not in columns:
                 # Records who decided a face's name. 'manual' means a person chose it in
                 # TagTuner; those decisions survive re-clustering, which otherwise
@@ -395,9 +412,15 @@ class PhotoIndex:
             cursor = self.conn.cursor()
             for meta, emb in zip(metas, embeddings):
                 emb_bytes = np.array(emb, dtype=np.float32).tobytes()
+                # Record the photo's identity beside its path. Where the file has
+                # one it is already in raw_metadata; where it does not, the extractor
+                # has minted one into the file by now.
+                from identity import read_document_id
+                document_id = (meta.get("document_id")
+                               or read_document_id(meta.get("raw_metadata", {})))
                 cursor.execute("""
-                    INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding, document_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     meta["path"],
                     meta.get("mtime", 0.0),
@@ -406,7 +429,8 @@ class PhotoIndex:
                     json.dumps(meta.get("people", [])),
                     json.dumps(meta.get("captions", [])),
                     json.dumps(meta.get("raw_metadata", {})),
-                    emb_bytes
+                    emb_bytes,
+                    document_id
                 ))
             self.conn.commit()
             
