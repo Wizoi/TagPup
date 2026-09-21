@@ -4,8 +4,10 @@ import json
 import sqlite3
 try:
     from . import db as tagpup_db
+    from . import localserver
 except ImportError:  # imported as a top-level module
     import db as tagpup_db
+    import localserver
 import urllib.parse
 import io
 import logging
@@ -14,7 +16,6 @@ import threading
 import subprocess
 import configparser
 from http.server import BaseHTTPRequestHandler
-from socketserver import ThreadingTCPServer
 from PIL import Image, ImageOps
 Image.MAX_IMAGE_PIXELS = 500000000
 import numpy as np
@@ -538,22 +539,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         pass # suppress request logs
 
     def validate_request_origin(self) -> bool:
-        # Validate Host header to prevent DNS rebinding
-        host = self.headers.get("Host", "")
-        host_clean = host.split(":")[0].lower()
-        if host_clean not in ("localhost", "127.0.0.1", "[::1]"):
-            self.send_error(403, "Forbidden: Invalid Host Header")
-            return False
-
-        # Validate Origin header to prevent CSRF from external websites
-        origin = self.headers.get("Origin")
-        if origin:
-            parsed_origin = urllib.parse.urlparse(origin)
-            origin_host = parsed_origin.netloc.split(":")[0].lower()
-            if origin_host not in ("localhost", "127.0.0.1", "[::1]"):
-                self.send_error(403, "Forbidden: Cross-Origin Requests Denied")
-                return False
-        return True
+        # Only this machine, and only pages this server served. See localserver.
+        return localserver.is_local_request(self)
 
     def resolve_db_from_url(self) -> bool:
         parsed_url = urllib.parse.urlparse(self.path)
@@ -3293,8 +3280,9 @@ def update_photo_metadata_tags(db_path: str, exiftool_path: str, photo_paths: Li
     conn.commit()
     conn.close()
 
-class ThreadedHTTPServer(ThreadingTCPServer):
-    allow_reuse_address = True
+#: Listens on IPv4 and IPv6 alike -- see scripts/localserver.py for why that is
+#: worth two seconds on every click.
+ThreadedHTTPServer = localserver.ThreadedHTTPServer
 
 def warmup_embedder_thread(embedder):
     logger.info("Background thread starting CLIP model warmup...")
