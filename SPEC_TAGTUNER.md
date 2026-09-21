@@ -69,6 +69,36 @@ labelled these *Matches/Outliers* and *High/Lower Confidence* and additionally o
 every nameless face into a mode meant for auditing named people. That entry has been
 removed; nameless faces are reached through **Identify Faces**, which groups them.
 
+### 0.2 Identify Faces: what the panel shows
+
+**Every candidate the server returns is reachable.** Candidates are split across three
+tabs: **Likely** (similarity >= 0.9), **Possible** (0.8 to 0.9) and **Ungrouped**
+(everything else, which is what DBSCAN could not group -- returned deliberately with
+`cluster_id: -1` and `similarity: 0.0`, because a face that forms no cluster is still a
+face somebody may recognise). Earlier versions bucketed only the first two and let the
+rest fall off the end of the chain, so a name whose candidates all failed to cluster --
+the common case for a face seen once or twice -- showed a count in the sidebar and an
+empty panel.
+
+The **Ungrouped** tab appears only when it has something in it, and the panel opens on
+whichever tab has faces rather than always on the most confident one: opening on an
+empty tab is indistinguishable from the person having no candidates at all.
+
+**Ignore Cluster** sits beside **Assign Cluster** and is the decision it is the
+counterpart to -- this group is somebody, or this group is nobody we will ever name. It
+excludes every face in the group in one action, states how many faces and photos that
+covers, and makes clear that nothing is deleted: the faces move to the **Excluded**
+bucket and can be restored. Reaching the same outcome by ticking each face meant thirty
+clicks to say one thing, so it did not get said.
+
+**Face Crop Details** shows both the crop being matched and the photo it came from, with
+the crop's bounding box drawn over that photo. The two answer different questions: who is
+this, and is the box even on a face. The crop's pixel size is shown, and flagged when its
+shorter side is under 40px, because a suggestion made from a crop that small deserves
+more doubt. The box overlay carries a large spread shadow to dim everything outside it,
+so it is positioned directly when the preview image is already cached rather than only
+from its load event -- otherwise the whole preview sat dimmed behind a zero-sized box.
+
 ### 1. Interactive Face Tuning
 - Clicking on a face card in the "Detected Faces" grid selects it and expands it to show the editing panel.
 - **Deselection/Cancel**: Clicking "Cancel" or selecting another face card deselects the current face and hides the editing panel.

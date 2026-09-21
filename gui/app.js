@@ -209,6 +209,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let activePersonName = null;
     let lastLoadedPersonName = null;
     const btnExcludeSelected = document.getElementById('btn-exclude-selected');
+    const matchingDetailCrop = document.getElementById('matching-detail-crop');
+    const matchingDetailCropSize = document.getElementById('matching-detail-crop-size');
     const btnRestoreSelected = document.getElementById('btn-restore-selected');
     let selectedFaceIds = [];
     let activePersonFaces = [];
@@ -2790,6 +2792,23 @@ document.addEventListener('DOMContentLoaded', () => {
         matchingDetailBoundingBoxOverlay.style.width = '0';
         matchingDetailBoundingBoxOverlay.style.height = '0';
 
+        // The crop itself: what the matcher compares, and what you are being asked
+        // to recognise. The panel promised it in its title and never showed it.
+        if (matchingDetailCrop) {
+            matchingDetailCrop.src = `/api/face-crop?id=${face.id}`;
+        }
+        if (matchingDetailCropSize && face.box && face.box.length === 4) {
+            const w = Math.round(face.box[2] - face.box[0]);
+            const h = Math.round(face.box[3] - face.box[1]);
+            // A crop far below the detector's working size is worth seeing before
+            // you trust a match made from it.
+            matchingDetailCropSize.textContent = `${w} x ${h} px`;
+            matchingDetailCropSize.classList.toggle('is-small', Math.min(w, h) < 40);
+            matchingDetailCropSize.title = Math.min(w, h) < 40
+                ? 'Small crops carry less to match on; treat a suggestion from one with care.'
+                : '';
+        }
+
         // Prepare image onload
         matchingDetailImg.onload = () => {
             const naturalWidth = matchingDetailImg.naturalWidth;
@@ -2819,6 +2838,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Load original preview
         matchingDetailImg.src = `/api/photo-file?path=${encodeURIComponent(face.photo_path)}&size=512`;
+        // A cached image can already be complete, in which case the load event never
+        // arrives and the box stays zero-sized -- with its 9999px shadow dimming the
+        // whole preview behind it. Position it directly when there is nothing to wait for.
+        if (matchingDetailImg.complete && matchingDetailImg.naturalWidth > 0) {
+            matchingDetailImg.onload();
+        }
 
         // Loading placeholders
         matchingDetailTags.innerHTML = '<span style="font-size:11px;color:var(--text-muted);font-style:italic;">Loading tags...</span>';

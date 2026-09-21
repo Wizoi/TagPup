@@ -193,6 +193,13 @@
                                 <img id="matching-detail-img" src="" alt="Original Photo Preview" style="max-width: 100%; max-height: 220px; object-fit: contain; display: block;">
                                 <div id="matching-detail-bounding-box-overlay" class="bounding-box-overlay" style="position: absolute; border: 2px solid #ef4444; box-shadow: 0 0 0 9999px rgba(0,0,0,0.4); pointer-events: none; transition: all 0.2s ease;"></div>
                             </div>
+                            <div class="face-crop-row">
+                                <img id="matching-detail-crop" class="face-crop-thumb" src="" alt="The face as the matcher sees it">
+                                <div class="face-crop-caption">
+                                    <span class="detail-label">The crop being matched</span>
+                                    <span id="matching-detail-crop-size" class="face-crop-size"></span>
+                                </div>
+                            </div>
                             <div class="details-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
                                 <div class="detail-item">
                                     <span class="detail-label" style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 3px;">Face ID</span>

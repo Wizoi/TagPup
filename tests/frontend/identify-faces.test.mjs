@@ -215,3 +215,67 @@ describe("ignoring a cluster", () => {
     assert.match(server.lastBody("/api/faces/exclude").reason, /cluster/);
   });
 });
+
+describe("face crop details", () => {
+  // The panel is titled Face Crop Details and showed the source photo with a box
+  // drawn on it, but never the crop itself -- the thing the matcher compares and
+  // the thing you are being asked to recognise.
+  const faces = [face(21, 0.95, 0), face(22, 0.94, 0)];
+
+  async function selectFirstFace(t) {
+    const { document, window, server } = await openPerson(t, faces);
+    const card = document.querySelector("#matching-faces-grid .face-match-item");
+    card.click();
+    await new Promise((r) => window.setTimeout(r, 60));
+    return { document, window, server };
+  }
+
+  test("the crop is shown for the selected face", async (t) => {
+    const { document } = await selectFirstFace(t);
+    const crop = document.getElementById("matching-detail-crop");
+    assert.match(crop.getAttribute("src"), /\/api\/face-crop\?id=21/);
+  });
+
+  test("the source photo is still shown alongside it", async (t) => {
+    const { document } = await selectFirstFace(t);
+    assert.match(
+      document.getElementById("matching-detail-img").getAttribute("src"),
+      /\/api\/photo-file/
+    );
+  });
+
+  test("the crop's pixel size is reported", async (t) => {
+    const { document } = await selectFirstFace(t);
+    // The fixture's box is [10, 10, 40, 40].
+    assert.match(document.getElementById("matching-detail-crop-size").textContent, /30 x 30 px/);
+  });
+
+  test("a crop too small to match well is flagged", async (t) => {
+    const { document } = await selectFirstFace(t);
+    const size = document.getElementById("matching-detail-crop-size");
+    assert.ok(size.classList.contains("is-small"), "a 30px crop was not flagged");
+    assert.match(size.title, /less to match on/);
+  });
+
+  test("a crop of a workable size is not flagged", async (t) => {
+    const big = [{ ...face(30, 0.95, 0), box: [0, 0, 120, 120] }];
+    const { document, window } = await openPerson(t, big);
+    document.querySelector("#matching-faces-grid .face-match-item").click();
+    await new Promise((r) => window.setTimeout(r, 60));
+
+    const size = document.getElementById("matching-detail-crop-size");
+    assert.equal(size.textContent, "120 x 120 px");
+    assert.ok(!size.classList.contains("is-small"));
+  });
+
+  test("selecting another face swaps the crop", async (t) => {
+    const { document, window } = await selectFirstFace(t);
+    const cards = document.querySelectorAll("#matching-faces-grid .face-match-item");
+    cards[1].click();
+    await new Promise((r) => window.setTimeout(r, 60));
+    assert.match(
+      document.getElementById("matching-detail-crop").getAttribute("src"),
+      /id=22/
+    );
+  });
+});
