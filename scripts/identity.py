@@ -57,6 +57,56 @@ def mint_document_id():
     return "xmp.did:%s" % uuid.uuid4()
 
 
+#: Keyword fields checked before and after a forced write. If one of these changes,
+#: the write cost the photo something it will not get back.
+KEYWORD_FIELDS = ("XMP:Subject", "IPTC:Keywords", "XMP:HierarchicalSubject")
+
+
+def _keywords(et, path):
+    """The photo's keyword fields as they stand, for comparison."""
+    try:
+        found = et.get_tags([path], tags=list(KEYWORD_FIELDS))[0]
+    except Exception:
+        return None
+    snapshot = {}
+    for field in KEYWORD_FIELDS:
+        value = found.get(field)
+        if isinstance(value, str):
+            value = [value]
+        snapshot[field] = list(value) if value else []
+    return snapshot
+
+
+def _write_forcing_minor_errors(et, path, minted):
+    """Write the identity into a photo whose XMP ExifTool objects to.
+
+    Some photos here carry two XMP blocks with different `rdf:about` attributes, which
+    ExifTool refuses to write to until told the error is minor. `-m` makes it proceed,
+    and rewrites the XMP as it does -- so the keyword fields are read before and after,
+    and put back if the write cost them anything. Photo files are not recoverable and
+    this is the one path that edits a structure ExifTool has already called wrong.
+    """
+    before = _keywords(et, path)
+    et.execute("-m", "-overwrite_original",
+               "-%s=%s" % (DOCUMENT_ID_FIELD, minted), path)
+
+    after = _keywords(et, path)
+    if before is None or after is None or before == after:
+        return
+
+    lost = {f: v for f, v in before.items() if v and v != after.get(f)}
+    if not lost:
+        return
+
+    logger.warning("Writing an identity into %s disturbed %s; putting it back",
+                   path, ", ".join(sorted(lost)))
+    try:
+        et.set_tags([path], tags=lost, params=["-m", "-overwrite_original"])
+    except Exception as e:
+        logger.error("Could not restore keywords on %s after writing its identity: %s",
+                     path, e)
+
+
 def ensure_document_id(et, path, metadata=None):
     """Return this photo's identity, writing one into the file if it has none.
 
@@ -77,9 +127,16 @@ def ensure_document_id(et, path, metadata=None):
     try:
         et.set_tags([path], tags={DOCUMENT_ID_FIELD: minted},
                     params=["-overwrite_original"])
-    except Exception as e:
-        logger.warning("Could not give %s an identity: %s", path, e)
-        return None
+    except Exception as first_error:
+        # A refusal is usually ExifTool objecting to the photo's existing XMP rather
+        # than anything about this write. Retry telling it the error is minor, and
+        # check afterwards that the retry cost the photo nothing.
+        try:
+            _write_forcing_minor_errors(et, path, minted)
+        except Exception as e:
+            logger.warning("Could not give %s an identity: %s (%s)",
+                           path, e, first_error)
+            return None
 
     logger.debug("Minted %s for %s", minted, path)
     return minted

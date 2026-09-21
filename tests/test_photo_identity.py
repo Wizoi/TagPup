@@ -159,5 +159,68 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
         self.assertEqual([p for p, _ in et.writes], [["D:/b.jpg"]])
 
 
+class TestAPhotoExifToolObjectsTo(unittest.TestCase):
+    """Some photos carry two XMP blocks with different `rdf:about` attributes, which
+    ExifTool refuses to write to until told the error is minor. Six such photos in this
+    library would otherwise never get an identity.
+
+    `-m` makes it proceed, and rewrites the XMP as it does. Photo files are not
+    recoverable, so the keyword fields are read before and after and put back if the
+    write cost them anything.
+    """
+
+    class Stubborn:
+        """Refuses the ordinary write; records the forced one."""
+
+        def __init__(self, before, after=None):
+            self.before = before
+            self.after = after if after is not None else before
+            self.forced = []
+            self.restored = []
+            self.reads = 0
+
+        def set_tags(self, paths, tags=None, params=None):
+            if params and "-m" in params:
+                self.restored.append(dict(tags or {}))
+                return
+            raise RuntimeError("Different 'rdf:about' attributes not handled")
+
+        def execute(self, *args):
+            self.forced.append(args)
+
+        def get_tags(self, paths, tags=None):
+            self.reads += 1
+            return [dict(self.before if self.reads == 1 else self.after)]
+
+    EMPTY = {"XMP:Subject": [], "IPTC:Keywords": [], "XMP:HierarchicalSubject": []}
+    KEYWORDS = {"XMP:Subject": ["People/Hazel Brookmire"], "IPTC:Keywords": [],
+                "XMP:HierarchicalSubject": []}
+
+    def test_a_refused_write_is_retried_with_minor_errors_ignored(self):
+        et = self.Stubborn(self.EMPTY)
+        minted = ensure_document_id(et, "D:/a.jpg", {})
+        self.assertTrue(minted.startswith("xmp.did:"))
+        self.assertEqual(len(et.forced), 1, "the write was not retried")
+        self.assertIn("-m", et.forced[0])
+
+    def test_keywords_that_survive_the_forced_write_are_left_alone(self):
+        et = self.Stubborn(self.KEYWORDS)
+        ensure_document_id(et, "D:/a.jpg", {})
+        self.assertEqual(et.restored, [], "keywords were rewritten for no reason")
+
+    def test_keywords_lost_to_the_forced_write_are_put_back(self):
+        et = self.Stubborn(self.KEYWORDS, after=self.EMPTY)
+        ensure_document_id(et, "D:/a.jpg", {})
+        self.assertEqual(len(et.restored), 1, "the photo lost its keywords silently")
+        self.assertEqual(et.restored[0]["XMP:Subject"], ["People/Hazel Brookmire"])
+
+    def test_a_photo_that_refuses_both_writes_is_left_without_one(self):
+        class Hopeless(self.Stubborn):
+            def execute(self, *args):
+                raise RuntimeError("still no")
+
+        self.assertIsNone(ensure_document_id(Hopeless(self.EMPTY), "D:/a.jpg", {}))
+
+
 if __name__ == "__main__":
     unittest.main()
