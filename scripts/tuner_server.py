@@ -1694,6 +1694,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
+            # The state the cached identify views were built against, read before this
+            # write touches anything. Only an entry stamped with this can be carried
+            # forward; anything older was built before something else changed the
+            # table -- a folder removed, a batch of photos indexed -- and re-stamping
+            # it would quietly revive a grid full of faces that no longer exist.
+            fingerprint_before = self.faces_fingerprint(conn)
+
             # 1. Fetch face details: photo_path and old name
             cursor.execute("SELECT photo_path, name FROM faces WHERE id = ?", (face_id,))
             face_row = cursor.fetchone()
@@ -1779,7 +1786,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 conn.commit()
                 # This face has left the identify pool; take it out of the cached
                 # views rather than making the next click rebuild them.
-                self.identify_cache_forget_faces(conn, [face_id])
+                self.identify_cache_forget_faces(conn, [face_id], fingerprint_before)
             self.send_json({"success": True})
 
         except Exception as e:
@@ -2730,6 +2737,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
+            # The state the cached identify views were built against, read before this
+            # write touches anything. Only an entry stamped with this can be carried
+            # forward; anything older was built before something else changed the
+            # table -- a folder removed, a batch of photos indexed -- and re-stamping
+            # it would quietly revive a grid full of faces that no longer exist.
+            fingerprint_before = self.faces_fingerprint(conn)
+
             # Read the selected faces once.
             #
             # Their path and current name were fetched three times over, one query per
@@ -2844,7 +2858,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
             with tagpup_db.writing(self.db_path, label="name faces in bulk"):
                 conn.commit()
-                self.identify_cache_forget_faces(conn, face_ids)
+                self.identify_cache_forget_faces(conn, face_ids, fingerprint_before)
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error in handle_post_match_bulk: {e}")
@@ -3333,6 +3347,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
             cursor = conn.cursor()
+
+            # The state the cached identify views were built against, read before this
+            # write touches anything. Only an entry stamped with this can be carried
+            # forward; anything older was built before something else changed the
+            # table -- a folder removed, a batch of photos indexed -- and re-stamping
+            # it would quietly revive a grid full of faces that no longer exist.
+            fingerprint_before = self.faces_fingerprint(conn)
             placeholders = ",".join("?" for _ in face_ids)
 
             cursor.execute(
@@ -3374,7 +3395,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 conn.commit()
                 # Ignoring a cluster is the single most expensive thing to have
                 # invalidated the grid, and it is pure removal.
-                self.identify_cache_forget_faces(conn, face_ids)
+                self.identify_cache_forget_faces(conn, face_ids, fingerprint_before)
             self.send_json({"success": True, "excluded": len(face_ids)})
         except Exception as e:
             logger.error("Error excluding faces: %s" % e)
@@ -3603,7 +3624,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             "value": value,
         }
 
-    def identify_cache_forget_faces(self, conn, face_ids):
+    def identify_cache_forget_faces(self, conn, face_ids, expected_fingerprint):
         """Take faces out of the cached Identify Faces views instead of discarding them.
 
         The per-person grid costs about fifty seconds to build on a real library,
@@ -3642,6 +3663,16 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             entry = cache.get(key)
             value = entry.get("value") if entry else None
             if not isinstance(value, dict) or not isinstance(value.get("faces"), list):
+                continue
+
+            # Only an entry describing the table as it was a moment ago can be carried
+            # forward. An older one was built before something this code knows nothing
+            # about changed the pool -- a folder removed, a batch of photos indexed,
+            # faces restored -- and those change what the clustering would say, not
+            # merely which cards to drop. Left alone, it stays stamped with a
+            # fingerprint that no longer matches and is rebuilt on the next request,
+            # which is the right answer. Re-stamping it would revive it.
+            if entry.get("fingerprint") != expected_fingerprint:
                 continue
 
             faces = value["faces"]

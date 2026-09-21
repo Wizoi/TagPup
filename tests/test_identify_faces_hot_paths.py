@@ -587,7 +587,7 @@ class TestTheCappedTailRule(unittest.TestCase):
             " excluded INTEGER DEFAULT 0)")
         self.conn.executemany(
             "INSERT INTO faces (id, name, excluded) VALUES (?, NULL, 0)",
-            [(i,) for i in range(1, 60)])
+            [(i,) for i in range(1, 1200)])
         self.conn.commit()
         self.addCleanup(self.conn.close)
 
@@ -596,11 +596,28 @@ class TestTheCappedTailRule(unittest.TestCase):
             cache.pop(key, None)
         self.cache = cache
 
+    def forget(self, ids):
+        """Remove faces the way a real request does: write first, then update the cache.
+
+        The pre-write fingerprint is what decides whether a cached entry can be carried
+        forward, so a test that never moves the table is not testing anything.
+        """
+        before = self.fingerprint()
+        self.conn.execute(
+            "UPDATE faces SET excluded = 1 WHERE id IN (%s)" % ",".join("?" * len(ids)),
+            list(ids))
+        self.conn.commit()
+        self.handler.identify_cache_forget_faces(self.conn, list(ids), before)
+
+    def fingerprint(self):
+        """The table state the cached grid was built against."""
+        return self.handler.faces_fingerprint(self.conn)
+
     def cache_a_grid(self, clustered_ids, shown_unclustered_ids, unclustered_total):
         faces = [{"id": i, "cluster_id": 0} for i in clustered_ids]
         faces += [{"id": i, "cluster_id": -1} for i in shown_unclustered_ids]
         self.cache["matches:Unknown Faces"] = {
-            "fingerprint": ("stale",),
+            "fingerprint": self.fingerprint(),
             "value": {
                 "faces": faces,
                 "total_count": len(faces),
@@ -619,22 +636,22 @@ class TestTheCappedTailRule(unittest.TestCase):
         shown = list(range(11, 11 + tuner_server.UNCLUSTERED_LIMIT))
         self.cache_a_grid(clustered, shown, unclustered_total=78411)
 
-        self.handler.identify_cache_forget_faces(self.conn, clustered)
+        self.forget(clustered)
 
         entry = self.entry()
         self.assertIsNotNone(
             entry, "ignoring a cluster threw away a grid whose tail it never touched")
         self.assertEqual(len(shown), entry["value"]["total_count"])
         self.assertEqual(78411, entry["value"]["unclustered_total"])
-        self.assertNotEqual(
-            ("stale",), entry["fingerprint"],
+        self.assertEqual(
+            self.fingerprint(), entry["fingerprint"],
             "the entry kept its old stamp, so it would be rebuilt anyway")
 
     def test_thinning_the_tail_a_little_keeps_the_grid(self):
         shown = list(range(11, 11 + tuner_server.UNCLUSTERED_LIMIT))
         self.cache_a_grid([1, 2], shown, unclustered_total=78411)
 
-        self.handler.identify_cache_forget_faces(self.conn, shown[:5])
+        self.forget(shown[:5])
 
         entry = self.entry()
         self.assertIsNotNone(entry, "removing five faces rebuilt the whole grid")
@@ -650,8 +667,7 @@ class TestTheCappedTailRule(unittest.TestCase):
         self.cache_a_grid([1, 2], shown, unclustered_total=78411)
 
         # Down past half the cap.
-        self.handler.identify_cache_forget_faces(
-            self.conn, shown[:tuner_server.UNCLUSTERED_LIMIT // 2 + 1])
+        self.forget(shown[:tuner_server.UNCLUSTERED_LIMIT // 2 + 1])
 
         self.assertIsNone(
             self.entry(),
@@ -663,7 +679,7 @@ class TestTheCappedTailRule(unittest.TestCase):
         shown = [11, 12, 13]
         self.cache_a_grid([1, 2], shown, unclustered_total=3)
 
-        self.handler.identify_cache_forget_faces(self.conn, shown)
+        self.forget(shown)
 
         entry = self.entry()
         self.assertIsNotNone(entry, "a grid showing every face it had was rebuilt")
@@ -673,17 +689,140 @@ class TestTheCappedTailRule(unittest.TestCase):
     def test_another_persons_untouched_grid_is_re_stamped_not_discarded(self):
         """One person's edit should not cost everybody else their grid."""
         self.cache["matches:Rhiannon Vail"] = {
-            "fingerprint": ("stale",),
+            "fingerprint": self.fingerprint(),
             "value": {"faces": [{"id": 900, "cluster_id": 0}], "total_count": 1,
                       "unclustered_total": 0, "unclustered_shown": 0, "has_more": False},
         }
         self.cache_a_grid([1, 2], [], unclustered_total=0)
 
-        self.handler.identify_cache_forget_faces(self.conn, [1, 2])
+        self.forget([1, 2])
 
         other = self.cache.get("matches:Rhiannon Vail")
         self.assertIsNotNone(other, "an unrelated person's grid was discarded")
         self.assertEqual(1, other["value"]["total_count"])
-        self.assertNotEqual(
-            ("stale",), other["fingerprint"],
+        self.assertEqual(
+            self.fingerprint(), other["fingerprint"],
             "it was kept but left stale-stamped, which rebuilds it on the next click")
+
+
+class TestSomethingElseChangedThePoolInBetween(unittest.TestCase):
+    """A cached grid may only be carried forward over the change it was told about.
+
+    Naming and excluding are removals, and a removal can only shrink a cluster -- which
+    is what makes patching the cached payload by hand sound. Nothing else about this
+    screen is a removal. Indexing a folder adds faces, and added faces can bridge two
+    groups into one, which no amount of dropping cards from a list will discover.
+    Removing a folder takes photos and their faces out from underneath it. Restoring
+    excluded faces puts them back with no group to belong to.
+
+    All of those move the fingerprint, so the cached entry stops matching and is
+    rebuilt -- correct, and free. The danger is the next removal after one of them:
+    walking the cache and re-stamping every entry with the current fingerprint would
+    revive a grid that was built before the folder was removed, and hand back cards for
+    photos that are gone.
+
+    So an entry is carried forward only if it is stamped with the state the table was
+    in immediately before this write. Anything else is left exactly as it is, stale,
+    and rebuilds on the next request.
+    """
+
+    def setUp(self):
+        self.handler = object.__new__(tuner_server.TunerHTTPRequestHandler)
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.execute(
+            "CREATE TABLE faces (id INTEGER PRIMARY KEY, name TEXT,"
+            " excluded INTEGER DEFAULT 0)")
+        self.conn.executemany(
+            "INSERT INTO faces (id, name, excluded) VALUES (?, NULL, 0)",
+            [(i,) for i in range(1, 40)])
+        self.conn.commit()
+        self.addCleanup(self.conn.close)
+
+        cache = tuner_server.TunerHTTPRequestHandler.identify_cache
+        for key in list(cache.keys()):
+            cache.pop(key, None)
+        self.cache = cache
+
+        # A grid, cached against the table as it stands.
+        self.cache["matches:Unknown Faces"] = {
+            "fingerprint": self.handler.faces_fingerprint(self.conn),
+            "value": {
+                "faces": [
+                    {"id": 1, "cluster_id": 3, "cluster_name": "Cluster 1", "similarity": 0.9},
+                    {"id": 2, "cluster_id": 3, "cluster_name": "Cluster 1", "similarity": 0.9},
+                    {"id": 3, "cluster_id": 3, "cluster_name": "Cluster 1", "similarity": 0.9},
+                    {"id": 30, "cluster_id": -1, "cluster_name": "Unclustered", "similarity": 0.0},
+                ],
+                "total_count": 4,
+                "unclustered_total": 1,
+                "unclustered_shown": 1,
+                "has_more": False,
+            },
+        }
+
+    def entry(self):
+        return self.cache.get("matches:Unknown Faces")
+
+    def remove_a_face_now(self, face_id):
+        """An ordinary exclude, using whatever the table looks like at this moment."""
+        before = self.handler.faces_fingerprint(self.conn)
+        self.conn.execute("UPDATE faces SET excluded = 1 WHERE id = ?", (face_id,))
+        self.conn.commit()
+        self.handler.identify_cache_forget_faces(self.conn, [face_id], before)
+
+    def test_a_removal_on_its_own_carries_the_grid_forward(self):
+        """The baseline the rest of this class is measured against."""
+        self.remove_a_face_now(1)
+
+        entry = self.entry()
+        self.assertIsNotNone(entry)
+        self.assertEqual(3, entry["value"]["total_count"])
+        self.assertEqual(self.handler.faces_fingerprint(self.conn), entry["fingerprint"])
+
+    def test_a_folder_removed_in_between_leaves_the_grid_to_rebuild(self):
+        # Somebody removes a folder: its photos go, and their faces with them.
+        self.conn.execute("DELETE FROM faces WHERE id IN (2, 3)")
+        self.conn.commit()
+
+        self.remove_a_face_now(1)
+
+        entry = self.entry()
+        if entry is not None:
+            self.assertNotEqual(
+                self.handler.faces_fingerprint(self.conn), entry["fingerprint"],
+                "a grid built before a folder was removed was re-stamped as current,"
+                " so it will be served with cards for photos that no longer exist",
+            )
+
+    def test_photos_indexed_in_between_leave_the_grid_to_rebuild(self):
+        """Added faces can bridge two groups into one. Dropping cards cannot see that."""
+        self.conn.executemany(
+            "INSERT INTO faces (id, name, excluded) VALUES (?, NULL, 0)",
+            [(i,) for i in range(500, 520)])
+        self.conn.commit()
+
+        self.remove_a_face_now(1)
+
+        entry = self.entry()
+        if entry is not None:
+            self.assertNotEqual(
+                self.handler.faces_fingerprint(self.conn), entry["fingerprint"],
+                "a grid built before twenty faces were indexed was re-stamped as"
+                " current, so clusters those faces would have joined stay split",
+            )
+
+    def test_faces_restored_in_between_leave_the_grid_to_rebuild(self):
+        self.conn.execute("UPDATE faces SET excluded = 1 WHERE id = 20")
+        self.conn.commit()
+        self.conn.execute("UPDATE faces SET excluded = 0 WHERE id = 20")
+        self.conn.execute("UPDATE faces SET excluded = 1 WHERE id IN (21, 22)")
+        self.conn.commit()
+
+        self.remove_a_face_now(1)
+
+        entry = self.entry()
+        if entry is not None:
+            self.assertNotEqual(
+                self.handler.faces_fingerprint(self.conn), entry["fingerprint"],
+                "a grid built before the pool changed underneath it was revived",
+            )
