@@ -2388,15 +2388,25 @@ document.addEventListener('DOMContentLoaded', () => {
         let filteredFaces = activePersonFaces;
         
         if (modeSelect.value === 'unmatched-faces') {
-            const high = filteredFaces.filter(f => f.similarity !== undefined && f.similarity >= 0.9);
-            const lower = filteredFaces.filter(f => f.similarity !== undefined && f.similarity >= 0.8 && f.similarity < 0.9);
+            // One rule for which band a candidate is in, used by the counts here and
+            // by the render below. They disagreeing is how a tab comes to say a number
+            // it then does not show.
+            const bandOf = (f) => {
+                if (f.person_similarity !== undefined) {
+                    if (f.person_similarity >= 0.75) return 'high';
+                    return f.person_similarity >= 0.60 ? 'lower' : 'rest';
+                }
+                if (f.similarity === undefined) return 'rest';
+                if (f.similarity >= 0.9) return 'high';
+                return f.similarity >= 0.8 ? 'lower' : 'rest';
+            };
+            const high = filteredFaces.filter(f => bandOf(f) === 'high');
+            const lower = filteredFaces.filter(f => bandOf(f) === 'lower');
             
             // Everything the server sent that clustered with nothing. It ranks these
             // last rather than withholding them, because a face that forms no group
             // is still a face somebody may recognise -- often the only ones there are.
-            const unclustered = filteredFaces.filter(
-                f => f.similarity === undefined || f.similarity < 0.8
-            );
+            const unclustered = filteredFaces.filter(f => bandOf(f) === 'rest');
 
             tabMatches.textContent = `Likely (${high.length})`;
             tabOutliers.textContent = `Possible (${lower.length})`;
@@ -2459,7 +2469,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
         renderedFaces.forEach(face => {
             if (modeSelect.value === 'unmatched-faces') {
-                if (face.similarity !== undefined && face.similarity >= 0.9) {
+                // When the person being sought has faces already named, the useful
+                // number is how much a candidate resembles THEM. Without that, all
+                // there is is a candidate's similarity to its own cluster -- a number
+                // about the crowd it arrived with, which is why a hundred candidates
+                // used to read Likely (0), Possible (0).
+                const ranked = face.person_similarity;
+                if (ranked !== undefined) {
+                    // Bands from the measured spread: across the people here with
+                    // reference faces, the best candidate scores a median of 0.83.
+                    if (ranked >= 0.75) high.push(face);
+                    else if (ranked >= 0.60) lower.push(face);
+                    else unclustered.push(face);
+                } else if (face.similarity !== undefined && face.similarity >= 0.9) {
                     high.push(face);
                 } else if (face.similarity !== undefined && face.similarity >= 0.8) {
                     lower.push(face);
@@ -2751,6 +2773,14 @@ This photo also names ${face.other_names.join(', ')}. `
                       + `offered for them.`
                     : '';
                 if (competingHere) item.classList.add('has-competing-names');
+                if (face.person_similarity !== undefined) {
+                    const badge = document.createElement('span');
+                    badge.className = 'face-resemblance';
+                    badge.textContent = `${Math.round(face.person_similarity * 100)}%`;
+                    badge.title = `How much this face resembles the faces already `
+                        + `named for this person. The list is ordered by it.`;
+                    item.appendChild(badge);
+                }
                 item.title = face.photo_path + competingHere;
                 item.setAttribute('data-face-id', face.id);
 

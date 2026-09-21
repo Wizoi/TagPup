@@ -3532,6 +3532,20 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             SUGGEST_CONFIDENT = 0.85
             known_names, known_matrix = person_centroids()
 
+            def reference_centroid(person):
+                """What this person looks like, from the faces already named as them.
+
+                None when nobody has been named yet -- which is the ordinary case for
+                somebody you are identifying for the first time, and the reason this
+                cannot simply replace the queue.
+                """
+                if known_matrix is None:
+                    return None
+                try:
+                    return known_matrix[known_names.index(person)]
+                except ValueError:
+                    return None
+
             def suggest_for(cluster_embeddings):
                 """Who does this group of faces most resemble, if anyone?"""
                 if known_matrix is None or not len(cluster_embeddings):
@@ -3639,7 +3653,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         "suggested_similarity": round(suggested_sim, 3),
                         "suggestion_strength": (
                             "likely" if suggested_sim >= SUGGEST_CONFIDENT else "possible"
-                        ) if suggested_name else None
+                        ) if suggested_name else None,
+                        "_emb_idx": global_idx
                     })
 
             # Append the unclustered faces, flagged so the UI can rank them lowest.
@@ -3673,11 +3688,29 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     "suggested_similarity": round(lone_sim, 3),
                     "suggestion_strength": (
                         "likely" if lone_sim >= SUGGEST_CONFIDENT else "possible"
-                    ) if lone_name else None
+                    ) if lone_name else None,
+                    "_emb_idx": global_idx
                 })
 
-            # Sort by similarity descending
-            faces.sort(key=lambda x: x["similarity"], reverse=True)
+            # Rank against the person being sought, where there is anything to rank
+            # against. Until now `similarity` meant similarity to a face's own cluster
+            # centroid -- a number about the crowd it arrived with, not about this
+            # person -- so a hundred candidates came back in no useful order.
+            #
+            # Ranked, not filtered. Two candidates can both be genuinely this person in
+            # different photos (measured here: 0.826 and 0.822 for one), so a cutoff
+            # would discard a real match to tidy the list.
+            seeking = reference_centroid(name)
+            if seeking is not None:
+                for face in faces:
+                    face["person_similarity"] = round(
+                        float(np.dot(embs[face.pop("_emb_idx")], seeking)), 3
+                    )
+                faces.sort(key=lambda x: x["person_similarity"], reverse=True)
+            else:
+                for face in faces:
+                    face.pop("_emb_idx", None)
+                faces.sort(key=lambda x: x["similarity"], reverse=True)
 
             payload = {
                 "faces": faces,

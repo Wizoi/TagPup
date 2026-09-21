@@ -106,8 +106,19 @@ keywords mention that name and no face in that photo is linked to it yet. Two
 consequences are worth stating, because both have been reported as bugs and neither
 is one:
 
+- The candidate list for one person can be very large. Somebody named in eight photos,
+  two of them crowd shots, offers every unnamed face in all eight: 105 candidates, of
+  which perhaps three are them. That is the honest consequence of keyword-driven
+  matching, not a fault -- but it is only workable if the list is **ordered**. Where the
+  person already has faces named, every candidate carries `person_similarity`, the
+  resemblance to those faces, and the list is sorted by it; the **Likely** (>= 0.75) and
+  **Possible** (0.60 to 0.75) tabs use it too. Each face shows the number. Candidates are
+  ranked, never filtered: two can both genuinely be this person in different photos --
+  measured here at 0.826 and 0.822 -- so a cutoff would throw a real match away. Where
+  the person has no named faces yet, there is nothing to rank against and the bands fall
+  back to cluster similarity.
 - A photo naming two people who both still lack a face offers **both** its faces under
-  **both** names. The tool cannot know which is which -- that is the question being
+  **both** names.The tool cannot know which is which -- that is the question being
   asked. Assigning one removes it from the other's list. Candidates now carry the other
   names their photo is missing, and the group header says "also names Miko Zellweg".
 - **Unknown Faces** holds unnamed faces whose photo leaves no name unaccounted for --
@@ -131,7 +142,16 @@ cluster immediately, with no confirmation, because a prompt on every cluster is 
 friction the button exists to remove. What makes that fair is the undo offered
 straight afterwards.
 
-**Clusters are ordered by confidence**, then by size. Sorting by size alone put the
+The **Unclustered** section is not a cluster: it holds the faces grouping could not
+place, which resemble each other no more than they resemble anything. It is therefore
+denied every cluster-wide action -- no **Assign Cluster**, no **Ignore Cluster**, and no
+cluster-level name suggestion, since one member's guess says nothing about the rest. It
+briefly had all three, which offered "Possibly Mira Wexford -- Assign 105" over 105
+unrelated faces in one click. The faces stay listed and selectable, because per-face
+assignment is the reason to show them at all. The tab is called **Unclustered** rather
+than Ungrouped, because the sidebar's **Ungrouped** bucket means something else entirely.
+
+**Clusters are ordered by confidence**, then by size.Sorting by size alone put the
 biggest puzzles at the top and scattered the easy wins, so the page opened on the
 hardest thing on it. Within a confidence band size still decides, because a bigger
 cluster is more work resolved by the same click.

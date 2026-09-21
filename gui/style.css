@@ -1766,3 +1766,18 @@ body {
     text-transform: none;
     color: var(--text-muted);
 }
+
+/* How much a candidate resembles the person being sought. Shown because the list is
+   ordered by it, and an order you cannot see is just an order you have to trust. */
+.face-resemblance {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.78);
+    color: var(--text-secondary);
+    pointer-events: none;
+}

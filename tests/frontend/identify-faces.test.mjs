@@ -771,3 +771,68 @@ describe("the Unclustered bucket is not a cluster", () => {
     assert.ok(labels.some((t) => /Ignore Cluster/.test(t)));
   });
 });
+
+describe("ranking a person's candidates against that person", () => {
+  // Reported as: Dannika's list has a few Dannikas and a lot of other people. It
+  // does, necessarily -- she is named in 8 photos, two of them crowd shots, and
+  // every unnamed face in a photo naming her is a candidate. 105 of them.
+  //
+  // What was missing is the order. `similarity` meant similarity to a face's own
+  // cluster centroid, a number about the crowd it arrived with rather than about
+  // her, so the confidence tabs read Likely (0), Possible (0) over 105 faces.
+  function candidate(id, personSimilarity) {
+    return { ...face(id, 0.0, -1), person_similarity: personSimilarity };
+  }
+
+  const crowd = [
+    candidate(1001, 0.728),
+    candidate(1002, 0.648),
+    candidate(1003, 0.412),
+    candidate(1004, 0.288),
+  ];
+
+  test("the tabs use resemblance to the person, not to the crowd", async (t) => {
+    const { document } = await openPerson(t, crowd);
+    assert.match(document.getElementById("tab-outliers").textContent, /Possible \(2\)/);
+    assert.match(document.getElementById("tab-low-conf").textContent, /Unclustered \(2\)/);
+  });
+
+  test("a strong resemblance lands in Likely", async (t) => {
+    const { document } = await openPerson(t, [candidate(1010, 0.935), candidate(1011, 0.5)]);
+    assert.match(document.getElementById("tab-matches").textContent, /Likely \(1\)/);
+  });
+
+  test("every candidate shows how much it resembles them", async (t) => {
+    const { document } = await openPerson(t, crowd);
+    const badges = [...document.querySelectorAll(".face-resemblance")].map(b => b.textContent);
+    assert.ok(badges.includes("73%"), `expected a 73% badge, got ${badges.join(", ")}`);
+  });
+
+  test("the order the server sent is preserved", async (t) => {
+    // Ranked, not filtered: two candidates can both genuinely be this person in
+    // different photos, so the page must show them all, best first.
+    const { document } = await openPerson(t, [candidate(1020, 0.826), candidate(1021, 0.822)]);
+    const badges = [...document.querySelectorAll(".face-resemblance")].map(b => b.textContent);
+    assert.deepEqual(badges, ["83%", "82%"]);
+  });
+
+  test("no badge when there is nobody to rank against", async (t) => {
+    // The ordinary case for somebody being identified for the first time.
+    const { document } = await openPerson(t, [face(1030, 0.0, -1), face(1031, 0.0, -1)]);
+    assert.equal(document.querySelector(".face-resemblance"), null);
+  });
+
+  test("with nobody to rank against the old banding still applies", async (t) => {
+    const { document } = await openPerson(t, [face(1040, 0.95, 2), face(1041, 0.94, 2)]);
+    assert.match(document.getElementById("tab-matches").textContent, /Likely \(2\)/);
+  });
+
+  test("the counts on the tabs match what the tabs contain", async (t) => {
+    // The counts and the render used to band faces separately, which is how a tab
+    // comes to promise a number it then does not show.
+    const { document, window } = await openPerson(t, crowd);
+    document.getElementById("tab-outliers").click();
+    await new Promise((r) => window.setTimeout(r, 30));
+    assert.equal(document.querySelectorAll(".face-match-item").length, 2);
+  });
+});
