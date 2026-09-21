@@ -210,6 +210,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let lastLoadedPersonName = null;
     const btnExcludeSelected = document.getElementById('btn-exclude-selected');
     const matchingDetailCrop = document.getElementById('matching-detail-crop');
+    const assignUndoBar = document.getElementById('assign-undo-bar');
+    const assignUndoText = document.getElementById('assign-undo-text');
+    const btnAssignUndo = document.getElementById('btn-assign-undo');
+    const btnAssignUndoDismiss = document.getElementById('btn-assign-undo-dismiss');
     const matchingDetailCropSize = document.getElementById('matching-detail-crop-size');
     const btnRestoreSelected = document.getElementById('btn-restore-selected');
     let selectedFaceIds = [];
@@ -2532,11 +2536,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const header = document.createElement('div');
             header.className = 'matching-group-header';
-            header.style.display = 'flex';
-            header.style.justifyContent = 'space-between';
-            header.style.alignItems = 'center';
+            // Layout lives in the stylesheet: fixed slots, so the buttons do not
+            // move between one cluster and the next.
 
             const titleSpan = document.createElement('span');
+            titleSpan.className = 'matching-group-title';
+
+            // Reserved whether or not there is a suggestion, so its absence
+            // does not slide the buttons across.
+            const suggestionSlot = document.createElement('div');
+            suggestionSlot.className = 'matching-group-suggestion-slot';
             if (modeSelect.value === 'unmatched-faces') {
                 const numFaces = groupFaces.length;
                 const numPhotos = new Set(groupFaces.map(f => f.photo_path)).size;
@@ -2553,21 +2562,47 @@ document.addEventListener('DOMContentLoaded', () => {
                 const suggestion = groupFaces.find(f => f.suggested_name);
                 if (suggestion) {
                     const pct = Math.round((suggestion.suggested_similarity || 0) * 100);
-                    const guess = document.createElement('button');
+                    const guessName = suggestion.suggested_name;
+                    const guess = document.createElement('span');
                     guess.className = 'cluster-suggestion';
-                    guess.textContent = `Looks like ${suggestion.suggested_name} (${pct}%)`;
-                    guess.title = `Compared against the faces already named `
-                        + `${suggestion.suggested_name}. Click to put the name in the `
-                        + `box, then use Assign Cluster — nothing is assigned by `
-                        + `this alone.`;
-                    guess.addEventListener('click', (e) => {
+
+                    // The label puts the name in the box without committing, for when
+                    // you want to look before you leap, or edit it first.
+                    const guessLabel = document.createElement('button');
+                    guessLabel.className = 'cluster-suggestion-label';
+                    guessLabel.textContent = `Looks like ${guessName} (${pct}%)`;
+                    guessLabel.title = `Compared against the faces already named `
+                        + `${guessName}. Click to put the name in the box without `
+                        + `assigning anything.`;
+                    guessLabel.addEventListener('click', (e) => {
                         e.stopPropagation();
                         if (inputReassignName) {
-                            inputReassignName.value = suggestion.suggested_name;
+                            inputReassignName.value = guessName;
                             inputReassignName.focus();
                         }
                     });
-                    titleSpan.appendChild(guess);
+
+                    // And the one-click path, for when the suggestion is simply right
+                    // -- which at these similarities it usually is. No confirmation:
+                    // a prompt on every cluster is the same friction under another
+                    // name. The undo offered afterwards is what makes that fair.
+                    const guessAccept = document.createElement('button');
+                    guessAccept.className = 'cluster-suggestion-assign';
+                    guessAccept.textContent = `\u2713 Assign ${groupFaces.length}`;
+                    guessAccept.title = `Assign all ${groupFaces.length} face(s) in this `
+                        + `group to ${guessName} now. You can undo it straight after.`;
+                    guessAccept.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const ids = groupFaces.map(f => f.id);
+                        guessAccept.disabled = true;
+                        guessAccept.textContent = 'Assigning...';
+                        postMatchBulk(ids, guessName);
+                        offerAssignUndo(ids, guessName);
+                    });
+
+                    guess.appendChild(guessLabel);
+                    guess.appendChild(guessAccept);
+                    suggestionSlot.appendChild(guess);
                 }
 
                 if (competing.length) {
@@ -2586,6 +2621,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 titleSpan.textContent = title;
             }
             header.appendChild(titleSpan);
+            header.appendChild(suggestionSlot);
 
             if (modeSelect.value === 'unmatched-faces') {
                 const assignBtn = document.createElement('button');
@@ -3232,6 +3268,52 @@ This photo also names ${face.other_names.join(', ')}. `
     }
 
     // POST bulk match to backend API
+    /**
+     * Report an assignment made without asking first, and offer it back.
+     *
+     * This is what makes a one-click assign reasonable: the way back is also one
+     * click, and it is put in front of you rather than left to be found. It hides
+     * itself after a while, because an undo offered forever starts to read as an
+     * unfinished job rather than a safety net.
+     */
+    let assignUndoTimer = null;
+    function offerAssignUndo(faceIds, name) {
+        if (!assignUndoBar) return;
+        if (assignUndoTimer) clearTimeout(assignUndoTimer);
+
+        assignUndoText.textContent =
+            `Assigned ${faceIds.length} face${faceIds.length !== 1 ? 's' : ''} to ${name}`;
+        assignUndoBar.classList.remove('hidden');
+        assignUndoBar.dataset.faceIds = JSON.stringify(faceIds);
+
+        assignUndoTimer = setTimeout(() => {
+            assignUndoBar.classList.add('hidden');
+            assignUndoTimer = null;
+        }, 20000);
+    }
+
+    function hideAssignUndo() {
+        if (assignUndoTimer) {
+            clearTimeout(assignUndoTimer);
+            assignUndoTimer = null;
+        }
+        if (assignUndoBar) assignUndoBar.classList.add('hidden');
+    }
+
+    if (btnAssignUndo) {
+        btnAssignUndo.addEventListener('click', () => {
+            let ids = [];
+            try {
+                ids = JSON.parse(assignUndoBar.dataset.faceIds || '[]');
+            } catch (e) { /* nothing to undo */ }
+            hideAssignUndo();
+            if (ids.length) postUnmatchBulk(ids);
+        });
+    }
+    if (btnAssignUndoDismiss) {
+        btnAssignUndoDismiss.addEventListener('click', hideAssignUndo);
+    }
+
     function postMatchBulk(faceIds, name) {
         btnReassignSelected.disabled = true;
         const originalText = btnReassignSelected.textContent;

@@ -346,7 +346,11 @@ describe("suggesting who an unknown cluster is", () => {
   ];
 
   function suggestionButton(document) {
-    return document.querySelector(".cluster-suggestion");
+    return document.querySelector(".cluster-suggestion-label");
+  }
+
+  function acceptButton(document) {
+    return document.querySelector(".cluster-suggestion-assign");
   }
 
   test("the cluster says who it looks like, with the number", async (t) => {
@@ -378,5 +382,154 @@ describe("suggesting who an unknown cluster is", () => {
     ];
     const { document } = await openPerson(t, anon);
     assert.equal(suggestionButton(document), null, "it guessed at somebody anyway");
+  });
+});
+
+describe("accepting a suggestion in one click", () => {
+  const cluster = [
+    { ...face(71, 0.96, 0), suggested_name: "Emory Kade", suggested_similarity: 0.933 },
+    { ...face(72, 0.95, 0), suggested_name: "Emory Kade", suggested_similarity: 0.933 },
+    { ...face(73, 0.94, 0), suggested_name: "Emory Kade", suggested_similarity: 0.933 },
+  ];
+
+  async function accept(t) {
+    const { document, window, server } = await openPerson(t, cluster);
+    document.querySelector(".cluster-suggestion-assign").click();
+    await new Promise((r) => window.setTimeout(r, 40));
+    return { document, window, server };
+  }
+
+  test("the pill offers an assign button saying how many", async (t) => {
+    const { document } = await openPerson(t, cluster);
+    const btn = document.querySelector(".cluster-suggestion-assign");
+    assert.ok(btn, "there is no way to accept the suggestion directly");
+    assert.match(btn.textContent, /Assign 3/);
+  });
+
+  test("it assigns the whole cluster to the suggested name", async (t) => {
+    const { server } = await accept(t);
+    const body = server.lastBody("/api/faces/match-bulk");
+    assert.equal(body.person_name, "Emory Kade");
+    assert.deepEqual(body.face_ids, [71, 72, 73]);
+  });
+
+  test("it does not stop to ask first", async (t) => {
+    // A confirmation on every cluster is the same friction the button removes.
+    // What makes that fair is the undo, not a prompt.
+    const { document, window, server } = await openPerson(t, cluster);
+    let asked = false;
+    window.confirm = () => { asked = true; return true; };
+    document.querySelector(".cluster-suggestion-assign").click();
+    await new Promise((r) => window.setTimeout(r, 40));
+
+    assert.equal(asked, false, "it put a confirmation in the way");
+    assert.ok(server.lastBody("/api/faces/match-bulk"), "nothing was assigned");
+  });
+
+  test("it says what it did, and offers it back", async (t) => {
+    const { document } = await accept(t);
+    const bar = document.getElementById("assign-undo-bar");
+    assert.ok(!bar.classList.contains("hidden"), "no undo was offered");
+    assert.match(document.getElementById("assign-undo-text").textContent,
+                 /Assigned 3 faces to Emory Kade/);
+  });
+
+  test("undo unmatches exactly the faces it assigned", async (t) => {
+    const { document, window, server } = await accept(t);
+    document.getElementById("btn-assign-undo").click();
+    await new Promise((r) => window.setTimeout(r, 40));
+
+    assert.deepEqual(server.lastBody("/api/faces/unmatch-bulk").face_ids, [71, 72, 73]);
+  });
+
+  test("undoing clears the offer, so it cannot be applied twice", async (t) => {
+    const { document, window } = await accept(t);
+    document.getElementById("btn-assign-undo").click();
+    await new Promise((r) => window.setTimeout(r, 40));
+    assert.ok(document.getElementById("assign-undo-bar").classList.contains("hidden"));
+  });
+
+  test("it can be dismissed without undoing", async (t) => {
+    const { document, window, server } = await accept(t);
+    document.getElementById("btn-assign-undo-dismiss").click();
+    await new Promise((r) => window.setTimeout(r, 20));
+
+    assert.ok(document.getElementById("assign-undo-bar").classList.contains("hidden"));
+    assert.equal(server.lastBody("/api/faces/unmatch-bulk"), undefined);
+  });
+
+  test("the label still only fills the box, assigning nothing", async (t) => {
+    const { document, window, server } = await openPerson(t, cluster);
+    document.querySelector(".cluster-suggestion-label").click();
+    await new Promise((r) => window.setTimeout(r, 30));
+
+    assert.equal(document.getElementById("input-reassign-name").value, "Emory Kade");
+    assert.equal(server.lastBody("/api/faces/match-bulk"), undefined);
+  });
+});
+
+describe("the cluster header keeps still", () => {
+  // Reported: three controls in three places, and Assign Cluster landing at a
+  // different x on every cluster depending on the title's length and whether a
+  // suggestion existed. These pin the structure that stops it moving.
+  const withSuggestion = [
+    { ...face(81, 0.96, 0), suggested_name: "Emory Kade", suggested_similarity: 0.93 },
+    { ...face(82, 0.95, 0), suggested_name: "Emory Kade", suggested_similarity: 0.93 },
+  ];
+  const withoutSuggestion = [
+    { ...face(91, 0.96, 0), suggested_name: null, suggested_similarity: 0.2 },
+    { ...face(92, 0.95, 0), suggested_name: null, suggested_similarity: 0.2 },
+  ];
+
+  function header(document) {
+    return document.querySelector(".matching-group-header");
+  }
+
+  test("the slot is there even when there is no suggestion", async (t) => {
+    // An empty slot of the same width is what keeps the buttons still.
+    const { document } = await openPerson(t, withoutSuggestion);
+    const slot = header(document).querySelector(".matching-group-suggestion-slot");
+    assert.ok(slot, "the reserved slot is missing, so the buttons will shift");
+    assert.equal(slot.children.length, 0);
+  });
+
+  test("the suggestion goes in the slot, not inside the title", async (t) => {
+    const { document } = await openPerson(t, withSuggestion);
+    assert.ok(
+      header(document).querySelector(".matching-group-suggestion-slot .cluster-suggestion"),
+      "the suggestion is not in its slot"
+    );
+    assert.equal(
+      document.querySelector(".matching-group-title .cluster-suggestion"),
+      null,
+      "the suggestion is still inside the title, where it pushes the buttons"
+    );
+  });
+
+  test("the header holds the same slots either way", async (t) => {
+    const a = await openPerson(t, withSuggestion);
+    const shape = (doc) => [...header(doc).children].map((el) => el.className.split(" ")[0]);
+    const withShape = shape(a.document);
+    closeAllApps();
+
+    const b = await openPerson(t, withoutSuggestion);
+    assert.deepEqual(shape(b.document), withShape,
+                     "the header is built differently when a suggestion is absent");
+  });
+
+  test("the actions keep their order", async (t) => {
+    const { document } = await openPerson(t, withSuggestion);
+    const buttons = [...header(document).children]
+      .filter((el) => el.tagName === "BUTTON")
+      .map((el) => el.textContent);
+    assert.equal(buttons.length, 2);
+    assert.match(buttons[0], /Assign Cluster/);
+    assert.match(buttons[1], /Ignore Cluster/);
+  });
+
+  test("a long name cannot push the buttons out", async (t) => {
+    const { document } = await openPerson(t, withSuggestion);
+    const title = document.querySelector(".matching-group-title");
+    assert.ok(title, "the title has no class to constrain it with");
   });
 });
