@@ -94,6 +94,19 @@ write its equivalent for the screen in question.
 ten seconds rebuilding passes a "are the cards gone" check. Wait for the main thread
 as well.
 
+**Validate in a sandbox; never in the app somebody is using.** Copy the library, copy
+the code, give it its own `config.ini` and a free port, and run it as a separate
+process. All four, not some of them — a copy on a different port that still lives in
+`data/` shows up in the database picker of the app they have open, and code run from
+the repo shares the reloader with their server. `scripts/measure_identify_faces.py`
+builds that sandbox and deletes it afterwards; measurement runs should leave nothing
+behind and nothing changed.
+
+**Delete what you created, and say so if you cannot.** The first version of that script
+used `rmtree(..., ignore_errors=True)` and quietly left 2.7 GB in the temp directory on
+every run, because Windows had not released the server's file handles yet. Retry, then
+report.
+
 **Don't edit `.py` while somebody is testing.** The reloader restarts the server and
 wipes every in-memory cache, so their run and yours are both measuring a cold start.
 Say when you are about to, or wait.
