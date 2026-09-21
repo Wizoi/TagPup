@@ -140,6 +140,23 @@ def extract_4_digit_year(s):
             return val
     return None
 
+#: Every nameless face still in play, for the Identify Faces queue.
+#:
+#: `LENGTH(f.embedding)` rather than `f.embedding`: the queue groups faces by the tags
+#: their photo carries and counts them. It never compares a vector to anything -- it
+#: only needs to know a face HAS one, because a face without an embedding cannot take
+#: part in identifying and must not be counted as waiting. Selecting the column itself
+#: read 380 MB of BLOB and built 189,000 numpy arrays to answer a question about
+#: integers. Clustering is the per-person view's job, and it selects the embeddings
+#: there, where they are actually used.
+IDENTIFY_CANDIDATES_SQL = """
+    SELECT f.id, f.photo_path, p.people, LENGTH(f.embedding)
+    FROM faces f
+    LEFT JOIN photos p ON p.path = f.photo_path
+    WHERE f.name IS NULL AND f.excluded = 0
+"""
+
+
 def get_year_from_mtime_or_meta(mtime, raw_meta_json, path=None):
     if path and path in _path_year_cache:
         return _path_year_cache[path]
@@ -3596,13 +3613,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_json(cached)
                 return
 
-            # 1. Fetch all unmatched faces with their embeddings and people lists
-            cursor.execute("""
-                SELECT f.id, f.photo_path, p.people, f.embedding
-                FROM faces f
-                LEFT JOIN photos p ON p.path = f.photo_path
-                WHERE f.name IS NULL AND f.excluded = 0
-            """)
+            # 1. Fetch all unmatched faces with the tags their photos carry
+            cursor.execute(IDENTIFY_CANDIDATES_SQL)
             unmatched_rows = cursor.fetchall()
 
             # 2. Fetch matched faces by photo to find already matched names
@@ -3622,23 +3634,20 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             for r in unmatched_rows:
                 photo_path = r[1]
                 people_json = r[2]
-                emb_bytes = r[3]
-                
-                if not emb_bytes or len(emb_bytes) == 0:
+                embedding_length = r[3]
+
+                # A face with no embedding cannot take part in identifying, so it is
+                # not waiting for anybody and must not be counted as though it were.
+                if not embedding_length:
                     continue
-                
-                emb = np.frombuffer(emb_bytes, dtype=np.float32)
-                norm = np.linalg.norm(emb)
-                if norm > 0:
-                    emb = emb / norm
-                
+
                 people = []
                 if people_json:
                     try:
                         people = json.loads(people_json)
                     except Exception:
                         pass
-                
+
                 matched_names = matched_by_photo.get(photo_path, set())
                 unmatched_tags = [p for p in people if p not in matched_names]
 
@@ -3647,9 +3656,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     for tag in unmatched_tags:
                         if tag not in tag_candidates:
                             tag_candidates[tag] = []
-                        tag_candidates[tag].append((photo_path, emb))
+                        tag_candidates[tag].append(photo_path)
                 else:
-                    unknown_candidates.append((photo_path, emb))
+                    unknown_candidates.append(photo_path)
 
             # Counting only -- no clustering here.
             #
@@ -3662,7 +3671,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             tag_photos = {}
             for tag, candidates in tag_candidates.items():
                 if len(candidates) >= 2:
-                    tag_photos[tag] = {c[0] for c in candidates}
+                    tag_photos[tag] = set(candidates)
 
             # Tags with a single unmatched candidate cannot form a group of their own.
             # They used to vanish from the UI entirely; they are surfaced under
@@ -3675,12 +3684,12 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             single_candidate_tags = {t for t, c in tag_candidates.items() if len(c) == 1}
             ungrouped_photos = set()
             for tag in single_candidate_tags:
-                photo_path = tag_candidates[tag][0][0]
+                photo_path = tag_candidates[tag][0]
                 photo_tags = photo_unmatched_tags.get(photo_path, set())
                 if photo_tags and photo_tags <= single_candidate_tags:
                     ungrouped_photos.add(photo_path)
 
-            unknown_photos = {c[0] for c in unknown_candidates}
+            unknown_photos = set(unknown_candidates)
 
             # Format the counts.
             #
@@ -3720,7 +3729,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             if len(ungrouped_photos) > 0:
                 ungrouped_faces = sum(
                     len(tag_candidates[tag]) for tag in single_candidate_tags
-                    if tag_candidates[tag][0][0] in ungrouped_photos)
+                    if tag_candidates[tag][0] in ungrouped_photos)
                 people_counts.append({
                     "name": "Ungrouped",
                     "count": ungrouped_faces or len(ungrouped_photos),

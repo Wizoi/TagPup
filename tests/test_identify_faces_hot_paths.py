@@ -2,17 +2,19 @@
 
 This screen is the one that meets a real library head on: 225,000 face rows, 189,000 of
 them still nameless, and every button on it ran work proportional to all of them. The
-tests here pin two of the things that made it slow, each of which is also wrong for a
+tests here pin the three things that made it slow, each of which is also wrong for a
 reason that has nothing to do with speed:
 
 * the faces table had no index the identify queries could use, so counting the
   excluded bucket read every row;
+* the queue read all 189,000 embeddings -- 380 MB of BLOB -- to produce a list of
+  counts that never looks at a vector;
 * matching fell back to `photo_path LIKE ?`, which is not a full-table scan by
   accident but by definition, and which silently treats `_` in a filename as a
   wildcard. Every camera on earth writes `IMG_1234.jpg`.
 
-The second is a correctness test wearing a performance test's clothes: a LIKE lookup
-on a path does not mean "this photo".
+The last is a correctness test wearing a performance test's clothes: a LIKE lookup on
+a path does not mean "this photo".
 """
 import json
 import os
@@ -212,6 +214,71 @@ class MatchingTestBase(unittest.TestCase):
         finally:
             conn.close()
         return row[0] if row else None
+
+
+class TestTheQueueDoesNotReadEmbeddings(MatchingTestBase):
+    """Counting who is waiting does not require anybody's face vector.
+
+    The queue endpoint selected `f.embedding` for all 189,000 nameless faces and
+    normalised every one of them -- 380 MB of BLOB read and 189,000 numpy allocations
+    -- then used the result for nothing but a non-empty test. It groups faces by the
+    tags their photo carries and counts them; no vector is ever compared to anything.
+
+    Tested by giving a face an embedding that is real bytes but not a vector. Code
+    that only asks whether an embedding is there is unbothered; code that parses every
+    one of them cannot get past it. That is the distinction worth pinning, and it is
+    also a robustness property in its own right -- one damaged row should not take the
+    whole queue down.
+    """
+
+    def unreadable_embedding_face(self, photo):
+        conn = sqlite3.connect(self.TEST_DB)
+        cur = conn.execute(
+            "INSERT INTO faces (photo_path, box, embedding, name, prob)"
+            " VALUES (?, '[0,0,10,10]', ?, NULL, 0.99)",
+            (photo, b"\x01\x02\x03"),   # not a whole number of float32s
+        )
+        fid = cur.lastrowid
+        conn.commit()
+        conn.close()
+        return fid
+
+    def queue(self):
+        with urllib.request.urlopen(
+            "http://127.0.0.1:%d/api/unmatched-faces/people" % self.TEST_PORT,
+            timeout=30,
+        ) as r:
+            return json.loads(r.read().decode("utf-8"))
+
+    def test_the_queue_opens_when_a_face_has_an_unreadable_embedding(self):
+        photo = self.add_photo("IMG_4242.jpg")
+        self.add_face(photo, seed=11)
+        self.unreadable_embedding_face(photo)
+
+        buckets = self.queue()
+        self.assertTrue(
+            any(b["name"] == "Unknown Faces" for b in buckets),
+            "the queue did not come back with its Unknown Faces bucket: %s" % (buckets,),
+        )
+
+    def test_a_face_with_no_embedding_is_not_counted_as_waiting(self):
+        """Not a performance point: a face with no vector cannot be identified."""
+        photo = self.add_photo("IMG_4343.jpg")
+        self.add_face(photo, seed=12)
+
+        conn = sqlite3.connect(self.TEST_DB)
+        conn.execute(
+            "INSERT INTO faces (photo_path, box, embedding, name, prob)"
+            " VALUES (?, '[0,0,10,10]', NULL, NULL, 0.99)", (photo,))
+        conn.commit()
+        conn.close()
+
+        unknown = [b for b in self.queue() if b["name"] == "Unknown Faces"]
+        self.assertEqual(1, len(unknown), "no Unknown Faces bucket came back")
+        self.assertEqual(
+            1, unknown[0]["count"],
+            "a face with no embedding was counted as waiting to be identified",
+        )
 
 
 class TestAnUnderscoreInAFilenameIsNotAWildcard(MatchingTestBase):
