@@ -50,6 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Database selection logic
     const dbSelect = document.getElementById('db-select');
     const btnCreateDb = document.getElementById('btn-create-db');
+    const btnChangeDb = document.getElementById('btn-change-db');
 
     function initDatabaseSelector() {
         if (!dbSelect) return;
@@ -104,6 +105,28 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .catch(err => alert('Error selecting database: ' + err));
         });
+
+        if (btnChangeDb) {
+            btnChangeDb.addEventListener('click', () => {
+                const leaf = folderLeaf(scannedFolder) || 'the open folder';
+                if (!confirm(
+                    `Switch to a different dog park?
+
+` +
+                    `${leaf} will be closed. Its photos belong to this dog park's index, ` +
+                    `and another one has its own people, tags and suggestions.`
+                )) return;
+                scannedFolder = null;
+                folderPhotos = [];
+                folderSuggestions = {};
+                folderPathInput.value = '';
+                const url = new URL(window.location);
+                url.searchParams.delete('path');
+                window.history.replaceState({}, '', url);
+                updateCurrentFolderLabel();
+                if (dbSelect) dbSelect.focus();
+            });
+        }
 
         if (btnCreateDb) {
             btnCreateDb.addEventListener('click', () => {
@@ -1023,6 +1046,24 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     }
 
+
+    /**
+     * Lock the dog-park picker once a folder is open.
+     *
+     * Switching reloads the page carrying the same ?path=, so the same folder comes
+     * back attached to a different database -- different index, different suggestions,
+     * different people -- with nothing on screen marking the change. That is a quiet
+     * way to tag a folder into the wrong library. The picker is free until a folder is
+     * open and behind a Change button afterwards, and Change closes the folder so the
+     * new dog park starts from a deliberate choice rather than an inherited one.
+     */
+    function updateDogParkLock() {
+        const open = Boolean(scannedFolder);
+        if (dbSelect) dbSelect.disabled = open;
+        if (btnCreateDb) btnCreateDb.disabled = open;
+        if (btnChangeDb) btnChangeDb.classList.toggle('hidden', !open);
+    }
+
     /** The folder as you know it: the last segment of its path. */
     function folderLeaf(folderPath) {
         if (!folderPath) return '';
@@ -1050,6 +1091,7 @@ document.addEventListener('DOMContentLoaded', () => {
     /** Show which folder is open, by name, and put it in the window title. */
     function updateCurrentFolderLabel() {
         const leaf = folderLeaf(scannedFolder);
+        updateDogParkLock();
         if (currentFolderName) {
             currentFolderName.textContent = leaf;
             currentFolderName.title = scannedFolder || '';

@@ -153,3 +153,63 @@ describe("the untagged-only checkbox is gone", () => {
     assert.equal(ctx.document.querySelectorAll("li[data-path]").length, 2);
   });
 });
+
+describe("the dog park cannot change under an open folder", () => {
+  // Switching reloads the page carrying the same ?path=, so the same folder comes back
+  // attached to a different index, different suggestions and different people, with
+  // nothing marking the change. That is a quiet way to tag a folder into the wrong
+  // library, so the picker locks while a folder is open.
+  test("the picker is free before a folder is opened", async (t) => {
+    const ctx = await load(t);
+    assert.equal(ctx.document.getElementById("db-select").disabled, false);
+    assert.ok(ctx.document.getElementById("btn-change-db").classList.contains("hidden"));
+  });
+
+  test("it locks once a folder is open", async (t) => {
+    const ctx = await load(t);
+    await openFolder(ctx, FOLDER);
+    assert.equal(
+      ctx.document.getElementById("db-select").disabled, true,
+      "the dog park could still be switched under an open folder"
+    );
+  });
+
+  test("a Change button appears instead", async (t) => {
+    const ctx = await load(t);
+    await openFolder(ctx, FOLDER);
+    assert.ok(!ctx.document.getElementById("btn-change-db").classList.contains("hidden"));
+  });
+
+  test("Change closes the folder and frees the picker", async (t) => {
+    const ctx = await load(t);
+    await openFolder(ctx, FOLDER);
+    ctx.window.confirm = () => true;
+
+    ctx.document.getElementById("btn-change-db").click();
+    await flush(ctx.window, 4);
+
+    assert.equal(ctx.document.getElementById("db-select").disabled, false);
+    assert.equal(ctx.document.getElementById("folder-path-input").value, "");
+    assert.ok(
+      !ctx.window.location.search.includes("path="),
+      "the folder stayed in the URL, so it would reopen in the new dog park"
+    );
+  });
+
+  test("declining Change leaves everything as it was", async (t) => {
+    const ctx = await load(t);
+    await openFolder(ctx, FOLDER);
+    ctx.window.confirm = () => false;
+
+    ctx.document.getElementById("btn-change-db").click();
+    await flush(ctx.window, 4);
+
+    assert.equal(ctx.document.getElementById("db-select").disabled, true);
+    assert.equal(ctx.document.getElementById("folder-path-input").value, FOLDER);
+  });
+
+  test("the picker is labelled in the app's own language", async (t) => {
+    const ctx = await load(t);
+    assert.match(ctx.document.body.textContent, /Dog Park/);
+  });
+});

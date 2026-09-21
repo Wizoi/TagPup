@@ -105,6 +105,7 @@ the list was focusable, which is why the arrow keys worked only while focus happ
 to be sitting on `<body>`.
 
 ### 1. Folder Browser & Grid Selection
+- **Choosing a dog park**: the database picker is labelled *Dog Park* — it holds one library's photos, people, tags and suggestions. It is free to change until a folder is open, and locked behind a **Change** button afterwards: switching reloads the page carrying the same `?path=`, so the same folder would come back attached to a different index with nothing marking the change. Change closes the folder and drops it from the URL, so the new dog park starts from a deliberate choice.
 - **Adding a folder to a database**: not here. TagPup has no Index button — queueing folders is TagTuner's job, where the queue survives a page refresh. TagPup still shows an index's progress if one is running on the folder you have open. Keywords TagPup writes are recorded in the index as it writes them, so there is nothing to press afterwards.
 - **Opening a folder**: Choosing one opens it. Browse, picking from the autocomplete list, pressing Enter, or leaving the path box all scan immediately; there is no separate Scan Folder step, because choosing a folder and asking to see it were never two decisions. Re-committing the folder already open does nothing, so blurring the box does not rescan. **Refresh** re-reads the open folder from disk.
 - **Directory Tree**: Scans image folders and lists subfolders grouped chronologically by capture year. Folder structures start collapsed on page boot.
