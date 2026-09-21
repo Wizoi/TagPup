@@ -82,11 +82,11 @@ describe("candidates that clustered with nothing", () => {
     );
   });
 
-  test("the Ungrouped tab appears and carries the count", async (t) => {
+  test("the Unclustered tab appears and carries the count", async (t) => {
     const { document } = await openPerson(t, allUngrouped);
     const tab = document.getElementById("tab-low-conf");
     assert.ok(!tab.classList.contains("hidden"), "the tab stayed hidden");
-    assert.match(tab.textContent, /Ungrouped \(15\)/);
+    assert.match(tab.textContent, /Unclustered \(15\)/);
   });
 
   test("the panel opens on the tab that has them", async (t) => {
@@ -123,7 +123,7 @@ describe("candidates that did cluster", () => {
     const { document } = await openPerson(t, mixed);
     assert.match(document.getElementById("tab-matches").textContent, /Likely \(2\)/);
     assert.match(document.getElementById("tab-outliers").textContent, /Possible \(1\)/);
-    assert.match(document.getElementById("tab-low-conf").textContent, /Ungrouped \(1\)/);
+    assert.match(document.getElementById("tab-low-conf").textContent, /Unclustered \(1\)/);
   });
 
   test("every candidate the server sent lands in exactly one tab", async (t) => {
@@ -135,7 +135,7 @@ describe("candidates that did cluster", () => {
     assert.equal(counts.reduce((a, b) => a + b, 0), mixed.length);
   });
 
-  test("switching to Ungrouped shows the ungrouped one", async (t) => {
+  test("switching to Unclustered shows the unclustered one", async (t) => {
     const { document, window } = await openPerson(t, mixed);
     document.getElementById("tab-low-conf").click();
     await new Promise((r) => window.setTimeout(r, 30));
@@ -144,7 +144,7 @@ describe("candidates that did cluster", () => {
 });
 
 describe("a name with no candidates at all", () => {
-  test("the Ungrouped tab stays hidden", async (t) => {
+  test("the Unclustered tab stays hidden", async (t) => {
     const { document } = await openPerson(t, []);
     assert.ok(document.getElementById("tab-low-conf").classList.contains("hidden"));
   });
@@ -696,5 +696,78 @@ describe("weaker guesses, and what comes first", () => {
     const titles = [...document.querySelectorAll(".matching-group-title")]
       .map((el) => el.textContent);
     assert.match(titles[0], /Cluster 700/);
+  });
+});
+
+describe("the Unclustered bucket is not a cluster", () => {
+  // Reported as: how did so many unrelated faces end up in one bucket? They did not
+  // end up together -- they failed to end up anywhere. DBSCAN returns what it could
+  // group and, separately, what it could not, and the leftovers were rendered as a
+  // section that looked exactly like a cluster because every other one is.
+  const leftovers = [
+    { ...face(801, 0.0, -1), cluster_name: "Unclustered", suggested_name: "Mira Wexford", suggested_similarity: 0.836 },
+    { ...face(802, 0.0, -1), cluster_name: "Unclustered", suggested_name: null, suggested_similarity: 0.3 },
+    { ...face(803, 0.0, -1), cluster_name: "Unclustered", suggested_name: null, suggested_similarity: 0.2 },
+  ];
+
+  function header(document) {
+    return document.querySelector(".matching-group-header");
+  }
+
+  function buttonsIn(document) {
+    return [...header(document).children]
+      .filter((el) => el.tagName === "BUTTON")
+      .map((el) => el.textContent);
+  }
+
+  test("it does not offer Assign Cluster", async (t) => {
+    // One click would have assigned every unrelated face to one person.
+    const { document } = await openPerson(t, leftovers);
+    assert.ok(!buttonsIn(document).some((t) => /Assign Cluster/.test(t)),
+              "a cluster-wide assign was offered for faces with nothing in common");
+  });
+
+  test("it does not offer Ignore Cluster", async (t) => {
+    // With the confirmation turned off this would have excluded them all silently.
+    const { document } = await openPerson(t, leftovers);
+    assert.ok(!buttonsIn(document).some((t) => /Ignore Cluster/.test(t)),
+              "a cluster-wide ignore was offered for faces with nothing in common");
+  });
+
+  test("it does not borrow one face's guess for the whole bucket", async (t) => {
+    // The first face resembles Mira Wexford. The other two resemble nobody, and
+    // saying so of all three would be a straightforward lie.
+    const { document } = await openPerson(t, leftovers);
+    assert.equal(document.querySelector(".cluster-suggestion"), null,
+                 "one face's suggestion was applied to the whole mixed bag");
+  });
+
+  test("it says what it actually is", async (t) => {
+    const { document } = await openPerson(t, leftovers);
+    const title = document.querySelector(".matching-group-title").textContent;
+    assert.match(title, /Unclustered/);
+    assert.match(title, /resembled nothing else/);
+  });
+
+  test("it says what to do instead", async (t) => {
+    const { document } = await openPerson(t, leftovers);
+    const note = document.querySelector(".not-a-cluster-note");
+    assert.ok(note, "nothing tells you these are unrelated");
+    assert.match(note.title, /Assign Selected/);
+  });
+
+  test("the faces are still shown and still selectable", async (t) => {
+    // Removing the bulk actions must not make them unreachable: per-face assignment
+    // through the header controls is the whole point of listing them.
+    const { document } = await openPerson(t, leftovers);
+    assert.equal(document.querySelectorAll(".face-match-item").length, 3);
+  });
+
+  test("a real cluster keeps both actions", async (t) => {
+    const real = [face(901, 0.95, 4), face(902, 0.94, 4)];
+    const { document } = await openPerson(t, real);
+    const labels = buttonsIn(document);
+    assert.ok(labels.some((t) => /Assign Cluster/.test(t)));
+    assert.ok(labels.some((t) => /Ignore Cluster/.test(t)));
   });
 });

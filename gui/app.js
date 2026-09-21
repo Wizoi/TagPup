@@ -2401,7 +2401,14 @@ document.addEventListener('DOMContentLoaded', () => {
             tabMatches.textContent = `Likely (${high.length})`;
             tabOutliers.textContent = `Possible (${lower.length})`;
             if (tabLowConf) {
-                tabLowConf.textContent = `Ungrouped (${unclustered.length})`;
+                // "Unclustered", not "Ungrouped": the sidebar already has a bucket
+                // called Ungrouped and it means something else entirely -- faces whose
+                // photo names somebody who has only that one candidate in the whole
+                // library. Two different ideas under one word on one screen.
+                tabLowConf.textContent = `Unclustered (${unclustered.length})`;
+                tabLowConf.title = 'Faces that resembled nothing else, so grouping left '
+                    + 'them on their own. Not the same as the Ungrouped bucket in the '
+                    + 'sidebar.';
                 tabLowConf.classList.toggle('hidden', unclustered.length === 0);
             }
         } else {
@@ -2552,10 +2559,31 @@ document.addEventListener('DOMContentLoaded', () => {
             // does not slide the buttons across.
             const suggestionSlot = document.createElement('div');
             suggestionSlot.className = 'matching-group-suggestion-slot';
+            // These faces did not end up together -- they failed to end up anywhere.
+            // Every cluster-wide action below is meaningless for them, and dangerous:
+            // one click would assign hundreds of unrelated faces to one person.
+            const isUnclustered = title === 'Unclustered'
+                || groupFaces.every(f => f.cluster_id === -1);
+
             if (modeSelect.value === 'unmatched-faces') {
                 const numFaces = groupFaces.length;
                 const numPhotos = new Set(groupFaces.map(f => f.photo_path)).size;
-                titleSpan.textContent = `${title} (${numFaces} face${numFaces !== 1 ? 's' : ''} in ${numPhotos} photo${numPhotos !== 1 ? 's' : ''})`;
+                titleSpan.textContent = isUnclustered
+                    ? `Unclustered \u2014 ${numFaces} face${numFaces !== 1 ? 's' : ''} that `
+                      + `resembled nothing else, from ${numPhotos} photo`
+                      + `${numPhotos !== 1 ? 's' : ''}`
+                    : `${title} (${numFaces} face${numFaces !== 1 ? 's' : ''} in ${numPhotos} photo${numPhotos !== 1 ? 's' : ''})`;
+
+                if (isUnclustered) {
+                    const note = document.createElement('span');
+                    note.className = 'not-a-cluster-note';
+                    note.textContent = 'these are unrelated \u2014 handle them one at a time';
+                    note.title = 'Face grouping puts together the faces that resemble '
+                        + 'each other. These resembled nothing, so they are listed '
+                        + 'together only because they have nowhere else to go. Select '
+                        + 'the ones you recognise and use Assign Selected, or Exclude.';
+                    titleSpan.appendChild(note);
+                }
 
                 // Every other person these photos still have no face for. Without it,
                 // a group photo's faces look like the tool guessing wildly.
@@ -2565,7 +2593,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Who the already-named faces say this group is. The queue can only
                 // offer a name the photo mentions, which is no help for the photos
                 // that name nobody -- and those are most of Unknown Faces.
-                const suggestion = groupFaces.find(f => f.suggested_name);
+                const suggestion = isUnclustered
+                    ? null   // a guess for one of them says nothing about the rest
+                    : groupFaces.find(f => f.suggested_name);
                 if (suggestion) {
                     const pct = Math.round((suggestion.suggested_similarity || 0) * 100);
                     const guessName = suggestion.suggested_name;
@@ -2637,7 +2667,11 @@ document.addEventListener('DOMContentLoaded', () => {
             header.appendChild(titleSpan);
             header.appendChild(suggestionSlot);
 
-            if (modeSelect.value === 'unmatched-faces') {
+            // Not for the Unclustered bucket: its faces have nothing in common, so
+            // "assign all of these to one person" and "ignore all of these" are both
+            // wrong by construction -- and one of them would have excluded up to 500
+            // faces without asking, once the confirmation was turned off.
+            if (modeSelect.value === 'unmatched-faces' && !isUnclustered) {
                 const assignBtn = document.createElement('button');
                 assignBtn.className = 'btn btn-primary btn-sm';
                 assignBtn.style.padding = '2px 8px';
