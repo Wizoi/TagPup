@@ -1992,3 +1992,41 @@ body {
     color: var(--badge-unmatched);
     pointer-events: none;
 }
+
+/* --------------------------------------------- building a person's grid --
+   The candidates have to be grouped before the grid can be drawn, and on a
+   large library that is most of a minute. The panel used to say "Loading
+   faces..." for the whole of it, which is indistinguishable from a hang. */
+.grid-build-progress {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 18px 20px;
+}
+
+.grid-build-bar-outer {
+    flex: 1;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--bg-card);
+    overflow: hidden;
+}
+
+.grid-build-bar-inner {
+    height: 100%;
+    width: 0%;
+    border-radius: 3px;
+    background: var(--accent-color, #5b8cff);
+    /* Slower than the poll interval, so the bar glides between readings
+       instead of stepping. */
+    transition: width 0.6s linear;
+}
+
+.grid-build-text {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 55%;
+}

@@ -1,6 +1,7 @@
 # tuner_server.py
 import collections
 import os
+import time
 import threading
 import subprocess
 import json
@@ -387,6 +388,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
     _db_suggest_status_registry = {}
     _db_suggest_threads_registry = {}
     _db_identify_cache_registry = {}
+    _db_identify_progress_registry = {}
     _db_index_status_registry = {}
     _db_index_threads_registry = {}
     _db_index_queue_registry = {}
@@ -397,6 +399,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
     # the answer only changes when faces are added or named, so it is cached against a
     # cheap fingerprint of the faces table rather than recomputed per request.
     identify_cache = DatabaseIsolatedDict(_db_identify_cache_registry)
+    # How far along a grid that is being built has got, so the screen can say so
+    # instead of sitting blank for a minute. Written by the request doing the work and
+    # read by a status request on another thread, which is what the threaded server is
+    # for. Keyed by person, because two people's grids can be built at once.
+    identify_progress = DatabaseIsolatedDict(_db_identify_progress_registry)
     index_status = DatabaseIsolatedDict(_db_index_status_registry)
     index_threads = DatabaseIsolatedDict(_db_index_threads_registry)
     # Folders waiting their turn, under the key "pending", and the single worker
@@ -753,6 +760,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.handle_get_unmatched_faces_people()
         elif path == "/api/unmatched-faces/person-matches":
             self.handle_get_unmatched_faces_person_matches(query)
+        elif path == "/api/unmatched-faces/build-status":
+            self.handle_get_unmatched_faces_build_status(query)
         elif path == "/api/browse-folder":
             self.handle_get_browse_folder()
         else:
@@ -3696,6 +3705,59 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             "value": value,
         }
 
+    #: The stages of building a person's grid, and roughly what share of the wait each
+    #: one is. Taken from measuring the real library, where the whole pass is about a
+    #: minute: reading the candidates is a second or two, grouping them is most of it,
+    #: and ranking the leftovers against the person is the next biggest piece.
+    #:
+    #: They only have to be close. Their job is to keep the bar moving forward at a
+    #: believable rate, not to predict the finish.
+    BUILD_STAGES = (
+        ("reading", 0.06),
+        ("grouping", 0.70),
+        ("suggesting", 0.04),
+        ("ranking", 0.14),
+        ("building", 0.06),
+    )
+
+    def build_progress(self, name, stage, fraction, message):
+        """Say how far along this person's grid is, for anyone who asks.
+
+        `fraction` is progress within the stage, 0 to 1. The overall figure comes from
+        the stage weights above, so it only ever moves forward.
+        """
+        done = 0.0
+        for stage_name, weight in self.BUILD_STAGES:
+            if stage_name == stage:
+                done += weight * max(0.0, min(1.0, fraction))
+                break
+            done += weight
+        TunerHTTPRequestHandler.identify_progress[name] = {
+            "name": name,
+            "stage": stage,
+            "message": message,
+            "percent": int(round(done * 100)),
+            "active": True,
+            "updated": time.time(),
+        }
+
+    def build_progress_done(self, name):
+        TunerHTTPRequestHandler.identify_progress.pop(name, None)
+
+    def handle_get_unmatched_faces_build_status(self, query):
+        """How far along is the grid somebody is waiting for?
+
+        Deliberately cheap and deliberately not cached: it is polled while another
+        thread does the slow work, and it touches no database at all.
+        """
+        name_list = query.get("name")
+        name = urllib.parse.unquote(name_list[0]) if name_list else None
+        if not name:
+            self.send_error(400, "Missing 'name' parameter")
+            return
+        progress = TunerHTTPRequestHandler.identify_progress.get(name)
+        self.send_json(progress or {"name": name, "active": False, "percent": 0})
+
     @staticmethod
     def _dissolve_stranded_clusters(faces):
         """A cluster that has lost all but one member is not a cluster any more.
@@ -4063,6 +4125,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_json(cached)
                 return
 
+            # Nothing was cached, so this is the slow path: reading every candidate and
+            # grouping it. Say so, from here until the response goes out.
+            self.build_progress(name, "reading", 0.0, "Reading the faces still unnamed")
+
             # 1. Fetch all unmatched faces in database
             cursor.execute("""
                 SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata, p.people
@@ -4143,6 +4209,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             #: SUGGEST_CONFIDENT is labelled as the weaker thing it is.
             SUGGEST_FLOOR = 0.70
             SUGGEST_CONFIDENT = 0.85
+            self.build_progress(
+                name, "reading", 0.7, "Reading the faces already named")
             _known_ids, known_names, known_matrix = self.named_face_matrix(conn, fingerprint)
 
             def reference_faces(person):
@@ -4225,10 +4293,17 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 return
 
             embs = np.array(embs)
+            self.build_progress(
+                name, "grouping", 0.0,
+                "Grouping %s faces that look alike" % format(len(embs), ","))
 
             # Group the candidates. The slow part of this screen by a wide margin, and
             # the reason it reports progress at all: see cluster_candidates.
-            labels = cluster_candidates(embs)
+            labels = cluster_candidates(
+                embs,
+                on_progress=lambda done, total: self.build_progress(
+                    name, "grouping", done / total if total else 1.0,
+                    "Grouping %s faces that look alike" % format(total, ",")))
 
             # Group faces by cluster label. Noise (label == -1) is kept rather than
             # discarded: those faces are real and still need a name, and dropping them
@@ -4262,6 +4337,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             # Who each group looks like, from the faces already named, for every group
             # at once. The queue itself is keyword-driven and can only offer a name the
             # photo mentions, which is no help at all for a photo naming nobody.
+            self.build_progress(
+                name, "suggesting", 0.0,
+                "Working out who %s groups resemble" % format(len(cluster_centroids), ","))
             cluster_suggestions = suggest_for_all(cluster_centroids)
 
             faces = []
@@ -4319,6 +4397,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             #
             # Scoring every face first costs one matrix multiply against the named
             # faces, which is cheaper than building 4,739 cards and throwing most away.
+            self.build_progress(
+                name, "ranking", 0.0,
+                "Ranking %s faces that grouped with nothing" % format(len(noise_indices), ","))
             ranked = list(noise_indices)
             if known_matrix is not None and len(ranked):
                 block = embs[ranked]                          # (n, dim), already unit
@@ -4331,6 +4412,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 order = np.argsort(-against_person)
                 ranked = [ranked[i] for i in order]
 
+            self.build_progress(name, "building", 0.0, "Building the grid")
 
             # Each unclustered face is its own group of one, so its centroid is itself.
             shown_unclustered = ranked[:UNCLUSTERED_LIMIT]
@@ -4403,6 +4485,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             logger.error(f"Error fetching unmatched faces person matches: {e}")
             self.send_error(500, f"Database error: {e}")
         finally:
+            # However this ended, nothing is being built for this person any more.
+            # Left behind, a stale entry would keep a progress bar on screen for good.
+            self.build_progress_done(name)
             if conn:
                 conn.close()
 

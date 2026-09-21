@@ -2525,12 +2525,18 @@ ${summary}${note}`)) {
                 ? `/api/unmatched-faces/person-matches?name=${encodeURIComponent(name)}`
                 : `/api/person-faces?name=${encodeURIComponent(name)}&limit=-1`;
 
+        // Only the Identify Faces grid does work worth reporting on.
+        if (mode === 'unmatched-faces' && name !== 'Excluded') {
+            startGridBuildProgress(name);
+        }
+
         fetch(apiPath, { signal: detailsAbortController.signal })
             .then(res => {
                 if (!res.ok) throw new Error('Failed to load faces');
                 return res.json();
             })
             .then(data => {
+                stopGridBuildProgress();
                 activePersonFaces = data.faces;
                 lastLoadedPersonName = name;
                 // A capped list presented as a total makes the remainder look lost.
@@ -2545,6 +2551,7 @@ ${summary}${note}`)) {
                 renderPersonFaces(activePersonFaces);
             })
             .catch(err => {
+                stopGridBuildProgress();
                 if (err.name === 'AbortError') return;
                 console.error('Error loading person faces:', err);
                 matchingPersonCount.textContent = 'Error loading faces';
@@ -2629,6 +2636,59 @@ ${summary}${note}`)) {
     }
 
     // Render face match items in grid
+    const gridBuildProgress = document.getElementById('grid-build-progress');
+    const gridBuildBar = document.getElementById('grid-build-bar');
+    const gridBuildText = document.getElementById('grid-build-text');
+    let gridBuildTimer = null;
+
+    /**
+     * Show how far along the server is with a grid we are waiting for.
+     *
+     * The response is one request that takes most of a minute on a large library, so
+     * there is nothing to stream and nothing to page. The request doing the work
+     * publishes its progress instead, and this polls for it on the side while the fetch
+     * is still in flight -- the server is threaded, and the status route touches no
+     * database, so asking costs nothing.
+     *
+     * A cached grid comes back at once and never reports progress, which is why the bar
+     * only appears after a moment rather than flashing on every person you click.
+     */
+    function startGridBuildProgress(name) {
+        stopGridBuildProgress();
+        if (!gridBuildProgress) return;
+
+        let shown = false;
+        const poll = () => {
+            fetch(`/api/unmatched-faces/build-status?name=${encodeURIComponent(name)}`)
+                .then(res => (res.ok ? res.json() : null))
+                .then(status => {
+                    if (!status || !status.active || gridBuildTimer === null) return;
+                    if (!shown) {
+                        shown = true;
+                        gridBuildProgress.classList.remove('hidden');
+                        matchingPersonCount.textContent = 'Building this grid...';
+                    }
+                    gridBuildBar.style.width = `${status.percent || 0}%`;
+                    gridBuildText.textContent =
+                        `${status.message || 'Working'} — ${status.percent || 0}%`;
+                })
+                .catch(() => {});
+        };
+
+        // Not immediately: a cached grid answers before the first poll would, and a bar
+        // that appears and vanishes reads as a glitch.
+        gridBuildTimer = window.setInterval(poll, 700);
+    }
+
+    function stopGridBuildProgress() {
+        if (gridBuildTimer !== null) {
+            window.clearInterval(gridBuildTimer);
+            gridBuildTimer = null;
+        }
+        if (gridBuildProgress) gridBuildProgress.classList.add('hidden');
+        if (gridBuildBar) gridBuildBar.style.width = '0%';
+    }
+
     /** Recount the heading from what is actually on screen, after faces have left. */
     function updateFacesHeadingCount() {
         if (!matchingPersonCount) return;

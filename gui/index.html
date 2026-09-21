@@ -210,6 +210,16 @@
                                 <button id="btn-assign-undo" class="btn btn-secondary btn-sm">&#8630; Undo</button>
                                 <button id="btn-assign-undo-dismiss" class="assign-undo-dismiss" title="Dismiss">&times;</button>
                             </div>
+                            <!-- Building a person's grid on a large library takes the
+                                 better part of a minute, nearly all of it grouping the
+                                 candidates. Rather than leave the panel blank, the page
+                                 polls the server for how far along it is. -->
+                            <div id="grid-build-progress" class="grid-build-progress hidden">
+                                <div class="grid-build-bar-outer">
+                                    <div id="grid-build-bar" class="grid-build-bar-inner"></div>
+                                </div>
+                                <span id="grid-build-text" class="grid-build-text"></span>
+                            </div>
                             <div class="matching-faces-grid" id="matching-faces-grid">
                                 <!-- Face crops will be rendered here dynamically -->
                             </div>
