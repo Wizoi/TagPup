@@ -104,13 +104,105 @@ def expand_tag_fields(tags):
             hierarchical.append(tag)
     return flat, hierarchical
 
-def write_keyword_fields(et, path, tags, extra_params=None):
+#: One loaded taxonomy per database, so resolving on every write costs nothing after
+#: the first. Cleared whenever the taxonomy is written; see invalidate_people_cache().
+_people_cache = {}
+_people_cache_guard = threading.Lock()
+
+
+def people_paths_for(db_path):
+    """Every person the taxonomy names, keyed by their lowercased leaf name."""
+    if not db_path:
+        return {}
+    key = os.path.normcase(os.path.abspath(str(db_path)))
+    with _people_cache_guard:
+        cached = _people_cache.get(key)
+    if cached is not None:
+        return cached
+
+    mapping = {}
+    try:
+        from taxonomy import TagTaxonomy
+
+        taxonomy = TagTaxonomy(db_path=db_path)
+        taxonomy.load()
+        roots = taxonomy.people_roots()
+        for tag_path in taxonomy.paths:
+            if "/" not in tag_path:
+                continue
+            if tag_path.split("/")[0].strip().lower() not in roots:
+                continue
+            leaf = tag_path.split("/")[-1].strip().lower()
+            # Someone filed in two places cannot be resolved without guessing, so
+            # they are left alone rather than filed in whichever came first.
+            mapping[leaf] = None if leaf in mapping and mapping[leaf] != tag_path else tag_path
+        mapping = {k: v for k, v in mapping.items() if v}
+    except Exception as e:
+        logger.debug("Could not load people paths from %s: %s", db_path, e)
+
+    with _people_cache_guard:
+        _people_cache[key] = mapping
+    return mapping
+
+
+def invalidate_people_cache(db_path=None):
+    """Forget the cached taxonomy, after something changed it."""
+    with _people_cache_guard:
+        if db_path is None:
+            _people_cache.clear()
+        else:
+            _people_cache.pop(os.path.normcase(os.path.abspath(str(db_path))), None)
+
+
+def resolve_people_tags(tags, db_path):
+    """Give every person in `tags` the path they are filed under.
+
+    The last line of defence, and deliberately at the write boundary rather than at
+    each caller. A person's name reaches this program as a leaf from half a dozen
+    directions -- the faces table, CLIP suggestions, neighbour propagation, a typed
+    name -- and each of those paths resolving it for itself is exactly how "Hailey
+    Brookmire" kept being written beside "People/Hazel Brookmire". One of them
+    always gets missed; folder auto-apply was the one that outlived three fixes.
+
+    Only a bare tag whose name matches somebody already in the people taxonomy is
+    touched. A flat keyword that is not a person -- "Cross Country", "Kentridge" --
+    is legitimate and is left exactly as it is.
+    """
+    people = people_paths_for(db_path)
+    if not people:
+        return list(tags)
+
+    pathed_leaves = {t.split("/")[-1].strip().lower() for t in tags if "/" in t}
+
+    resolved = []
+    for tag in tags:
+        if "/" in tag:
+            if tag not in resolved:
+                resolved.append(tag)
+            continue
+        low = str(tag).strip().lower()
+        # A leaf duplicating a path already on this photo is simply dropped.
+        if low in pathed_leaves:
+            continue
+        person = people.get(low)
+        target = person or tag
+        if target not in resolved:
+            resolved.append(target)
+    return resolved
+
+
+def write_keyword_fields(et, path, tags, extra_params=None, db_path=None):
     """Write `tags` into a photo's keyword fields, clearing fields that end up empty.
 
     ExifTool treats an empty list as "no change", so assigning [] silently leaves the
     old keywords in place. Removing a photo's last tag therefore has to be expressed as
     an explicit '-TAG=' deletion instead.
+
+    Pass `db_path` and a person named by a bare leaf is written as the tag they are
+    filed under instead. Every write path through this function should pass it.
     """
+    if db_path:
+        tags = resolve_people_tags(tags, db_path)
     flat, hierarchical = expand_tag_fields(tags)
 
     params = dict(extra_params or {})
@@ -1888,7 +1980,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             executable = self.get_exiftool_path()
             import exiftool
             with exiftool.ExifToolHelper(executable=executable) as et:
-                write_keyword_fields(et, photo_path, tags, extra_params=params)
+                write_keyword_fields(et, photo_path, tags, extra_params=params,
+                                     db_path=self.db_path)
                 
             from metadata import sync_title_to_filename, METADATA_FIELDS
             new_path = sync_title_to_filename(photo_path, title, executable)
@@ -2019,7 +2112,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
                     new_tags = list(new_tags_set)
 
-                    write_keyword_fields(et, path, new_tags)
+                    new_tags = resolve_people_tags(new_tags, self.db_path)
+                    write_keyword_fields(et, path, new_tags, db_path=self.db_path)
 
                     if photo_entry:
                         photo_entry["tags"] = new_tags
@@ -2083,7 +2177,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                         current_tags = indexed_tags_for_photo(self.db_path, path)
                     new_tags = list(set(current_tags + apply_tags))
 
-                    write_keyword_fields(et, path, new_tags)
+                    # Apply All writes whatever the suggester proposed, and the
+                    # suggester deals in leaf names. Resolve before writing.
+                    new_tags = resolve_people_tags(new_tags, self.db_path)
+                    write_keyword_fields(et, path, new_tags, db_path=self.db_path)
 
                     if photo_entry:
                         photo_entry["tags"] = new_tags
@@ -2638,6 +2735,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             taxonomy.load()
             taxonomy.add_tag(tag_path)
             taxonomy.save()
+            invalidate_people_cache(self.db_path)
             
             self.send_json({"success": True, "id": new_id, "tag": tag_path})
         except Exception as e:
@@ -2802,6 +2900,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             for p in paths_to_remove:
                 taxonomy.paths.discard(p)
             taxonomy.save()
+            invalidate_people_cache(self.db_path)
             
             TagPupHTTPRequestHandler.folder_cache.clear()
             self.send_json({"success": True})
@@ -2952,6 +3051,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 taxonomy.paths.add(new_desc_tag)
                 
             taxonomy.save()
+            invalidate_people_cache(self.db_path)
             
             TagPupHTTPRequestHandler.folder_cache.clear()
             self.send_json({"success": True})
@@ -3071,7 +3171,8 @@ def update_photo_metadata_tags(db_path: str, exiftool_path: str, photo_paths: Li
                     continue
                     
                 try:
-                    new_flat_tags, new_hierarchical_tags = write_keyword_fields(et, path, new_tags)
+                    new_flat_tags, new_hierarchical_tags = write_keyword_fields(
+                        et, path, new_tags, db_path=db_path)
 
                     raw_meta["XMP:Subject"] = new_flat_tags
                     raw_meta["XMP:HierarchicalSubject"] = new_hierarchical_tags
