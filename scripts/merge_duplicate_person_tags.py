@@ -134,11 +134,10 @@ def main():
     if len(duplicates) > 10:
         print("   ... and %d more" % (len(duplicates) - 10))
 
-    print("\nphotos whose keywords carry the bare form: %d" % len(affected))
-    for photo_path, before, after in affected[:3]:
+    print("\nphotos whose keywords also carry the bare form: %d (left as they are)"
+          % len(affected))
+    for photo_path in affected[:3]:
         print("   %s" % os.path.basename(photo_path))
-        print("      %s" % before)
-        print("   -> %s" % after)
 
     if not args.apply:
         print("\nNothing was changed. Re-run with --apply to write it.")
@@ -149,8 +148,7 @@ def main():
         return
 
     apply_plan(args.db, duplicates, affected)
-    print("\nMerged %d duplicate tag(s) across %d photo(s)."
-          % (len(duplicates), len(affected)))
+    print("\nRemoved %d duplicate taxonomy node(s)." % len(duplicates))
 
     remaining, _ = plan_for(args.db)
     print("duplicates remaining: %d" % len(remaining))
