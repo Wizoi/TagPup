@@ -119,6 +119,60 @@ def repair_tags(tags, paths, roots):
     return result, replaced
 
 
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".heic", ".webp")
+
+
+def plan_for_folder(db_path, folder, exiftool_path=None):
+    """The same plan, read from the files in a folder rather than from the index.
+
+    Needed because the index lags the files: a folder tagged minutes ago still has
+    its old keywords recorded, so planning from the index would report nothing to do
+    on exactly the photos that need it most.
+    """
+    import exiftool
+
+    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)
+    paths, roots = people_paths(conn)
+    conn.close()
+
+    photo_paths = []
+    for root, _dirs, files in os.walk(folder):
+        for name in sorted(files):
+            if name.lower().endswith(IMAGE_SUFFIXES):
+                photo_paths.append(os.path.join(root, name))
+
+    changes = []
+    with exiftool.ExifToolHelper(executable=exiftool_path) as et:
+        for i in range(0, len(photo_paths), 100):
+            batch = photo_paths[i:i + 100]
+            try:
+                rows = et.get_tags(batch, tags=["XMP:Subject"])
+            except Exception:
+                rows = []
+                for one in batch:
+                    try:
+                        rows.extend(et.get_tags([one], tags=["XMP:Subject"]))
+                    except Exception:
+                        continue
+            for row in rows:
+                photo_path = row.get("SourceFile") or ""
+                subject = row.get("XMP:Subject", [])
+                if isinstance(subject, str):
+                    subject = [subject]
+                subject = [str(t).strip() for t in subject if str(t).strip()]
+
+                after, replaced = repair_tags(subject, paths, roots)
+                if any(pathed for _bare, pathed in replaced):
+                    changes.append({
+                        "path": os.path.normpath(photo_path),
+                        "before": subject,
+                        "after": after,
+                        "replaced": [(b, p) for b, p in replaced if p],
+                    })
+
+    return changes, paths, roots
+
+
 def plan_for(db_path):
     """Which photos hold a bare person name, and what each should become.
 
@@ -205,14 +259,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default="data/kr-track.db")
     parser.add_argument("--exiftool", default=None, help="path to exiftool")
+    parser.add_argument("--folder", default=None,
+                        help="read the photos in this folder instead of the index; "
+                             "use it for a folder tagged since the last index")
     parser.add_argument("--apply", action="store_true",
                         help="write the changes; without this nothing is modified")
     args = parser.parse_args()
 
-    changes, paths, roots = plan_for(args.db)
+    if args.folder:
+        changes, paths, roots = plan_for_folder(args.db, args.folder, args.exiftool)
+    else:
+        changes, paths, roots = plan_for(args.db)
     on_disk = [c for c in changes if os.path.exists(c["path"])]
 
-    print("%s\n" % args.db)
+    print("%s%s\n" % (args.db, (" -- " + args.folder) if args.folder else ""))
     print("photos holding a bare person name: %d (%d still on disk)"
           % (len(changes), len(on_disk)))
 
@@ -244,7 +304,10 @@ def main():
     for photo_path, error in failed:
         print("   FAILED %s: %s" % (os.path.basename(photo_path), error))
 
-    remaining, _, _ = plan_for(args.db)
+    if args.folder:
+        remaining, _, _ = plan_for_folder(args.db, args.folder, args.exiftool)
+    else:
+        remaining, _, _ = plan_for(args.db)
     remaining = [c for c in remaining if os.path.exists(c["path"])]
     print("photos on disk still holding a bare person name: %d" % len(remaining))
 
