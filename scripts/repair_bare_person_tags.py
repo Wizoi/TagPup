@@ -234,7 +234,13 @@ def apply_changes(db_path, changes, paths, roots, exiftool_path=None):
 
                 after, replaced = repair_tags(subject, paths, roots)
                 if not replaced or after == subject:
+                    # The file is already right and the index disagreed with it --
+                    # a stale row, not a bad photo. Two databases cover some of the
+                    # same folders, so repairing through one leaves the other's rows
+                    # describing keywords that have since been fixed. Record what the
+                    # file holds rather than leaving the row wrong.
                     unchanged += 1
+                    applied[photo_path] = subject
                     continue
 
                 write_keyword_fields(et, photo_path, after)
