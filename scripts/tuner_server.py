@@ -4,6 +4,10 @@ import threading
 import subprocess
 import json
 import sqlite3
+try:
+    from . import db as tagpup_db
+except ImportError:  # imported as a top-level module
+    import db as tagpup_db
 import urllib.parse
 import io
 import logging
@@ -753,7 +757,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             
@@ -815,7 +819,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
@@ -1016,7 +1020,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             cursor.execute("SELECT photo_path, box, crop_image FROM faces WHERE id = ?", (face_id,))
@@ -1113,7 +1117,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             return
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             
@@ -1191,7 +1195,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             
@@ -1265,7 +1269,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             
@@ -1364,7 +1368,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
@@ -1479,7 +1483,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
@@ -1668,7 +1672,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.conn.cursor() if hasattr(conn, 'conn') else conn.cursor()
 
@@ -1735,7 +1739,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
@@ -1866,7 +1870,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
@@ -2012,7 +2016,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             return
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             
@@ -2100,7 +2104,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             return
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             faces = []
@@ -2305,7 +2309,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
@@ -2391,7 +2395,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
@@ -2635,7 +2639,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         """
         counts = {}
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             for (photo_path,) in conn.execute("SELECT path FROM photos"):
                 counts[normalize_path(os.path.dirname(photo_path))] = \
                     counts.get(normalize_path(os.path.dirname(photo_path)), 0) + 1
@@ -2913,7 +2917,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         conn = None
         try:
             prefix = to_db_path(folder_path).rstrip("/") + "/"
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
@@ -2992,7 +2996,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             cursor = conn.cursor()
             placeholders = ",".join("?" for _ in face_ids)
 
@@ -3059,7 +3063,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             placeholders = ",".join("?" for _ in face_ids)
             conn.execute(
                 "UPDATE faces SET excluded = 0, excluded_reason = NULL, name_source = NULL"
@@ -3082,7 +3086,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             return
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, p.raw_metadata,"
@@ -3146,7 +3150,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_error(404, "Database not found")
                 return
 
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
@@ -3266,7 +3270,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             return
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
@@ -3405,7 +3409,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             return
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
@@ -3806,7 +3810,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             
             # Filter out hidden tags
             hidden_tags = set()
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
             if cursor.fetchone():
@@ -3908,7 +3912,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
             # Delete the file record and faces from the active SQLite database
             db_key = to_db_path(photo_path)
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             try:
                 conn.execute("PRAGMA foreign_keys = ON;")
                 cursor = conn.cursor()
@@ -3998,7 +4002,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             people_list = extract_people(params, tags, db_path=self.db_path)
             
             if new_path != photo_path:
-                conn = sqlite3.connect(self.db_path, timeout=30.0)
+                conn = tagpup_db.connect(self.db_path, timeout=30.0)
                 cursor = conn.cursor()
                 cursor.execute(
                     "UPDATE photos SET path=?, title=?, tags=?, people=? WHERE path=?",
@@ -4007,7 +4011,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 conn.commit()
                 conn.close()
             else:
-                conn = sqlite3.connect(self.db_path, timeout=30.0)
+                conn = tagpup_db.connect(self.db_path, timeout=30.0)
                 cursor = conn.cursor()
                 cursor.execute(
                     "UPDATE photos SET title=?, tags=?, people=? WHERE path=?",
@@ -4455,7 +4459,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     os.rename(target_path, safe_path)
                     
                     # Update DB path for the conflicted occupant
-                    conn = sqlite3.connect(self.db_path, timeout=30.0)
+                    conn = tagpup_db.connect(self.db_path, timeout=30.0)
                     cursor = conn.cursor()
                     cursor.execute("UPDATE photos SET path=? WHERE path=?", (safe_path, target_path))
                     conn.commit()
@@ -4482,7 +4486,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     updated_paths_map[orig_old_path] = target_path
                     
                     # Update SQLite database path
-                    conn = sqlite3.connect(self.db_path, timeout=30.0)
+                    conn = tagpup_db.connect(self.db_path, timeout=30.0)
                     cursor = conn.cursor()
                     cursor.execute("UPDATE photos SET path=? WHERE path=?", (target_path, orig_old_path))
                     conn.commit()
@@ -4530,7 +4534,7 @@ def start_server(port=8080, db_path="data/photo_index.db", gui_dir="gui"):
     # Automatically check and apply schema migration on startup
     conn = None
     try:
-        conn = sqlite3.connect(db_path, timeout=30.0)
+        conn = tagpup_db.connect(db_path, timeout=30.0)
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(faces)")
         columns = [info[1] for info in cursor.fetchall()]

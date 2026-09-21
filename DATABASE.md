@@ -14,18 +14,28 @@ This program is a reader and a writer at the same time, constantly: the server a
 the page while a background thread indexes a folder or runs tag suggestions, and the
 suggester records the faces it detects through a connection of its own.
 
-Connections are therefore opened in **WAL** mode with an explicit **`busy_timeout`**
-(30s) and `synchronous=NORMAL`, applied by `configure_connection()` in
-`scripts/index.py`. In SQLite's default rollback-journal mode a writer needs an
+**Every connection comes from `scripts/db.py`.** It opens in **WAL** mode with an
+explicit **`busy_timeout`** (30s) and `synchronous=NORMAL`, and it owns a **write lock
+keyed by database file** so that this process writes to one database one thread at a
+time. There were 71 places opening a connection and 72 statements writing through one,
+each deciding these settings for itself -- which is to say, none of them deciding.
+`tests/test_db_access.py` fails if any module calls `sqlite3.connect` directly.In SQLite's default rollback-journal mode a writer needs an
 exclusive lock on the whole file and any open reader denies it -- which is how clicking
 **Suggest Tags** came to produce a wall of `database is locked` against its own server,
 losing the detected faces for those photos. `journal_mode` is a property of the database
 file, so it carries to every connection once set; `busy_timeout` is per-connection and
 must be set on each.
 
-Neither is a guarantee -- a checkpoint or a second writer can still collide -- so
-recording faces retries with a short backoff before giving up, and reports an **error**
-when it does. Those faces are lost until the photo is indexed again, which is not a
+WAL alone is not enough, which is why the lock exists. WAL permits many readers beside
+**one** writer; it says nothing about two writers, and nearly every writer here is
+another thread of this same program -- both servers handle each request on its own
+thread, and the suggester runs a thread pool. The busy timeout does not cover that case
+either: a connection holding an open read transaction that then tries to write must
+upgrade its lock, and SQLite refuses that immediately **without calling the busy
+handler**, so a 30-second timeout expires instantly.
+
+The lock cannot see another process or a checkpoint, so writes also retry with a short
+backoff. Recording faces reports an **error** when it finally gives up.Those faces are lost until the photo is indexed again, which is not a
 warning-shaped event.
 
 Any new connection should go through `configure_connection()`.

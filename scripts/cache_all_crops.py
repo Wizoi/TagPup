@@ -1,6 +1,10 @@
 import os
 import sys
 import sqlite3
+try:
+    from . import db as tagpup_db
+except ImportError:  # imported as a top-level module
+    import db as tagpup_db
 import json
 import io
 import time
@@ -17,7 +21,7 @@ def cache_all_crops(batch_size=100):
         return
 
     print("Connecting to database...")
-    conn = sqlite3.connect(db_path)
+    conn = tagpup_db.connect(db_path)
     cursor = conn.cursor()
 
     # Find faces with missing crops

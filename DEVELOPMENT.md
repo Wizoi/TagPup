@@ -84,10 +84,17 @@ patch scripts failed on their last assertion, silently discarding the earlier ed
 had already succeeded in memory. If a patch reports a failure, re-check every part of it,
 not only the part that failed.
 
-**SQLite: this program is always a reader and a writer at once.** The server answers the
-page while a background thread indexes or suggests. Connections are opened WAL with an
-explicit `busy_timeout`; see [DATABASE.md](DATABASE.md). Adding a new connection means
-routing it through `configure_connection()` in `scripts/index.py`.
+**Never call `sqlite3.connect` directly — use `scripts/db.py`.** This program is always
+a reader and a writer at once, from many threads: both servers handle each request on
+its own thread, the suggester runs a thread pool, and indexing runs in a background
+thread beside all of it. `db.py` owns the journal mode, the busy timeout, the per-file
+write lock and the busy retry. `tests/test_db_access.py` fails if a module connects on
+its own, because such a connection gets none of it.
+
+This was learned the slow way: `database is locked` was fixed three times in one
+afternoon, appearing from a different write path each time — recording faces, then tag
+embeddings, then the embedding cache — because each site had its own settings. See
+[DATABASE.md](DATABASE.md) for why WAL alone does not fix it.
 
 **ExifTool treats an empty list as "no change".** Clearing a photo's last keyword has to
 be an explicit `-TAG=` deletion, which is what `write_keyword_fields()` does. Assigning

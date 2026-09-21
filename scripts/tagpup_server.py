@@ -2,6 +2,10 @@
 import os
 import json
 import sqlite3
+try:
+    from . import db as tagpup_db
+except ImportError:  # imported as a top-level module
+    import db as tagpup_db
 import urllib.parse
 import io
 import logging
@@ -139,7 +143,7 @@ def indexed_tags_for_photo(db_path, photo_path):
     because nothing was cached would erase tags the photo already carries.
     """
     try:
-        conn = sqlite3.connect(db_path, timeout=10.0)
+        conn = tagpup_db.connect(db_path, timeout=10.0)
         try:
             row = conn.execute(
                 "SELECT tags FROM photos WHERE LOWER(path) = LOWER(?)",
@@ -999,7 +1003,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT id, box, name, prob, embedding, excluded, excluded_reason"
@@ -1098,7 +1102,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT photo_path, box, crop_image FROM faces WHERE id = ?", (face_id,)
@@ -1173,7 +1177,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
     def handle_get_tags(self):
         try:
             db_tags = set()
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             cursor = conn.cursor()
             cursor.execute("SELECT tags FROM photos WHERE tags IS NOT NULL")
             for row in cursor.fetchall():
@@ -1195,7 +1199,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
             # Filter out hidden tags
             hidden_tags = set()
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
             if cursor.fetchone():
@@ -1223,7 +1227,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
     def handle_get_people(self):
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             cursor = conn.cursor()
             cursor.execute("SELECT DISTINCT name FROM faces WHERE name IS NOT NULL ORDER BY name")
             people = [row[0] for row in cursor.fetchall()]
@@ -1313,7 +1317,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         # Query existing metadata from SQLite DB to avoid running ExifTool on unchanged files
         db_records = {}
         try:
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT path, mtime, size, tags, people, captions, raw_metadata FROM photos WHERE path LIKE ?",
@@ -1805,7 +1809,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
             # Delete the file record and faces from the active SQLite database
             db_key = to_db_path(photo_path)
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             try:
                 conn.execute("PRAGMA foreign_keys = ON;")
                 cursor = conn.cursor()
@@ -1908,7 +1912,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 db_people = extract_people(cleaned_meta, db_tags, db_path=self.db_path)
                 db_captions = [title] if title else []
                 
-                conn = sqlite3.connect(self.db_path, timeout=10.0)
+                conn = tagpup_db.connect(self.db_path, timeout=10.0)
                 cursor = conn.cursor()
                 
                 # If renamed, delete old and insert new (preserving embedding if present)
@@ -2453,7 +2457,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             # Self-healing helper to resolve parent linkage for existing database entries
             def heal_taxonomy_parents(db_path):
                 try:
-                    conn = sqlite3.connect(db_path, timeout=30.0)
+                    conn = tagpup_db.connect(db_path, timeout=30.0)
                     cursor = conn.cursor()
                     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
                     if not cursor.fetchone():
@@ -2524,7 +2528,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
             heal_taxonomy_parents(self.db_path)
 
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
             if not cursor.fetchone():
@@ -2565,7 +2569,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 self.send_json_error(400, "Tag name cannot be empty")
                 return
                 
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             
             if parent_id:
@@ -2650,7 +2654,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 self.send_json_error(400, "Missing 'id' parameter")
                 return
                 
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             
             cursor.execute("SELECT tag, parent_id FROM tag_taxonomy WHERE id = ?", (tag_id,))
@@ -2689,7 +2693,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 self.send_json_error(400, "Missing 'tag_id' parameter")
                 return
                 
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             cursor.execute("SELECT tag FROM tag_taxonomy WHERE id = ?", (tag_id,))
             row = cursor.fetchone()
@@ -2700,7 +2704,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             tag_path = row[0]
             conn.close()
             
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             cursor.execute("SELECT path, tags FROM photos WHERE tags IS NOT NULL")
             affected_photos = []
@@ -2738,7 +2742,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 self.send_json_error(400, "Missing parameters")
                 return
                 
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             cursor.execute("SELECT tag FROM tag_taxonomy WHERE id = ?", (tag_id,))
             row = cursor.fetchone()
@@ -2749,7 +2753,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             tag_path = row[0]
             conn.close()
             
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             cursor.execute("SELECT path, tags FROM photos WHERE tags IS NOT NULL")
             affected_photos = []
@@ -2774,7 +2778,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                         return
                     from taxonomy import TagTaxonomy
                     target_tag = TagTaxonomy.normalize_tag(target_tag)
-                    conn = sqlite3.connect(self.db_path, timeout=10.0)
+                    conn = tagpup_db.connect(self.db_path, timeout=10.0)
                     cursor = conn.cursor()
                     insert_tag_path_to_db(cursor, target_tag)
                     conn.commit()
@@ -2784,7 +2788,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 else:
                     update_photo_metadata_tags(self.db_path, executable, affected_photos, tag_path, None)
                     
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             cursor.execute("PRAGMA foreign_keys = ON")
             cursor.execute("DELETE FROM tag_taxonomy WHERE id = ?", (tag_id,))
@@ -2814,7 +2818,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 self.send_json_error(400, "Missing parameters")
                 return
                 
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             cursor.execute("SELECT tag, parent_id, name FROM tag_taxonomy WHERE id = ?", (tag_id,))
             row = cursor.fetchone()
@@ -2868,7 +2872,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             conn.close()
             
             # Find and update affected photos
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             cursor.execute("SELECT path, tags FROM photos WHERE tags IS NOT NULL")
             affected_photos = []
@@ -2895,7 +2899,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             old_leaf = old_tag_path.split("/")[-1]
             new_leaf = new_tag_path.split("/")[-1]
             if old_leaf != new_leaf:
-                conn = sqlite3.connect(self.db_path, timeout=10.0)
+                conn = tagpup_db.connect(self.db_path, timeout=10.0)
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT has_face FROM tag_taxonomy WHERE id = ?", (tag_id,)
@@ -2960,7 +2964,7 @@ def get_tag_usage_counts(db_path):
     if not os.path.exists(db_path):
         return counts
     try:
-        conn = sqlite3.connect(db_path, timeout=10.0)
+        conn = tagpup_db.connect(db_path, timeout=10.0)
         cursor = conn.cursor()
         cursor.execute("SELECT tags FROM photos WHERE tags IS NOT NULL")
         for row in cursor.fetchall():
@@ -3032,7 +3036,7 @@ def update_photo_metadata_tags(db_path: str, exiftool_path: str, photo_paths: Li
     from metadata import extract_people, extract_tags
     from taxonomy import TagTaxonomy
     
-    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn = tagpup_db.connect(db_path, timeout=30.0)
     cursor = conn.cursor()
     
     batch_size = 50

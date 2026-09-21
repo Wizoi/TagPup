@@ -165,25 +165,34 @@ class ClipEmbedder:
             
             # Try database cache first if photo_index is available
             if self.photo_index is not None and self.photo_index.conn is not None:
-                emb_bytes = np.array(embedding, dtype=np.float32).tobytes()
-                cursor = self.photo_index.conn.cursor()
-                cursor.execute("""
-                    INSERT OR REPLACE INTO embedding_cache (
-                        path, mtime, size, model_name, pretrained, 
-                        preserve_full_frame, max_aspect_ratio, force_image_size, embedding
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    abs_path,
-                    stat.st_mtime,
-                    stat.st_size,
-                    self.model_name,
-                    self.pretrained,
-                    1 if self.preserve_full_frame else 0,
-                    self.max_aspect_ratio,
-                    self.force_image_size,
-                    emb_bytes
-                ))
-                self.photo_index.conn.commit()
+                def store():
+                    emb_bytes = np.array(embedding, dtype=np.float32).tobytes()
+                    cursor = self.photo_index.conn.cursor()
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO embedding_cache (
+                            path, mtime, size, model_name, pretrained,
+                            preserve_full_frame, max_aspect_ratio, force_image_size, embedding
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        abs_path,
+                        stat.st_mtime,
+                        stat.st_size,
+                        self.model_name,
+                        self.pretrained,
+                        1 if self.preserve_full_frame else 0,
+                        self.max_aspect_ratio,
+                        self.force_image_size,
+                        emb_bytes
+                    ))
+                    self.photo_index.conn.commit()
+
+                # Every worker in the suggestion pool writes its embedding through
+                # this one shared connection, so they take their turn.
+                writer = getattr(self.photo_index, "write", None)
+                if writer is not None:
+                    writer(store, label="embedding cache for %s" % os.path.basename(file_path))
+                else:
+                    store()
                 return
 
             # Fallback to disk-based cache

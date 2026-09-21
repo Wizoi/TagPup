@@ -2,6 +2,10 @@
 import os
 import json
 import sqlite3
+try:
+    from . import db as tagpup_db
+except ImportError:  # imported as a top-level module
+    import db as tagpup_db
 import logging
 from typing import Set, List, Dict, Union, Optional
 
@@ -41,7 +45,7 @@ class TagTaxonomy:
         # 1. Try to load from database
         if os.path.exists(self.db_path):
             try:
-                conn = sqlite3.connect(self.db_path, timeout=10.0)
+                conn = tagpup_db.connect(self.db_path, timeout=10.0)
                 cursor = conn.cursor()
                 cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
                 if cursor.fetchone():
@@ -83,7 +87,7 @@ class TagTaxonomy:
         if not os.path.exists(self.db_path):
             return
         try:
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             
             # Make sure table exists
@@ -179,7 +183,7 @@ class TagTaxonomy:
         roots = {r.lower() for r in self.DEFAULT_PEOPLE_ROOTS}
         if getattr(self, "db_path", None):
             try:
-                conn = sqlite3.connect(self.db_path, timeout=30.0)
+                conn = tagpup_db.connect(self.db_path, timeout=30.0)
                 cur = conn.cursor()
                 cur.execute(
                     "SELECT name FROM sqlite_master "
@@ -327,7 +331,7 @@ def seed_taxonomy_from_db(db_path: str):
     """Seed taxonomy tree from DB index and default categories if empty."""
     import sqlite3
     try:
-        conn = sqlite3.connect(db_path, timeout=30.0)
+        conn = tagpup_db.connect(db_path, timeout=30.0)
         cursor = conn.cursor()
         
         # Ensure tag_taxonomy table exists

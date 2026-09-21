@@ -1,5 +1,9 @@
 # metadata.py
 import os
+try:
+    from . import db as tagpup_db
+except ImportError:  # imported as a top-level module
+    import db as tagpup_db
 import logging
 from typing import List, Dict, Any, Optional, Set
 import exiftool
@@ -129,8 +133,7 @@ def get_people_roots(db_path: Optional[str] = None, conn: Any = None) -> Set[str
             pass
     elif db_path and os.path.exists(db_path):
         try:
-            import sqlite3
-            conn_temp = sqlite3.connect(db_path, timeout=5.0)
+            conn_temp = tagpup_db.connect(db_path, timeout=5.0)
             cursor = conn_temp.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
             if cursor.fetchone():
@@ -193,7 +196,7 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
         if db_path and os.path.exists(db_path):
             try:
                 import sqlite3
-                conn_temp = sqlite3.connect(db_path, timeout=5.0)
+                conn_temp = tagpup_db.connect(db_path, timeout=5.0)
                 cursor = conn_temp.cursor()
                 cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
                 if cursor.fetchone():

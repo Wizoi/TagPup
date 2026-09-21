@@ -24,6 +24,10 @@ import json
 import os
 import shutil
 import sqlite3
+try:
+    from . import db as tagpup_db
+except ImportError:  # imported as a top-level module
+    import db as tagpup_db
 import subprocess
 import sys
 import threading
@@ -124,8 +128,8 @@ def main():
         if os.path.exists(leftover):
             os.remove(leftover)
 
-    src = sqlite3.connect(f"file:{args.source}?mode=ro", uri=True, timeout=60.0)
-    dst = sqlite3.connect(work_db, timeout=60.0)
+    src = tagpup_db.connect(f"file:{args.source}?mode=ro", uri=True, timeout=60.0)
+    dst = tagpup_db.connect(work_db, timeout=60.0)
     src.backup(dst)
     dst.close()
     src.close()
@@ -168,7 +172,7 @@ def main():
 
 
 def db(work_db, query, args=()):
-    conn = sqlite3.connect(f"file:{work_db}?mode=ro", uri=True)
+    conn = tagpup_db.connect(f"file:{work_db}?mode=ro", uri=True)
     try:
         row = conn.execute(query, args).fetchone()
         return row[0] if row else None
@@ -177,7 +181,7 @@ def db(work_db, query, args=()):
 
 
 def db_all(work_db, query, args=()):
-    conn = sqlite3.connect(f"file:{work_db}?mode=ro", uri=True)
+    conn = tagpup_db.connect(f"file:{work_db}?mode=ro", uri=True)
     try:
         return [r[0] for r in conn.execute(query, args).fetchall()]
     finally:

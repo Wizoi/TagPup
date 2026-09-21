@@ -4,6 +4,10 @@ Usage:  .venv\Scripts\python scripts/restore_face_names.py data/face_names_backu
 """
 import json
 import sqlite3
+try:
+    from . import db as tagpup_db
+except ImportError:  # imported as a top-level module
+    import db as tagpup_db
 import sys
 
 
@@ -18,7 +22,7 @@ def main():
     faces = payload["faces"]
     print(f"Restoring {len(faces)} face names into {db_path} (backup taken {payload['taken']})...")
 
-    conn = sqlite3.connect(db_path, timeout=60.0)
+    conn = tagpup_db.connect(db_path, timeout=60.0)
     conn.executemany("UPDATE faces SET name = ? WHERE id = ?", [(n, i) for i, n in faces])
     conn.commit()
     named = conn.execute("SELECT COUNT(*) FROM faces WHERE name IS NOT NULL").fetchone()[0]

@@ -3,10 +3,15 @@ import os
 import json
 import socket
 import sqlite3
+try:
+    from . import db as tagpup_db
+except ImportError:  # imported as a top-level module
+    import db as tagpup_db
 import logging
 import hashlib
 import subprocess
 import time
+import threading
 from typing import List, Dict, Any, Tuple, Optional, Set
 import numpy as np
 import faiss
@@ -141,55 +146,12 @@ class PathLocker:
         for path in list(self.locked_paths):
             self.release(path)
 
-#: How long a connection waits for a busy database before giving up. Generous
-#: because the thing it waits for -- another part of this same program finishing a
-#: write -- is short, and failing is expensive.
-DB_BUSY_TIMEOUT_MS = 30000
-
-
-def retry_when_busy(operation, attempts=4, first_delay=0.25, label="database write"):
-    """Run something that writes, waiting out a locked database rather than failing.
-
-    WAL and a busy timeout remove nearly all of this contention, but neither is a
-    guarantee: a checkpoint or another writer can still collide. A short backoff turns
-    the remaining collisions into a pause instead of lost work.
-
-    Only lock errors are retried. Anything else is a real failure and is raised at
-    once, because retrying a broken statement four times only delays the report.
-    """
-    delay = first_delay
-    for attempt in range(attempts):
-        try:
-            return operation()
-        except sqlite3.OperationalError as e:
-            if "locked" not in str(e).lower() and "busy" not in str(e).lower():
-                raise
-            if attempt == attempts - 1:
-                raise
-            logger.info("%s: database busy, retrying in %.2fs", label, delay)
-            time.sleep(delay)
-            delay *= 2
-
-
-def configure_connection(conn):
-    """Put a connection into the mode this program actually runs in.
-
-    WAL because a reader and a writer coexist constantly here: the server answers
-    requests from the page while a background thread indexes or suggests. In the
-    default rollback-journal mode a writer needs an exclusive lock on the whole file
-    and any open reader denies it, which is exactly the "database is locked" that
-    Suggest Tags produced against its own server.
-
-    journal_mode is a property of the database file, so setting it once carries to
-    every other connection. busy_timeout is per-connection and has to be set here.
-    """
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=%d" % DB_BUSY_TIMEOUT_MS)
-        conn.execute("PRAGMA synchronous=NORMAL")
-    except Exception as e:
-        logger.warning("Could not configure the database connection: %s", e)
-    return conn
+# Connection settings, the write lock and the busy retry live in db.py, which every
+# connection in the codebase goes through. These names are kept so existing callers
+# and tests keep working.
+DB_BUSY_TIMEOUT_MS = tagpup_db.BUSY_TIMEOUT_MS
+configure_connection = tagpup_db.configure
+retry_when_busy = tagpup_db.retry_when_busy
 
 
 class PhotoIndex:
@@ -286,7 +248,7 @@ class PhotoIndex:
                 os.makedirs(db_dir, exist_ok=True)
                 
             # Set a 30-second timeout to handle concurrent lock waiting gracefully
-            self.conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+            self.conn = tagpup_db.connect(self.db_path, timeout=30.0, check_same_thread=False)
             configure_connection(self.conn)
             self.conn.execute("PRAGMA foreign_keys = ON;")
             self._create_table()
@@ -567,6 +529,15 @@ class PhotoIndex:
             logger.error(f"Error saving faces for {photo_path}: {e}")
             self.conn.rollback()
 
+    def write(self, operation, label="database write"):
+        """Run a write with every other writer to this database held back.
+
+        The lock is per database file and lives in db.py, so it also holds back
+        writers going through a different connection -- which is most of them: both
+        servers open their own per request, and every request is its own thread.
+        """
+        return tagpup_db.write(self.db_path, operation, label=label)
+
     def save_faces_if_absent(self, photo_path: str, faces: List[Dict[str, Any]]) -> int:
         """Record detected faces only when this photo has none yet. Returns rows inserted.
 
@@ -581,18 +552,16 @@ class PhotoIndex:
         """
         if not faces:
             return 0
-        def attempt():
-            return self._insert_faces_if_absent(photo_path, faces)
-
-        return retry_when_busy(
-            attempt, label="recording faces for %s" % os.path.basename(photo_path)
+        return self.write(
+            lambda: self._insert_faces_if_absent(photo_path, faces),
+            label="recording faces for %s" % os.path.basename(photo_path),
         )
 
     def _insert_faces_if_absent(self, photo_path: str, faces: List[Dict[str, Any]]) -> int:
         """One attempt at the insert above. Separated so it can simply be retried."""
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
             configure_connection(conn)
             cursor = conn.cursor()
             cursor.execute(
@@ -878,7 +847,7 @@ class PhotoIndex:
         """Save precomputed tag embedding."""
         if not self.conn:
             return
-        try:
+        def store():
             emb_bytes = np.array(embedding, dtype=np.float32).tobytes()
             cursor = self.conn.cursor()
             cursor.execute(
@@ -889,7 +858,12 @@ class PhotoIndex:
                 (tag, prompt, model_name, pretrained, emb_bytes)
             )
             self.conn.commit()
+
+        try:
+            self.write(store, label="tag embedding for '%s'" % tag)
         except Exception as e:
+            # Losing a tag embedding costs the next suggestion run the time to
+            # recompute it. Not data loss, so this stays a warning.
             logger.warning(f"Failed to save tag embedding for '{tag}': {e}")
 
 

@@ -9,9 +9,11 @@ That source is fixed -- people now enter the taxonomy under a people root -- but
 pairs it already made are still there, and it ran on every index, so a library may
 have accumulated many. This merges them:
 
-  * the bare taxonomy node is removed where a pathed one with the same leaf exists
-  * a photo keyword carrying the bare form is rewritten to the pathed form
-  * photos.people is left alone: leaf names are its correct content
+Only the taxonomy is touched. photos.tags is reported and left alone: it holds what the
+file holds, and a photo file legitimately carries both a hierarchy and, in some
+libraries, a flat leaf. Rewriting those rows only made the database disagree with the
+file until the next index put it back. photos.people is left alone for the same reason:
+leaf names are its correct content.
 
 Run with --apply to write. Without it, nothing is changed and the plan is printed.
 """
@@ -19,6 +21,10 @@ import argparse
 import json
 import os
 import sqlite3
+try:
+    from . import db as tagpup_db
+except ImportError:  # imported as a top-level module
+    import db as tagpup_db
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -30,7 +36,7 @@ def leaf_of(tag):
 
 def plan_for(db_path):
     """Which bare tags duplicate a pathed one, and which photos carry them."""
-    conn = sqlite3.connect(db_path, timeout=60.0)
+    conn = tagpup_db.connect(db_path, timeout=60.0)
     cursor = conn.cursor()
 
     cursor.execute(
@@ -77,28 +83,17 @@ def plan_for(db_path):
             photo_tags = json.loads(tags_json or "[]")
         except Exception:
             continue
-        if not any(t in duplicates for t in photo_tags):
-            continue
-        rewritten, seen = [], set()
-        for t in photo_tags:
-            replacement = duplicates.get(t, t)
-            if replacement not in seen:
-                seen.add(replacement)
-                rewritten.append(replacement)
-        affected.append((photo_path, photo_tags, rewritten))
+        # Reported for information only; these rows are not changed.
+        if any(t in duplicates for t in photo_tags):
+            affected.append(photo_path)
 
     conn.close()
     return duplicates, affected
 
 
 def apply_plan(db_path, duplicates, affected):
-    conn = sqlite3.connect(db_path, timeout=60.0)
+    conn = tagpup_db.connect(db_path, timeout=60.0)
     cursor = conn.cursor()
-    for photo_path, _before, after in affected:
-        cursor.execute(
-            "UPDATE photos SET tags = ? WHERE path = ?",
-            (json.dumps(after), photo_path),
-        )
     for bare in duplicates:
         cursor.execute("DELETE FROM tag_taxonomy WHERE tag = ?", (bare,))
     conn.commit()

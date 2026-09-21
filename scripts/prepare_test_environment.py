@@ -7,6 +7,10 @@ extracts real animal face crops, and indexes them in test_photo_index.db.
 
 import os
 import sqlite3
+try:
+    from . import db as tagpup_db
+except ImportError:  # imported as a top-level module
+    import db as tagpup_db
 import json
 import numpy as np
 from PIL import Image
@@ -72,7 +76,7 @@ def main():
     print(f"New content folder prepared: {new_dir}")
 
     # 4. Connect to database to write mock records
-    conn = sqlite3.connect(DB_PATH)
+    conn = tagpup_db.connect(DB_PATH)
     c = conn.cursor()
 
     # Paths (must be forward slash normalized for TagPup DB)
