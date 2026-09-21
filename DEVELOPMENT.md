@@ -104,11 +104,19 @@ related: clicking a recognised face added the person a second time in the bare f
 the `×` on a selection chip removed nothing while still rewriting every selected file;
 a suggested `Activity/Cross Country` was written as `Cross Country`.
 
-**The app starts itself from the middle of `app.js`.** A `?path=` in the URL calls
-`scanFolder()` around line 459, so any closure-level `let` or `const` declared below
-that and read above it can be reached before its declaration runs — which throws
-`Cannot access X before initialization`, and inside a promise chain surfaces as
-something unrelated ("Error scanning folder"). Declare state at the top with the rest.
+**`gui_tagpup/app.js` starts itself at the very end, and must stay that way.** The
+`?path=` startup block calls into most of the app. Run from anywhere but the bottom of
+the closure it can reach a `let` declared further down, and reaching a `let` early does
+not give you `undefined` — it throws, which takes the rest of the closure's body with
+it. Every binding below that point is then permanently uninitialised, so **the error a
+user sees names an unrelated line**.
+
+That is not hypothetical. `checkIndexingStatus` touched `indexProgressTimer`, declared
+2,300 lines below; the throw left `facesRequestToken` uninitialised too, and the
+visible failure was `Error scanning folder: Cannot access 'facesRequestToken' before
+initialization` — two removes from the line at fault, and it survived one fix that
+addressed only the symptom. `tests/frontend/tag-vocabulary.test.mjs` enforces the
+position.
 
 **Never call `sqlite3.connect` directly — use `scripts/db.py`.** This program is always
 a reader and a writer at once, from many threads: both servers handle each request on
