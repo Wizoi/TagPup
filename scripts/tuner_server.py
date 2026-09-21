@@ -1696,12 +1696,17 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 return
 
             # Check for conflict: is person_name already tagged on another face in this photo?
+            #
+            # One lookup, by equality. There used to be a `photo_path LIKE ?` retry
+            # whenever this found nothing -- which is the ordinary case, since finding
+            # nothing is what "no conflict" looks like -- and it was wrong twice over.
+            # LIKE cannot use idx_faces_photo_path, so it scanned every face row (0.38s
+            # on this library, on every single assignment); and in LIKE an underscore
+            # matches any character, so `IMG_1234.jpg` also matched `IMG-1234.jpg` and
+            # refused a legitimate assignment because a different photo had that person.
             cursor.execute("SELECT id FROM faces WHERE photo_path = ? AND name = ? AND id != ?", (photo_path, person_name, face_id))
             conflict_row = cursor.fetchone()
-            if not conflict_row:
-                cursor.execute("SELECT id FROM faces WHERE photo_path LIKE ? AND name = ? AND id != ?", (photo_path, person_name, face_id))
-                conflict_row = cursor.fetchone()
-                
+
             if conflict_row:
                 self.send_response(400)
                 self.send_header("Content-Type", "application/json")
@@ -2760,12 +2765,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     return
 
                 # Conflict 2: The person is already tagged on another face in this photo
+                #
+                # By equality only. The LIKE retry this used to fall back on scanned
+                # every face row per selected face -- nineteen seconds for a selection
+                # of fifty -- and treated an underscore in a filename as a wildcard,
+                # so a lookalike name in an unrelated photo blocked the assignment.
                 fid = fids[0]
                 cursor.execute("SELECT id FROM faces WHERE photo_path = ? AND name = ? AND id != ?", (photo_path, person_name, fid))
                 conflict_row = cursor.fetchone()
-                if not conflict_row:
-                    cursor.execute("SELECT id FROM faces WHERE photo_path LIKE ? AND name = ? AND id != ?", (photo_path, person_name, fid))
-                    conflict_row = cursor.fetchone()
 
                 if conflict_row:
                     self.send_response(400)
