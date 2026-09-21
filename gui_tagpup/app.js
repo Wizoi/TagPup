@@ -3019,37 +3019,45 @@ document.addEventListener('DOMContentLoaded', () => {
             btnSuggestTitleWand.removeAttribute('data-suggested-title');
         }
 
-        // People
-        suggestedPeopleContainer.innerHTML = '';
-        if (!sugg.people || sugg.people.length === 0) {
-            suggestedPeopleContainer.innerHTML = '<span style="color: var(--text-muted); font-size: 12px;">No people detected.</span>';
-        } else {
-            sugg.people.forEach(item => {
+        // Only what is not already on the photo.
+        //
+        // This listed every suggestion the analysis produced, applied or not, so after
+        // Apply All the box sat there repeating the tags it had just written back at
+        // you. A suggestion you have taken is not a suggestion; it is a tag, and it is
+        // already shown as one a few inches above.
+        const photo = folderPhotos.find(p => p.path === photoPath);
+        const outstanding = (list, key) =>
+            (list || []).filter(item => !photoAlreadyHas(photo, item[key]));
+
+        const people = outstanding(sugg.people, 'name');
+        const tags = outstanding(sugg.tags, 'tag');
+
+        // Nothing left to act on: the box would be a heading over two empty lists.
+        if (people.length === 0 && tags.length === 0 && !sugg.title) {
+            suggestionsSection.classList.add('hidden');
+            return;
+        }
+
+        function fill(container, items, key, isPerson) {
+            container.innerHTML = '';
+            const group = container.closest('.suggestion-item');
+            // Hide the half that has nothing rather than label an empty row.
+            if (group) group.classList.toggle('hidden', items.length === 0);
+            items.forEach(item => {
+                const name = item[key];
+                const pct = Math.round((item.score || 0) * 100);
                 const chip = document.createElement('span');
                 chip.className = 'suggestion-chip';
                 chip.style.cursor = 'pointer';
-                chip.title = 'Click to add person';
-                chip.textContent = item.name;
-                chip.addEventListener('click', () => applySuggestedTagDirect(item.name, true));
-                suggestedPeopleContainer.appendChild(chip);
+                chip.textContent = pct ? `${name} · ${pct}%` : name;
+                chip.title = `Click to add ${name} to this photo.`;
+                chip.addEventListener('click', () => applySuggestedTagDirect(name, isPerson));
+                container.appendChild(chip);
             });
         }
 
-        // Tags
-        suggestedTagsContainer.innerHTML = '';
-        if (!sugg.tags || sugg.tags.length === 0) {
-            suggestedTagsContainer.innerHTML = '<span style="color: var(--text-muted); font-size: 12px;">No tag recommendations.</span>';
-        } else {
-            sugg.tags.forEach(item => {
-                const chip = document.createElement('span');
-                chip.className = 'suggestion-chip';
-                chip.style.cursor = 'pointer';
-                chip.title = 'Click to add tag';
-                chip.textContent = item.tag;
-                chip.addEventListener('click', () => applySuggestedTagDirect(item.tag, false));
-                suggestedTagsContainer.appendChild(chip);
-            });
-        }
+        fill(suggestedPeopleContainer, people, 'name', true);
+        fill(suggestedTagsContainer, tags, 'tag', false);
     }
 
     /**
@@ -3095,6 +3103,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (!photo.people.includes(leaf)) photo.people.push(leaf);
                 }
                 renderTags(updatedTags);
+                // The suggestion has been taken, so it is no longer a suggestion.
+                renderSuggestionsPanel(path);
                 statusDot.className = 'status-indicator-dot';
                 statusText.textContent = 'Ready';
                 saveToLocalStorageCache();
@@ -3165,6 +3175,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (!photo.people.includes(leaf)) photo.people.push(leaf);
                 });
                 renderTags(updatedTags);
+                renderSuggestionsPanel(path);
                 statusDot.className = 'status-indicator-dot';
                 statusText.textContent = 'Ready';
                 saveToLocalStorageCache();

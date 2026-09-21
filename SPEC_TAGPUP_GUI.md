@@ -73,6 +73,20 @@ not only on Enter. Two limits:
 is deliberately excluded from blur-commit: it is pre-filled with the current title, so
 blurring it unchanged would re-save the same value on every pass.
 
+### 0.2 What the analysis found
+
+Below the photo's details sit two halves of one row: **AI Suggestions** on the left,
+**Detected Faces** on the right. Suggestions lead because they are the thing to act on;
+the faces are reference, and the place to pick up a match the suggester was not
+confident enough to propose. Either half takes the full width when the other is empty.
+
+The suggestions box lists **only what the photo does not already carry**. It previously
+listed everything the analysis produced, so after Apply All it sat there repeating back
+the tags it had just written; a suggestion you have taken is a tag, and it is shown as
+one a few inches above. Taking one removes it, and when nothing is left the box goes
+away rather than becoming a heading over two empty lists. A person is matched by who
+they are, so a bare suggested name counts as present on a photo tagged with their path.
+
 ### 0.1 Feedback, Scope and Undo
 
 **One status channel.** Results and validation go to the status line, which was

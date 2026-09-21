@@ -168,15 +168,14 @@
                             </div>
                         </div>
 
-                        <!-- AI Suggestions Box -->
-                        <div id="faces-section" class="faces-section hidden">
-                            <div class="faces-section-header">
-                                <span class="detail-label">Detected Faces</span>
-                                <span id="faces-summary" class="faces-summary"></span>
-                            </div>
-                            <div id="faces-strip" class="faces-strip"></div>
-                        </div>
+                    </div>
 
+                    <!-- What the analysis found, side by side: what it proposes on the
+                         left, the faces it detected on the right. Suggestions come
+                         first because they are the thing to act on; the faces are
+                         reference, and the place to pick up a match the suggester was
+                         not confident enough to propose. -->
+                    <div class="analysis-row">
                         <div id="suggestions-section" class="suggestions-section hidden">
                             <div class="suggestions-header-row">
                                 <h3>🤖 AI Suggestions</h3>
@@ -196,6 +195,14 @@
                                     </div>
                                 </div>
                             </div>
+                        </div>
+
+                        <div id="faces-section" class="faces-section hidden">
+                            <div class="faces-section-header">
+                                <span class="detail-label">Detected Faces</span>
+                                <span id="faces-summary" class="faces-summary"></span>
+                            </div>
+                            <div id="faces-strip" class="faces-strip"></div>
                         </div>
                     </div>
                 </div>

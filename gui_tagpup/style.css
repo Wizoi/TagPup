@@ -1093,8 +1093,34 @@ body {
    force its whole track open and squeeze the others to nothing. A photo of a start
    line with thirty detected faces did exactly that: the face strip pushed its column
    wide and left Image Details a single character per line. */
-.details-and-suggestions-row > * {
+.details-and-suggestions-row > *,
+.analysis-row > * {
     min-width: 0;
+}
+
+/* What the analysis found: what it proposes on the left, the faces it detected on the
+   right, half and half. Suggestions lead because they are the thing to act on; the
+   faces are reference, and where you pick up a match the suggester was not confident
+   enough to offer. */
+.analysis-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    align-items: start;
+    margin-top: 20px;
+}
+
+/* Either half can be empty -- no suggestions left to apply, or no faces found -- and
+   the other should then have the width to itself rather than sitting in half of it. */
+.analysis-row:has(#suggestions-section.hidden),
+.analysis-row:has(#faces-section.hidden) {
+    grid-template-columns: 1fr;
+}
+
+@media (max-width: 900px) {
+    .analysis-row {
+        grid-template-columns: 1fr;
+    }
 }
 
 .details-and-suggestions-row:has(#suggestions-section.hidden) {
@@ -1667,13 +1693,11 @@ input:checked + .slider:before {
 
 
 /* ---- Detected faces strip ---------------------------------------------- */
-/* The strip gets the full width of the row rather than sharing it with the details
-   panel. A crowd photo yields dozens of faces, and squeezing those into a third of
-   the width made both halves unusable. */
+/* One half of the analysis row. A crowd photo yields dozens of faces, so the strip
+   wraps and scrolls within its half rather than pushing the row wider. */
 .faces-section {
     padding: 12px 20px;
     border-bottom: 1px solid var(--border-color);
-    grid-column: 1 / -1;
 }
 
 .faces-section-header {
