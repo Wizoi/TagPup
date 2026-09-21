@@ -1534,41 +1534,42 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 
             target_emb_bytes = row[0]
             target_emb = np.frombuffer(target_emb_bytes, dtype=np.float32)
-            
-            # Fetch all resolved faces (excluding the current face if it's already resolved)
-            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL AND excluded = 0 AND id != ?", (face_id,))
-            faces_rows = cursor.fetchall()
-            
-            if not faces_rows:
+
+            # Every named face, from the cache shared with the identify views, rather
+            # than re-read from SQLite on every click. This endpoint fires each time a
+            # card is selected, and rebuilding a 73 MB matrix to answer it cost half a
+            # second of the click.
+            known_ids, names, embeddings_matrix = self.named_face_matrix(
+                conn, self.faces_fingerprint(conn))
+            if embeddings_matrix is None:
                 self.send_json([])
                 return
-                
-            names = []
-            embeddings_list = []
-            for name, emb_bytes in faces_rows:
-                names.append(name)
-                embeddings_list.append(np.frombuffer(emb_bytes, dtype=np.float32))
-                
-            embeddings_matrix = np.array(embeddings_list, dtype=np.float32)
-            
+
             # Calculate similarities (dot product since they are L2 normalized)
             similarities = np.dot(embeddings_matrix, target_emb)
-            
+
             # Sort indices descending
             sorted_indices = np.argsort(similarities)[::-1]
-            
-            # Extract top 5 unique names with similarity scores
+
+            # Extract top 5 unique names with similarity scores. The face itself is
+            # skipped rather than excluded from the matrix, which is shared and cannot
+            # be rebuilt per face; a face is not a suggestion for itself.
             top_matches = []
+            seen = set()
             for idx in sorted_indices:
+                if known_ids[idx] == face_id:
+                    continue
                 name = names[idx]
-                if name not in [m["name"] for m in top_matches]:
-                    top_matches.append({
-                        "name": name,
-                        "similarity": float(similarities[idx])
-                    })
-                    if len(top_matches) >= 5:
-                        break
-                        
+                if name in seen:
+                    continue
+                seen.add(name)
+                top_matches.append({
+                    "name": name,
+                    "similarity": float(similarities[idx])
+                })
+                if len(top_matches) >= 5:
+                    break
+
             self.send_json(top_matches)
             
         except Exception as e:
@@ -3597,6 +3598,53 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             "value": value,
         }
 
+    def named_face_matrix(self, conn, fingerprint):
+        """Every face that carries a name, as unit vectors, with the names beside them.
+
+        Not one averaged face per person: the diagnostics panel scores a candidate
+        against the best single named face, and a suggestion that scored the same pair
+        differently would be two numbers for one comparison on one screen. Averaging is
+        also the more cautious of the two -- it drags down when somebody's named faces
+        vary in light and angle, which at a cross-country meet they always do -- and
+        that caution was costing real matches.
+
+        Built once per state of the faces table rather than once per request. Clicking
+        a face card asks who it resembles, and that question used to re-read all 35,758
+        named embeddings from SQLite and rebuild a 73 MB matrix -- half a second and
+        two allocations of it, on every click. Naming or excluding a face moves the
+        fingerprint and the matrix is rebuilt; nothing else disturbs it.
+
+        Returns (ids, names, matrix), with matrix None when nobody has been named yet.
+        The ids are carried so a caller can leave a particular face out of its own
+        answer -- the matrix is shared, so it cannot be rebuilt to exclude one row.
+        """
+        cached = self.identify_cache_get("named_matrix", fingerprint)
+        if cached is not None:
+            return cached
+
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, name, embedding FROM faces "
+            "WHERE name IS NOT NULL AND embedding IS NOT NULL AND excluded = 0"
+        )
+        ids, names, vecs = [], [], []
+        for face_id, person, blob in cur.fetchall():
+            try:
+                vec = np.frombuffer(blob, dtype=np.float32)
+            except Exception:
+                # One damaged row is not a reason to refuse every comparison.
+                continue
+            norm = np.linalg.norm(vec)
+            if norm == 0:
+                continue
+            ids.append(face_id)
+            names.append(person)
+            vecs.append(vec / norm)
+
+        result = (ids, names, np.vstack(vecs) if vecs else None)
+        self.identify_cache_put("named_matrix", fingerprint, result)
+        return result
+
     def handle_get_unmatched_faces_people(self):
         if not os.path.exists(self.db_path):
             self.send_json([])
@@ -3850,38 +3898,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_json({"faces": [], "total_count": 0, "has_more": False})
                 return
 
-            def named_faces():
-                """Every face that carries a name, with the name beside it.
-
-                Not one averaged face per person: the diagnostics panel scores a
-                candidate against the best single named face, and a suggestion that
-                scored the same pair differently would be two numbers for one
-                comparison on one screen. Averaging is also the more cautious of the
-                two -- it drags down when somebody's named faces vary in light and
-                angle, which at a cross-country meet they always do -- and that
-                caution was costing real matches.
-
-                Cached with the rest of this response, against the faces-table
-                fingerprint, so naming a face recomputes it and nothing else does.
-                """
-                cur = conn.cursor()
-                cur.execute(
-                    "SELECT name, embedding FROM faces "
-                    "WHERE name IS NOT NULL AND embedding IS NOT NULL AND excluded = 0"
-                )
-                names, vecs = [], []
-                for person, blob in cur.fetchall():
-                    try:
-                        vec = np.frombuffer(blob, dtype=np.float32)
-                    except Exception:
-                        continue
-                    norm = np.linalg.norm(vec)
-                    if norm == 0:
-                        continue
-                    names.append(person)
-                    vecs.append(vec / norm)
-                return names, (np.vstack(vecs) if vecs else None)
-
             #: Below this a suggestion is more distraction than help. Set at 0.70
             #: rather than higher because a weaker guess is still a shortlist of one,
             #: and confirming or rejecting it costs a glance -- which beats reading a
@@ -3889,7 +3905,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             #: SUGGEST_CONFIDENT is labelled as the weaker thing it is.
             SUGGEST_FLOOR = 0.70
             SUGGEST_CONFIDENT = 0.85
-            known_names, known_matrix = named_faces()
+            _known_ids, known_names, known_matrix = self.named_face_matrix(conn, fingerprint)
 
             def reference_faces(person):
                 """Every face already named as this person.

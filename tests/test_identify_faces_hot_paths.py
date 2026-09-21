@@ -11,10 +11,14 @@ reason that has nothing to do with speed:
   counts that never looks at a vector;
 * matching fell back to `photo_path LIKE ?`, which is not a full-table scan by
   accident but by definition, and which silently treats `_` in a filename as a
-  wildcard. Every camera on earth writes `IMG_1234.jpg`.
+  wildcard. Every camera on earth writes `IMG_1234.jpg`;
+* clicking a card re-read all 35,758 named embeddings and rebuilt a 73 MB matrix to
+  ask who the face resembles, on every click.
 
-The last is a correctness test wearing a performance test's clothes: a LIKE lookup on
-a path does not mean "this photo".
+The third is a correctness test wearing a performance test's clothes: a LIKE lookup on
+a path does not mean "this photo". The fourth brought a shared matrix with it, and the
+tests below pin what sharing it must not change: a face is not a suggestion for
+itself, and naming somebody has to be visible in the next answer.
 """
 import json
 import os
@@ -355,3 +359,78 @@ class TestAnUnderscoreInAFilenameIsNotAWildcard(MatchingTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheSharedNamedFaceMatrix(MatchingTestBase):
+    """Every named face, built once per state of the faces table instead of per click.
+
+    Selecting a card asks `/api/face-matches` who it resembles. That read all 35,758
+    named embeddings back out of SQLite and built a 73 MB matrix to answer it -- half
+    a second, every click, for a matrix identical to the one the last click built.
+
+    Sharing it costs two properties that the per-request version got for free, because
+    it excluded the face being asked about from its own query. Both are pinned here.
+    """
+
+    def matches_for(self, face_id):
+        with urllib.request.urlopen(
+            "http://127.0.0.1:%d/api/face-matches?id=%d" % (self.TEST_PORT, face_id),
+            timeout=30,
+        ) as r:
+            return json.loads(r.read().decode("utf-8"))
+
+    def test_a_face_is_not_a_suggestion_for_itself(self):
+        """Otherwise every named face resembles itself at 100%, which says nothing."""
+        photo = self.add_photo("IMG_5150.jpg")
+        named = self.add_face(photo, seed=21, name="Ines Okonkwo")
+
+        self.assertEqual(
+            [], self.matches_for(named),
+            "the only named face in the library was offered as its own match",
+        )
+
+    def test_another_face_of_the_same_person_is_still_offered(self):
+        """Skipping the face itself must not skip the person."""
+        first = self.add_photo("IMG_5151.jpg")
+        second = self.add_photo("IMG_5152.jpg")
+        vector = unit_vector(22)
+
+        conn = sqlite3.connect(self.TEST_DB)
+        for photo in (first, second):
+            conn.execute(
+                "INSERT INTO faces (photo_path, box, embedding, name, prob)"
+                " VALUES (?, '[0,0,10,10]', ?, 'Ines Okonkwo', 0.99)",
+                (photo, vector.tobytes()),
+            )
+        conn.commit()
+        face_id = conn.execute(
+            "SELECT id FROM faces WHERE photo_path = ?", (first,)).fetchone()[0]
+        conn.close()
+
+        names = [m["name"] for m in self.matches_for(face_id)]
+        self.assertEqual(
+            ["Ines Okonkwo"], names,
+            "the person's other face was lost along with the face itself",
+        )
+
+    def test_naming_somebody_shows_up_in_the_next_answer(self):
+        """A shared matrix is only safe if naming a face rebuilds it."""
+        photo = self.add_photo("IMG_5153.jpg")
+        asking = self.add_face(photo, seed=23)
+
+        self.assertEqual(
+            [], self.matches_for(asking), "nobody is named yet, so nothing can match")
+
+        elsewhere = self.add_photo("IMG_5154.jpg")
+        newly_named = self.add_face(elsewhere, seed=24)
+        status, _body = self.post(
+            "/api/face/match",
+            {"face_id": newly_named, "person_name": "Halvard Nilsen"},
+        )
+        self.assertEqual(200, status)
+
+        names = [m["name"] for m in self.matches_for(asking)]
+        self.assertIn(
+            "Halvard Nilsen", names,
+            "the shared matrix was served stale after a face was named",
+        )
