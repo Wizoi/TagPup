@@ -162,7 +162,7 @@ def plan_for_folder(db_path, folder, exiftool_path=None):
                 subject = [str(t).strip() for t in subject if str(t).strip()]
 
                 after, replaced = repair_tags(subject, paths, roots)
-                if any(pathed for _bare, pathed in replaced):
+                if replaced:
                     changes.append({
                         "path": os.path.normpath(photo_path),
                         "before": subject,
@@ -192,8 +192,12 @@ def plan_for(db_path):
         except Exception:
             continue
 
+        # Any repair counts, not only a bare name gaining its path. A photo whose only
+        # fault is debris -- a "People" root standing alone, or a leaf duplicating a
+        # path beside it -- was skipped, so the seed photo carrying both went unfixed
+        # through a full pass.
         after, replaced = repair_tags(tags, paths, roots)
-        if any(pathed for _bare, pathed in replaced):
+        if replaced:
             changes.append({
                 "path": photo_path,
                 "before": tags,
