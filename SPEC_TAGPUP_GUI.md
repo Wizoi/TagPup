@@ -80,6 +80,13 @@ Below the photo's details sit two halves of one row: **AI Suggestions** on the l
 the faces are reference, and the place to pick up a match the suggester was not
 confident enough to propose. Either half takes the full width when the other is empty.
 
+Clicking a face adds that person to the photo — a recognised one as readily as a
+proposed one. Only unnamed faces carrying a suggestion used to be clickable, so a photo
+whose faces were already identified offered no way to act on them: the strip said who
+was in the picture while People Tags sat empty. A face whose person the photo already
+names is dimmed and says so rather than looking live and doing nothing, and an excluded
+face is never offered.
+
 The suggestions box lists **only what the photo does not already carry**. It previously
 listed everything the analysis produced, so after Apply All it sat there repeating back
 the tags it had just written; a suggestion you have taken is a tag, and it is shown as

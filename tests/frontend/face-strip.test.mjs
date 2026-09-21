@@ -189,3 +189,85 @@ describe("face strip", () => {
     assert.ok(hidden(ctx.section()), "strip left visible on the folder view");
   });
 });
+
+describe("acting on a face", () => {
+  // Reported as: the cards highlight, and clicking does nothing.
+  //
+  // Only an unnamed face carrying a suggestion was ever clickable, so a photo whose
+  // faces were already recognised offered no way to act on them -- the strip named
+  // who was in the picture while People Tags sat empty. And where the person *was*
+  // already tagged, the click returned silently, which reads the same as broken.
+  const TAXONOMY = [
+    { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
+    { id: 2, tag: "People/Jane Doe", name: "Jane Doe", parent_id: 1, has_face: 1 },
+  ];
+
+  async function openWith(t, { faces, tags = [], people = [] }) {
+    const photo = photoRecord({ filename: "a.jpg", tags, people });
+    const server = new FakeServer()
+      .on("/api/tags", ["People/Jane Doe"])
+      .on("/api/people", ["Jane Doe"])
+      .on("/api/taxonomy/tree", TAXONOMY)
+      .on("/api/taxonomy/create", { success: true })
+      .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
+      .on("/api/folder/suggest-status", { status: "idle" })
+      .on("/api/folder/index-status", { status: "completed", percent: 100 })
+      .on("/api/folder/scan", [photo])
+      .on("/api/photo-faces", faces)
+      .on("/api/photo/save-metadata", { success: true });
+
+    const ctx = await loadApp("tagpup", {
+      t, url: "http://localhost:8090/photo_index/", server,
+    });
+    const input = ctx.document.getElementById("folder-path-input");
+    input.value = "D:/Library/2020";
+    input.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
+    await flush(ctx.window, 6);
+    const row = ctx.document.querySelector("li[data-path]");
+    if (row) row.click();
+    await flush(ctx.window, 8);
+    return ctx;
+  }
+
+  const named = { faces: [{ id: 1, box: [0, 0, 9, 9], area: 81, name: "Jane Doe", excluded: false }], total: 1, unmatched: 0 };
+
+  test("a recognised face the photo does not name is clickable", async (t) => {
+    const ctx = await openWith(t, { faces: named, tags: [], people: [] });
+    const card = ctx.document.querySelector(".face-card");
+    assert.ok(
+      card.classList.contains("face-card-actionable"),
+      "a recognised face offered no way to add that person"
+    );
+  });
+
+  test("clicking it adds the person, by their path", async (t) => {
+    const ctx = await openWith(t, { faces: named, tags: [], people: [] });
+    click(ctx.window, ctx.document.querySelector(".face-card"));
+    await flush(ctx.window, 8);
+
+    const body = ctx.server.lastBody("/api/photo/save-metadata");
+    assert.ok(body, "clicking a recognised face saved nothing");
+    assert.ok(body.tags.includes("People/Jane Doe"), JSON.stringify(body.tags));
+  });
+
+  test("a face whose person is already tagged is not clickable", async (t) => {
+    const ctx = await openWith(t, {
+      faces: named, tags: ["People/Jane Doe"], people: ["Jane Doe"],
+    });
+    const card = ctx.document.querySelector(".face-card");
+    assert.ok(!card.classList.contains("face-card-actionable"));
+    assert.ok(card.classList.contains("face-card-settled"));
+    assert.match(card.title, /already tagged/i);
+  });
+
+  test("an excluded face is not offered", async (t) => {
+    const ctx = await openWith(t, {
+      faces: {
+        faces: [{ id: 4, box: [0, 0, 9, 9], area: 81, name: "Jane Doe",
+                  excluded: true, excluded_reason: "stranger" }],
+        total: 1, unmatched: 0,
+      },
+    });
+    assert.ok(!ctx.document.querySelector(".face-card").classList.contains("face-card-actionable"));
+  });
+});

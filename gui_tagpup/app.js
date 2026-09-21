@@ -1535,6 +1535,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 const faces = data.faces || [];
                 if (faces.length === 0) return;
 
+                // Who this photo already names, so a face is only offered when acting
+                // on it would change something.
+                const photoRecord = folderPhotos.find(p => p.path === photoPath);
+
                 facesSection.classList.remove('hidden');
                 if (facesSummary) {
                     const unmatched = data.unmatched || 0;
@@ -1574,13 +1578,29 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     card.appendChild(label);
 
-                    // Clicking a suggestion adds that person to the photo, which is the
+                    // Clicking a face adds that person to the photo, which is the
                     // small correction TagPup is meant for; deeper work is TagTuner's.
-                    if (!face.name && face.suggestion) {
+                    //
+                    // A recognised face counts as much as a proposed one. Only
+                    // unnamed-with-a-suggestion used to be clickable, so a photo whose
+                    // faces were already identified offered no way to act on them --
+                    // the strip said who was in the picture while People Tags sat
+                    // empty, and clicking did nothing.
+                    const namesSomebody = face.name || face.suggestion;
+                    const alreadyTagged = namesSomebody
+                        && photoAlreadyHas(photoRecord, namesSomebody);
+
+                    if (namesSomebody && !alreadyTagged && !face.excluded) {
                         card.classList.add('face-card-actionable');
+                        card.title = `Click to add ${namesSomebody} to this photo`;
                         card.addEventListener('click', () => {
-                            applySuggestedTagDirect(face.suggestion, true);
+                            applySuggestedTagDirect(namesSomebody, true);
                         });
+                    } else if (alreadyTagged) {
+                        // Not clickable, and saying so beats a card that looks live
+                        // and does nothing when pressed.
+                        card.classList.add('face-card-settled');
+                        card.title = `${namesSomebody} is already tagged on this photo`;
                     }
                     facesStrip.appendChild(card);
                 });
@@ -3082,7 +3102,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const resolved = await resolveTagOrPerson(tagName, isPerson);
         if (!resolved) return;
 
-        if (photoAlreadyHas(photo, resolved)) return;
+        // Say so rather than doing nothing. A click that silently no-ops reads as a
+        // broken button, which is how this was reported.
+        if (photoAlreadyHas(photo, resolved)) {
+            setStatus('ready', `${leafOf(resolved)} is already on this photo`);
+            return;
+        }
         const updatedTags = [...photo.tags, resolved];
         const leaf = leafOf(resolved);
 

@@ -1816,3 +1816,16 @@ input:checked + .slider:before {
     opacity: 0.75;
     border-style: dashed;
 }
+
+/* A face whose person is already tagged on this photo. Dimmed rather than removed:
+   the strip's job is to show who was detected, and a face vanishing once acted on
+   would make the count disagree with what is on screen. Not clickable, and its
+   tooltip says why -- a card that looks live and does nothing is worse than a
+   card that plainly has nothing left to do. */
+.face-card-settled .face-card-img {
+    opacity: 0.55;
+}
+
+.face-card-settled .face-card-label {
+    color: var(--text-muted);
+}
