@@ -1536,3 +1536,25 @@ body {
 .face-crop-size.is-small {
     color: var(--badge-error, #f87171);
 }
+
+/* Why a face is being offered: its photo names somebody else who also has no face
+   yet, so both faces appear under both names. */
+.competing-names-note {
+    margin-left: 8px;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-muted);
+    text-transform: none;
+}
+
+.face-match-item.has-competing-names::after {
+    content: '';
+    position: absolute;
+    left: 4px;
+    bottom: 4px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--badge-warning, #fbbf24);
+    pointer-events: none;
+}

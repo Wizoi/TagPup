@@ -2541,6 +2541,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 const numFaces = groupFaces.length;
                 const numPhotos = new Set(groupFaces.map(f => f.photo_path)).size;
                 titleSpan.textContent = `${title} (${numFaces} face${numFaces !== 1 ? 's' : ''} in ${numPhotos} photo${numPhotos !== 1 ? 's' : ''})`;
+
+                // Every other person these photos still have no face for. Without it,
+                // a group photo's faces look like the tool guessing wildly.
+                const competing = [...new Set(
+                    groupFaces.flatMap(f => f.other_names || [])
+                )];
+                if (competing.length) {
+                    const note = document.createElement('span');
+                    note.className = 'competing-names-note';
+                    note.textContent = competing.length === 1
+                        ? `also names ${competing[0]}`
+                        : `also names ${competing.length} others`;
+                    note.title = `These photos also name: ${competing.join(', ')}.\n\n`
+                        + `Faces are offered under every name their photo is still `
+                        + `missing, so the same face can appear under more than one `
+                        + `person. Assigning one removes it from the others.`;
+                    titleSpan.appendChild(note);
+                }
             } else {
                 titleSpan.textContent = title;
             }
@@ -2618,7 +2636,18 @@ document.addEventListener('DOMContentLoaded', () => {
             groupFaces.forEach(face => {
                 const item = document.createElement('div');
                 item.className = 'face-match-item';
-                item.title = face.photo_path;
+                // Why this face is here: its photo names somebody else too, and
+                // neither has a face yet, so both faces are offered under both names.
+                // Saying so turns a confusing grid into a clear task.
+                const competingHere = (face.other_names || []).length
+                    ? `
+
+This photo also names ${face.other_names.join(', ')}. `
+                      + `Assign whichever face is this person and the rest stop being `
+                      + `offered for them.`
+                    : '';
+                if (competingHere) item.classList.add('has-competing-names');
+                item.title = face.photo_path + competingHere;
                 item.setAttribute('data-face-id', face.id);
 
                 if (selectedFaceIds.includes(face.id)) {

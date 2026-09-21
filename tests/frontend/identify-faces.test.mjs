@@ -279,3 +279,58 @@ describe("face crop details", () => {
     );
   });
 });
+
+describe("saying why a face is offered", () => {
+  // A candidate is an unnamed face in a photo whose keywords mention the name, where
+  // no face there is linked to it yet. When a photo names two people and neither has
+  // a face, both faces appear under both names -- correct, and impossible to work out
+  // from a grid of faces with no explanation.
+  const shared = [
+    { ...face(41, 0.0, -1), photo_path: "D:\\xc\\group.jpg", other_names: ["Miko Zellweg"] },
+    { ...face(42, 0.0, -1), photo_path: "D:\\xc\\group.jpg", other_names: ["Miko Zellweg"] },
+    { ...face(43, 0.0, -1), photo_path: "D:\\xc\\solo.jpg", other_names: [] },
+  ];
+
+  test("the group says who else its photos name", async (t) => {
+    const { document } = await openPerson(t, shared);
+    const header = document.querySelector(".matching-group-header");
+    assert.match(header.textContent, /also names Miko Zellweg/);
+  });
+
+  test("several other names are counted rather than listed", async (t) => {
+    const many = [
+      { ...face(44, 0.0, -1), other_names: ["Miko Zellweg", "Oren Ingram", "Emory Kade"] },
+    ];
+    const { document } = await openPerson(t, many);
+    const note = document.querySelector(".competing-names-note");
+    assert.match(note.textContent, /also names 3 others/);
+    assert.match(note.title, /Miko Zellweg/);
+  });
+
+  test("the faces sharing a photo with another name are marked", async (t) => {
+    const { document } = await openPerson(t, shared);
+    const marked = [...document.querySelectorAll(".face-match-item")]
+      .filter((el) => el.classList.contains("has-competing-names"));
+    assert.equal(marked.length, 2, "the two faces from the shared photo are not marked");
+  });
+
+  test("a face whose photo names only this person is not marked", async (t) => {
+    const { document } = await openPerson(t, shared);
+    const items = [...document.querySelectorAll(".face-match-item")];
+    const solo = items.find((el) => !el.classList.contains("has-competing-names"));
+    assert.ok(solo, "every face was marked, including the unambiguous one");
+  });
+
+  test("the mark explains what to do about it", async (t) => {
+    const { document } = await openPerson(t, shared);
+    const marked = document.querySelector(".face-match-item.has-competing-names");
+    assert.match(marked.title, /Miko Zellweg/);
+    assert.match(marked.title, /stop being\s+offered/);
+  });
+
+  test("nothing is said when no photo names anyone else", async (t) => {
+    const clean = [{ ...face(45, 0.0, -1), other_names: [] }];
+    const { document } = await openPerson(t, clean);
+    assert.equal(document.querySelector(".competing-names-note"), null);
+  });
+});

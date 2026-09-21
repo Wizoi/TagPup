@@ -3489,6 +3489,17 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_json({"faces": [], "total_count": 0, "has_more": False})
                 return
 
+            # Which other people each candidate's photo still has no face for. A photo
+            # naming two unaccounted people offers both its faces under both names,
+            # which is right but reads as noise until you are told why.
+            def other_unaccounted_names(row):
+                try:
+                    people = json.loads(row[7] or "[]")
+                except Exception:
+                    return []
+                matched = matched_by_photo.get(row[1], set())
+                return [p for p in people if p not in matched and p != name]
+
             # Extract embeddings
             valid_rows = []
             embs = []
@@ -3560,7 +3571,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         "year": year,
                         "similarity": similarity,
                         "cluster_id": int(label),
-                        "cluster_name": cluster_name
+                        "cluster_name": cluster_name,
+                        "other_names": other_unaccounted_names(r)
                     })
 
             # Append the unclustered faces, flagged so the UI can rank them lowest.
@@ -3587,7 +3599,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     "year": get_year_from_mtime_or_meta(r[4], r[6], r[1]),
                     "similarity": 0.0,
                     "cluster_id": -1,
-                    "cluster_name": "Unclustered"
+                    "cluster_name": "Unclustered",
+                    "other_names": other_unaccounted_names(r)
                 })
 
             # Sort by similarity descending
