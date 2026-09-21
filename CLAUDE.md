@@ -63,6 +63,41 @@ already had rows created 233 duplicate faces.
 **A write reports what it changed, not what it attempted.** A backfill read 60 photos,
 reported 60 done, and wrote nothing; the paths did not match and nothing said so.
 
+## Performance work
+
+Read this before claiming anything got faster. Every line of it was paid for by
+shipping a "43s → 0.19s" result for a screen that was exactly as slow as before.
+
+**A performance claim is a claim about a user action.** The unit is the thing the
+person described — "ignoring a cluster is slow" means click Ignore Cluster, wait until
+the app is usable. Not an endpoint, not a query, not a function. If the report names a
+click, the result names the same click or there is no result.
+
+**Measure the scenario, not your hypothesis.** The failure was measuring
+`POST /exclude` then `GET /person-matches` — a pair of calls the app never makes,
+invented because the suspect was the server. It made the hypothesis look right while
+the real cost, a full DOM rebuild in the browser, was never in the number at all. Ask
+what the app actually does on that click, in order, and time exactly that.
+
+**Baseline first, with the harness that will report the result.** Reproduce the
+reported slowness before changing a line. A harness that cannot reproduce it is not
+measuring the reported thing, and every conclusion drawn from it afterwards is about
+something else. If the baseline comes out fast, the harness is wrong — not the report.
+
+**The browser is half the system.** Server timings are a diagnosis, never a result.
+Rendering tens of thousands of cards, clearing tens of thousands of `img.src`, and
+rebuilding the DOM cost seconds, and no server timing can see any of it.
+`scripts/measure_identify_faces.py` drives the real app in a real browser; use it, or
+write its equivalent for the screen in question.
+
+**Usable, not merely returned.** A page that removes the cards and *then* blocks for
+ten seconds rebuilding passes a "are the cards gone" check. Wait for the main thread
+as well.
+
+**Don't edit `.py` while somebody is testing.** The reloader restarts the server and
+wipes every in-memory cache, so their run and yours are both measuring a cold start.
+Say when you are about to, or wait.
+
 ## Before committing
 
 - One concern per commit. `git add -A` has lumped two together twice; stage by path.

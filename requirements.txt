@@ -9,3 +9,6 @@ tqdm
 Pillow
 facenet-pytorch
 scikit-learn
+# Drives the real app in a real browser: screenshots, and the end-to-end
+# click-latency measurements in scripts/measure_identify_faces.py.
+playwright
