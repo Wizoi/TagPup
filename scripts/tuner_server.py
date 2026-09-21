@@ -4979,6 +4979,15 @@ def start_server(port=8080, db_path="data/photo_index.db", gui_dir="gui"):
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_faces_name ON faces(name)")
         conn.commit()
 
+        # And the one Identify Faces filters on. PhotoIndex.load() creates it too, but
+        # opening TagTuner does not necessarily go through PhotoIndex, and this screen
+        # is unusable without it on a large library: every count of the excluded bucket
+        # scans the whole faces table, crops and embeddings included.
+        if "excluded" in columns:
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_faces_identify ON faces(excluded, name)")
+            conn.commit()
+
         # ('Non Person' is migrated onto the excluded column by PhotoIndex.load,
         #  which every entry point calls; it is not duplicated here.)
         conn.commit()
