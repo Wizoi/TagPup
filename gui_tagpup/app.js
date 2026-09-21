@@ -1777,18 +1777,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 selectionDateValue.textContent = formatFriendlyDateRange(dateObjs[0], dateObjs[dateObjs.length - 1]);
             }
 
+            // One chip per person, but remembering every spelling their name actually
+            // takes across the selection. The chip is labelled with the leaf and used
+            // to be actioned with it too, so removing someone sent "Hazel Brookmire"
+            // for a photo tagged "People/Hazel Brookmire": the server removes by exact
+            // match, so nothing came off, and every selected file was rewritten anyway.
             const peopleCounts = {};
             const tagCounts = {};
-            
+
             selectedPhotos.forEach(photo => {
                 const photoPeople = photo.people || [];
                 const tags = photo.tags || [];
-                
+
                 tags.forEach(tag => {
                     const isPerson = isPersonTag(tag) || photoPeople.includes(tag);
                     if (isPerson) {
-                        const leaf = tag.includes('/') ? tag.split('/').pop().trim() : tag;
-                        peopleCounts[leaf] = (peopleCounts[leaf] || 0) + 1;
+                        const leaf = leafOf(tag);
+                        if (!peopleCounts[leaf]) peopleCounts[leaf] = { count: 0, tags: [] };
+                        peopleCounts[leaf].count++;
+                        if (!peopleCounts[leaf].tags.includes(tag)) {
+                            peopleCounts[leaf].tags.push(tag);
+                        }
                     } else {
                         tagCounts[tag] = (tagCounts[tag] || 0) + 1;
                     }
@@ -1802,35 +1811,40 @@ document.addEventListener('DOMContentLoaded', () => {
                 selectionPeopleList.innerHTML = '<span style="color: var(--text-muted); font-size: 12px; padding: 4px 0;">None</span>';
             } else {
                 peopleKeys.forEach(p => {
-                    const count = peopleCounts[p];
+                    const { count, tags: spellings } = peopleCounts[p];
+                    // Apply the pathed form where the selection has one, so applying a
+                    // person never introduces the bare name the keywords must not hold.
+                    const applyAs = spellings.find(t => t.includes('/')) || spellings[0];
                     const chip = document.createElement('span');
                     chip.className = 'selection-summary-chip';
                     chip.textContent = `${p} (${count})`;
-                    
+                    chip.title = spellings.join(', ');
+
                     // Show apply arrow only if it's not present on ALL selected photos
                     if (count < selectedThumbnails.length) {
                         const applyIcon = document.createElement('span');
                         applyIcon.className = 'selection-summary-chip-apply';
                         applyIcon.textContent = ' ➡️';
-                        applyIcon.title = `Apply "${p}" to all selected photos`;
+                        applyIcon.title = `Apply "${applyAs}" to all selected photos`;
                         applyIcon.addEventListener('click', (e) => {
                             e.stopPropagation();
-                            applyTagToAllSelected(p, true);
+                            applyTagToAllSelected(applyAs, true);
                         });
                         chip.appendChild(applyIcon);
                     }
-                    
-                    // Remove icon
+
+                    // Remove icon. Every spelling goes, or a person tagged both ways
+                    // across the selection comes half off and the chip stays put.
                     const removeIcon = document.createElement('span');
                     removeIcon.className = 'selection-summary-chip-remove';
                     removeIcon.textContent = ' ×';
                     removeIcon.title = `Remove "${p}" from all selected photos`;
                     removeIcon.addEventListener('click', (e) => {
                         e.stopPropagation();
-                        removeTagFromAllSelected(p, true);
+                        removeTagFromAllSelected(spellings, true);
                     });
                     chip.appendChild(removeIcon);
-                    
+
                     selectionPeopleList.appendChild(chip);
                 });
             }
@@ -1993,8 +2007,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             photo.tags.push(tag);
                         }
                         if (isPerson) {
+                            // photo.people holds leaf names, not paths.
+                            const leaf = leafOf(tag);
                             if (!photo.people) photo.people = [];
-                            if (!photo.people.includes(tag)) photo.people.push(tag);
+                            if (!photo.people.includes(leaf)) photo.people.push(leaf);
                         }
                     }
                 });
@@ -2019,16 +2035,27 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function removeTagFromAllSelected(tag, isPerson) {
+    /**
+     * Take a tag off every selected photo. Accepts one tag or several.
+     *
+     * Several, because a person can be spelled more than one way across a selection --
+     * "People/Hazel Brookmire" on the photos tagged properly and "Hazel Brookmire" on
+     * the ones an earlier bug reached. The server removes by exact match, so removing
+     * only one of those leaves the chip in place and looks like the button is broken.
+     */
+    function removeTagFromAllSelected(tagOrTags, isPerson) {
         if (selectedThumbnails.length === 0) return;
+        const tags = Array.isArray(tagOrTags) ? tagOrTags : [tagOrTags];
+        if (tags.length === 0) return;
+        const leaves = tags.map(t => leafOf(t).toLowerCase());
 
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Removing tag...';
-        
+
         fetch('/api/photos/bulk-tags', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: selectedThumbnails, add_tags: [], remove_tags: [tag] })
+            body: JSON.stringify({ paths: selectedThumbnails, add_tags: [], remove_tags: tags })
         })
         .then(res => res.json())
         .then(data => {
@@ -2037,9 +2064,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 selectedThumbnails.forEach(path => {
                     const photo = folderPhotos.find(p => p.path === path);
                     if (photo) {
-                        photo.tags = photo.tags.filter(t => t !== tag);
+                        photo.tags = photo.tags.filter(t => !tags.includes(t));
                         if (isPerson && photo.people) {
-                            photo.people = photo.people.filter(p => p !== tag);
+                            photo.people = photo.people.filter(
+                                p => !leaves.includes(leafOf(p).toLowerCase()));
                         }
                     }
                 });
