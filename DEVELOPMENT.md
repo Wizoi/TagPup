@@ -157,7 +157,8 @@ All of these are dry-run by default and take `--apply` to write. Take a backup f
 | `scripts/verify_workflow.py` | End-to-end pass over both apps against a throwaway copy of a database. |
 | `scripts/merge_duplicate_person_tags.py` | Removes a bare person tag where a `People/<name>` already names them. |
 | `scripts/repair_bare_person_tags.py` | Rewrites a photo's keywords so a person carries their full path, not a bare leaf. |
-| `scripts/relink_renamed_photos.py` | Re-points index rows at photos renamed under them, using `PreservedFileName`. |
+| `scripts/backfill_document_ids.py` | Gives already-indexed photos the identity new ones get. Resumable. |
+| `scripts/relink_renamed_photos.py` | Re-points index rows at photos renamed under them, by identity then `PreservedFileName`. |
 | `scripts/restore_face_names.py` | Restores face names from a JSON snapshot. |
 
 ## Things that were true and are worth not re-learning

@@ -177,7 +177,8 @@ class PhotoIndex:
                 people TEXT,
                 captions TEXT,
                 raw_metadata TEXT,
-                embedding BLOB
+                embedding BLOB,
+                document_id TEXT
             )
         """)
         cursor.execute("""
