@@ -299,6 +299,20 @@ class PhotoIndex:
                 cursor.execute("ALTER TABLE faces ADD COLUMN name_source TEXT")
                 self.conn.commit()
             
+            # Identify Faces filters on `excluded` and `name` together, on every load:
+            # who is still nameless, how many are excluded, which named faces to
+            # compare against. Leading with `excluded` lets a count of the excluded
+            # bucket be answered from the index alone, without touching rows that
+            # carry a 2 KB embedding and a 6 KB JPEG crop apiece -- 0.37s of scanning
+            # on a 225,000-face library, for a number that is usually near zero.
+            #
+            # Created here rather than in _create_table() because the columns it spans
+            # are added by the migrations just above: a database old enough to be
+            # missing `excluded` would fail on an index that names it.
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_faces_identify ON faces(excluded, name)")
+            self.conn.commit()
+
             # Migrate tag_taxonomy: is_people -> has_face
             cursor.execute("PRAGMA table_info(tag_taxonomy)")
             tax_columns = [info[1] for info in cursor.fetchall()]
