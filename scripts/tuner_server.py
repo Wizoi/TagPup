@@ -150,6 +150,14 @@ def extract_4_digit_year(s):
 #: read 380 MB of BLOB and built 189,000 numpy arrays to answer a question about
 #: integers. Clustering is the per-person view's job, and it selects the embeddings
 #: there, where they are actually used.
+#: How many unclustered faces a person's grid shows at once.
+#:
+#: They are capped because a person in many group photos can have tens of thousands of
+#: unclustered candidates, and rendering a card for each one locks up the browser. The
+#: cap keeps them reachable a screenful at a time; `has_more` tells the client there
+#: are further faces behind it.
+UNCLUSTERED_LIMIT = 500
+
 IDENTIFY_CANDIDATES_SQL = """
     SELECT f.id, f.photo_path, p.people, LENGTH(f.embedding)
     FROM faces f
@@ -3651,12 +3659,19 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             total_unclustered = max(
                 0, int(value.get("unclustered_total") or 0) - gone_unclustered)
 
-            # Unclustered faces are capped, so there can be more of them waiting behind
-            # the ones on screen. Thinning the visible end of that queue without
-            # bringing the next ones forward would quietly shrink the grid towards
-            # empty while faces still needed a name. Rebuild instead -- it is the one
-            # case where the cached answer is genuinely no longer the right answer.
-            if total_unclustered > shown_unclustered:
+            # Unclustered faces are capped, so there can be more waiting behind the
+            # ones on screen, and thinning the visible end without bringing the next
+            # ones forward shrinks the grid towards empty while faces still need a
+            # name. Only a removal that actually took unclustered faces can do that --
+            # ignoring a cluster leaves the tail exactly as it was -- and even then it
+            # is worth letting the tail wear down before paying for a rebuild, because
+            # the rebuild is the whole minute this exists to avoid.
+            #
+            # An earlier version of this rule asked only whether more faces were
+            # waiting, which is true from the moment the grid is built, so every
+            # removal rebuilt and the cache never once got used.
+            wearing_thin = shown_unclustered < UNCLUSTERED_LIMIT // 2
+            if gone_unclustered and total_unclustered > shown_unclustered and wearing_thin:
                 cache.pop(key, None)
                 continue
 
@@ -3665,7 +3680,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             updated["total_count"] = len(kept)
             updated["unclustered_total"] = total_unclustered
             updated["unclustered_shown"] = shown_unclustered
-            updated["has_more"] = False
+            updated["has_more"] = total_unclustered > shown_unclustered
             cache[key] = {"fingerprint": fingerprint, "value": updated}
 
     def named_face_matrix(self, conn, fingerprint):
@@ -4135,12 +4150,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     })
 
             # Append the unclustered faces, flagged so the UI can rank them lowest.
-            #
-            # These are capped: a person in many group photos can have tens of thousands
-            # of unclustered candidates, and rendering a card for each one locks up the
-            # browser. The cap keeps them reachable a screenful at a time; has_more tells
-            # the client there are further faces behind it.
-            UNCLUSTERED_LIMIT = 500
+            # Capped -- see UNCLUSTERED_LIMIT.
             unclustered_total = len(noise_indices)
 
             # The person being sought, needed before the cap rather than after it:

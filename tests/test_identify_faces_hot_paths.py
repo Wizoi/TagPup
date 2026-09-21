@@ -39,6 +39,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
+import tuner_server
 from index import PhotoIndex
 from tuner_server import start_server as start_tuner_server, set_active_db_path
 
@@ -173,6 +174,10 @@ class MatchingTestBase(unittest.TestCase):
         conn.execute("DELETE FROM photos")
         conn.commit()
         conn.close()
+        # The identify cache is process-wide and outlives the rows it describes, so a
+        # payload left by the last test can be served to this one.
+        for key in list(tuner_server.TunerHTTPRequestHandler.identify_cache.keys()):
+            tuner_server.TunerHTTPRequestHandler.identify_cache.pop(key, None)
 
     def post(self, path, body):
         req = urllib.request.Request(
@@ -558,3 +563,127 @@ class TestRemovingFacesKeepsTheGridWarm(MatchingTestBase):
             "restored faces never came back to the grid; the cache was reused when it"
             " should have been rebuilt",
         )
+
+
+class TestTheCappedTailRule(unittest.TestCase):
+    """When a removal is worth a rebuild, and when it is not.
+
+    Exercised directly on the cache, because the interesting cases need a grid with
+    tens of thousands of unclustered faces behind the cap and that is a fixture worth
+    not building 15 times.
+
+    The first version of this rule asked only whether more faces were waiting behind
+    the cap. On Unknown Faces that is true from the moment the grid is built -- 78,411
+    behind a cap of 500 on the real library -- so every removal rebuilt, and the cache
+    it was guarding never got used once. Measured: ignoring a cluster of 6,660 faces
+    still cost 43s afterwards, against 0.2s when the cached grid is kept.
+    """
+
+    def setUp(self):
+        self.handler = object.__new__(tuner_server.TunerHTTPRequestHandler)
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.execute(
+            "CREATE TABLE faces (id INTEGER PRIMARY KEY, name TEXT,"
+            " excluded INTEGER DEFAULT 0)")
+        self.conn.executemany(
+            "INSERT INTO faces (id, name, excluded) VALUES (?, NULL, 0)",
+            [(i,) for i in range(1, 60)])
+        self.conn.commit()
+        self.addCleanup(self.conn.close)
+
+        cache = tuner_server.TunerHTTPRequestHandler.identify_cache
+        for key in list(cache.keys()):
+            cache.pop(key, None)
+        self.cache = cache
+
+    def cache_a_grid(self, clustered_ids, shown_unclustered_ids, unclustered_total):
+        faces = [{"id": i, "cluster_id": 0} for i in clustered_ids]
+        faces += [{"id": i, "cluster_id": -1} for i in shown_unclustered_ids]
+        self.cache["matches:Unknown Faces"] = {
+            "fingerprint": ("stale",),
+            "value": {
+                "faces": faces,
+                "total_count": len(faces),
+                "unclustered_total": unclustered_total,
+                "unclustered_shown": len(shown_unclustered_ids),
+                "has_more": unclustered_total > len(shown_unclustered_ids),
+            },
+        }
+
+    def entry(self):
+        return self.cache.get("matches:Unknown Faces")
+
+    def test_ignoring_a_cluster_keeps_a_capped_grid(self):
+        """The headline case. A cluster removal never touches the unclustered tail."""
+        clustered = list(range(1, 11))
+        shown = list(range(11, 11 + tuner_server.UNCLUSTERED_LIMIT))
+        self.cache_a_grid(clustered, shown, unclustered_total=78411)
+
+        self.handler.identify_cache_forget_faces(self.conn, clustered)
+
+        entry = self.entry()
+        self.assertIsNotNone(
+            entry, "ignoring a cluster threw away a grid whose tail it never touched")
+        self.assertEqual(len(shown), entry["value"]["total_count"])
+        self.assertEqual(78411, entry["value"]["unclustered_total"])
+        self.assertNotEqual(
+            ("stale",), entry["fingerprint"],
+            "the entry kept its old stamp, so it would be rebuilt anyway")
+
+    def test_thinning_the_tail_a_little_keeps_the_grid(self):
+        shown = list(range(11, 11 + tuner_server.UNCLUSTERED_LIMIT))
+        self.cache_a_grid([1, 2], shown, unclustered_total=78411)
+
+        self.handler.identify_cache_forget_faces(self.conn, shown[:5])
+
+        entry = self.entry()
+        self.assertIsNotNone(entry, "removing five faces rebuilt the whole grid")
+        self.assertEqual(
+            tuner_server.UNCLUSTERED_LIMIT - 5, entry["value"]["unclustered_shown"])
+        self.assertEqual(78410 - 4, entry["value"]["unclustered_total"])
+        self.assertTrue(
+            entry["value"]["has_more"], "the tail behind the cap was forgotten")
+
+    def test_wearing_the_tail_down_rebuilds_so_the_next_faces_come_forward(self):
+        """Otherwise the grid shrinks towards empty while faces still need a name."""
+        shown = list(range(11, 11 + tuner_server.UNCLUSTERED_LIMIT))
+        self.cache_a_grid([1, 2], shown, unclustered_total=78411)
+
+        # Down past half the cap.
+        self.handler.identify_cache_forget_faces(
+            self.conn, shown[:tuner_server.UNCLUSTERED_LIMIT // 2 + 1])
+
+        self.assertIsNone(
+            self.entry(),
+            "the visible tail wore down past half the cap and the grid was not rebuilt,"
+            " so the faces waiting behind it stay unreachable")
+
+    def test_a_grid_with_nothing_behind_the_cap_is_never_rebuilt(self):
+        """No tail to bring forward means no reason to pay for a rebuild."""
+        shown = [11, 12, 13]
+        self.cache_a_grid([1, 2], shown, unclustered_total=3)
+
+        self.handler.identify_cache_forget_faces(self.conn, shown)
+
+        entry = self.entry()
+        self.assertIsNotNone(entry, "a grid showing every face it had was rebuilt")
+        self.assertEqual(0, entry["value"]["unclustered_total"])
+        self.assertFalse(entry["value"]["has_more"])
+
+    def test_another_persons_untouched_grid_is_re_stamped_not_discarded(self):
+        """One person's edit should not cost everybody else their grid."""
+        self.cache["matches:Rhiannon Vail"] = {
+            "fingerprint": ("stale",),
+            "value": {"faces": [{"id": 900, "cluster_id": 0}], "total_count": 1,
+                      "unclustered_total": 0, "unclustered_shown": 0, "has_more": False},
+        }
+        self.cache_a_grid([1, 2], [], unclustered_total=0)
+
+        self.handler.identify_cache_forget_faces(self.conn, [1, 2])
+
+        other = self.cache.get("matches:Rhiannon Vail")
+        self.assertIsNotNone(other, "an unrelated person's grid was discarded")
+        self.assertEqual(1, other["value"]["total_count"])
+        self.assertNotEqual(
+            ("stale",), other["fingerprint"],
+            "it was kept but left stale-stamped, which rebuilds it on the next click")
