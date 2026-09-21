@@ -50,13 +50,14 @@ function serverWith(faces, count = 2) {
 }
 
 async function openPerson(t, faces) {
+  const server = serverWith(faces).on("/api/faces/exclude", { success: true, excluded: faces.length });
   const { window, document } = await loadApp("tagtuner", {
-    server: serverWith(faces),
+    server,
     url: `http://localhost:8080/kr-track/?mode=unmatched-faces&person=${encodeURIComponent(NAME)}`,
     t,
   });
   await new Promise((r) => window.setTimeout(r, 120));
-  return { window, document };
+  return { window, document, server };
 }
 
 function cards(document) {
@@ -150,5 +151,67 @@ describe("a name with no candidates at all", () => {
       document.getElementById("matching-faces-grid").textContent,
       /No likely matches|No candidates/
     );
+  });
+});
+
+describe("ignoring a cluster", () => {
+  // Exclusion already meant "never offer this face to anyone", but reaching it
+  // required ticking every face in the group. A cluster of a stranger at a meet
+  // can be thirty faces, which is thirty clicks to say one thing.
+  const cluster = [
+    face(10, 0.95, 0),
+    face(11, 0.94, 0),
+    face(12, 0.92, 0),
+  ];
+
+  function ignoreButton(document) {
+    return [...document.querySelectorAll(".matching-group-header button")]
+      .find((b) => /Ignore Cluster/.test(b.textContent));
+  }
+
+  test("every cluster offers it, beside Assign Cluster", async (t) => {
+    const { document } = await openPerson(t, cluster);
+    assert.ok(ignoreButton(document), "no way to ignore a cluster");
+  });
+
+  test("it excludes every face in the cluster at once", async (t) => {
+    const { document, window, server } = await openPerson(t, cluster);
+    window.confirm = () => true;
+    ignoreButton(document).click();
+    await new Promise((r) => window.setTimeout(r, 40));
+
+    const body = server.lastBody("/api/faces/exclude");
+    assert.deepEqual(body.face_ids, [10, 11, 12]);
+  });
+
+  test("it asks first, and declining changes nothing", async (t) => {
+    const { document, window, server } = await openPerson(t, cluster);
+    window.confirm = () => false;
+    ignoreButton(document).click();
+    await new Promise((r) => window.setTimeout(r, 40));
+
+    assert.equal(server.lastBody("/api/faces/exclude"), undefined);
+  });
+
+  test("it does not ask twice for the same decision", async (t) => {
+    // The bulk path prompts for a reason; asking again after a confirm that
+    // already stated the scope is the friction that stops a feature being used.
+    const { document, window, server } = await openPerson(t, cluster);
+    let prompted = false;
+    window.confirm = () => true;
+    window.prompt = () => { prompted = true; return "x"; };
+    ignoreButton(document).click();
+    await new Promise((r) => window.setTimeout(r, 40));
+
+    assert.equal(prompted, false, "a second modal appeared for the same decision");
+  });
+
+  test("the reason it records says where it came from", async (t) => {
+    const { document, window, server } = await openPerson(t, cluster);
+    window.confirm = () => true;
+    ignoreButton(document).click();
+    await new Promise((r) => window.setTimeout(r, 40));
+
+    assert.match(server.lastBody("/api/faces/exclude").reason, /cluster/);
   });
 });

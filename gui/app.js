@@ -2579,6 +2579,33 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 });
                 header.appendChild(assignBtn);
+
+                // The counterpart to Assign Cluster: these faces are somebody we are
+                // never going to name -- a passer-by, a spectator, a bad crop -- and
+                // should stop being offered as a candidate to anyone. Doing it per
+                // face meant ticking thirty boxes to say one thing.
+                const ignoreBtn = document.createElement('button');
+                ignoreBtn.className = 'btn btn-secondary btn-sm';
+                ignoreBtn.style.padding = '2px 8px';
+                ignoreBtn.style.fontSize = '11px';
+                ignoreBtn.style.marginLeft = '6px';
+                ignoreBtn.textContent = '\uD83D\uDEAB Ignore Cluster';
+                ignoreBtn.title =
+                    'Keep these faces out of matching entirely. They stay in the '
+                    + 'Excluded bucket and can be put back.';
+                ignoreBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const numPhotos = new Set(groupFaces.map(f => f.photo_path)).size;
+                    const ok = confirm(
+                        `Ignore ${groupFaces.length} face(s) from ${numPhotos} photo(s)?\n\n`
+                        + 'They will stop being offered as a match for anyone. '
+                        + 'Nothing is deleted -- they move to the Excluded bucket, '
+                        + 'where you can put them back.'
+                    );
+                    if (!ok) return;
+                    postExcludeBulk(groupFaces.map(f => f.id), 'ignored cluster');
+                });
+                header.appendChild(ignoreBtn);
             }
 
             section.appendChild(header);
@@ -2899,14 +2926,19 @@ document.addEventListener('DOMContentLoaded', () => {
     // face out of identity work entirely; it is reversible from the Excluded bucket.
     const EXCLUDE_REASONS = ['not a person', 'stranger', 'bad crop', 'duplicate'];
 
-    function postExcludeBulk(faceIds) {
+    function postExcludeBulk(faceIds, presetReason) {
         if (!faceIds.length) return;
-        const reason = prompt(
-            `Exclude ${faceIds.length} face(s) from matching.\n\n` +
-            `Reason (${EXCLUDE_REASONS.join(' / ')}):`,
-            EXCLUDE_REASONS[0]
-        );
-        if (reason === null) return;   // cancelled
+        // A caller that has already asked the question passes the reason in, rather
+        // than putting a second modal in front of the same decision.
+        let reason = presetReason;
+        if (reason === undefined) {
+            reason = prompt(
+                `Exclude ${faceIds.length} face(s) from matching.\n\n` +
+                `Reason (${EXCLUDE_REASONS.join(' / ')}):`,
+                EXCLUDE_REASONS[0]
+            );
+            if (reason === null) return;   // cancelled
+        }
 
         if (btnExcludeSelected) {
             btnExcludeSelected.disabled = true;
