@@ -4,9 +4,8 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from click.testing import CliRunner
-import numpy as np
 from PIL import Image
 
 # Ensure workspace and scripts directories are in search path

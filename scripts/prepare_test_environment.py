@@ -6,7 +6,6 @@ extracts real animal face crops, and indexes them in test_photo_index.db.
 """
 
 import os
-import sqlite3
 try:
     from . import db as tagpup_db
 except ImportError:  # imported as a top-level module

@@ -20,7 +20,6 @@ Run with --apply to write. Without it, nothing is changed and the plan is printe
 import argparse
 import json
 import os
-import sqlite3
 try:
     from . import db as tagpup_db
 except ImportError:  # imported as a top-level module

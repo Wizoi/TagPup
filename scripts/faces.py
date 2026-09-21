@@ -3,7 +3,7 @@ import os
 import json
 import logging
 import io
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Optional
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = 500000000
 import numpy as np

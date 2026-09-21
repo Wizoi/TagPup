@@ -18,7 +18,6 @@ import unittest
 import urllib.error
 import urllib.request
 
-import numpy as np
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)

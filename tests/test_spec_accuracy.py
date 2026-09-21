@@ -15,7 +15,6 @@ specs and deliberately not parsed here.
 import os
 import re
 import sys
-import ast
 import unittest
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

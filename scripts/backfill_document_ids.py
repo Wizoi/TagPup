@@ -41,9 +41,11 @@ def rows_without_identity(db_path):
         conn.execute("SELECT document_id FROM photos LIMIT 1")
     except Exception:
         conn.close()
+        # `from None`: the underlying "no such column" is noise in front of a message
+        # that already says what to do about it.
         raise SystemExit(
             "%s has no document_id column yet; open it with TagPup once so the "
-            "migration runs." % db_path)
+            "migration runs." % db_path) from None
 
     missing, gone = [], []
     for (path,) in conn.execute(

@@ -3,7 +3,6 @@
 Usage:  .venv\Scripts\python scripts/restore_face_names.py data/face_names_backup_<ts>.json
 """
 import json
-import sqlite3
 try:
     from . import db as tagpup_db
 except ImportError:  # imported as a top-level module

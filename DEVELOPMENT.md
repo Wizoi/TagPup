@@ -31,8 +31,9 @@ through the CLI where no reloader can reach them.
 
 | suite | command | count |
 | --- | --- | --- |
-| Python | `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py"` | ~494 |
-| Frontend | `node --test tests/frontend/*.test.mjs` | ~237 |
+| Python | `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py"` | ~612 |
+| Frontend | `node --test tests/frontend/*.test.mjs` | ~283 |
+| Lint | `.venv/Scripts/python.exe -m ruff check .` | runs inside the Python suite |
 
 Use the glob for the frontend suite. `node --test tests/frontend/` treats `harness.mjs`
 as a test file, finds no tests in it, and reports a failure that is purely the

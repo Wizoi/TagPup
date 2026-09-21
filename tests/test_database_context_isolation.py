@@ -285,7 +285,6 @@ class TestSuggestionsCachePerDatabase(unittest.TestCase):
 
     def test_matches_tuner_server_naming(self):
         """Both servers read the same cache files; their naming must not drift apart."""
-        import tuner_server
 
         for db_name in ("photo_index.db", "kr-track.db", "some_other.db"):
             db_path = os.path.join("data", db_name)

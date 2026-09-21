@@ -13,7 +13,7 @@ import re
 import threading
 import subprocess
 import configparser
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingTCPServer
 from PIL import Image, ImageOps
 Image.MAX_IMAGE_PIXELS = 500000000
@@ -2207,7 +2207,6 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         executable = self.get_exiftool_path()
         import exiftool
         from metadata import extract_people
-        from writer import derive_caption_from_tags
         
         try:
             with exiftool.ExifToolHelper(executable=executable) as et:
@@ -3235,7 +3234,6 @@ def insert_tag_path_to_db(cursor, path: str, has_face_root: bool = False) -> int
     return parent_id
 
 def update_photo_metadata_tags(db_path: str, exiftool_path: str, photo_paths: List[str], tag_to_remove: str, tag_to_add: Optional[str] = None):
-    import sqlite3
     import json
     import exiftool
     from metadata import extract_people, extract_tags

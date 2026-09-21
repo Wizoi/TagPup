@@ -14,7 +14,6 @@ goes.
 These tests are the structural fix: a connection opened outside db.py gets none of the
 settings, so the rule is that there are no such connections.
 """
-import ast
 import os
 import re
 import sys

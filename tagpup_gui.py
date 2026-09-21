@@ -161,7 +161,7 @@ def main():
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     try:
                         s.connect(("127.0.0.1", port))
-                        logger.info(f"TagPup server is ready. Opening browser...")
+                        logger.info("TagPup server is ready. Opening browser...")
                         webbrowser.open(f"http://localhost:{port}/")
                         return
                     except (ConnectionRefusedError, OSError):

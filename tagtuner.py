@@ -4,8 +4,6 @@ import sys
 import logging
 import configparser
 import webbrowser
-import threading
-import time
 
 # Set up logging with colors for warnings and errors
 class ColorFormatter(logging.Formatter):
@@ -161,7 +159,7 @@ def main():
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     try:
                         s.connect(("127.0.0.1", port))
-                        logger.info(f"TagTuner server is ready. Opening browser...")
+                        logger.info("TagTuner server is ready. Opening browser...")
                         webbrowser.open(f"http://localhost:{port}/")
                         return
                     except (ConnectionRefusedError, OSError):

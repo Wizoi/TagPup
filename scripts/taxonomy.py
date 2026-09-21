@@ -1,13 +1,12 @@
 # taxonomy.py
 import os
 import json
-import sqlite3
 try:
     from . import db as tagpup_db
 except ImportError:  # imported as a top-level module
     import db as tagpup_db
 import logging
-from typing import Set, List, Dict, Union, Optional
+from typing import Set, List, Dict, Optional
 
 logger = logging.getLogger("tagpup_cli.taxonomy")
 

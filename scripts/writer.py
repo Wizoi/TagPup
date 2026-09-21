@@ -2,7 +2,7 @@
 import os
 import json
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 import exiftool
 
 logger = logging.getLogger("tagpup_cli.writer")

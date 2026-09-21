@@ -4,7 +4,7 @@ import json
 import hashlib
 import logging
 import threading
-from typing import List, Union, Optional, Any
+from typing import List, Optional, Any
 from PIL import Image
 # Disable Pillow image size check limit to support large photos / panoramas
 Image.MAX_IMAGE_PIXELS = 500000000

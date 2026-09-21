@@ -43,7 +43,6 @@ logging.getLogger("huggingface_hub").propagate = False
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="huggingface_hub")
 
-import os
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 # Add scripts folder to search path

@@ -201,7 +201,6 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
         # Callers that need taxonomy resolution pass db_path or an open connection.
         if db_path and os.path.exists(db_path):
             try:
-                import sqlite3
                 conn_temp = tagpup_db.connect(db_path, timeout=5.0)
                 cursor = conn_temp.cursor()
                 cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
@@ -406,7 +405,6 @@ class MetadataExtractor:
 def parse_year_from_metadata(meta: Dict[str, Any]) -> Optional[int]:
     """Extract a 4-digit numeric year from EXIF/XMP date tags, or fallback to filename/folder."""
     import re
-    import os
     date_keys = [
         "EXIF:DateTimeOriginal", "DateTimeOriginal",
         "XMP:DateTimeOriginal",

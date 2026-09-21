@@ -1,0 +1,58 @@
+# Ruff, configured to find defects rather than to have opinions.
+#
+# The full default rule set reports about 900 findings here, most of them style
+# preferences and several of them things this codebase does on purpose: a bare
+# `except` that logs and carries on is the right call when the alternative is failing
+# an index over one unreadable photo. A linter that reports 900 things gets muted, and
+# then it reports nothing.
+#
+# So this selects the rules that have caught real bugs:
+#
+#   F     pyflakes -- unused imports, names assigned and never read, redefinitions.
+#         Cheap, and a redefined function is how two tests can silently become one.
+#   E9    syntax and IO errors, which are never style.
+#   B     bugbear, restricted below to the checks that are about behaviour rather
+#         than taste.
+#
+# It earned its place in five minutes. Two F821s were live bugs: an error handler that
+# raised NameError every time it fired, because Python deletes the `except` variable
+# before the lambda reading it runs; and a call in tuner_server to a function that
+# lives in tagpup_server and was never imported, so TagTuner had never once saved its
+# suggestion cache -- the NameError went straight into a catch that logged and moved
+# on.
+#
+# Line length is not enforced. This code carries long SQL and long log lines, and
+# rewrapping them would churn every file to no benefit.
+
+line-length = 100
+
+# Throwaway analysis scripts, kept for reference rather than maintained.
+exclude = ["scratch", ".venv"]
+
+[lint]
+select = ["F", "E9", "B"]
+ignore = [
+    # A bare `except Exception` is deliberate wherever the work must continue: one
+    # corrupt photo must not fail a batch of 500. Where it is wrong it is wrong for
+    # reasons a linter cannot see.
+    "BLE001",
+    # `zip()` without `strict=` -- the pairings here are built together and cannot
+    # differ in length.
+    "B905",
+    # A closure defined inside a loop over a variable from that loop. Every instance
+    # here is a helper defined and called within one iteration, which is safe; the
+    # rule cannot see that, and rewriting seven working functions to silence it would
+    # be churn. Worth revisiting if a closure ever does outlive its iteration.
+    "B023",
+    # A loop variable that is not used in the body. Reads as noise where the loop is
+    # `for _name, items in ...` and only one half is wanted.
+    "B007",
+    # A local assigned and never read. A weak signal: every instance here names the
+    # return of a call made for its side effects, where the name documents what came
+    # back. Worth re-checking if it ever starts firing on fresh code.
+    "F841",
+]
+
+[lint.per-file-ignores]
+# Tests build deliberately odd objects and reach into private helpers.
+"tests/*" = ["B011"]

@@ -11,7 +11,7 @@ except ImportError:  # imported as a top-level module
 import urllib.parse
 import io
 import logging
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingTCPServer
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = 500000000
@@ -186,7 +186,6 @@ def get_year_from_mtime_or_meta(mtime, raw_meta_json, path=None):
     return year_str
 
 
-import threading
 import configparser
 _thread_local = threading.local()
 
@@ -345,6 +344,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             
         try:
             import json
+            # Defined in tagpup_server and never imported here, so this raised
+            # NameError into the catch below on every call: TagTuner has never
+            # actually written its suggestion cache.
+            from tagpup_server import make_json_serializable
             with cls.model_lock:
                 serializable_data = make_json_serializable(cls.suggest_status)
             os.makedirs(os.path.dirname(cache_path), exist_ok=True)
@@ -4081,11 +4084,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 pass
         return default_path
 
-    def read_json_body(self):
-        content_length = int(self.headers.get("Content-Length", 0))
-        post_data = self.rfile.read(content_length)
-        return json.loads(post_data.decode("utf-8"))
-
     def handle_get_browse_folder(self):
         try:
             # Native Windows Vista-style Folder Browser Dialog via Python to avoid GUI blocks
@@ -4455,7 +4453,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         executable = self.get_exiftool_path()
         import exiftool
         from metadata import extract_people
-        from writer import derive_caption_from_tags
         
         try:
             with exiftool.ExifToolHelper(executable=executable) as et:

@@ -23,7 +23,6 @@ import argparse
 import json
 import os
 import shutil
-import sqlite3
 try:
     from . import db as tagpup_db
 except ImportError:  # imported as a top-level module

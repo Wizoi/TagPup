@@ -11,7 +11,6 @@ import logging
 import hashlib
 import subprocess
 import time
-import threading
 from typing import List, Dict, Any, Tuple, Optional, Set
 import numpy as np
 import faiss

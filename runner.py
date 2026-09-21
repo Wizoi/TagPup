@@ -1,11 +1,9 @@
 # runner.py
 import os
 import sys
-import json
 import sqlite3
 import subprocess
 import threading
-import time
 import webbrowser
 import logging
 import platform
@@ -819,7 +817,11 @@ class RunnerApp:
                     self.root.after(0, lambda: self.status_label.config(text=f"Status: Failed (Code {return_code})"))
 
             except Exception as err:
-                self.root.after(0, lambda: self.log_text(f"\n>>> Execution error: {err}\n", tag="error"))
+                # Bound as a default argument: Python deletes the `except` variable when
+                # the block ends, and this lambda runs later on the UI thread -- so the
+                # error handler itself raised NameError, every time it fired.
+                self.root.after(0, lambda message=str(err): self.log_text(
+                    f"\n>>> Execution error: {message}\n", tag="error"))
                 self.root.after(0, lambda: self.status_label.config(text="Status: Execution Error"))
             finally:
                 self.active_process = None

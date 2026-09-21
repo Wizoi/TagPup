@@ -13,7 +13,6 @@ The structural guard is deliberately mechanical: it fires on a newly added worke
 before anyone has to reproduce a hung progress bar to discover the problem.
 """
 import os
-import re
 import sys
 import ast
 import json

@@ -1,9 +1,7 @@
 # suggester.py
 import os
-import re
-import json
 import logging
-from typing import List, Dict, Any, Tuple, Set, Optional
+from typing import List, Dict, Any, Optional
 from taxonomy import TagTaxonomy
 from index import PhotoIndex
 
