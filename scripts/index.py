@@ -141,6 +141,57 @@ class PathLocker:
         for path in list(self.locked_paths):
             self.release(path)
 
+#: How long a connection waits for a busy database before giving up. Generous
+#: because the thing it waits for -- another part of this same program finishing a
+#: write -- is short, and failing is expensive.
+DB_BUSY_TIMEOUT_MS = 30000
+
+
+def retry_when_busy(operation, attempts=4, first_delay=0.25, label="database write"):
+    """Run something that writes, waiting out a locked database rather than failing.
+
+    WAL and a busy timeout remove nearly all of this contention, but neither is a
+    guarantee: a checkpoint or another writer can still collide. A short backoff turns
+    the remaining collisions into a pause instead of lost work.
+
+    Only lock errors are retried. Anything else is a real failure and is raised at
+    once, because retrying a broken statement four times only delays the report.
+    """
+    delay = first_delay
+    for attempt in range(attempts):
+        try:
+            return operation()
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e).lower() and "busy" not in str(e).lower():
+                raise
+            if attempt == attempts - 1:
+                raise
+            logger.info("%s: database busy, retrying in %.2fs", label, delay)
+            time.sleep(delay)
+            delay *= 2
+
+
+def configure_connection(conn):
+    """Put a connection into the mode this program actually runs in.
+
+    WAL because a reader and a writer coexist constantly here: the server answers
+    requests from the page while a background thread indexes or suggests. In the
+    default rollback-journal mode a writer needs an exclusive lock on the whole file
+    and any open reader denies it, which is exactly the "database is locked" that
+    Suggest Tags produced against its own server.
+
+    journal_mode is a property of the database file, so setting it once carries to
+    every other connection. busy_timeout is per-connection and has to be set here.
+    """
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=%d" % DB_BUSY_TIMEOUT_MS)
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except Exception as e:
+        logger.warning("Could not configure the database connection: %s", e)
+    return conn
+
+
 class PhotoIndex:
     def __init__(self, db_path: str = "data/photo_index.db"):
         self.db_path = db_path
@@ -236,6 +287,7 @@ class PhotoIndex:
                 
             # Set a 30-second timeout to handle concurrent lock waiting gracefully
             self.conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+            configure_connection(self.conn)
             self.conn.execute("PRAGMA foreign_keys = ON;")
             self._create_table()
             
@@ -529,9 +581,19 @@ class PhotoIndex:
         """
         if not faces:
             return 0
+        def attempt():
+            return self._insert_faces_if_absent(photo_path, faces)
+
+        return retry_when_busy(
+            attempt, label="recording faces for %s" % os.path.basename(photo_path)
+        )
+
+    def _insert_faces_if_absent(self, photo_path: str, faces: List[Dict[str, Any]]) -> int:
+        """One attempt at the insert above. Separated so it can simply be retried."""
         conn = None
         try:
             conn = sqlite3.connect(self.db_path, timeout=30.0)
+            configure_connection(conn)
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT COUNT(*) FROM faces WHERE LOWER(photo_path) = LOWER(?)", (photo_path,)
@@ -559,7 +621,13 @@ class PhotoIndex:
             conn.commit()
             return inserted
         except Exception as e:
-            logger.warning(f"Could not record detected faces for {photo_path}: {e}")
+            # Losing the faces for a photo is not a warning-shaped event: they are
+            # gone until it is indexed again, and this scrolled past in a wall of
+            # yellow while the run reported success.
+            logger.error(
+                "Detected faces for %s were NOT saved (%s). Re-index this folder to "
+                "recover them.", photo_path, e
+            )
             if conn:
                 try:
                     conn.rollback()

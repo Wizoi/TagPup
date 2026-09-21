@@ -132,6 +132,7 @@ For guides, tutorials, specifications, and schemas:
 *   🎯 [TagTuner UI Specification](SPEC_TAGTUNER.md): Face tuning grid mechanics, autocompletes, DBSCAN identity matching, and profile workflows.
 *   🐶 [AI CLI Engine Specification](SPEC_TAGPUP_CLI.md): Machine learning architecture, CLIP embeddings, consensus scoring formulas, and CLI parameters.
 *   🗄️ [Database Specification](DATABASE.md): SQLite schema table structures and visual Entity-Relationship/Data-Flow diagrams.
+*   🛠️ [Development Notes](DEVELOPMENT.md): running the suites, how the jsdom harness works, and the traps that have cost real time.
 
 ---
 

@@ -8,6 +8,28 @@ TagPup uses an SQLite database (by default stored at `data/photo_index.db`) to m
 
 ---
 
+## Concurrency
+
+This program is a reader and a writer at the same time, constantly: the server answers
+the page while a background thread indexes a folder or runs tag suggestions, and the
+suggester records the faces it detects through a connection of its own.
+
+Connections are therefore opened in **WAL** mode with an explicit **`busy_timeout`**
+(30s) and `synchronous=NORMAL`, applied by `configure_connection()` in
+`scripts/index.py`. In SQLite's default rollback-journal mode a writer needs an
+exclusive lock on the whole file and any open reader denies it -- which is how clicking
+**Suggest Tags** came to produce a wall of `database is locked` against its own server,
+losing the detected faces for those photos. `journal_mode` is a property of the database
+file, so it carries to every connection once set; `busy_timeout` is per-connection and
+must be set on each.
+
+Neither is a guarantee -- a checkpoint or a second writer can still collide -- so
+recording faces retries with a short backoff before giving up, and reports an **error**
+when it does. Those faces are lost until the photo is indexed again, which is not a
+warning-shaped event.
+
+Any new connection should go through `configure_connection()`.
+
 ## Database Schema
 
 The database consists of five primary tables: `photos`, `faces`, `embedding_cache`, `tag_taxonomy`, and `tag_embeddings`.
