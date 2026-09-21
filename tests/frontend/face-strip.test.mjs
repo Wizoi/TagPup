@@ -7,7 +7,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder } from "./harness.mjs";
 
 const PHOTO = photoRecord({ filename: "a.jpg" });
 
@@ -29,9 +29,7 @@ async function openPhoto(t, faces) {
     url: "http://localhost:8090/photo_index/",
     server: baseServer(faces),
   });
-  ctx.document.getElementById("folder-path-input").value = "D:/Library/2020";
-  ctx.document.getElementById("btn-scan-folder").click();
-  await flush(ctx.window, 6);
+  await openFolder(ctx, "D:/Library/2020", { settle: 6 });
 
   ctx.document.querySelector(".thumbnail-card .thumbnail-img-wrapper")?.click();
   // Opening via the sidebar list is the reliable path in the test DOM.

@@ -8,7 +8,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder } from "./harness.mjs";
 
 const PHOTOS = [
   { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: ["Beach"], people: [], captions: [], title: "" },
@@ -30,8 +30,7 @@ function server(photos = PHOTOS) {
 /** Load the app and scan a folder, so the list is populated. */
 async function scanned(t, s = server()) {
   const { window, document } = await loadApp("tagpup", { server: s, t });
-  document.getElementById("folder-path-input").value = "D:\\p";
-  document.getElementById("btn-scan-folder").click();
+  await openFolder({ document, window }, "D:\\p");
   await new Promise((r) => window.setTimeout(r, 60));
   return { window, document, server: s };
 }
@@ -177,26 +176,13 @@ describe("seeing what is left to do", () => {
     assert.equal(rows(document)[1].querySelector(".photo-item-tagcount"), null);
   });
 
-  test("the untagged filter hides finished photos", async (t) => {
-    const { document } = await scanned(t);
-    const toggle = document.getElementById("filter-untagged-only");
-    toggle.checked = true;
-    toggle.dispatchEvent(new document.defaultView.Event("change"));
-    assert.deepEqual(
-      rows(document).map((r) => r.getAttribute("data-path")),
-      ["D:\\p\\b.jpg", "D:\\p\\c.jpg"]
-    );
-  });
-
-  test("turning the filter off brings them back", async (t) => {
-    const { document } = await scanned(t);
-    const toggle = document.getElementById("filter-untagged-only");
-    toggle.checked = true;
-    toggle.dispatchEvent(new document.defaultView.Event("change"));
-    toggle.checked = false;
-    toggle.dispatchEvent(new document.defaultView.Event("change"));
-    assert.equal(rows(document).length, 3);
-  });
+  // The "only show what still needs tagging" checkbox was removed from the sidebar:
+  // it sat above the file list adding noise to a column that is read constantly, for
+  // a filter reached rarely. The idea is worth keeping -- narrowing a folder to what
+  // is left turns it into a work queue -- but it wants a better home than a stray
+  // checkbox, so the tests for it go with the control. What it was built on is still
+  // here and still covered: isPhotoTagged, the tagged/to-go counts, and the row
+  // markers above.
 });
 
 describe("carrying tags forward", () => {

@@ -143,7 +143,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // DOM Elements
     const folderPathInput = document.getElementById('folder-path-input');
     const btnBrowseFolder = document.getElementById('btn-browse-folder');
-    const btnScanFolder = document.getElementById('btn-scan-folder');
     const btnIndexFolder = document.getElementById('btn-index-folder');
     const btnSuggestTags = document.getElementById('btn-suggest-tags');
     const suggestProgressContainer = document.getElementById('suggest-progress-container');
@@ -156,7 +155,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const photoSearch = document.getElementById('photo-search');
     const photoList = document.getElementById('photo-list');
     const listStats = document.getElementById('list-stats');
-    const filterUntaggedOnly = document.getElementById('filter-untagged-only');
+    const currentFolderName = document.getElementById('current-folder-name');
     const btnRefreshList = document.getElementById('btn-refresh-list');
     
     const sidebar = document.querySelector('.sidebar');
@@ -482,7 +481,13 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .catch(err => console.error("Error autocompleting folder:", err));
     });
-    btnScanFolder.addEventListener('click', () => scanFolder(true));
+    // Choosing a folder opens it. Picking from the autocomplete list or leaving the
+    // box both fire `change`; Enter commits without waiting to lose focus. A button
+    // that only repeats what choosing already means is one step too many.
+    folderPathInput.addEventListener('change', () => openChosenFolder());
+    folderPathInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); openChosenFolder(); }
+    });
     btnIndexFolder.addEventListener('click', startIndexing);
     btnSuggestTags.addEventListener('click', startSuggestions);
     btnRefreshList.addEventListener('click', () => scanFolder(true));
@@ -1029,6 +1034,50 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     }
 
+    /** The folder as you know it: the last segment of its path. */
+    function folderLeaf(folderPath) {
+        if (!folderPath) return '';
+        return String(folderPath).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
+    }
+
+    /**
+     * Open whatever folder is currently in the box, unless it is already open.
+     *
+     * `change` fires both when a suggestion is picked and when the box loses focus,
+     * so without the guard, clicking away from a folder already on screen would
+     * re-scan it for nothing.
+     */
+    function openChosenFolder() {
+        const path = folderPathInput.value.trim();
+        if (!path) return;
+        if (scannedFolder && normalizeForCompare(path) === normalizeForCompare(scannedFolder)) return;
+        scanFolder(false);
+    }
+
+    function normalizeForCompare(folderPath) {
+        return String(folderPath).replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase();
+    }
+
+    /** Show which folder is open, by name, and put it in the window title. */
+    function updateCurrentFolderLabel() {
+        const leaf = folderLeaf(scannedFolder);
+        if (currentFolderName) {
+            currentFolderName.textContent = leaf;
+            currentFolderName.title = scannedFolder || '';
+            currentFolderName.classList.toggle('hidden', !leaf);
+        }
+        document.title = leaf ? `${leaf} — TagPup` : 'TagPup GUI';
+        if (folderViewHeader) {
+            const label = leaf ? `Folder View — ${leaf}` : 'Folder View (Thumbnails)';
+            folderViewHeader.innerHTML = '';
+            const icon = document.createElement('span');
+            icon.className = 'folder-header-icon';
+            icon.textContent = '\u{1F4C2}';
+            folderViewHeader.appendChild(icon);
+            folderViewHeader.appendChild(document.createTextNode(' ' + label));
+        }
+    }
+
     // Scans a folder
     function scanFolder(forceRefresh = false) {
         const path = folderPathInput.value.trim();
@@ -1049,6 +1098,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const age = Date.now() - cacheEntry.timestamp;
                     if (age < CACHE_TTL_MS) {
                         scannedFolder = path;
+                        updateCurrentFolderLabel();
                         folderPhotos = cacheEntry.photos;
                         folderSuggestions = cacheEntry.suggestions || {};
                         updateListStats('(cached)');
@@ -1113,6 +1163,7 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .then(data => {
                 scannedFolder = path;
+                updateCurrentFolderLabel();
                 folderPhotos = data;
                 updateListStats();
                 
@@ -1197,10 +1248,7 @@ document.addEventListener('DOMContentLoaded', () => {
      */
     function visiblePhotos() {
         const query = photoSearch.value.toLowerCase().trim();
-        const untaggedOnly = filterUntaggedOnly && filterUntaggedOnly.checked;
         return folderPhotos.filter(photo => {
-            // Narrowing to what is left turns a folder into a work queue.
-            if (untaggedOnly && isPhotoTagged(photo)) return false;
             if (!query) return true;
             const fname = photo.filename || photo.path.split(/[/\\]/).pop() || '';
             return fname.toLowerCase().includes(query)
@@ -1305,12 +1353,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     let searchTimeout = null;
-    if (filterUntaggedOnly) {
-        filterUntaggedOnly.addEventListener('change', () => {
-            renderFileList();
-            renderThumbnails();
-        });
-    }
 
     function filterFileList() {
         if (searchTimeout) clearTimeout(searchTimeout);
@@ -2766,7 +2808,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        btnScanFolder.disabled = true;
         btnIndexFolder.disabled = true;
         btnSuggestTags.disabled = true;
 
@@ -2789,7 +2830,6 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         .catch(err => {
             console.error(err);
-            btnScanFolder.disabled = false;
             btnIndexFolder.disabled = false;
             btnSuggestTags.disabled = false;
             statusDot.className = 'status-indicator-dot';
@@ -2816,8 +2856,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         const wasVisible = !indexProgressContainer.classList.contains('hidden');
                         indexProgressContainer.classList.add('hidden');
                         
-                        btnScanFolder.disabled = false;
-                        btnIndexFolder.disabled = false;
+                                    btnIndexFolder.disabled = false;
                         
                         if (wasVisible) {
                             fetchKnownTagsAndPeople();
@@ -2833,8 +2872,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         const wasVisible = !indexProgressContainer.classList.contains('hidden');
                         indexProgressContainer.classList.add('hidden');
                         
-                        btnScanFolder.disabled = false;
-                        btnIndexFolder.disabled = false;
+                                    btnIndexFolder.disabled = false;
                         updateSuggestButtonState();
                         
                         if (wasVisible) {

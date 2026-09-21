@@ -15,7 +15,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder } from "./harness.mjs";
 
 const TAXONOMY = [
   { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
@@ -45,9 +45,7 @@ async function openPhoto(t, { photo, faces, suggestions }) {
     url: "http://localhost:8090/photo_index/",
     server: serverFor(photo, faces, suggestions),
   });
-  ctx.document.getElementById("folder-path-input").value = "D:/Library/2020";
-  ctx.document.getElementById("btn-scan-folder").click();
-  await flush(ctx.window, 6);
+  await openFolder(ctx, "D:/Library/2020", { settle: 6 });
 
   const item = ctx.document.querySelector("li[data-path]");
   if (item) item.click();
@@ -170,9 +168,7 @@ describe("removing a person from a selection", () => {
       url: "http://localhost:8090/photo_index/",
       server,
     });
-    ctx.document.getElementById("folder-path-input").value = "D:/Library/2020";
-    ctx.document.getElementById("btn-scan-folder").click();
-    await flush(ctx.window, 6);
+    await openFolder(ctx, "D:/Library/2020", { settle: 6 });
 
     // Select every photo in the grid.
     for (const box of ctx.document.querySelectorAll(".thumbnail-checkbox")) {

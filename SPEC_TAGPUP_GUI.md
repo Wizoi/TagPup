@@ -37,10 +37,16 @@ after narrowing the list.
 **Knowing where you are.** Each sidebar row carries a filled or hollow dot for tagged
 or not, and a tag count where it has any. The count line reads `38 of 80 tagged, 42 to
 go` rather than `80 files loaded` — on returning to a folder, the question is how much
-is left. **Only show what still needs tagging** narrows both the list and the grid to
-untagged photos, turning a folder into a work queue. A photo counts as tagged if it
-has any tag, any person, or a title: the question is "have I been here yet", not "is
-this perfect".
+is left. A photo counts as tagged if it has any tag, any person, or a title: the
+question is "have I been here yet", not "is this perfect".
+
+The folder's own name — the last segment of its path, not the whole thing — sits under
+the path box and in the window title. The absolute path is long enough to be unreadable
+in a sidebar, and the shoot's name is what identifies it.
+
+A checkbox narrowing the list to untagged photos was removed: it added a line of noise
+above a list that is read constantly, for a filter reached rarely. The idea is worth
+returning to in a better home, and everything it was built on remains.
 
 Selecting a photo resets the details panel to the top, so each one starts at its own
 image rather than mid-panel at the previous photo's scroll position.
@@ -99,6 +105,7 @@ the list was focusable, which is why the arrow keys worked only while focus happ
 to be sitting on `<body>`.
 
 ### 1. Folder Browser & Grid Selection
+- **Opening a folder**: Choosing one opens it. Browse, picking from the autocomplete list, pressing Enter, or leaving the path box all scan immediately; there is no separate Scan Folder step, because choosing a folder and asking to see it were never two decisions. Re-committing the folder already open does nothing, so blurring the box does not rescan. **Refresh** re-reads the open folder from disk.
 - **Directory Tree**: Scans image folders and lists subfolders grouped chronologically by capture year. Folder structures start collapsed on page boot.
 - **Thumbnails sizes**: Segment buttons dynamically switch card sizes between **Small**, **Medium**, and **Large**.
 - **Multiselect actions**: Standard checkbox check toggles and range select (Shift-Click) select contiguous items in the list.

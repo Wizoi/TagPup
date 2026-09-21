@@ -8,7 +8,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, openFolder } from "./harness.mjs";
 
 const baseRoutes = (server) =>
   server
@@ -96,9 +96,7 @@ describe("tagpup: image sources are routed too", () => {
       server,
     });
 
-    document.getElementById("folder-path-input").value = "D:\\Library\\2020";
-    document.getElementById("btn-scan-folder").click();
-    await flush(window, 6);
+    await openFolder({ document, window }, "D:\\Library\\2020", { settle: 6 });
 
     const images = [...document.querySelectorAll("img")].filter((img) =>
       (img.getAttribute("src") || "").includes("/api/photo-file")

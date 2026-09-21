@@ -7,7 +7,7 @@
  */
 import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder } from "./harness.mjs";
 
 const FILES = ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"];
 
@@ -26,9 +26,7 @@ async function loadGrid(t) {
     server,
   });
 
-  ctx.document.getElementById("folder-path-input").value = "D:\\Library\\2020";
-  ctx.document.getElementById("btn-scan-folder").click();
-  await flush(ctx.window, 6);
+  await openFolder(ctx, "D:\\Library\\2020", { settle: 6 });
 
   ctx.cards = () => [...ctx.document.querySelectorAll(".thumbnail-card")];
   ctx.checkboxes = () =>

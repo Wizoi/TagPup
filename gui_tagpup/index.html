@@ -43,10 +43,13 @@
                         <input type="text" id="folder-path-input" placeholder="Select image folder..." autocomplete="off" list="folder-datalist">
                         <button id="btn-browse-folder" class="btn btn-secondary">Browse...</button>
                     </div>
+                    <!-- The folder you are in, by the name you know it by. The full path
+                         is in the input above and in every photo's details; what is
+                         wanted at a glance is which shoot this is. -->
+                    <div id="current-folder-name" class="current-folder-name hidden"></div>
                     <div class="folder-action-buttons" style="display: flex; gap: 8px;">
-                        <button id="btn-scan-folder" class="btn btn-primary" style="flex: 1;">Scan Folder</button>
-                        <button id="btn-index-folder" class="btn btn-secondary" title="Add folder to selected database & index" style="width: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; padding: 0; cursor: pointer;">💾</button>
-                        <button id="btn-suggest-tags" class="btn btn-accent" disabled>Suggest Tags</button>
+                        <button id="btn-suggest-tags" class="btn btn-accent" style="flex: 1;" disabled>Start Photo Analysis</button>
+                        <button id="btn-index-folder" class="btn btn-secondary" title="Add this folder's photos to the database and index them">＋ Index</button>
                     </div>
                     <!-- Background Progress Bar -->
                     <div id="suggest-progress-container" class="suggest-progress-container hidden">
@@ -70,11 +73,6 @@
                     <span class="search-icon">🔍</span>
                 </div>
 
-                <label class="untagged-filter" title="Show only photos that have no tags, people or title yet">
-                    <input type="checkbox" id="filter-untagged-only">
-                    Only show what still needs tagging
-                </label>
-
                 <div class="sidebar-header-row">
                     <div class="list-stats" id="list-stats">0 files loaded</div>
                     <button id="btn-refresh-list" class="btn btn-secondary btn-sm" title="Refresh files list">🔄 Refresh</button>
@@ -95,8 +93,8 @@
                 <!-- Empty State -->
                 <div class="empty-state" id="empty-state">
                     <div class="empty-state-icon">📂</div>
-                    <h2>No Folder Scanned</h2>
-                    <p>Enter or browse for a folder path in the left sidebar and click "Scan Folder" to begin.</p>
+                    <h2>No Folder Open</h2>
+                    <p>Browse for a folder in the left sidebar, or type its path and press Enter. It opens as soon as you choose it.</p>
                 </div>
 
                 <!-- Single Photo Content View -->

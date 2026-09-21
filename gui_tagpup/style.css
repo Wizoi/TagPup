@@ -1761,14 +1761,16 @@ input:checked + .slider:before {
     flex-shrink: 0;
 }
 
-.untagged-filter {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 4px 2px 8px;
-    font-size: 12px;
-    color: var(--text-muted);
-    cursor: pointer;
+/* Which folder is open, by the name you know it by. The full path is in the box
+   above and on every photo; what is wanted at a glance is which shoot this is. */
+.current-folder-name {
+    margin: 2px 0 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-color);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* The image handles horizontal drags itself, so the browser must not claim them as

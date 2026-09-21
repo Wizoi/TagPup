@@ -240,3 +240,18 @@ export function photoRecord(overrides = {}) {
     ...overrides,
   };
 }
+
+/**
+ * Open a folder the way a user does: type the path and commit it.
+ *
+ * There is no Scan Folder button any more -- choosing a folder opens it -- so tests
+ * go through the same `change` event the autocomplete list and the browse dialog do.
+ * Routed through here so the next change to that mechanism is one edit, not eight.
+ */
+export async function openFolder(ctx, folderPath, { settle = 6 } = {}) {
+  const input = ctx.document.getElementById("folder-path-input");
+  input.value = folderPath;
+  input.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
+  await flush(ctx.window, settle);
+  return ctx;
+}
