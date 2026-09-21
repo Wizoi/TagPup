@@ -3675,27 +3675,59 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
             unknown_photos = {c[0] for c in unknown_candidates}
 
-            # Format the counts
+            # Format the counts.
+            #
+            # Identify Faces counts faces throughout, because a face is the unit of
+            # work here: one photo of a start line holds thirty, and clearing it is
+            # thirty decisions. The sidebar used to count photos for people and the
+            # Ungrouped bucket, faces for Excluded, and photos for Unknown Faces --
+            # three units in one list, so "710 photos" sat beside "4,739 faces" in the
+            # panel and "1,554 photos" beside "1,554 ungrouped faces".
             people_counts = []
-            for tag, photos in tag_photos.items():
-                if len(photos) > 0:
-                    people_counts.append({"name": tag, "count": len(photos)})
+            for tag, candidates in tag_candidates.items():
+                if len(tag_photos.get(tag, ())) > 0:
+                    people_counts.append({
+                        "name": tag,
+                        "count": len(candidates),
+                        "unit": "face",
+                        "photos": len(tag_photos[tag]),
+                    })
 
             # Sort descending by photo count
             people_counts.sort(key=lambda x: x["count"], reverse=True)
 
             # Put Unknown Faces first, then Ungrouped, as the two catch-all buckets.
-            if len(unknown_photos) > 0:
-                people_counts.insert(0, {"name": "Unknown Faces", "count": len(unknown_photos)})
+            #
+            # These count faces, not photos, and say so. A person's count is photos
+            # because a photo is the unit of work for them -- open it, name who is in
+            # it. In these buckets the unit is a face: one photo of a start line holds
+            # thirty. Counting photos here put "710 photos" in the sidebar beside
+            # "4,739 faces" in the panel, two true numbers that read as a contradiction.
+            if len(unknown_candidates) > 0:
+                people_counts.insert(0, {
+                    "name": "Unknown Faces",
+                    "count": len(unknown_candidates),
+                    "unit": "face",
+                    "photos": len(unknown_photos),
+                })
             if len(ungrouped_photos) > 0:
-                people_counts.append({"name": "Ungrouped", "count": len(ungrouped_photos)})
+                ungrouped_faces = sum(
+                    len(tag_candidates[tag]) for tag in single_candidate_tags
+                    if tag_candidates[tag][0][0] in ungrouped_photos)
+                people_counts.append({
+                    "name": "Ungrouped",
+                    "count": ungrouped_faces or len(ungrouped_photos),
+                    "unit": "face",
+                    "photos": len(ungrouped_photos),
+                })
 
             # Excluded faces take no part in identifying, but the bucket has to be
             # reachable from somewhere or an exclusion could never be reviewed or undone.
             cursor.execute("SELECT COUNT(*) FROM faces WHERE excluded = 1")
             excluded_count = cursor.fetchone()[0]
             if excluded_count:
-                people_counts.append({"name": "Excluded", "count": excluded_count})
+                people_counts.append({
+                    "name": "Excluded", "count": excluded_count, "unit": "face"})
 
             self.identify_cache_put("queue", fingerprint, people_counts)
             self.send_json(people_counts)
@@ -3979,7 +4011,34 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             # the client there are further faces behind it.
             UNCLUSTERED_LIMIT = 500
             unclustered_total = len(noise_indices)
-            for global_idx in noise_indices[:UNCLUSTERED_LIMIT]:
+
+            # The person being sought, needed before the cap rather than after it:
+            # ranking has to see every candidate to choose the strongest 500.
+            seeking_for_ranking = reference_faces(name)
+
+            # Rank the whole set, then take the top of it.
+            #
+            # This used to slice the first 500 off an unordered list and sort those,
+            # so with 4,739 unclustered faces the 500 on screen were an arbitrary
+            # sample that happened to be sorted -- the strongest matches in the other
+            # 4,239 were never shown, and no amount of clearing the queue reached them
+            # because the next pass sliced the same way.
+            #
+            # Scoring every face first costs one matrix multiply against the named
+            # faces, which is cheaper than building 4,739 cards and throwing most away.
+            ranked = list(noise_indices)
+            if known_matrix is not None and len(ranked):
+                block = embs[ranked]                          # (n, dim), already unit
+                best_per_face = np.max(np.dot(block, known_matrix.T), axis=1)
+                order = np.argsort(-best_per_face)
+                ranked = [ranked[i] for i in order]
+            if seeking_for_ranking is not None and len(ranked):
+                block = embs[ranked]
+                against_person = np.max(np.dot(block, seeking_for_ranking.T), axis=1)
+                order = np.argsort(-against_person)
+                ranked = [ranked[i] for i in order]
+
+            for global_idx in ranked[:UNCLUSTERED_LIMIT]:
                 r = valid_rows[global_idx]
                 lone_name, lone_sim = suggest_for(embs[global_idx:global_idx + 1])
                 try:
@@ -4014,7 +4073,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             # Ranked, not filtered. Two candidates can both be genuinely this person in
             # different photos (measured here: 0.826 and 0.822 for one), so a cutoff
             # would discard a real match to tidy the list.
-            seeking = reference_faces(name)
+            seeking = seeking_for_ranking
             if seeking is not None:
                 for face in faces:
                     # Against the best of this person's faces, not their average: a

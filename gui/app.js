@@ -241,6 +241,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const matchingDetailCropSize = document.getElementById('matching-detail-crop-size');
     const btnRestoreSelected = document.getElementById('btn-restore-selected');
     let selectedFaceIds = [];
+    //: Each rendered face's own best match, by face id. A selection of faces
+    //: that each resemble a different person cannot be assigned to one name
+    //: typed in a box, and the badge on each card already says who it is.
+    let suggestionByFaceId = new Map();
     let activePersonFaces = [];
     let activeTab = 'matches'; // 'matches' or 'outliers'
     let modalSelectedFaceIds = [];
@@ -332,7 +336,30 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnReassignSelected) {
         btnReassignSelected.addEventListener('click', () => {
             const name = inputReassignName.value.trim();
-            if (!name || selectedFaceIds.length === 0) return;
+            if (selectedFaceIds.length === 0) return;
+
+            // Nothing typed, and the selection disagrees about who it is: send each
+            // face to the person its own badge names.
+            if (!name && btnReassignSelected.dataset.byBadge) {
+                const byName = new Map();
+                selectedFaceIds.forEach(id => {
+                    const person = suggestionByFaceId.get(id);
+                    if (!person) return;
+                    if (!byName.has(person)) byName.set(person, []);
+                    byName.get(person).push(id);
+                });
+                const summary = [...byName.entries()]
+                    .map(([person, ids]) => `${ids.length} to ${person}`).join(', ');
+                if (!confirm(`Assign each face to the person it matches?
+
+${summary}`)) {
+                    return;
+                }
+                byName.forEach((ids, person) => postMatchBulk(ids, person));
+                return;
+            }
+
+            if (!name) return;
             if (!allKnownPeople.includes(name)) {
                 if (!confirm(`"${name}" is not currently in the database. Do you want to create a new person tag and assign it to the selected face(s)?`)) {
                     return;
@@ -2289,7 +2316,16 @@ document.addEventListener('DOMContentLoaded', () => {
             badge.style.backgroundColor = 'var(--bg-tertiary)';
             badge.style.border = '1px solid var(--border-color)';
             if (modeSelect.value === 'unmatched-faces') {
-                badge.textContent = `${person.count} photo${person.count !== 1 ? 's' : ''}`;
+                // The catch-all buckets count faces, because a face is the unit of
+                // work in them -- one photo of a start line holds thirty. Saying
+                // "photos" there put a number in the sidebar that read as a
+                // contradiction of the one in the panel beside it.
+                const unit = person.unit === 'face' ? 'face' : 'photo';
+                const n = person.count.toLocaleString();
+                badge.textContent = `${n} ${unit}${person.count !== 1 ? 's' : ''}`;
+                if (person.unit === 'face' && person.photos) {
+                    badge.title = `${n} faces across ${person.photos.toLocaleString()} photos`;
+                }
             } else {
                 badge.textContent = `${person.count} face${person.count !== 1 ? 's' : ''}`;
             }
@@ -2894,6 +2930,7 @@ This photo also names ${face.other_names.join(', ')}. `
                 // face can carry its own -- and that is exactly what this bucket is
                 // full of.
                 if (face.suggested_name) {
+                    suggestionByFaceId.set(face.id, face.suggested_name);
                     const guess = document.createElement('button');
                     guess.className = 'face-guess'
                         + (face.suggestion_strength === 'possible' ? ' is-possible' : '');
@@ -3389,8 +3426,33 @@ This photo also names ${face.other_names.join(', ')}. `
         btnUnmatchSelected.textContent = `⚠️ Unmatch Selected (${count})`;
         btnUnmatchSelected.disabled = count === 0;
 
+        // A selection whose faces each resemble somebody different cannot be assigned
+        // to one typed name, and asking for one is what made this box confusing. The
+        // badges already say who each face is, so the button uses them.
+        const suggested = selectedFaceIds
+            .map(id => suggestionByFaceId.get(id))
+            .filter(Boolean);
+        const distinct = new Set(suggested);
+        const assignByBadge = count > 1 && distinct.size > 1
+            && suggested.length === count && !inputReassignName.value.trim();
+
+        if (inputReassignName) {
+            inputReassignName.placeholder = assignByBadge
+                ? `Multiple (${distinct.size} people) — or type one name for all`
+                : 'Assign to name...';
+            inputReassignName.classList.toggle('is-multiple', assignByBadge);
+        }
+
         if (btnReassignSelected) {
-            btnReassignSelected.disabled = count === 0 || !inputReassignName.value.trim();
+            btnReassignSelected.disabled = count === 0
+                || (!inputReassignName.value.trim() && !assignByBadge);
+            btnReassignSelected.textContent = assignByBadge
+                ? `Assign ${count} to their matches`
+                : 'Assign Selected';
+            btnReassignSelected.title = assignByBadge
+                ? 'Each selected face goes to the person its badge names'
+                : '';
+            btnReassignSelected.dataset.byBadge = assignByBadge ? '1' : '';
         }
 
         if (btnNewPerson) {

@@ -206,6 +206,26 @@ The buckets -- `Unknown Faces`, `Ungrouped`, `Excluded` -- stay pinned to the to
 either order. They are not people, and sorting them into the alphabet would bury them
 between two names.
 
+### 0.4.1 Counting, ranking and assigning in Identify Faces
+
+**The sidebar counts faces.** A face is the unit of work here: one photo of a start line
+holds thirty, and clearing it is thirty decisions. It previously used three units in one
+list — photos for people and Ungrouped, faces for Excluded, photos for Unknown Faces —
+so "710 photos" sat beside "4,739 faces" in the panel. The photo count is on hover.
+
+**The strongest candidates are shown, not the first ones found.** Unclustered faces are
+capped at 500 because a person in many group photos can have tens of thousands and a
+card for each locks up the browser. The cap used to be applied *before* ranking, so with
+4,739 candidates the 500 on screen were an arbitrary sample that happened to be sorted,
+and the best matches in the other 4,239 were unreachable — clearing the queue sliced the
+same way next time. Every candidate is now scored, then the top 500 are built.
+
+**A mixed selection is assigned by its badges.** Selecting several faces that each
+resemble a different person left one box asking for one name. Where the selected faces
+disagree and nothing is typed, the button reads *Assign N to their matches* and sends
+each face to the person its own badge names, after stating the split. Typing a name
+still overrides them, because sometimes the machine is wrong about all of them.
+
 ### 0.5 Review Tags
 
 A third mode beside Folder Matches and Identify Faces, for the word tags face curation
