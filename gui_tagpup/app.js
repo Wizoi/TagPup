@@ -1978,9 +1978,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Suggestions might contain people
                     if (sugg.people) {
                         sugg.people.forEach(p => {
-                            const leaf = p.name;
-                            // Only suggest if not already added to this photo
-                            const alreadyAdded = tags.includes(leaf) || photoPeople.includes(leaf);
+                            const leaf = leafOf(p.name);
+                            // Only suggest someone this photo does not already name.
+                            // `tags.includes(leaf)` compares a bare suggestion against
+                            // tags that are paths, so it never matched; the list was
+                            // right only because photo.people happens to hold leaves,
+                            // and would have offered everybody the moment it did not.
+                            const alreadyAdded =
+                                photoAlreadyHas(photo, p.name)
+                                || photoPeople.some(n => samePerson(n, leaf));
                             if (!alreadyAdded) {
                                 suggPeopleCounts[leaf] = (suggPeopleCounts[leaf] || 0) + 1;
                             }
@@ -1992,14 +1998,16 @@ document.addEventListener('DOMContentLoaded', () => {
                         sugg.tags.forEach(t => {
                             const leaf = t.tag;
                             const isPerson = isPersonTag(leaf);
-                            const alreadyAdded = tags.includes(leaf);
-                            if (!alreadyAdded) {
-                                if (isPerson) {
-                                    const cleanLeaf = leafOf(leaf);
-                                    suggPeopleCounts[cleanLeaf] = (suggPeopleCounts[cleanLeaf] || 0) + 1;
-                                } else {
-                                    suggTagCounts[leaf] = (suggTagCounts[leaf] || 0) + 1;
-                                }
+                            // photoAlreadyHas compares people by who they are, so a
+                            // suggested "Kira Bao" counts as present on a photo tagged
+                            // "People/Kira Bao". A plain keyword still matches exactly.
+                            if (photoAlreadyHas(photo, leaf)) return;
+                            if (isPerson) {
+                                const cleanLeaf = leafOf(leaf);
+                                if (photoPeople.some(n => samePerson(n, cleanLeaf))) return;
+                                suggPeopleCounts[cleanLeaf] = (suggPeopleCounts[cleanLeaf] || 0) + 1;
+                            } else {
+                                suggTagCounts[leaf] = (suggTagCounts[leaf] || 0) + 1;
                             }
                         });
                     }
@@ -2872,6 +2880,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         // Merge progressive suggestions
                         folderSuggestions = data.suggestions || {};
                         renderFileList(); // updates tags badge dynamically
+                        updateSelectedThumbnailsCount();
                         saveToLocalStorageCache();
                     } 
                     else if (data.status === 'completed') {
@@ -2882,6 +2891,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         btnFolderAutoApply.disabled = false;
                         
                         renderFileList();
+                        // The selection panel shows suggestions too, and nothing
+                        // refreshed it when they arrived. They appeared on the next
+                        // unrelated click instead, which read as though that click
+                        // had taken tags off the photos.
+                        updateSelectedThumbnailsCount();
                         saveToLocalStorageCache();
                         
                         updateSuggestButtonState('completed');
