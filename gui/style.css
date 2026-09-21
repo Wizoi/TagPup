@@ -1942,3 +1942,10 @@ body {
     font-size: 13px;
     color: var(--text-muted);
 }
+
+/* Shift-clicking a grid is a selection gesture, not a text one. Without this the
+   browser highlights the labels between the two cards, which looks like the page has
+   broken in the middle of picking a run of faces. */
+.matching-faces-grid {
+    user-select: none;
+}

@@ -245,6 +245,10 @@ document.addEventListener('DOMContentLoaded', () => {
     //: that each resemble a different person cannot be assigned to one name
     //: typed in a box, and the badge on each card already says who it is.
     let suggestionByFaceId = new Map();
+    //: The faces as rendered, in order, so Shift can mean "everything between".
+    let renderedFaceOrder = [];
+    //: Where a Shift range measures from: the last face clicked on its own.
+    let selectionAnchorId = null;
     let activePersonFaces = [];
     let activeTab = 'matches'; // 'matches' or 'outliers'
     let modalSelectedFaceIds = [];
@@ -2474,6 +2478,7 @@ ${summary}`)) {
             img.src = '';
         });
         matchingFacesGrid.innerHTML = '';
+        renderedFaceOrder = [];
 
         // Abort any ongoing details fetches
         if (detailsAbortController) {
@@ -2599,6 +2604,7 @@ ${summary}`)) {
             img.src = '';
         });
         matchingFacesGrid.innerHTML = '';
+        renderedFaceOrder = [];
         selectedFaceIds = [];
         updateMatchingSelectionUI();
         clearFaceDetails();
@@ -2914,6 +2920,8 @@ ${summary}`)) {
             groupFaces.forEach(face => {
                 const item = document.createElement('div');
                 item.className = 'face-match-item';
+                item.dataset.faceId = String(face.id);
+                renderedFaceOrder.push(face.id);
                 // Why this face is here: its photo names somebody else too, and
                 // neither has a face yet, so both faces are offered under both names.
                 // Saying so turns a confusing grid into a clear task.
@@ -2975,24 +2983,7 @@ This photo also names ${face.other_names.join(', ')}. `
                 img.loading = 'lazy';
                 item.appendChild(img);
 
-                item.addEventListener('click', () => {
-                    const idx = selectedFaceIds.indexOf(face.id);
-                    if (idx > -1) {
-                        selectedFaceIds.splice(idx, 1);
-                        item.classList.remove('selected');
-                    } else {
-                        selectedFaceIds.push(face.id);
-                        item.classList.add('selected');
-                    }
-                    updateMatchingSelectionUI();
-
-                    if (selectedFaceIds.length > 0) {
-                        const lastFaceId = selectedFaceIds[selectedFaceIds.length - 1];
-                        showFaceDetails(lastFaceId);
-                    } else {
-                        clearFaceDetails();
-                    }
-                });
+                item.addEventListener('click', (e) => selectFace(face.id, e));
 
                 grid.appendChild(item);
             });
@@ -3418,6 +3409,70 @@ This photo also names ${face.other_names.join(', ')}. `
         btnRestoreSelected.addEventListener('click', () => {
             if (selectedFaceIds.length) postRestoreBulk(selectedFaceIds);
         });
+    }
+
+
+    /**
+     * Select a face the way a file list does.
+     *
+     * Plain click selects only that face. Ctrl (or Cmd) adds and removes one at a
+     * time. Shift takes everything between it and the last face clicked on its own,
+     * and Ctrl+Shift adds that run to what is already selected.
+     *
+     * Every click used to toggle, which is fine for two faces and unusable for two
+     * hundred: picking a run meant two hundred clicks, and one stray click in the
+     * middle of it silently removed a face from a selection about to be assigned.
+     */
+    function selectFace(faceId, event) {
+        const additive = event && (event.ctrlKey || event.metaKey);
+        const ranged = event && event.shiftKey;
+
+        if (ranged && selectionAnchorId !== null) {
+            const from = renderedFaceOrder.indexOf(selectionAnchorId);
+            const to = renderedFaceOrder.indexOf(faceId);
+            if (from > -1 && to > -1) {
+                const run = renderedFaceOrder.slice(Math.min(from, to), Math.max(from, to) + 1);
+                // Ctrl+Shift extends; Shift alone replaces, so a second Shift-click
+                // re-measures from the same anchor rather than growing forever.
+                selectedFaceIds = additive
+                    ? [...new Set([...selectedFaceIds, ...run])]
+                    : run;
+                applyFaceSelection(faceId);
+                return;
+            }
+        }
+
+        if (additive) {
+            const at = selectedFaceIds.indexOf(faceId);
+            if (at > -1) selectedFaceIds.splice(at, 1);
+            else selectedFaceIds.push(faceId);
+        } else {
+            // Plain click starts again, unless it lands on the only thing selected --
+            // then it clears, so there is a way back to nothing without the keyboard.
+            const onlyThis = selectedFaceIds.length === 1 && selectedFaceIds[0] === faceId;
+            selectedFaceIds = onlyThis ? [] : [faceId];
+        }
+        selectionAnchorId = faceId;
+        applyFaceSelection(faceId);
+    }
+
+    /** Paint the selection onto the grid, and show the face just acted on. */
+    function applyFaceSelection(focusFaceId) {
+        const chosen = new Set(selectedFaceIds);
+        matchingFacesGrid.querySelectorAll('.face-match-item').forEach(item => {
+            const id = Number(item.dataset.faceId);
+            item.classList.toggle('selected', chosen.has(id));
+        });
+        updateMatchingSelectionUI();
+
+        if (selectedFaceIds.length === 0) {
+            clearFaceDetails();
+            return;
+        }
+        const show = chosen.has(focusFaceId)
+            ? focusFaceId
+            : selectedFaceIds[selectedFaceIds.length - 1];
+        showFaceDetails(show);
     }
 
     function updateMatchingSelectionUI() {

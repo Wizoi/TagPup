@@ -220,6 +220,19 @@ card for each locks up the browser. The cap used to be applied *before* ranking,
 and the best matches in the other 4,239 were unreachable — clearing the queue sliced the
 same way next time. Every candidate is now scored, then the top 500 are built.
 
+**Selection behaves like a file list.** A plain click selects only the face it lands
+on, and clicking the only selected face clears it. `Ctrl` (or `Cmd`) adds and removes
+one at a time. `Shift` takes everything between that face and the last one clicked on
+its own, measured in render order; a second `Shift`-click re-measures from the same
+anchor rather than growing, so overshooting a range costs one click to fix.
+`Ctrl`+`Shift` adds a range to what is already chosen. The grid disables text selection,
+because `Shift`-clicking it is a selection gesture and highlighted labels between two
+cards look like a broken page.
+
+Every click used to toggle. That is fine for two faces and unusable for two hundred:
+picking a run meant two hundred clicks, and one stray click in the middle silently took
+a face back out of a selection about to be assigned.
+
 **A mixed selection is assigned by its badges.** Selecting several faces that each
 resemble a different person left one box asking for one name. Where the selected faces
 disagree and nothing is typed, the button reads *Assign N to their matches* and sends

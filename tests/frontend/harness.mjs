@@ -213,12 +213,14 @@ export async function tick(window, ms) {
   }
 }
 
-/** Fire a click, optionally with a modifier, the way a browser would. */
-export function click(window, element, { shiftKey = false } = {}) {
+/** Fire a click, optionally with modifiers, the way a browser would. */
+export function click(window, element, { shiftKey = false, ctrlKey = false, metaKey = false } = {}) {
   const event = new window.MouseEvent("click", {
     bubbles: true,
     cancelable: true,
     shiftKey,
+    ctrlKey,
+    metaKey,
   });
   element.dispatchEvent(event);
   return event;

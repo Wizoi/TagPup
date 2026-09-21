@@ -111,7 +111,9 @@ describe("assigning a mixed selection", () => {
     const ctx = await open(t, [{ name: NAME, count: 2, unit: "face" }], mixed);
     const cards = [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
     assert.equal(cards.length, 2, "the fixture did not render two faces");
-    cards.forEach((card) => click(ctx.window, card));
+    // Ctrl-click, because a plain click now selects only what it lands on -- the
+    // way a file list behaves.
+    cards.forEach((card) => click(ctx.window, card, { ctrlKey: true }));
     await new Promise((r) => ctx.window.setTimeout(r, 40));
     return ctx;
   }
@@ -169,11 +171,138 @@ describe("assigning a mixed selection", () => {
     const agreeing = [face(1, "Rory Olwen", 0.96), face(2, "Rory Olwen", 0.9)];
     const ctx = await open(t, [{ name: NAME, count: 2, unit: "face" }], agreeing);
     const cards = [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
-    cards.forEach((card) => click(ctx.window, card));
+    cards.forEach((card) => click(ctx.window, card, { ctrlKey: true }));
     await new Promise((r) => ctx.window.setTimeout(r, 40));
 
     const button = ctx.document.getElementById("btn-reassign-selected");
     assert.equal(button.textContent, "Assign Selected",
       "one person's faces do not need the by-badge path");
+  });
+});
+
+describe("picking faces the way a file list does", () => {
+  // Every click used to toggle. Fine for two faces, unusable for two hundred: picking
+  // a run meant two hundred clicks, and one stray click in the middle silently took a
+  // face back out of a selection that was about to be assigned.
+  const many = [
+    face(1, "Rory Olwen", 0.96),
+    face(2, "Kira Bao", 0.93),
+    face(3, "Rory Olwen", 0.9),
+    face(4, "Kira Bao", 0.88),
+    face(5, "Rory Olwen", 0.86),
+  ];
+
+  async function grid(t) {
+    const ctx = await open(t, [{ name: NAME, count: many.length, unit: "face" }], many);
+    ctx.cards = () =>
+      [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
+    ctx.chosen = () =>
+      ctx.cards().filter((c) => c.classList.contains("selected"))
+        .map((c) => Number(c.dataset.faceId));
+    return ctx;
+  }
+
+  const settle = (ctx) => new Promise((r) => ctx.window.setTimeout(r, 30));
+
+  test("a plain click selects only what it lands on", async (t) => {
+    const ctx = await grid(t);
+    click(ctx.window, ctx.cards()[0]);
+    await settle(ctx);
+    click(ctx.window, ctx.cards()[2]);
+    await settle(ctx);
+    assert.deepEqual(ctx.chosen(), [3]);
+  });
+
+  test("clicking the only selected face clears it", async (t) => {
+    // A way back to nothing without reaching for the keyboard.
+    const ctx = await grid(t);
+    click(ctx.window, ctx.cards()[1]);
+    await settle(ctx);
+    click(ctx.window, ctx.cards()[1]);
+    await settle(ctx);
+    assert.deepEqual(ctx.chosen(), []);
+  });
+
+  test("ctrl-click adds one at a time", async (t) => {
+    const ctx = await grid(t);
+    click(ctx.window, ctx.cards()[0]);
+    await settle(ctx);
+    click(ctx.window, ctx.cards()[3], { ctrlKey: true });
+    await settle(ctx);
+    assert.deepEqual(ctx.chosen().sort(), [1, 4]);
+  });
+
+  test("ctrl-click takes one back out", async (t) => {
+    const ctx = await grid(t);
+    click(ctx.window, ctx.cards()[0]);
+    await settle(ctx);
+    click(ctx.window, ctx.cards()[1], { ctrlKey: true });
+    await settle(ctx);
+    click(ctx.window, ctx.cards()[0], { ctrlKey: true });
+    await settle(ctx);
+    assert.deepEqual(ctx.chosen(), [2]);
+  });
+
+  test("cmd-click does the same, for a Mac", async (t) => {
+    const ctx = await grid(t);
+    click(ctx.window, ctx.cards()[0]);
+    await settle(ctx);
+    click(ctx.window, ctx.cards()[2], { metaKey: true });
+    await settle(ctx);
+    assert.deepEqual(ctx.chosen().sort(), [1, 3]);
+  });
+
+  test("shift-click takes everything between", async (t) => {
+    const ctx = await grid(t);
+    click(ctx.window, ctx.cards()[1]);
+    await settle(ctx);
+    click(ctx.window, ctx.cards()[3], { shiftKey: true });
+    await settle(ctx);
+    assert.deepEqual(ctx.chosen(), [2, 3, 4]);
+  });
+
+  test("a range works backwards too", async (t) => {
+    const ctx = await grid(t);
+    click(ctx.window, ctx.cards()[3]);
+    await settle(ctx);
+    click(ctx.window, ctx.cards()[1], { shiftKey: true });
+    await settle(ctx);
+    assert.deepEqual(ctx.chosen(), [2, 3, 4]);
+  });
+
+  test("a second shift-click re-measures from the same anchor", async (t) => {
+    // Rather than growing forever, so overshooting a range is one click to fix.
+    const ctx = await grid(t);
+    click(ctx.window, ctx.cards()[0]);
+    await settle(ctx);
+    click(ctx.window, ctx.cards()[4], { shiftKey: true });
+    await settle(ctx);
+    click(ctx.window, ctx.cards()[1], { shiftKey: true });
+    await settle(ctx);
+    assert.deepEqual(ctx.chosen(), [1, 2]);
+  });
+
+  test("ctrl-shift-click adds a range to what is already chosen", async (t) => {
+    const ctx = await grid(t);
+    click(ctx.window, ctx.cards()[0]);
+    await settle(ctx);
+    click(ctx.window, ctx.cards()[3], { ctrlKey: true });
+    await settle(ctx);
+    click(ctx.window, ctx.cards()[4], { ctrlKey: true, shiftKey: true });
+    await settle(ctx);
+    assert.deepEqual(ctx.chosen().sort(), [1, 4, 5]);
+  });
+
+  test("shift with nothing chosen yet just selects that face", async (t) => {
+    const ctx = await grid(t);
+    click(ctx.window, ctx.cards()[2], { shiftKey: true });
+    await settle(ctx);
+    assert.deepEqual(ctx.chosen(), [3]);
+  });
+
+  test("the hint says which modifiers do what", async (t) => {
+    const ctx = await grid(t);
+    assert.match(ctx.document.body.textContent, /Ctrl-click to add/);
+    assert.match(ctx.document.body.textContent, /Shift-click for a range/);
   });
 });
