@@ -803,6 +803,29 @@ document.addEventListener('DOMContentLoaded', () => {
         return false;
     }
 
+    /** The last segment of a tag path, which is the name a person is known by. */
+    function leafOf(tag) {
+        if (!tag) return '';
+        return tag.includes('/') ? tag.split('/').pop().trim() : tag.trim();
+    }
+
+    /**
+     * Does this photo already carry this tag, or this same person under another name?
+     *
+     * A person belongs in the keywords as a path, "People/Hazel Brookmire". But face
+     * recognition and the tag suggester both speak in leaf names, so a plain
+     * `tags.includes()` compared "Hazel Brookmire" against "People/Hazel Brookmire",
+     * found no match, and wrote the person in a second time as a bare leaf. Identity is
+     * the leaf; the path is only where they are filed.
+     */
+    function photoAlreadyHas(photo, tag) {
+        const tags = (photo && photo.tags) || [];
+        if (tags.includes(tag)) return true;
+        if (!isPersonTag(tag)) return false;
+        const leaf = leafOf(tag).toLowerCase();
+        return tags.some(t => isPersonTag(t) && leafOf(t).toLowerCase() === leaf);
+    }
+
     function updateTagsDatalist() {
         tagsDatalist.innerHTML = '';
         
@@ -2873,16 +2896,31 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function applySuggestedTagDirect(tagName, isPerson) {
+    /**
+     * Add a suggested tag or person to the open photo, as the tag they are filed under.
+     *
+     * This used to reduce whatever it was given to its leaf and write that. For a
+     * keyword it threw away the level the taxonomy had just resolved; for a person it
+     * wrote the bare name that the keyword convention does not allow, beside the
+     * "People/<name>" the photo was already carrying. Clicking a face TagPup had
+     * matched therefore added that person a second time, in the wrong form.
+     *
+     * Suggestions arrive as leaf names, so the name is resolved to its taxonomy path
+     * first. The modal only appears where the name is genuinely ambiguous, which for a
+     * recognised face means never: they are in the taxonomy already.
+     */
+    async function applySuggestedTagDirect(tagName, isPerson) {
         const path = activePhotoPath;
         if (!path) return;
         const photo = folderPhotos.find(p => p.path === path);
         if (!photo) return;
 
-        const leaf = tagName.includes('/') ? tagName.split('/').pop().trim() : tagName;
+        const resolved = await resolveTagOrPerson(tagName, isPerson);
+        if (!resolved) return;
 
-        if (photo.tags.includes(leaf)) return;
-        const updatedTags = [...photo.tags, leaf];
+        if (photoAlreadyHas(photo, resolved)) return;
+        const updatedTags = [...photo.tags, resolved];
+        const leaf = leafOf(resolved);
 
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Saving...';
@@ -2927,18 +2965,30 @@ document.addEventListener('DOMContentLoaded', () => {
         saveSingleTitle();
     }
 
-    function applyAllSingleSuggestions() {
+    async function applyAllSingleSuggestions() {
         const path = activePhotoPath;
         if (!path) return;
         const photo = folderPhotos.find(p => p.path === path);
         const sugg = folderSuggestions[path];
         if (!photo || !sugg) return;
 
-        const suggTags = (sugg.tags || []).map(t => t.tag);
-        const suggPeople = (sugg.people || []).map(p => p.name);
-        const allSuggestions = Array.from(new Set([...suggTags, ...suggPeople]));
-        
-        const updatedTags = Array.from(new Set([...photo.tags, ...allSuggestions]));
+        // Resolve each suggestion to the tag it is filed under before writing it, and
+        // skip anyone the photo already names. Applying the list raw wrote bare leaves.
+        const wanted = [
+            ...(sugg.tags || []).map(t => ({ name: t.tag, isPerson: false })),
+            ...(sugg.people || []).map(p => ({ name: p.name, isPerson: true })),
+        ];
+        const resolvedSuggestions = [];
+        for (const item of wanted) {
+            const resolved = await resolveTagOrPerson(item.name, item.isPerson);
+            if (!resolved) continue;
+            if (photoAlreadyHas(photo, resolved)) continue;
+            if (resolvedSuggestions.includes(resolved)) continue;
+            resolvedSuggestions.push(resolved);
+        }
+        if (resolvedSuggestions.length === 0) return;
+
+        const updatedTags = Array.from(new Set([...photo.tags, ...resolvedSuggestions]));
         const updatedTitle = photo.title; // Do not apply suggested title automatically
 
         statusDot.className = 'status-indicator-dot busy';
@@ -2953,6 +3003,11 @@ document.addEventListener('DOMContentLoaded', () => {
         .then(data => {
             if (data.success) {
                 photo.tags = updatedTags;
+                if (!photo.people) photo.people = [];
+                resolvedSuggestions.filter(isPersonTag).forEach(t => {
+                    const leaf = leafOf(t);
+                    if (!photo.people.includes(leaf)) photo.people.push(leaf);
+                });
                 renderTags(updatedTags);
                 statusDot.className = 'status-indicator-dot';
                 statusText.textContent = 'Ready';
@@ -3163,7 +3218,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const currentTags = photo.tags || [];
             const photoPeople = photo.people || [];
-            
+
             // Check general tags suggestions
             if (sugg.tags) {
                 for (let t of sugg.tags) {
@@ -3176,13 +3231,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
             if (hasSomethingToApply) break;
-            
-            // Check people suggestions
+
+            // Check people suggestions. A person the photo already names under their
+            // path is nothing to apply, so compare by leaf rather than by spelling --
+            // otherwise the button offers to add someone who is already there.
             if (sugg.people) {
                 for (let p of sugg.people) {
                     if (p.score >= 0.75) {
-                        const leaf = p.name;
-                        if (!currentTags.includes(leaf) && !photoPeople.includes(leaf)) {
+                        const leaf = leafOf(p.name);
+                        if (!photoAlreadyHas(photo, p.name)
+                            && !photoPeople.some(n => leafOf(n).toLowerCase() === leaf.toLowerCase())) {
                             hasSomethingToApply = true;
                             break;
                         }

@@ -379,14 +379,13 @@ class TagSuggester:
                                 else:
                                     score = max(0.50, round(1.0 - (best_dist - 0.60) / (0.90 - 0.60) * 0.50, 2))
                                 
-                                # Resolve leaf name to full taxonomy path if possible
-                                resolved_path = best_name
-                                for path in self.taxonomy.paths:
-                                    parts = path.split("/")
-                                    if len(parts) >= 2 and parts[-1].lower() == best_name.lower() and parts[0].lower() in ["family", "friends", "pets"]:
-                                        resolved_path = path
-                                        break
-                                
+                                # Resolve leaf name to full taxonomy path if possible.
+                                # This looked under a hardcoded "family"/"friends"/
+                                # "pets" only, so anyone filed under People came back
+                                # as a bare leaf and was suggested -- and written --
+                                # in the one form the keywords must not hold.
+                                resolved_path = self.taxonomy.find_person_path(best_name) or best_name
+
                                 # Boost or insert tag
                                 found = False
                                 for t in suggested_tags:
@@ -432,14 +431,10 @@ class TagSuggester:
                 
                 # Zero-shot CLIP threshold. 0.23 is a solid default for prompt-matched visual concepts
                 if sim >= 0.23:
-                    # Automatically map person name back to their full hierarchical taxonomy path if it exists
-                    resolved_tag = tag
-                    for path in self.taxonomy.paths:
-                        parts = path.split("/")
-                        if len(parts) >= 2 and parts[-1].lower() == tag.lower() and parts[0].lower() in ["family", "friends"]:
-                            resolved_tag = path
-                            break
-                            
+                    # Map a person's name back to the path they are filed under, under
+                    # whichever root this library uses rather than an assumed one.
+                    resolved_tag = self.taxonomy.find_person_path(tag) or tag
+
                     suggested_tags.append({
                         "tag": resolved_tag,
                         "score": round(sim, 2),
