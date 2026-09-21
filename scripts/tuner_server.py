@@ -635,6 +635,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.handle_get_people()
 
         # API: get list of all known people with face counts
+        elif path == "/api/tags/list":
+            self.handle_get_tags_list(query)
+        elif path == "/api/tags/photos":
+            self.handle_get_tag_photos(query)
         elif path == "/api/people-with-counts":
             self.handle_get_people_with_counts()
 
@@ -701,6 +705,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.handle_post_unmatch_bulk()
         elif path == "/api/faces/match-bulk":
             self.handle_post_match_bulk()
+        elif path == "/api/tags/merge":
+            self.handle_post_tags_merge()
         elif path == "/api/person/rename":
             self.handle_post_person_rename()
         elif path == "/api/faces/recluster":
@@ -1107,6 +1113,306 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         except Exception as e:
             logger.error(f"Error serving face crop for ID {face_id}: {e}")
             self.send_error(500, f"Error cropping face: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+
+    # ---- Word tags -------------------------------------------------------------
+    #
+    # TagTuner curates faces because a wrong name spreads: a tagged photo is what the
+    # suggester learns the next photo from. Word tags spread the same way and had no
+    # view at all, so a misspelling could sit in the vocabulary for months, be
+    # suggested, be applied, and become its own source. Finding one took SQL.
+    #
+    # These endpoints answer the two questions that were unanswerable: what is in the
+    # vocabulary, and which photos does a given tag actually touch.
+
+    def _tag_taxonomy_rows(self, cursor):
+        """Every taxonomy entry, and which roots this library files people under."""
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
+        if not cursor.fetchone():
+            return [], {"people", "family", "friends", "pets"}
+
+        roots = {"people", "family", "friends", "pets"}
+        cursor.execute(
+            "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'")
+        for row in cursor.fetchall():
+            if row[0]:
+                roots.add(row[0].strip().lower())
+
+        cursor.execute("SELECT tag, has_face FROM tag_taxonomy")
+        return cursor.fetchall(), roots
+
+    def handle_get_tags_list(self, query):
+        """Every tag this library knows, with what it touches.
+
+        `people` decides which side of the face/word split to return: the point of
+        this view is the tags TagTuner could not previously reach, so people are left
+        out by default.
+        """
+        if not os.path.exists(self.db_path):
+            self.send_json({"tags": [], "buckets": {}})
+            return
+
+        include_people = str(query.get("people", ["0"])[0]).lower() in ("1", "true", "yes")
+        conn = None
+        try:
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
+            cursor = conn.cursor()
+
+            taxonomy_rows, people_roots = self._tag_taxonomy_rows(cursor)
+            in_taxonomy = {}
+            for tag, has_face in taxonomy_rows:
+                if tag:
+                    in_taxonomy[tag] = bool(has_face)
+
+            # A person the taxonomy files under a people root, by their leaf name.
+            # A bare tag matching one is that person having lost their path, not a
+            # word tag -- and saying so is the point, since that is the fault the
+            # keyword convention forbids.
+            person_leaves = {
+                tag.split("/")[-1].strip().lower()
+                for tag in in_taxonomy
+                if "/" in tag and tag.split("/")[0].strip().lower() in people_roots
+            }
+
+            def is_person_tag(tag):
+                if "/" in tag:
+                    return tag.split("/")[0].strip().lower() in people_roots
+                low = tag.strip().lower()
+                return (low in people_roots
+                        or low in person_leaves
+                        or in_taxonomy.get(tag, False))
+
+            def is_stray_person(tag):
+                return "/" not in tag and tag.strip().lower() in person_leaves
+
+            embedded = set()
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='tag_embeddings'")
+            if cursor.fetchone():
+                cursor.execute("SELECT DISTINCT tag FROM tag_embeddings")
+                embedded = {row[0] for row in cursor.fetchall() if row[0]}
+
+            counts = {}
+            cursor.execute("SELECT tags FROM photos")
+            for (tags_json,) in cursor.fetchall():
+                try:
+                    tags = json.loads(tags_json or "[]")
+                except Exception:
+                    continue
+                for tag in tags:
+                    if tag:
+                        counts[tag] = counts.get(tag, 0) + 1
+
+            every = set(counts) | set(in_taxonomy)
+            out = []
+            for tag in sorted(every):
+                if is_person_tag(tag) and not include_people:
+                    continue
+                count = counts.get(tag, 0)
+                out.append({
+                    "tag": tag,
+                    "leaf": tag.split("/")[-1].strip(),
+                    "count": count,
+                    "flat": "/" not in tag,
+                    "in_taxonomy": tag in in_taxonomy,
+                    "has_embedding": tag in embedded,
+                    "is_person": is_person_tag(tag),
+                    "person_without_path": is_stray_person(tag),
+                })
+
+            buckets = {
+                # Tags with no path. Some are legitimately flat; some are people who
+                # lost theirs, which is what the keyword convention forbids.
+                "flat": sorted(t["tag"] for t in out if t["flat"] and t["count"]),
+                # Where typos hide: a tag used once has never been confirmed by a
+                # second photo agreeing with it.
+                "used_once": sorted(t["tag"] for t in out if t["count"] == 1),
+                # In the vocabulary, on no photo. These still feed zero-shot matching,
+                # so they can be suggested without ever having described anything.
+                "unused": sorted(t["tag"] for t in out if t["count"] == 0),
+            }
+            # Counted separately from the tags returned: a person who lost their path
+            # is excluded from the word-tag list by `is_person_tag`, but it is exactly
+            # what somebody opening this view wants told.
+            strays = sorted(
+                tag for tag in every
+                if is_stray_person(tag) and counts.get(tag, 0) > 0
+            )
+            buckets["people_without_a_path"] = strays
+            self.send_json({"tags": out, "buckets": buckets})
+        except Exception as e:
+            logger.error(f"Error listing tags: {e}")
+            self.send_json_error(500, str(e))
+        finally:
+            if conn:
+                conn.close()
+
+    def handle_get_tag_photos(self, query):
+        """The photos carrying one tag, newest first."""
+        tag = (query.get("tag", [""])[0] or "").strip()
+        if not tag:
+            self.send_json_error(400, "Missing tag")
+            return
+        if not os.path.exists(self.db_path):
+            self.send_json({"tag": tag, "photos": [], "total": 0})
+            return
+
+        conn = None
+        try:
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT path, tags, mtime FROM photos")
+
+            photos = []
+            for path, tags_json, mtime in cursor.fetchall():
+                try:
+                    tags = json.loads(tags_json or "[]")
+                except Exception:
+                    continue
+                if tag not in tags:
+                    continue
+                photos.append({
+                    "path": path,
+                    "filename": os.path.basename(path),
+                    "mtime": mtime or 0,
+                    "tags": tags,
+                })
+
+            photos.sort(key=lambda p: p["mtime"], reverse=True)
+            self.send_json({"tag": tag, "photos": photos, "total": len(photos)})
+        except Exception as e:
+            logger.error(f"Error listing photos for tag {tag}: {e}")
+            self.send_json_error(500, str(e))
+        finally:
+            if conn:
+                conn.close()
+
+
+    def handle_post_tags_merge(self):
+        """Rename a tag, or merge it into another, everywhere it lives.
+
+        A tag is in five places and a rename has to reach all of them, or the old name
+        comes back. That is not a guess: `Saskia Wrenn` was cleaned out of every photo
+        file and still went on being suggested, because its cached CLIP embedding was
+        never dropped and zero-shot matching reads from there.
+
+            photo files      XMP:Subject, IPTC:Keywords, XMP:HierarchicalSubject
+            photos.tags      the index's own copy, which goes stale silently
+            tag_taxonomy     or the retired name stays offerable
+            tag_embeddings   or zero-shot keeps matching it
+            suggest_status   TagPup's in-memory cache, in another process
+
+        The first four are handled here. The fifth cannot be reached from this process,
+        so the reply says how many folders hold suggestions that predate the merge
+        rather than pretending they were refreshed.
+
+        Defaults to a dry run: `apply` must be sent explicitly, and without it nothing
+        is written and the plan comes back. Every destructive script in this repo works
+        that way, and it has caught real mistakes before they reached photos.
+        """
+        try:
+            data = self.read_json_body()
+        except Exception:
+            self.send_json_error(400, "Invalid JSON payload")
+            return
+
+        source = (data.get("from") or "").strip()
+        target = (data.get("into") or data.get("to") or "").strip()
+        apply_it = bool(data.get("apply"))
+        retire_only = bool(data.get("retire"))
+
+        if not source:
+            self.send_json_error(400, "Missing the tag to change")
+            return
+        if not target and not retire_only:
+            self.send_json_error(400, "Missing the tag to merge into")
+            return
+        if target == source:
+            self.send_json_error(400, "That tag is already called that")
+            return
+
+        conn = None
+        try:
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
+            cursor = conn.cursor()
+
+            affected = []
+            already = 0
+            cursor.execute("SELECT path, tags FROM photos")
+            for photo_path, tags_json in cursor.fetchall():
+                try:
+                    tags = json.loads(tags_json or "[]")
+                except Exception:
+                    continue
+                if source in tags:
+                    affected.append(photo_path)
+                    if target and target in tags:
+                        already += 1
+
+            embeddings = 0
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='tag_embeddings'")
+            has_embeddings = bool(cursor.fetchone())
+            if has_embeddings:
+                embeddings = cursor.execute(
+                    "SELECT COUNT(*) FROM tag_embeddings WHERE tag = ?", (source,)).fetchone()[0]
+
+            in_taxonomy = 0
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
+            has_taxonomy = bool(cursor.fetchone())
+            if has_taxonomy:
+                in_taxonomy = cursor.execute(
+                    "SELECT COUNT(*) FROM tag_taxonomy WHERE tag = ?", (source,)).fetchone()[0]
+
+            plan = {
+                "from": source,
+                "into": target or None,
+                "retire_only": retire_only,
+                "photos": len(affected),
+                "photos_already_carrying_the_target": already,
+                "embeddings_to_drop": embeddings,
+                "taxonomy_rows_to_drop": in_taxonomy,
+                "examples": [os.path.basename(p) for p in affected[:5]],
+                "applied": False,
+            }
+
+            if not apply_it:
+                conn.close()
+                self.send_json(plan)
+                return
+
+            if affected:
+                from tagpup_server import update_photo_metadata_tags
+
+                update_photo_metadata_tags(
+                    self.db_path, self.get_exiftool_path(), affected,
+                    source, target or None)
+
+            def clean_up(write_conn):
+                c = write_conn.cursor()
+                if has_embeddings:
+                    c.execute("DELETE FROM tag_embeddings WHERE tag = ?", (source,))
+                if has_taxonomy:
+                    c.execute("DELETE FROM tag_taxonomy WHERE tag = ?", (source,))
+                return True
+
+            conn.close()
+            conn = None
+            tagpup_db.write_with_connection(
+                self.db_path, clean_up, label="retire tag %s" % source)
+
+            plan["applied"] = True
+            logger.info("Merged tag %r into %r across %d photo(s)",
+                        source, target or "(nothing)", len(affected))
+            self.send_json(plan)
+        except Exception as e:
+            logger.error(f"Error merging tag {source!r}: {e}")
+            self.send_json_error(500, str(e))
         finally:
             if conn:
                 conn.close()

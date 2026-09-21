@@ -276,6 +276,9 @@ between two names.
 - `/api/faces/excluded`: Returns `{"faces": list, "total_count": int}` for every face marked as not-a-person, each carrying its `reason`, so exclusions can be reviewed and undone.
 - `/api/browse-folder`: Invokes native folder dialog and returns selected path.
 
+- `/api/tags/list`: Every word tag the library knows, with `count` (photos carrying it), `flat`, `in_taxonomy`, `has_embedding` and `is_person`. People are excluded unless `?people=1`, since the point of this view is the tags face curation could not reach. Also returns `buckets`: `flat`, `used_once` (where typos hide), `unused` (in the vocabulary, on no photo, yet still feeding zero-shot matching) and `people_without_a_path` (a person written as a bare leaf, which the keyword convention forbids).
+- `/api/tags/photos?tag=`: The photos carrying one tag, newest first. Matches the whole tag, never a prefix.
+
 ### `POST` Endpoints
 - `/api/databases/select`: Expects JSON body `{"db_name": string}`. Persists the chosen database as `default_db` in `config.ini`.
 - `/api/databases/create`: Expects JSON body `{"db_name": string}`. Creates a new empty database file, seeded with the default taxonomy categories.
@@ -289,6 +292,7 @@ between two names.
 - `/api/folder/remove`: Expects JSON body `{"folder_path": string}`. Removes every indexed photo under that folder, and their faces, from the current database. Returns `{"photos_removed", "faces_removed", "manual_lost", "excluded_lost"}` — the last two report how much curated face work the removal discarded, since those rows go with the photos. **The photo files themselves are never deleted.**
 - `/api/faces/exclude`: Expects JSON body `{"face_ids": list, "reason": string (optional)}` (a single `face_id` is also accepted). Marks faces as not-a-person. Any name they carried is cleared, and the person is dropped from the photo when no other face of theirs remains in it. Excluded faces take no part in clustering, match suggestions, or the Identify Faces queue.
 - `/api/faces/restore`: Expects JSON body `{"face_ids": list}`. Reverses an exclusion, returning the faces unnamed and unclaimed so they can be identified again.
+- `/api/tags/merge`: Expects JSON body `{"from": string, "into": string, "apply": bool, "retire": bool}`. Renames a tag or merges it into another across the photo files, `photos.tags`, `tag_taxonomy` and `tag_embeddings`. **Defaults to a dry run** — without `apply` nothing is written and the plan comes back, reporting how many photos are affected, how many already carry the target, and how many embedding and taxonomy rows would go. `retire` drops the tag without a target. Dropping the cached embedding is not optional bookkeeping: a tag cleaned out of every file still gets suggested while its embedding survives. TagPup's in-memory `suggest_status` lives in another process and is not refreshed by this.
 - `/api/person/rename`: Expects JSON body `{"old_name": string, "new_name": string}`. Renames a person in the database and updates photo tags.
 - `/api/faces/recluster`: Expects JSON body `{}`. Runs face clustering algorithm dynamically.
 - `/api/photo/unmatch-all`: Expects JSON body `{"photo_path": string}`.
