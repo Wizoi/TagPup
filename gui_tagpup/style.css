@@ -1089,6 +1089,14 @@ body {
     align-items: start;
 }
 
+/* A grid item's minimum width is its content by default, so one wide child can
+   force its whole track open and squeeze the others to nothing. A photo of a start
+   line with thirty detected faces did exactly that: the face strip pushed its column
+   wide and left Image Details a single character per line. */
+.details-and-suggestions-row > * {
+    min-width: 0;
+}
+
 .details-and-suggestions-row:has(#suggestions-section.hidden) {
     grid-template-columns: 1fr;
 }
@@ -1659,9 +1667,13 @@ input:checked + .slider:before {
 
 
 /* ---- Detected faces strip ---------------------------------------------- */
+/* The strip gets the full width of the row rather than sharing it with the details
+   panel. A crowd photo yields dozens of faces, and squeezing those into a third of
+   the width made both halves unusable. */
 .faces-section {
     padding: 12px 20px;
     border-bottom: 1px solid var(--border-color);
+    grid-column: 1 / -1;
 }
 
 .faces-section-header {
@@ -1676,10 +1688,15 @@ input:checked + .slider:before {
     color: var(--text-muted);
 }
 
+/* Wrap rather than scroll sideways. Thirty faces on one horizontal line means
+   dragging a scrollbar to find the one you want; in rows they are all in view, and
+   the height is capped so the strip never pushes the tagging fields off screen. */
 .faces-strip {
     display: flex;
+    flex-wrap: wrap;
     gap: 10px;
-    overflow-x: auto;
+    max-height: 320px;
+    overflow-y: auto;
     padding-bottom: 6px;
 }
 
