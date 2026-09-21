@@ -359,7 +359,10 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
                 
                 # Learn new tags into taxonomy
                 taxonomy.add_tags(meta["tags"])
-                taxonomy.add_tags(meta["people"])
+                # Not add_tags: people[] holds leaf names, and treating a leaf as a
+                # whole path mints a bare root node beside the People/<name> that
+                # already exists. This runs on every index, so it undid every cleanup.
+                taxonomy.add_people(meta["people"])
                 
                 # Save progress incrementally in batches of 100
                 if len(batch_embeddings) >= 100:

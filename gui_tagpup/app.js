@@ -875,8 +875,25 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        const sortedPeople = Array.from(peopleSet).sort();
-        sortedPeople.forEach(p => {
+        // One entry per person, whatever shape their tag arrived in. The list was
+        // built from three sources -- person tags, known people, and the tags on the
+        // photos in view -- and a person recorded both as "Josephine Sandoval" and as
+        // "People/Josephine Sandoval" appeared twice, which is a choice nobody can make
+        // correctly because both do the same thing.
+        //
+        // The pathed form wins: it says where the person belongs, and a bare name is
+        // what you get when that was lost.
+        const byPerson = new Map();
+        Array.from(peopleSet).forEach(tag => {
+            const leaf = tag.split('/').pop().trim().toLowerCase();
+            if (!leaf) return;
+            const existing = byPerson.get(leaf);
+            if (!existing || (!existing.includes('/') && tag.includes('/'))) {
+                byPerson.set(leaf, tag);
+            }
+        });
+
+        Array.from(byPerson.values()).sort().forEach(p => {
             const opt = document.createElement('option');
             opt.value = p;
             peopleDatalist.appendChild(opt);

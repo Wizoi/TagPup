@@ -100,7 +100,26 @@ Tags and captions are written back using ExifTool:
 - **Every photo is indexed.** Indexing once required a photo to carry at least one flat tag, person tag or caption, which made the index a record of what had already been organised rather than of the library. An untagged photo could not be searched for, suggested against, or have its faces identified -- precisely the photos that needed the tool most.
 - **Smart Skipping (Incremental Indexing)**: On subsequent indexing runs, the system compares each scanned file's modification time (`mtime`) and file size (`size`) with the values stored in the database. If both match, the file is skipped entirely from metadata parsing and embedding generation, drastically speeding up catalog updates.
 - **Single-Pass Face Indexing**: Unless `--skip-faces` is passed, the indexer automatically triggers face detection and embeddings extraction in the same loop, writing results to the `faces` table after the parent photo row has been committed.
-- **Per-Photo Locking**: A photo is locked for the duration of its processing by creating a
+- **People Enter The Taxonomy Under A People Root**: `extract_people()` returns *leaf*
+  names -- `photos.people` is the flattened view used for display and matching -- so
+  passing that list to `taxonomy.add_tags()` treated each leaf as a whole path and
+  minted a bare root node per person, beside the `People/<name>` the hierarchical
+  keyword had already created. Indexing calls `taxonomy.add_people()` instead, which
+  files a person under the root the library already uses for people (`People`,
+  `Family`, `Friends`, or one marked `has_face`) and does nothing at all when that
+  person is already in the taxonomy somewhere.
+
+  `add_tag()` additionally refuses to create a bare root that an existing **people**
+  path already claims: photo files carry both forms in the wild, and a file saying
+  `Cora Ingersoll` beside a taxonomy saying `People/Cora Ingersoll` gave that person two homes.
+  Only people are folded this way -- `Kentridge` beside `School/Kentridge` is left
+  alone, since tidying that for every tag is a different question.
+
+  This matters because indexing runs repeatedly: the kr-track taxonomy had been cleaned
+  from 51 such duplicates to zero once before, and the next index run recreated them
+  all. `scripts/merge_duplicate_person_tags.py` merges any that already exist (dry-run
+  by default, `--apply` to write); it removed 53 across 129 photos here.
+- **Per-Photo Locking**:A photo is locked for the duration of its processing by creating a
   file in `data/locks/`, named for the MD5 of its absolute path -- exclusive creation makes this
   atomic between processes. The lock records the holding process's pid, host and acquisition
   time. A lock whose holder is demonstrably gone (dead pid on this host, or older than six

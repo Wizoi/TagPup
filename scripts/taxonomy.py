@@ -144,11 +144,23 @@ class TagTaxonomy:
         return "/".join(parts)
 
     def add_tag(self, tag: str):
-        """Add a tag to the taxonomy, building all of its ancestor paths."""
+        """Add a tag to the taxonomy, building all of its ancestor paths.
+
+        A bare name that a people path already claims is not added as a root of its
+        own. Photo keywords carry both forms in the wild -- a file may say
+        "Cora Ingersoll" where the taxonomy says "People/Cora Ingersoll" -- and adding the
+        bare one gives that person a second home, which is a choice nobody reading
+        the Add Person list can make correctly. Only people are folded this way:
+        "Kentridge" beside "School/Kentridge" is left alone, because deciding that
+        for every tag is a different question and not this one.
+        """
         normalized = self.normalize_tag(tag)
         if not normalized:
             return
-            
+
+        if "/" not in normalized and self.find_person_path(normalized):
+            return
+
         parts = normalized.split("/")
         for i in range(1, len(parts) + 1):
             path = "/".join(parts[:i])
@@ -158,6 +170,95 @@ class TagTaxonomy:
         """Add multiple tags to the taxonomy."""
         for tag in tags:
             self.add_tag(tag)
+
+    #: Roots that hold people. A library may use any of them, or its own.
+    DEFAULT_PEOPLE_ROOTS = ("People", "Family", "Friends")
+
+    def people_roots(self) -> Set[str]:
+        """Lowercased roots this library files people under."""
+        roots = {r.lower() for r in self.DEFAULT_PEOPLE_ROOTS}
+        if getattr(self, "db_path", None):
+            try:
+                conn = sqlite3.connect(self.db_path, timeout=30.0)
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='tag_taxonomy'"
+                )
+                if cur.fetchone():
+                    cur.execute(
+                        "SELECT name FROM tag_taxonomy "
+                        "WHERE has_face = 1 AND tag NOT LIKE '%/%'"
+                    )
+                    for row in cur.fetchall():
+                        if row[0]:
+                            roots.add(row[0].strip().lower())
+                conn.close()
+            except Exception:
+                pass
+        return roots
+
+    def find_person_path(self, name: str) -> Optional[str]:
+        """An existing people path whose last segment is this name."""
+        wanted = self.normalize_tag(name).split("/")[-1].strip().lower()
+        if not wanted:
+            return None
+        roots = self.people_roots()
+        for path in self.paths:
+            if "/" not in path:
+                continue
+            if path.split("/")[0].strip().lower() not in roots:
+                continue
+            if path.split("/")[-1].strip().lower() == wanted:
+                return path
+        return None
+
+    def find_by_leaf(self, name: str) -> Optional[str]:
+        """An existing path whose last segment is this name, if there is one."""
+        wanted = self.normalize_tag(name).split("/")[-1].strip().lower()
+        if not wanted:
+            return None
+        for path in self.paths:
+            if path.split("/")[-1].strip().lower() == wanted:
+                return path
+        return None
+
+    def people_root(self) -> str:
+        """The root this library files people under.
+
+        Whichever of the usual people roots already exists, so a library using
+        "Family" does not suddenly grow a "People" beside it. Falls back to People.
+        """
+        existing = {p.split("/")[0].strip().lower() for p in self.paths}
+        for root in self.DEFAULT_PEOPLE_ROOTS:
+            if root.lower() in existing:
+                return root
+        return self.DEFAULT_PEOPLE_ROOTS[0]
+
+    def add_people(self, names: List[str]):
+        """Record people in the taxonomy, under a people root.
+
+        `names` are leaf names: extract_people flattens a hierarchical keyword down
+        to the person it names, because that is the form used for display and for
+        matching. Passing them to add_tags instead treated each as a whole path and
+        minted a bare root node per person, beside the People/<name> the keyword had
+        already created -- and it ran on every index, so every cleanup was undone by
+        the next run.
+
+        A name already somewhere in the taxonomy is left where it is: the point is to
+        avoid a second home for it, not to move the first one.
+        """
+        root = self.people_root()
+        for name in names:
+            normalized = self.normalize_tag(name)
+            if not normalized:
+                continue
+            if "/" in normalized:
+                self.add_tag(normalized)
+                continue
+            if self.find_person_path(normalized):
+                continue
+            self.add_tag("%s/%s" % (root, normalized))
 
     def expand_tag(self, tag: str) -> List[str]:
         """Given a tag, if it matches a path in the taxonomy, expand it to include all ancestors."""
