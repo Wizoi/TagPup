@@ -1553,11 +1553,29 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (face.excluded) card.classList.add('excluded');
                     else if (!face.name) card.classList.add('unmatched');
 
+                    // The crop and anything drawn over it share a box, so the
+                    // confidence can sit on the picture instead of competing with the
+                    // name for a 72px label that ellipsises either way.
+                    const frame = document.createElement('div');
+                    frame.className = 'face-card-frame';
+
                     const img = document.createElement('img');
                     img.className = 'face-card-img';
                     img.src = `/api/face-crop?id=${face.id}`;
                     img.alt = face.name || 'Unidentified face';
-                    card.appendChild(img);
+                    frame.appendChild(img);
+
+                    // How sure the match is, in the corner of the crop. It used to be
+                    // appended to the name inside the label, where "Saskia Wren? 72%"
+                    // truncated to "Saskia Wren? ..." and the number -- the part that
+                    // decides whether to trust it -- was the first thing lost.
+                    if (!face.excluded && face.suggestion && face.similarity) {
+                        const badge = document.createElement('span');
+                        badge.className = 'face-card-confidence';
+                        badge.textContent = `${Math.round(face.similarity * 100)}%`;
+                        frame.appendChild(badge);
+                    }
+                    card.appendChild(frame);
 
                     const label = document.createElement('span');
                     label.className = 'face-card-label';
@@ -1569,7 +1587,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         card.title = face.name;
                     } else if (face.suggestion) {
                         const pct = Math.round((face.similarity || 0) * 100);
-                        label.textContent = `${face.suggestion}? ${pct}%`;
+                        // The percentage lives on the crop now; repeating it here is
+                        // what pushed the name into an ellipsis.
+                        label.textContent = `${face.suggestion}?`;
                         card.title = `Closest match: ${face.suggestion} (${pct}%). Not assigned.`;
                         label.classList.add('face-card-suggestion');
                     } else {
@@ -1592,7 +1612,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     if (namesSomebody && !alreadyTagged && !face.excluded) {
                         card.classList.add('face-card-actionable');
-                        card.title = `Click to add ${namesSomebody} to this photo`;
+                        // Keep what the card already said -- the closest match and how
+                        // sure it is -- and add what pressing it does. Replacing it
+                        // threw away the reading somebody hovers to check.
+                        card.title = `${card.title || namesSomebody}`
+                            + `
+Click to add ${namesSomebody} to this photo.`;
                         card.addEventListener('click', () => {
                             applySuggestedTagDirect(namesSomebody, true);
                         });

@@ -271,3 +271,61 @@ describe("acting on a face", () => {
     assert.ok(!ctx.document.querySelector(".face-card").classList.contains("face-card-actionable"));
   });
 });
+
+describe("how sure the match is", () => {
+  // It used to be appended to the name inside a 72px label, so "Saskia Wren? 72%"
+  // rendered as "Saskia Wren? ..." -- and the number, the part that decides whether to
+  // trust the match, was the first thing the ellipsis took.
+  const suggested = (similarity) => ({
+    faces: [{
+      id: 3, box: [0, 0, 9, 9], area: 81, name: null,
+      suggestion: "Jane Doe", similarity, excluded: false,
+    }],
+    total: 1, unmatched: 1,
+  });
+
+  test("it sits on the crop, not in the label", async (t) => {
+    const ctx = await openPhoto(t, suggested(0.72));
+    const badge = ctx.document.querySelector(".face-card-confidence");
+    assert.ok(badge, "no confidence badge on the crop");
+    assert.equal(badge.textContent, "72%");
+  });
+
+  test("the label keeps the name and drops the number", async (t) => {
+    const ctx = await openPhoto(t, suggested(0.72));
+    const label = ctx.document.querySelector(".face-card-label");
+    assert.match(label.textContent, /Jane Doe\?/);
+    assert.ok(!label.textContent.includes("72"), `still doubled up: ${label.textContent}`);
+  });
+
+  test("the full reading is still on hover", async (t) => {
+    const ctx = await openPhoto(t, suggested(0.72));
+    assert.match(ctx.document.querySelector(".face-card").title, /72%/);
+  });
+
+  test("a face that was recognised carries no badge", async (t) => {
+    // A confirmed name is not a percentage.
+    const ctx = await openPhoto(t, {
+      faces: [{ id: 1, box: [0, 0, 9, 9], area: 81, name: "Jane Doe", excluded: false }],
+      total: 1, unmatched: 0,
+    });
+    assert.equal(ctx.document.querySelector(".face-card-confidence"), null);
+  });
+
+  test("an unidentified face carries no badge", async (t) => {
+    const ctx = await openPhoto(t, {
+      faces: [{ id: 2, box: [0, 0, 9, 9], area: 81, name: null, suggestion: null, excluded: false }],
+      total: 1, unmatched: 1,
+    });
+    assert.equal(ctx.document.querySelector(".face-card-confidence"), null);
+  });
+
+  test("an excluded face carries no badge", async (t) => {
+    const ctx = await openPhoto(t, {
+      faces: [{ id: 4, box: [0, 0, 9, 9], area: 81, name: null, suggestion: "Jane Doe",
+                similarity: 0.9, excluded: true, excluded_reason: "stranger" }],
+      total: 1, unmatched: 0,
+    });
+    assert.equal(ctx.document.querySelector(".face-card-confidence"), null);
+  });
+});

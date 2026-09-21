@@ -1829,3 +1829,30 @@ input:checked + .slider:before {
 .face-card-settled .face-card-label {
     color: var(--text-muted);
 }
+
+/* The crop and what is drawn over it. A positioned parent so the confidence badge has
+   something to sit in the corner of. */
+.face-card-frame {
+    position: relative;
+    line-height: 0;
+}
+
+/* How sure a match is, in the corner of the face it is about.
+   
+   It used to be appended to the name inside a 72px label -- "Saskia Wren? 72%" rendered
+   as "Saskia Wren? ..." and the number, the part that decides whether to trust the
+   match, was the first thing the ellipsis took. On the crop it has room, and it reads
+   against both a dark and a bright face because the pill carries its own ground. */
+.face-card-confidence {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.5;
+    border-radius: 8px;
+    background: rgba(9, 13, 22, 0.78);
+    color: var(--text-primary);
+    pointer-events: none;
+}
