@@ -1829,3 +1829,116 @@ body {
 .face-guess.is-possible:hover {
     background: rgba(100, 116, 139, 1);
 }
+
+/* ---- Review Tags ----------------------------------------------------------
+   The word tags, which face curation could not reach. A tagged photo is what the
+   suggester learns the next photo from, so a misspelling spreads exactly as a wrong
+   name does -- and there was no view in which to notice one. */
+.tag-view-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 20px 24px;
+    overflow-y: auto;
+}
+
+.tag-view-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 16px;
+}
+
+.tag-view-header h2 {
+    font-family: var(--font-heading);
+    font-size: 20px;
+    /* A tag path can be long; it wraps rather than pushing the buttons off. */
+    overflow-wrap: anywhere;
+}
+
+.tag-view-summary {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.tag-view-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+/* What is wrong with a tag, where something is: no hierarchy, on no photo, or absent
+   from the suggester's cache. Quiet, because most tags have nothing to say. */
+.tag-item-note {
+    display: block;
+    margin-top: 2px;
+    font-size: 10px;
+    letter-spacing: 0.3px;
+    color: var(--badge-unmatched);
+}
+
+/* A bucket is not a tag: it collects the ones worth looking at first, and sorting it
+   into the alphabet would bury it. */
+.tag-bucket-item .photo-title {
+    font-weight: 600;
+}
+
+.tag-bucket-members {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.tag-bucket-member {
+    padding: 5px 10px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.tag-bucket-member:hover {
+    border-color: var(--accent);
+}
+
+.tag-photo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
+}
+
+.tag-photo-card {
+    min-width: 0;
+}
+
+.tag-photo-card img {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+}
+
+.tag-photo-name {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tag-empty {
+    font-size: 13px;
+    color: var(--text-muted);
+}

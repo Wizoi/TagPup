@@ -206,6 +206,30 @@ The buckets -- `Unknown Faces`, `Ungrouped`, `Excluded` -- stay pinned to the to
 either order. They are not people, and sorting them into the alphabet would bury them
 between two names.
 
+### 0.5 Review Tags
+
+A third mode beside Folder Matches and Identify Faces, for the word tags face curation
+could not reach. A tagged photo is what the suggester learns the next photo from, so a
+misspelling spreads exactly as a wrong name does — and until this view there was nowhere
+to ask *where is this tag, and what does it touch*.
+
+The sidebar lists every tag with its photo count, ordered and searched by the same
+controls the people list uses. Four buckets sit pinned above the alphabet, because a
+flat list of 881 tags hides the handful worth looking at: **No hierarchy** (a tag with
+no path), **Used once** (where typos hide, never confirmed by a second photo), **On no
+photo** (in the vocabulary, describing nothing, still offerable), and **People missing a
+path** (a person written as a bare leaf, which the keyword convention forbids). An empty
+bucket is not shown. A tag carries a short note where something is wrong with it.
+
+Opening a tag shows its photos and says what it is — how many carry it, whether it has a
+hierarchy, whether the suggester has it cached. **Rename**, **Merge into…** and
+**Retire** change it everywhere it lives: the photo files, `photos.tags`,
+`tag_taxonomy` and `tag_embeddings`. Each asks the server for a plan first and states
+what it would touch before writing; a tag can sit on hundreds of photo files and the
+plan is the last point at which that costs nothing. Dropping the cached embedding is not
+bookkeeping — a tag cleaned out of every file goes on being suggested while zero-shot
+matching can still read its name.
+
 ### 1. Interactive Face Tuning
 - Clicking on a face card in the "Detected Faces" grid selects it and expands it to show the editing panel.
 - **Deselection/Cancel**: Clicking "Cancel" or selecting another face card deselects the current face and hides the editing panel.

@@ -34,6 +34,7 @@
                         <option value="folder-match">Folder Matches</option>
                         <option value="unmatched-faces">Identify Faces</option>
                         <option value="face-matching">Review People</option>
+                        <option value="tags">Review Tags</option>
                     </select>
                 </div>
                 <div class="control-group" id="show-matched-container">
@@ -140,6 +141,34 @@
                             </div>
                         </div>
                     </div>
+                </div>
+
+                <!-- Review Tags: the word tags, which face curation could not reach.
+                     A tagged photo is what the suggester learns the next photo from, so
+                     a misspelling spreads exactly as a wrong name does. Until now there
+                     was no view in which "where is this tag and what does it touch"
+                     could be asked. -->
+                <div class="tag-view-content hidden" id="tag-view-content">
+                    <div class="tag-view-header">
+                        <div>
+                            <h2 id="tag-view-name">Select a tag</h2>
+                            <p id="tag-view-summary" class="tag-view-summary"></p>
+                        </div>
+                        <div class="tag-view-actions">
+                            <button id="btn-tag-rename" class="btn btn-secondary btn-sm" disabled
+                                title="Change this tag everywhere it appears">Rename…</button>
+                            <button id="btn-tag-merge" class="btn btn-secondary btn-sm" disabled
+                                title="Fold this tag into another one">Merge into…</button>
+                            <button id="btn-tag-retire" class="btn btn-secondary btn-sm" disabled
+                                title="Stop offering this tag, leaving the photos alone">Retire…</button>
+                        </div>
+                    </div>
+
+                    <div id="tag-view-placeholder" class="sidebar-placeholder">
+                        <p>Pick a tag on the left to see the photos it is on.</p>
+                    </div>
+
+                    <div class="tag-photo-grid" id="tag-photo-grid"></div>
                 </div>
 
                 <!-- Face Matching Content View -->

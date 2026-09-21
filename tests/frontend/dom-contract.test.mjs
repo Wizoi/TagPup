@@ -131,12 +131,21 @@ describe("sidebar refreshes follow the selected mode", () => {
   });
 
   test("the dispatcher still dispatches", () => {
+    // Read the function, not a fixed number of bytes of it. This asserted against the
+    // first 900 characters and broke when a third mode was added ahead of the branch
+    // it was looking for -- a passing test turning red for the length of the code
+    // above it teaches nothing.
     const js = fs.readFileSync(path.join(REPO_ROOT, "gui", "app.js"), "utf8");
-    const body = js.slice(js.indexOf("function fetchPhotos()"));
-    assert.match(
-      body.slice(0, 900),
+    const start = js.indexOf("function fetchPhotos()");
+    assert.ok(start > 0, "fetchPhotos is gone");
+    const end = js.indexOf("\n    function ", start + 10);
+    const body = js.slice(start, end);
+
+    for (const branch of [
       /mode === 'face-matching' \|\| mode === 'unmatched-faces'/,
-      "fetchPhotos no longer branches on the mode"
-    );
+      /mode === 'tags'/,
+    ]) {
+      assert.match(body, branch, "fetchPhotos no longer branches on the mode");
+    }
   });
 });
