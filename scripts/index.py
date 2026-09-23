@@ -471,6 +471,16 @@ class PhotoIndex:
                 # hand, "nobody" decisions and exclusions. Re-indexing a changed photo
                 # did exactly that. The existing spelling is kept because the faces
                 # point at it, and a row under a second spelling would be a duplicate.
+                # Who the keywords name depends on this library's taxonomy, which
+                # the reader only consults when a caller remembers to pass it. The
+                # CLI and both folder indexers did not, and the row lost everyone
+                # outside the default roots. Resolve here, against this connection.
+                from metadata import extract_people
+                resolved = extract_people(meta.get("raw_metadata", {}), meta.get("tags", []),
+                                          conn=self.conn)
+                known = {p.lower() for p in meta.get("people", [])}
+                meta = dict(meta, people=list(meta.get("people", []))
+                            + [p for p in resolved if p.lower() not in known])
                 clause, params = paths.sql_equals("path", meta["path"])
                 existing = cursor.execute(
                     "SELECT path FROM photos WHERE " + clause + " LIMIT 1", params).fetchone()

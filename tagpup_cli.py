@@ -291,7 +291,7 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     from tqdm import tqdm
     for i in tqdm(range(0, len(images_to_process), batch_size), desc="Reading metadata"):
         batch = images_to_process[i:i+batch_size]
-        batch_meta = extractor.batch_read(batch)
+        batch_meta = extractor.batch_read(batch, db_path=db_path)
         all_metadata.extend(batch_meta)
 
     # Every scanned photo is indexed, tagged or not.
@@ -517,7 +517,7 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
         from tqdm import tqdm
         for i in tqdm(range(0, len(all_images), batch_size), desc="Reading metadata"):
             batch = all_images[i:i+batch_size]
-            batch_meta = extractor.batch_read(batch)
+            batch_meta = extractor.batch_read(batch, db_path=db_path)
             for meta in batch_meta:
                 metadata_map[meta["path"]] = meta
 
@@ -754,14 +754,17 @@ def stats(ctx):
 
 @cli.command()
 @click.argument("photo_path", type=click.Path(exists=True, dir_okay=False))
-def inspect(photo_path: str):
+@click.pass_context
+def inspect(ctx, photo_path: str):
     """Inspect metadata found in a single image (useful for debugging)."""
     config = get_config()
     exiftool_path = get_exiftool_path(config)
+    # Who the keywords name depends on the library's taxonomy.
+    db_path, _ = get_db_paths(config, ctx.obj.get("test", False), ctx.obj.get("db"))
 
     console.print(f"Inspecting file: [bold cyan]{photo_path}[/bold cyan]")
     extractor = MetadataExtractor(exiftool_path=exiftool_path)
-    meta = extractor.batch_read([photo_path])[0]
+    meta = extractor.batch_read([photo_path], db_path=db_path)[0]
 
     console.print("\n[bold underline]Parsed Output[/bold underline]")
     console.print(f"Path: {meta['path']}")
