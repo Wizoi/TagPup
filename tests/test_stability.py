@@ -827,27 +827,35 @@ class TestStability(unittest.TestCase):
     def test_rotate_image_file_direction_validation(self):
         import tempfile
         import shutil
-        from PIL import Image
+        from PIL import Image, ImageOps
         from metadata import rotate_image_file
-        
+        from tests.test_taxonomy_lifecycle import EXIFTOOL
+        if not EXIFTOOL:
+            self.skipTest("ExifTool not installed")
+
         temp_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, temp_dir, True)
         img_path = os.path.join(temp_dir, "test_rotate.jpg")
-        
+
         # Create an asymmetrical image: 10 wide, 20 high
         img = Image.new("RGB", (10, 20), color="red")
         img.save(img_path, "JPEG")
-        
-        # Rotate left (counter-clockwise) -> should become 20 wide, 10 high
-        rotate_image_file(img_path, "left")
-        with Image.open(img_path) as rotated:
-            self.assertEqual(rotated.size, (20, 10), "Rotating left should swap dimensions")
-            
-        # Rotate right (clockwise) -> should become 10 wide, 20 high again
-        rotate_image_file(img_path, "right")
-        with Image.open(img_path) as rotated:
-            self.assertEqual(rotated.size, (10, 20), "Rotating right should swap dimensions back")
-            
-        shutil.rmtree(temp_dir)
+
+        def shown_size():
+            # A rotation sets the Orientation tag; the pixels stay as stored.
+            with Image.open(img_path) as rotated:
+                return ImageOps.exif_transpose(rotated).size
+
+        with self.assertRaises(ValueError):
+            rotate_image_file(img_path, "sideways", EXIFTOOL)
+
+        # Rotate left (counter-clockwise) -> shown 20 wide, 10 high
+        rotate_image_file(img_path, "left", EXIFTOOL)
+        self.assertEqual(shown_size(), (20, 10), "Rotating left should swap dimensions")
+
+        # Rotate right (clockwise) -> shown 10 wide, 20 high again
+        rotate_image_file(img_path, "right", EXIFTOOL)
+        self.assertEqual(shown_size(), (10, 20), "Rotating right should swap dimensions back")
 
     def test_hierarchical_tags_cleaning(self):
         from metadata import extract_tags

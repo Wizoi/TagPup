@@ -378,6 +378,66 @@ def tags_in_file(et, photo_path):
     return extract_tags({k: clean_metadata_value(v) for k, v in meta.items()})
 
 
+def record_file_stat_in_index(db_path, photo_path):
+    """Record a photo's current mtime and size in its index row. Returns rows changed.
+
+    For a write that changes the file but not what the index describes -- a rotation
+    changes only the Orientation tag. Left stale, the folder scan would distrust the
+    row and re-read the photo with ExifTool on every scan.
+    """
+    stat = os.stat(photo_path)
+    where, where_params = paths.sql_equals("path", photo_path)
+
+    def store(conn):
+        cursor = conn.execute("UPDATE photos SET mtime = ?, size = ? WHERE " + where,
+                              (stat.st_mtime, stat.st_size) + where_params)
+        return cursor.rowcount
+
+    return tagpup_db.write_with_connection(
+        db_path, store, label="file stat for %s" % os.path.basename(photo_path))
+
+
+def turned_box(box, direction, width, height):
+    """A face box after a quarter turn of a `width` x `height` image.
+
+    Left is counter-clockwise, as Image.rotate(90, expand=True) turns it.
+    """
+    x1, y1, x2, y2 = box[:4]
+    if direction == "left":
+        return [y1, width - x2, y2, width - x1]
+    return [height - y2, x1, height - y1, x2]
+
+
+def turn_face_boxes(db_path, photo_path, direction, width, height):
+    """Turn a photo's stored face boxes with it. Returns how many rows changed.
+
+    Only for a photo Pillow shows already oriented (a TIFF: Pillow applies its
+    Orientation on load), where every box -- and every crop cut from it -- is in the
+    turned picture's coordinates once the Orientation changes. The cached crop is
+    dropped so the next request cuts it again from the right place.
+    """
+    where, where_params = paths.sql_equals("photo_path", photo_path)
+
+    def turn(conn):
+        cursor = conn.cursor()
+        rows = cursor.execute("SELECT id, box FROM faces WHERE " + where, where_params).fetchall()
+        changed = 0
+        for face_id, box_json in rows:
+            try:
+                box = json.loads(box_json)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(box, list) or len(box) < 4:
+                continue
+            cursor.execute("UPDATE faces SET box = ?, crop_image = NULL WHERE id = ?",
+                           (json.dumps(turned_box(box, direction, width, height)), face_id))
+            changed += cursor.rowcount
+        return changed
+
+    return tagpup_db.write_with_connection(
+        db_path, turn, label="face boxes for rotated %s" % os.path.basename(photo_path))
+
+
 def forget_photo_in_index(db_path, photo_path):
     """Remove a deleted photo's row, its faces and its cached embedding.
 
@@ -2251,26 +2311,40 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.send_json_error(400, "Invalid file path")
             return
 
-        # Rotation re-encodes the image, so reject anything but an explicit direction
-        # rather than silently treating an unrecognised value as a right turn.
+        # Reject anything but an explicit direction rather than silently treating an
+        # unrecognised value as a right turn.
         if direction not in ("left", "right"):
             self.send_json_error(400, "Direction must be 'left' or 'right'")
             return
 
         try:
             from metadata import rotate_image_file
-            executable = self.get_exiftool_path()
-            rotate_image_file(paths.stored(photo_path), direction, executable)
-                
-            # Update cache file stats
-            folder_path = paths.key(os.path.dirname(photo_path))
-            if folder_path in TagPupHTTPRequestHandler.folder_cache:
-                stat = os.stat(photo_path)
-                photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(paths.key(photo_path))
-                if photo_entry:
-                    photo_entry["mtime"] = stat.st_mtime
-                    photo_entry["size"] = stat.st_size
-                    
+            from PIL import Image
+            photo_path = paths.stored(photo_path)
+
+            # Face boxes are in the coordinates Pillow shows the photo in. For most
+            # formats that is the stored pixels, which a rotation (an Orientation
+            # change) leaves alone, so the boxes stay right. Pillow applies a TIFF's
+            # Orientation as it loads it, so there the boxes must turn with it.
+            with Image.open(photo_path) as img:
+                shown_oriented = img.format == "TIFF"
+                if shown_oriented:
+                    img.load()
+                width, height = img.size
+
+            rotate_image_file(photo_path, direction, self.get_exiftool_path())
+
+            if shown_oriented:
+                turn_face_boxes(self.db_path, photo_path, direction, width, height)
+            # The file changed, so the scan must not distrust its row; nothing the
+            # index describes did.
+            record_file_stat_in_index(self.db_path, photo_path)
+
+            stat = os.stat(photo_path)
+            for _folder_map, photo_entry in self.cached_photo_entries(photo_path):
+                photo_entry["mtime"] = stat.st_mtime
+                photo_entry["size"] = stat.st_size
+
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error rotating image {photo_path}: {e}")

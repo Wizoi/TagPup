@@ -538,26 +538,57 @@ def build_photo_ui_record(path: str, meta: Dict[str, Any], mtime: float = 0.0, s
     }
 
 
-def rotate_image_file(photo_path: str, direction: str, exiftool_path: Optional[str] = None) -> None:
-    """Rotates the image at photo_path 90 degrees CCW (left) or CW (right)
-    and preserves EXIF data while resetting Orientation tag to 1."""
-    from PIL import Image, ImageOps
-    with Image.open(photo_path) as img:
-        exif_bytes = img.info.get('exif')
-        img_transposed = ImageOps.exif_transpose(img)
-        angle = 90 if direction == "left" else 270
-        rotated = img_transposed.rotate(angle, expand=True)
-        if exif_bytes:
-            rotated.save(photo_path, exif=exif_bytes, quality=95)
-        else:
-            rotated.save(photo_path, quality=95)
+#: The EXIF Orientation a photo has after a quarter turn, by the one it had before.
+#: Worked out against ImageOps.exif_transpose -- what is shown for the new value is
+#: what was shown for the old one, turned -- and checked the same way in
+#: tests/test_rotate_keeps_the_photo.py. The mirrored values (2, 4, 5, 7) stay mirrored.
+ROTATED_ORIENTATION = {
+    "left": {1: 8, 2: 5, 3: 6, 4: 7, 5: 4, 6: 1, 7: 2, 8: 3},
+    "right": {1: 6, 2: 7, 3: 8, 4: 5, 5: 2, 6: 3, 7: 4, 8: 1},
+}
 
-    if exiftool_path:
+
+def rotate_image_file(photo_path: str, direction: str, exiftool_path: Optional[str] = None) -> int:
+    """Turn a photo a quarter left or right. Returns the Orientation it now has.
+
+    Only the EXIF Orientation tag changes; the pixels are not touched. This used to
+    decode the photo with Pillow, turn it, and save it again passing only the EXIF
+    block, which dropped every XMP and IPTC field -- keywords, people, caption,
+    DocumentID -- and re-encoded the JPEG at quality 95 on every click. Browsers, and
+    the server's previews (ImageOps.exif_transpose), show a photo by its orientation,
+    so changing that turns what everybody sees and leaves everything else alone.
+
+    The new value is composed with the one already there, so turning a phone photo
+    stored sideways (Orientation 6) left makes it 1, not 8.
+
+    Raises if ExifTool is unavailable or the file does not end up with the value
+    written: a rotation that silently did nothing would be reported as done.
+    """
+    turns = ROTATED_ORIENTATION.get(direction)
+    if turns is None:
+        raise ValueError("Direction must be 'left' or 'right', not %r" % (direction,))
+    if not exiftool_path:
+        raise ValueError("Rotating a photo needs ExifTool, and no ExifTool path was given")
+
+    def orientation_of(et):
+        found = et.get_tags([photo_path], tags=["EXIF:Orientation"])
+        value = (found[0] if found else {}).get("EXIF:Orientation")
         try:
-            with ExifToolSession(executable=exiftool_path) as et:
-                et.set_tags([photo_path], tags={"Orientation": 1}, params=["-overwrite_original"])
-        except Exception:
-            pass
+            value = int(value)
+        except (TypeError, ValueError):
+            return None
+        return value if 1 <= value <= 8 else None
+
+    with ExifToolSession(executable=exiftool_path) as et:
+        new = turns[orientation_of(et) or 1]
+        # Written without a group, so an XMP tiff:Orientation already in the file is
+        # updated to match instead of being left to contradict the EXIF one.
+        et.set_tags([photo_path], tags={"Orientation": new}, params=["-overwrite_original"])
+        written = orientation_of(et)
+    if written != new:
+        raise RuntimeError("Rotated %s to orientation %s, but the file now says %s"
+                           % (os.path.basename(photo_path), new, written))
+    return new
 
 
 def sanitize_filename(name: str) -> str:
