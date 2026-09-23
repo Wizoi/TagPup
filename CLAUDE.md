@@ -26,6 +26,26 @@ any indexer. Check for one before editing; run long indexes through the CLI.
 **Never call `sqlite3.connect`.** Use `scripts/db.py`. It owns journal mode, busy
 timeout, the per-file write lock and the retry. `tests/test_db_access.py` enforces it.
 
+**Never spell or compare a photo path by hand.** `scripts/paths.py` owns it: `stored()`
+for anything written to the database, walked or sent to the browser; `key()` for
+in-memory comparison; `sql_equals()` / `sql_under()` for SQL. A helper that turned
+`D:\x` into `D:/x` made tag writes, renames and deletes match no row for three
+months while reporting success. In the pages, `pathKey` / `samePath`.
+`tests/test_paths_single_owner.py` and `tests/frontend/path-helpers.test.mjs` enforce it.
+
+**SQL on this library is not SQL on a test fixture.** 225,000 faces, most carrying a
+6 KB crop, and every one of these has shipped:
+- `LIKE` is not equality. It ignores case and reads `_` and `%` as wildcards, so
+  `IMG_0001.jpg` also matches `IMGX0001.jpg` -- in an `UPDATE`, other photos change.
+- A function on a column (`LOWER(path) = ?`) cannot use its index. Neither can a
+  comparison whose collation differs from the index's.
+- Never select a BLOB you do not use. `SELECT *` on `faces` is ten seconds cold.
+- A query in a per-item loop that answers the same thing each time belongs outside it.
+- Check `EXPLAIN QUERY PLAN` against `data/photo_index.db` (read-only, via
+  `db.readonly_uri`) for anything that touches `faces` or `photos`.
+- Look at real rows before writing a lookup. A fixture seeded through the helper under
+  test agrees with the helper, not with the data.
+
 **Never convert between a person's name and their tag by hand.** Identity is a leaf
 (`Rowan Thackeray`); the tag is a path (`People/Rowan Thackeray`). Use `leafOf`,
 `rootOf`, `samePerson`, `photoAlreadyHas` in `gui_tagpup/app.js`, and

@@ -58,7 +58,7 @@ Stores high-level image metadata, tags (keywords), captions, resolved people lis
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
-| `path` | TEXT | PRIMARY KEY | Absolute or relative path to the original image file. |
+| `path` | TEXT | PRIMARY KEY | The image file. Absolute path in stored form -- `paths.stored()`: native separators, as the indexer writes it. Compared case-insensitively on Windows through `paths.sql_equals()`, which the `*_path_nocase` indexes answer; never by `LOWER()` or `LIKE`. |
 | `mtime` | REAL | | Last modification time (epoch timestamp) of the image file. |
 | `size` | INTEGER | | File size in bytes. |
 | `tags` | TEXT | | JSON-serialized array of metadata keyword strings (e.g., `["nature", "sunset"]`). |
@@ -74,7 +74,7 @@ Stores details of faces detected within photos, including face crop coordinates,
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | Unique face crop identifier. |
-| `photo_path` | TEXT | FOREIGN KEY | Path to parent photo. References `photos(path)` with `ON DELETE CASCADE`. |
+| `photo_path` | TEXT | FOREIGN KEY | Path to parent photo, in the same stored form as `photos.path`. References `photos(path)` with `ON DELETE CASCADE`. May name a photo that was never indexed: the suggester records faces it detects. |
 | `box` | TEXT | | JSON-serialized bounding box coordinates `[x1, y1, x2, y2]`. |
 | `embedding` | BLOB | | 512-dimensional face embedding vector (binary representation of float32 array). |
 | `name` | TEXT | | The resolved name of the person (or `NULL` if unmatched). |
@@ -89,7 +89,7 @@ Acts as a cache layer for photo visual embeddings to avoid recalculating heavy i
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
-| `path` | TEXT | PRIMARY KEY | Absolute or relative path to the image file. |
+| `path` | TEXT | PRIMARY KEY | The image file, in stored form (see `photos.path`). |
 | `mtime` | REAL | | Last modification time. |
 | `size` | INTEGER | | File size in bytes. |
 | `model_name` | TEXT | | Name of the feature extraction model used. |
