@@ -1798,6 +1798,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.send_json_error(400, "Missing 'path' parameter")
             return
         folder_path = paths.key(urllib.parse.unquote(folder_path_list[0]))
+        self.ensure_suggestions_loaded(self.db_path)
         status_info = TagPupHTTPRequestHandler.suggest_status.get(folder_path, {"status": "idle"})
         self.send_json(status_info)
 
@@ -1815,7 +1816,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             
         folder_path = paths.stored(folder_path)
         folder_path_norm = paths.key(folder_path)
-        
+
+        self.ensure_suggestions_loaded(self.db_path)
         status_info = TagPupHTTPRequestHandler.suggest_status.get(folder_path_norm)
         if status_info and status_info["status"] in ("preparing", "running"):
             self.send_json({"success": True, "status": status_info["status"]})
@@ -1890,9 +1892,33 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     merged.setdefault(p, s)
         return rekeyed
 
+    #: Libraries whose saved suggestions have been read into memory, by registry key.
+    _suggestions_loaded = set()
+    _suggestions_load_lock = threading.Lock()
+
+    @classmethod
+    def ensure_suggestions_loaded(cls, db_path):
+        """Read a library's saved suggestions the first time anything uses them.
+
+        They used to be read once, at startup, for the startup library only. Any
+        other library's saved runs were never offered again, and the first save for
+        it -- which writes everything in memory -- replaced its file with just this
+        session's folders. Every reader of the suggestions and every save calls this,
+        so no save can happen before the load.
+        """
+        set_active_db_path(db_path)
+        registry_key = get_active_db_path()
+        if registry_key in cls._suggestions_loaded:
+            return
+        with cls._suggestions_load_lock:
+            if registry_key not in cls._suggestions_loaded:
+                cls.load_suggestions_cache(db_path)
+
     @classmethod
     def load_suggestions_cache(cls, db_path):
         set_active_db_path(db_path)
+        # Marked first: a file that fails to load is not tried again on every save.
+        cls._suggestions_loaded.add(get_active_db_path())
         cache_path = cls._suggestions_cache_path(db_path)
         if os.path.exists(cache_path):
             try:
@@ -1936,7 +1962,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         import json
         import tempfile
         import time
-        set_active_db_path(db_path)
+        # What is written is everything in memory, so the saved folders must be in
+        # memory first or this would replace them with only this session's.
+        cls.ensure_suggestions_loaded(db_path)
         cache_path = cls._suggestions_cache_path(db_path)
 
         def too_soon():
@@ -2593,6 +2621,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             return
             
         folder_path = paths.key(folder_path)
+        self.ensure_suggestions_loaded(self.db_path)
         status_info = TagPupHTTPRequestHandler.suggest_status.get(folder_path)
         if not status_info or "suggestions" not in status_info:
             self.send_json_error(400, "No suggestions found for this folder")
@@ -3783,8 +3812,9 @@ def start_server(port=8090, db_path="data/photo_index.db", gui_dir="gui_tagpup")
                 photo_index=photo_index
             )
             TagPupHTTPRequestHandler.shared_embedder = shared_embedder
-            # Load suggestions cache
-            TagPupHTTPRequestHandler.load_suggestions_cache(db_path)
+            # The startup library's saved suggestions, ahead of the first request;
+            # any other library's are read the first time it is used.
+            TagPupHTTPRequestHandler.ensure_suggestions_loaded(db_path)
             
             warmup_thread = threading.Thread(
                 target=warmup_embedder_thread,
