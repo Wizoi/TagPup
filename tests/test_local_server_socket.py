@@ -105,6 +105,26 @@ class TestTheServerAnswersOnBothStacks(unittest.TestCase):
         )
 
 
+class TestAPortInUseIsRefused(unittest.TestCase):
+    """Two servers must never share a port.
+
+    On Windows SO_REUSEADDR let a second server bind a port a live one held, and the
+    two then took each other's connections. Two test runs did that at once: one run's
+    request reached the other run's server, where the folder picker was not mocked,
+    and it opened on the desktop of the person using the app.
+    """
+
+    def test_a_second_server_on_the_same_port_fails_to_start(self):
+        with ServerOnAPort() as s:
+            try:
+                second = localserver.ThreadedHTTPServer(("", s.port), Echo)
+            except OSError:
+                return
+            second.server_close()
+            self.fail("a second server bound port %d while the first was listening"
+                      " on it; requests would go to either" % s.port)
+
+
 class TestHostParsing(unittest.TestCase):
     """`[::1]:8080` is a host and a port, not a host called `[`."""
 

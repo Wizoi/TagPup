@@ -19,6 +19,7 @@ the right one.
 it -- harmless while nothing listened on IPv6, and a locked door the moment something
 did.
 """
+import os
 import socket
 import urllib.parse
 from socketserver import ThreadingTCPServer
@@ -38,7 +39,14 @@ class ThreadedHTTPServer(ThreadingTCPServer):
     two seconds a request; failing to start costs everything.
     """
 
-    allow_reuse_address = True
+    # SO_REUSEADDR means different things on the two platforms. On POSIX it only
+    # skips TIME_WAIT, which a restarting server wants. On Windows it lets a second
+    # socket bind a port a live server already holds -- and the two then take each
+    # other's connections. Two test runs did exactly that: one run's requests reached
+    # the other run's server, where a mocked folder picker was real, and opened it on
+    # the desktop of the person using the app. Windows gets SO_EXCLUSIVEADDRUSE instead,
+    # so a port in use is refused, loudly.
+    allow_reuse_address = os.name != "nt"
     address_family = socket.AF_INET6
 
     def __init__(self, server_address, handler, bind_and_activate=True):
@@ -50,6 +58,9 @@ class ThreadedHTTPServer(ThreadingTCPServer):
             super().__init__((host or "", port), handler, bind_and_activate)
 
     def server_bind(self):
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+        if exclusive is not None:
+            self.socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
         if self.address_family == socket.AF_INET6:
             try:
                 self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
