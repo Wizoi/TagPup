@@ -161,19 +161,20 @@ class TestWorkersBindTheirDatabase(unittest.TestCase):
         self.assertTrue(_calls_set_active_db_path(fn))
 
 
-class TestSuggestionsCacheNamingAgreesAcrossServers(unittest.TestCase):
-    """Both servers read each other's cache files; their naming must not drift."""
+class TestSuggestionsCacheIsScopedPerDatabase(unittest.TestCase):
+    """TagPup owns the cache file (tests/test_suggestions_pipeline.py checks it is
+    the only owner); it must still be one file per database."""
 
-    def test_both_servers_scope_the_cache_per_database(self):
-        for module_path in SERVER_MODULES:
-            with open(module_path, encoding="utf-8") as f:
-                src = f.read()
-            self.assertIn(
-                "gui_suggestions_cache_",
-                src,
-                f"{os.path.basename(module_path)} writes an unscoped suggestions cache, "
-                "which lets one database overwrite another's suggestions",
-            )
+    def test_the_server_scopes_the_cache_per_database(self):
+        module_path = SERVER_MODULES[0]
+        with open(module_path, encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn(
+            "gui_suggestions_cache_",
+            src,
+            f"{os.path.basename(module_path)} writes an unscoped suggestions cache, "
+            "which lets one database overwrite another's suggestions",
+        )
 
 
 class CrossDatabaseReadIsolationMixin:

@@ -439,55 +439,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
     suggest_status = DatabaseIsolatedDict(_db_suggest_status_registry)
     suggest_threads = DatabaseIsolatedDict(_db_suggest_threads_registry)
 
-    @classmethod
-    def load_suggestions_cache(cls, db_path):
-        set_active_db_path(db_path)
-        db_basename = os.path.splitext(os.path.basename(db_path))[0]
-        if db_basename == "photo_index":
-            cache_path = os.path.join(os.path.dirname(db_path), "gui_suggestions_cache.json")
-        else:
-            cache_path = os.path.join(os.path.dirname(db_path), f"gui_suggestions_cache_{db_basename}.json")
-            
-        if os.path.exists(cache_path):
-            try:
-                import json
-                with open(cache_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                # Clean up any active/running statuses to "idle"
-                for folder, status in data.items():
-                    if status.get("status") in ("running", "preparing"):
-                        status["status"] = "idle"
-                # Keyed the way this process looks folders up, whichever spelling the
-                # file was written with.
-                with cls.model_lock:
-                    cls.suggest_status.update(
-                        {paths.key(folder): status for folder, status in data.items()})
-                logger.info(f"Loaded suggestions cache from {cache_path} with {len(data)} folders.")
-            except Exception as e:
-                logger.error(f"Error loading suggestions cache: {e}")
-
-    @classmethod
-    def save_suggestions_cache(cls, db_path):
-        set_active_db_path(db_path)
-        db_basename = os.path.splitext(os.path.basename(db_path))[0]
-        if db_basename == "photo_index":
-            cache_path = os.path.join(os.path.dirname(db_path), "gui_suggestions_cache.json")
-        else:
-            cache_path = os.path.join(os.path.dirname(db_path), f"gui_suggestions_cache_{db_basename}.json")
-            
-        try:
-            import json
-            # Defined in tagpup_server and never imported here, so this raised
-            # NameError into the catch below on every call: TagTuner has never
-            # actually written its suggestion cache.
-            from tagpup_server import make_json_serializable
-            with cls.model_lock:
-                serializable_data = make_json_serializable(cls.suggest_status)
-            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump(serializable_data, f, indent=2)
-        except Exception as e:
-            logger.error(f"Error saving suggestions cache: {e}")
+    # The suggestions cache file belongs to TagPup, which runs the suggestions and is
+    # the only process that reads or writes it (TagPupHTTPRequestHandler.
+    # _suggestions_cache_path). TagTuner used to carry its own copy of the naming and
+    # its own load and save; nothing called either, and a second writer of the same
+    # file from a stale in-memory copy would have overwritten TagPup's.
 
     def resolve_db_from_url(self) -> bool:
         parsed_url = urllib.parse.urlparse(self.path)

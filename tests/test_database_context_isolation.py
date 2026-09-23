@@ -283,20 +283,9 @@ class TestSuggestionsCachePerDatabase(unittest.TestCase):
         b = TagPupHTTPRequestHandler._suggestions_cache_path(os.path.join("data", "kr-track.db"))
         self.assertNotEqual(a, b)
 
-    def test_matches_tuner_server_naming(self):
-        """Both servers read the same cache files; their naming must not drift apart."""
-
-        for db_name in ("photo_index.db", "kr-track.db", "some_other.db"):
-            db_path = os.path.join("data", db_name)
-            tagpup_path = TagPupHTTPRequestHandler._suggestions_cache_path(db_path)
-            # Mirror of tuner_server's inline naming (tuner_server.py load/save_suggestions_cache)
-            base = os.path.splitext(os.path.basename(db_path))[0]
-            expected = (
-                os.path.join(os.path.dirname(db_path), "gui_suggestions_cache.json")
-                if base == "photo_index"
-                else os.path.join(os.path.dirname(db_path), f"gui_suggestions_cache_{base}.json")
-            )
-            self.assertEqual(tagpup_path, expected, f"naming drift for {db_name}")
+    # TagTuner's copy of this naming, which a test here kept in step, is gone: it had
+    # no callers, and tagpup_server is now the only place the file is named
+    # (tests/test_suggestions_pipeline.py, OneFileOneOwner).
 
 
 if __name__ == "__main__":
