@@ -193,6 +193,50 @@ def resolve_people_tags(tags, db_path):
     return resolved
 
 
+def keyword_fields(flat, hierarchical):
+    """Every field a keyword write sets, and what it sets it to.
+
+    The one list of them. write_keyword_fields writes exactly these, and
+    record_keyword_fields records exactly these, so the file and its index row cannot
+    drift apart one field at a time. They did: the index recorded the two XMP fields
+    and not IPTC:Keywords, which metadata.extract_tags also reads, so a tag removed in
+    bulk stayed in raw_metadata and came back the next time anything re-derived tags
+    from it -- renaming an unrelated tag, for one.
+
+    An empty value means the field is cleared.
+    """
+    return {
+        "XMP:Subject": list(flat),
+        "IPTC:Keywords": list(flat),
+        "EXIF:XPKeywords": ";".join(flat),
+        "XMP:HierarchicalSubject": list(hierarchical),
+    }
+
+
+def record_keyword_fields(raw_meta, flat, hierarchical):
+    """Make `raw_meta` say what a keyword write just put in the file. Returns it.
+
+    Only fields the scan reads are recorded, so a row written here looks the same as
+    one read back from the file. A field under its bare name ("Keywords") is the same
+    value the scan stored twice, and is rewritten too; a stale copy there would be
+    read back just the same. A cleared field is removed, as a scan would find nothing.
+    """
+    from metadata import METADATA_FIELDS
+
+    for field, value in keyword_fields(flat, hierarchical).items():
+        if field not in METADATA_FIELDS:
+            continue
+        bare = field.split(":", 1)[1]
+        for name in (field, bare):
+            if name != field and name not in raw_meta:
+                continue
+            if value:
+                raw_meta[name] = list(value)
+            else:
+                raw_meta.pop(name, None)
+    return raw_meta
+
+
 def record_tags_in_index(db_path, photo_path, tags, flat=None, hierarchical=None):
     """Tell the index what a photo's keywords now are.
 
@@ -204,10 +248,21 @@ def record_tags_in_index(db_path, photo_path, tags, flat=None, hierarchical=None
 
     `flat` and `hierarchical` are what was actually written to the file, as
     write_keyword_fields returns them, so raw_metadata keeps agreeing with the photo.
+    Left out, they are what write_keyword_fields would have written for `tags`.
+
+    The file's new mtime and size are recorded too. Writing keywords changes both, and
+    the folder scan only trusts a row whose mtime and size match the file; without
+    them every photo tagged in bulk was re-read with ExifTool on every scan after.
     """
     from metadata import extract_people
 
+    if flat is None and hierarchical is None:
+        flat, hierarchical = expand_tag_fields(tags)
     where, where_params = paths.sql_equals("path", photo_path)
+    try:
+        stat = os.stat(photo_path)
+    except OSError:
+        stat = None
 
     def store(conn):
         cursor = conn.cursor()
@@ -221,16 +276,21 @@ def record_tags_in_index(db_path, photo_path, tags, flat=None, hierarchical=None
             raw_meta = json.loads(raw_json) if raw_json else {}
         except Exception:
             raw_meta = {}
-        if flat is not None:
-            raw_meta["XMP:Subject"] = flat
-        if hierarchical is not None:
-            raw_meta["XMP:HierarchicalSubject"] = hierarchical
+        record_keyword_fields(raw_meta, flat or [], hierarchical or [])
 
         people = extract_people(raw_meta, tags, db_path=db_path)
-        cursor.execute(
-            "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE rowid = ?",
-            (json.dumps(tags), json.dumps(people), json.dumps(raw_meta), rowid),
-        )
+        if stat is None:
+            cursor.execute(
+                "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE rowid = ?",
+                (json.dumps(tags), json.dumps(people), json.dumps(raw_meta), rowid),
+            )
+        else:
+            cursor.execute(
+                "UPDATE photos SET tags = ?, people = ?, raw_metadata = ?, mtime = ?, size = ?"
+                " WHERE rowid = ?",
+                (json.dumps(tags), json.dumps(people), json.dumps(raw_meta),
+                 stat.st_mtime, stat.st_size, rowid),
+            )
         return cursor.rowcount > 0
 
     try:
@@ -260,18 +320,14 @@ def write_keyword_fields(et, path, tags, extra_params=None, db_path=None):
     params = dict(extra_params or {})
     clear_args = []
 
-    if flat:
-        params["XMP:Subject"] = flat
-        params["IPTC:Keywords"] = flat
-        params["EXIF:XPKeywords"] = ";".join(flat)
-    else:
-        params["EXIF:XPKeywords"] = ""
-        clear_args.extend(["-XMP:Subject=", "-IPTC:Keywords="])
-
-    if hierarchical:
-        params["XMP:HierarchicalSubject"] = hierarchical
-    else:
-        clear_args.append("-XMP:HierarchicalSubject=")
+    # The fields come from keyword_fields(), which record_keyword_fields() also reads,
+    # so whatever is written here is what the index records. An empty string clears a
+    # field as written; an empty list does not, and needs the explicit deletion.
+    for field, value in keyword_fields(flat, hierarchical).items():
+        if value or isinstance(value, str):
+            params[field] = value
+        else:
+            clear_args.append("-%s=" % field)
 
     if params:
         et.set_tags([path], tags=params, params=["-overwrite_original"])
@@ -2232,8 +2288,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             executable = self.get_exiftool_path()
             import exiftool
             with exiftool.ExifToolHelper(executable=executable) as et:
-                write_keyword_fields(et, photo_path, tags, extra_params=params,
-                                     db_path=self.db_path)
+                new_flat_tags, new_hierarchical_tags = write_keyword_fields(
+                    et, photo_path, tags, extra_params=params, db_path=self.db_path)
                 
             from metadata import sync_title_to_filename, METADATA_FIELDS
             new_path = paths.stored(sync_title_to_filename(photo_path, title, executable))
@@ -2300,9 +2356,11 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     
                 if photo_entry:
                     from metadata import extract_tags
-                    # Update raw_metadata tags
-                    photo_entry["raw_metadata"]["XMP:Subject"] = new_flat_tags
-                    photo_entry["raw_metadata"]["XMP:HierarchicalSubject"] = new_hierarchical_tags
+                    # Every keyword field, not just the XMP pair: tags are re-derived
+                    # from this on the next line, and a stale IPTC:Keywords brought a
+                    # removed tag straight back.
+                    record_keyword_fields(photo_entry["raw_metadata"],
+                                          new_flat_tags, new_hierarchical_tags)
                     if date_taken:
                         date_cleaned = str(date_taken).replace("T", " ").replace("-", ":").strip()
                         photo_entry["raw_metadata"]["EXIF:DateTimeOriginal"] = date_cleaned
@@ -2372,7 +2430,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
                     if photo_entry:
                         photo_entry["tags"] = new_tags
-                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags, db_path=self.db_path)
+                        raw_meta = record_keyword_fields(
+                            photo_entry.setdefault("raw_metadata", {}), flat, hierarchical)
+                        photo_entry["people"] = extract_people(raw_meta, new_tags, db_path=self.db_path)
 
             self.send_json({"success": True})
         except Exception as e:
@@ -2458,7 +2518,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
                     if photo_entry:
                         photo_entry["tags"] = new_tags
-                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags, db_path=self.db_path)
+                        raw_meta = record_keyword_fields(
+                            photo_entry.setdefault("raw_metadata", {}), flat, hierarchical)
+                        photo_entry["people"] = extract_people(raw_meta, new_tags, db_path=self.db_path)
 
             self.send_json({"success": True})
         except Exception as e:
@@ -3448,67 +3510,76 @@ def insert_tag_path_to_db(cursor, path: str, has_face_root: bool = False) -> int
     return parent_id
 
 def update_photo_metadata_tags(db_path: str, exiftool_path: str, photo_paths: List[str], tag_to_remove: str, tag_to_add: Optional[str] = None):
+    """Rename or remove a tag on every photo in `photo_paths`, in the file and the index.
+
+    Returns how many index rows were rewritten. Each row goes through
+    record_tags_in_index, the same as a bulk edit: this used to write its own rows,
+    recording two of the keyword fields and not the file's new mtime, so a renamed
+    tag's photos were re-read on every scan and a stale IPTC:Keywords was re-derived
+    straight back into the tags.
+    """
     import json
     import exiftool
-    from metadata import extract_people, extract_tags
+    from metadata import extract_tags
     from taxonomy import TagTaxonomy
-    
-    conn = tagpup_db.connect(db_path, timeout=30.0)
-    cursor = conn.cursor()
-    
-    batch_size = 50
-    with exiftool.ExifToolHelper(executable=exiftool_path) as et:
-        for i in range(0, len(photo_paths), batch_size):
-            batch = photo_paths[i:i+batch_size]
-            for path in batch:
-                path = paths.stored(path)
-                where, where_params = paths.sql_equals("path", path)
-                cursor.execute("SELECT rowid, tags, raw_metadata FROM photos WHERE " + where, where_params)
-                row = cursor.fetchone()
-                if not row:
-                    continue
-                rowid = row[0]
-                try:
-                    current_tags = json.loads(row[1]) if row[1] else []
-                    raw_meta = json.loads(row[2]) if row[2] else {}
-                except Exception:
-                    continue
-                
-                new_tags = []
-                changed = False
-                for tag in current_tags:
-                    normalized = TagTaxonomy.normalize_tag(tag)
-                    if normalized == tag_to_remove or normalized.startswith(tag_to_remove + "/"):
-                        changed = True
-                        if tag_to_add:
-                            suffix = normalized[len(tag_to_remove):]
-                            new_tag = tag_to_add + suffix
-                            new_tags.append(new_tag)
-                    else:
-                        new_tags.append(tag)
-                        
-                if not changed:
-                    continue
-                    
-                try:
-                    new_flat_tags, new_hierarchical_tags = write_keyword_fields(
-                        et, path, new_tags, db_path=db_path)
 
-                    raw_meta["XMP:Subject"] = new_flat_tags
-                    raw_meta["XMP:HierarchicalSubject"] = new_hierarchical_tags
+    # Read first, write after: this connection holds no transaction while the rows are
+    # rewritten, one at a time, through the write lock.
+    rows = []
+    conn = tagpup_db.connect(db_path, timeout=30.0)
+    try:
+        cursor = conn.cursor()
+        for path in photo_paths:
+            path = paths.stored(path)
+            where, where_params = paths.sql_equals("path", path)
+            cursor.execute("SELECT tags, raw_metadata FROM photos WHERE " + where, where_params)
+            row = cursor.fetchone()
+            if row:
+                rows.append((path, row))
+    finally:
+        conn.close()
+
+    recorded = 0
+    with exiftool.ExifToolHelper(executable=exiftool_path) as et:
+        for path, row in rows:
+            try:
+                current_tags = json.loads(row[0]) if row[0] else []
+                raw_meta = json.loads(row[1]) if row[1] else {}
+            except Exception:
+                continue
+
+            new_tags = []
+            changed = False
+            for tag in current_tags:
+                normalized = TagTaxonomy.normalize_tag(tag)
+                if normalized == tag_to_remove or normalized.startswith(tag_to_remove + "/"):
+                    changed = True
+                    if tag_to_add:
+                        suffix = normalized[len(tag_to_remove):]
+                        new_tag = tag_to_add + suffix
+                        new_tags.append(new_tag)
+                else:
+                    new_tags.append(tag)
                     
-                    updated_tags = extract_tags(raw_meta)
-                    updated_people = extract_people(raw_meta, updated_tags, db_path=db_path, conn=conn)
-                    
-                    cursor.execute(
-                        "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE rowid = ?",
-                        (json.dumps(updated_tags), json.dumps(updated_people), json.dumps(raw_meta), rowid)
-                    )
-                except Exception as err:
-                    logger.error(f"Failed to update metadata on disk/db for {path}: {err}")
-                    
-    conn.commit()
-    conn.close()
+            if not changed:
+                continue
+                
+            try:
+                new_flat_tags, new_hierarchical_tags = write_keyword_fields(
+                    et, path, new_tags, db_path=db_path)
+
+                # The tags column holds the view extract_tags derives from the
+                # file's fields, as it did before; derived here from exactly the
+                # fields just written.
+                updated_tags = extract_tags(record_keyword_fields(
+                    raw_meta, new_flat_tags, new_hierarchical_tags))
+                if record_tags_in_index(db_path, path, updated_tags,
+                                        new_flat_tags, new_hierarchical_tags):
+                    recorded += 1
+            except Exception as err:
+                logger.error(f"Failed to update metadata on disk/db for {path}: {err}")
+
+    return recorded
 
 #: Listens on IPv4 and IPv6 alike -- see scripts/localserver.py for why that is
 #: worth two seconds on every click.

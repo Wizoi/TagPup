@@ -4673,33 +4673,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         photo_path = paths.stored(photo_path)
 
         try:
-            new_flat_tags = []
-            new_hierarchical_tags = []
-            for tag in tags:
-                new_flat_tags.append(tag)
-                if "/" in tag:
-                    new_hierarchical_tags.append(tag)
-                    for part in tag.split("/"):
-                        new_flat_tags.append(part)
-            
-            new_flat_tags = list(set(new_flat_tags))
-            new_hierarchical_tags = list(set(new_hierarchical_tags))
-            
+            from tagpup_server import (record_keyword_fields, record_tags_in_index,
+                                       write_keyword_fields)
+
             params = {}
-            if new_flat_tags:
-                params["XMP:Subject"] = new_flat_tags
-                params["IPTC:Keywords"] = new_flat_tags
-                params["EXIF:XPKeywords"] = ";".join(new_flat_tags)
-            else:
-                params["XMP:Subject"] = []
-                params["IPTC:Keywords"] = []
-                params["EXIF:XPKeywords"] = ""
-                
-            if new_hierarchical_tags:
-                params["XMP:HierarchicalSubject"] = new_hierarchical_tags
-            else:
-                params["XMP:HierarchicalSubject"] = []
-                
             if title:
                 params["XMP:Description"] = title
                 params["IPTC:Caption-Abstract"] = title
@@ -4713,9 +4690,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 
             executable = self.get_exiftool_path()
             import exiftool
+            # The keywords go through the one writer TagPup uses, so both apps write
+            # the same fields -- this one used to split every path into its segments
+            # and, removing a photo's last tag, wrote [] which ExifTool ignores.
             with exiftool.ExifToolHelper(executable=executable) as et:
-                et.set_tags([photo_path], tags=params, params=["-overwrite_original"])
-                
+                new_flat_tags, new_hierarchical_tags = write_keyword_fields(
+                    et, photo_path, tags, extra_params=params, db_path=self.db_path)
+
             from metadata import sync_title_to_filename
             new_path = paths.stored(sync_title_to_filename(photo_path, title, executable))
 
@@ -4729,6 +4710,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             # moved -- faces with it -- rather than rewritten in place.
             index_updated = 0
             faces_moved = 0
+            row_path = new_path
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
             try:
                 cursor = conn.cursor()
@@ -4745,12 +4727,20 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                             "Renamed %s to %s, but the index already has rows at the new "
                             "name; the old rows were left where they are."
                             % (photo_path, new_path))
+                        row_path = None
                     else:
                         faces_moved = moved[1]
                 with tagpup_db.writing(self.db_path, label="save photo metadata"):
                     conn.commit()
             finally:
                 conn.close()
+
+            # The keyword fields, raw_metadata and the file's new mtime and size, the
+            # same way every other keyword write records them. Without the mtime the
+            # scan re-read this photo with ExifTool every time.
+            if row_path:
+                record_tags_in_index(self.db_path, row_path, new_flat_tags,
+                                     new_flat_tags, new_hierarchical_tags)
 
             # Update cache
             folder_path = paths.key(os.path.dirname(new_path))
@@ -4767,9 +4757,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
                 if photo_entry:
                     from metadata import extract_tags
-                    # Update raw_metadata tags
-                    photo_entry["raw_metadata"]["XMP:Subject"] = new_flat_tags
-                    photo_entry["raw_metadata"]["XMP:HierarchicalSubject"] = new_hierarchical_tags
+                    # Every keyword field: a stale IPTC:Keywords here is re-derived
+                    # into the tags on the next line and undoes a removal.
+                    record_keyword_fields(photo_entry["raw_metadata"],
+                                          new_flat_tags, new_hierarchical_tags)
                     photo_entry["tags"] = extract_tags(photo_entry["raw_metadata"])
                     photo_entry["captions"] = [title] if title else []
                     photo_entry["title"] = title
@@ -4799,6 +4790,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         executable = self.get_exiftool_path()
         import exiftool
         from metadata import extract_people
+        from tagpup_server import (indexed_tags_for_photo, record_keyword_fields,
+                                   record_tags_in_index, resolve_people_tags,
+                                   write_keyword_fields)
         
         try:
             with exiftool.ExifToolHelper(executable=executable) as et:
@@ -4809,48 +4803,33 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     if folder_path in TunerHTTPRequestHandler.folder_cache:
                         photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].get(paths.key(path))
                         
-                    current_tags = photo_entry["tags"] if photo_entry else []
+                    # This write replaces the photo's whole keyword set, so a folder
+                    # never scanned in this session starts from its indexed tags, not
+                    # from nothing -- starting from [] erased every tag it had.
+                    if photo_entry:
+                        current_tags = photo_entry["tags"]
+                    else:
+                        current_tags = indexed_tags_for_photo(self.db_path, path)
                     new_tags_set = set(current_tags)
                     for t in add_tags:
                         new_tags_set.add(t)
                     for t in remove_tags:
                         new_tags_set.discard(t)
-                        
-                    new_tags = list(new_tags_set)
-                    
-                    new_flat_tags = []
-                    new_hierarchical_tags = []
-                    for tag in new_tags:
-                        new_flat_tags.append(tag)
-                        if "/" in tag:
-                            new_hierarchical_tags.append(tag)
-                            for part in tag.split("/"):
-                                new_flat_tags.append(part)
-                                
-                    new_flat_tags = list(set(new_flat_tags))
-                    new_hierarchical_tags = list(set(new_hierarchical_tags))
-                    
-                    params = {}
-                    if new_flat_tags:
-                        params["XMP:Subject"] = new_flat_tags
-                        params["IPTC:Keywords"] = new_flat_tags
-                        params["EXIF:XPKeywords"] = ";".join(new_flat_tags)
-                    else:
-                        params["XMP:Subject"] = []
-                        params["IPTC:Keywords"] = []
-                        params["EXIF:XPKeywords"] = ""
-                        
-                    if new_hierarchical_tags:
-                        params["XMP:HierarchicalSubject"] = new_hierarchical_tags
-                    else:
-                        params["XMP:HierarchicalSubject"] = []
-                        
-                    et.set_tags([path], tags=params, params=["-overwrite_original"])
-                    
+
+                    # The same three steps as TagPup's bulk write, from the same
+                    # functions: this one wrote the file its own way and never told
+                    # the index, so every row it touched described the old keywords.
+                    new_tags = resolve_people_tags(list(new_tags_set), self.db_path)
+                    flat, hierarchical = write_keyword_fields(
+                        et, path, new_tags, db_path=self.db_path)
+                    record_tags_in_index(self.db_path, path, new_tags, flat, hierarchical)
+
                     if photo_entry:
                         photo_entry["tags"] = new_tags
-                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags, db_path=self.db_path)
-                        
+                        raw_meta = record_keyword_fields(
+                            photo_entry.setdefault("raw_metadata", {}), flat, hierarchical)
+                        photo_entry["people"] = extract_people(raw_meta, new_tags, db_path=self.db_path)
+
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error in bulk tags write: {e}")
@@ -4884,6 +4863,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         executable = self.get_exiftool_path()
         import exiftool
         from metadata import extract_people
+        from tagpup_server import (indexed_tags_for_photo, record_keyword_fields,
+                                   record_tags_in_index, resolve_people_tags,
+                                   write_keyword_fields)
         
         try:
             with exiftool.ExifToolHelper(executable=executable) as et:
@@ -4901,34 +4883,24 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     if folder_path_dir in TunerHTTPRequestHandler.folder_cache:
                         photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path_dir].get(paths.key(path))
                         
-                    current_tags = photo_entry["tags"] if photo_entry else []
-                    new_tags = list(set(current_tags + apply_tags))
-                    
-                    new_flat_tags = []
-                    new_hierarchical_tags = []
-                    for tag in new_tags:
-                        new_flat_tags.append(tag)
-                        if "/" in tag:
-                            new_hierarchical_tags.append(tag)
-                            for part in tag.split("/"):
-                                new_flat_tags.append(part)
-                                
-                    new_flat_tags = list(set(new_flat_tags))
-                    new_hierarchical_tags = list(set(new_hierarchical_tags))
-                    
-                    params = {}
-                    if new_flat_tags:
-                        params["XMP:Subject"] = new_flat_tags
-                        params["IPTC:Keywords"] = new_flat_tags
-                        params["EXIF:XPKeywords"] = ";".join(new_flat_tags)
-                    if new_hierarchical_tags:
-                        params["XMP:HierarchicalSubject"] = new_hierarchical_tags
-                        
-                    et.set_tags([path], tags=params, params=["-overwrite_original"])
-                    
+                    if photo_entry:
+                        current_tags = photo_entry["tags"]
+                    else:
+                        current_tags = indexed_tags_for_photo(self.db_path, path)
+
+                    # Written and recorded exactly as TagPup's Apply All does; this
+                    # wrote the file and left the index describing the old keywords.
+                    new_tags = resolve_people_tags(
+                        list(set(current_tags + apply_tags)), self.db_path)
+                    flat, hierarchical = write_keyword_fields(
+                        et, path, new_tags, db_path=self.db_path)
+                    record_tags_in_index(self.db_path, path, new_tags, flat, hierarchical)
+
                     if photo_entry:
                         photo_entry["tags"] = new_tags
-                        photo_entry["people"] = extract_people(photo_entry.get("raw_metadata", {}), new_tags, db_path=self.db_path)
+                        raw_meta = record_keyword_fields(
+                            photo_entry.setdefault("raw_metadata", {}), flat, hierarchical)
+                        photo_entry["people"] = extract_people(raw_meta, new_tags, db_path=self.db_path)
                             
             self.send_json({"success": True})
         except Exception as e:
