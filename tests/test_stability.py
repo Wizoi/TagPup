@@ -32,6 +32,9 @@ class TestStability(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # Its own port: subclasses inherit the attribute, and a port
+        # already held by the last class's server is refused.
+        cls.TEST_PORT = free_port()
         # Start the server once in a background thread
         cls.server_thread = threading.Thread(
             target=start_server,

@@ -77,6 +77,9 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # Its own port: subclasses inherit the attribute, and a port
+        # already held by the last class's server is refused.
+        cls.TEST_PORT = free_port()
         from index import PhotoIndex
 
         for db in (cls.STARTUP_DB, cls.OTHER_DB):

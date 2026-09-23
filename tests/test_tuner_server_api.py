@@ -56,6 +56,9 @@ class TunerAPITestBase(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # Its own port: subclasses inherit the attribute, and a port
+        # already held by the last class's server is refused.
+        cls.TEST_PORT = free_port()
         from index import PhotoIndex
 
         pi = PhotoIndex(db_path=cls.TEST_DB)

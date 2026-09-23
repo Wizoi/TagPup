@@ -26,6 +26,9 @@ class TestMultipleDatabases(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # Its own port: subclasses inherit the attribute, and a port
+        # already held by the last class's server is refused.
+        cls.TEST_PORT = free_port()
         # Save original default_db from config.ini if exists
         config_path = os.path.join(WORKSPACE_DIR, "config.ini")
         cls.config = configparser.ConfigParser(interpolation=None)
@@ -226,6 +229,9 @@ class TestFolderIndexingAPI(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # Its own port: subclasses inherit the attribute, and a port
+        # already held by the last class's server is refused.
+        cls.TEST_PORT = free_port()
         # Create DB file
         from index import PhotoIndex
         pi = PhotoIndex(db_path=cls.TEST_DB_PATH)
