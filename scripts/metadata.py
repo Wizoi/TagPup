@@ -128,37 +128,82 @@ def extract_tags(meta: Dict[str, Any]) -> List[str]:
             
     return cleaned_tags
 
+class PeopleVocabulary:
+    """What a library's taxonomy says about people, read once.
+
+    `roots` are the lowercase face roots (People, Family, Pets, ...): a keyword under
+    one names a person by its leaf. `by_keyword` maps a keyword, spelled as a full tag
+    or as a bare leaf, to the person it names. extract_people used to read both from
+    the database for every photo and scan the whole taxonomy per keyword -- 30s over
+    68,000 photos -- so anything resolving many photos loads this once and passes it.
+    """
+
+    DEFAULT_ROOTS = frozenset({"family", "friends", "people"})
+
+    def __init__(self, roots, by_keyword):
+        self.roots = set(roots)
+        self.by_keyword = by_keyword
+
+    @classmethod
+    def load(cls, db_path: Optional[str] = None, conn: Any = None) -> "PeopleVocabulary":
+        """From `conn`, else from `db_path`, else the defaults alone.
+
+        No implicit fallback to a hard-coded database: resolving against the default
+        library would apply one database's taxonomy to another.
+        """
+        own = None
+        try:
+            if conn is None and db_path and os.path.exists(db_path):
+                own = conn = tagpup_db.connect(db_path, timeout=5.0)
+            if conn is None:
+                return cls(cls.DEFAULT_ROOTS, {})
+            return cls._read(conn)
+        except Exception as e:
+            logger.warning(f"Error resolving people from database taxonomy: {e}")
+            return cls(cls.DEFAULT_ROOTS, {})
+        finally:
+            if own is not None:
+                own.close()
+
+    @classmethod
+    def _read(cls, conn):
+        roots = set(cls.DEFAULT_ROOTS)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
+        if not cursor.fetchone():
+            return cls(roots, {})
+        cursor.execute("SELECT name FROM tag_taxonomy WHERE (parent_id IS NULL OR tag NOT LIKE '%/%') AND has_face = 1")
+        for (name,) in cursor.fetchall():
+            if name:
+                roots.add(name.lower().strip())
+        by_keyword = {}
+        cursor.execute("SELECT tag, name FROM tag_taxonomy WHERE has_face = 1")
+        for db_tag, db_name in cursor.fetchall():
+            # A face ROOT (People, Family, Pets, ...) is a category, not a person, so
+            # a photo tagged plainly "Family" must not gain a name.
+            if db_name and db_name.lower() in roots and "/" not in db_tag:
+                continue
+            # The first row to match a keyword by either spelling wins, as it did
+            # when this was a scan in row order.
+            if db_tag:
+                by_keyword.setdefault(db_tag.lower(), db_name)
+            if db_name:
+                by_keyword.setdefault(db_name.lower(), db_name)
+        return cls(roots, by_keyword)
+
+
 def get_people_roots(db_path: Optional[str] = None, conn: Any = None) -> Set[str]:
     """Retrieve lowercase names of all root categories marked as People from database."""
-    roots = {"family", "friends", "people"}  # Default fallbacks
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-            if cursor.fetchone():
-                cursor.execute("SELECT name FROM tag_taxonomy WHERE (parent_id IS NULL OR tag NOT LIKE '%/%') AND has_face = 1")
-                for row in cursor.fetchall():
-                    if row[0]:
-                        roots.add(row[0].lower().strip())
-        except Exception:
-            pass
-    elif db_path and os.path.exists(db_path):
-        try:
-            conn_temp = tagpup_db.connect(db_path, timeout=5.0)
-            cursor = conn_temp.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-            if cursor.fetchone():
-                cursor.execute("SELECT name FROM tag_taxonomy WHERE (parent_id IS NULL OR tag NOT LIKE '%/%') AND has_face = 1")
-                for row in cursor.fetchall():
-                    if row[0]:
-                        roots.add(row[0].lower().strip())
-            conn_temp.close()
-        except Exception:
-            pass
-    return roots
+    return PeopleVocabulary.load(db_path, conn=conn).roots
 
-def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str] = None, conn: Any = None) -> List[str]:
-    """Extract people tags from PersonInImage or RegionName, and also from hierarchical tags starting with People/ or custom designated categories."""
+
+def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str] = None,
+                   conn: Any = None, vocabulary: Optional[PeopleVocabulary] = None) -> List[str]:
+    """Extract people tags from PersonInImage or RegionName, and also from hierarchical tags starting with People/ or custom designated categories.
+
+    Pass `vocabulary` when resolving many photos; otherwise the taxonomy is read
+    from `conn` or `db_path` for this one call.
+    """
     people = []
     for key in ["XMP:PersonInImage", "PersonInImage", "XMP:RegionName", "RegionName"]:
         val = meta.get(key)
@@ -167,65 +212,27 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
                 people.extend([str(v).strip() for v in val if v])
             else:
                 people.append(str(val).strip())
-                
-    people_roots = get_people_roots(db_path, conn=conn)
-    
+
+    if vocabulary is None:
+        vocabulary = PeopleVocabulary.load(db_path, conn=conn)
+
     # Extract person name from hierarchical tags starting with any people roots
     for tag in tags:
         normalized = tag.replace("|", "/").replace("\\", "/")  # not a path: a keyword hierarchy
         parts = [p.strip() for p in normalized.split("/") if p.strip()]
         if len(parts) >= 2:
             root = parts[0].lower()
-            if root in people_roots:
+            if root in vocabulary.roots:
                 # The leaf node of the tag path is the name of the person
                 people.append(parts[-1])
 
     # Also resolve flat tags (e.g. "Cora Ingersoll") that exist in the taxonomy as a face category
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-            if cursor.fetchone():
-                cursor.execute("SELECT tag, name FROM tag_taxonomy WHERE has_face = 1")
-                people_tags = cursor.fetchall()
-                for tag in tags:
-                    norm = tag.replace("\\", "/").strip()  # not a path: a keyword hierarchy
-                    for db_tag, db_name in people_tags:
-                        # A face ROOT (People, Family, Pets, ...) is a category, not a person,
-                        # so a photo tagged plainly "Family" must not gain a name.
-                        if db_name and db_name.lower() in people_roots and "/" not in db_tag:
-                            continue
-                        if norm.lower() == db_tag.lower() or norm.lower() == db_name.lower():
-                            people.append(db_name)
-                            break
-        except Exception as e:
-            logger.warning(f"Error resolving people from database taxonomy: {e}")
-    else:
-        # No implicit fallback to a hard-coded database: silently resolving people
-        # against the default library would apply one database's taxonomy to another.
-        # Callers that need taxonomy resolution pass db_path or an open connection.
-        if db_path and os.path.exists(db_path):
-            try:
-                conn_temp = tagpup_db.connect(db_path, timeout=5.0)
-                cursor = conn_temp.cursor()
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-                if cursor.fetchone():
-                    cursor.execute("SELECT tag, name FROM tag_taxonomy WHERE has_face = 1")
-                    people_tags = cursor.fetchall()
-                    for tag in tags:
-                        norm = tag.replace("\\", "/").strip()  # not a path: a keyword hierarchy
-                        for db_tag, db_name in people_tags:
-                            # A face ROOT (People, Family, Pets, ...) is a category, not a person,
-                            # so a photo tagged plainly "Family" must not gain a name.
-                            if db_name and db_name.lower() in people_roots and "/" not in db_tag:
-                                continue
-                            if norm.lower() == db_tag.lower() or norm.lower() == db_name.lower():
-                                people.append(db_name)
-                                break
-                conn_temp.close()
-            except Exception as e:
-                logger.warning(f"Error resolving people from database taxonomy: {e}")
-                
+    for tag in tags:
+        norm = tag.replace("\\", "/").strip()  # not a path: a keyword hierarchy
+        name = vocabulary.by_keyword.get(norm.lower())
+        if name:
+            people.append(name)
+
     seen = set()
     unique_people = []
     for p in people:
@@ -233,6 +240,7 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
             seen.add(p)
             unique_people.append(p)
     return unique_people
+
 
 def face_names(photo_path: str, db_path: Optional[str] = None, conn: Any = None) -> List[str]:
     """The names given to a photo's faces, excluded faces left out, in detection order."""
