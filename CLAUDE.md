@@ -66,7 +66,9 @@ the bulk paths did not, and rows described what photos used to hold.
 can be reached before its `let` runs, which throws and reports an unrelated line.
 
 **Write patch scripts with a file tool, not a shell heredoc.** Backslashes and `\u`
-escapes are mangled in transit. This has cost time twice in one day.
+escapes are mangled in transit. This cost time five times in two days, so it is no
+longer a rule to remember: `.claude/hooks/no-heredoc-escapes.mjs` (a PreToolUse hook in
+`.claude/settings.json`) refuses an interpreter heredoc containing an escape.
 
 **Never put real names in tests, fixtures, comments or commit messages.** This library
 is photographs of real people, many of them minors. Use fictional names of the same
