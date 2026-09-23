@@ -54,8 +54,12 @@ def raw_metadata_as_scanned(keywords, hierarchical):
 
 def exiftool_that_writes():
     """ExifToolHelper stand-in whose writes change the file the way a real one does:
-    new bytes, so a new size, and a new mtime. Returns (helper class, et)."""
+    new bytes, so a new size, and a new mtime. Returns (helper class, et).
+
+    It reads back what it holds, too: the bulk writers start from the keywords in the
+    file. A file it has not written holds what photo() seeds by default."""
     et = MagicMock()
+    held = {}
 
     def touch(path):
         with open(path, "ab") as f:
@@ -63,8 +67,25 @@ def exiftool_that_writes():
         st = os.stat(path)
         os.utime(path, (st.st_atime, st.st_mtime + 120))
 
-    et.set_tags.side_effect = lambda files, tags=None, params=None: [touch(p) for p in files]
-    et.execute.side_effect = lambda *args: touch(args[-1])
+    def fields(path):
+        scanned = raw_metadata_as_scanned(KEYWORDS, HIERARCHICAL)
+        return held.setdefault(path, {k: v for k, v in scanned.items() if ":" in k})
+
+    def set_tags(files, tags=None, params=None):
+        for p in files:
+            fields(p).update({k: v for k, v in (tags or {}).items() if v not in ([], "")})
+            touch(p)
+
+    def execute(*args):
+        for arg in args:
+            if arg.startswith("-") and arg.endswith("="):
+                fields(args[-1]).pop(arg[1:-1], None)
+        touch(args[-1])
+
+    et.set_tags.side_effect = set_tags
+    et.execute.side_effect = execute
+    et.get_tags.side_effect = lambda files, tags=None, params=None: [
+        dict(fields(p), SourceFile=p) for p in files]
     helper = MagicMock()
     helper.return_value.__enter__.return_value = et
     helper.return_value.__exit__.return_value = False

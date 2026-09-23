@@ -356,6 +356,28 @@ def indexed_tags_for_photo(db_path, photo_path):
     return []
 
 
+#: The fields a photo's tags are read from: exactly what metadata.extract_tags reads,
+#: so tags read here are the tags a folder scan would have found.
+TAG_SOURCE_FIELDS = ("IPTC:Keywords", "XMP:Subject", "XMP:HierarchicalSubject")
+
+
+def tags_in_file(et, photo_path):
+    """The tags a photo carries now, read from the file itself.
+
+    The bulk writers replace a photo's whole keyword set, so they must start from
+    what it holds. They used to start from the folder cache, then the index, then
+    nothing: the cache is empty after a restart while the page still shows the folder,
+    and a photo the index has no row for then kept only the tags being added. The
+    file is the truth; it is read in the ExifTool session the writer already has open.
+    Raises if the file cannot be read, rather than treat it as having no tags.
+    """
+    from metadata import clean_metadata_value, extract_tags
+
+    found = et.get_tags([photo_path], tags=list(TAG_SOURCE_FIELDS))
+    meta = found[0] if found else {}
+    return extract_tags({k: clean_metadata_value(v) for k, v in meta.items()})
+
+
 def forget_photo_in_index(db_path, photo_path):
     """Remove a deleted photo's row, its faces and its cached embedding.
 
@@ -701,6 +723,27 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
     def log_message(self, format, *args):
         pass # suppress request logs
+
+    @classmethod
+    def cached_photo_entries(cls, photo_path):
+        """Every folder-cache map holding this photo, as (folder map, record) pairs.
+
+        A scan stores its whole recursive walk under the scanned folder's key, so a
+        photo in a subfolder is filed under an ancestor, not under its own directory.
+        The writers looked it up under paths.key(dirname(photo)) and never found it:
+        its record went on showing what it held before the write. A photo can be in
+        more than one map when a folder and a subfolder of it were both scanned; each
+        is kept true.
+        """
+        photo_key = paths.key(photo_path)
+        found = []
+        for folder_key, folder_map in list(cls.folder_cache.items()):
+            if not paths.is_under(photo_path, folder_key):
+                continue
+            entry = folder_map.get(photo_key)
+            if entry is not None:
+                found.append((folder_map, entry))
+        return found
 
     def validate_request_origin(self) -> bool:
         # Only this machine, and only pages this server served. See localserver.
@@ -2255,13 +2298,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             # Delete the file record, its faces and its cached embedding.
             forget_photo_in_index(self.db_path, photo_path)
 
-            # Remove from local server folder cache
-            folder_path = paths.key(os.path.dirname(photo_path))
-            if folder_path in TagPupHTTPRequestHandler.folder_cache:
-                normalized_photo_path = paths.key(photo_path)
-                if normalized_photo_path in TagPupHTTPRequestHandler.folder_cache[folder_path]:
-                    del TagPupHTTPRequestHandler.folder_cache[folder_path][normalized_photo_path]
-            
+            # Remove from every folder-cache map that holds it.
+            for folder_map, _entry in self.cached_photo_entries(photo_path):
+                folder_map.pop(paths.key(photo_path), None)
+
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error deleting image {photo_path}: {e}")
@@ -2378,37 +2418,31 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             except Exception as db_err:
                 logger.warning(f"Failed to update SQLite database metadata for {new_path}: {db_err}")
 
-            # Update in-memory cache
-            folder_path = paths.key(os.path.dirname(new_path))
-            photo_entry = None
-            if folder_path in TagPupHTTPRequestHandler.folder_cache:
+            # Update in-memory cache: every folder map holding the photo, found under
+            # the name it had (a rename stays in the same directory).
+            for folder_map, photo_entry in self.cached_photo_entries(photo_path):
                 if renamed:
-                    photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].pop(paths.key(photo_path), None)
-                    if photo_entry:
-                        photo_entry["path"] = new_path
-                        photo_entry["filename"] = os.path.basename(new_path)
-                        TagPupHTTPRequestHandler.folder_cache[folder_path][paths.key(new_path)] = photo_entry
-                else:
-                    photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(paths.key(photo_path))
-                    
-                if photo_entry:
-                    from metadata import extract_tags
-                    # Every keyword field, not just the XMP pair: tags are re-derived
-                    # from this on the next line, and a stale IPTC:Keywords brought a
-                    # removed tag straight back.
-                    record_keyword_fields(photo_entry["raw_metadata"],
-                                          new_flat_tags, new_hierarchical_tags)
-                    if date_taken:
-                        date_cleaned = str(date_taken).replace("T", " ").replace("-", ":").strip()
-                        photo_entry["raw_metadata"]["EXIF:DateTimeOriginal"] = date_cleaned
-                        photo_entry["raw_metadata"]["XMP:DateTimeOriginal"] = date_cleaned
-                        photo_entry["raw_metadata"]["EXIF:CreateDate"] = date_cleaned
-                    photo_entry["tags"] = extract_tags(photo_entry["raw_metadata"])
-                    photo_entry["captions"] = [title] if title else []
-                    photo_entry["title"] = title
-                    from metadata import photo_people
-                    photo_entry["people"] = photo_people(photo_entry["raw_metadata"], tags, new_path, db_path=self.db_path)
-                    
+                    folder_map.pop(paths.key(photo_path), None)
+                    photo_entry["path"] = new_path
+                    photo_entry["filename"] = os.path.basename(new_path)
+                    folder_map[paths.key(new_path)] = photo_entry
+
+                from metadata import extract_tags, photo_people
+                raw_meta = photo_entry.setdefault("raw_metadata", {})
+                # Every keyword field, not just the XMP pair: tags are re-derived
+                # from this on the next line, and a stale IPTC:Keywords brought a
+                # removed tag straight back.
+                record_keyword_fields(raw_meta, new_flat_tags, new_hierarchical_tags)
+                if date_taken:
+                    date_cleaned = str(date_taken).replace("T", " ").replace("-", ":").strip()
+                    raw_meta["EXIF:DateTimeOriginal"] = date_cleaned
+                    raw_meta["XMP:DateTimeOriginal"] = date_cleaned
+                    raw_meta["EXIF:CreateDate"] = date_cleaned
+                photo_entry["tags"] = extract_tags(raw_meta)
+                photo_entry["captions"] = [title] if title else []
+                photo_entry["title"] = title
+                photo_entry["people"] = photo_people(raw_meta, tags, new_path, db_path=self.db_path)
+
             result = {"success": True, "new_path": new_path}
             if index_warning:
                 result["index_warning"] = index_warning
@@ -2440,19 +2474,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             with ExifToolSession(executable=executable) as et:
                 for path in photo_list:
                     path = paths.stored(path)
-                    folder_path = paths.key(os.path.dirname(path))
-                    photo_entry = None
-                    if folder_path in TagPupHTTPRequestHandler.folder_cache:
-                        photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(paths.key(path))
-                        
-                    # This write replaces the photo's whole keyword set, so fall back to
-                    # the indexed tags when the folder was never scanned in this session.
-                    if photo_entry:
-                        current_tags = photo_entry["tags"]
-                    else:
-                        current_tags = indexed_tags_for_photo(self.db_path, path)
-
-                    new_tags_set = set(current_tags)
+                    # This write replaces the photo's whole keyword set, so it starts
+                    # from what the file holds now -- never from a cache that may be
+                    # cold or an index that may never have seen the photo.
+                    new_tags_set = set(tags_in_file(et, path))
                     for t in add_tags:
                         new_tags_set.add(t)
                     for t in remove_tags:
@@ -2465,7 +2490,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                         et, path, new_tags, db_path=self.db_path)
                     record_tags_in_index(self.db_path, path, new_tags, flat, hierarchical)
 
-                    if photo_entry:
+                    for _folder_map, photo_entry in self.cached_photo_entries(path):
                         photo_entry["tags"] = new_tags
                         raw_meta = record_keyword_fields(
                             photo_entry.setdefault("raw_metadata", {}), flat, hierarchical)
@@ -2532,19 +2557,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     if not apply_tags:
                         continue
                         
-                    # The folder cache is keyed by paths.key; any other spelling never
-                    # matches on Windows and silently loses the existing tags.
+                    # The whole keyword set is written, so it starts from what the
+                    # file holds now, not from the folder cache or the index.
                     path = paths.stored(path)
-                    folder_path_dir = paths.key(os.path.dirname(path))
-                    photo_entry = None
-                    if folder_path_dir in TagPupHTTPRequestHandler.folder_cache:
-                        photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path_dir].get(paths.key(path))
-
-                    if photo_entry:
-                        current_tags = photo_entry["tags"]
-                    else:
-                        current_tags = indexed_tags_for_photo(self.db_path, path)
-                    new_tags = list(set(current_tags + apply_tags))
+                    new_tags = list(set(tags_in_file(et, path) + apply_tags))
 
                     # Apply All writes whatever the suggester proposed, and the
                     # suggester deals in leaf names. Resolve before writing.
@@ -2553,7 +2569,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                         et, path, new_tags, db_path=self.db_path)
                     record_tags_in_index(self.db_path, path, new_tags, flat, hierarchical)
 
-                    if photo_entry:
+                    for _folder_map, photo_entry in self.cached_photo_entries(path):
                         photo_entry["tags"] = new_tags
                         raw_meta = record_keyword_fields(
                             photo_entry.setdefault("raw_metadata", {}), flat, hierarchical)
@@ -2658,9 +2674,12 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             from metadata import build_photo_ui_record
             for entry in updated_entries:
                 p = paths.stored(entry["path"])
-                previous = photos_map.get(paths.key(p))
-                if previous is not None:
-                    photos_map[paths.key(p)] = build_photo_ui_record(p, entry, previous.get("mtime", 0.0), previous.get("size", 0))
+                # Every map holding the photo: this folder's, and an ancestor's scan
+                # that walked into it.
+                for folder_map, previous in self.cached_photo_entries(p):
+                    folder_map[paths.key(p)] = build_photo_ui_record(
+                        p, entry, entry.get("mtime", previous.get("mtime", 0.0)),
+                        entry.get("size", previous.get("size", 0)))
                     
             updated_photos = list(photos_map.values())
             self.send_json({"success": True, "updated_photos": updated_photos})
