@@ -65,6 +65,18 @@ class FolderMembership(unittest.TestCase):
     def test_a_sibling_sharing_a_prefix_is_not_inside(self):
         self.assertFalse(paths.is_under(r"D:\Pictures\Run 2\a.jpg", r"D:\Pictures\Run"))
 
+    def test_a_sibling_share_is_not_inside_a_share_root(self):
+        # os.path.join(r"\\nas\photos", "") adds no separator after a share root.
+        self.assertTrue(paths.is_under(r"\\nas\photos\a.jpg", r"\\nas\photos"))
+        self.assertFalse(paths.is_under(r"\\nas\photos2\a.jpg", r"\\nas\photos"))
+
+    def test_a_bare_drive_means_the_drive(self):
+        # The drive the process is running on is the one abspath resolves to its
+        # working directory; other drives happen to resolve to their root.
+        drive = os.getcwd()[:2]
+        self.assertEqual(paths.stored(drive), drive + "\\")
+        self.assertTrue(paths.is_under(drive + r"\Pictures\a.jpg", drive))
+
     def test_a_folder_is_not_inside_itself(self):
         self.assertFalse(paths.is_under(r"D:\Pictures\Run", r"D:\Pictures\Run"))
 
@@ -117,6 +129,10 @@ class SqlUnderMatchesStoredRows(unittest.TestCase):
                 "SELECT path FROM photos WHERE " + clause + " ORDER BY path", params)]
         finally:
             conn.close()
+
+    def test_a_sibling_share_is_not_found_under_a_share_root(self):
+        rows = [r"\\nas\photos\a.jpg", r"\\nas\photos2\b.jpg", r"\\nas\photosArchive\c.jpg"]
+        self.assertEqual(self.rows_under(r"\\nas\photos", rows), [r"\\nas\photos\a.jpg"])
 
     def test_folder_typed_in_another_case_finds_the_rows(self):
         self.assertEqual(self.rows_under("d:/pictures/run", [r"D:\Pictures\Run\a.jpg"]),

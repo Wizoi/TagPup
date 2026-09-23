@@ -46,7 +46,22 @@ def stored(path):
     """
     if not path:
         return ""
-    return os.path.abspath(os.fspath(path))
+    path = os.fspath(path)
+    # A bare drive ("C:") is that drive's current directory to abspath, which in a
+    # server is wherever it was started from. Nobody typing "C:" as a folder means
+    # that; they mean the drive.
+    if CASE_INSENSITIVE and len(path) == 2 and path[1] == ":" and path[0].isalpha():
+        path += os.sep
+    return os.path.abspath(path)
+
+
+def _as_folder(spelling):
+    """A folder spelling that ends in exactly one separator.
+
+    os.path.join(p, "") does not add one after a UNC share root ("\\\\nas\\photos"),
+    so "under \\\\nas\\photos" also matched "\\\\nas\\photos2\\...".
+    """
+    return spelling if spelling.endswith(os.sep) else spelling + os.sep
 
 
 def key(path):
@@ -65,7 +80,7 @@ def is_under(path, folder):
     """Is `path` inside `folder` (at any depth)? A folder is not under itself."""
     if not path or not folder:
         return False
-    return key(path).startswith(os.path.join(key(folder), ""))
+    return key(path).startswith(_as_folder(key(folder)))
 
 
 def sql_equals(column, path):
@@ -86,6 +101,6 @@ def sql_under(column, folder):
     A prefix comparison rather than LIKE, so "%" and "_" in folder names are plain
     characters.
     """
-    prefix = os.path.join(stored(folder), "")
+    prefix = _as_folder(stored(folder))
     return ("substr(%s, 1, ?) = ? COLLATE %s" % (column, COLLATE),
             (len(prefix), prefix))
