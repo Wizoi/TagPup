@@ -289,7 +289,8 @@ class TagSuggester:
         # 4b. Face recognition suggestions
         try:
             detected_faces = []
-            
+            has_face_rows = False
+
             # Check database cache first
             if self.index and self.index.conn:
                 try:
@@ -298,9 +299,17 @@ class TagSuggester:
                     # This looked for a forward-slash spelling the faces are never
                     # stored under, so every run detected the same faces again.
                     clause, params = paths.sql_equals("photo_path", photo_path)
-                    cursor.execute("SELECT box, embedding, prob FROM faces WHERE " + clause, params)
+                    cursor.execute(
+                        "SELECT box, embedding, prob, excluded, name, name_source"
+                        " FROM faces WHERE " + clause, params)
                     for row in cursor.fetchall():
-                        box_json, emb_bytes, prob = row
+                        box_json, emb_bytes, prob, excluded, name, name_source = row
+                        has_face_rows = True
+                        # A face someone excluded, or decided is nobody, is not to be
+                        # named again by resemblance. It still counts as a face on
+                        # file, so the photo is not sent through detection again.
+                        if excluded or (name is None and name_source == "manual"):
+                            continue
                         box = json.loads(box_json)
                         emb = np.frombuffer(emb_bytes, dtype=np.float32).tolist()
                         detected_faces.append({
@@ -312,7 +321,7 @@ class TagSuggester:
                     logger.warning(f"Failed to query database faces: {db_err}")
             
             # If not in database, detect and embed on-the-fly
-            if not detected_faces:
+            if not has_face_rows:
                 from faces import FaceProcessor
                 global _global_face_processor
                 if _global_face_processor is None:
