@@ -3280,60 +3280,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                       "folder": folder_path}
             cls.index_status[folder_norm] = status
         try:
-            import sys
-            import subprocess
-
-            env = os.environ.copy()
-            env["TAGPUP_DB_PATH"] = db_path
-            workspace = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-            proc = subprocess.Popen(
-                [sys.executable, "tagpup_cli.py", "index", folder_path],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, env=env, bufsize=1, cwd=workspace,
-            )
-            from tagpup_server import summarize_indexer_line
-
-            with proc.stdout:
-                for line in iter(proc.stdout.readline, ""):
-                    clean = summarize_indexer_line(line)
-                    if clean:
-                        status["message"] = clean
-                        match = re.search(r"(\d+)%", clean)
-                        if match:
-                            status["percent"] = int(float(match.group(1)) * 0.9)
-            proc.wait()
-
-            if proc.returncode != 0:
-                status["status"] = "failed"
-                status["message"] = "Indexing failed with exit code %s." % proc.returncode
-                status["percent"] = 0
-                return
-
-            if run_clustering:
-                status["message"] = "Resolving and matching face identities..."
-                status["percent"] = 95
-                proc2 = subprocess.Popen(
-                    [sys.executable, "tagpup_cli.py", "cluster-faces"],
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, env=env, bufsize=1, cwd=workspace,
-                )
-                with proc2.stdout:
-                    for line in iter(proc2.stdout.readline, ""):
-                        clean = summarize_indexer_line(line)
-                        if clean:
-                            status["message"] = clean
-                proc2.wait()
-
-            # The identify queue is cached against a fingerprint of the faces table,
-            # which the new rows change, so it recomputes on its own.
-            status["status"] = "completed"
-            status["percent"] = 100
-            status["message"] = (
-                "Folder indexed and identities resolved."
-                if run_clustering
-                else "Folder indexed. Faces detected; run Recluster to assign identities."
-            )
+            # The same steps TagPup runs, which read both exit codes. The identify
+            # queue is cached against a fingerprint of the faces table, which the new
+            # rows change, so it recomputes on its own.
+            from tagpup_server import index_folder_with_cli
+            index_folder_with_cli(folder_path, db_path, run_clustering, status)
         except Exception as e:
             logger.exception("Error indexing folder %s: %s" % (folder_path, e))
             status["status"] = "failed"

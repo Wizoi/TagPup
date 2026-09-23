@@ -85,6 +85,61 @@ def summarize_indexer_line(line):
     return clean
 
 
+def index_folder_with_cli(folder_path, db_path, run_clustering, status):
+    """Index a folder through the CLI, then optionally resolve faces, filling `status`.
+
+    Both apps ran this as their own copy, and both reported "identities resolved" when
+    cluster-faces had failed: its exit code was never read. The CLI is started from
+    the repository, as TagTuner's copy did -- TagPup's relied on the server's working
+    directory to find tagpup_cli.py. Returns True when every step succeeded.
+    """
+    import sys
+
+    env = os.environ.copy()
+    env["TAGPUP_DB_PATH"] = db_path
+    workspace = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def run(args, scale):
+        proc = subprocess.Popen(
+            [sys.executable, "tagpup_cli.py"] + args,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, env=env, bufsize=1, cwd=workspace,
+        )
+        with proc.stdout:
+            for line in iter(proc.stdout.readline, ""):
+                clean = summarize_indexer_line(line)
+                if clean:
+                    status["message"] = clean
+                    match = re.search(r"(\d+)%", clean) if scale else None
+                    if match:
+                        status["percent"] = int(float(match.group(1)) * scale)
+        proc.wait()
+        return proc.returncode
+
+    # The indexer stores the paths it walks as given, so it is handed the stored form.
+    code = run(["index", paths.stored(folder_path)], 0.9)
+    if code != 0:
+        status.update(status="failed", percent=0,
+                      message="Indexing failed with exit code %s." % code)
+        return False
+
+    if run_clustering:
+        # Only on explicit request: this re-derives every face name in the database,
+        # not just the folder that was indexed.
+        status.update(message="Resolving and matching face identities...", percent=95)
+        code = run(["cluster-faces"], None)
+        if code != 0:
+            status.update(status="failed", percent=100,
+                          message="Folder indexed, but resolving face identities failed "
+                                  "(exit code %s). Run Recluster to try again." % code)
+            return False
+
+    status.update(status="completed", percent=100, message=(
+        "Folder indexed and face identities resolved." if run_clustering
+        else "Folder indexed. Faces detected; run Recluster to assign identities."))
+    return True
+
+
 def expand_tag_fields(tags):
     """Split a tag list into the flat and hierarchical keyword forms written to files.
 
@@ -1282,70 +1337,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             status_dict = {"status": "running", "percent": 0, "message": "Starting indexing..."}
             cls.index_status[folder_path_norm] = status_dict
         try:
-            import sys
-            import subprocess
-            import re
-
-            # The indexer stores the paths it walks as given, so hand it the stored
-            # form: a folder typed with forward slashes produced rows with both.
-            cmd = [sys.executable, "tagpup_cli.py", "index", paths.stored(folder_path)]
-            env = os.environ.copy()
-            env["TAGPUP_DB_PATH"] = db_path
-            
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                env=env,
-                bufsize=1
-            )
-            
-            for line in iter(proc.stdout.readline, ""):
-                clean_line = summarize_indexer_line(line)
-                if clean_line:
-                    status_dict["message"] = clean_line
-                    # Parse percent E.g. "Indexing photos:  45%" and scale to 90%
-                    match = re.search(r"(\d+)%", clean_line)
-                    if match:
-                        status_dict["percent"] = int(float(match.group(1)) * 0.9)
-                        
-            proc.wait()
-            if proc.returncode == 0:
-                if run_clustering:
-                    # Only on explicit request: this re-derives every face name in the
-                    # database, not just the folder that was indexed.
-                    status_dict["message"] = "Resolving and matching face identities..."
-                    status_dict["percent"] = 95
-
-                    proc2 = subprocess.Popen(
-                        [sys.executable, "tagpup_cli.py", "cluster-faces"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        env=env,
-                        bufsize=1
-                    )
-                    for line in iter(proc2.stdout.readline, ""):
-                        clean_line = summarize_indexer_line(line)
-                        if clean_line:
-                            status_dict["message"] = clean_line
-                    proc2.wait()
-
-                if folder_path_norm in cls.folder_cache:
-                    del cls.folder_cache[folder_path_norm]
-                status_dict["status"] = "completed"
-                status_dict["message"] = (
-                    "Folder successfully added, indexed, and face matching resolved."
-                    if run_clustering
-                    else "Folder successfully added and indexed. Faces detected; "
-                         "run Recluster separately to assign identities."
-                )
-                status_dict["percent"] = 100
-            else:
-                status_dict["status"] = "failed"
-                status_dict["message"] = f"Indexing failed with exit code {proc.returncode}."
-                status_dict["percent"] = 0
+            index_folder_with_cli(folder_path, db_path, run_clustering, status_dict)
+            # Rows were written even when clustering failed afterwards.
+            if folder_path_norm in cls.folder_cache:
+                del cls.folder_cache[folder_path_norm]
         except Exception as e:
             logger.exception(f"Error running folder index thread for {folder_path}: {e}")
             status_dict["status"] = "failed"
