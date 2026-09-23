@@ -438,6 +438,17 @@ class PhotoIndex:
             self.indexed_metadata = []
             return False
 
+    def _with_face_names(self, meta):
+        """meta's people plus the names already given to this photo's faces."""
+        from metadata import face_names
+        people = list(meta.get("people", []))
+        seen = {p.lower() for p in people}
+        for name in face_names(meta["path"], conn=self.conn):
+            if name.lower() not in seen:
+                seen.add(name.lower())
+                people.append(name)
+        return people
+
     def build_or_update(self, embeddings: List[List[float]], metas: List[Dict[str, Any]], dim: int = 512, reload: bool = True):
         """Batch insert/update photos inside the SQLite database (transaction-safe)."""
         if not embeddings or self.conn is None:
@@ -461,7 +472,10 @@ class PhotoIndex:
                     meta.get("mtime", 0.0),
                     meta.get("size", 0),
                     json.dumps(meta.get("tags", [])),
-                    json.dumps(meta.get("people", [])),
+                    # Keyword people and the photo's named faces: a re-index
+                    # rebuilt this from keywords alone and dropped everyone
+                    # identified only by their face. See metadata.photo_people.
+                    json.dumps(self._with_face_names(meta)),
                     json.dumps(meta.get("captions", [])),
                     json.dumps(meta.get("raw_metadata", {})),
                     emb_bytes,

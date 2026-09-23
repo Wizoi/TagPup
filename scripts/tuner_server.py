@@ -4699,8 +4699,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             new_path = paths.stored(sync_title_to_filename(photo_path, title, executable))
 
             # Update SQLite database
-            from metadata import extract_people
-            people_list = extract_people(params, tags, db_path=self.db_path)
+            from metadata import photo_people
+            people_list = photo_people(params, tags, photo_path, db_path=self.db_path)
 
             # The title is the photo's caption: the photos table has no title column,
             # and naming one failed the whole update after the file had been written.
@@ -4762,7 +4762,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     photo_entry["tags"] = extract_tags(photo_entry["raw_metadata"])
                     photo_entry["captions"] = [title] if title else []
                     photo_entry["title"] = title
-                    photo_entry["people"] = extract_people(photo_entry["raw_metadata"], tags, db_path=self.db_path)
+                    photo_entry["people"] = photo_people(photo_entry["raw_metadata"], tags, new_path, db_path=self.db_path)
                     
             self.send_json({"success": True, "new_path": new_path,
                             "index_updated": index_updated, "faces_moved": faces_moved})
@@ -4787,7 +4787,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             
         executable = self.get_exiftool_path()
         from exiftool_session import ExifToolSession
-        from metadata import extract_people
+        from metadata import photo_people
         from tagpup_server import (indexed_tags_for_photo, record_keyword_fields,
                                    record_tags_in_index, resolve_people_tags,
                                    write_keyword_fields)
@@ -4826,7 +4826,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         photo_entry["tags"] = new_tags
                         raw_meta = record_keyword_fields(
                             photo_entry.setdefault("raw_metadata", {}), flat, hierarchical)
-                        photo_entry["people"] = extract_people(raw_meta, new_tags, db_path=self.db_path)
+                        photo_entry["people"] = photo_people(raw_meta, new_tags, path, db_path=self.db_path)
 
             self.send_json({"success": True})
         except Exception as e:

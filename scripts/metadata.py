@@ -234,6 +234,46 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
             unique_people.append(p)
     return unique_people
 
+def face_names(photo_path: str, db_path: Optional[str] = None, conn: Any = None) -> List[str]:
+    """The names given to a photo's faces, excluded faces left out, in detection order."""
+    own = None
+    try:
+        if conn is None:
+            if not db_path or not os.path.exists(db_path):
+                return []
+            own = conn = tagpup_db.connect(tagpup_db.readonly_uri(db_path), uri=True)
+        clause, params = paths.sql_equals("photo_path", photo_path)
+        rows = conn.execute(
+            "SELECT name FROM faces WHERE " + clause
+            + " AND name IS NOT NULL AND COALESCE(excluded, 0) = 0 ORDER BY id", params).fetchall()
+        return [name for (name,) in rows if name]
+    except Exception as e:
+        logger.warning(f"Could not read face names for {photo_path}: {e}")
+        return []
+    finally:
+        if own is not None:
+            own.close()
+
+
+def photo_people(meta: Dict[str, Any], tags: List[str], photo_path: str,
+                 db_path: Optional[str] = None, conn: Any = None) -> List[str]:
+    """Everyone in a photo: whom its keywords name, and whom its faces were named as.
+
+    What photos.people means. It has two sources and two kinds of writer: naming a
+    face in TagTuner adds the person without necessarily writing a keyword, while
+    every keyword write rebuilt the column from the keywords alone -- so tagging a
+    photo silently took off everyone identified only by their face. Every writer of
+    the column goes through here, so both sources always count.
+    """
+    people = extract_people(meta, tags, db_path=db_path, conn=conn)
+    seen = {p.lower() for p in people}
+    for name in face_names(photo_path, db_path=db_path, conn=conn):
+        if name.lower() not in seen:
+            seen.add(name.lower())
+            people.append(name)
+    return people
+
+
 def extract_captions(meta: Dict[str, Any]) -> List[str]:
     """Extract titles, captions, and descriptions."""
     captions = []

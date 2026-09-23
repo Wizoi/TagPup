@@ -254,7 +254,7 @@ def record_tags_in_index(db_path, photo_path, tags, flat=None, hierarchical=None
     the folder scan only trusts a row whose mtime and size match the file; without
     them every photo tagged in bulk was re-read with ExifTool on every scan after.
     """
-    from metadata import extract_people
+    from metadata import photo_people
 
     if flat is None and hierarchical is None:
         flat, hierarchical = expand_tag_fields(tags)
@@ -278,7 +278,7 @@ def record_tags_in_index(db_path, photo_path, tags, flat=None, hierarchical=None
             raw_meta = {}
         record_keyword_fields(raw_meta, flat or [], hierarchical or [])
 
-        people = extract_people(raw_meta, tags, db_path=db_path)
+        people = photo_people(raw_meta, tags, photo_path, db_path=db_path, conn=conn)
         if stat is None:
             cursor.execute(
                 "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE rowid = ?",
@@ -2309,10 +2309,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     fresh_meta = fresh_meta_list[0] if fresh_meta_list else {}
                     
                 # Clean metadata
-                from metadata import clean_metadata_value, extract_tags, extract_people
+                from metadata import clean_metadata_value, extract_tags, photo_people
                 cleaned_meta = {k: clean_metadata_value(v) for k, v in fresh_meta.items()}
                 db_tags = extract_tags(cleaned_meta)
-                db_people = extract_people(cleaned_meta, db_tags, db_path=self.db_path)
+                db_people = photo_people(cleaned_meta, db_tags, photo_path, db_path=self.db_path)
                 db_captions = [title] if title else []
                 # A rename moves the row -- embedding, faces and all -- rather than
                 # inserting a second one beside it and leaving the faces behind.
@@ -2369,8 +2369,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     photo_entry["tags"] = extract_tags(photo_entry["raw_metadata"])
                     photo_entry["captions"] = [title] if title else []
                     photo_entry["title"] = title
-                    from metadata import extract_people
-                    photo_entry["people"] = extract_people(photo_entry["raw_metadata"], tags, db_path=self.db_path)
+                    from metadata import photo_people
+                    photo_entry["people"] = photo_people(photo_entry["raw_metadata"], tags, new_path, db_path=self.db_path)
                     
             result = {"success": True, "new_path": new_path}
             if index_warning:
@@ -2397,7 +2397,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             
         executable = self.get_exiftool_path()
         from exiftool_session import ExifToolSession
-        from metadata import extract_people
+        from metadata import photo_people
 
         try:
             with ExifToolSession(executable=executable) as et:
@@ -2432,7 +2432,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                         photo_entry["tags"] = new_tags
                         raw_meta = record_keyword_fields(
                             photo_entry.setdefault("raw_metadata", {}), flat, hierarchical)
-                        photo_entry["people"] = extract_people(raw_meta, new_tags, db_path=self.db_path)
+                        photo_entry["people"] = photo_people(raw_meta, new_tags, path, db_path=self.db_path)
 
             self.send_json({"success": True})
         except Exception as e:
@@ -2469,7 +2469,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             suggestions_map = {k: v for k, v in suggestions_map.items() if paths.key(k) in wanted}
         executable = self.get_exiftool_path()
         from exiftool_session import ExifToolSession
-        from metadata import extract_people
+        from metadata import photo_people
 
         try:
             with ExifToolSession(executable=executable) as et:
@@ -2520,7 +2520,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                         photo_entry["tags"] = new_tags
                         raw_meta = record_keyword_fields(
                             photo_entry.setdefault("raw_metadata", {}), flat, hierarchical)
-                        photo_entry["people"] = extract_people(raw_meta, new_tags, db_path=self.db_path)
+                        photo_entry["people"] = photo_people(raw_meta, new_tags, path, db_path=self.db_path)
 
             self.send_json({"success": True})
         except Exception as e:
