@@ -1716,8 +1716,15 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     if status.get("status") in ("running", "preparing"):
                         status["status"] = "idle"
                 data = cls._rekey_saved_suggestions(data)
+                # Only folders nothing has touched yet. This runs in the background
+                # at startup, so a folder chosen straight away can already have a run
+                # in progress; overwriting it with the saved copy -- rewritten to
+                # "idle" above -- told the page the run had stopped, and it stopped
+                # asking while the server went on and finished.
                 with cls.model_lock:
-                    cls.suggest_status.update(data)
+                    for folder, status in data.items():
+                        if folder not in cls.suggest_status:
+                            cls.suggest_status[folder] = status
                 logger.info(f"Loaded suggestions cache from {cache_path} with {len(data)} folders.")
             except Exception as e:
                 logger.error(f"Error loading suggestions cache: {e}")
