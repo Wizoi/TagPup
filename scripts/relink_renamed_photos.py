@@ -100,7 +100,13 @@ def identities(folder, exiftool_path=None):
 
 
 def preserved_names(folder, exiftool_path=None):
-    """Every photo in a folder, keyed by the stem of the name it was renamed from."""
+    """Every photo under a folder, keyed by (its folder's key, the stem it was renamed from).
+
+    Keyed by folder as well as stem: a rename never moves a file, and camera names
+    repeat -- a library holds many IMG_0421s -- so a dead row may only be matched to
+    a renamed file beside it. Keyed by stem alone, the last folder searched won, and
+    a row's named faces could be re-pointed at a stranger's photo in another folder.
+    """
     import exiftool
 
     paths = []
@@ -131,24 +137,39 @@ def preserved_names(folder, exiftool_path=None):
                 source = row.get("SourceFile")
                 if not original or not source:
                     continue
-                key = stem_of(original)
+                key = (photo_paths.key(os.path.dirname(photo_paths.stored(source))),
+                       stem_of(original))
                 # Two files claiming one original cannot be told apart; leave both.
                 by_original[key] = None if key in by_original else photo_paths.stored(source)
 
     return {k: v for k, v in by_original.items() if v}
 
 
+def merge_unambiguous(into, found):
+    """Add `found` to `into`, dropping any key two different files claim.
+
+    Folders are walked recursively, so one file can turn up from two walks -- that
+    is the same claim twice. Two different files claiming one key is a copy, not a
+    rename, and neither can be matched without guessing.
+    """
+    for key, path in found.items():
+        if key in into and (into[key] is None or not photo_paths.same(into[key], path)):
+            into[key] = None
+        else:
+            into[key] = path
+
+
 def plan_for(db_path, exiftool_path=None):
     """Which dead rows can be re-pointed, and to what."""
-    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)  # not a path: the database file's URI
+    conn = tagpup_db.connect(tagpup_db.readonly_uri(db_path), uri=True)
     dead = dead_rows(conn)
 
     folders = sorted({os.path.dirname(p) for p in dead if os.path.isdir(os.path.dirname(p))})
     lookup = {}
     by_identity = {}
     for folder in folders:
-        lookup.update(preserved_names(folder, exiftool_path))
-        by_identity.update(identities(folder, exiftool_path))
+        merge_unambiguous(lookup, preserved_names(folder, exiftool_path))
+        merge_unambiguous(by_identity, identities(folder, exiftool_path))
 
     # A dead row's own identity, where indexing recorded one.
     row_identity = {}
@@ -170,7 +191,8 @@ def plan_for(db_path, exiftool_path=None):
     for old in dead:
         # Identity first: it survives a move and a rename by any tool. The preserved
         # filename is the fallback, and only ever worked for TagPup's own renames.
-        new = by_identity.get(row_identity.get(old, ""), None) or lookup.get(stem_of(old))
+        new = (by_identity.get(row_identity.get(old, ""))
+               or lookup.get((photo_paths.key(os.path.dirname(old)), stem_of(old))))
         if not new:
             unmatched.append(old)
             continue
