@@ -1135,8 +1135,8 @@ class TestStability(unittest.TestCase):
         cursor.execute("DELETE FROM photos")
         
         # We will create two eras:
-        # Era 1 (2010): 6 photos/faces of Clara as a child (embedding: [1.0, 0.0, 0.0, ...])
-        # Era 2 (2026): 6 photos/faces of Clara as a teen (embedding: [0.0, 1.0, 0.0, ...])
+        # Era 1 (2010): 6 photos/faces of Wren as a child (embedding: [1.0, 0.0, 0.0, ...])
+        # Era 2 (2026): 6 photos/faces of Wren as a teen (embedding: [0.0, 1.0, 0.0, ...])
         emb_child = np.zeros(512, dtype=np.float32)
         emb_child[0] = 1.0
         emb_child_bytes = emb_child.tobytes()
@@ -1149,15 +1149,15 @@ class TestStability(unittest.TestCase):
         for i in range(6):
             path = f"C:/photos/2010_child_{i}.jpg"
             raw_meta = {"EXIF:DateTimeOriginal": "2010:06:01 12:00:00"}
-            cursor.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, 1000.0, 10, '[]', '[\"Clara\"]', '[]', ?)", (path, json.dumps(raw_meta)))
-            cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, '[10, 10, 50, 50]', ?, 'Clara', 0.99)", (path, emb_child_bytes))
+            cursor.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, 1000.0, 10, '[]', '[\"Wren\"]', '[]', ?)", (path, json.dumps(raw_meta)))
+            cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, '[10, 10, 50, 50]', ?, 'Wren', 0.99)", (path, emb_child_bytes))
             
         # Insert Era 2 teen faces (2026)
         for i in range(6):
             path = f"C:/photos/2026_teen_{i}.jpg"
             raw_meta = {"EXIF:DateTimeOriginal": "2026:06:01 12:00:00"}
-            cursor.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, 2000.0, 10, '[]', '[\"Clara\"]', '[]', ?)", (path, json.dumps(raw_meta)))
-            cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, '[10, 10, 50, 50]', ?, 'Clara', 0.99)", (path, emb_teen_bytes))
+            cursor.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, 2000.0, 10, '[]', '[\"Wren\"]', '[]', ?)", (path, json.dumps(raw_meta)))
+            cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, '[10, 10, 50, 50]', ?, 'Wren', 0.99)", (path, emb_teen_bytes))
             
         photo_index.conn.commit()
         
@@ -1173,7 +1173,7 @@ class TestStability(unittest.TestCase):
         cursor.execute("SELECT photo_path, name FROM faces WHERE photo_path LIKE '%2026%'")
         rows = cursor.fetchall()
         for path, name in rows:
-            self.assertEqual(name, "Clara", f"Teen face {path} should remain resolved to Clara under era-aware centroids")
+            self.assertEqual(name, "Wren", f"Teen face {path} should remain resolved to Wren under era-aware centroids")
             
         # Verify `/api/person-faces` returns high similarity for both eras when queried
         from tuner_server import TunerHTTPRequestHandler
@@ -1190,7 +1190,7 @@ class TestStability(unittest.TestCase):
                 pass
                 
         handler = MockHandler(self.TEST_DB_PATH)
-        handler.handle_get_person_faces({"name": ["Clara"]})
+        handler.handle_get_person_faces({"name": ["Wren"]})
         handler.wfile.seek(0)
         response_data = json.loads(handler.wfile.read().decode('utf-8'))
         
