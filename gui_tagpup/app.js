@@ -625,14 +625,33 @@ document.addEventListener('DOMContentLoaded', () => {
      * showed -- including when that needed no write -- and false when it does not, in
      * which case the typed text is left where it was.
      *
-     * One at a time: a second call waits for the first and then looks again, so two
-     * requests never race each other with different ideas of the tag list.
+     * It waits its turn in the photo write queue and reads the fields when it runs,
+     * so a second call sees what the first one wrote.
      */
     function saveDetailEdits(fields = { title: true, tags: true, people: true }) {
-        if (detailSaveInFlight) {
-            return detailSaveInFlight.then(() => saveDetailEdits(fields));
-        }
-        const run = writeDetailEdits(fields).catch(err => {
+        const path = activePhotoPath;
+        // The fields belong to the photo they were typed on. Leaving waits for the
+        // queue, so this should always hold; if it does not, the text is not ours.
+        return queuePhotoWrite(() => (activePhotoPath === path ? writeDetailEdits(fields) : true));
+    }
+
+    /**
+     * Every write to a photo's metadata from this page, one at a time, in order.
+     *
+     * Each writer used to post its own snapshot of the whole tag list, taken when it
+     * was clicked, and redraw whichever photo was open when the server answered. Two
+     * quick writes raced and the later one dropped the other's change; a reply that
+     * landed after moving on drew the old photo's tags and chips on the new one.
+     *
+     * So a job runs only after every write queued before it, and computes what it
+     * writes from the photo's tags as they are then. It redraws only when its photo
+     * is still the one shown (redrawIfShowing), and detailSaveInFlight is the tail of
+     * the whole queue, which is what leaving a photo waits for. Resolves to the job's
+     * result, or false if it threw; the queue carries on either way.
+     */
+    function queuePhotoWrite(job) {
+        const before = detailSaveInFlight || Promise.resolve();
+        const run = before.then(() => job()).catch(err => {
             // Resolving a name can fail too (the taxonomy write); that is a failed
             // save like any other, and the text stays where it is.
             console.error(err);
@@ -645,6 +664,26 @@ document.addEventListener('DOMContentLoaded', () => {
         detailSaveInFlight = run;
         updateSaveButton();
         return run;
+    }
+
+    /** POST a photo's title and tags -- as they are now, unless given -- and check the reply. */
+    async function postPhotoMetadata(photo, { title = photo.title, tags = photo.tags || [], ...extra } = {}) {
+        const res = await fetch('/api/photo/save-metadata', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: photo.path, title, tags, ...extra })
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Failed to save');
+        return data;
+    }
+
+    /** After a write: redraw the panel for this photo, but only if it is still the one open. */
+    function redrawIfShowing(photo) {
+        if (activePhotoPath !== photo.path) return;
+        renderTags(photo.tags);
+        renderSuggestionsPanel(photo.path);
+        updateCarryForwardState();
     }
 
     async function writeDetailEdits(fields) {
@@ -781,7 +820,10 @@ document.addEventListener('DOMContentLoaded', () => {
      * under way is waited for rather than asked about.
      */
     async function confirmLeavingPhoto() {
-        if (detailSaveInFlight) await detailSaveInFlight;
+        // The whole queue, not just the write that was running when this began: one
+        // queued behind it may be about to write the very text the question below
+        // would offer to discard.
+        while (detailSaveInFlight) await detailSaveInFlight;
         if (!hasUnsavedEdits()) return true;
         if (leavePrompt) return false;   // already asking; this route waits its turn
 
@@ -1981,7 +2023,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             + `
 Click to add ${namesSomebody} to this photo.`;
                         card.addEventListener('click', () => {
-                            applySuggestedTagDirect(namesSomebody, true);
+                            applySuggestedTagDirect(namesSomebody, true, photoPath);
                         });
                     } else if (alreadyTagged) {
                         // Not clickable, and saying so beats a card that looks live
@@ -2095,7 +2137,9 @@ Click to add ${namesSomebody} to this photo.`;
                     statusDot.className = 'status-indicator-dot busy';
                     statusText.textContent = 'Saving title...';
                     
-                    fetch('/api/photo/save-metadata', {
+                    // Queued with every other write to a photo, so the tags it sends
+                    // are the photo's tags when it runs, not a copy from before.
+                    queuePhotoWrite(() => fetch('/api/photo/save-metadata', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ path: photo.path, title: newTitle, tags: photo.tags })
@@ -2135,7 +2179,7 @@ Click to add ${namesSomebody} to this photo.`;
                         statusText.textContent = 'Error';
                         alert("Error saving title: " + err.message);
                         input.replaceWith(name);
-                    });
+                    }));
                 }
                 
                 input.addEventListener('keydown', (ev) => {
@@ -2774,40 +2818,45 @@ Click to add ${namesSomebody} to this photo.`;
         const photo = folderPhotos.find(p => p.path === path);
         if (!photo) return;
 
-        const { missing, from } = carryForwardCandidates();
-        if (!missing.length) {
-            setStatus('ready', from
-                ? `Nothing to carry over from ${from}`
-                : 'No previous photo to carry tags from');
+        const { tags: carried, from } = previousPhotoTags();
+        const nothingToCarry = () => setStatus('ready', from
+            ? `Nothing to carry over from ${from}`
+            : 'No previous photo to carry tags from');
+        if (!carryForwardCandidates().missing.length) {
+            nothingToCarry();
             return;
         }
 
-        const updatedTags = Array.from(new Set([...(photo.tags || []), ...missing]));
-        const before = (photo.tags || []).slice();
-        setStatus('busy', `Copying ${missing.length} tag(s) from ${from}...`);
-
-        fetch('/api/photo/save-metadata', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, title: photo.title, tags: updatedTags })
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (!data.success) throw new Error(data.error || 'Failed to save');
+        return queuePhotoWrite(async () => {
+            // What is missing now, not when the key was pressed: a write queued
+            // ahead of this one may have added some of it, or removed others.
+            const before = (photo.tags || []).slice();
+            const have = new Set(before);
+            const missing = carried.filter(t => !have.has(t));
+            if (!missing.length) {
+                nothingToCarry();
+                return true;
+            }
+            const updatedTags = Array.from(new Set([...before, ...missing]));
+            setStatus('busy', `Copying ${missing.length} tag(s) from ${from}...`);
+            try {
+                await postPhotoMetadata(photo, { tags: updatedTags });
+            } catch (err) {
+                console.error(err);
+                setStatus('error', 'Could not copy tags: ' + err.message);
+                return false;
+            }
             photo.tags = updatedTags;
             recordUndo({
                 label: `carry ${missing.length} tag(s) from ${from}`,
-                photos: [{ path, tags: before, title: photo.title }],
+                photos: [{ path: photo.path, tags: before, title: photo.title }],
             });
-            renderTags(updatedTags);
+            redrawIfShowing(photo);
             renderFileList();
             renderThumbnails();
             saveToLocalStorageCache();
             setStatus('ready', `Copied ${missing.length} tag(s) from ${from}`);
-        })
-        .catch(err => {
-            console.error(err);
-            setStatus('error', 'Could not copy tags: ' + err.message);
+            return true;
         });
     }
 
@@ -3031,34 +3080,29 @@ Click to add ${namesSomebody} to this photo.`;
         const photo = folderPhotos.find(p => p.path === path);
         if (!photo) return;
 
-        const updatedTags = photo.tags.filter(t => t !== tagToRemove);
+        return queuePhotoWrite(async () => {
+            // From the tags as they are when this runs: two pills clicked in quick
+            // succession each used to write "all but mine", and the later one put
+            // the other back.
+            const current = photo.tags || [];
+            const updatedTags = current.filter(t => t !== tagToRemove);
+            if (updatedTags.length === current.length) return true;
 
-        statusDot.className = 'status-indicator-dot busy';
-        statusText.textContent = 'Deleting tag...';
-
-        fetch('/api/photo/save-metadata', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, title: photo.title, tags: updatedTags })
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                photo.tags = updatedTags;
-                renderTags(updatedTags);
-                updateTagsDatalist();
-                statusDot.className = 'status-indicator-dot';
-                statusText.textContent = 'Ready';
-                saveToLocalStorageCache();
-            } else {
-                throw new Error(data.error || 'Failed to delete');
+            setStatus('busy', 'Deleting tag...');
+            try {
+                await postPhotoMetadata(photo, { tags: updatedTags });
+            } catch (err) {
+                console.error(err);
+                setStatus('error', 'Error');
+                alert("Error deleting tag: " + err.message);
+                return false;
             }
-        })
-        .catch(err => {
-            console.error(err);
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Error';
-            alert("Error deleting tag: " + err.message);
+            photo.tags = updatedTags;
+            redrawIfShowing(photo);
+            updateTagsDatalist();
+            setStatus('ready', 'Ready');
+            saveToLocalStorageCache();
+            return true;
         });
     }
 
@@ -3416,7 +3460,7 @@ Click to add ${namesSomebody} to this photo.`;
                 chip.style.cursor = 'pointer';
                 chip.textContent = pct ? `${name} · ${pct}%` : name;
                 chip.title = `Click to add ${name} to this photo.`;
-                chip.addEventListener('click', () => applySuggestedTagDirect(name, isPerson));
+                chip.addEventListener('click', () => applySuggestedTagDirect(name, isPerson, photoPath));
                 container.appendChild(chip);
             });
         }
@@ -3438,55 +3482,46 @@ Click to add ${namesSomebody} to this photo.`;
      * first. The modal only appears where the name is genuinely ambiguous, which for a
      * recognised face means never: they are in the taxonomy already.
      */
-    async function applySuggestedTagDirect(tagName, isPerson) {
+    function applySuggestedTagDirect(tagName, isPerson, forPath = activePhotoPath) {
+        // A chip or face card belongs to the photo it was drawn for. One left over
+        // from another photo must not write that photo's suggestion to this one.
         const path = activePhotoPath;
-        if (!path) return;
+        if (!path || forPath !== path) return;
         const photo = folderPhotos.find(p => p.path === path);
         if (!photo) return;
 
-        const resolved = await resolveTagOrPerson(tagName, isPerson);
-        if (!resolved) return;
+        return queuePhotoWrite(async () => {
+            const resolved = await resolveTagOrPerson(tagName, isPerson);
+            if (!resolved) return true;
 
-        // Say so rather than doing nothing. A click that silently no-ops reads as a
-        // broken button, which is how this was reported.
-        if (photoAlreadyHas(photo, resolved)) {
-            setStatus('ready', `${leafOf(resolved)} is already on this photo`);
-            return;
-        }
-        const updatedTags = [...photo.tags, resolved];
-        const leaf = leafOf(resolved);
-
-        statusDot.className = 'status-indicator-dot busy';
-        statusText.textContent = 'Saving...';
-
-        fetch('/api/photo/save-metadata', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, title: photo.title, tags: updatedTags })
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                photo.tags = updatedTags;
-                if (isPerson) {
-                    if (!photo.people) photo.people = [];
-                    if (!photo.people.includes(leaf)) photo.people.push(leaf);
-                }
-                renderTags(updatedTags);
-                // The suggestion has been taken, so it is no longer a suggestion.
-                renderSuggestionsPanel(path);
-                statusDot.className = 'status-indicator-dot';
-                statusText.textContent = 'Ready';
-                saveToLocalStorageCache();
-            } else {
-                throw new Error(data.error);
+            // Say so rather than doing nothing. A click that silently no-ops reads as
+            // a broken button, which is how this was reported.
+            if (photoAlreadyHas(photo, resolved)) {
+                setStatus('ready', `${leafOf(resolved)} is already on this photo`);
+                return true;
             }
-        })
-        .catch(err => {
-            console.error(err);
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Error';
-            alert("Error adding suggested tag: " + err.message);
+            const updatedTags = [...(photo.tags || []), resolved];
+            const leaf = leafOf(resolved);
+
+            setStatus('busy', 'Saving...');
+            try {
+                await postPhotoMetadata(photo, { tags: updatedTags });
+            } catch (err) {
+                console.error(err);
+                setStatus('error', 'Error');
+                alert("Error adding suggested tag: " + err.message);
+                return false;
+            }
+            photo.tags = updatedTags;
+            if (isPerson) {
+                if (!photo.people) photo.people = [];
+                if (!photo.people.includes(leaf)) photo.people.push(leaf);
+            }
+            // The suggestion has been taken, so it is no longer a suggestion.
+            redrawIfShowing(photo);
+            setStatus('ready', 'Ready');
+            saveToLocalStorageCache();
+            return true;
         });
     }
 
@@ -3508,56 +3543,46 @@ Click to add ${namesSomebody} to this photo.`;
         const sugg = folderSuggestions[path];
         if (!photo || !sugg) return;
 
-        // Resolve each suggestion to the tag it is filed under before writing it, and
-        // skip anyone the photo already names. Applying the list raw wrote bare leaves.
-        const wanted = [
-            ...(sugg.tags || []).map(t => ({ name: t.tag, isPerson: false })),
-            ...(sugg.people || []).map(p => ({ name: p.name, isPerson: true })),
-        ];
-        const resolvedSuggestions = [];
-        for (const item of wanted) {
-            const resolved = await resolveTagOrPerson(item.name, item.isPerson);
-            if (!resolved) continue;
-            if (photoAlreadyHas(photo, resolved)) continue;
-            if (resolvedSuggestions.includes(resolved)) continue;
-            resolvedSuggestions.push(resolved);
-        }
-        if (resolvedSuggestions.length === 0) return;
-
-        const updatedTags = Array.from(new Set([...photo.tags, ...resolvedSuggestions]));
-        const updatedTitle = photo.title; // Do not apply suggested title automatically
-
-        statusDot.className = 'status-indicator-dot busy';
-        statusText.textContent = 'Saving...';
-
-        fetch('/api/photo/save-metadata', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, title: updatedTitle, tags: updatedTags })
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                photo.tags = updatedTags;
-                if (!photo.people) photo.people = [];
-                resolvedSuggestions.filter(isPersonTag).forEach(t => {
-                    const leaf = leafOf(t);
-                    if (!photo.people.includes(leaf)) photo.people.push(leaf);
-                });
-                renderTags(updatedTags);
-                renderSuggestionsPanel(path);
-                statusDot.className = 'status-indicator-dot';
-                statusText.textContent = 'Ready';
-                saveToLocalStorageCache();
-            } else {
-                throw new Error(data.error);
+        return queuePhotoWrite(async () => {
+            // Resolve each suggestion to the tag it is filed under before writing it,
+            // and skip anyone the photo already names -- as it is now, after whatever
+            // was queued ahead. Applying the list raw wrote bare leaves.
+            const wanted = [
+                ...(sugg.tags || []).map(t => ({ name: t.tag, isPerson: false })),
+                ...(sugg.people || []).map(p => ({ name: p.name, isPerson: true })),
+            ];
+            const resolvedSuggestions = [];
+            for (const item of wanted) {
+                const resolved = await resolveTagOrPerson(item.name, item.isPerson);
+                if (!resolved) continue;
+                if (photoAlreadyHas(photo, resolved)) continue;
+                if (resolvedSuggestions.includes(resolved)) continue;
+                resolvedSuggestions.push(resolved);
             }
-        })
-        .catch(err => {
-            console.error(err);
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Error';
-            alert("Error applying all suggestions: " + err.message);
+            if (resolvedSuggestions.length === 0) return true;
+
+            // The suggested title is not applied automatically.
+            const updatedTags = Array.from(new Set([...(photo.tags || []), ...resolvedSuggestions]));
+
+            setStatus('busy', 'Saving...');
+            try {
+                await postPhotoMetadata(photo, { tags: updatedTags });
+            } catch (err) {
+                console.error(err);
+                setStatus('error', 'Error');
+                alert("Error applying all suggestions: " + err.message);
+                return false;
+            }
+            photo.tags = updatedTags;
+            if (!photo.people) photo.people = [];
+            resolvedSuggestions.filter(isPersonTag).forEach(t => {
+                const leaf = leafOf(t);
+                if (!photo.people.includes(leaf)) photo.people.push(leaf);
+            });
+            redrawIfShowing(photo);
+            setStatus('ready', 'Ready');
+            saveToLocalStorageCache();
+            return true;
         });
     }
 
@@ -4113,32 +4138,30 @@ Click to add ${namesSomebody} to this photo.`;
                 return;
             }
             
-            statusDot.className = 'status-indicator-dot busy';
-            statusText.textContent = 'Saving date taken...';
             closeDateModal();
-            
-            fetch('/api/photo/save-metadata', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    path: path,
-                    title: photo.title,
-                    tags: photo.tags,
-                    date_taken: newDateVal
-                })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    const formattedDate = newDateVal.replace("T", " ").replace(/-/g, ":");
-                    
-                    // Update in-memory record
-                    photo.raw_metadata = photo.raw_metadata || {};
-                    photo.raw_metadata["EXIF:DateTimeOriginal"] = formattedDate;
-                    photo.raw_metadata["XMP:DateTimeOriginal"] = formattedDate;
-                    photo.raw_metadata["EXIF:CreateDate"] = formattedDate;
-                    
-                    // Format and display in UI
+
+            // In the photo write queue with every other write: it sends the tags and
+            // title too, and those are read when it runs, not when Save was clicked.
+            queuePhotoWrite(async () => {
+                setStatus('busy', 'Saving date taken...');
+                try {
+                    await postPhotoMetadata(photo, { date_taken: newDateVal });
+                } catch (err) {
+                    console.error(err);
+                    setStatus('error', 'Error');
+                    alert("Error saving date taken: " + err.message);
+                    return false;
+                }
+                const formattedDate = newDateVal.replace("T", " ").replace(/-/g, ":");
+
+                // Update in-memory record
+                photo.raw_metadata = photo.raw_metadata || {};
+                photo.raw_metadata["EXIF:DateTimeOriginal"] = formattedDate;
+                photo.raw_metadata["XMP:DateTimeOriginal"] = formattedDate;
+                photo.raw_metadata["EXIF:CreateDate"] = formattedDate;
+
+                // Format and display in UI -- if this photo is still the one shown.
+                if (activePhotoPath === photo.path) {
                     const localD = parseExifDateToLocalDate(formattedDate);
                     if (localD) {
                         const stats = getFolderDateStats();
@@ -4146,21 +4169,13 @@ Click to add ${namesSomebody} to this photo.`;
                     } else {
                         detailDateTaken.textContent = newDateVal;
                     }
-                    
-                    statusDot.className = 'status-indicator-dot';
-                    statusText.textContent = 'Ready';
-                    saveToLocalStorageCache();
-                    renderFileList();
-                    renderThumbnails();
-                } else {
-                    throw new Error(data.error || 'Failed to save');
                 }
-            })
-            .catch(err => {
-                console.error(err);
-                statusDot.className = 'status-indicator-dot';
-                statusText.textContent = 'Error';
-                alert("Error saving date taken: " + err.message);
+
+                setStatus('ready', 'Ready');
+                saveToLocalStorageCache();
+                renderFileList();
+                renderThumbnails();
+                return true;
             });
         });
     }
