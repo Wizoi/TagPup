@@ -174,7 +174,7 @@ class TestSavingACaptionThatRenamesThePhoto(HandlerCase):
             # metadata joins onto whatever spelling it was given.
             return forward(renamed_to)
 
-        with patch("exiftool.ExifToolHelper", fake_exiftool([{"XMP:Description": "Finish line"}])), \
+        with patch("exiftool_session.ExifToolSession", fake_exiftool([{"XMP:Description": "Finish line"}])), \
                 patch("metadata.sync_title_to_filename", side_effect=sync_title):
             result = self.call("handle_post_photo_save_metadata",
                                {"path": forward(photo), "title": "Finish line", "tags": []})
@@ -206,7 +206,7 @@ class TestSavingACaptionThatRenamesThePhoto(HandlerCase):
             os.rename(photo_path, renamed_to)
             return renamed_to
 
-        with patch("exiftool.ExifToolHelper", fake_exiftool([{}])), \
+        with patch("exiftool_session.ExifToolSession", fake_exiftool([{}])), \
                 patch("metadata.sync_title_to_filename", side_effect=sync_title):
             result = self.call("handle_post_photo_save_metadata",
                                {"path": photo, "title": "Finish line", "tags": []})
@@ -257,7 +257,7 @@ class TestSmartRenameNumbersByDateTaken(HandlerCase):
         }
 
         preserved = [{"XMP-xmpMM:PreservedFileName": "original.jpg"}]
-        with patch("exiftool.ExifToolHelper", fake_exiftool(preserved)), \
+        with patch("exiftool_session.ExifToolSession", fake_exiftool(preserved)), \
                 patch("metadata.MetadataExtractor", fake_extractor()):
             result = self.call("handle_post_folder_rename_photos", {
                 "folder_path": forward(self.folder),
@@ -282,7 +282,7 @@ class TestTimeShiftKeepsTheRealPaths(HandlerCase):
     def test_a_cold_folder_is_walked_and_returned_in_its_own_case(self):
         photo = self.make_file("IMG_0001.jpg")
         extractor = fake_extractor({"EXIF:Model": "Test Camera"})
-        with patch("metadata.MetadataExtractor", extractor), patch("exiftool.ExifTool", MagicMock()):
+        with patch("metadata.MetadataExtractor", extractor), patch("exiftool_session.ExifToolSession", MagicMock()):
             result = self.call("handle_post_folder_time_shift", {
                 "folder_path": forward(self.folder), "camera_model": "All Cameras",
                 "shift_minutes": 30})

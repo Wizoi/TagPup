@@ -507,9 +507,8 @@ def rotate_image_file(photo_path: str, direction: str, exiftool_path: Optional[s
             rotated.save(photo_path, quality=95)
 
     if exiftool_path:
-        import exiftool
         try:
-            with exiftool.ExifToolHelper(executable=exiftool_path) as et:
+            with ExifToolSession(executable=exiftool_path) as et:
                 et.set_tags([photo_path], tags={"Orientation": 1}, params=["-overwrite_original"])
         except Exception:
             pass
@@ -532,9 +531,8 @@ def sync_title_to_filename(photo_path: str, new_title: str, exiftool_path: str) 
     if not os.path.exists(photo_path):
         return photo_path
 
-    import exiftool
     try:
-        with exiftool.ExifToolHelper(executable=exiftool_path) as et:
+        with ExifToolSession(executable=exiftool_path) as et:
             meta = et.get_tags([photo_path], tags=["XMP-xmpMM:PreservedFileName", "XMP:PreservedFileName"])
             meta_dict = meta[0] if meta else {}
             

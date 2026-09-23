@@ -410,7 +410,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
     
     # Database-specific registries
     _db_folder_cache_registry = {}
-    _db_suggest_status_registry = {}
     _db_suggest_threads_registry = {}
     _db_identify_cache_registry = {}
     _db_identify_progress_registry = {}
@@ -436,7 +435,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
     # through one at a time rather than in parallel -- but asking for ten of them
     # should not mean standing over the machine to start each one.
     index_queue = DatabaseIsolatedDict(_db_index_queue_registry)
-    suggest_status = DatabaseIsolatedDict(_db_suggest_status_registry)
     suggest_threads = DatabaseIsolatedDict(_db_suggest_threads_registry)
 
     # The suggestions cache file belongs to TagPup, which runs the suggestions and is
@@ -4689,11 +4687,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 params["EXIF:XPComment"] = ""
                 
             executable = self.get_exiftool_path()
-            import exiftool
+            from exiftool_session import ExifToolSession
             # The keywords go through the one writer TagPup uses, so both apps write
             # the same fields -- this one used to split every path into its segments
             # and, removing a photo's last tag, wrote [] which ExifTool ignores.
-            with exiftool.ExifToolHelper(executable=executable) as et:
+            with ExifToolSession(executable=executable) as et:
                 new_flat_tags, new_hierarchical_tags = write_keyword_fields(
                     et, photo_path, tags, extra_params=params, db_path=self.db_path)
 
@@ -4788,14 +4786,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             return
             
         executable = self.get_exiftool_path()
-        import exiftool
+        from exiftool_session import ExifToolSession
         from metadata import extract_people
         from tagpup_server import (indexed_tags_for_photo, record_keyword_fields,
                                    record_tags_in_index, resolve_people_tags,
                                    write_keyword_fields)
-        
+
         try:
-            with exiftool.ExifToolHelper(executable=executable) as et:
+            with ExifToolSession(executable=executable) as et:
                 for path in photo_list:
                     path = paths.stored(path)
                     folder_path = paths.key(os.path.dirname(path))
@@ -4833,78 +4831,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error in bulk tags write: {e}")
-            self.send_json_error(500, str(e))
-
-    def handle_post_folder_auto_apply(self):
-        try:
-            data = self.read_json_body()
-        except Exception:
-            self.send_json_error(400, "Invalid JSON payload")
-            return
-            
-        folder_path = data.get("folder_path")
-        threshold = data.get("threshold", 0.75)
-        
-        if not folder_path or not os.path.isdir(folder_path):
-            self.send_json_error(400, "Invalid folder path")
-            return
-            
-        folder_path = paths.key(folder_path)
-        status_info = TunerHTTPRequestHandler.suggest_status.get(folder_path)
-        if not status_info or "suggestions" not in status_info:
-            self.send_json_error(400, "No suggestions found for this folder")
-            return
-
-        suggestions_map = status_info["suggestions"]
-        photo_paths = data.get("photo_paths")
-        if photo_paths:
-            wanted = {paths.key(p) for p in photo_paths}
-            suggestions_map = {k: v for k, v in suggestions_map.items() if paths.key(k) in wanted}
-        executable = self.get_exiftool_path()
-        import exiftool
-        from metadata import extract_people
-        from tagpup_server import (indexed_tags_for_photo, record_keyword_fields,
-                                   record_tags_in_index, resolve_people_tags,
-                                   write_keyword_fields)
-        
-        try:
-            with exiftool.ExifToolHelper(executable=executable) as et:
-                for path, sugg_info in suggestions_map.items():
-                    raw_sugg = sugg_info.get("raw_suggestions", {})
-                    suggested_tags = raw_sugg.get("suggested_tags", [])
-                    
-                    apply_tags = [t["tag"] for t in suggested_tags if t.get("score", 0.0) >= threshold]
-                    if not apply_tags:
-                        continue
-                        
-                    path = paths.stored(path)
-                    folder_path_dir = paths.key(os.path.dirname(path))
-                    photo_entry = None
-                    if folder_path_dir in TunerHTTPRequestHandler.folder_cache:
-                        photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path_dir].get(paths.key(path))
-                        
-                    if photo_entry:
-                        current_tags = photo_entry["tags"]
-                    else:
-                        current_tags = indexed_tags_for_photo(self.db_path, path)
-
-                    # Written and recorded exactly as TagPup's Apply All does; this
-                    # wrote the file and left the index describing the old keywords.
-                    new_tags = resolve_people_tags(
-                        list(set(current_tags + apply_tags)), self.db_path)
-                    flat, hierarchical = write_keyword_fields(
-                        et, path, new_tags, db_path=self.db_path)
-                    record_tags_in_index(self.db_path, path, new_tags, flat, hierarchical)
-
-                    if photo_entry:
-                        photo_entry["tags"] = new_tags
-                        raw_meta = record_keyword_fields(
-                            photo_entry.setdefault("raw_metadata", {}), flat, hierarchical)
-                        photo_entry["people"] = extract_people(raw_meta, new_tags, db_path=self.db_path)
-                            
-            self.send_json({"success": True})
-        except Exception as e:
-            logger.error(f"Error auto-applying suggestions: {e}")
             self.send_json_error(500, str(e))
 
     def handle_post_folder_time_shift(self):
@@ -4975,8 +4901,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             return
             
         executable = self.get_exiftool_path()
-        import exiftool
-        
+        from exiftool_session import ExifToolSession
+
         sign = "+" if shift_minutes >= 0 else "-"
         abs_minutes = abs(shift_minutes)
         
@@ -4984,7 +4910,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         shift_cd = f"-CreateDate{sign}=0:0:0 0:{abs_minutes}:0"
         
         try:
-            with exiftool.ExifTool(executable=executable) as et:
+            # check_execute=False: the plain ExifTool this replaced never raised on a
+            # non-zero status, and a batch with one unwritable photo still shifts the rest.
+            with ExifToolSession(executable=executable, check_execute=False) as et:
                 batch_size = 50
                 for i in range(0, len(target_paths), batch_size):
                     batch = target_paths[i:i+batch_size]
@@ -5165,7 +5093,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             N = len(sorted_paths)
             index_len = len(str(N))
             
-            import exiftool
+            from exiftool_session import ExifToolSession
             from metadata import sanitize_filename
             executable = self.get_exiftool_path()
             
@@ -5175,7 +5103,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 if not os.path.exists(old_path):
                     continue
                     
-                with exiftool.ExifToolHelper(executable=executable) as et:
+                with ExifToolSession(executable=executable) as et:
                     meta = et.get_tags([old_path], tags=[
                         "XMP-xmpMM:PreservedFileName", "XMP:PreservedFileName",
                         "XMP:Title", "Title", "XMP:Description", "Description",
@@ -5192,7 +5120,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         
                 if not preserved:
                     orig_name = os.path.basename(old_path)
-                    with exiftool.ExifToolHelper(executable=executable) as et:
+                    with ExifToolSession(executable=executable) as et:
                         et.set_tags([old_path], tags={"XMP-xmpMM:PreservedFileName": orig_name}, params=["-overwrite_original"])
                         
                 title = ""

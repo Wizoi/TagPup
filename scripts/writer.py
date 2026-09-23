@@ -3,7 +3,7 @@ import os
 import json
 import logging
 from typing import List, Optional
-import exiftool
+from exiftool_session import ExifToolSession
 
 logger = logging.getLogger("tagpup_cli.writer")
 
@@ -172,7 +172,7 @@ class MetadataWriter:
         # We will write tags to XMP:Subject, IPTC:Keywords, and XMP:HierarchicalSubject
         # and captions to XMP:Description and IPTC:Caption-Abstract
         try:
-            with exiftool.ExifToolHelper(executable=executable) as et:
+            with ExifToolSession(executable=executable) as et:
                 for path, tags, caption in write_tasks:
                     try:
                         params = {}

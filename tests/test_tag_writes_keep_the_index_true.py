@@ -87,8 +87,10 @@ class IndexCase(unittest.TestCase):
                                     (tuner_server, TunerHTTPRequestHandler)):
                 module.set_active_db_path(self.db_path)
                 handler.folder_cache.clear()
-                handler.suggest_status.clear()
                 module.set_active_db_path(None)
+            tagpup_server.set_active_db_path(self.db_path)
+            TagPupHTTPRequestHandler.suggest_status.clear()
+            tagpup_server.set_active_db_path(None)
             tagpup_server.invalidate_people_cache()
         self.addCleanup(forget_state)
         tagpup_server.invalidate_people_cache()
@@ -155,7 +157,7 @@ class TestARemovedTagStaysRemoved(IndexCase):
     def test_a_bulk_remove_survives_renaming_another_tag(self):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
-        with patch("exiftool.ExifToolHelper", helper):
+        with patch("exiftool_session.ExifToolSession", helper):
             self.call(TagPupHTTPRequestHandler, tagpup_server, "handle_post_photos_bulk_tags",
                       {"paths": [stored], "add_tags": [], "remove_tags": ["Cross Country"]})
             self.assertNotIn("Cross Country", self.row(stored)["tags"])
@@ -190,7 +192,7 @@ class TestTheRowKeepsTheFilesNewStat(IndexCase):
     def test_bulk_tagging(self):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
-        with patch("exiftool.ExifToolHelper", helper):
+        with patch("exiftool_session.ExifToolSession", helper):
             self.call(TagPupHTTPRequestHandler, tagpup_server, "handle_post_photos_bulk_tags",
                       {"paths": [stored], "add_tags": ["Relay"], "remove_tags": []})
         self.assertRowMatchesTheFile(stored)
@@ -198,7 +200,7 @@ class TestTheRowKeepsTheFilesNewStat(IndexCase):
     def test_renaming_a_tag(self):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
-        with patch("exiftool.ExifToolHelper", helper):
+        with patch("exiftool_session.ExifToolSession", helper):
             tagpup_server.update_photo_metadata_tags(
                 self.db_path, "exiftool", [stored], "Beach", "Places/Beach")
         self.assertRowMatchesTheFile(stored)
@@ -208,7 +210,7 @@ class TestTagTunerTellsTheIndex(IndexCase):
     def test_bulk_tags(self):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
-        with patch("exiftool.ExifToolHelper", helper):
+        with patch("exiftool_session.ExifToolSession", helper):
             self.call(TunerHTTPRequestHandler, tuner_server, "handle_post_photos_bulk_tags",
                       {"paths": [stored], "add_tags": ["Relay"], "remove_tags": ["Cross Country"]})
 
@@ -219,27 +221,10 @@ class TestTagTunerTellsTheIndex(IndexCase):
         self.assertNotIn("Cross Country", extract_tags(row["raw"]))
         self.assertRowMatchesTheFile(stored)
 
-    def test_auto_apply(self):
-        stored = self.photo()
-        tuner_server.set_active_db_path(self.db_path)
-        TunerHTTPRequestHandler.suggest_status[tagpup_server.paths.key(self.folder)] = {
-            "suggestions": {stored: {"raw_suggestions": {
-                "suggested_tags": [{"tag": "Relay", "score": 0.9}]}}}}
-        helper, _ = exiftool_that_writes()
-        with patch("exiftool.ExifToolHelper", helper):
-            self.call(TunerHTTPRequestHandler, tuner_server, "handle_post_folder_auto_apply",
-                      {"folder_path": self.folder})
-
-        row = self.row(stored)
-        self.assertIn("Relay", row["tags"])
-        self.assertIn("Beach", row["tags"])
-        self.assertIn("Relay", extract_tags(row["raw"]))
-        self.assertRowMatchesTheFile(stored)
-
     def test_save_metadata_records_every_field_and_the_new_stat(self):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
-        with patch("exiftool.ExifToolHelper", helper), \
+        with patch("exiftool_session.ExifToolSession", helper), \
                 patch("metadata.sync_title_to_filename", side_effect=lambda p, t, e: p):
             self.call(TunerHTTPRequestHandler, tuner_server, "handle_post_photo_save_metadata",
                       {"path": stored, "title": "", "tags": ["Beach"]})

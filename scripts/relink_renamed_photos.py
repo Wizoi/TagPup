@@ -60,7 +60,7 @@ def identities(folder, exiftool_path=None):
     filename that collides with another photo's original. PreservedFileName only ever
     worked for renames TagPup itself performed.
     """
-    import exiftool
+    from exiftool_session import ExifToolSession
 
     paths = []
     for root, _dirs, files in os.walk(folder):
@@ -72,7 +72,7 @@ def identities(folder, exiftool_path=None):
     if not paths:
         return by_id
 
-    with exiftool.ExifToolHelper(executable=exiftool_path) as et:
+    with ExifToolSession(executable=exiftool_path) as et:
         for i in range(0, len(paths), 100):
             batch = paths[i:i + 100]
             try:
@@ -107,7 +107,7 @@ def preserved_names(folder, exiftool_path=None):
     a renamed file beside it. Keyed by stem alone, the last folder searched won, and
     a row's named faces could be re-pointed at a stranger's photo in another folder.
     """
-    import exiftool
+    from exiftool_session import ExifToolSession
 
     paths = []
     for root, _dirs, files in os.walk(folder):
@@ -119,7 +119,7 @@ def preserved_names(folder, exiftool_path=None):
     if not paths:
         return by_original
 
-    with exiftool.ExifToolHelper(executable=exiftool_path) as et:
+    with ExifToolSession(executable=exiftool_path) as et:
         for i in range(0, len(paths), 100):
             batch = paths[i:i + 100]
             try:

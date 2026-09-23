@@ -26,6 +26,12 @@ any indexer. Check for one before editing; run long indexes through the CLI.
 **Never call `sqlite3.connect`.** Use `scripts/db.py`. It owns journal mode, busy
 timeout, the per-file write lock and the retry. `tests/test_db_access.py` enforces it.
 
+**Never construct `ExifToolHelper` or `ExifTool` directly.** Use `ExifToolSession` from
+`scripts/exiftool_session.py`. pyexiftool reads stdout to the end before stderr; a batch
+with ~4 KB of warnings fills the stderr pipe and both sides wait forever -- two scripts
+sat at 0% CPU for two days. The session drains both and gives each command a deadline.
+`tests/test_exiftool_single_owner.py` enforces it.
+
 **Never spell or compare a photo path by hand.** `scripts/paths.py` owns it: `stored()`
 for anything written to the database, walked or sent to the browser; `key()` for
 in-memory comparison; `sql_equals()` / `sql_under()` for SQL. A helper that turned

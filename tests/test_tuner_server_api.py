@@ -1490,7 +1490,7 @@ class TestSaveMetadataKeepsTheIndex(TunerAPITestBase):
                 return renamed_to
             return path
 
-        with patch("exiftool.ExifToolHelper", MagicMock()), \
+        with patch("exiftool_session.ExifToolSession", MagicMock()), \
                 patch("metadata.sync_title_to_filename", side_effect=sync_title_to_filename):
             return self.post("/api/photo/save-metadata",
                              {"path": photo, "title": title, "tags": list(tags)})

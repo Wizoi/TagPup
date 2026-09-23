@@ -2286,8 +2286,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                         params["EXIF:SubSecTime"] = subsec_digits
 
             executable = self.get_exiftool_path()
-            import exiftool
-            with exiftool.ExifToolHelper(executable=executable) as et:
+            from exiftool_session import ExifToolSession
+            with ExifToolSession(executable=executable) as et:
                 new_flat_tags, new_hierarchical_tags = write_keyword_fields(
                     et, photo_path, tags, extra_params=params, db_path=self.db_path)
                 
@@ -2304,7 +2304,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 size = stat.st_size
                 
                 # Fetch new raw metadata from ExifTool
-                with exiftool.ExifToolHelper(executable=executable) as et:
+                with ExifToolSession(executable=executable) as et:
                     fresh_meta_list = et.get_tags([new_path], tags=METADATA_FIELDS)
                     fresh_meta = fresh_meta_list[0] if fresh_meta_list else {}
                     
@@ -2396,11 +2396,11 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             return
             
         executable = self.get_exiftool_path()
-        import exiftool
+        from exiftool_session import ExifToolSession
         from metadata import extract_people
-        
+
         try:
-            with exiftool.ExifToolHelper(executable=executable) as et:
+            with ExifToolSession(executable=executable) as et:
                 for path in photo_list:
                     path = paths.stored(path)
                     folder_path = paths.key(os.path.dirname(path))
@@ -2468,11 +2468,11 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             wanted = {paths.key(p) for p in photo_paths}
             suggestions_map = {k: v for k, v in suggestions_map.items() if paths.key(k) in wanted}
         executable = self.get_exiftool_path()
-        import exiftool
+        from exiftool_session import ExifToolSession
         from metadata import extract_people
-        
+
         try:
-            with exiftool.ExifToolHelper(executable=executable) as et:
+            with ExifToolSession(executable=executable) as et:
                 for path, sugg_info in suggestions_map.items():
                     # Apply exactly what the panel offered.
                     #
@@ -2595,8 +2595,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             return
             
         executable = self.get_exiftool_path()
-        import exiftool
-        
+        from exiftool_session import ExifToolSession
+
         sign = "+" if shift_minutes >= 0 else "-"
         abs_minutes = abs(shift_minutes)
         
@@ -2604,7 +2604,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         shift_cd = f"-CreateDate{sign}=0:0:0 0:{abs_minutes}:0"
         
         try:
-            with exiftool.ExifTool(executable=executable) as et:
+            # check_execute=False: the plain ExifTool this replaced never raised on a
+            # non-zero status, and a batch with one unwritable photo still shifts the rest.
+            with ExifToolSession(executable=executable, check_execute=False) as et:
                 batch_size = 50
                 for i in range(0, len(target_paths), batch_size):
                     batch = target_paths[i:i+batch_size]
@@ -2723,7 +2725,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             N = len(sorted_paths)
             index_len = len(str(N))
             
-            import exiftool
+            from exiftool_session import ExifToolSession
             from metadata import sanitize_filename
             executable = self.get_exiftool_path()
             
@@ -2733,7 +2735,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 if not os.path.exists(old_path):
                     continue
                     
-                with exiftool.ExifToolHelper(executable=executable) as et:
+                with ExifToolSession(executable=executable) as et:
                     meta = et.get_tags([old_path], tags=[
                         "XMP-xmpMM:PreservedFileName", "XMP:PreservedFileName",
                         "XMP:Title", "Title", "XMP:Description", "Description",
@@ -2750,7 +2752,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                         
                 if not preserved:
                     orig_name = os.path.basename(old_path)
-                    with exiftool.ExifToolHelper(executable=executable) as et:
+                    with ExifToolSession(executable=executable) as et:
                         et.set_tags([old_path], tags={"XMP-xmpMM:PreservedFileName": orig_name}, params=["-overwrite_original"])
                         
                 title = ""
@@ -3519,7 +3521,7 @@ def update_photo_metadata_tags(db_path: str, exiftool_path: str, photo_paths: Li
     straight back into the tags.
     """
     import json
-    import exiftool
+    from exiftool_session import ExifToolSession
     from metadata import extract_tags
     from taxonomy import TagTaxonomy
 
@@ -3540,7 +3542,7 @@ def update_photo_metadata_tags(db_path: str, exiftool_path: str, photo_paths: Li
         conn.close()
 
     recorded = 0
-    with exiftool.ExifToolHelper(executable=exiftool_path) as et:
+    with ExifToolSession(executable=exiftool_path) as et:
         for path, row in rows:
             try:
                 current_tags = json.loads(row[0]) if row[0] else []

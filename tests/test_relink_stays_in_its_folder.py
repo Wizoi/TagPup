@@ -74,8 +74,8 @@ class RelinkStaysInItsFolder(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def plan(self):
-        import exiftool
-        with mock.patch.object(exiftool, "ExifToolHelper", FakeExifTool):
+        import exiftool_session
+        with mock.patch.object(exiftool_session, "ExifToolSession", FakeExifTool):
             return relink_renamed_photos.plan_for(self.db)
 
     def test_a_row_is_not_matched_to_a_file_in_another_folder(self):
