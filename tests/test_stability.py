@@ -1145,18 +1145,19 @@ class TestStability(unittest.TestCase):
         emb_teen[1] = 1.0
         emb_teen_bytes = emb_teen.tobytes()
         
-        # Insert Era 1 child faces (2010)
+        # Insert Era 1 child faces (2010). Each photo names her in its keywords: a name
+        # only on the face is clustering's own guess, which is not evidence for itself.
         for i in range(6):
             path = f"C:/photos/2010_child_{i}.jpg"
             raw_meta = {"EXIF:DateTimeOriginal": "2010:06:01 12:00:00"}
-            cursor.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, 1000.0, 10, '[]', '[\"Wren\"]', '[]', ?)", (path, json.dumps(raw_meta)))
+            cursor.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, 1000.0, 10, '[\"People/Wren\"]', '[\"Wren\"]', '[]', ?)", (path, json.dumps(raw_meta)))
             cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, '[10, 10, 50, 50]', ?, 'Wren', 0.99)", (path, emb_child_bytes))
             
         # Insert Era 2 teen faces (2026)
         for i in range(6):
             path = f"C:/photos/2026_teen_{i}.jpg"
             raw_meta = {"EXIF:DateTimeOriginal": "2026:06:01 12:00:00"}
-            cursor.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, 2000.0, 10, '[]', '[\"Wren\"]', '[]', ?)", (path, json.dumps(raw_meta)))
+            cursor.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, 2000.0, 10, '[\"People/Wren\"]', '[\"Wren\"]', '[]', ?)", (path, json.dumps(raw_meta)))
             cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, '[10, 10, 50, 50]', ?, 'Wren', 0.99)", (path, emb_teen_bytes))
             
         photo_index.conn.commit()

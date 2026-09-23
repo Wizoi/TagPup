@@ -250,11 +250,38 @@ class FaceProcessor:
         # anchors and votes this whole resolution runs on. Keying by the face's
         # spelling keeps every lookup below exact and costs one key() per photo.
         meta_by_key = {paths.key(meta["path"]): meta for meta in photo_index.metadata}
+
+        # What counts as evidence of who is in a photo: its keywords, and names given
+        # to its faces by hand. `people` also holds the names on its faces, and some of
+        # those are this resolver's own guesses from the last run -- read as evidence,
+        # a lone face it once named anchored the same name again, so a wrong guess
+        # voted for itself on every run. So each photo's people, as seen below, loses
+        # the names only its guessed faces gave it.
+        from metadata import PeopleVocabulary, extract_people
+        vocabulary = PeopleVocabulary.load(getattr(photo_index, "db_path", None),
+                                           conn=getattr(photo_index, "conn", None))
+        guessed_by_path = {}
+        manual_by_path = {}
+        for f in all_faces:
+            if f["id"] in manual_names:
+                if manual_names[f["id"]]:
+                    manual_by_path.setdefault(f["photo_path"], set()).add(manual_names[f["id"]])
+            elif f.get("name"):
+                guessed_by_path.setdefault(f["photo_path"], set()).add(f["name"])
+
         meta_by_path = {}
         for face_path in {f["photo_path"] for f in all_faces}:
             meta = meta_by_key.get(paths.key(face_path))
-            if meta is not None:
-                meta_by_path[face_path] = meta
+            if meta is None:
+                continue
+            guessed = guessed_by_path.get(face_path, set())
+            if guessed:
+                written = set(extract_people(meta.get("raw_metadata") or {}, meta.get("tags") or [],
+                                             vocabulary=vocabulary))
+                written |= manual_by_path.get(face_path, set())
+                meta = dict(meta, people=[p for p in meta.get("people", [])
+                                          if p not in guessed or p in written])
+            meta_by_path[face_path] = meta
         
         # Precompute face counts per photo to avoid O(N) scanning inside the cluster loop
         face_counts_by_photo = {}
