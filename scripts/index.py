@@ -191,6 +191,43 @@ def faces_generation(conn):
     return row[0] if row else 0
 
 
+def ensure_taxonomy_generation(conn):
+    """A counter that moves whenever the tag tree changes, by whoever changes it.
+
+    TagPup caches who the tree says each person is, and resolves every keyword it
+    writes through that. TagTuner is another process: a person it renamed or merged
+    stayed under the old path in TagPup's cache until TagPup restarted, and TagPup
+    wrote the old path back into photos. The cache is now kept against this.
+    """
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table'"
+                        " AND name = 'tag_taxonomy'").fetchone():
+        return  # nothing to watch yet; PhotoIndex.load creates both
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS taxonomy_generation (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            generation INTEGER NOT NULL
+        )
+    """)
+    conn.execute("INSERT OR IGNORE INTO taxonomy_generation (id, generation) VALUES (1, 0)")
+    bump = "BEGIN UPDATE taxonomy_generation SET generation = generation + 1 WHERE id = 1; END"
+    conn.execute("CREATE TRIGGER IF NOT EXISTS taxonomy_generation_insert"
+                 " AFTER INSERT ON tag_taxonomy " + bump)
+    conn.execute("CREATE TRIGGER IF NOT EXISTS taxonomy_generation_delete"
+                 " AFTER DELETE ON tag_taxonomy " + bump)
+    conn.execute("CREATE TRIGGER IF NOT EXISTS taxonomy_generation_update"
+                 " AFTER UPDATE OF tag, name, parent_id, has_face ON tag_taxonomy " + bump)
+    conn.commit()
+
+
+def taxonomy_generation(conn):
+    """The counter above, or 0 on a database that does not have it yet."""
+    try:
+        row = conn.execute("SELECT generation FROM taxonomy_generation WHERE id = 1").fetchone()
+    except sqlite3.OperationalError:
+        return 0
+    return row[0] if row else 0
+
+
 class PhotoIndex:
     def __init__(self, db_path: str = "data/photo_index.db"):
         self.db_path = db_path
@@ -355,6 +392,7 @@ class PhotoIndex:
                 "CREATE INDEX IF NOT EXISTS idx_faces_identify ON faces(excluded, name)")
             self.conn.commit()
             ensure_faces_generation(self.conn)
+            ensure_taxonomy_generation(self.conn)
 
             # Paths compare the way the filesystem does (paths.sql_equals): without
             # case on Windows. An equality under a collation can only use an index

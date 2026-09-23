@@ -130,6 +130,14 @@ One row, a counter that moves whenever a face's identity changes. Identify Faces
 | `id` | INTEGER | PRIMARY KEY | Always `1`. |
 | `generation` | INTEGER | NOT NULL | Bumped by the triggers; only ever compared for change. |
 
+### 7. `taxonomy_generation` Table
+One row, a counter that moves whenever the tag tree changes. TagPup caches who the tree says each person is and resolves every keyword it writes through that cache; TagTuner edits the tree from another process, so TagPup compares this counter on each lookup and rereads the tree when it has moved. Triggers on `tag_taxonomy` (`taxonomy_generation_insert`, `_delete`, `_update`) bump it on every insert, delete, and update of `tag`, `name`, `parent_id` or `has_face`. Created by `index.ensure_taxonomy_generation()`, which both `PhotoIndex.load()` and TagTuner's startup call.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | INTEGER | PRIMARY KEY | Always `1`. |
+| `generation` | INTEGER | NOT NULL | Bumped by the triggers; only ever compared for change. |
+
 ---
 
 ## Entity-Relationship (ER) Diagram
@@ -192,6 +200,11 @@ erDiagram
     }
 
     faces_generation {
+        INTEGER id PK
+        INTEGER generation
+    }
+
+    taxonomy_generation {
         INTEGER id PK
         INTEGER generation
     }

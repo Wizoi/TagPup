@@ -162,9 +162,24 @@ def expand_tag_fields(tags):
     return flat, hierarchical
 
 #: One loaded taxonomy per database, so resolving on every write costs nothing after
-#: the first. Cleared whenever the taxonomy is written; see invalidate_people_cache().
+#: the first. Each entry is (the tree's generation when it was read, the mapping):
+#: this process clears it when it writes the tree (invalidate_people_cache), and the
+#: generation catches the edits it cannot see -- TagTuner's, in another process.
 _people_cache = {}
 _people_cache_guard = threading.Lock()
+
+
+def _taxonomy_generation_of(db_path):
+    from index import taxonomy_generation
+
+    try:
+        conn = tagpup_db.connect(tagpup_db.readonly_uri(db_path), uri=True)
+    except Exception:
+        return None
+    try:
+        return taxonomy_generation(conn)
+    finally:
+        conn.close()
 
 
 def people_paths_for(db_path):
@@ -172,10 +187,12 @@ def people_paths_for(db_path):
     if not db_path:
         return {}
     key = paths.key(str(db_path))
+    generation = _taxonomy_generation_of(db_path) if os.path.exists(db_path) else None
     with _people_cache_guard:
         cached = _people_cache.get(key)
-    if cached is not None:
-        return cached
+    # A generation that cannot be read says nothing changed; what was read stands.
+    if cached is not None and (generation is None or cached[0] == generation):
+        return cached[1]
 
     mapping = {}
     try:
@@ -198,7 +215,7 @@ def people_paths_for(db_path):
         logger.debug("Could not load people paths from %s: %s", db_path, e)
 
     with _people_cache_guard:
-        _people_cache[key] = mapping
+        _people_cache[key] = (generation, mapping)
     return mapping
 
 

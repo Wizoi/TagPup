@@ -5284,8 +5284,10 @@ def start_server(port=8080, db_path="data/photo_index.db", gui_dir="gui"):
                 "CREATE INDEX IF NOT EXISTS idx_faces_identify ON faces(excluded, name)")
             conn.commit()
             # So its cache sees renames and reassignments, for the same reason.
-            from index import ensure_faces_generation
+            from index import ensure_faces_generation, ensure_taxonomy_generation
             ensure_faces_generation(conn)
+            # And so TagPup, another process, sees the tree edits made here.
+            ensure_taxonomy_generation(conn)
 
         # ('Non Person' is migrated onto the excluded column by PhotoIndex.load,
         #  which every entry point calls; it is not duplicated here.)
