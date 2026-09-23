@@ -40,6 +40,13 @@ go` rather than `80 files loaded` — on returning to a folder, the question is 
 is left. A photo counts as tagged if it has any tag, any person, or a title: the
 question is "have I been here yet", not "is this perfect".
 
+Beside the **Original Image** heading, `12 of 48` says where the open photo sits in
+the list. It counts the rows the arrow keys walk — after any search — so the next
+photo is always 13 of 48, and a search that narrows the list narrows the count. It
+follows every change of photo and every rebuild of the list (search, rename, delete,
+rescan), and is hidden with no photo open or when the search has left the open photo
+out.
+
 The folder's own name — the last segment of its path, not the whole thing — sits under
 the path box and in the window title. The absolute path is long enough to be unreadable
 in a sidebar, and the shoot's name is what identifies it.

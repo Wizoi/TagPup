@@ -176,6 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const photoSearch = document.getElementById('photo-search');
     const photoList = document.getElementById('photo-list');
+    const photoPosition = document.getElementById('photo-position');   // "12 of 48"
     const listStats = document.getElementById('list-stats');
     const currentFolderName = document.getElementById('current-folder-name');
     const btnRefreshList = document.getElementById('btn-refresh-list');
@@ -1714,6 +1715,26 @@ document.addEventListener('DOMContentLoaded', () => {
             fragment.appendChild(li);
         });
         photoList.appendChild(fragment);
+        updatePhotoPosition();
+    }
+
+    /**
+     * "12 of 48": where the open photo sits in the list, to see how far along you are.
+     *
+     * Counted over the rendered rows -- the same list stepPhoto walks -- so Next is
+     * always N+1 of M, and a search that narrows the list narrows the count with it.
+     * Called when the list is rebuilt (filter, rename, delete, rescan all go through
+     * renderFileList) and when the open photo changes. Hidden with no photo open, or
+     * when the open photo is not among the rows the search left.
+     */
+    function updatePhotoPosition() {
+        if (!photoPosition) return;
+        const items = Array.from(photoList.querySelectorAll('.photo-item-file'));
+        const index = activePhotoPath
+            ? items.findIndex(el => el.getAttribute('data-path') === activePhotoPath)
+            : -1;
+        photoPosition.classList.toggle('hidden', index === -1);
+        photoPosition.textContent = index === -1 ? '' : `${index + 1} of ${items.length}`;
     }
 
     let searchTimeout = null;
@@ -1754,6 +1775,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         renderThumbnails();
         updateSelectedThumbnailsCount();
+        updatePhotoPosition();
     }
 
 
@@ -2675,6 +2697,7 @@ Click to add ${namesSomebody} to this photo.`;
         // you looking at another photo's fields with its image off-screen above.
         if (detailsPanel) detailsPanel.scrollTop = 0;
         updateCarryForwardState();
+        updatePhotoPosition();
 
         renderPhotoFaces(path);
 
