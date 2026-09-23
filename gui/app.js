@@ -4222,6 +4222,8 @@ This photo also names ${face.other_names.join(', ')}. `
         })
         .then(data => {
             if (data.success) {
+                // Some photo files may not have been rewritten; they still name the old spelling.
+                if (data.warning) alert('Renamed, but ' + data.warning);
                 // Update selection state to new name
                 activePersonName = newName;
                 lastLoadedPersonName = null;

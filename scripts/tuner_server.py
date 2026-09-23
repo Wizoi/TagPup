@@ -3651,6 +3651,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 "SELECT id, tag FROM tag_taxonomy WHERE name = ? AND has_face = 1", (old_name,)
             )
             person_nodes = cursor.fetchall()
+            # (node id, old path, new path, whether the new path already has a node)
             renamed_paths = []
             for node_id, node_tag in person_nodes:
                 parts = node_tag.split("/")
@@ -3659,22 +3660,30 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     "SELECT id FROM tag_taxonomy WHERE tag = ? AND id != ?", (new_tag, node_id)
                 )
                 if cursor.fetchone():
-                    continue  # target already exists; leave the tree alone
+                    # Two spellings of one person becoming one. The node for the new
+                    # name is kept, and the old one goes once no photo carries it. This
+                    # used to leave the tree and the files alone, so the files kept the
+                    # old path and the next scan brought the old name back.
+                    renamed_paths.append((node_id, node_tag, new_tag, True))
+                    continue
                 cursor.execute(
                     "UPDATE tag_taxonomy SET name = ?, tag = ? WHERE id = ?",
                     (new_name, new_tag, node_id),
                 )
-                renamed_paths.append((node_tag, new_tag))
+                renamed_paths.append((node_id, node_tag, new_tag, False))
 
             conn.commit()
 
-            # Rewrite the keyword metadata on any photo carrying the old tag path.
+            # Rewrite the keyword metadata on any photo carrying the old tag path, and
+            # count what was rewritten rather than what was meant to be.
+            affected_total = rewritten_total = 0
+            write_error = None
             if renamed_paths:
                 try:
                     from tagpup_server import update_photo_metadata_tags
 
                     executable = self.get_exiftool_path()
-                    for old_tag, new_tag in renamed_paths:
+                    for node_id, old_tag, new_tag, merged in renamed_paths:
                         cursor.execute("SELECT path, tags FROM photos WHERE tags IS NOT NULL")
                         affected = []
                         for p_path, tags_json in cursor.fetchall():
@@ -3686,14 +3695,27 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                                         break
                             except Exception:
                                 continue
+                        rewritten = 0
                         if affected:
-                            update_photo_metadata_tags(
+                            rewritten = update_photo_metadata_tags(
                                 self.db_path, executable, affected, old_tag, new_tag
                             )
+                        affected_total += len(affected)
+                        rewritten_total += rewritten
+                        if merged and rewritten == len(affected):
+                            cursor.execute("DELETE FROM tag_taxonomy WHERE id = ?", (node_id,))
+                            conn.commit()
                 except Exception as write_err:
                     logger.error(f"Person rename: failed to update photo files: {write_err}")
+                    write_error = str(write_err)
 
-            self.send_json({"success": True})
+            reply = {"success": True, "photos_affected": affected_total,
+                     "photos_rewritten": rewritten_total}
+            if rewritten_total < affected_total or write_error:
+                reply["warning"] = "%d of %d photo(s) could not be rewritten and still name %s%s." % (
+                    affected_total - rewritten_total, affected_total, old_name,
+                    " (%s)" % write_error if write_error else "")
+            self.send_json(reply)
         except Exception as e:
             logger.error(f"Error in handle_post_person_rename: {e}")
             self.send_error(500, f"Internal error: {e}")
