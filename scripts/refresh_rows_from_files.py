@@ -83,8 +83,24 @@ def why_stale(row):
     return reasons
 
 
+def distinct_captions(captions_json):
+    """The stored captions with repeats removed, or None if there were none to remove.
+
+    The extractor listed each caption once per field it appeared in, prefixed and
+    bare; the stored list is exactly that output, so dropping repeats from it is
+    exactly what the corrected extraction gives -- no file needs reading.
+    """
+    try:
+        captions = json.loads(captions_json or "[]")
+    except Exception:
+        return None
+    distinct = list(dict.fromkeys(captions))
+    return distinct if len(distinct) != len(captions) else None
+
+
 def plan(conn, folder=None):
-    stale = {}
+    """(rows whose file must be re-read, {path: captions} fixable from the row alone)."""
+    stale, captions_only = {}, {}
     query = "SELECT path, mtime, size, tags, captions, raw_metadata FROM photos"
     params = ()
     if folder:
@@ -94,8 +110,12 @@ def plan(conn, folder=None):
     for row in conn.execute(query, params):
         reasons = why_stale(row)
         if reasons:
-            stale[row[0]] = reasons
-    return stale
+            stale[row[0]] = reasons   # re-reading the file fixes its captions too
+            continue
+        fixed = distinct_captions(row[4])
+        if fixed is not None:
+            captions_only[row[0]] = fixed
+    return stale, captions_only
 
 
 def read_files(photo_paths, db_path):
@@ -150,18 +170,23 @@ def backup(db_path):
     return target
 
 
-def record_all(db_path, records, to_write):
+def record_all(db_path, records, to_write, captions_only):
+    """Write both kinds of fix in one transaction. Returns (from files, captions only)."""
     def store(conn):
-        written = 0
+        from_files = 0
         for path in to_write:
             r = records[path]
-            written += conn.execute(
+            from_files += conn.execute(
                 "UPDATE photos SET tags = ?, people = ?, captions = ?, raw_metadata = ?,"
                 " mtime = ?, size = ?, document_id = COALESCE(document_id, ?) WHERE path = ?",
                 (json.dumps(r["tags"]), json.dumps(r["people"]), json.dumps(r["captions"]),
                  json.dumps(r["raw_metadata"]), r["mtime"], r["size"], r.get("document_id"),
                  path)).rowcount
-        return written
+        captions = 0
+        for path, fixed in captions_only.items():
+            captions += conn.execute("UPDATE photos SET captions = ? WHERE path = ?",
+                                     (json.dumps(fixed), path)).rowcount
+        return from_files, captions
     return tagpup_db.write_with_connection(db_path, store, label="refresh rows from files")
 
 
@@ -175,19 +200,19 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     conn = tagpup_db.connect(tagpup_db.readonly_uri(args.db), uri=True)
+    records, to_write, fields, unreadable, examples = {}, [], Counter(), 0, []
     try:
-        stale = plan(conn, args.folder)
+        stale, captions_only = plan(conn, args.folder)
         print("%s\n" % args.db)
         print("rows that may not describe their file: %d" % len(stale))
         for reason, count in Counter(r for rs in stale.values() for r in rs).most_common():
             print("  %-20s %d" % (reason, count))
-        if not stale:
-            return 0
+        print("rows listing a caption more than once: %d (fixed from the row; no file read)"
+              % len(captions_only))
 
-        print("\nreading %d file(s) (read-only)..." % len(stale))
-        records = read_files(sorted(stale), args.db)
-        to_write, fields, unreadable = [], Counter(), 0
-        examples = []
+        if stale:
+            print("\nreading %d file(s) (read-only)..." % len(stale))
+            records = read_files(sorted(stale), args.db)
         for path in sorted(stale):
             record = records.get(path)
             if record is None or not record.get("raw_metadata"):
@@ -202,9 +227,10 @@ def main(argv=None):
     finally:
         conn.close()
 
-    print("\nrows whose file says something different: %d" % len(to_write))
-    for field, count in fields.most_common():
-        print("  %-20s %d" % (field, count))
+    if stale:
+        print("\nrows whose file says something different: %d" % len(to_write))
+        for field, count in fields.most_common():
+            print("  %-20s %d" % (field, count))
     if unreadable:
         print("files that could not be read (left alone): %d" % unreadable)
     for path, before, after in examples:
@@ -214,11 +240,13 @@ def main(argv=None):
     if not args.apply:
         print("\nDry run. Nothing was changed. Re-run with --apply to write.")
         return 0
-    if not to_write:
+    if not to_write and not captions_only:
         print("\nNothing to write.")
         return 0
     print("\nbacked up to %s" % backup(args.db))
-    print("rows changed: %d" % record_all(args.db, records, to_write))
+    from_files, captions = record_all(args.db, records, to_write, captions_only)
+    print("rows changed from their files: %d" % from_files)
+    print("rows with repeated captions removed: %d" % captions)
     return 0
 
 

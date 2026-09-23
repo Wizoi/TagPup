@@ -47,6 +47,13 @@ class RefreshRowsFromFiles(unittest.TestCase):
         row("stale_stat", ["Activity/Running"], {"XMP:Subject": ["Activity/Running"]},
             mtime=999.0)
         row("fine", ["Activity/Running"], {"XMP:Subject": ["Activity/Running"]})
+        # Right about its file, but indexed when every caption was listed twice.
+        self.files["twice"] = os.path.join(self.dir, "twice.jpg")
+        with open(self.files["twice"], "wb") as handle:
+            handle.write(b"jpeg")
+        os.utime(self.files["twice"], (1_000_000, 1_000_000))
+        row("twice", [], {"IPTC:ObjectName": "Harbour at dusk", "ObjectName": "Harbour at dusk"},
+            captions=["Harbour at dusk", "Harbour at dusk"])
         index.conn.commit()
         index.close()
 
@@ -100,7 +107,8 @@ class RefreshRowsFromFiles(unittest.TestCase):
 
     def test_apply_records_what_the_files_hold(self):
         out = self.run_script("--apply")
-        self.assertIn("rows changed: 3", out)
+        self.assertIn("rows changed from their files: 3", out)
+        self.assertIn("rows with repeated captions removed: 1", out)
         rows = self.rows()
         # Whatever the indexer's extraction makes of the file (it currently lists
         # each caption field twice); what matters is that the garbling is gone.
@@ -110,7 +118,21 @@ class RefreshRowsFromFiles(unittest.TestCase):
         self.assertNotIn("Beach", rows[self.files["stale_keywords"]][2]["IPTC:Keywords"])
         self.assertEqual(rows[self.files["stale_stat"]][3], os.stat(self.files["stale_stat"]).st_mtime)
         # And a second run finds nothing left to do.
-        self.assertIn("rows that may not describe their file: 0", self.run_script())
+        again = self.run_script()
+        self.assertIn("rows that may not describe their file: 0", again)
+        self.assertIn("rows listing a caption more than once: 0", again)
+
+    def test_repeated_captions_are_fixed_from_the_row_without_reading_the_file(self):
+        self.run_script("--apply")
+        self.assertNotIn(self.files["twice"], self.read)
+        self.assertEqual(self.rows()[self.files["twice"]][1], ["Harbour at dusk"])
+
+    def test_the_extractor_lists_each_caption_once(self):
+        from metadata import extract_captions
+        meta = {"IPTC:ObjectName": "Harbour at dusk", "ObjectName": "Harbour at dusk",
+                "XMP:Title": "Harbour at dusk", "Title": "Harbour at dusk",
+                "XMP:Description": "Boats coming in", "Description": "Boats coming in"}
+        self.assertEqual(extract_captions(meta), ["Boats coming in", "Harbour at dusk"])
 
 
 if __name__ == "__main__":
