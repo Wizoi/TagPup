@@ -155,6 +155,42 @@ configure_connection = tagpup_db.configure
 retry_when_busy = tagpup_db.retry_when_busy
 
 
+def ensure_faces_generation(conn):
+    """A counter that moves whenever a face's identity changes, by whoever changes it.
+
+    Identify Faces caches its queue against a fingerprint of the faces table. Counts
+    cannot see a person renamed or a face moved from one person to another, so the
+    triggers below count those, and every writer -- TagTuner, TagPup, the CLI, a
+    script -- bumps it without knowing it exists. A crop being cached is not a change
+    of identity and leaves it alone.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS faces_generation (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            generation INTEGER NOT NULL
+        )
+    """)
+    conn.execute("INSERT OR IGNORE INTO faces_generation (id, generation) VALUES (1, 0)")
+    bump = "BEGIN UPDATE faces_generation SET generation = generation + 1 WHERE id = 1; END"
+    conn.execute("CREATE TRIGGER IF NOT EXISTS faces_generation_insert"
+                 " AFTER INSERT ON faces " + bump)
+    conn.execute("CREATE TRIGGER IF NOT EXISTS faces_generation_delete"
+                 " AFTER DELETE ON faces " + bump)
+    conn.execute("CREATE TRIGGER IF NOT EXISTS faces_generation_update"
+                 " AFTER UPDATE OF name, name_source, excluded, embedding, photo_path"
+                 " ON faces " + bump)
+    conn.commit()
+
+
+def faces_generation(conn):
+    """The counter above, or 0 on a database that does not have it yet."""
+    try:
+        row = conn.execute("SELECT generation FROM faces_generation WHERE id = 1").fetchone()
+    except sqlite3.OperationalError:
+        return 0
+    return row[0] if row else 0
+
+
 class PhotoIndex:
     def __init__(self, db_path: str = "data/photo_index.db"):
         self.db_path = db_path
@@ -318,6 +354,7 @@ class PhotoIndex:
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_faces_identify ON faces(excluded, name)")
             self.conn.commit()
+            ensure_faces_generation(self.conn)
 
             # Paths compare the way the filesystem does (paths.sql_equals): without
             # case on Windows. An equality under a collation can only use an index

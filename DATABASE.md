@@ -122,6 +122,14 @@ Stores cached visual embeddings of tag prompts to accelerate zero-shot tag conse
 | `pretrained` | TEXT | PRIMARY KEY | Pretrained weights identifier of the model. |
 | `embedding` | BLOB | | Binary representation of float array for the prompt embedding. |
 
+### 6. `faces_generation` Table
+One row, a counter that moves whenever a face's identity changes. Identify Faces caches its queue and match lists against a fingerprint of `faces`, and counts cannot see a person renamed or a face moved from one person to another. Triggers on `faces` (`faces_generation_insert`, `_delete`, `_update`) bump it on every insert, delete, and update of `name`, `name_source`, `excluded`, `embedding` or `photo_path`, whoever makes the change. Caching a crop does not. Created by `index.ensure_faces_generation()`, which both `PhotoIndex.load()` and TagTuner's startup call.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | INTEGER | PRIMARY KEY | Always `1`. |
+| `generation` | INTEGER | NOT NULL | Bumped by the triggers; only ever compared for change. |
+
 ---
 
 ## Entity-Relationship (ER) Diagram
@@ -181,6 +189,11 @@ erDiagram
         TEXT model_name PK
         TEXT pretrained PK
         BLOB embedding
+    }
+
+    faces_generation {
+        INTEGER id PK
+        INTEGER generation
     }
 
     photos ||--o{ faces : "contains"

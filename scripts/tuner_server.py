@@ -3694,7 +3694,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         row = conn.execute(
             "SELECT COUNT(*), COUNT(name), COALESCE(MAX(id), 0), COALESCE(SUM(excluded), 0) FROM faces"
         ).fetchone()
-        return tuple(row) if row else (0, 0, 0, 0)
+        # None of those counts moves when a person is renamed or a face is given to
+        # someone else; the generation does. See index.ensure_faces_generation.
+        from index import faces_generation
+        return (tuple(row) if row else (0, 0, 0, 0)) + (faces_generation(conn),)
 
     def identify_cache_get(self, key, fingerprint):
         entry = TunerHTTPRequestHandler.identify_cache.get(key)
@@ -5305,6 +5308,9 @@ def start_server(port=8080, db_path="data/photo_index.db", gui_dir="gui"):
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_faces_identify ON faces(excluded, name)")
             conn.commit()
+            # So its cache sees renames and reassignments, for the same reason.
+            from index import ensure_faces_generation
+            ensure_faces_generation(conn)
 
         # ('Non Person' is migrated onto the excluded column by PhotoIndex.load,
         #  which every entry point calls; it is not duplicated here.)
