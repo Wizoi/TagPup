@@ -3431,6 +3431,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     pass
             conn.close()
             
+            rewritten = 0
             if affected_photos:
                 executable = self.get_exiftool_path()
                 if action == "move":
@@ -3444,11 +3445,30 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     insert_tag_path_to_db(cursor, target_tag)
                     conn.commit()
                     conn.close()
-                    
-                    update_photo_metadata_tags(self.db_path, executable, affected_photos, tag_path, target_tag)
+                    # The writes resolve names against the tree, which now has the target.
+                    invalidate_people_cache(self.db_path)
+
+                    rewritten = update_photo_metadata_tags(
+                        self.db_path, executable, affected_photos, tag_path, target_tag)
                 else:
-                    update_photo_metadata_tags(self.db_path, executable, affected_photos, tag_path, None)
-                    
+                    rewritten = update_photo_metadata_tags(
+                        self.db_path, executable, affected_photos, tag_path, None)
+
+            # A photo that could not be rewritten still carries the tag, so the tag
+            # still describes it and stays in the tree. It used to be deleted anyway,
+            # and the reply said success.
+            if rewritten < len(affected_photos):
+                TagPupHTTPRequestHandler.folder_cache.clear()
+                self.send_json({
+                    "success": False,
+                    "photos_affected": len(affected_photos),
+                    "photos_rewritten": rewritten,
+                    "error": "%d of %d photo(s) could not be rewritten, so '%s' was kept; "
+                             "they still carry it." % (len(affected_photos) - rewritten,
+                                                       len(affected_photos), tag_path),
+                })
+                return
+
             conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             cursor.execute("PRAGMA foreign_keys = ON")
@@ -3464,9 +3484,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 taxonomy.paths.discard(p)
             taxonomy.save()
             invalidate_people_cache(self.db_path)
-            
+
             TagPupHTTPRequestHandler.folder_cache.clear()
-            self.send_json({"success": True})
+            self.send_json({"success": True, "photos_affected": len(affected_photos),
+                            "photos_rewritten": rewritten})
         except Exception as e:
             self.send_json_error(500, str(e))
 
@@ -3518,8 +3539,12 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 self.send_json_error(400, f"A tag with path '{new_tag_path}' already exists.")
                 return
                 
-            # Retrieve descendants
-            cursor.execute("SELECT id, tag FROM tag_taxonomy WHERE tag LIKE ?", (old_tag_path + "/%",))
+            # Retrieve descendants: tags that begin with exactly this path and a slash.
+            # LIKE read `_` as any character and ignored case, so renaming `Club_A`
+            # renamed everything under `ClubXA` too.
+            prefix = old_tag_path + "/"
+            cursor.execute("SELECT id, tag FROM tag_taxonomy WHERE substr(tag, 1, ?) = ?",
+                           (len(prefix), prefix))
             descendants = cursor.fetchall()
             
             # Update the node itself
@@ -3550,9 +3575,16 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     pass
             conn.close()
             
+            # The tree has the new name now. The writes below resolve people against
+            # it, and with the cache still holding the old tree a photo that also
+            # carries the bare name had the old path written straight back.
+            invalidate_people_cache(self.db_path)
+
+            rewritten = 0
             if affected_photos:
                 executable = self.get_exiftool_path()
-                update_photo_metadata_tags(self.db_path, executable, affected_photos, old_tag_path, new_tag_path)
+                rewritten = update_photo_metadata_tags(
+                    self.db_path, executable, affected_photos, old_tag_path, new_tag_path)
 
             # Resolved faces store the bare leaf name, so renaming a person in the tag
             # tree has to follow through to the faces table. Without this the taxonomy,
@@ -3615,9 +3647,15 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 
             taxonomy.save()
             invalidate_people_cache(self.db_path)
-            
+
             TagPupHTTPRequestHandler.folder_cache.clear()
-            self.send_json({"success": True})
+            reply = {"success": True, "photos_affected": len(affected_photos),
+                     "photos_rewritten": rewritten}
+            if rewritten < len(affected_photos):
+                reply["warning"] = ("%d of %d photo(s) could not be rewritten and still carry "
+                                    "'%s'." % (len(affected_photos) - rewritten,
+                                               len(affected_photos), old_tag_path))
+            self.send_json(reply)
         except Exception as e:
             self.send_json_error(500, str(e))
 

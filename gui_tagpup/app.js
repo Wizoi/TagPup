@@ -4577,6 +4577,10 @@ Click to add ${namesSomebody} to this photo.`;
                     });
                 } else {
                     alert("Error deleting tag: " + resData.error);
+                    // A partial delete rewrote some photos; show them as they are now.
+                    if (resData.photos_rewritten && scannedFolder) scanFolder(true);
+                    statusDot.className = 'status-indicator-dot';
+                    statusText.textContent = 'Ready';
                 }
             });
         })
@@ -4599,6 +4603,8 @@ Click to add ${namesSomebody} to this photo.`;
         .then(res => res.json())
         .then(data => {
             if (data.success) {
+                // Some photos may not have been rewritten; they still carry the old tag.
+                if (data.warning) alert("Renamed, but " + data.warning);
                 loadTaxonomy().then(() => {
                     renderTaxonomyTree();
                     fetchKnownTagsAndPeople();
