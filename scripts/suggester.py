@@ -4,6 +4,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from taxonomy import TagTaxonomy
 from index import PhotoIndex
+import paths
 
 import threading
 logger = logging.getLogger("tagpup_cli.suggester")
@@ -278,14 +279,15 @@ class TagSuggester:
         # 4b. Face recognition suggestions
         try:
             detected_faces = []
-            norm_path = os.path.normpath(photo_path).replace("\\", "/")
-            
             # Check database cache first
             if self.index and self.index.conn:
                 try:
                     import json
                     cursor = self.index.conn.cursor()
-                    cursor.execute("SELECT box, embedding, prob FROM faces WHERE LOWER(photo_path) = LOWER(?)", (norm_path,))
+                    # This looked for a forward-slash spelling the faces are never
+                    # stored under, so every run detected the same faces again.
+                    clause, params = paths.sql_equals("photo_path", photo_path)
+                    cursor.execute("SELECT box, embedding, prob FROM faces WHERE " + clause, params)
                     for row in cursor.fetchall():
                         box_json, emb_bytes, prob = row
                         box = json.loads(box_json)

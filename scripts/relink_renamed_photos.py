@@ -30,8 +30,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from . import db as tagpup_db
+    from . import paths as photo_paths
 except ImportError:  # imported as a top-level module
     import db as tagpup_db
+    import paths as photo_paths   # not `paths`: the walks below use that name
 
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".heic", ".webp")
@@ -90,7 +92,9 @@ def identities(folder, exiftool_path=None):
                 key = str(doc_id).strip()
                 # Two files claiming one identity is a copy, not a rename; neither can
                 # be matched to a row without guessing which.
-                by_id[key] = None if key in by_id else os.path.normpath(source)
+                # Stored form: this is what a row is re-pointed at, and ExifTool
+                # answers with forward slashes.
+                by_id[key] = None if key in by_id else photo_paths.stored(source)
 
     return {k: v for k, v in by_id.items() if v}
 
@@ -129,14 +133,14 @@ def preserved_names(folder, exiftool_path=None):
                     continue
                 key = stem_of(original)
                 # Two files claiming one original cannot be told apart; leave both.
-                by_original[key] = None if key in by_original else os.path.normpath(source)
+                by_original[key] = None if key in by_original else photo_paths.stored(source)
 
     return {k: v for k, v in by_original.items() if v}
 
 
 def plan_for(db_path, exiftool_path=None):
     """Which dead rows can be re-pointed, and to what."""
-    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)
+    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)  # not a path: the database file's URI
     dead = dead_rows(conn)
 
     folders = sorted({os.path.dirname(p) for p in dead if os.path.isdir(os.path.dirname(p))})
@@ -159,7 +163,7 @@ def plan_for(db_path, exiftool_path=None):
     live = set()
     for (path,) in conn.execute("SELECT path FROM photos"):
         if path and os.path.exists(path):
-            live.add(os.path.normcase(os.path.normpath(path)))
+            live.add(photo_paths.key(path))
 
     moves, unmatched = [], []
     claimed = set()
@@ -170,7 +174,7 @@ def plan_for(db_path, exiftool_path=None):
         if not new:
             unmatched.append(old)
             continue
-        key = os.path.normcase(new)
+        key = photo_paths.key(new)
         # Never point two rows at one file, and never collide with a row already there.
         if key in live or key in claimed:
             unmatched.append(old)

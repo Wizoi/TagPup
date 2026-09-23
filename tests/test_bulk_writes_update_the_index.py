@@ -23,6 +23,12 @@ import tagpup_server
 
 PHOTO = "D:/Library/2020/a.jpg"
 
+# What the indexer writes, and so what every real row looks like: os.path.abspath,
+# native separators. Rows are seeded like this directly -- never through a helper of
+# the code under test, which is how the old tests came to agree with a helper that
+# matched no real row.
+STORED = os.path.abspath(PHOTO)
+
 
 class TestTheIndexHearsAboutBulkEdits(unittest.TestCase):
     def setUp(self):
@@ -46,7 +52,7 @@ class TestTheIndexHearsAboutBulkEdits(unittest.TestCase):
         )
         conn.execute(
             "INSERT INTO photos (path, tags, people, raw_metadata) VALUES (?,?,?,?)",
-            (tagpup_server.to_db_path(PHOTO), json.dumps(["Beach"]), json.dumps([]),
+            (STORED, json.dumps(["Beach"]), json.dumps([]),
              json.dumps({"XMP:Subject": ["Beach"]})),
         )
         conn.commit()
@@ -64,12 +70,12 @@ class TestTheIndexHearsAboutBulkEdits(unittest.TestCase):
                         pass
         self.addCleanup(cleanup)
 
-    def row(self, path=PHOTO):
+    def row(self, stored=STORED):
+        """The row exactly as stored -- no spelling conversion of any kind."""
         conn = tagpup_db.connect(self.db_path)
         try:
             cur = conn.execute(
-                "SELECT tags, people, raw_metadata FROM photos WHERE path = ?",
-                (tagpup_server.to_db_path(path),),
+                "SELECT tags, people, raw_metadata FROM photos WHERE path = ?", (stored,),
             )
             found = cur.fetchone()
         finally:
@@ -118,7 +124,35 @@ class TestTheIndexHearsAboutBulkEdits(unittest.TestCase):
         written = tagpup_server.record_tags_in_index(
             self.db_path, "D:/Library/2020/never-indexed.jpg", ["Beach"])
         self.assertFalse(written)
-        self.assertIsNone(self.row("D:/Library/2020/never-indexed.jpg"))
+        self.assertIsNone(self.row(os.path.abspath("D:/Library/2020/never-indexed.jpg")))
+
+    def test_the_write_reports_that_it_changed_the_row(self):
+        self.assertTrue(tagpup_server.record_tags_in_index(
+            self.db_path, PHOTO, ["Beach", "Cross Country"]))
+
+    @unittest.skipUnless(os.name == "nt", "separators and case only differ on Windows")
+    def test_any_spelling_of_the_photo_finds_its_native_row(self):
+        # The browser and the folder cache hand this forward slashes and whatever case
+        # they were given; the row holds backslashes. Every spelling is one photo.
+        self.assertIn("\\", STORED)
+        for spelling in (PHOTO, "d:/library/2020/A.JPG", "D:\\Library\\2020\\a.jpg"):
+            with self.subTest(spelling=spelling):
+                tags = ["Beach", spelling]
+                self.assertTrue(tagpup_server.record_tags_in_index(self.db_path, spelling, tags))
+                self.assertEqual(self.row()["tags"], tags)
+        conn = tagpup_db.connect(self.db_path)
+        try:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0], 1)
+        finally:
+            conn.close()
+
+    @unittest.skipUnless(os.name == "nt", "separators and case only differ on Windows")
+    def test_a_cold_cache_reads_the_tags_from_the_native_row(self):
+        # Bulk writes start from these when the folder was never scanned; missing the
+        # row meant starting from nothing and erasing the photo's tags.
+        self.assertEqual(tagpup_server.indexed_tags_for_photo(self.db_path, PHOTO), ["Beach"])
+        self.assertEqual(
+            tagpup_server.indexed_tags_for_photo(self.db_path, "d:/LIBRARY/2020/a.jpg"), ["Beach"])
 
     def test_a_broken_database_does_not_fail_the_write(self):
         # The file is already written and correct by this point; a stale row is

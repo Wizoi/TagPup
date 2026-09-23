@@ -5,9 +5,11 @@ import sqlite3
 try:
     from . import db as tagpup_db
     from . import localserver
+    from . import paths
 except ImportError:  # imported as a top-level module
     import db as tagpup_db
     import localserver
+    import paths
 import urllib.parse
 import io
 import logging
@@ -22,15 +24,14 @@ import numpy as np
 
 logger = logging.getLogger("tagpup.server")
 
-def normalize_path(path):
-    if not path:
-        return ""
-    return os.path.abspath(path).lower().replace("\\", "/")
-
-def to_db_path(path):
-    if not path:
-        return ""
-    return os.path.abspath(path).replace("\\", "/")
+# A photo path has two spellings, and both come from scripts/paths.py: paths.key() for
+# the in-memory caches, paths.stored() for the index, the browser and the disk. This
+# file used to have its own pair, and the one for the index turned the native paths the
+# indexer writes into forward slashes, so every lookup made through it on Windows
+# matched nothing: tag writes never reached the index, renames orphaned their rows and
+# faces, deleted photos kept theirs, and the folder scan never found its cached
+# metadata. The tests seeded their rows through that same function, so they agreed with
+# it and not with the data.
 
 _INDEXER_TQDM = re.compile(r"^(.*?):\s*(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
 
@@ -115,7 +116,7 @@ def people_paths_for(db_path):
     """Every person the taxonomy names, keyed by their lowercased leaf name."""
     if not db_path:
         return {}
-    key = os.path.normcase(os.path.abspath(str(db_path)))
+    key = paths.key(str(db_path))
     with _people_cache_guard:
         cached = _people_cache.get(key)
     if cached is not None:
@@ -152,7 +153,7 @@ def invalidate_people_cache(db_path=None):
         if db_path is None:
             _people_cache.clear()
         else:
-            _people_cache.pop(os.path.normcase(os.path.abspath(str(db_path))), None)
+            _people_cache.pop(paths.key(str(db_path)), None)
 
 
 def resolve_people_tags(tags, db_path):
@@ -206,17 +207,18 @@ def record_tags_in_index(db_path, photo_path, tags, flat=None, hierarchical=None
     """
     from metadata import extract_people
 
+    where, where_params = paths.sql_equals("path", photo_path)
+
     def store(conn):
         cursor = conn.cursor()
-        cursor.execute(
-            "SELECT raw_metadata FROM photos WHERE path = ?", (to_db_path(photo_path),)
-        )
+        cursor.execute("SELECT rowid, raw_metadata FROM photos WHERE " + where, where_params)
         row = cursor.fetchone()
         if not row:
             return False   # never indexed; adding it here would be an index, not an edit
+        rowid, raw_json = row
 
         try:
-            raw_meta = json.loads(row[0]) if row[0] else {}
+            raw_meta = json.loads(raw_json) if raw_json else {}
         except Exception:
             raw_meta = {}
         if flat is not None:
@@ -226,11 +228,10 @@ def record_tags_in_index(db_path, photo_path, tags, flat=None, hierarchical=None
 
         people = extract_people(raw_meta, tags, db_path=db_path)
         cursor.execute(
-            "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE path = ?",
-            (json.dumps(tags), json.dumps(people), json.dumps(raw_meta),
-             to_db_path(photo_path)),
+            "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE rowid = ?",
+            (json.dumps(tags), json.dumps(people), json.dumps(raw_meta), rowid),
         )
-        return True
+        return cursor.rowcount > 0
 
     try:
         return tagpup_db.write_with_connection(
@@ -288,14 +289,8 @@ def indexed_tags_for_photo(db_path, photo_path):
     try:
         conn = tagpup_db.connect(db_path, timeout=10.0)
         try:
-            row = conn.execute(
-                "SELECT tags FROM photos WHERE LOWER(path) = LOWER(?)",
-                (to_db_path(photo_path),),
-            ).fetchone()
-            if row is None:
-                row = conn.execute(
-                    "SELECT tags FROM photos WHERE LOWER(path) = LOWER(?)", (photo_path,)
-                ).fetchone()
+            where, where_params = paths.sql_equals("path", photo_path)
+            row = conn.execute("SELECT tags FROM photos WHERE " + where, where_params).fetchone()
         finally:
             conn.close()
         if row and row[0]:
@@ -304,11 +299,109 @@ def indexed_tags_for_photo(db_path, photo_path):
         logger.warning(f"Could not read indexed tags for {photo_path}: {e}")
     return []
 
+
+def forget_photo_in_index(db_path, photo_path):
+    """Remove a deleted photo's row, its faces and its cached embedding.
+
+    Returns how many rows of each were removed. The faces are deleted by name rather
+    than left to the foreign key's cascade: db.connect() does not turn foreign keys
+    on, and a face left behind points at a photo that no longer exists.
+    """
+    def forget(conn):
+        cursor = conn.cursor()
+        removed = {}
+        for table, column in (("faces", "photo_path"), ("photos", "path"),
+                              ("embedding_cache", "path")):
+            where, params = paths.sql_equals(column, photo_path)
+            cursor.execute("DELETE FROM %s WHERE %s" % (table, where), params)
+            removed[table] = cursor.rowcount
+        return removed
+
+    removed = tagpup_db.write_with_connection(
+        db_path, forget, label="index rows for deleted %s" % os.path.basename(photo_path))
+    if not removed.get("photos"):
+        logger.info("Deleted %s, which the index had no row for.", photo_path)
+    return removed
+
+
+def move_photo_rows(db_path, renames):
+    """Move index rows from each old path to its new one, and its faces with them.
+
+    `renames` maps old path to new path, in any spelling. Returns (moved, skipped):
+    how many photo rows actually changed, and the (old, new) pairs left where they
+    were because the new path already had rows. Re-pointing rows at a path that
+    already has them is how 233 duplicate faces were made, so a destination is
+    checked first and an occupied one is reported rather than merged into.
+
+    A destination is free when nothing is there, when it is the same file (a rename
+    that only changes case), or when whatever is there is itself moving away in this
+    same call -- a rename that shuffles numbered files among themselves, or the
+    occupant of a name that was moved aside to make room. The rows are moved in one
+    transaction, by rowid, through a placeholder, so a shuffle never collides with
+    itself on the way.
+    """
+    def rows_at(cursor, table, column, id_column, path):
+        where, params = paths.sql_equals(column, path)
+        return [r[0] for r in cursor.execute(
+            "SELECT %s FROM %s WHERE %s" % (id_column, table, where), params)]
+
+    def move(conn):
+        cursor = conn.cursor()
+        plan = dict(renames)
+        skipped = []
+        # Settle what moves first: skipping one rename can make another's
+        # destination occupied, so repeat until nothing changes.
+        changed = True
+        while changed:
+            changed = False
+            leaving = {paths.key(old) for old in plan}
+            arriving = set()
+            for old_path, new_path in list(plan.items()):
+                new_key = paths.key(new_path)
+                clash = new_key in arriving
+                if not clash and not paths.same(old_path, new_path) and new_key not in leaving:
+                    clash = bool(rows_at(cursor, "photos", "path", "rowid", new_path)
+                                 or rows_at(cursor, "faces", "photo_path", "id", new_path))
+                if clash:
+                    skipped.append((old_path, new_path))
+                    del plan[old_path]
+                    changed = True
+                    break
+                arriving.add(new_key)
+
+        staged = []
+        for n, (old_path, new_path) in enumerate(plan.items()):
+            photo_ids = rows_at(cursor, "photos", "path", "rowid", old_path)
+            face_ids = rows_at(cursor, "faces", "photo_path", "id", old_path)
+            # "<" cannot appear in a Windows file name, and this never outlives
+            # the transaction.
+            placeholder = "<moving %d>" % n
+            cursor.executemany("UPDATE photos SET path = ? WHERE rowid = ?",
+                               [(placeholder, rowid) for rowid in photo_ids])
+            staged.append((paths.stored(new_path), photo_ids, face_ids))
+
+        moved = 0
+        for new_stored, photo_ids, face_ids in staged:
+            for rowid in photo_ids:
+                cursor.execute("UPDATE photos SET path = ? WHERE rowid = ?", (new_stored, rowid))
+                moved += cursor.rowcount
+            cursor.executemany("UPDATE faces SET photo_path = ? WHERE id = ?",
+                               [(new_stored, face_id) for face_id in face_ids])
+        return moved, skipped
+
+    moved, skipped = tagpup_db.write_with_connection(
+        db_path, move, label="index rows for %d renamed photo(s)" % len(renames))
+    for old_path, new_path in skipped:
+        logger.warning("Renamed %s to %s, but the index already has rows for the new "
+                       "name; left both as they were.", old_path, new_path)
+    return moved, skipped
+
 def send_to_recycle_bin(file_path):
     import ctypes
     from ctypes import wintypes
     
-    file_path = os.path.abspath(file_path).replace('/', '\\')
+    # SHFileOperationW wants native separators, which is what stored() gives.
+    file_path = paths.stored(file_path)
     if not os.path.exists(file_path):
         return False
         
@@ -406,8 +499,8 @@ def get_year_from_mtime_or_meta(mtime, raw_meta_json, path=None):
             pass
                 
     if not parsed_year and path:
-        norm_path = path.replace("\\", "/")
-        parts = norm_path.split("/")
+        # Either separator: the path's segments are all that is wanted here.
+        parts = re.split(r"[\\/]", path)
         if parts:
             filename = parts[-1]
             matches = re.findall(r'\d{4}', filename)
@@ -438,7 +531,7 @@ def set_active_db_path(db_path):
         if hasattr(_thread_local, "active_db_path"):
             delattr(_thread_local, "active_db_path")
     else:
-        _thread_local.active_db_path = os.path.abspath(db_path).replace("\\", "/").lower()
+        _thread_local.active_db_path = os.path.abspath(db_path).replace("\\", "/").lower()  # not a path: the database file, as a registry key
 
 def get_active_db_path():
     active_db = getattr(_thread_local, "active_db_path", None)
@@ -447,7 +540,7 @@ def get_active_db_path():
     handler_cls = globals().get("TagPupHTTPRequestHandler")
     if handler_cls:
         try:
-            return os.path.abspath(handler_cls.db_path).replace("\\", "/").lower()
+            return os.path.abspath(handler_cls.db_path).replace("\\", "/").lower()  # not a path: the database file, as a registry key
         except Exception:
             pass
     return "data/photo_index.db"
@@ -572,7 +665,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     if db_name.startswith("test_"):
                         db_name = db_name[5:]
                         
-                resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")
+                resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")  # not a path: a database file
                 set_active_db_path(resolved_db_path)
                 self.db_path = resolved_db_path
                 
@@ -596,7 +689,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.end_headers()
             return False
             
-        resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")
+        resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")  # not a path: a database file
         set_active_db_path(resolved_db_path)
         self.db_path = resolved_db_path
         return True
@@ -888,7 +981,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             config.read(config_path, encoding='utf-8')
             
         data_dir = config.get("paths", "data_dir", fallback="data")
-        db_path = os.path.join(data_dir, fs_db_name).replace("\\", "/")
+        db_path = os.path.join(data_dir, fs_db_name).replace("\\", "/")  # not a path: a database file
         
         try:
             if not os.path.exists(db_path):
@@ -915,7 +1008,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.send_json_error(400, "Missing path parameter")
             return
         folder_path = urllib.parse.unquote(path_list[0])
-        folder_path_norm = normalize_path(folder_path)
+        folder_path_norm = paths.key(folder_path)
         
         status = self.index_status.get(folder_path_norm, {"status": "completed", "percent": 100, "message": "Ready"})
         self.send_json(status)
@@ -932,7 +1025,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.send_json_error(400, "Invalid folder path")
             return
             
-        folder_path_norm = normalize_path(folder_path)
+        folder_path_norm = paths.key(folder_path)
         
         current_status = self.index_status.get(folder_path_norm)
         if current_status and current_status.get("status") == "running":
@@ -967,7 +1060,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         # request does not carry over, and the class-level fallback points at the startup
         # database, which would resolve the isolated registries to the wrong database.
         set_active_db_path(db_path)
-        folder_path_norm = normalize_path(folder_path)
+        folder_path_norm = paths.key(folder_path)
         status_dict = cls.index_status.get(folder_path_norm)
         if status_dict is None:
             status_dict = {"status": "running", "percent": 0, "message": "Starting indexing..."}
@@ -977,7 +1070,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             import subprocess
             import re
 
-            cmd = [sys.executable, "tagpup_cli.py", "index", folder_path]
+            # The indexer stores the paths it walks as given, so hand it the stored
+            # form: a folder typed with forward slashes produced rows with both.
+            cmd = [sys.executable, "tagpup_cli.py", "index", paths.stored(folder_path)]
             env = os.environ.copy()
             env["TAGPUP_DB_PATH"] = db_path
             
@@ -1134,10 +1229,11 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         try:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
             cursor = conn.cursor()
+            on_photo, on_photo_params = paths.sql_equals("photo_path", photo_path)
             cursor.execute(
                 "SELECT id, box, name, prob, embedding, excluded, excluded_reason"
-                " FROM faces WHERE LOWER(photo_path) = LOWER(?) ORDER BY id",
-                (photo_path,),
+                " FROM faces WHERE " + on_photo + " ORDER BY id",
+                on_photo_params,
             )
             rows = cursor.fetchall()
             if not rows:
@@ -1147,8 +1243,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             # Resolved faces elsewhere in the library, for suggesting a name.
             cursor.execute(
                 "SELECT name, embedding FROM faces"
-                " WHERE name IS NOT NULL AND excluded = 0 AND LOWER(photo_path) != LOWER(?)",
-                (photo_path,),
+                " WHERE name IS NOT NULL AND excluded = 0 AND NOT (" + on_photo + ")",
+                on_photo_params,
             )
             known_names, known_vectors = [], []
             for name, emb in cursor.fetchall():
@@ -1411,9 +1507,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.send_json_error(400, f"Path is not a valid directory: {folder_path}")
             return
             
-        folder_path = os.path.abspath(folder_path)
-        folder_path_norm = normalize_path(folder_path)
-        
+        folder_path = paths.stored(folder_path)
+        folder_path_norm = paths.key(folder_path)
+
         # Check cache
         if folder_path_norm in TagPupHTTPRequestHandler.folder_cache and not force_refresh:
             cached_data = list(TagPupHTTPRequestHandler.folder_cache[folder_path_norm].values())
@@ -1448,14 +1544,15 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         try:
             conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
+            under, under_params = paths.sql_under("path", folder_path)
             cursor.execute(
-                "SELECT path, mtime, size, tags, people, captions, raw_metadata FROM photos WHERE path LIKE ?",
-                (to_db_path(folder_path) + "/%",)
+                "SELECT path, mtime, size, tags, people, captions, raw_metadata FROM photos WHERE " + under,
+                under_params,
             )
             for row in cursor.fetchall():
                 p, mt, sz, t_json, pe_json, c_json, raw_json = row
-                db_records[normalize_path(p)] = {
-                    "path": p,
+                db_records[paths.key(p)] = {
+                    "path": paths.stored(p),
                     "mtime": mt,
                     "size": sz,
                     "tags": json.loads(t_json) if t_json else [],
@@ -1472,7 +1569,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         files_to_read = []
         
         for file in image_files:
-            file_norm = normalize_path(file)
+            file_norm = paths.key(file)
             try:
                 stat = os.stat(file)
                 mtime = stat.st_mtime
@@ -1499,7 +1596,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     batch_paths = [b[0] for b in batch]
                     batch_meta = extractor.batch_read(batch_paths)
                     for (file, mtime, size), meta in zip(batch, batch_meta):
-                        file_norm = normalize_path(file)
+                        file_norm = paths.key(file)
                         folder_map[file_norm] = build_photo_ui_record(file, meta, mtime, size)
             except Exception as e:
                 logger.error(f"Error running ExifTool during scan: {e}")
@@ -1524,7 +1621,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         if not folder_path_list:
             self.send_json_error(400, "Missing 'path' parameter")
             return
-        folder_path = normalize_path(urllib.parse.unquote(folder_path_list[0]))
+        folder_path = paths.key(urllib.parse.unquote(folder_path_list[0]))
         status_info = TagPupHTTPRequestHandler.suggest_status.get(folder_path, {"status": "idle"})
         self.send_json(status_info)
 
@@ -1540,8 +1637,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.send_json_error(400, "Invalid folder path")
             return
             
-        folder_path = os.path.abspath(folder_path)
-        folder_path_norm = normalize_path(folder_path)
+        folder_path = paths.stored(folder_path)
+        folder_path_norm = paths.key(folder_path)
         
         status_info = TagPupHTTPRequestHandler.suggest_status.get(folder_path_norm)
         if status_info and status_info["status"] in ("preparing", "running"):
@@ -1578,6 +1675,33 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             return os.path.join(os.path.dirname(db_path), "gui_suggestions_cache.json")
         return os.path.join(os.path.dirname(db_path), f"gui_suggestions_cache_{db_basename}.json")
 
+    @staticmethod
+    def _rekey_saved_suggestions(data):
+        """Saved suggestions, keyed the way this code looks them up.
+
+        Files written before paths.py hold folder keys in the old lower-case,
+        forward-slash form, which paths.key() does not produce; loading them as they
+        were would keep every saved run where nothing ever asks for it. A folder saved
+        under two spellings becomes one entry, its suggestions merged. The photos
+        inside are keyed by the path the page was sent, which is paths.stored().
+        """
+        rekeyed = {}
+        for folder, status in data.items():
+            if not isinstance(status, dict):
+                continue
+            suggestions = status.get("suggestions")
+            if isinstance(suggestions, dict):
+                status["suggestions"] = {paths.stored(p): s for p, s in suggestions.items()}
+            folder_key = paths.key(folder)
+            existing = rekeyed.get(folder_key)
+            if existing is None:
+                rekeyed[folder_key] = status
+            else:
+                merged = existing.setdefault("suggestions", {})
+                for p, s in (status.get("suggestions") or {}).items():
+                    merged.setdefault(p, s)
+        return rekeyed
+
     @classmethod
     def load_suggestions_cache(cls, db_path):
         set_active_db_path(db_path)
@@ -1591,6 +1715,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 for folder, status in data.items():
                     if status.get("status") in ("running", "preparing"):
                         status["status"] = "idle"
+                data = cls._rekey_saved_suggestions(data)
                 with cls.model_lock:
                     cls.suggest_status.update(data)
                 logger.info(f"Loaded suggestions cache from {cache_path} with {len(data)} folders.")
@@ -1615,13 +1740,13 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
     def rescan_folder_to_cache_classmethod(cls, folder_path):
         valid_exts = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
         image_files = []
-        for root, _, files in os.walk(folder_path):
+        for root, _, files in os.walk(paths.stored(folder_path)):
             for file in files:
                 ext = os.path.splitext(file)[1].lower()
                 if ext in valid_exts:
                     image_files.append(os.path.join(root, file))
         if not image_files:
-            cls.folder_cache[normalize_path(folder_path)] = {}
+            cls.folder_cache[paths.key(folder_path)] = {}
             return
             
         import configparser
@@ -1648,16 +1773,16 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         folder_map = {}
         for meta in results:
             path = meta["path"]
-            folder_map[normalize_path(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
+            folder_map[paths.key(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
             
-        cls.folder_cache[normalize_path(folder_path)] = folder_map
+        cls.folder_cache[paths.key(folder_path)] = folder_map
 
     @classmethod
     def run_folder_suggestions_thread(cls, folder_path, db_path):
         # Restore the active database in this worker thread (see run_folder_index_thread).
         set_active_db_path(db_path)
-        folder_path = os.path.abspath(folder_path)
-        folder_path_norm = normalize_path(folder_path)
+        folder_path = paths.stored(folder_path)
+        folder_path_norm = paths.key(folder_path)
         try:
             import configparser
             import concurrent.futures
@@ -1685,7 +1810,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     "status": "preparing", "completed": 0, "total": 0, "suggestions": {}
                 }
             existing_suggs = cls.suggest_status[folder_path_norm].get("suggestions", {})
-            unprocessed_paths = [p for p in photo_paths if photos_dict[p]["path"] not in existing_suggs]
+            unprocessed_paths = [p for p in photo_paths if paths.stored(photos_dict[p]["path"]) not in existing_suggs]
             
             cls.suggest_status[folder_path_norm]["total"] = len(photo_paths)
             cls.suggest_status[folder_path_norm]["completed"] = len(photo_paths) - len(unprocessed_paths)
@@ -1761,7 +1886,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     return None
                 try:
                     meta = photos_dict[path]
-                    orig_path = meta["path"]
+                    orig_path = paths.stored(meta["path"])
                     emb = embedder.embed_image(orig_path)
                     sugg = suggester.suggest_for_photo(orig_path, emb, k=15, min_sim=0.35, target_metadata=meta)
                     
@@ -1792,7 +1917,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 except Exception as e:
                     logger.error(f"Error suggesting for {path}: {e}")
                     meta = photos_dict.get(path, {})
-                    orig_path = meta.get("path", path)
+                    orig_path = paths.stored(meta.get("path", path))
                     with cls.model_lock:
                         cls.suggest_status[folder_path_norm]["suggestions"][orig_path] = {
                             "tags": [],
@@ -1820,7 +1945,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 try:
                     consensus_suggestions = suggester.apply_folder_consensus(suggestions_list)
                     for sugg in consensus_suggestions:
-                        path = sugg["path"]
+                        path = paths.stored(sugg["path"])
                         suggested_tags = []
                         suggested_people = []
                         for item in sugg.get("suggested_tags", []):
@@ -1871,7 +1996,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             
         try:
             import subprocess
-            norm_path = os.path.normpath(photo_path)
+            norm_path = paths.stored(photo_path)
             subprocess.Popen(["explorer.exe", f"/select,{norm_path}"])
             self.send_json({"success": True})
         except Exception as e:
@@ -1901,13 +2026,13 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         try:
             from metadata import rotate_image_file
             executable = self.get_exiftool_path()
-            rotate_image_file(photo_path, direction, executable)
+            rotate_image_file(paths.stored(photo_path), direction, executable)
                 
             # Update cache file stats
-            folder_path = normalize_path(os.path.dirname(photo_path))
+            folder_path = paths.key(os.path.dirname(photo_path))
             if folder_path in TagPupHTTPRequestHandler.folder_cache:
                 stat = os.stat(photo_path)
-                photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(normalize_path(photo_path))
+                photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(paths.key(photo_path))
                 if photo_entry:
                     photo_entry["mtime"] = stat.st_mtime
                     photo_entry["size"] = stat.st_size
@@ -1936,22 +2061,13 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 self.send_json_error(500, "Failed to move file to Recycle Bin")
                 return
 
-            # Delete the file record and faces from the active SQLite database
-            db_key = to_db_path(photo_path)
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            try:
-                conn.execute("PRAGMA foreign_keys = ON;")
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM photos WHERE LOWER(path) = ?", (db_key.lower(),))
-                cursor.execute("DELETE FROM embedding_cache WHERE LOWER(path) = ?", (db_key.lower(),))
-                conn.commit()
-            finally:
-                conn.close()
-                
+            # Delete the file record, its faces and its cached embedding.
+            forget_photo_in_index(self.db_path, photo_path)
+
             # Remove from local server folder cache
-            folder_path = normalize_path(os.path.dirname(photo_path))
+            folder_path = paths.key(os.path.dirname(photo_path))
             if folder_path in TagPupHTTPRequestHandler.folder_cache:
-                normalized_photo_path = normalize_path(photo_path)
+                normalized_photo_path = paths.key(photo_path)
                 if normalized_photo_path in TagPupHTTPRequestHandler.folder_cache[folder_path]:
                     del TagPupHTTPRequestHandler.folder_cache[folder_path][normalized_photo_path]
             
@@ -1976,7 +2092,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         if not photo_path or not os.path.exists(photo_path):
             self.send_json_error(400, "Invalid file path")
             return
-            
+        photo_path = paths.stored(photo_path)
+
         try:
             new_flat_tags, new_hierarchical_tags = expand_tag_fields(tags)
 
@@ -2021,8 +2138,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                                      db_path=self.db_path)
                 
             from metadata import sync_title_to_filename, METADATA_FIELDS
-            new_path = sync_title_to_filename(photo_path, title, executable)
-            
+            new_path = paths.stored(sync_title_to_filename(photo_path, title, executable))
+            renamed = not paths.same(new_path, photo_path)
+            index_warning = None
+
             # Update SQLite database
             try:
                 # Get new file stats on disk
@@ -2041,50 +2160,45 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 db_tags = extract_tags(cleaned_meta)
                 db_people = extract_people(cleaned_meta, db_tags, db_path=self.db_path)
                 db_captions = [title] if title else []
-                
-                conn = tagpup_db.connect(self.db_path, timeout=10.0)
-                cursor = conn.cursor()
-                
-                # If renamed, delete old and insert new (preserving embedding if present)
-                if normalize_path(new_path) != normalize_path(photo_path):
-                    cursor.execute("SELECT embedding FROM photos WHERE path = ?", (to_db_path(photo_path),))
-                    row = cursor.fetchone()
-                    emb = row[0] if row else None
-                    
-                    cursor.execute("DELETE FROM photos WHERE path = ?", (to_db_path(photo_path),))
-                    cursor.execute(
-                        """
-                        INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (to_db_path(new_path), mtime, size, json.dumps(db_tags), json.dumps(db_people), json.dumps(db_captions), json.dumps(cleaned_meta), emb)
-                    )
-                    cursor.execute("UPDATE faces SET photo_path = ? WHERE photo_path = ?", (to_db_path(new_path), to_db_path(photo_path)))
+                # A rename moves the row -- embedding, faces and all -- rather than
+                # inserting a second one beside it and leaving the faces behind.
+                skipped = move_photo_rows(self.db_path, {photo_path: new_path})[1] if renamed else []
+                if skipped:
+                    index_warning = ("Renamed, but the index already has a photo at %s; "
+                                     "its rows were left as they were." % new_path)
                 else:
-                    cursor.execute(
-                        """
-                        UPDATE photos 
-                        SET mtime = ?, size = ?, tags = ?, people = ?, captions = ?, raw_metadata = ?
-                        WHERE path = ?
-                        """,
-                        (mtime, size, json.dumps(db_tags), json.dumps(db_people), json.dumps(db_captions), json.dumps(cleaned_meta), to_db_path(new_path))
-                    )
-                conn.commit()
-                conn.close()
+                    where, where_params = paths.sql_equals("path", new_path)
+                    def update_row(conn):
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "UPDATE photos SET mtime = ?, size = ?, tags = ?, people = ?,"
+                            " captions = ?, raw_metadata = ? WHERE " + where,
+                            (mtime, size, json.dumps(db_tags), json.dumps(db_people),
+                             json.dumps(db_captions), json.dumps(cleaned_meta)) + where_params,
+                        )
+                        return cursor.rowcount
+
+                    # A photo the index has never seen is not added here: that would
+                    # be a row with no embedding and no faces, which is an index
+                    # entry in name only.
+                    tagpup_db.write_with_connection(
+                        self.db_path, update_row,
+                        label="index row for %s" % os.path.basename(new_path))
             except Exception as db_err:
                 logger.warning(f"Failed to update SQLite database metadata for {new_path}: {db_err}")
 
             # Update in-memory cache
-            folder_path = normalize_path(os.path.dirname(new_path))
+            folder_path = paths.key(os.path.dirname(new_path))
+            photo_entry = None
             if folder_path in TagPupHTTPRequestHandler.folder_cache:
-                if normalize_path(new_path) != normalize_path(photo_path):
-                    photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].pop(normalize_path(photo_path), None)
+                if renamed:
+                    photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].pop(paths.key(photo_path), None)
                     if photo_entry:
                         photo_entry["path"] = new_path
                         photo_entry["filename"] = os.path.basename(new_path)
-                        TagPupHTTPRequestHandler.folder_cache[folder_path][normalize_path(new_path)] = photo_entry
+                        TagPupHTTPRequestHandler.folder_cache[folder_path][paths.key(new_path)] = photo_entry
                 else:
-                    photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(normalize_path(photo_path))
+                    photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(paths.key(photo_path))
                     
                 if photo_entry:
                     from metadata import extract_tags
@@ -2102,7 +2216,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     from metadata import extract_people
                     photo_entry["people"] = extract_people(photo_entry["raw_metadata"], tags, db_path=self.db_path)
                     
-            self.send_json({"success": True, "new_path": new_path})
+            result = {"success": True, "new_path": new_path}
+            if index_warning:
+                result["index_warning"] = index_warning
+            self.send_json(result)
         except Exception as e:
             logger.error(f"Error saving metadata for {photo_path}: {e}")
             self.send_json_error(500, str(e))
@@ -2114,11 +2231,11 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.send_json_error(400, "Invalid JSON payload")
             return
             
-        paths = data.get("paths", [])
+        photo_list = data.get("paths", [])
         add_tags = data.get("add_tags", [])
         remove_tags = data.get("remove_tags", [])
         
-        if not paths:
+        if not photo_list:
             self.send_json_error(400, "Missing paths list")
             return
             
@@ -2128,11 +2245,12 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         
         try:
             with exiftool.ExifToolHelper(executable=executable) as et:
-                for path in paths:
-                    folder_path = normalize_path(os.path.dirname(path))
+                for path in photo_list:
+                    path = paths.stored(path)
+                    folder_path = paths.key(os.path.dirname(path))
                     photo_entry = None
                     if folder_path in TagPupHTTPRequestHandler.folder_cache:
-                        photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(normalize_path(path))
+                        photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path].get(paths.key(path))
                         
                     # This write replaces the photo's whole keyword set, so fall back to
                     # the indexed tags when the folder was never scanned in this session.
@@ -2180,7 +2298,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.send_json_error(400, "Invalid folder path")
             return
             
-        folder_path = normalize_path(folder_path)
+        folder_path = paths.key(folder_path)
         status_info = TagPupHTTPRequestHandler.suggest_status.get(folder_path)
         if not status_info or "suggestions" not in status_info:
             self.send_json_error(400, "No suggestions found for this folder")
@@ -2189,8 +2307,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         suggestions_map = status_info["suggestions"]
         photo_paths = data.get("photo_paths")
         if photo_paths:
-            photo_paths = [os.path.normpath(p).replace("\\", "/") for p in photo_paths]
-            suggestions_map = {k: v for k, v in suggestions_map.items() if os.path.normpath(k).replace("\\", "/") in photo_paths}
+            wanted = {paths.key(p) for p in photo_paths}
+            suggestions_map = {k: v for k, v in suggestions_map.items() if paths.key(k) in wanted}
         executable = self.get_exiftool_path()
         import exiftool
         from metadata import extract_people
@@ -2219,12 +2337,13 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     if not apply_tags:
                         continue
                         
-                    # The folder cache is keyed by normalize_path; an un-normalized key
-                    # never matches on Windows and silently loses the existing tags.
-                    folder_path_dir = normalize_path(os.path.dirname(path))
+                    # The folder cache is keyed by paths.key; any other spelling never
+                    # matches on Windows and silently loses the existing tags.
+                    path = paths.stored(path)
+                    folder_path_dir = paths.key(os.path.dirname(path))
                     photo_entry = None
                     if folder_path_dir in TagPupHTTPRequestHandler.folder_cache:
-                        photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path_dir].get(normalize_path(path))
+                        photo_entry = TagPupHTTPRequestHandler.folder_cache[folder_path_dir].get(paths.key(path))
 
                     if photo_entry:
                         current_tags = photo_entry["tags"]
@@ -2267,15 +2386,20 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.send_json({"success": True, "message": "No shift applied (0 minutes)"})
             return
             
-        folder_path = normalize_path(folder_path)
-        
+        # Walked and written in the stored form, looked up by the key. This used to
+        # walk the lower-cased key itself, so every path it found -- and every path
+        # it sent back to the page -- was lower case, and the cache it built was keyed
+        # by those instead of by paths.key().
+        folder_path = paths.stored(folder_path)
+        folder_key = paths.key(folder_path)
+
         # Load from cache, or scan on the fly if missing
-        if folder_path not in TagPupHTTPRequestHandler.folder_cache:
+        if folder_key not in TagPupHTTPRequestHandler.folder_cache:
             try:
                 from metadata import MetadataExtractor
                 executable = self.get_exiftool_path()
                 extractor = MetadataExtractor(exiftool_path=executable)
-                
+
                 valid_exts = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
                 image_files = []
                 for root, _, files in os.walk(folder_path):
@@ -2283,28 +2407,28 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                         ext = os.path.splitext(file)[1].lower()
                         if ext in valid_exts:
                             image_files.append(os.path.join(root, file))
-                            
+
                 from metadata import build_photo_ui_record
                 results = extractor.batch_read(image_files)
                 folder_map = {}
                 for meta in results:
-                    path = meta["path"]
-                    folder_map[path] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
-                TagPupHTTPRequestHandler.folder_cache[folder_path] = folder_map
+                    path = paths.stored(meta["path"])
+                    folder_map[paths.key(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
+                TagPupHTTPRequestHandler.folder_cache[folder_key] = folder_map
             except Exception as scan_err:
                 logger.error(f"Error scanning folder on the fly for time shift: {scan_err}")
                 self.send_json_error(500, f"Folder must be scanned first, and scan fallback failed: {scan_err}")
                 return
-            
-        photos_map = TagPupHTTPRequestHandler.folder_cache[folder_path]
-        
+
+        photos_map = TagPupHTTPRequestHandler.folder_cache[folder_key]
+
         # Filter photos by camera model
         target_paths = []
-        for path, entry in photos_map.items():
+        for entry in photos_map.values():
             raw = entry.get("raw_metadata", {})
             model = raw.get("EXIF:Model") or raw.get("Model") or raw.get("EXIF:Make") or raw.get("Make") or "Unknown Camera"
             if camera_model == "All Cameras" or model == camera_model:
-                target_paths.append(path)
+                target_paths.append(paths.stored(entry["path"]))
                 
         if not target_paths:
             self.send_json({"success": True, "message": "No photos matched the camera model"})
@@ -2334,9 +2458,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             
             from metadata import build_photo_ui_record
             for entry in updated_entries:
-                p = entry["path"]
-                if p in photos_map:
-                    photos_map[p] = build_photo_ui_record(p, entry, photos_map[p].get("mtime", 0.0), photos_map[p].get("size", 0))
+                p = paths.stored(entry["path"])
+                previous = photos_map.get(paths.key(p))
+                if previous is not None:
+                    photos_map[paths.key(p)] = build_photo_ui_record(p, entry, previous.get("mtime", 0.0), previous.get("size", 0))
                     
             updated_photos = list(photos_map.values())
             self.send_json({"success": True, "updated_photos": updated_photos})
@@ -2346,13 +2471,13 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
     def rescan_folder_to_cache(self, folder_path):
         valid_exts = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
         image_files = []
-        for root, _, files in os.walk(folder_path):
+        for root, _, files in os.walk(paths.stored(folder_path)):
             for file in files:
                 ext = os.path.splitext(file)[1].lower()
                 if ext in valid_exts:
                     image_files.append(os.path.join(root, file))
         if not image_files:
-            TagPupHTTPRequestHandler.folder_cache[normalize_path(folder_path)] = {}
+            TagPupHTTPRequestHandler.folder_cache[paths.key(folder_path)] = {}
             return
             
         from metadata import MetadataExtractor, build_photo_ui_record
@@ -2367,9 +2492,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         folder_map = {}
         for meta in results:
             path = meta["path"]
-            folder_map[normalize_path(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
+            folder_map[paths.key(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
             
-        TagPupHTTPRequestHandler.folder_cache[normalize_path(folder_path)] = folder_map
+        TagPupHTTPRequestHandler.folder_cache[paths.key(folder_path)] = folder_map
 
     def handle_post_folder_rename_photos(self):
         try:
@@ -2382,9 +2507,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         photo_paths = data.get("photo_paths", [])
         grouping = data.get("grouping", "").strip()
         
-        folder_path = to_db_path(folder_path)
+        folder_path = paths.stored(folder_path)
         if photo_paths:
-            photo_paths = [to_db_path(p) for p in photo_paths]
+            photo_paths = [paths.stored(p) for p in photo_paths]
             
         if not folder_path or not os.path.exists(folder_path):
             self.send_json_error(400, "Invalid folder path")
@@ -2411,11 +2536,13 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             format_pattern = config.get("renaming", "format")
             
             # Sort the selected photo paths chronologically by Date Taken
-            cache = TagPupHTTPRequestHandler.folder_cache.get(normalize_path(folder_path), {})
-            cache = {normalize_path(k): v for k, v in cache.items()}
-            
+            cache = TagPupHTTPRequestHandler.folder_cache.get(paths.key(folder_path), {})
+            cache = {paths.key(k): v for k, v in cache.items()}
+
             def get_date_taken_sort_key(p_path):
-                entry = cache.get(p_path)
+                # The cache is keyed by paths.key; looking it up by the path itself
+                # never matched, so every photo sorted by its file time instead.
+                entry = cache.get(paths.key(p_path))
                 if entry:
                     raw = entry.get("raw_metadata", {})
                     for k in ["EXIF:DateTimeOriginal", "DateTimeOriginal", "XMP:DateTimeOriginal", "EXIF:CreateDate", "CreateDate"]:
@@ -2489,21 +2616,27 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 new_base = sanitize_filename(new_base)
                 ext = os.path.splitext(old_path)[1]
                 new_name = new_base + ext
-                new_path = os.path.join(folder_path, new_name).replace("\\", "/")
-                
+                new_path = os.path.join(folder_path, new_name)
+
                 selected_renames[old_path] = new_path
 
-            # Identify and resolve external conflicts on disk
+            # Identify and resolve external conflicts on disk. The occupant is moved
+            # aside, and its index row has to go with it -- otherwise the photo
+            # renamed into its place finds the name taken in the index.
+            selected_keys = {paths.key(p) for p in selected_renames}
+            target_keys = {paths.key(p) for p in selected_renames.values()}
+            occupant_moves = {}
             for old_path, target_path in selected_renames.items():
-                if os.path.exists(target_path) and target_path not in selected_renames:
+                if os.path.exists(target_path) and paths.key(target_path) not in selected_keys:
                     dir_name = os.path.dirname(target_path)
                     base, ext = os.path.splitext(os.path.basename(target_path))
                     counter = 1
-                    safe_path = os.path.join(dir_name, f"{base}_conflict_{counter}{ext}").replace("\\", "/")
-                    while os.path.exists(safe_path) or safe_path in selected_renames.values():
+                    safe_path = os.path.join(dir_name, f"{base}_conflict_{counter}{ext}")
+                    while os.path.exists(safe_path) or paths.key(safe_path) in target_keys:
                         counter += 1
-                        safe_path = os.path.join(dir_name, f"{base}_conflict_{counter}{ext}").replace("\\", "/")
+                        safe_path = os.path.join(dir_name, f"{base}_conflict_{counter}{ext}")
                     os.rename(target_path, safe_path)
+                    occupant_moves[target_path] = safe_path
 
             # Two-pass rename sequence to avoid self-overwrite conflicts in the selection range
             temp_renames = {}
@@ -2512,7 +2645,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 if old_path != target_path:
                     dir_name = os.path.dirname(old_path)
                     ext = os.path.splitext(old_path)[1]
-                    temp_path = os.path.join(dir_name, f"tmp_rename_{hash(old_path)}_{time.time()}{ext}").replace("\\", "/")
+                    temp_path = os.path.join(dir_name, f"tmp_rename_{hash(old_path)}_{time.time()}{ext}")
                     os.rename(old_path, temp_path)
                     temp_renames[temp_path] = target_path
                 else:
@@ -2540,21 +2673,15 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             # it did not, which is the same shape as the bulk tag writes fixed earlier:
             # the screen was right and the database was not.
             renamed = {old: new for old, new in updated_paths_map.items() if old != new}
-            if renamed:
-                def move_rows(conn):
-                    cursor = conn.cursor()
-                    for old_path, new_path in renamed.items():
-                        cursor.execute(
-                            "UPDATE photos SET path = ? WHERE path = ?",
-                            (to_db_path(new_path), to_db_path(old_path)))
-                        cursor.execute(
-                            "UPDATE faces SET photo_path = ? WHERE photo_path = ?",
-                            (to_db_path(new_path), to_db_path(old_path)))
-                    return len(renamed)
+            index_rows_moved, index_skipped = 0, []
+            if renamed or occupant_moves:
                 try:
-                    tagpup_db.write_with_connection(
-                        self.db_path, move_rows,
-                        label="index rows for %d renamed photo(s)" % len(renamed))
+                    # One call, so the occupants moved aside free their names for the
+                    # photos renamed into them within the same transaction.
+                    index_rows_moved, index_skipped = move_photo_rows(
+                        self.db_path, {**occupant_moves, **renamed})
+                    logger.info("Renamed %d photo(s); moved %d index row(s).",
+                                len(renamed), index_rows_moved)
                 except Exception as e:
                     # The files are renamed either way; a stranded row is recoverable
                     # with scripts/relink_renamed_photos.py.
@@ -2562,13 +2689,13 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                                  "rows: %s", len(renamed), e)
 
             # Clear old and scan new cache entries
-            if normalize_path(folder_path) in TagPupHTTPRequestHandler.folder_cache:
-                del TagPupHTTPRequestHandler.folder_cache[normalize_path(folder_path)]
+            if paths.key(folder_path) in TagPupHTTPRequestHandler.folder_cache:
+                del TagPupHTTPRequestHandler.folder_cache[paths.key(folder_path)]
                 
             self.rescan_folder_to_cache(folder_path)
             
             # Send updated photos sorted chronologically
-            updated_list = list(TagPupHTTPRequestHandler.folder_cache.get(normalize_path(folder_path), {}).values())
+            updated_list = list(TagPupHTTPRequestHandler.folder_cache.get(paths.key(folder_path), {}).values())
             
             def get_date_taken_str(meta):
                 raw_meta = meta.get("raw_metadata", {})
@@ -2584,7 +2711,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.send_json({
                 "success": True,
                 "updated_paths": updated_paths_map,
-                "updated_photos": updated_list
+                "updated_photos": updated_list,
+                "index_rows_moved": index_rows_moved,
+                "index_skipped": [new for _, new in index_skipped],
             })
             
         except Exception as e:
@@ -3103,8 +3232,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     )
                     renamed_faces = cursor.rowcount
                     # Keep the photos.people list in step with the faces it came from.
-                    cursor.execute("SELECT path, people FROM photos WHERE people LIKE ?", (f"%{old_leaf}%",))
-                    for p_path, people_json in cursor.fetchall():
+                    cursor.execute("SELECT rowid, people FROM photos WHERE people LIKE ?", (f"%{old_leaf}%",))
+                    for p_rowid, people_json in cursor.fetchall():
                         try:
                             people = json.loads(people_json or "[]")
                         except Exception:
@@ -3118,8 +3247,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                                 seen.add(x)
                                 deduped.append(x)
                         cursor.execute(
-                            "UPDATE photos SET people = ? WHERE path = ?",
-                            (json.dumps(deduped), p_path),
+                            "UPDATE photos SET people = ? WHERE rowid = ?",
+                            (json.dumps(deduped), p_rowid),
                         )
                 conn.commit()
                 conn.close()
@@ -3234,13 +3363,16 @@ def update_photo_metadata_tags(db_path: str, exiftool_path: str, photo_paths: Li
         for i in range(0, len(photo_paths), batch_size):
             batch = photo_paths[i:i+batch_size]
             for path in batch:
-                cursor.execute("SELECT tags, raw_metadata FROM photos WHERE path = ?", (path,))
+                path = paths.stored(path)
+                where, where_params = paths.sql_equals("path", path)
+                cursor.execute("SELECT rowid, tags, raw_metadata FROM photos WHERE " + where, where_params)
                 row = cursor.fetchone()
                 if not row:
                     continue
+                rowid = row[0]
                 try:
-                    current_tags = json.loads(row[0]) if row[0] else []
-                    raw_meta = json.loads(row[1]) if row[1] else {}
+                    current_tags = json.loads(row[1]) if row[1] else []
+                    raw_meta = json.loads(row[2]) if row[2] else {}
                 except Exception:
                     continue
                 
@@ -3271,8 +3403,8 @@ def update_photo_metadata_tags(db_path: str, exiftool_path: str, photo_paths: Li
                     updated_people = extract_people(raw_meta, updated_tags, db_path=db_path, conn=conn)
                     
                     cursor.execute(
-                        "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE path = ?",
-                        (json.dumps(updated_tags), json.dumps(updated_people), json.dumps(raw_meta), path)
+                        "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE rowid = ?",
+                        (json.dumps(updated_tags), json.dumps(updated_people), json.dumps(raw_meta), rowid)
                     )
                 except Exception as err:
                     logger.error(f"Failed to update metadata on disk/db for {path}: {err}")

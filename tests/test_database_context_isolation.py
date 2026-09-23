@@ -31,8 +31,8 @@ from tagpup_server import (
     start_server as start_tagpup_server,
     TagPupHTTPRequestHandler,
     set_active_db_path,
-    normalize_path,
 )
+import paths
 
 
 def _post(port, path, body):
@@ -245,7 +245,7 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
             mock_popen.return_value = mock_proc
 
             set_active_db_path(self.OTHER_DB)
-            TagPupHTTPRequestHandler.index_status.pop(normalize_path(folder), None)
+            TagPupHTTPRequestHandler.index_status.pop(paths.key(folder), None)
             set_active_db_path(None)
 
             t = threading.Thread(
@@ -258,7 +258,7 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
             self.assertFalse(t.is_alive(), "worker thread hung")
 
         set_active_db_path(self.OTHER_DB)
-        status = TagPupHTTPRequestHandler.index_status.get(normalize_path(folder))
+        status = TagPupHTTPRequestHandler.index_status.get(paths.key(folder))
         self.assertIsNotNone(status, "worker died without recording any status")
         self.assertEqual(status.get("status"), "completed")
 

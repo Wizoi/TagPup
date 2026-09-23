@@ -95,7 +95,8 @@ class ExclusionTestBase(unittest.TestCase):
     def add_photo(self, name, people=()):
         from PIL import Image
 
-        path = os.path.join(self.tmpdir, name).replace("\\", "/")
+        # As the indexer writes it: absolute, native separators.
+        path = os.path.abspath(os.path.join(self.tmpdir, name))
         Image.new("RGB", (64, 64), (80, 90, 100)).save(path, "JPEG")
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(

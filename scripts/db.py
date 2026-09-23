@@ -29,11 +29,15 @@ writers to different databases never wait on each other.
 Never call `sqlite3.connect` directly; `tests/test_db_access.py` fails if you do.
 """
 import logging
-import os
 import sqlite3
 import threading
 import time
 from contextlib import contextmanager
+
+try:
+    from . import paths
+except ImportError:  # imported as a top-level module
+    import paths
 
 logger = logging.getLogger("tagpup_cli.db")
 
@@ -57,9 +61,18 @@ def _key(target):
     if text.startswith("file:"):
         text = text[len("file:"):].split("?", 1)[0]
     try:
-        return os.path.normcase(os.path.abspath(text))
+        return paths.key(text)
     except Exception:
         return text
+
+
+def readonly_uri(db_path):
+    """The `file:` URI that opens a database read-only: connect(readonly_uri(p), uri=True).
+
+    URI syntax wants forward slashes, which is the one place a path is spelled with
+    them on purpose.
+    """
+    return "file:%s?mode=ro" % paths.stored(db_path).replace("\\", "/")  # not a path: URI syntax
 
 
 def _is_readonly(target, kwargs):

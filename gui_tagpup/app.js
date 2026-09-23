@@ -108,7 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (btnChangeDb) {
             btnChangeDb.addEventListener('click', () => {
-                const leaf = folderLeaf(scannedFolder) || 'the open folder';
+                const leaf = baseName(scannedFolder) || 'the open folder';
                 if (!confirm(
                     `Switch to a different dog park?
 
@@ -452,7 +452,11 @@ document.addEventListener('DOMContentLoaded', () => {
             suggestions: folderSuggestions
         };
         try {
-            localStorage.setItem(`tagpup_cache_${scannedFolder}`, JSON.stringify(cacheEntry));
+            localStorage.setItem(folderCacheKey(scannedFolder), JSON.stringify(cacheEntry));
+            // An entry under the folder as it was typed predates keying by pathKey;
+            // this one supersedes it, so drop it rather than leave it using quota.
+            const legacyKey = `tagpup_cache_${scannedFolder}`;
+            if (legacyKey !== folderCacheKey(scannedFolder)) localStorage.removeItem(legacyKey);
         } catch (e) {
             console.warn("Storage quota exceeded, could not cache folder data.");
         }
@@ -1064,10 +1068,40 @@ document.addEventListener('DOMContentLoaded', () => {
         if (btnChangeDb) btnChangeDb.classList.toggle('hidden', !open);
     }
 
-    /** The folder as you know it: the last segment of its path. */
-    function folderLeaf(folderPath) {
-        if (!folderPath) return '';
-        return String(folderPath).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
+    // ------------------------------------------------------------------ paths --
+    // Every photo and folder path the server sends is already in one spelling -- the
+    // native absolute path, exactly as the database holds it -- so server paths are
+    // compared with `===` and never rewritten here. These helpers are for the two
+    // cases that are not server paths: what somebody typed into the folder box, and
+    // what the native Browse dialog returned (forward slashes). tests/frontend/
+    // path-helpers.test.mjs fails on a separator conversion anywhere else.
+
+    /**
+     * The one comparable form of a path. Separators are unified to backslashes,
+     * trailing ones dropped, and case folded -- what Windows' os.path.normcase does,
+     * and what the server's paths.key() does. Case-insensitive because the library
+     * lives on a Windows filesystem, where D:\Run and d:\run are the same folder.
+     */
+    function pathKey(p) {
+        if (!p) return '';
+        return String(p).trim().replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+    }
+
+    /** Whether two spellings name the same file or folder. */
+    function samePath(a, b) {
+        if (!a || !b) return false;
+        return pathKey(a) === pathKey(b);
+    }
+
+    /** Where a folder's scan is cached: one entry per folder, however it was typed. */
+    function folderCacheKey(folder) {
+        return `tagpup_cache_${pathKey(folder)}`;
+    }
+
+    /** The last segment of a path: a photo's file name, or a folder as you know it. */
+    function baseName(p) {
+        if (!p) return '';
+        return String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
     }
 
     /**
@@ -1080,17 +1114,14 @@ document.addEventListener('DOMContentLoaded', () => {
     function openChosenFolder() {
         const path = folderPathInput.value.trim();
         if (!path) return;
-        if (scannedFolder && normalizeForCompare(path) === normalizeForCompare(scannedFolder)) return;
+        // Typed, so any spelling of the open folder counts as the open folder.
+        if (scannedFolder && samePath(path, scannedFolder)) return;
         scanFolder(false);
-    }
-
-    function normalizeForCompare(folderPath) {
-        return String(folderPath).replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase();
     }
 
     /** Show which folder is open, by name, and put it in the window title. */
     function updateCurrentFolderLabel() {
-        const leaf = folderLeaf(scannedFolder);
+        const leaf = baseName(scannedFolder);
         updateDogParkLock();
         if (currentFolderName) {
             currentFolderName.textContent = leaf;
@@ -1122,7 +1153,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Cache lookup if not forcing refresh
         if (!forceRefresh) {
-            const rawCache = localStorage.getItem(`tagpup_cache_${path}`);
+            // Falls back once to the key as typed, which is how entries were stored
+            // before pathKey; the next save moves it to the shared key.
+            const rawCache = localStorage.getItem(folderCacheKey(path))
+                || localStorage.getItem(`tagpup_cache_${path}`);
             if (rawCache) {
                 try {
                     const cacheEntry = JSON.parse(rawCache);
@@ -1281,7 +1315,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const query = photoSearch.value.toLowerCase().trim();
         return folderPhotos.filter(photo => {
             if (!query) return true;
-            const fname = photo.filename || photo.path.split(/[/\\]/).pop() || '';
+            const fname = photo.filename || baseName(photo.path) || '';
             return fname.toLowerCase().includes(query)
                 || (photo.title && photo.title.toLowerCase().includes(query))
                 || (photo.tags || []).some(t => t.toLowerCase().includes(query));
@@ -1339,7 +1373,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const nameSpan = document.createElement('span');
             nameSpan.className = 'photo-item-name';
-            const fullName = photo.filename || photo.path.split(/[/\\]/).pop() || "";
+            const fullName = photo.filename || baseName(photo.path) || "";
             const lastDotIndex = fullName.lastIndexOf('.');
             const displayName = lastDotIndex !== -1 ? fullName.substring(0, lastDotIndex) : fullName;
             
@@ -1747,7 +1781,7 @@ Click to add ${namesSomebody} to this photo.`;
                             
                             if (data.new_path && data.new_path !== oldPath) {
                                 photo.path = data.new_path;
-                                photo.filename = data.new_path.split(/[/\\]/).pop();
+                                photo.filename = baseName(data.new_path);
                                 if (activePhotoPath === oldPath) {
                                     activePhotoPath = data.new_path;
                                 }
@@ -2371,7 +2405,7 @@ Click to add ${namesSomebody} to this photo.`;
         if (!prev) return { tags: [], from: null };
         return {
             tags: (prev.tags || []).slice(),
-            from: prev.filename || prevPath.split(/[/\\]/).pop(),
+            from: prev.filename || baseName(prevPath),
         };
     }
 
@@ -2571,7 +2605,7 @@ Click to add ${namesSomebody} to this photo.`;
                 
                 if (data.new_path && data.new_path !== path) {
                     photo.path = data.new_path;
-                    photo.filename = data.new_path.split(/[/\\]/).pop();
+                    photo.filename = baseName(data.new_path);
                     activePhotoPath = data.new_path;
                     selectPhoto(data.new_path);
                 }

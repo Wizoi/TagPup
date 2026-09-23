@@ -28,15 +28,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from . import db as tagpup_db
+    from . import paths as photo_paths
 except ImportError:  # imported as a top-level module
     import db as tagpup_db
+    import paths as photo_paths   # not `paths`: backfill() takes a list by that name
 
 from identity import ensure_document_id, read_document_id
 
 
 def rows_without_identity(db_path):
     """Indexed photos with no identity recorded, and whether their file is there."""
-    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)
+    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)  # not a path: the database file's URI
     try:
         conn.execute("SELECT document_id FROM photos LIMIT 1")
     except Exception:
@@ -80,10 +82,11 @@ def backfill(db_path, paths, exiftool_path=None, batch_size=200, on_progress=Non
     # stores whatever spelling it was given -- usually backslashes on Windows. The
     # UPDATE matches on path exactly, so recording against ExifTool's spelling
     # silently updates nothing: the run reports success and the column stays NULL.
-    as_indexed = {os.path.normcase(os.path.normpath(p)): p for p in paths}
+    # So ExifTool's answer is mapped back, by paths.key, to the row's own spelling.
+    as_indexed = {photo_paths.key(p): p for p in paths}
 
     def indexed_path(reported):
-        return as_indexed.get(os.path.normcase(os.path.normpath(reported)), reported)
+        return as_indexed.get(photo_paths.key(reported), reported)
 
     read_count = minted_count = 0
     failed = []

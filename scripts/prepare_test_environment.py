@@ -78,9 +78,12 @@ def main():
     conn = tagpup_db.connect(DB_PATH)
     c = conn.cursor()
 
-    # Paths (must be forward slash normalized for TagPup DB)
-    puppy_path = os.path.normpath(os.path.join(training_dir, "puppy.png")).replace("\\", "/")
-    puppy2_path = os.path.normpath(os.path.join(new_dir, "puppy2.png")).replace("\\", "/")
+    # Stored the way the indexer stores them. These rows used forward slashes, the
+    # opposite of production, so the screenshots were taken of a database no real
+    # index ever produces.
+    import paths
+    puppy_path = paths.stored(os.path.join(training_dir, "puppy.png"))
+    puppy2_path = paths.stored(os.path.join(new_dir, "puppy2.png"))
 
     # Embeddings (mock vectors)
     clip_emb = np.random.randn(1024).astype(np.float32)

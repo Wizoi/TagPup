@@ -17,6 +17,12 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 from index import PhotoIndex
 from tuner_server import start_server, TunerHTTPRequestHandler
 
+
+def native(path):
+    """A path as the indexer stores it: absolute, with this platform's separators."""
+    return os.path.abspath(path)
+
+
 class TestStability(unittest.TestCase):
     TEST_DB_PATH = os.path.join(WORKSPACE_DIR, "data", "test_validation_index.db")
     TEST_PORT = 9898
@@ -467,14 +473,14 @@ class TestStability(unittest.TestCase):
         
         # Insert unmatched face with same embedding (similarity = 1.0) but name IS NULL
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       ("C:/photos/automatch_test.jpg", 1000.0, 100, "[]", "[]", "[]", "{}"))
+                       (native("C:/photos/automatch_test.jpg"), 1000.0, 100, "[]", "[]", "[]", "{}"))
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       ("C:/photos/john_doe.jpg", 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+                       (native("C:/photos/john_doe.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
         
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/john_doe.jpg", "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
+                       (native("C:/photos/john_doe.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/automatch_test.jpg", "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
+                       (native("C:/photos/automatch_test.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
         photo_index.conn.commit()
         photo_index.close()
         
@@ -494,12 +500,12 @@ class TestStability(unittest.TestCase):
         # Verify the face was successfully resolved to John Doe in the DB
         conn = sqlite3.connect(self.TEST_DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT name FROM faces WHERE photo_path = 'C:/photos/automatch_test.jpg'")
+        c.execute("SELECT name FROM faces WHERE photo_path = ?", (native("C:/photos/automatch_test.jpg"),))
         name = c.fetchone()[0]
         self.assertEqual(name, "John Doe")
         
         # Also verify photo's people field is updated
-        c.execute("SELECT people FROM photos WHERE path = 'C:/photos/automatch_test.jpg'")
+        c.execute("SELECT people FROM photos WHERE path = ?", (native("C:/photos/automatch_test.jpg"),))
         people = json.loads(c.fetchone()[0])
         self.assertIn("John Doe", people)
         conn.close()
@@ -515,19 +521,19 @@ class TestStability(unittest.TestCase):
         
         # Insert photos in the same folder
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       ("C:/photos/folderA/photo1.jpg", 1000.0, 100, "[]", "[]", "[]", "{}"))
+                       (native("C:/photos/folderA/photo1.jpg"), 1000.0, 100, "[]", "[]", "[]", "{}"))
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       ("C:/photos/folderA/photo2.jpg", 1000.0, 100, "[]", "[]", "[]", "{}"))
+                       (native("C:/photos/folderA/photo2.jpg"), 1000.0, 100, "[]", "[]", "[]", "{}"))
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       ("C:/photos/folderA/john_doe.jpg", 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+                       (native("C:/photos/folderA/john_doe.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
         
         # Insert faces
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/folderA/john_doe.jpg", "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
+                       (native("C:/photos/folderA/john_doe.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/folderA/photo1.jpg", "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
+                       (native("C:/photos/folderA/photo1.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/folderA/photo2.jpg", "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
+                       (native("C:/photos/folderA/photo2.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
         photo_index.conn.commit()
         photo_index.close()
         
@@ -548,7 +554,8 @@ class TestStability(unittest.TestCase):
         # Verify the faces were successfully resolved to John Doe in the DB
         conn = sqlite3.connect(self.TEST_DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT name FROM faces WHERE photo_path IN ('C:/photos/folderA/photo1.jpg', 'C:/photos/folderA/photo2.jpg')")
+        c.execute("SELECT name FROM faces WHERE photo_path IN (?, ?)",
+                  (native("C:/photos/folderA/photo1.jpg"), native("C:/photos/folderA/photo2.jpg")))
         names = [r[0] for r in c.fetchall()]
         self.assertEqual(names, ["John Doe", "John Doe"])
         conn.close()
@@ -563,17 +570,17 @@ class TestStability(unittest.TestCase):
         resolved_emb /= norm
         
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       ("C:/photos/duplicate_test.jpg", 1000.0, 100, "[]", "[]", "[]", "{}"))
+                       (native("C:/photos/duplicate_test.jpg"), 1000.0, 100, "[]", "[]", "[]", "{}"))
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       ("C:/photos/john_doe.jpg", 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+                       (native("C:/photos/john_doe.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
         
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/john_doe.jpg", "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
+                       (native("C:/photos/john_doe.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
         # Insert two unmatched faces on the same photo that both match John Doe
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/duplicate_test.jpg", "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
+                       (native("C:/photos/duplicate_test.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/duplicate_test.jpg", "[20,20,30,30]", resolved_emb.tobytes(), None, 0.95))
+                       (native("C:/photos/duplicate_test.jpg"), "[20,20,30,30]", resolved_emb.tobytes(), None, 0.95))
         photo_index.conn.commit()
         photo_index.close()
         
@@ -594,7 +601,7 @@ class TestStability(unittest.TestCase):
         # Verify both faces remain None in the DB
         conn = sqlite3.connect(self.TEST_DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT name FROM faces WHERE photo_path = 'C:/photos/duplicate_test.jpg'")
+        c.execute("SELECT name FROM faces WHERE photo_path = ?", (native("C:/photos/duplicate_test.jpg"),))
         names = [r[0] for r in c.fetchall()]
         self.assertEqual(names, [None, None])
         conn.close()
@@ -609,17 +616,17 @@ class TestStability(unittest.TestCase):
         resolved_emb /= norm
         
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       ("C:/photos/already_tagged_test.jpg", 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+                       (native("C:/photos/already_tagged_test.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       ("C:/photos/john_doe.jpg", 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+                       (native("C:/photos/john_doe.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
         
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/john_doe.jpg", "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
+                       (native("C:/photos/john_doe.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
         # One face already matched to John Doe, another unmatched but matches John Doe's embedding
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/already_tagged_test.jpg", "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
+                       (native("C:/photos/already_tagged_test.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/already_tagged_test.jpg", "[20,20,30,30]", resolved_emb.tobytes(), None, 0.95))
+                       (native("C:/photos/already_tagged_test.jpg"), "[20,20,30,30]", resolved_emb.tobytes(), None, 0.95))
         photo_index.conn.commit()
         photo_index.close()
         
@@ -640,7 +647,7 @@ class TestStability(unittest.TestCase):
         # Verify the unmatched face remains None in the DB
         conn = sqlite3.connect(self.TEST_DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT name FROM faces WHERE photo_path = 'C:/photos/already_tagged_test.jpg'")
+        c.execute("SELECT name FROM faces WHERE photo_path = ?", (native("C:/photos/already_tagged_test.jpg"),))
         names = sorted([str(r[0]) for r in c.fetchall()])
         self.assertEqual(names, ["John Doe", "None"])
         conn.close()
@@ -652,15 +659,15 @@ class TestStability(unittest.TestCase):
         cursor = photo_index.conn.cursor()
         
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       ("C:/photos/conflict_test.jpg", 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+                       (native("C:/photos/conflict_test.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
         
         # Face 1 is John Doe, Face 2 is unmatched
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/conflict_test.jpg", "[0,0,10,10]", b"", "John Doe", 0.95))
+                       (native("C:/photos/conflict_test.jpg"), "[0,0,10,10]", b"", "John Doe", 0.95))
         face1_id = cursor.lastrowid
         
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/conflict_test.jpg", "[20,20,30,30]", b"", None, 0.95))
+                       (native("C:/photos/conflict_test.jpg"), "[20,20,30,30]", b"", None, 0.95))
         face2_id = cursor.lastrowid
         photo_index.conn.commit()
         photo_index.close()
@@ -689,18 +696,18 @@ class TestStability(unittest.TestCase):
         
         # Photo 1 has John Doe already, and an unmatched face
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       ("C:/photos/conflict_p1.jpg", 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+                       (native("C:/photos/conflict_p1.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/conflict_p1.jpg", "[0,0,10,10]", b"", "John Doe", 0.95))
+                       (native("C:/photos/conflict_p1.jpg"), "[0,0,10,10]", b"", "John Doe", 0.95))
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/conflict_p1.jpg", "[20,20,30,30]", b"", None, 0.95))
+                       (native("C:/photos/conflict_p1.jpg"), "[20,20,30,30]", b"", None, 0.95))
         face2_id = cursor.lastrowid
         
         # Photo 2 has another unmatched face
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       ("C:/photos/conflict_p2.jpg", 1000.0, 100, "[]", "[]", "[]", "{}"))
+                       (native("C:/photos/conflict_p2.jpg"), 1000.0, 100, "[]", "[]", "[]", "{}"))
         cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-                       ("C:/photos/conflict_p2.jpg", "[0,0,10,10]", b"", None, 0.95))
+                       (native("C:/photos/conflict_p2.jpg"), "[0,0,10,10]", b"", None, 0.95))
         face3_id = cursor.lastrowid
         
         photo_index.conn.commit()
@@ -729,22 +736,25 @@ class TestStability(unittest.TestCase):
         from PIL import Image
         import tuner_server
         
+        import paths
+
         temp_dir = tempfile.mkdtemp()
         img_path = os.path.join(temp_dir, "test_shift.jpg")
         img = Image.new("RGB", (10, 10), color="blue")
         img.save(img_path, "JPEG")
-        
-        tuner_server.TunerHTTPRequestHandler.folder_cache[temp_dir] = {
-            img_path: {
+
+        # Filed the way the folder scan files it: the folder's key, then each photo's.
+        tuner_server.TunerHTTPRequestHandler.folder_cache[paths.key(temp_dir)] = {
+            paths.key(img_path): {
                 "path": img_path,
                 "raw_metadata": {
-                    "EXIF:Model": "Test Camera", 
+                    "EXIF:Model": "Test Camera",
                     "EXIF:DateTimeOriginal": "2026:01:01 12:00:00",
                     "EXIF:CreateDate": "2026:01:01 12:00:00"
                 }
             }
         }
-        
+
         url = f"http://127.0.0.1:{self.TEST_PORT}/api/folder/time-shift"
         req = urllib.request.Request(
             url,
@@ -765,8 +775,38 @@ class TestStability(unittest.TestCase):
         except Exception as e:
             shutil.rmtree(temp_dir)
             self.fail(f"Time shift API request failed: {e}")
-            
+
         shutil.rmtree(temp_dir)
+        # The page is handed the photo's own path, not the lower-cased key it is
+        # filed under in the cache.
+        self.assertEqual([p["path"] for p in data["updated_photos"]], [img_path])
+
+    def test_api_folder_time_shift_scans_an_uncached_folder_into_real_paths(self):
+        """With nothing cached, the shift scans the folder itself -- and still hands
+        back each photo's path as it is, not the lower-cased key it files it under."""
+        import tempfile
+        import shutil
+        from PIL import Image
+
+        temp_dir = os.path.join(tempfile.mkdtemp(), "Shoot_Day")
+        os.makedirs(temp_dir)
+        self.addCleanup(shutil.rmtree, os.path.dirname(temp_dir), True)
+        img_path = os.path.join(temp_dir, "IMG_Shift.jpg")
+        Image.new("RGB", (10, 10), color="blue").save(img_path, "JPEG")
+
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.TEST_PORT}/api/folder/time-shift",
+            data=json.dumps({
+                "folder_path": temp_dir,
+                "camera_model": "All Cameras",
+                "shift_minutes": 30
+            }).encode('utf-8'),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        data = json.loads(urllib.request.urlopen(req).read().decode('utf-8'))
+        self.assertTrue(data["success"], data)
+        self.assertEqual([p["path"] for p in data["updated_photos"]], [img_path])
 
     def test_build_photo_ui_record(self):
         from metadata import build_photo_ui_record
@@ -821,68 +861,128 @@ class TestStability(unittest.TestCase):
         self.assertNotIn("John Doe", res, "Should hide redundant leaf component tag")
         self.assertNotIn("Family", res, "Should hide redundant parent component tag")
 
+    def _seed_rename_photo(self, conn, path, mtime, taken, face_name=None):
+        """A photo row -- and optionally a named face -- as the indexer writes them."""
+        conn.execute(
+            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (path, mtime, 100, "[]", json.dumps([face_name] if face_name else []), "[]",
+             json.dumps({"EXIF:DateTimeOriginal": taken} if taken else {})))
+        if face_name:
+            conn.execute(
+                "INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                (path, "[0,0,10,10]", b"", face_name, 0.9))
+
+    def _post_rename(self, temp_dir, photo_paths):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.TEST_PORT}/api/folder/rename-photos",
+            data=json.dumps({
+                "folder_path": temp_dir,
+                "photo_paths": photo_paths,
+                "grouping": "TestGroup"
+            }).encode('utf-8'),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        return json.loads(urllib.request.urlopen(req).read().decode('utf-8'))
+
+    def _rows(self, sql, params=()):
+        conn = sqlite3.connect(self.TEST_DB_PATH)
+        try:
+            return conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+
     def test_api_folder_rename_photos(self):
         import tempfile
         import shutil
         from PIL import Image
-        
-        temp_dir = tempfile.mkdtemp().replace("\\", "/")
+        import paths
+
+        temp_dir = tempfile.mkdtemp()
         try:
-            p1 = os.path.join(temp_dir, "file_A.jpg").replace("\\", "/")
-            p2 = os.path.join(temp_dir, "file_B.jpg").replace("\\", "/")
-            
+            p1 = os.path.join(temp_dir, "file_A.jpg")
+            p2 = os.path.join(temp_dir, "file_B.jpg")
+
             im = Image.new("RGB", (10, 10), "blue")
             im.save(p1)
             im.save(p2)
-            
+
             conn = sqlite3.connect(self.TEST_DB_PATH)
-            c = conn.cursor()
-            c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                      (p1, 2000.0, 100, "[]", "[]", "[]", json.dumps({"EXIF:DateTimeOriginal": "2026:06:27 12:00:00"})))
-            c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                      (p2, 1000.0, 100, "[]", "[]", "[]", json.dumps({"EXIF:DateTimeOriginal": "2026:06:27 11:00:00"})))
+            self._seed_rename_photo(conn, p1, 2000.0, "2026:06:27 12:00:00", "Rowan Thackeray")
+            self._seed_rename_photo(conn, p2, 1000.0, "2026:06:27 11:00:00", "Tamsin Okafor")
             conn.commit()
             conn.close()
-            
+            faces_before = self._rows("SELECT COUNT(*) FROM faces")[0][0]
+
             from metadata import build_photo_ui_record
-            TunerHTTPRequestHandler.folder_cache[temp_dir] = {
-                p1: build_photo_ui_record(p1, {"path": p1, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 12:00:00"}}, 2000.0, 100),
-                p2: build_photo_ui_record(p2, {"path": p2, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 11:00:00"}}, 1000.0, 100)
+            TunerHTTPRequestHandler.folder_cache[paths.key(temp_dir)] = {
+                paths.key(p1): build_photo_ui_record(p1, {"path": p1, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 12:00:00"}}, 2000.0, 100),
+                paths.key(p2): build_photo_ui_record(p2, {"path": p2, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 11:00:00"}}, 1000.0, 100)
             }
-            
-            url = f"http://127.0.0.1:{self.TEST_PORT}/api/folder/rename-photos"
-            req = urllib.request.Request(
-                url,
-                data=json.dumps({
-                    "folder_path": temp_dir,
-                    "photo_paths": [p1, p2],
-                    "grouping": "TestGroup"
-                }).encode('utf-8'),
-                headers={"Content-Type": "application/json"},
-                method="POST"
-            )
-            response = urllib.request.urlopen(req)
-            data = json.loads(response.read().decode('utf-8'))
-            
+
+            data = self._post_rename(temp_dir, [p1, p2])
             self.assertTrue(data["success"])
-            
-            expected_p2_new = os.path.join(temp_dir, "TestGroup - 1.jpg").replace("\\", "/")
-            expected_p1_new = os.path.join(temp_dir, "TestGroup - 2.jpg").replace("\\", "/")
-            
+
+            expected_p2_new = os.path.join(temp_dir, "TestGroup - 1.jpg")
+            expected_p1_new = os.path.join(temp_dir, "TestGroup - 2.jpg")
+
             self.assertTrue(os.path.exists(expected_p2_new))
             self.assertTrue(os.path.exists(expected_p1_new))
             self.assertFalse(os.path.exists(p1))
             self.assertFalse(os.path.exists(p2))
-            
-            conn = sqlite3.connect(self.TEST_DB_PATH)
-            c = conn.cursor()
-            c.execute("SELECT path FROM photos")
-            db_paths = [r[0].replace("\\", "/") for r in c.fetchall()]
-            conn.close()
-            
+
+            # The index follows the files: photo rows at the new names, spelled as
+            # the indexer spells them, and nothing left at the old ones.
+            db_paths = sorted(r[0] for r in self._rows("SELECT path FROM photos"))
             self.assertIn(expected_p1_new, db_paths)
             self.assertIn(expected_p2_new, db_paths)
-            
+            self.assertNotIn(p1, db_paths)
+            self.assertNotIn(p2, db_paths)
+
+            # And the faces go with them, names kept, none duplicated.
+            faces = dict(self._rows("SELECT photo_path, name FROM faces WHERE name IS NOT NULL"
+                                    " AND photo_path IN (?, ?, ?, ?)",
+                                    (p1, p2, expected_p1_new, expected_p2_new)))
+            self.assertEqual(faces, {expected_p1_new: "Rowan Thackeray",
+                                     expected_p2_new: "Tamsin Okafor"})
+            self.assertEqual(self._rows("SELECT COUNT(*) FROM faces")[0][0], faces_before)
+            self.assertEqual(data["index_moved"], {"photos": 2, "faces": 2})
+            self.assertEqual(data["index_not_moved"], [])
+
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_api_folder_rename_photos_does_not_merge_onto_rows_already_there(self):
+        """A stale row at the new name is not merged into: that duplicates faces."""
+        import tempfile
+        import shutil
+        from PIL import Image
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            p1 = os.path.join(temp_dir, "file_A.jpg")
+            Image.new("RGB", (10, 10), "blue").save(p1)
+            stale = os.path.join(temp_dir, "TestGroup - 1.jpg")  # no file, only rows
+
+            conn = sqlite3.connect(self.TEST_DB_PATH)
+            self._seed_rename_photo(conn, p1, 2000.0, "2026:06:27 12:00:00", "Rowan Thackeray")
+            self._seed_rename_photo(conn, stale, 500.0, None, "Tamsin Okafor")
+            conn.commit()
+            conn.close()
+
+            data = self._post_rename(temp_dir, [p1])
+            self.assertTrue(data["success"])
+            self.assertTrue(os.path.exists(stale), "the file itself was still renamed")
+
+            self.assertEqual(data["index_not_moved"], [stale])
+            self.assertEqual(data["index_moved"], {"photos": 0, "faces": 0})
+            self.assertEqual(
+                self._rows("SELECT name FROM faces WHERE photo_path = ?", (stale,)),
+                [("Tamsin Okafor",)], "faces were merged onto the rows already there")
+            self.assertEqual(
+                self._rows("SELECT name FROM faces WHERE photo_path = ?", (p1,)),
+                [("Rowan Thackeray",)])
         finally:
             shutil.rmtree(temp_dir)
 
@@ -890,111 +990,97 @@ class TestStability(unittest.TestCase):
         import tempfile
         import shutil
         from PIL import Image
-        
-        temp_dir = tempfile.mkdtemp().replace("\\", "/")
+        import paths
+
+        temp_dir = tempfile.mkdtemp()
         try:
             # Create two selected files
-            p1 = os.path.join(temp_dir, "file_A.jpg").replace("\\", "/")
-            p2 = os.path.join(temp_dir, "file_B.jpg").replace("\\", "/")
+            p1 = os.path.join(temp_dir, "file_A.jpg")
+            p2 = os.path.join(temp_dir, "file_B.jpg")
             # Create conflicting file occupant (this one is NOT in our renaming selection)
-            p_conflict = os.path.join(temp_dir, "TestGroup - 1.jpg").replace("\\", "/")
-            
+            p_conflict = os.path.join(temp_dir, "TestGroup - 1.jpg")
+
             im = Image.new("RGB", (10, 10), "blue")
             im.save(p1)
             im.save(p2)
             im.save(p_conflict)
-            
+
             # Setup DB record cache
             conn = sqlite3.connect(self.TEST_DB_PATH)
-            c = conn.cursor()
-            c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                      (p1, 2000.0, 100, "[]", "[]", "[]", json.dumps({"EXIF:DateTimeOriginal": "2026:06:27 12:00:00"})))
-            c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                      (p2, 1000.0, 100, "[]", "[]", "[]", json.dumps({"EXIF:DateTimeOriginal": "2026:06:27 11:00:00"})))
-            c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                      (p_conflict, 500.0, 100, "[]", "[]", "[]", json.dumps({})))
+            self._seed_rename_photo(conn, p1, 2000.0, "2026:06:27 12:00:00", "Rowan Thackeray")
+            self._seed_rename_photo(conn, p2, 1000.0, "2026:06:27 11:00:00", "Tamsin Okafor")
+            self._seed_rename_photo(conn, p_conflict, 500.0, None, "Ellis Marchetti")
             conn.commit()
             conn.close()
-            
+
             # Pre-populate server cache
             from metadata import build_photo_ui_record
-            TunerHTTPRequestHandler.folder_cache[temp_dir] = {
-                p1: build_photo_ui_record(p1, {"path": p1, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 12:00:00"}}, 2000.0, 100),
-                p2: build_photo_ui_record(p2, {"path": p2, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 11:00:00"}}, 1000.0, 100),
-                p_conflict: build_photo_ui_record(p_conflict, {"path": p_conflict, "raw_metadata": {}}, 500.0, 100)
+            TunerHTTPRequestHandler.folder_cache[paths.key(temp_dir)] = {
+                paths.key(p1): build_photo_ui_record(p1, {"path": p1, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 12:00:00"}}, 2000.0, 100),
+                paths.key(p2): build_photo_ui_record(p2, {"path": p2, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 11:00:00"}}, 1000.0, 100),
+                paths.key(p_conflict): build_photo_ui_record(p_conflict, {"path": p_conflict, "raw_metadata": {}}, 500.0, 100)
             }
-            
-            # Trigger renaming POST request
-            url = f"http://127.0.0.1:{self.TEST_PORT}/api/folder/rename-photos"
-            req = urllib.request.Request(
-                url,
-                data=json.dumps({
-                    "folder_path": temp_dir,
-                    "photo_paths": [p1, p2],
-                    "grouping": "TestGroup"
-                }).encode('utf-8'),
-                headers={"Content-Type": "application/json"},
-                method="POST"
-            )
-            response = urllib.request.urlopen(req)
-            data = json.loads(response.read().decode('utf-8'))
-            
+
+            data = self._post_rename(temp_dir, [p1, p2])
             self.assertTrue(data["success"])
-            
+
             # Check targets were successfully created
-            expected_p2_new = os.path.join(temp_dir, "TestGroup - 1.jpg").replace("\\", "/")
-            expected_p1_new = os.path.join(temp_dir, "TestGroup - 2.jpg").replace("\\", "/")
-            expected_conflict_new = os.path.join(temp_dir, "TestGroup - 1_conflict_1.jpg").replace("\\", "/")
-            
+            expected_p2_new = os.path.join(temp_dir, "TestGroup - 1.jpg")
+            expected_p1_new = os.path.join(temp_dir, "TestGroup - 2.jpg")
+            expected_conflict_new = os.path.join(temp_dir, "TestGroup - 1_conflict_1.jpg")
+
             self.assertTrue(os.path.exists(expected_p2_new), f"Should have created {expected_p2_new}")
             self.assertTrue(os.path.exists(expected_p1_new), f"Should have created {expected_p1_new}")
             self.assertTrue(os.path.exists(expected_conflict_new), f"Should have moved conflicting occupant to {expected_conflict_new}")
-            
+
             # Verify original selected files and old conflict files are gone from their old paths
             self.assertFalse(os.path.exists(p1))
             self.assertFalse(os.path.exists(p2))
             # Note that p_conflict old path was occupied by expected_p2_new, so the old path now has the new file content.
-            
+
             # Verify DB paths
-            conn = sqlite3.connect(self.TEST_DB_PATH)
-            c = conn.cursor()
-            c.execute("SELECT path FROM photos")
-            db_paths = [r[0].replace("\\", "/") for r in c.fetchall()]
-            conn.close()
-            
+            db_paths = [r[0] for r in self._rows("SELECT path FROM photos")]
             self.assertIn(expected_p1_new, db_paths)
             self.assertIn(expected_p2_new, db_paths)
             self.assertIn(expected_conflict_new, db_paths)
-            
+
+            # Each face followed its own photo: the occupant's to where it was moved
+            # aside, the renamed photo's onto the name the occupant gave up.
+            faces = dict(self._rows("SELECT name, photo_path FROM faces WHERE name IS NOT NULL"))
+            self.assertEqual(faces["Ellis Marchetti"], expected_conflict_new)
+            self.assertEqual(faces["Tamsin Okafor"], expected_p2_new)
+            self.assertEqual(faces["Rowan Thackeray"], expected_p1_new)
+            self.assertEqual(data["index_moved"], {"photos": 3, "faces": 3})
+
         finally:
             shutil.rmtree(temp_dir)
 
     def test_api_photo_delete(self):
         import tempfile
         import shutil
-        temp_dir = tempfile.mkdtemp().replace("\\", "/")
+        import paths
+        temp_dir = tempfile.mkdtemp()
         try:
-            p = os.path.join(temp_dir, "to_delete.jpg").replace("\\", "/")
+            p = os.path.join(temp_dir, "to_delete.jpg")
             with open(p, "wb") as f:
                 f.write(b"fake jpeg content")
-                
-            # Seed the database
+
+            # Seed the database the way the indexer writes it: native paths.
             conn = sqlite3.connect(self.TEST_DB_PATH)
             c = conn.cursor()
             c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags) VALUES (?, 1.0, 10, '[]')", (p,))
             c.execute("INSERT OR REPLACE INTO embedding_cache (path, mtime, size, model_name, pretrained, preserve_full_frame, max_aspect_ratio, force_image_size, embedding) VALUES (?, 1.0, 10, 'm', 'p', 0, 1.0, 100, ?)", (p, b'\x00'*512))
-            c.execute("INSERT INTO faces (photo_path, box, name, prob) VALUES (?, '[]', 'John Doe', 1.0)", (p,))
+            c.execute("INSERT INTO faces (photo_path, box, name, prob) VALUES (?, '[]', 'Rowan Thackeray', 1.0)", (p,))
             conn.commit()
             conn.close()
-            
+
             # Populate server folder cache
-            from tuner_server import TunerHTTPRequestHandler, normalize_path
-            folder_path = normalize_path(temp_dir)
-            normalized_p = normalize_path(p)
-            TunerHTTPRequestHandler.folder_cache[folder_path] = {
-                normalized_p: {"path": p, "filename": "to_delete.jpg", "tags": []}
+            folder_key = paths.key(temp_dir)
+            photo_key = paths.key(p)
+            TunerHTTPRequestHandler.folder_cache[folder_key] = {
+                photo_key: {"path": p, "filename": "to_delete.jpg", "tags": []}
             }
-            
+
             # Send POST delete request
             url = f"http://127.0.0.1:{self.TEST_PORT}/api/photo/delete"
             req = urllib.request.Request(
@@ -1005,30 +1091,24 @@ class TestStability(unittest.TestCase):
             )
             response = urllib.request.urlopen(req)
             data = json.loads(response.read().decode('utf-8'))
-            
+
             self.assertTrue(data["success"])
-            
+
             # Verify file is not on disk (moved to recycle bin)
             self.assertFalse(os.path.exists(p))
-            
+
             # Verify records are gone from DB
-            conn = sqlite3.connect(self.TEST_DB_PATH)
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM photos WHERE path = ?", (p,))
-            photos_count = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM embedding_cache WHERE path = ?", (p,))
-            cache_count = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM faces WHERE photo_path = ?", (p,))
-            faces_count = c.fetchone()[0]
-            conn.close()
-            
+            photos_count = self._rows("SELECT COUNT(*) FROM photos WHERE path = ?", (p,))[0][0]
+            cache_count = self._rows("SELECT COUNT(*) FROM embedding_cache WHERE path = ?", (p,))[0][0]
+            faces_count = self._rows("SELECT COUNT(*) FROM faces WHERE photo_path = ?", (p,))[0][0]
+
             self.assertEqual(photos_count, 0)
             self.assertEqual(cache_count, 0)
             self.assertEqual(faces_count, 0)
-            
+
             # Verify folder_cache entry is evicted
-            self.assertNotIn(normalized_p, TunerHTTPRequestHandler.folder_cache[folder_path])
-            
+            self.assertNotIn(photo_key, TunerHTTPRequestHandler.folder_cache[folder_key])
+
         finally:
             shutil.rmtree(temp_dir)
 

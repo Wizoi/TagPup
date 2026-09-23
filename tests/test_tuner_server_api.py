@@ -799,7 +799,10 @@ class TestFolderQueue(TunerAPITestBase):
 
     def make_folders(self, n):
         import tempfile
-        return [tempfile.mkdtemp(prefix="tuner_q%d_" % i) for i in range(n)]
+        folders = [tempfile.mkdtemp(prefix="tuner_q%d_" % i) for i in range(n)]
+        for folder in folders:
+            self.addCleanup(shutil.rmtree, folder, True)
+        return folders
 
     def queue_state(self):
         from tuner_server import TunerHTTPRequestHandler, set_active_db_path
@@ -854,10 +857,11 @@ class TestFolderQueue(TunerAPITestBase):
         self.assertEqual(len(self.queue_state()), 1)
 
     def test_a_folder_being_indexed_now_is_not_queued_behind_itself(self):
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
+        import paths
         folders = self.make_folders(1)
         set_active_db_path(self.TEST_DB)
-        TunerHTTPRequestHandler.index_status[normalize_path(folders[0])] = {
+        TunerHTTPRequestHandler.index_status[paths.key(folders[0])] = {
             "status": "running", "percent": 10, "message": "working",
         }
         set_active_db_path(None)
@@ -937,11 +941,12 @@ class TestQueueCancel(TestFolderQueue):
 
     def test_cancelling_does_not_touch_the_folder_being_indexed(self):
         """That one owns a subprocess partway through writing rows."""
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
+        import paths
         running = self.make_folders(1)[0]
         queued = self.make_folders(1)
         set_active_db_path(self.TEST_DB)
-        TunerHTTPRequestHandler.index_status[normalize_path(running)] = {
+        TunerHTTPRequestHandler.index_status[paths.key(running)] = {
             "status": "running", "percent": 30, "message": "working",
         }
         set_active_db_path(None)
@@ -994,7 +999,8 @@ class TestQueueRunner(TestFolderQueue):
 
     def test_the_failure_is_recorded_against_the_folder_that_failed(self):
         from unittest.mock import patch
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
+        import paths
         folders = self.make_folders(2)
         self.post_start(folders)
 
@@ -1008,7 +1014,7 @@ class TestQueueRunner(TestFolderQueue):
 
         set_active_db_path(self.TEST_DB)
         try:
-            failed = TunerHTTPRequestHandler.index_status.get(normalize_path(folders[0]))
+            failed = TunerHTTPRequestHandler.index_status.get(paths.key(folders[0]))
         finally:
             set_active_db_path(None)
         self.assertEqual(failed["status"], "failed")
@@ -1192,7 +1198,7 @@ class TestTunerFolderRemoval(TunerAPITestBase):
     def seed_folder(self, name="removeme"):
         import tempfile
         folder = tempfile.mkdtemp(prefix=f"tuner_{name}_")
-        photo = os.path.join(folder, "a.jpg").replace("\\", "/")
+        photo = os.path.abspath(os.path.join(folder, "a.jpg"))
         from PIL import Image
         Image.new("RGB", (16, 16)).save(photo, "JPEG")
 
@@ -1274,12 +1280,13 @@ class TestSingleIndexJob(TunerAPITestBase):
         self.assertEqual(body["active"], [])
 
     def test_a_running_job_is_reported(self):
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
+        import paths
         import tempfile
 
         folder = tempfile.mkdtemp(prefix="tuner_active_")
         set_active_db_path(self.TEST_DB)
-        TunerHTTPRequestHandler.index_status[normalize_path(folder)] = {
+        TunerHTTPRequestHandler.index_status[paths.key(folder)] = {
             "status": "running", "percent": 42, "message": "Generating embeddings: 42% (21/50)",
         }
         set_active_db_path(None)
@@ -1298,14 +1305,16 @@ class TestSingleIndexJob(TunerAPITestBase):
         The folder is queued instead, and still nothing runs in parallel.
         """
         from unittest.mock import patch
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
+        import paths
         import tempfile
 
         busy_folder = tempfile.mkdtemp(prefix="tuner_busy_")
         other_folder = tempfile.mkdtemp(prefix="tuner_other_")
         set_active_db_path(self.TEST_DB)
-        TunerHTTPRequestHandler.index_status[normalize_path(busy_folder)] = {
+        TunerHTTPRequestHandler.index_status[paths.key(busy_folder)] = {
             "status": "running", "percent": 10, "message": "working",
+            "folder": busy_folder,
         }
         set_active_db_path(None)
 
@@ -1318,18 +1327,19 @@ class TestSingleIndexJob(TunerAPITestBase):
 
         active = self.get("/api/folder/index-active")
         self.assertEqual(len(active["active"]), 1, "two folders were running at once")
-        self.assertEqual(active["active"][0]["folder"], normalize_path(busy_folder))
+        self.assertEqual(active["active"][0]["folder"], busy_folder)
         self.assertEqual([q["name"] for q in active["queued"]],
                          [os.path.basename(other_folder)])
 
     def test_restarting_the_same_folder_is_still_accepted(self):
         """Asking again for the folder already running is harmless, not an error."""
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
+        import paths
         import tempfile
 
         folder = tempfile.mkdtemp(prefix="tuner_same_")
         set_active_db_path(self.TEST_DB)
-        TunerHTTPRequestHandler.index_status[normalize_path(folder)] = {
+        TunerHTTPRequestHandler.index_status[paths.key(folder)] = {
             "status": "running", "percent": 10, "message": "working",
         }
         set_active_db_path(None)
@@ -1339,14 +1349,15 @@ class TestSingleIndexJob(TunerAPITestBase):
         self.assertEqual(body.get("status"), "running")
 
     def test_a_finished_job_does_not_block_the_next_one(self):
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path, normalize_path
+        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
+        import paths
         from unittest.mock import patch, MagicMock
         import tempfile
 
         done_folder = tempfile.mkdtemp(prefix="tuner_done_")
         next_folder = tempfile.mkdtemp(prefix="tuner_next_")
         set_active_db_path(self.TEST_DB)
-        TunerHTTPRequestHandler.index_status[normalize_path(done_folder)] = {
+        TunerHTTPRequestHandler.index_status[paths.key(done_folder)] = {
             "status": "completed", "percent": 100, "message": "done",
         }
         set_active_db_path(None)
@@ -1357,3 +1368,225 @@ class TestSingleIndexJob(TunerAPITestBase):
         with patch("subprocess.Popen", return_value=proc):
             status, body = self.post("/api/folder/index-start", {"folder_path": next_folder})
         self.assertEqual(status, 200, body)
+
+
+def forward_slashes(path):
+    """A path typed the way a person or a browser tends to: with forward slashes."""
+    import pathlib
+    return pathlib.PurePath(path).as_posix()
+
+
+def other_spelling(path):
+    """The same file named another way: forward slashes and, where the filesystem
+    ignores case, the case turned over."""
+    import paths
+    spelled = forward_slashes(path)
+    return spelled.swapcase() if paths.CASE_INSENSITIVE else spelled
+
+
+class TestPathsMatchTheRowsTheIndexerWrote(TunerAPITestBase):
+    """Every fixture here is seeded as the indexer writes it: absolute and native.
+
+    The lookups used to go through `= ?` and then `LIKE ?`: the equality missed any
+    other spelling of the same file, and the LIKE retry read "_" -- which most camera
+    filenames contain -- as any character, reaching photos it was never asked about.
+    """
+
+    def test_unmatch_all_leaves_a_photo_whose_name_differs_only_at_an_underscore(self):
+        target = self.add_photo(self.make_photo_file("IMG_1234.jpg"), people=["Rowan Thackeray"])
+        sibling = self.add_photo(self.make_photo_file("IMG-1234.jpg"), people=["Tamsin Okafor"])
+        mine = self.add_face(target, unit_vector(900), name="Rowan Thackeray")
+        theirs = self.add_face(sibling, unit_vector(901), name="Tamsin Okafor")
+
+        status, body = self.post("/api/photo/unmatch-all", {"photo_path": target})
+        self.assertEqual(status, 200, body)
+        self.assertIsNone(self.face_name(mine))
+        self.assertEqual(self.face_name(theirs), "Tamsin Okafor",
+                         "unmatching one photo cleared a name in a different photo")
+        self.assertEqual(self.photo_people(sibling), ["Tamsin Okafor"])
+
+    def test_unmatch_all_finds_the_photo_whichever_way_it_is_spelled(self):
+        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Rowan Thackeray"])
+        face = self.add_face(photo, unit_vector(902), name="Rowan Thackeray")
+
+        status, body = self.post("/api/photo/unmatch-all", {"photo_path": other_spelling(photo)})
+        self.assertEqual(status, 200, body)
+        self.assertIsNone(self.face_name(face))
+        self.assertEqual(self.photo_people(photo), [])
+
+    def test_photo_details_finds_the_faces_whichever_way_the_photo_is_spelled(self):
+        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Rowan Thackeray"])
+        self.add_face(photo, unit_vector(903), name="Rowan Thackeray")
+
+        data = self.get("/api/photo-details?path=%s" % urllib.parse.quote(other_spelling(photo)))
+        self.assertEqual([f["name"] for f in data["faces"]], ["Rowan Thackeray"])
+        self.assertIn("Rowan Thackeray", data["people"])
+
+
+class TestFolderRemovalBySpelling(TunerAPITestBase):
+    def seed(self):
+        import tempfile
+        folder = tempfile.mkdtemp(prefix="tuner_spelling_")
+        self.addCleanup(shutil.rmtree, folder, True)
+        os.makedirs(os.path.join(folder, "Day_2"))
+        photo = self.add_photo(os.path.join(folder, "Day_2", "IMG_0001.jpg"))
+        self.add_face(photo, unit_vector(910), name="Rowan Thackeray")
+        return folder, photo
+
+    def count(self, sql, params=()):
+        conn = sqlite3.connect(self.TEST_DB)
+        try:
+            return conn.execute(sql, params).fetchone()[0]
+        finally:
+            conn.close()
+
+    def test_a_folder_named_in_another_spelling_is_still_removed(self):
+        folder, _ = self.seed()
+        status, body = self.post("/api/folder/remove", {"folder_path": other_spelling(folder)})
+        self.assertEqual(status, 200, body)
+        self.assertEqual((body["photos_removed"], body["faces_removed"]), (1, 1))
+        self.assertEqual(self.count("SELECT COUNT(*) FROM photos"), 0)
+        self.assertEqual(self.count("SELECT COUNT(*) FROM faces"), 0)
+
+    def test_faces_whose_path_is_spelled_apart_from_their_photo_go_too(self):
+        """Faces are matched on their own photo_path, not through the photo rows."""
+        import paths
+        if not paths.CASE_INSENSITIVE:
+            self.skipTest("two spellings of one file need a case-insensitive filesystem")
+        folder, photo = self.seed()
+        self.add_face(photo.swapcase(), unit_vector(911), name="Tamsin Okafor")
+
+        status, body = self.post("/api/folder/remove", {"folder_path": folder})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.count("SELECT COUNT(*) FROM faces"), 0,
+                         "a face of a removed photo was left behind")
+        self.assertEqual(body["faces_removed"], 2)
+
+    def test_a_sibling_folder_sharing_the_prefix_is_left_alone(self):
+        folder, _ = self.seed()
+        sibling = self.add_photo(folder + "_extra" + os.sep + "IMG_0002.jpg")
+        self.add_face(sibling, unit_vector(912), name="Tamsin Okafor")
+
+        self.post("/api/folder/remove", {"folder_path": folder})
+        self.assertEqual(self.count("SELECT COUNT(*) FROM photos"), 1)
+        self.assertEqual(self.count("SELECT COUNT(*) FROM faces"), 1)
+
+
+class TestSaveMetadataKeepsTheIndex(TunerAPITestBase):
+    """Saving a photo's tags and caption writes them to its row -- and follows a rename.
+
+    The update named a `title` column the photos table does not have, so it failed
+    after the file had already been written; and a rename rewrote the photo row with
+    the path as given while its faces stayed behind at the old name.
+    """
+
+    def save(self, photo, renamed_to=None, title="Harbour at dusk", tags=("Places/Harbour",)):
+        from unittest.mock import patch, MagicMock
+
+        def sync_title_to_filename(path, title, executable):
+            # What the real one does when the title calls for a new filename.
+            if renamed_to:
+                os.rename(path, renamed_to)
+                return renamed_to
+            return path
+
+        with patch("exiftool.ExifToolHelper", MagicMock()), \
+                patch("metadata.sync_title_to_filename", side_effect=sync_title_to_filename):
+            return self.post("/api/photo/save-metadata",
+                             {"path": photo, "title": title, "tags": list(tags)})
+
+    def row(self, path):
+        conn = sqlite3.connect(self.TEST_DB)
+        try:
+            return conn.execute(
+                "SELECT tags, captions FROM photos WHERE path = ?", (path,)).fetchone()
+        finally:
+            conn.close()
+
+    def faces_at(self, path):
+        conn = sqlite3.connect(self.TEST_DB)
+        try:
+            return [r[0] for r in conn.execute(
+                "SELECT name FROM faces WHERE photo_path = ?", (path,))]
+        finally:
+            conn.close()
+
+    def test_tags_and_caption_reach_the_photo_row(self):
+        photo = self.add_photo(self.make_photo_file("IMG_0100.jpg"))
+        status, body = self.save(photo)
+        self.assertEqual(status, 200, body)
+        tags, captions = self.row(photo)
+        self.assertEqual(json.loads(tags), ["Places/Harbour"])
+        self.assertEqual(json.loads(captions), ["Harbour at dusk"])
+        self.assertEqual(body["index_updated"], 1)
+
+    def test_a_rename_moves_the_photo_row_and_its_faces(self):
+        photo = self.add_photo(self.make_photo_file("IMG_0101.jpg"))
+        self.add_face(photo, unit_vector(920), name="Rowan Thackeray")
+        renamed = os.path.join(self.tmpdir, "Harbour at dusk.jpg")
+
+        status, body = self.save(photo, renamed_to=renamed)
+        self.assertEqual(status, 200, body)
+        self.assertIsNone(self.row(photo), "the old photo row was left behind")
+        self.assertIsNotNone(self.row(renamed), "no photo row at the new name")
+        self.assertEqual(self.faces_at(renamed), ["Rowan Thackeray"])
+        self.assertEqual(self.faces_at(photo), [])
+        self.assertEqual(body["new_path"], renamed)
+
+
+class TestFolderSpellingsReachingTheIndexer(TestFolderQueue):
+    """The indexer stores paths in the spelling it is handed, so it is handed one."""
+
+    def test_the_indexer_is_handed_the_stored_spelling_of_a_typed_folder(self):
+        from unittest.mock import patch, MagicMock
+        from tuner_server import TunerHTTPRequestHandler
+        folder = self.make_folders(1)[0]
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.stdout.readline.side_effect = ["done\n", ""]
+        with patch("subprocess.Popen", return_value=proc) as popen:
+            TunerHTTPRequestHandler.run_folder_index_thread(
+                forward_slashes(folder), self.TEST_DB)
+        self.assertEqual(popen.call_args_list[0].args[0][3], folder)
+
+    def test_queued_and_running_jobs_name_the_folder_the_same_way(self):
+        from unittest.mock import patch
+        from tuner_server import TunerHTTPRequestHandler
+        folders = self.make_folders(2)
+        status, body = self.post_start([forward_slashes(f) for f in folders])
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["queued"], folders)
+
+        seen = []
+
+        def look(folder, db, cluster=False):
+            seen.append(self.get("/api/folder/index-active"))
+
+        with patch.object(TunerHTTPRequestHandler, "run_folder_index_thread", side_effect=look):
+            TunerHTTPRequestHandler.run_index_queue(self.TEST_DB)
+
+        first = seen[0]
+        self.assertEqual([a["folder"] for a in first["active"]], [folders[0]])
+        self.assertEqual([q["folder"] for q in first["queued"]], [folders[1]])
+        self.assertEqual(first["active"][0]["name"], os.path.basename(folders[0]))
+
+
+class TestSubfoldersOfATypedParent(TestSubfolderListing):
+    def test_children_of_a_parent_typed_with_forward_slashes_are_spelled_one_way(self):
+        child = self.make_child("shoot", images=1)
+        conn = sqlite3.connect(self.TEST_DB)
+        conn.execute(
+            "INSERT INTO photos (path, tags, people, captions) VALUES (?, '[]', '[]', '[]')",
+            (os.path.join(child, "img0.jpg"),),
+        )
+        conn.commit()
+        conn.close()
+        body = self.get("/api/folder/subfolders?path=%s"
+                        % urllib.parse.quote(other_spelling(self.parent)))
+        self.assertEqual(body["folders"][0]["indexed"], 1)
+        import paths
+        self.assertTrue(paths.same(body["folders"][0]["path"], child))
+        self.assertEqual(body["folders"][0]["path"],
+                         os.path.join(body["parent"], "shoot"))
+        self.assertEqual(body["parent"], os.path.abspath(body["parent"]),
+                         "the parent came back with mixed separators")

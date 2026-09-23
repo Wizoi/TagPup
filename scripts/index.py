@@ -5,8 +5,10 @@ import socket
 import sqlite3
 try:
     from . import db as tagpup_db
+    from . import paths
 except ImportError:  # imported as a top-level module
     import db as tagpup_db
+    import paths
 import logging
 import hashlib
 import subprocess
@@ -44,14 +46,14 @@ class PathLocker:
         self._alive_cache = {}
 
     def _get_lock_path(self, path: str) -> str:
-        abs_path = os.path.abspath(path)
-        path_hash = hashlib.md5(abs_path.encode('utf-8')).hexdigest()
+        # By key, so two spellings of one photo contend for one lock.
+        path_hash = hashlib.md5(paths.key(path).encode('utf-8')).hexdigest()
         return os.path.join(self.lock_dir, f"{path_hash}.lock")
 
     def _write_lock(self, lock_file: str, path: str):
         with open(lock_file, "x", encoding="utf-8") as f:
             json.dump({
-                "path": os.path.abspath(path),
+                "path": paths.stored(path),
                 "pid": os.getpid(),
                 "host": socket.gethostname(),
                 "acquired": time.time(),
@@ -313,6 +315,21 @@ class PhotoIndex:
                 "CREATE INDEX IF NOT EXISTS idx_faces_identify ON faces(excluded, name)")
             self.conn.commit()
 
+            # Paths compare the way the filesystem does (paths.sql_equals): without
+            # case on Windows. An equality under a collation can only use an index
+            # declared with that collation, so without these every such lookup would
+            # scan -- which is what the LOWER(path) and `LIKE ?` comparisons they
+            # replace were doing, 225,000 faces at a time.
+            if paths.COLLATE != "BINARY":
+                for index_name, table, column in (
+                    ("idx_photos_path_nocase", "photos", "path"),
+                    ("idx_faces_photo_path_nocase", "faces", "photo_path"),
+                    ("idx_embedding_cache_path_nocase", "embedding_cache", "path"),
+                ):
+                    cursor.execute("CREATE INDEX IF NOT EXISTS %s ON %s(%s COLLATE %s)"
+                                   % (index_name, table, column, paths.COLLATE))
+                self.conn.commit()
+
             # Migrate tag_taxonomy: is_people -> has_face
             cursor.execute("PRAGMA table_info(tag_taxonomy)")
             tax_columns = [info[1] for info in cursor.fetchall()]
@@ -436,7 +453,7 @@ class PhotoIndex:
                     INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding, document_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    meta["path"],
+                    paths.stored(meta["path"]),
                     meta.get("mtime", 0.0),
                     meta.get("size", 0),
                     json.dumps(meta.get("tags", [])),
@@ -493,7 +510,8 @@ class PhotoIndex:
             cursor = self.conn.cursor()
             # SQLite deletes in chunks or individual queries
             for path in paths_to_remove:
-                cursor.execute("DELETE FROM photos WHERE path = ?", (path,))
+                clause, params = paths.sql_equals("path", path)
+                cursor.execute("DELETE FROM photos WHERE " + clause, params)
             self.conn.commit()
             # Rebuild in-memory index
             self.load()
@@ -534,7 +552,8 @@ class PhotoIndex:
             return
         try:
             cursor = self.conn.cursor()
-            cursor.execute("DELETE FROM faces WHERE photo_path = ?", (photo_path,))
+            clause, params = paths.sql_equals("photo_path", photo_path)
+            cursor.execute("DELETE FROM faces WHERE " + clause, params)
             self.conn.commit()
         except Exception as e:
             logger.error(f"Error removing faces for {photo_path}: {e}")
@@ -552,7 +571,8 @@ class PhotoIndex:
         try:
             cursor = self.conn.cursor()
             # First clean up old face records for this photo
-            cursor.execute("DELETE FROM faces WHERE photo_path = ?", (photo_path,))
+            clause, params = paths.sql_equals("photo_path", photo_path)
+            cursor.execute("DELETE FROM faces WHERE " + clause, params)
             
             for face in faces:
                 box_json = json.dumps(face["box"])
@@ -561,7 +581,7 @@ class PhotoIndex:
                 cursor.execute("""
                     INSERT INTO faces (photo_path, box, embedding, name, crop_image, prob)
                     VALUES (?, ?, ?, ?, ?, ?)
-                """, (photo_path, box_json, emb_bytes, face.get("name"), crop_bytes, face.get("prob")))
+                """, (paths.stored(photo_path), box_json, emb_bytes, face.get("name"), crop_bytes, face.get("prob")))
             self.conn.commit()
         except Exception as e:
             logger.error(f"Error saving faces for {photo_path}: {e}")
@@ -611,9 +631,8 @@ class PhotoIndex:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
             configure_connection(conn)
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT COUNT(*) FROM faces WHERE LOWER(photo_path) = LOWER(?)", (photo_path,)
-            )
+            clause, params = paths.sql_equals("photo_path", photo_path)
+            cursor.execute("SELECT COUNT(*) FROM faces WHERE " + clause, params)
             if cursor.fetchone()[0] > 0:
                 return 0  # already recorded; leave it alone
 
@@ -626,7 +645,7 @@ class PhotoIndex:
                     "INSERT INTO faces (photo_path, box, embedding, name, crop_image, prob)"
                     " VALUES (?, ?, ?, NULL, ?, ?)",
                     (
-                        photo_path,
+                        paths.stored(photo_path),
                         json.dumps(face.get("box", [])),
                         np.array(emb, dtype=np.float32).tobytes(),
                         face.get("crop_image"),
@@ -776,13 +795,12 @@ class PhotoIndex:
             cursor = self.conn.cursor()
             cursor.execute("BEGIN TRANSACTION")
             for photo_path, faces in batch_faces.items():
+                clause, params = paths.sql_equals("photo_path", photo_path)
                 if not overwrite:
-                    cursor.execute(
-                        "SELECT COUNT(*) FROM faces WHERE photo_path = ?", (photo_path,)
-                    )
+                    cursor.execute("SELECT COUNT(*) FROM faces WHERE " + clause, params)
                     if cursor.fetchone()[0] > 0:
                         continue
-                cursor.execute("DELETE FROM faces WHERE photo_path = ?", (photo_path,))
+                cursor.execute("DELETE FROM faces WHERE " + clause, params)
                 for face in faces:
                     box_json = json.dumps(face["box"])
                     emb_bytes = np.array(face["embedding"], dtype=np.float32).tobytes()
@@ -790,7 +808,7 @@ class PhotoIndex:
                     cursor.execute("""
                         INSERT INTO faces (photo_path, box, embedding, name, crop_image, prob)
                         VALUES (?, ?, ?, ?, ?, ?)
-                    """, (photo_path, box_json, emb_bytes, face.get("name"), crop_bytes, face.get("prob")))
+                    """, (paths.stored(photo_path), box_json, emb_bytes, face.get("name"), crop_bytes, face.get("prob")))
             self.conn.commit()
         except Exception as e:
             logger.error(f"Error saving faces batch to SQLite: {e}")

@@ -9,9 +9,11 @@ import sqlite3
 try:
     from . import db as tagpup_db
     from . import localserver
+    from . import paths
 except ImportError:  # imported as a top-level module
     import db as tagpup_db
     import localserver
+    import paths
 import urllib.parse
 import io
 import logging
@@ -25,21 +27,44 @@ from sklearn.neighbors import sort_graph_by_row_values
 
 logger = logging.getLogger("tagtuner.server")
 
-def normalize_path(path):
-    if not path:
-        return ""
-    return os.path.abspath(path).lower().replace("\\", "/")
+def photo_rows_exist(cursor, path):
+    """Does the index hold a photo row, or any face, for this path?"""
+    for table, column in (("photos", "path"), ("faces", "photo_path")):
+        clause, params = paths.sql_equals(column, path)
+        if cursor.execute(
+                "SELECT 1 FROM %s WHERE %s LIMIT 1" % (table, clause), params).fetchone():
+            return True
+    return False
 
-def to_db_path(path):
-    if not path:
-        return ""
-    return os.path.abspath(path).replace("\\", "/")
+
+def move_photo_rows(cursor, old_path, new_path):
+    """Point a renamed photo's index rows -- its photo row and its faces -- at the new name.
+
+    Returns (photos_moved, faces_moved) as the database counted them, or None when the
+    destination already holds rows of its own. Those are left alone rather than merged:
+    faces have no unique key, so moving a photo's faces onto a path that already has
+    faces duplicates every one of them.
+    """
+    if not paths.same(old_path, new_path) and photo_rows_exist(cursor, new_path):
+        return None
+    # faces.photo_path references photos.path, and neither order of the two updates
+    # satisfies that in between; the check waits for the commit.
+    cursor.execute("PRAGMA defer_foreign_keys = ON")
+    new_stored = paths.stored(new_path)
+    clause, params = paths.sql_equals("path", old_path)
+    photos_moved = cursor.execute(
+        "UPDATE photos SET path = ? WHERE " + clause, (new_stored,) + params).rowcount
+    clause, params = paths.sql_equals("photo_path", old_path)
+    faces_moved = cursor.execute(
+        "UPDATE faces SET photo_path = ? WHERE " + clause, (new_stored,) + params).rowcount
+    return photos_moved, faces_moved
+
 
 def send_to_recycle_bin(file_path):
     import ctypes
     from ctypes import wintypes
-    
-    file_path = os.path.abspath(file_path).replace('/', '\\')
+
+    file_path = paths.stored(file_path)
     if not os.path.exists(file_path):
         return False
         
@@ -240,8 +265,9 @@ def cluster_candidates(embeddings, on_progress=None):
 
 
 def get_year_from_mtime_or_meta(mtime, raw_meta_json, path=None):
-    if path and path in _path_year_cache:
-        return _path_year_cache[path]
+    path_key = paths.key(path)
+    if path_key and path_key in _path_year_cache:
+        return _path_year_cache[path_key]
 
     parsed_year = None
     if raw_meta_json:
@@ -259,10 +285,9 @@ def get_year_from_mtime_or_meta(mtime, raw_meta_json, path=None):
                 pass
                 
     if not parsed_year and path:
-        # Normalize path separators to forward slashes
-        norm_path = path.replace("\\", "/")
-        parts = norm_path.split("/")
-        
+        # The stored spelling has one separator throughout, so it splits on that.
+        parts = paths.stored(path).split(os.sep)
+
         # The filename is the last segment
         if parts:
             filename = parts[-1]
@@ -280,8 +305,8 @@ def get_year_from_mtime_or_meta(mtime, raw_meta_json, path=None):
                     break
                     
     year_str = parsed_year if parsed_year else "Unknown"
-    if path:
-        _path_year_cache[path] = year_str
+    if path_key:
+        _path_year_cache[path_key] = year_str
     return year_str
 
 
@@ -293,7 +318,7 @@ def set_active_db_path(db_path):
         if hasattr(_thread_local, "active_db_path"):
             delattr(_thread_local, "active_db_path")
     else:
-        _thread_local.active_db_path = os.path.abspath(db_path).replace("\\", "/").lower()
+        _thread_local.active_db_path = os.path.abspath(db_path).replace("\\", "/").lower()  # not a path: the database-file key the per-database registries are filed under
 
 def get_active_db_path():
     active_db = getattr(_thread_local, "active_db_path", None)
@@ -302,7 +327,7 @@ def get_active_db_path():
     handler_cls = globals().get("TunerHTTPRequestHandler")
     if handler_cls:
         try:
-            return os.path.abspath(handler_cls.db_path).replace("\\", "/").lower()
+            return os.path.abspath(handler_cls.db_path).replace("\\", "/").lower()  # not a path: the database-file key the per-database registries are filed under
         except Exception:
             pass
     return "data/photo_index.db"
@@ -432,8 +457,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 for folder, status in data.items():
                     if status.get("status") in ("running", "preparing"):
                         status["status"] = "idle"
+                # Keyed the way this process looks folders up, whichever spelling the
+                # file was written with.
                 with cls.model_lock:
-                    cls.suggest_status.update(data)
+                    cls.suggest_status.update(
+                        {paths.key(folder): status for folder, status in data.items()})
                 logger.info(f"Loaded suggestions cache from {cache_path} with {len(data)} folders.")
             except Exception as e:
                 logger.error(f"Error loading suggestions cache: {e}")
@@ -491,7 +519,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     if db_name.startswith("test_"):
                         db_name = db_name[5:]
                         
-                resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")
+                resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")  # not a path: a database file, spelled as the other db paths here are
                 set_active_db_path(resolved_db_path)
                 self.db_path = resolved_db_path
                 
@@ -515,7 +543,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.end_headers()
             return False
             
-        resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")
+        resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")  # not a path: a database file, spelled as the other db paths here are
         set_active_db_path(resolved_db_path)
         self.db_path = resolved_db_path
         return True
@@ -666,7 +694,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             config.read(config_path, encoding='utf-8')
             
         data_dir = config.get("paths", "data_dir", fallback="data")
-        db_path = os.path.join(data_dir, fs_db_name).replace("\\", "/")
+        db_path = os.path.join(data_dir, fs_db_name).replace("\\", "/")  # not a path: a database file, spelled as the other db paths here are
         
         try:
             if not os.path.exists(db_path):
@@ -926,13 +954,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             cursor = conn.cursor()
 
             # 1. Fetch metadata from photos table
-            cursor.execute("SELECT people, tags, captions, mtime, raw_metadata FROM photos WHERE path = ?", (photo_path,))
+            path_sql, path_args = paths.sql_equals("path", photo_path)
+            cursor.execute("SELECT people, tags, captions, mtime, raw_metadata FROM photos WHERE " + path_sql, path_args)
             photo_row = cursor.fetchone()
-            
-            # Fallback for Windows path casing mismatches
-            if not photo_row:
-                cursor.execute("SELECT people, tags, captions, mtime, raw_metadata FROM photos WHERE path LIKE ?", (photo_path,))
-                photo_row = cursor.fetchone()
 
             people = []
             tags = []
@@ -961,13 +985,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             year = get_year_from_mtime_or_meta(mtime, raw_meta_json, photo_path)
 
             # 2. Fetch face detections from faces table
-            cursor.execute("SELECT id, box, name, embedding FROM faces WHERE photo_path = ?", (photo_path,))
+            path_sql, path_args = paths.sql_equals("photo_path", photo_path)
+            cursor.execute("SELECT id, box, name, embedding FROM faces WHERE " + path_sql, path_args)
             face_rows = cursor.fetchall()
-            
-            # Fallback casing mismatch
-            if not face_rows:
-                cursor.execute("SELECT id, box, name, embedding FROM faces WHERE photo_path LIKE ?", (photo_path,))
-                face_rows = cursor.fetchall()
 
             # Load all resolved face embeddings to compute max correlation
             cursor.execute("SELECT embedding FROM faces WHERE name IS NOT NULL")
@@ -1563,9 +1583,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 filtered_people = []
                 for p in all_people:
                     cursor.execute("SELECT tag FROM tag_taxonomy WHERE name = ? AND has_face = 1", (p,))
-                    paths = [r[0] for r in cursor.fetchall()]
-                    if paths:
-                        hidden = all(is_tag_hidden(path) for path in paths)
+                    tag_paths = [r[0] for r in cursor.fetchall()]
+                    if tag_paths:
+                        hidden = all(is_tag_hidden(path) for path in tag_paths)
                     else:
                         hidden = False
                     if not hidden:
@@ -1805,7 +1825,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             # on this library, on every single assignment); and in LIKE an underscore
             # matches any character, so `IMG_1234.jpg` also matched `IMG-1234.jpg` and
             # refused a legitimate assignment because a different photo had that person.
-            cursor.execute("SELECT id FROM faces WHERE photo_path = ? AND name = ? AND id != ?", (photo_path, person_name, face_id))
+            path_sql, path_args = paths.sql_equals("photo_path", photo_path)
+            cursor.execute("SELECT id FROM faces WHERE " + path_sql + " AND name = ? AND id != ?", path_args + (person_name, face_id,))
             conflict_row = cursor.fetchone()
 
             if conflict_row:
@@ -1824,13 +1845,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             cursor.execute("UPDATE faces SET name = ?, name_source = 'manual' WHERE id = ?", (person_name, face_id))
 
             # 3. Update photos table people list
-            cursor.execute("SELECT path, people FROM photos WHERE path = ?", (photo_path,))
+            path_sql, path_args = paths.sql_equals("path", photo_path)
+            cursor.execute("SELECT path, people FROM photos WHERE " + path_sql, path_args)
             photo_row = cursor.fetchone()
-            
-            # Fallback for Windows path casing mismatches
-            if not photo_row:
-                cursor.execute("SELECT path, people FROM photos WHERE path LIKE ?", (photo_path,))
-                photo_row = cursor.fetchone()
                 
             actual_photo_path = photo_path
             people = []
@@ -1848,11 +1865,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
             # Check if old name is no longer matched to any other faces in the photo
             if old_name and old_name != person_name:
-                cursor.execute("SELECT count(*) FROM faces WHERE photo_path = ? AND name = ? AND id != ?", (photo_path, old_name, face_id))
+                path_sql, path_args = paths.sql_equals("photo_path", photo_path)
+                cursor.execute("SELECT count(*) FROM faces WHERE " + path_sql + " AND name = ? AND id != ?", path_args + (old_name, face_id,))
                 count_row = cursor.fetchone()
-                if not count_row:
-                    cursor.execute("SELECT count(*) FROM faces WHERE photo_path LIKE ? AND name = ? AND id != ?", (photo_path, old_name, face_id))
-                    count_row = cursor.fetchone()
                 
                 other_count = count_row[0] if count_row else 0
                 if other_count == 0:
@@ -1861,7 +1876,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
             # Save the updated people list
             people_json = json.dumps(people)
-            cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (people_json, actual_photo_path))
+            path_sql, path_args = paths.sql_equals("path", actual_photo_path)
+            cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (people_json,) + path_args)
 
             with tagpup_db.writing(self.db_path, label="name a face"):
                 conn.commit()
@@ -1926,20 +1942,16 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             cursor.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE id = ?", (face_id,))
 
             # 3. Check if old name is no longer matched to any other faces in the photo
-            cursor.execute("SELECT count(*) FROM faces WHERE photo_path = ? AND name = ? AND id != ?", (photo_path, old_name, face_id))
+            path_sql, path_args = paths.sql_equals("photo_path", photo_path)
+            cursor.execute("SELECT count(*) FROM faces WHERE " + path_sql + " AND name = ? AND id != ?", path_args + (old_name, face_id,))
             count_row = cursor.fetchone()
-            if not count_row:
-                cursor.execute("SELECT count(*) FROM faces WHERE photo_path LIKE ? AND name = ? AND id != ?", (photo_path, old_name, face_id))
-                count_row = cursor.fetchone()
                 
             other_count = count_row[0] if count_row else 0
             if other_count == 0:
                 # Remove old name from people list in photos table
-                cursor.execute("SELECT path, people FROM photos WHERE path = ?", (photo_path,))
+                path_sql, path_args = paths.sql_equals("path", photo_path)
+                cursor.execute("SELECT path, people FROM photos WHERE " + path_sql, path_args)
                 photo_row = cursor.fetchone()
-                if not photo_row:
-                    cursor.execute("SELECT path, people FROM photos WHERE path LIKE ?", (photo_path,))
-                    photo_row = cursor.fetchone()
                     
                 actual_photo_path = photo_path
                 people = []
@@ -1954,7 +1966,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 people = [p for p in people if p != old_name]
                 people_json = json.dumps(people)
                 
-                cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (people_json, actual_photo_path))
+                path_sql, path_args = paths.sql_equals("path", actual_photo_path)
+                cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (people_json,) + path_args)
 
             conn.commit()
             self.send_json({"success": True})
@@ -2025,29 +2038,29 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     cursor.execute("SELECT photo_path, name FROM faces WHERE name IS NOT NULL")
                     faces_by_photo = {}
                     for p_path, name in cursor.fetchall():
-                        if p_path not in faces_by_photo:
-                            faces_by_photo[p_path] = set()
-                        faces_by_photo[p_path].add(name)
+                        faces_by_photo.setdefault(paths.key(p_path), set()).add(name)
 
                     # Fetch all photos
                     cursor.execute("SELECT path, people FROM photos")
                     photos_rows = cursor.fetchall()
-                    
+
                     for path, people_json in photos_rows:
-                        if path in faces_by_photo:
+                        path_key = paths.key(path)
+                        if path_key in faces_by_photo:
                             try:
                                 people = json.loads(people_json) if people_json else []
                             except Exception:
                                 people = []
                             
                             updated = False
-                            for name in faces_by_photo[path]:
+                            for name in faces_by_photo[path_key]:
                                 if name not in people:
                                     people.append(name)
                                     updated = True
                                     
                             if updated:
-                                cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(people), path))
+                                path_sql, path_args = paths.sql_equals("path", path)
+                                cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (json.dumps(people),) + path_args)
                     
                     conn.commit()
 
@@ -2096,27 +2109,26 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             cursor = conn.conn.cursor() if hasattr(conn, 'conn') else conn.cursor()
 
             # 1. Fetch currently matched names for faces in this photo
-            cursor.execute("SELECT DISTINCT name FROM faces WHERE photo_path = ? AND name IS NOT NULL", (photo_path,))
+            path_sql, path_args = paths.sql_equals("photo_path", photo_path)
+            cursor.execute("SELECT DISTINCT name FROM faces WHERE " + path_sql + " AND name IS NOT NULL", path_args)
             matched_names = {row[0] for row in cursor.fetchall()}
-            
-            # Fallback for Windows path casing mismatches
-            if not matched_names:
-                cursor.execute("SELECT DISTINCT name FROM faces WHERE photo_path LIKE ? AND name IS NOT NULL", (photo_path,))
-                matched_names = {row[0] for row in cursor.fetchall()}
 
             # 2. Update faces table: set name = NULL
             # A person chose this, so record it as a manual decision: re-clustering
             # re-derives every name from scratch and must not discard it.
-            cursor.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE photo_path = ?", (photo_path,))
-            cursor.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE photo_path LIKE ?", (photo_path,))
+            #
+            # One equality, not an equality and then a LIKE as well: in LIKE an
+            # underscore matches any character, so the LIKE pass also cleared every
+            # name in a photo called IMG-1234.jpg when this one was IMG_1234.jpg.
+            path_sql, path_args = paths.sql_equals("photo_path", photo_path)
+            cursor.execute(
+                "UPDATE faces SET name = NULL, name_source = 'manual' WHERE " + path_sql, path_args)
 
             # 3. Update photos table: remove the matched names from people metadata
             if matched_names:
-                cursor.execute("SELECT path, people FROM photos WHERE path = ?", (photo_path,))
+                path_sql, path_args = paths.sql_equals("path", photo_path)
+                cursor.execute("SELECT path, people FROM photos WHERE " + path_sql, path_args)
                 photo_row = cursor.fetchone()
-                if not photo_row:
-                    cursor.execute("SELECT path, people FROM photos WHERE path LIKE ?", (photo_path,))
-                    photo_row = cursor.fetchone()
                 
                 if photo_row:
                     actual_photo_path = photo_row[0]
@@ -2129,7 +2141,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
                     # Filter out names that were matched
                     people = [p for p in people if p not in matched_names]
-                    cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(people), actual_photo_path))
+                    path_sql, path_args = paths.sql_equals("path", actual_photo_path)
+                    cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (json.dumps(people),) + path_args)
 
             conn.commit()
             self.send_json({"success": True})
@@ -2163,13 +2176,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             cursor = conn.cursor()
 
             # 1. Fetch unmatched faces in this photo
-            cursor.execute("SELECT id, embedding FROM faces WHERE photo_path = ? AND name IS NULL", (photo_path,))
+            path_sql, path_args = paths.sql_equals("photo_path", photo_path)
+            cursor.execute("SELECT id, embedding FROM faces WHERE " + path_sql + " AND name IS NULL", path_args)
             unmatched_rows = cursor.fetchall()
-            
-            # Fallback for Windows path casing mismatches
-            if not unmatched_rows:
-                cursor.execute("SELECT id, embedding FROM faces WHERE photo_path LIKE ? AND name IS NULL", (photo_path,))
-                unmatched_rows = cursor.fetchall()
 
             if not unmatched_rows:
                 self.send_json({"success": True, "matched_count": 0})
@@ -2193,11 +2202,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             resolved_matrix = np.array(resolved_embs, dtype=np.float32)
 
             # Fetch names already resolved in this photo to avoid duplicate assignments
-            cursor.execute("SELECT name FROM faces WHERE photo_path = ? AND name IS NOT NULL", (photo_path,))
+            path_sql, path_args = paths.sql_equals("photo_path", photo_path)
+            cursor.execute("SELECT name FROM faces WHERE " + path_sql + " AND name IS NOT NULL", path_args)
             already_tagged_rows = cursor.fetchall()
-            if not already_tagged_rows:
-                cursor.execute("SELECT name FROM faces WHERE photo_path LIKE ? AND name IS NOT NULL", (photo_path,))
-                already_tagged_rows = cursor.fetchall()
             already_tagged_names = {row[0] for row in already_tagged_rows if row[0]}
 
             # 3. For each unmatched face, find the best candidate match
@@ -2237,11 +2244,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
             # 4. Append newly matched names to photos table people list
             if newly_matched_names:
-                cursor.execute("SELECT path, people FROM photos WHERE path = ?", (photo_path,))
+                path_sql, path_args = paths.sql_equals("path", photo_path)
+                cursor.execute("SELECT path, people FROM photos WHERE " + path_sql, path_args)
                 photo_row = cursor.fetchone()
-                if not photo_row:
-                    cursor.execute("SELECT path, people FROM photos WHERE path LIKE ?", (photo_path,))
-                    photo_row = cursor.fetchone()
 
                 if photo_row:
                     actual_photo_path = photo_row[0]
@@ -2259,7 +2264,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                             updated = True
 
                     if updated:
-                        cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(people), actual_photo_path))
+                        path_sql, path_args = paths.sql_equals("path", actual_photo_path)
+                        cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (json.dumps(people),) + path_args)
 
             conn.commit()
             self.send_json({"success": True, "matched_count": matched_count})
@@ -2283,7 +2289,6 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             if not folder_path:
                 self.send_error(400, "Missing folder_path")
                 return
-            folder_path = folder_path.rstrip("/\\")
 
             if not os.path.exists(self.db_path):
                 self.send_error(404, "Database not found")
@@ -2293,15 +2298,15 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
-            # 1. Fetch unmatched faces in this folder
-            pattern1 = folder_path.replace("/", "\\") + "\\%"
-            pattern2 = folder_path.replace("\\", "/") + "/%"
-            
+            # 1. Fetch unmatched faces in this folder -- and, as ever, in the folders
+            # under it. A prefix comparison rather than LIKE, whose "_" and "%" are
+            # wildcards that also occur in folder names.
+            under_sql, under_args = paths.sql_under("photo_path", folder_path)
             cursor.execute("""
-                SELECT id, embedding, photo_path 
-                FROM faces 
-                WHERE (photo_path LIKE ? OR photo_path LIKE ?) AND name IS NULL
-            """, (pattern1, pattern2))
+                SELECT id, embedding, photo_path
+                FROM faces
+                WHERE """ + under_sql + """ AND name IS NULL
+            """, under_args)
             unmatched_rows = cursor.fetchall()
 
             if not unmatched_rows:
@@ -2329,15 +2334,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             cursor.execute("""
                 SELECT name, photo_path
                 FROM faces
-                WHERE (photo_path LIKE ? OR photo_path LIKE ?) AND name IS NOT NULL
-            """, (pattern1, pattern2))
+                WHERE """ + under_sql + """ AND name IS NOT NULL
+            """, under_args)
             already_tagged_rows = cursor.fetchall()
-            
+
             already_tagged_by_photo = {}
             for name, p_path in already_tagged_rows:
-                if p_path not in already_tagged_by_photo:
-                    already_tagged_by_photo[p_path] = set()
-                already_tagged_by_photo[p_path].add(name)
+                already_tagged_by_photo.setdefault(paths.key(p_path), set()).add(name)
 
             # 3. For each unmatched face, find the best candidate match, grouped by photo
             proposed_by_photo = {}  # photo_path -> list of (face_id, proposed_name)
@@ -2361,7 +2364,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             photos_to_update = {}
 
             for photo_path, proposed_list in proposed_by_photo.items():
-                already_tagged = already_tagged_by_photo.get(photo_path, set())
+                already_tagged = already_tagged_by_photo.get(paths.key(photo_path), set())
                 
                 proposed_counts = {}
                 for _, name in proposed_list:
@@ -2382,11 +2385,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
             # 4. Update photos table people lists for each affected photo
             for photo_path, newly_matched_names in photos_to_update.items():
-                cursor.execute("SELECT path, people FROM photos WHERE path = ?", (photo_path,))
+                path_sql, path_args = paths.sql_equals("path", photo_path)
+                cursor.execute("SELECT path, people FROM photos WHERE " + path_sql, path_args)
                 photo_row = cursor.fetchone()
-                if not photo_row:
-                    cursor.execute("SELECT path, people FROM photos WHERE path LIKE ?", (photo_path,))
-                    photo_row = cursor.fetchone()
 
                 if photo_row:
                     actual_photo_path = photo_row[0]
@@ -2404,15 +2405,16 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                             updated = True
 
                     if updated:
-                        cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(people), actual_photo_path))
+                        path_sql, path_args = paths.sql_equals("path", actual_photo_path)
+                        cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (json.dumps(people),) + path_args)
 
             # Query the remaining unmatched counts for photos in this folder
             cursor.execute("""
                 SELECT f.photo_path, COUNT(*)
                 FROM faces f
-                WHERE (f.photo_path LIKE ? OR f.photo_path LIKE ?) AND f.name IS NULL
+                WHERE """ + under_sql + """ AND f.name IS NULL
                 GROUP BY f.photo_path
-            """, (pattern1, pattern2))
+            """, under_args)
             remaining_rows = cursor.fetchall()
             remaining_counts = {r[0]: r[1] for r in remaining_rows}
 
@@ -2473,9 +2475,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             for r in rows:
                 p = r[0]
                 cursor.execute("SELECT tag FROM tag_taxonomy WHERE name = ? AND has_face = 1", (p,))
-                paths = [row[0] for row in cursor.fetchall()]
-                if paths:
-                    hidden = all(is_tag_hidden(path) for path in paths)
+                tag_paths = [row[0] for row in cursor.fetchall()]
+                if tag_paths:
+                    hidden = all(is_tag_hidden(path) for path in tag_paths)
                 else:
                     hidden = False
                 if not hidden:
@@ -2748,11 +2750,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             cursor.execute(f"UPDATE faces SET name = NULL, name_source = 'manual' WHERE id IN ({placeholders})", face_ids)
 
             for photo_path, old_names in photos_to_check.items():
-                cursor.execute("SELECT path, people FROM photos WHERE path = ?", (photo_path,))
+                path_sql, path_args = paths.sql_equals("path", photo_path)
+                cursor.execute("SELECT path, people FROM photos WHERE " + path_sql, path_args)
                 photo_row = cursor.fetchone()
-                if not photo_row:
-                    cursor.execute("SELECT path, people FROM photos WHERE path LIKE ?", (photo_path,))
-                    photo_row = cursor.fetchone()
 
                 if photo_row:
                     actual_photo_path = photo_row[0]
@@ -2765,18 +2765,17 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
                     updated_people = list(people)
                     for old_name in old_names:
-                        cursor.execute("SELECT count(*) FROM faces WHERE photo_path = ? AND name = ?", (photo_path, old_name))
+                        path_sql, path_args = paths.sql_equals("photo_path", photo_path)
+                        cursor.execute("SELECT count(*) FROM faces WHERE " + path_sql + " AND name = ?", path_args + (old_name,))
                         count_row = cursor.fetchone()
-                        if not count_row:
-                            cursor.execute("SELECT count(*) FROM faces WHERE photo_path LIKE ? AND name = ?", (photo_path, old_name))
-                            count_row = cursor.fetchone()
 
                         other_count = count_row[0] if count_row else 0
                         if other_count == 0:
                             updated_people = [p for p in updated_people if p != old_name]
 
                     if updated_people != people:
-                        cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(updated_people), actual_photo_path))
+                        path_sql, path_args = paths.sql_equals("path", actual_photo_path)
+                        cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (json.dumps(updated_people),) + path_args)
 
             conn.commit()
             self.send_json({"success": True})
@@ -2883,7 +2882,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 # of fifty -- and treated an underscore in a filename as a wildcard,
                 # so a lookalike name in an unrelated photo blocked the assignment.
                 fid = fids[0]
-                cursor.execute("SELECT id FROM faces WHERE photo_path = ? AND name = ? AND id != ?", (photo_path, person_name, fid))
+                path_sql, path_args = paths.sql_equals("photo_path", photo_path)
+                cursor.execute("SELECT id FROM faces WHERE " + path_sql + " AND name = ? AND id != ?", path_args + (person_name, fid,))
                 conflict_row = cursor.fetchone()
 
                 if conflict_row:
@@ -2902,11 +2902,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
             # 3. Update photos table people list for each affected photo
             for photo_path, old_names in photos_to_check.items():
-                cursor.execute("SELECT path, people FROM photos WHERE path = ?", (photo_path,))
+                path_sql, path_args = paths.sql_equals("path", photo_path)
+                cursor.execute("SELECT path, people FROM photos WHERE " + path_sql, path_args)
                 photo_row = cursor.fetchone()
-                if not photo_row:
-                    cursor.execute("SELECT path, people FROM photos WHERE path LIKE ?", (photo_path,))
-                    photo_row = cursor.fetchone()
 
                 if photo_row:
                     actual_photo_path = photo_row[0]
@@ -2924,18 +2922,17 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     # Remove old names if they are no longer matched to any other faces in the photo
                     updated_people = list(people)
                     for old_name in old_names:
-                        cursor.execute("SELECT count(*) FROM faces WHERE photo_path = ? AND name = ?", (photo_path, old_name))
+                        path_sql, path_args = paths.sql_equals("photo_path", photo_path)
+                        cursor.execute("SELECT count(*) FROM faces WHERE " + path_sql + " AND name = ?", path_args + (old_name,))
                         count_row = cursor.fetchone()
-                        if not count_row:
-                            cursor.execute("SELECT count(*) FROM faces WHERE photo_path LIKE ? AND name = ?", (photo_path, old_name))
-                            count_row = cursor.fetchone()
 
                         other_count = count_row[0] if count_row else 0
                         if other_count == 0:
                             updated_people = [p for p in updated_people if p != old_name]
 
                     if updated_people != people:
-                        cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(updated_people), actual_photo_path))
+                        path_sql, path_args = paths.sql_equals("path", actual_photo_path)
+                        cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (json.dumps(updated_people),) + path_args)
 
             with tagpup_db.writing(self.db_path, label="name faces in bulk"):
                 conn.commit()
@@ -2969,18 +2966,21 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         With a queue there is a second thing it cannot otherwise know: how much is left.
         """
         active = []
-        for folder, status in list(TunerHTTPRequestHandler.index_status.items()):
+        for folder_key, status in list(TunerHTTPRequestHandler.index_status.items()):
             if isinstance(status, dict) and status.get("status") == "running":
+                # The status is filed under the folder's key, which is for comparing;
+                # the folder itself, as a queued job shows it, travels in the status.
+                folder = status.get("folder") or folder_key
                 active.append({
                     "folder": folder,
-                    "name": os.path.basename(folder.rstrip("/")),
+                    "name": os.path.basename(folder),
                     "percent": status.get("percent", 0),
                     "message": status.get("message", ""),
                 })
 
         pending = [
             {"folder": job["folder"],
-             "name": os.path.basename(job["folder"].rstrip("/"))}
+             "name": os.path.basename(job["folder"])}
             for job in TunerHTTPRequestHandler.index_queue.get("pending", [])
         ]
         self.send_json({
@@ -3002,7 +3002,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         if not path_list:
             self.send_json_error(400, "Missing path parameter")
             return
-        parent = urllib.parse.unquote(path_list[0])
+        # Stored form before anything is joined onto it: a parent typed with forward
+        # slashes otherwise yields children spelled with both separators at once.
+        parent = paths.stored(urllib.parse.unquote(path_list[0]))
         if not os.path.isdir(parent):
             self.send_json_error(400, "Not a folder: %s" % parent)
             return
@@ -3026,7 +3028,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 "name": name,
                 "images": images,
                 "has_subfolders": subdirs,
-                "indexed": indexed_prefixes.get(normalize_path(full), 0),
+                "indexed": indexed_prefixes.get(paths.key(full), 0),
             })
 
         own_images, own_subdirs = self._count_images(parent, recursive=False)
@@ -3071,8 +3073,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         try:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
             for (photo_path,) in conn.execute("SELECT path FROM photos"):
-                counts[normalize_path(os.path.dirname(photo_path))] = \
-                    counts.get(normalize_path(os.path.dirname(photo_path)), 0) + 1
+                folder_key = paths.key(os.path.dirname(photo_path))
+                counts[folder_key] = counts.get(folder_key, 0) + 1
             conn.close()
         except Exception:
             return {}
@@ -3083,7 +3085,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         if not path_list:
             self.send_json_error(400, "Missing path parameter")
             return
-        folder_norm = normalize_path(urllib.parse.unquote(path_list[0]))
+        folder_norm = paths.key(urllib.parse.unquote(path_list[0]))
         status = TunerHTTPRequestHandler.index_status.get(
             folder_norm, {"status": "completed", "percent": 100, "message": "Ready"}
         )
@@ -3126,11 +3128,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             if not os.path.isdir(raw):
                 invalid.append(raw)
                 continue
-            norm = normalize_path(raw)
+            norm = paths.key(raw)
             if norm in seen:
                 continue
             seen.add(norm)
-            valid.append((raw, norm))
+            # The job carries the stored spelling: it is what the indexer is handed,
+            # and what the page is shown for queued and running jobs alike.
+            valid.append((paths.stored(raw), norm))
 
         if not valid:
             self.send_json_error(
@@ -3140,7 +3144,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             return
 
         queue = list(TunerHTTPRequestHandler.index_queue.get("pending", []))
-        queued_norms = {normalize_path(job["folder"]) for job in queue}
+        queued_norms = {paths.key(job["folder"]) for job in queue}
 
         accepted, already = [], []
         for raw, norm in valid:
@@ -3155,6 +3159,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             queued_norms.add(norm)
             TunerHTTPRequestHandler.index_status[norm] = {
                 "status": "queued", "percent": 0, "message": "Waiting to be indexed...",
+                "folder": raw,
             }
             accepted.append(raw)
 
@@ -3191,11 +3196,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.send_json_error(400, "Nothing to cancel")
             return
 
-        targets = {normalize_path(p) for p in (wanted or []) if p}
+        targets = {paths.key(p) for p in (wanted or []) if p}
         queue = list(TunerHTTPRequestHandler.index_queue.get("pending", []))
         kept, dropped = [], []
         for job in queue:
-            norm = normalize_path(job["folder"])
+            norm = paths.key(job["folder"])
             if cancel_all or norm in targets:
                 dropped.append(job["folder"])
                 TunerHTTPRequestHandler.index_status.pop(norm, None)
@@ -3238,10 +3243,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 job = queue.pop(0)
                 cls.index_queue["pending"] = queue
 
-                folder_norm = normalize_path(job["folder"])
+                folder_norm = paths.key(job["folder"])
                 cls.index_status[folder_norm] = {
                     "status": "running", "percent": 0,
                     "message": "Starting indexing...",
+                    "folder": paths.stored(job["folder"]),
                 }
                 try:
                     cls.run_folder_index_thread(
@@ -3251,6 +3257,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     logger.exception("Queued index of %s failed: %s" % (job["folder"], e))
                     cls.index_status[folder_norm] = {
                         "status": "failed", "percent": 0, "message": "Error: %s" % e,
+                        "folder": paths.stored(job["folder"]),
                     }
         finally:
             cls.index_queue["runner"] = None
@@ -3260,10 +3267,15 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         # Re-bind the active database: a worker thread does not inherit the request's
         # thread-local, and the class-level fallback points at the startup database.
         set_active_db_path(db_path)
-        folder_norm = normalize_path(folder_path)
+        # The indexer writes rows in the spelling it is handed, so it is handed the
+        # stored one: a folder typed with forward slashes otherwise produced rows with
+        # both separators in one path, which no lookup matched.
+        folder_path = paths.stored(folder_path)
+        folder_norm = paths.key(folder_path)
         status = cls.index_status.get(folder_norm)
         if status is None:
-            status = {"status": "running", "percent": 0, "message": "Starting indexing..."}
+            status = {"status": "running", "percent": 0, "message": "Starting indexing...",
+                      "folder": folder_path}
             cls.index_status[folder_norm] = status
         try:
             import sys
@@ -3346,49 +3358,43 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
         conn = None
         try:
-            prefix = to_db_path(folder_path).rstrip("/") + "/"
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
-            # Compare on normalised paths: rows are written by several components with
-            # different separators and casing.
-            cursor.execute("SELECT path FROM photos")
-            targets = [
-                p for (p,) in cursor.fetchall()
-                if to_db_path(p).lower().startswith(prefix.lower())
-            ]
-            if not targets:
-                self.send_json({"success": True, "photos_removed": 0, "faces_removed": 0,
-                                "manual_lost": 0, "excluded_lost": 0})
-                return
+            # Everything under the folder, at any depth, compared the way the
+            # filesystem compares -- in SQL, rather than by reading every path in the
+            # library into Python to filter it. Faces are matched on their own
+            # photo_path rather than through the photo rows, so a face is removed
+            # with its folder even where its photo row is missing or spelled apart.
+            photos_sql, photos_args = paths.sql_under("path", folder_path)
+            faces_sql, faces_args = paths.sql_under("photo_path", folder_path)
 
-            placeholders = ",".join("?" for _ in targets)
-            faces_removed = cursor.execute(
-                "SELECT COUNT(*) FROM faces WHERE photo_path IN (%s)" % placeholders, targets
-            ).fetchone()[0]
             manual_lost = cursor.execute(
-                "SELECT COUNT(*) FROM faces WHERE photo_path IN (%s) AND name_source = 'manual'"
-                % placeholders, targets
+                "SELECT COUNT(*) FROM faces WHERE " + faces_sql + " AND name_source = 'manual'",
+                faces_args,
             ).fetchone()[0]
             excluded_lost = cursor.execute(
-                "SELECT COUNT(*) FROM faces WHERE photo_path IN (%s) AND excluded = 1"
-                % placeholders, targets
+                "SELECT COUNT(*) FROM faces WHERE " + faces_sql + " AND excluded = 1",
+                faces_args,
             ).fetchone()[0]
 
             # Delete faces explicitly rather than relying on the cascade, which is only
-            # active when foreign keys are enabled on this particular connection.
-            cursor.execute("DELETE FROM faces WHERE photo_path IN (%s)" % placeholders, targets)
-            cursor.execute("DELETE FROM photos WHERE path IN (%s)" % placeholders, targets)
+            # active when foreign keys are enabled on this particular connection. The
+            # counts reported are what the deletes removed, not what was expected.
+            faces_removed = cursor.execute(
+                "DELETE FROM faces WHERE " + faces_sql, faces_args).rowcount
+            photos_removed = cursor.execute(
+                "DELETE FROM photos WHERE " + photos_sql, photos_args).rowcount
             conn.commit()
 
             logger.info(
                 "Removed %d photo(s) and %d face(s) under %s"
-                % (len(targets), faces_removed, folder_path)
+                % (photos_removed, faces_removed, folder_path)
             )
             self.send_json({
                 "success": True,
-                "photos_removed": len(targets),
+                "photos_removed": photos_removed,
                 "faces_removed": faces_removed,
                 "manual_lost": manual_lost,
                 "excluded_lost": excluded_lost,
@@ -3455,19 +3461,21 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             for _face_id, photo_path, old_name in affected:
                 if not old_name:
                     continue
+                faces_sql, faces_args = paths.sql_equals("photo_path", photo_path)
                 cursor.execute(
-                    "SELECT COUNT(*) FROM faces WHERE photo_path = ? AND name = ? AND excluded = 0",
-                    (photo_path, old_name),
+                    "SELECT COUNT(*) FROM faces WHERE " + faces_sql + " AND name = ? AND excluded = 0",
+                    faces_args + (old_name,),
                 )
                 if cursor.fetchone()[0] == 0:
-                    cursor.execute("SELECT people FROM photos WHERE path = ?", (photo_path,))
+                    photo_sql, photo_args = paths.sql_equals("path", photo_path)
+                    cursor.execute("SELECT people FROM photos WHERE " + photo_sql, photo_args)
                     row = cursor.fetchone()
                     if row and row[0]:
                         try:
                             people = [p for p in json.loads(row[0]) if p != old_name]
                             cursor.execute(
-                                "UPDATE photos SET people = ? WHERE path = ?",
-                                (json.dumps(people), photo_path),
+                                "UPDATE photos SET people = ? WHERE " + photo_sql,
+                                (json.dumps(people),) + photo_args,
                             )
                         except Exception:
                             pass
@@ -3623,7 +3631,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                             updated_people.append(name)
                 
                 if changed and updated_people != people:
-                    cursor.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(updated_people), path))
+                    path_sql, path_args = paths.sql_equals("path", path)
+                    cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (json.dumps(updated_people),) + path_args)
 
             # Follow the rename into the tag taxonomy and the photo files themselves.
             # Previously this endpoint only touched the faces and photos tables, so the
@@ -3662,7 +3671,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         for p_path, tags_json in cursor.fetchall():
                             try:
                                 for t in json.loads(tags_json or "[]"):
-                                    norm = t.replace("\\", "/").strip()
+                                    norm = t.replace("\\", "/").strip()  # not a path: a keyword's hierarchy separator
                                     if norm == old_tag or norm.startswith(old_tag + "/"):
                                         affected.append(p_path)
                                         break
@@ -4598,7 +4607,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             
         try:
             import subprocess
-            norm_path = os.path.normpath(photo_path)
+            norm_path = paths.stored(photo_path)
             subprocess.Popen(["explorer.exe", f"/select,{norm_path}"])
             self.send_json({"success": True})
         except Exception as e:
@@ -4614,21 +4623,22 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             
         photo_path = data.get("path")
         direction = data.get("direction")
-        
+
         if not photo_path or not os.path.exists(photo_path):
             self.send_json_error(400, "Invalid file path")
             return
-            
+        photo_path = paths.stored(photo_path)
+
         try:
             from metadata import rotate_image_file
             executable = self.get_exiftool_path()
             rotate_image_file(photo_path, direction, executable)
-                
+
             # Update cache file stats
-            folder_path = normalize_path(os.path.dirname(photo_path))
+            folder_path = paths.key(os.path.dirname(photo_path))
             if folder_path in TunerHTTPRequestHandler.folder_cache:
                 stat = os.stat(photo_path)
-                photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].get(normalize_path(photo_path))
+                photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].get(paths.key(photo_path))
                 if photo_entry:
                     photo_entry["mtime"] = stat.st_mtime
                     photo_entry["size"] = stat.st_size
@@ -4649,7 +4659,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         if not photo_path or not os.path.exists(photo_path):
             self.send_json_error(400, "Invalid file path")
             return
-            
+        photo_path = paths.stored(photo_path)
+
         try:
             # First, send the file to the recycle bin
             success = send_to_recycle_bin(photo_path)
@@ -4657,26 +4668,33 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_json_error(500, "Failed to move file to Recycle Bin")
                 return
 
-            # Delete the file record and faces from the active SQLite database
-            db_key = to_db_path(photo_path)
+            # Delete the photo's rows -- its faces, its photo row and its cached
+            # embedding -- from the active database. This used to compare LOWER(path)
+            # against a forward-slash spelling, which no row the indexer wrote has, so
+            # a deleted photo kept every row and its faces stayed in the identify queue.
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
             try:
                 conn.execute("PRAGMA foreign_keys = ON;")
                 cursor = conn.cursor()
-                cursor.execute("DELETE FROM photos WHERE LOWER(path) = ?", (db_key.lower(),))
-                cursor.execute("DELETE FROM embedding_cache WHERE LOWER(path) = ?", (db_key.lower(),))
-                conn.commit()
+                faces_sql, faces_args = paths.sql_equals("photo_path", photo_path)
+                photo_sql, photo_args = paths.sql_equals("path", photo_path)
+                faces_removed = cursor.execute(
+                    "DELETE FROM faces WHERE " + faces_sql, faces_args).rowcount
+                photos_removed = cursor.execute(
+                    "DELETE FROM photos WHERE " + photo_sql, photo_args).rowcount
+                cursor.execute("DELETE FROM embedding_cache WHERE " + photo_sql, photo_args)
+                with tagpup_db.writing(self.db_path, label="delete a photo"):
+                    conn.commit()
             finally:
                 conn.close()
-                
+
             # Remove from local server folder cache
-            folder_path = normalize_path(os.path.dirname(photo_path))
+            folder_path = paths.key(os.path.dirname(photo_path))
             if folder_path in TunerHTTPRequestHandler.folder_cache:
-                normalized_photo_path = normalize_path(photo_path)
-                if normalized_photo_path in TunerHTTPRequestHandler.folder_cache[folder_path]:
-                    del TunerHTTPRequestHandler.folder_cache[folder_path][normalized_photo_path]
-            
-            self.send_json({"success": True})
+                TunerHTTPRequestHandler.folder_cache[folder_path].pop(paths.key(photo_path), None)
+
+            self.send_json({"success": True, "photos_removed": photos_removed,
+                            "faces_removed": faces_removed})
         except Exception as e:
             logger.error(f"Error deleting image {photo_path}: {e}")
             self.send_json_error(500, str(e))
@@ -4696,7 +4714,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         if not photo_path or not os.path.exists(photo_path):
             self.send_json_error(400, "Invalid file path")
             return
-            
+        photo_path = paths.stored(photo_path)
+
         try:
             new_flat_tags = []
             new_hierarchical_tags = []
@@ -4742,43 +4761,54 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 et.set_tags([photo_path], tags=params, params=["-overwrite_original"])
                 
             from metadata import sync_title_to_filename
-            new_path = sync_title_to_filename(photo_path, title, executable)
-            
+            new_path = paths.stored(sync_title_to_filename(photo_path, title, executable))
+
             # Update SQLite database
             from metadata import extract_people
             people_list = extract_people(params, tags, db_path=self.db_path)
-            
-            if new_path != photo_path:
-                conn = tagpup_db.connect(self.db_path, timeout=30.0)
+
+            # The title is the photo's caption: the photos table has no title column,
+            # and naming one failed the whole update after the file had been written.
+            # The row is matched by the stored spelling and, if the file was renamed,
+            # moved -- faces with it -- rather than rewritten in place.
+            index_updated = 0
+            faces_moved = 0
+            conn = tagpup_db.connect(self.db_path, timeout=30.0)
+            try:
                 cursor = conn.cursor()
-                cursor.execute(
-                    "UPDATE photos SET path=?, title=?, tags=?, people=? WHERE path=?",
-                    (new_path, title, json.dumps(tags), json.dumps(people_list), photo_path)
-                )
-                conn.commit()
+                photo_sql, photo_args = paths.sql_equals("path", photo_path)
+                index_updated = cursor.execute(
+                    "UPDATE photos SET captions = ?, tags = ?, people = ? WHERE " + photo_sql,
+                    (json.dumps([title] if title else []), json.dumps(tags),
+                     json.dumps(people_list)) + photo_args,
+                ).rowcount
+                if new_path != photo_path:
+                    moved = move_photo_rows(cursor, photo_path, new_path)
+                    if moved is None:
+                        logger.warning(
+                            "Renamed %s to %s, but the index already has rows at the new "
+                            "name; the old rows were left where they are."
+                            % (photo_path, new_path))
+                    else:
+                        faces_moved = moved[1]
+                with tagpup_db.writing(self.db_path, label="save photo metadata"):
+                    conn.commit()
+            finally:
                 conn.close()
-            else:
-                conn = tagpup_db.connect(self.db_path, timeout=30.0)
-                cursor = conn.cursor()
-                cursor.execute(
-                    "UPDATE photos SET title=?, tags=?, people=? WHERE path=?",
-                    (title, json.dumps(tags), json.dumps(people_list), photo_path)
-                )
-                conn.commit()
-                conn.close()
-                
+
             # Update cache
-            folder_path = normalize_path(os.path.dirname(new_path))
+            folder_path = paths.key(os.path.dirname(new_path))
+            photo_entry = None
             if folder_path in TunerHTTPRequestHandler.folder_cache:
-                if normalize_path(new_path) != normalize_path(photo_path):
-                    photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].pop(normalize_path(photo_path), None)
+                if new_path != photo_path:
+                    photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].pop(paths.key(photo_path), None)
                     if photo_entry:
                         photo_entry["path"] = new_path
                         photo_entry["filename"] = os.path.basename(new_path)
-                        TunerHTTPRequestHandler.folder_cache[folder_path][normalize_path(new_path)] = photo_entry
+                        TunerHTTPRequestHandler.folder_cache[folder_path][paths.key(new_path)] = photo_entry
                 else:
-                    photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].get(normalize_path(photo_path))
-                    
+                    photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].get(paths.key(photo_path))
+
                 if photo_entry:
                     from metadata import extract_tags
                     # Update raw_metadata tags
@@ -4789,7 +4819,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     photo_entry["title"] = title
                     photo_entry["people"] = extract_people(photo_entry["raw_metadata"], tags, db_path=self.db_path)
                     
-            self.send_json({"success": True, "new_path": new_path})
+            self.send_json({"success": True, "new_path": new_path,
+                            "index_updated": index_updated, "faces_moved": faces_moved})
         except Exception as e:
             logger.error(f"Error saving metadata for {photo_path}: {e}")
             self.send_json_error(500, str(e))
@@ -4801,11 +4832,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.send_json_error(400, "Invalid JSON payload")
             return
             
-        paths = data.get("paths", [])
+        photo_list = data.get("paths", [])
         add_tags = data.get("add_tags", [])
         remove_tags = data.get("remove_tags", [])
-        
-        if not paths:
+
+        if not photo_list:
             self.send_json_error(400, "Missing paths list")
             return
             
@@ -4815,11 +4846,12 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         
         try:
             with exiftool.ExifToolHelper(executable=executable) as et:
-                for path in paths:
-                    folder_path = normalize_path(os.path.dirname(path))
+                for path in photo_list:
+                    path = paths.stored(path)
+                    folder_path = paths.key(os.path.dirname(path))
                     photo_entry = None
                     if folder_path in TunerHTTPRequestHandler.folder_cache:
-                        photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].get(normalize_path(path))
+                        photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path].get(paths.key(path))
                         
                     current_tags = photo_entry["tags"] if photo_entry else []
                     new_tags_set = set(current_tags)
@@ -4882,17 +4914,17 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.send_json_error(400, "Invalid folder path")
             return
             
-        folder_path = normalize_path(folder_path)
+        folder_path = paths.key(folder_path)
         status_info = TunerHTTPRequestHandler.suggest_status.get(folder_path)
         if not status_info or "suggestions" not in status_info:
             self.send_json_error(400, "No suggestions found for this folder")
             return
-            
+
         suggestions_map = status_info["suggestions"]
         photo_paths = data.get("photo_paths")
         if photo_paths:
-            photo_paths = [os.path.normpath(p).replace("\\", "/") for p in photo_paths]
-            suggestions_map = {k: v for k, v in suggestions_map.items() if os.path.normpath(k).replace("\\", "/") in photo_paths}
+            wanted = {paths.key(p) for p in photo_paths}
+            suggestions_map = {k: v for k, v in suggestions_map.items() if paths.key(k) in wanted}
         executable = self.get_exiftool_path()
         import exiftool
         from metadata import extract_people
@@ -4907,10 +4939,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                     if not apply_tags:
                         continue
                         
-                    folder_path_dir = normalize_path(os.path.dirname(path))
+                    path = paths.stored(path)
+                    folder_path_dir = paths.key(os.path.dirname(path))
                     photo_entry = None
                     if folder_path_dir in TunerHTTPRequestHandler.folder_cache:
-                        photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path_dir].get(normalize_path(path))
+                        photo_entry = TunerHTTPRequestHandler.folder_cache[folder_path_dir].get(paths.key(path))
                         
                     current_tags = photo_entry["tags"] if photo_entry else []
                     new_tags = list(set(current_tags + apply_tags))
@@ -4965,10 +4998,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.send_json({"success": True, "message": "No shift applied (0 minutes)"})
             return
             
-        folder_path = os.path.abspath(folder_path)
-        
-        # Load from cache, or scan on the fly if missing
-        if folder_path not in TunerHTTPRequestHandler.folder_cache:
+        folder_path = paths.stored(folder_path)
+        folder_key = paths.key(folder_path)
+
+        # Load from cache, or scan on the fly if missing. The cache is filed under the
+        # folder's key, the way every other handler files and finds it; this looked it
+        # up under the bare absolute path, so it missed and rescanned every time.
+        if folder_key not in TunerHTTPRequestHandler.folder_cache:
             try:
                 from metadata import MetadataExtractor
                 executable = self.get_exiftool_path()
@@ -4986,23 +5022,25 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 results = extractor.batch_read(image_files)
                 folder_map = {}
                 for meta in results:
-                    path = meta["path"]
-                    folder_map[normalize_path(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
-                TunerHTTPRequestHandler.folder_cache[folder_path] = folder_map
+                    path = paths.stored(meta["path"])
+                    folder_map[paths.key(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
+                TunerHTTPRequestHandler.folder_cache[folder_key] = folder_map
             except Exception as scan_err:
                 logger.error(f"Error scanning folder on the fly for time shift: {scan_err}")
                 self.send_json_error(500, f"Folder must be scanned first, and scan fallback failed: {scan_err}")
                 return
-            
-        photos_map = TunerHTTPRequestHandler.folder_cache[folder_path]
-        
-        # Filter photos by camera model
+
+        photos_map = TunerHTTPRequestHandler.folder_cache[folder_key]
+
+        # Filter photos by camera model. ExifTool is handed each photo's own path, not
+        # the key it is filed under -- the key is lower-cased on Windows, and what
+        # ExifTool reads back from it came back to the page lower-cased too.
         target_paths = []
-        for path, entry in photos_map.items():
+        for path_key, entry in photos_map.items():
             raw = entry.get("raw_metadata", {})
             model = raw.get("EXIF:Model") or raw.get("Model") or raw.get("EXIF:Make") or raw.get("Make") or "Unknown Camera"
             if camera_model == "All Cameras" or model == camera_model:
-                target_paths.append(path)
+                target_paths.append(paths.stored(entry.get("path") or path_key))
                 
         if not target_paths:
             self.send_json({"success": True, "message": "No photos matched the camera model"})
@@ -5032,9 +5070,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             
             from metadata import build_photo_ui_record
             for entry in updated_entries:
-                p = entry["path"]
-                if p in photos_map:
-                    photos_map[p] = build_photo_ui_record(p, entry, photos_map[p].get("mtime", 0.0), photos_map[p].get("size", 0))
+                p = paths.stored(entry["path"])
+                p_key = paths.key(p)
+                if p_key in photos_map:
+                    photos_map[p_key] = build_photo_ui_record(p, entry, photos_map[p_key].get("mtime", 0.0), photos_map[p_key].get("size", 0))
                     
             updated_photos = list(photos_map.values())
             self.send_json({"success": True, "updated_photos": updated_photos})
@@ -5043,6 +5082,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.send_json_error(500, str(e))
 
     def rescan_folder_to_cache(self, folder_path):
+        folder_path = paths.stored(folder_path)
         valid_exts = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
         image_files = []
         for root, _, files in os.walk(folder_path):
@@ -5051,7 +5091,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 if ext in valid_exts:
                     image_files.append(os.path.join(root, file))
         if not image_files:
-            TunerHTTPRequestHandler.folder_cache[normalize_path(folder_path)] = {}
+            TunerHTTPRequestHandler.folder_cache[paths.key(folder_path)] = {}
             return
             
         from metadata import MetadataExtractor, build_photo_ui_record
@@ -5065,10 +5105,73 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             
         folder_map = {}
         for meta in results:
-            path = meta["path"]
-            folder_map[normalize_path(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
-            
-        TunerHTTPRequestHandler.folder_cache[normalize_path(folder_path)] = folder_map
+            path = paths.stored(meta["path"])
+            folder_map[paths.key(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
+
+        TunerHTTPRequestHandler.folder_cache[paths.key(folder_path)] = folder_map
+
+    def _move_renamed_rows(self, file_moves):
+        """Make the index follow a batch of renames: photo rows and faces both.
+
+        `file_moves` is (kind, old, new) in the order the files moved: "occupant" for a
+        file that was in the way and was moved aside, "renamed" for a selected photo.
+        Returns ({"photos": n, "faces": n} as the database counted them, [new paths
+        whose rows could not be moved]).
+
+        The selected photos are moved in two passes, as the files were: a batch that
+        renames A to B and B to C would otherwise move A's rows onto B's while B's are
+        still there. A photo whose new name already has rows that are not about to
+        move away is left where it is and reported -- merging would duplicate faces.
+        """
+        moved = {"photos": 0, "faces": 0}
+        not_moved = []
+        if not file_moves:
+            return moved, not_moved
+
+        conn = tagpup_db.connect(self.db_path, timeout=30.0)
+        try:
+            cursor = conn.cursor()
+            for kind, old, new in file_moves:
+                if kind != "occupant":
+                    continue
+                result = move_photo_rows(cursor, old, new)
+                if result is None:
+                    not_moved.append(new)
+                else:
+                    moved["photos"] += result[0]
+                    moved["faces"] += result[1]
+
+            renames = [(old, new) for kind, old, new in file_moves if kind == "renamed"]
+            vacating = {paths.key(old) for old, _ in renames}
+            staged = []
+            for i, (old, new) in enumerate(renames):
+                if paths.key(new) not in vacating and photo_rows_exist(cursor, new):
+                    not_moved.append(new)
+                    continue
+                parking = os.path.join(
+                    os.path.dirname(paths.stored(old)),
+                    "tagtuner-renaming-%d-%s" % (i, os.path.basename(old)))
+                if move_photo_rows(cursor, old, parking) is None:
+                    not_moved.append(new)
+                    continue
+                staged.append((old, parking, new))
+
+            for old, parking, new in staged:
+                result = move_photo_rows(cursor, parking, new)
+                if result is None:
+                    move_photo_rows(cursor, parking, old)
+                    not_moved.append(new)
+                else:
+                    moved["photos"] += result[0]
+                    moved["faces"] += result[1]
+
+            with tagpup_db.writing(self.db_path, label="rename photos"):
+                conn.commit()
+        finally:
+            conn.close()
+        if not_moved:
+            logger.warning("Renamed files whose index rows were not moved: %s" % not_moved)
+        return moved, not_moved
 
     def handle_post_folder_rename_photos(self):
         try:
@@ -5081,9 +5184,9 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         photo_paths = data.get("photo_paths", [])
         grouping = data.get("grouping", "").strip()
         
-        folder_path = to_db_path(folder_path)
+        folder_path = paths.stored(folder_path)
         if photo_paths:
-            photo_paths = [to_db_path(p) for p in photo_paths]
+            photo_paths = [paths.stored(p) for p in photo_paths]
             
         if not folder_path or not os.path.exists(folder_path):
             self.send_json_error(400, "Invalid folder path")
@@ -5110,11 +5213,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             format_pattern = config.get("renaming", "format")
             
             # Sort the selected photo paths chronologically by Date Taken
-            cache = TunerHTTPRequestHandler.folder_cache.get(normalize_path(folder_path), {})
-            cache = {normalize_path(k): v for k, v in cache.items()}
-            
+            cache = TunerHTTPRequestHandler.folder_cache.get(paths.key(folder_path), {})
+
             def get_date_taken_sort_key(p_path):
-                entry = cache.get(p_path)
+                entry = cache.get(paths.key(p_path))
                 if entry:
                     raw = entry.get("raw_metadata", {})
                     for k in ["EXIF:DateTimeOriginal", "DateTimeOriginal", "XMP:DateTimeOriginal", "EXIF:CreateDate", "CreateDate"]:
@@ -5188,66 +5290,63 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 new_base = sanitize_filename(new_base)
                 ext = os.path.splitext(old_path)[1]
                 new_name = new_base + ext
-                new_path = os.path.join(folder_path, new_name).replace("\\", "/")
-                
+                new_path = os.path.join(folder_path, new_name)
+
                 selected_renames[old_path] = new_path
 
-            # Identify and resolve external conflicts on disk
-            for old_path, target_path in selected_renames.items():
-                if os.path.exists(target_path) and target_path not in selected_renames:
-                    dir_name = os.path.dirname(target_path)
-                    base, ext = os.path.splitext(os.path.basename(target_path))
-                    counter = 1
-                    safe_path = os.path.join(dir_name, f"{base}_conflict_{counter}{ext}").replace("\\", "/")
-                    while os.path.exists(safe_path) or safe_path in selected_renames.values():
-                        counter += 1
-                        safe_path = os.path.join(dir_name, f"{base}_conflict_{counter}{ext}").replace("\\", "/")
-                    os.rename(target_path, safe_path)
-                    
-                    # Update DB path for the conflicted occupant
-                    conn = tagpup_db.connect(self.db_path, timeout=30.0)
-                    cursor = conn.cursor()
-                    cursor.execute("UPDATE photos SET path=? WHERE path=?", (safe_path, target_path))
-                    conn.commit()
-                    conn.close()
+            selected_keys = {paths.key(p) for p in selected_renames}
+            target_keys = {paths.key(p) for p in selected_renames.values()}
 
-            # Two-pass rename sequence to avoid self-overwrite conflicts in the selection range
-            temp_renames = {}
-            import time
-            for old_path, target_path in selected_renames.items():
-                if old_path != target_path:
-                    dir_name = os.path.dirname(old_path)
-                    ext = os.path.splitext(old_path)[1]
-                    temp_path = os.path.join(dir_name, f"tmp_rename_{hash(old_path)}_{time.time()}{ext}").replace("\\", "/")
-                    os.rename(old_path, temp_path)
-                    temp_renames[temp_path] = target_path
-                else:
-                    temp_renames[old_path] = target_path
+            # Every file move, in the order it happened, for the index to follow.
+            file_moves = []
 
-            updated_paths_map = {}
-            for temp_path, target_path in temp_renames.items():
-                if temp_path != target_path:
-                    os.rename(temp_path, target_path)
-                    orig_old_path = next(k for k, v in selected_renames.items() if v == target_path)
-                    updated_paths_map[orig_old_path] = target_path
-                    
-                    # Update SQLite database path
-                    conn = tagpup_db.connect(self.db_path, timeout=30.0)
-                    cursor = conn.cursor()
-                    cursor.execute("UPDATE photos SET path=? WHERE path=?", (target_path, orig_old_path))
-                    conn.commit()
-                    conn.close()
-                else:
-                    updated_paths_map[target_path] = target_path
-                    
+            # The index follows whatever moved on disk, even if a later rename in
+            # the batch fails: rows left behind describe files that are not there.
+            try:
+                # Identify and resolve external conflicts on disk
+                for old_path, target_path in selected_renames.items():
+                    if os.path.exists(target_path) and paths.key(target_path) not in selected_keys:
+                        dir_name = os.path.dirname(target_path)
+                        base, ext = os.path.splitext(os.path.basename(target_path))
+                        counter = 1
+                        safe_path = os.path.join(dir_name, f"{base}_conflict_{counter}{ext}")
+                        while os.path.exists(safe_path) or paths.key(safe_path) in target_keys:
+                            counter += 1
+                            safe_path = os.path.join(dir_name, f"{base}_conflict_{counter}{ext}")
+                        os.rename(target_path, safe_path)
+                        file_moves.append(("occupant", target_path, safe_path))
+
+                # Two-pass rename sequence to avoid self-overwrite conflicts in the selection range
+                temp_renames = {}
+                import time
+                for old_path, target_path in selected_renames.items():
+                    if old_path != target_path:
+                        dir_name = os.path.dirname(old_path)
+                        ext = os.path.splitext(old_path)[1]
+                        temp_path = os.path.join(dir_name, f"tmp_rename_{hash(old_path)}_{time.time()}{ext}")
+                        os.rename(old_path, temp_path)
+                        temp_renames[temp_path] = (old_path, target_path)
+                    else:
+                        temp_renames[old_path] = (old_path, target_path)
+
+                updated_paths_map = {}
+                for temp_path, (orig_old_path, target_path) in temp_renames.items():
+                    if temp_path != target_path:
+                        os.rename(temp_path, target_path)
+                        updated_paths_map[orig_old_path] = target_path
+                        file_moves.append(("renamed", orig_old_path, target_path))
+                    else:
+                        updated_paths_map[target_path] = target_path
+            finally:
+                index_moved, index_not_moved = self._move_renamed_rows(file_moves)
+
             # Clear old and scan new cache entries
-            if normalize_path(folder_path) in TunerHTTPRequestHandler.folder_cache:
-                del TunerHTTPRequestHandler.folder_cache[normalize_path(folder_path)]
+            TunerHTTPRequestHandler.folder_cache.pop(paths.key(folder_path), None)
                 
             self.rescan_folder_to_cache(folder_path)
             
             # Send updated photos sorted chronologically
-            updated_list = list(TunerHTTPRequestHandler.folder_cache.get(normalize_path(folder_path), {}).values())
+            updated_list = list(TunerHTTPRequestHandler.folder_cache.get(paths.key(folder_path), {}).values())
             
             def get_date_taken_str(meta):
                 raw_meta = meta.get("raw_metadata", {})
@@ -5263,7 +5362,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.send_json({
                 "success": True,
                 "updated_paths": updated_paths_map,
-                "updated_photos": updated_list
+                "updated_photos": updated_list,
+                # What the index actually changed, counted by the database, and the
+                # photos it could not follow because their new name already had rows.
+                "index_moved": index_moved,
+                "index_not_moved": index_not_moved,
             })
             
         except Exception as e:

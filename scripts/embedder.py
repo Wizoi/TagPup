@@ -12,6 +12,11 @@ import torch
 import numpy as np
 import open_clip
 
+try:
+    from . import paths
+except ImportError:  # imported as a top-level module
+    import paths
+
 logger = logging.getLogger("tagpup_cli.embedder")
 
 def pad_to_square(image: Image.Image, background_color=(0, 0, 0)) -> Image.Image:
@@ -96,9 +101,9 @@ class ClipEmbedder:
                 raise e
 
     def _get_cache_path(self, file_path: str) -> str:
-        """Get the cache file path based on MD5 of absolute file path."""
-        abs_path = os.path.abspath(file_path)
-        path_hash = hashlib.md5(abs_path.encode('utf-8')).hexdigest()
+        """Get the cache file path: the MD5 of the photo's paths.key, so two spellings
+        of one photo share one cache file."""
+        path_hash = hashlib.md5(paths.key(file_path).encode('utf-8')).hexdigest()
         return os.path.join(self.cache_dir, f"{path_hash}.json")
 
     def get_cached_embedding(self, file_path: str) -> Optional[List[float]]:
@@ -110,12 +115,11 @@ class ClipEmbedder:
         if self.photo_index is not None and self.photo_index.conn is not None:
             try:
                 stat = os.stat(file_path)
-                abs_path = os.path.abspath(file_path)
+                clause, params = paths.sql_equals("path", file_path)
                 cursor = self.photo_index.conn.cursor()
                 cursor.execute("""
                     SELECT mtime, size, model_name, pretrained, preserve_full_frame, max_aspect_ratio, force_image_size, embedding
-                    FROM embedding_cache WHERE path = ?
-                """, (abs_path,))
+                    FROM embedding_cache WHERE """ + clause, params)
                 row = cursor.fetchone()
                 if row:
                     mtime, size, model_name, pretrained, preserve_full_frame, max_aspect_ratio, force_image_size, emb_bytes = row
@@ -161,8 +165,8 @@ class ClipEmbedder:
         """Save embedding to cache with file stats."""
         try:
             stat = os.stat(file_path)
-            abs_path = os.path.abspath(file_path)
-            
+            stored_path = paths.stored(file_path)
+
             # Try database cache first if photo_index is available
             if self.photo_index is not None and self.photo_index.conn is not None:
                 def store(conn):
@@ -173,7 +177,7 @@ class ClipEmbedder:
                             preserve_full_frame, max_aspect_ratio, force_image_size, embedding
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        abs_path,
+                        stored_path,
                         stat.st_mtime,
                         stat.st_size,
                         self.model_name,
@@ -199,7 +203,7 @@ class ClipEmbedder:
             # Fallback to disk-based cache
             cache_path = self._get_cache_path(file_path)
             data = {
-                "path": abs_path,
+                "path": stored_path,
                 "mtime": stat.st_mtime,
                 "size": stat.st_size,
                 "model_name": self.model_name,

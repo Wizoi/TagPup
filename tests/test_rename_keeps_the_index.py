@@ -10,6 +10,10 @@ included. One such rename in this library stranded 78 rows holding 234 faces, 88
 them named by hand. That work survived only because the renamer records where each
 file came from, so the rows could be matched back afterwards -- see
 scripts/relink_renamed_photos.py, which exists because of this bug.
+
+Then the move itself looked rows up with forward slashes while the index holds native
+paths, so on Windows it matched nothing and reported success. The rows here are seeded
+the way the indexer writes them (os.path.abspath), never through the code under test.
 """
 import json
 import os
@@ -27,6 +31,11 @@ OLD = "D:/Library/2020/2Z6A5820.jpg"
 NEW = "D:/Library/2020/Meet - 01.jpg"
 
 
+def native(path):
+    """What the indexer writes: os.path.abspath, backslashes on Windows."""
+    return os.path.abspath(path)
+
+
 class RenameCase(unittest.TestCase):
     def setUp(self):
         import tempfile
@@ -42,19 +51,9 @@ class RenameCase(unittest.TestCase):
         conn.execute("""CREATE TABLE faces (
             id INTEGER PRIMARY KEY, photo_path TEXT, name TEXT, embedding BLOB
         )""")
-        conn.execute(
-            "INSERT INTO photos (path, tags, people, raw_metadata, embedding) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (tagpup_server.to_db_path(OLD), json.dumps(["Cross Country"]),
-             json.dumps([]), json.dumps({}), b"an-embedding"),
-        )
-        conn.executemany(
-            "INSERT INTO faces (photo_path, name) VALUES (?, ?)",
-            [(tagpup_server.to_db_path(OLD), "Rowan Thackeray"),
-             (tagpup_server.to_db_path(OLD), None)],
-        )
         conn.commit()
         conn.close()
+        self.seed(OLD, b"an-embedding", ["Rowan Thackeray", None])
 
         def cleanup():
             for suffix in ("", "-wal", "-shm"):
@@ -66,33 +65,47 @@ class RenameCase(unittest.TestCase):
                         pass
         self.addCleanup(cleanup)
 
+    def seed(self, path, embedding, face_names):
+        conn = tagpup_db.connect(self.db_path)
+        try:
+            conn.execute(
+                "INSERT INTO photos (path, tags, people, raw_metadata, embedding) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (native(path), json.dumps(["Cross Country"]), json.dumps([]),
+                 json.dumps({}), embedding),
+            )
+            conn.executemany(
+                "INSERT INTO faces (photo_path, name) VALUES (?, ?)",
+                [(native(path), name) for name in face_names],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     def move(self, mapping):
-        """The index half of the rename handler, as it now runs."""
-        def move_rows(conn):
-            cursor = conn.cursor()
-            for old_path, new_path in mapping.items():
-                cursor.execute("UPDATE photos SET path = ? WHERE path = ?",
-                               (tagpup_server.to_db_path(new_path),
-                                tagpup_server.to_db_path(old_path)))
-                cursor.execute("UPDATE faces SET photo_path = ? WHERE photo_path = ?",
-                               (tagpup_server.to_db_path(new_path),
-                                tagpup_server.to_db_path(old_path)))
-            return len(mapping)
-        return tagpup_db.write_with_connection(self.db_path, move_rows)
+        return tagpup_server.move_photo_rows(self.db_path, mapping)
 
     def photos(self):
         conn = tagpup_db.connect(self.db_path)
         try:
-            return [r[0] for r in conn.execute("SELECT path FROM photos")]
+            return sorted(r[0] for r in conn.execute("SELECT path FROM photos"))
         finally:
             conn.close()
 
-    def faces_for(self, path):
+    def embedding_at(self, path):
         conn = tagpup_db.connect(self.db_path)
         try:
-            return conn.execute(
-                "SELECT COUNT(*) FROM faces WHERE photo_path = ?",
-                (tagpup_server.to_db_path(path),)).fetchone()[0]
+            row = conn.execute("SELECT embedding FROM photos WHERE path = ?",
+                               (native(path),)).fetchone()
+        finally:
+            conn.close()
+        return row[0] if row else None
+
+    def face_names_at(self, path):
+        conn = tagpup_db.connect(self.db_path)
+        try:
+            return sorted((r[0] or "") for r in conn.execute(
+                "SELECT name FROM faces WHERE photo_path = ?", (native(path),)))
         finally:
             conn.close()
 
@@ -100,60 +113,117 @@ class RenameCase(unittest.TestCase):
 class TestTheRowFollowsTheFile(RenameCase):
     def test_the_photo_row_names_the_new_file(self):
         self.move({OLD: NEW})
-        self.assertEqual(self.photos(), [tagpup_server.to_db_path(NEW)])
+        self.assertEqual(self.photos(), [native(NEW)])
 
     def test_the_faces_come_with_it(self):
         self.move({OLD: NEW})
-        self.assertEqual(self.faces_for(NEW), 2)
-        self.assertEqual(self.faces_for(OLD), 0)
+        self.assertEqual(len(self.face_names_at(NEW)), 2)
+        self.assertEqual(self.face_names_at(OLD), [])
 
     def test_a_named_face_keeps_its_name(self):
         # The expensive part: names assigned by hand, which a delete-and-reindex loses.
         self.move({OLD: NEW})
-        conn = tagpup_db.connect(self.db_path)
-        try:
-            names = [r[0] for r in conn.execute(
-                "SELECT name FROM faces WHERE photo_path = ? AND name IS NOT NULL",
-                (tagpup_server.to_db_path(NEW),))]
-        finally:
-            conn.close()
-        self.assertEqual(names, ["Rowan Thackeray"])
+        self.assertEqual(self.face_names_at(NEW), ["", "Rowan Thackeray"])
 
     def test_the_embedding_is_not_disturbed(self):
         self.move({OLD: NEW})
-        conn = tagpup_db.connect(self.db_path)
-        try:
-            emb = conn.execute("SELECT embedding FROM photos").fetchone()[0]
-        finally:
-            conn.close()
-        self.assertEqual(emb, b"an-embedding")
+        self.assertEqual(self.embedding_at(NEW), b"an-embedding")
 
     def test_a_photo_that_did_not_move_is_left_alone(self):
         self.move({})
-        self.assertEqual(self.photos(), [tagpup_server.to_db_path(OLD)])
+        self.assertEqual(self.photos(), [native(OLD)])
 
     def test_renaming_a_photo_the_index_never_saw_is_not_an_error(self):
-        self.move({"D:/Library/2020/never-indexed.jpg": "D:/Library/2020/x.jpg"})
-        self.assertEqual(self.photos(), [tagpup_server.to_db_path(OLD)])
+        moved, skipped = self.move({"D:/Library/2020/never-indexed.jpg": "D:/Library/2020/x.jpg"})
+        self.assertEqual((moved, skipped), (0, []))
+        self.assertEqual(self.photos(), [native(OLD)])
+
+    def test_it_reports_the_rows_it_moved_not_the_renames_it_was_given(self):
+        moved, _ = self.move({OLD: NEW, "D:/Library/2020/never-indexed.jpg": "D:/Library/2020/x.jpg"})
+        self.assertEqual(moved, 1)
+
+    @unittest.skipUnless(os.name == "nt", "separators and case only differ on Windows")
+    def test_any_spelling_of_the_old_name_finds_the_native_row(self):
+        self.assertIn("\\", native(OLD))
+        moved, _ = self.move({"d:\\library/2020/2z6a5820.JPG": NEW})
+        self.assertEqual(moved, 1)
+        self.assertEqual(self.photos(), [native(NEW)])
+        self.assertEqual(len(self.face_names_at(NEW)), 2)
 
 
-class TestTheHandlerActuallyDoesIt(unittest.TestCase):
+class TestADestinationThatIsTaken(RenameCase):
+    """Re-pointing rows at a path that already had rows once made 233 duplicate faces."""
+
+    def test_an_occupied_destination_is_reported_not_merged_into(self):
+        self.seed(NEW, b"someone-else", ["Ada Marchetti"])
+        moved, skipped = self.move({OLD: NEW})
+        self.assertEqual(moved, 0)
+        self.assertEqual(skipped, [(OLD, NEW)])
+        self.assertEqual(self.face_names_at(NEW), ["Ada Marchetti"])
+        self.assertEqual(self.face_names_at(OLD), ["", "Rowan Thackeray"])
+        self.assertEqual(self.embedding_at(OLD), b"an-embedding")
+
+    def test_renumbering_a_run_moves_every_row_to_its_own_file(self):
+        # Smart Rename shifting indices: -01 becomes -02 while the old -02 becomes
+        # -03. Done one row at a time, the first update hit the second row's primary
+        # key and the whole transaction rolled back, so nothing moved at all.
+        first, second, third = ("D:/Library/Run - 1.jpg", "D:/Library/Run - 2.jpg",
+                                "D:/Library/Run - 3.jpg")
+        self.seed(first, b"first", ["Rowan Thackeray"])
+        self.seed(second, b"second", ["Ada Marchetti", "Tobias Wren"])
+        moved, skipped = self.move({first: second, second: third})
+        self.assertEqual((moved, skipped), (2, []))
+        self.assertEqual(self.embedding_at(second), b"first")
+        self.assertEqual(self.embedding_at(third), b"second")
+        self.assertIsNone(self.embedding_at(first))
+        self.assertEqual(self.face_names_at(second), ["Rowan Thackeray"])
+        self.assertEqual(self.face_names_at(third), ["Ada Marchetti", "Tobias Wren"])
+
+    def test_swapping_two_names_swaps_their_rows(self):
+        a, b = "D:/Library/Run - 1.jpg", "D:/Library/Run - 2.jpg"
+        self.seed(a, b"a", ["Rowan Thackeray"])
+        self.seed(b, b"b", ["Ada Marchetti"])
+        moved, skipped = self.move({a: b, b: a})
+        self.assertEqual((moved, skipped), (2, []))
+        self.assertEqual(self.embedding_at(a), b"b")
+        self.assertEqual(self.face_names_at(a), ["Ada Marchetti"])
+        self.assertEqual(self.face_names_at(b), ["Rowan Thackeray"])
+
+    def test_a_name_moved_aside_in_the_same_call_is_free(self):
+        # The file already on the target name is renamed to _conflict_1 first; its row
+        # goes with it, and the renamed photo can then take the name.
+        target, aside = "D:/Library/Run - 1.jpg", "D:/Library/Run - 1_conflict_1.jpg"
+        self.seed(target, b"occupant", ["Ada Marchetti"])
+        moved, skipped = self.move({target: aside, OLD: target})
+        self.assertEqual((moved, skipped), (2, []))
+        self.assertEqual(self.embedding_at(aside), b"occupant")
+        self.assertEqual(self.embedding_at(target), b"an-embedding")
+        self.assertEqual(self.face_names_at(target), ["", "Rowan Thackeray"])
+
+    def test_a_case_only_rename_is_not_blocked_by_itself(self):
+        moved, skipped = self.move({OLD: OLD.lower()})
+        self.assertEqual((moved, skipped), (1, []))
+
+
+class TestTheHandlersActuallyDoIt(unittest.TestCase):
     """The guard. The rename handler renamed files and cleared a cache; that it also
     had to move the rows was not obvious from reading it, and will not be next time."""
 
-    def test_the_rename_handler_moves_photo_and_face_rows(self):
+    def body_of(self, name):
         source = os.path.join(WORKSPACE_DIR, "scripts", "tagpup_server.py")
         with open(source, encoding="utf-8") as f:
             text = f.read()
-
-        start = text.index("def handle_post_folder_rename_photos")
+        start = text.index("def " + name)
         end = text.index("\n    def ", start + 10)
-        body = text[start:end]
+        return text[start:end]
 
-        self.assertIn("UPDATE photos SET path", body,
-                      "renaming no longer moves the photo's index row")
-        self.assertIn("UPDATE faces SET photo_path", body,
-                      "renaming no longer moves the photo's faces")
+    def test_the_rename_handler_moves_photo_and_face_rows(self):
+        self.assertIn("move_photo_rows(", self.body_of("handle_post_folder_rename_photos"),
+                      "renaming no longer moves the photo's index rows")
+
+    def test_saving_a_renamed_photo_moves_its_rows(self):
+        self.assertIn("move_photo_rows(", self.body_of("handle_post_photo_save_metadata"),
+                      "a caption rename no longer moves the photo's index rows")
 
 
 if __name__ == "__main__":

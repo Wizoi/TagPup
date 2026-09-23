@@ -875,7 +875,7 @@ ${summary}${note}`)) {
                     const job = (data.active || [])[0];
                     // Not the folder we just watched finish: that one is done
                     // whatever this reply still says about it.
-                    if (job && job.folder !== lastFinishedFolder) {
+                    if (job && !samePath(job.folder, lastFinishedFolder)) {
                         setIndexingUI(true);
                         indexProgressContainer.classList.remove('hidden');
                         pollIndexStatus(job.folder);
@@ -897,7 +897,7 @@ ${summary}${note}`)) {
 
     function pollIndexStatus(folderPath) {
         if (indexPollTimer) clearInterval(indexPollTimer);
-        if (folderPath !== lastFinishedFolder) lastFinishedFolder = null;
+        if (!samePath(folderPath, lastFinishedFolder)) lastFinishedFolder = null;
 
         const query = () => {
             fetch(`/api/folder/index-status?path=${encodeURIComponent(folderPath)}`)
@@ -1008,6 +1008,32 @@ ${summary}${note}`)) {
             });
     }
 
+    // ------------------------------------------------------------------ paths --
+    // Every photo and folder path the server sends is already in one spelling -- the
+    // native absolute path, exactly as the database holds it -- so server paths can
+    // be compared with `===` and are never rewritten here. These helpers are for
+    // paths from anywhere else: the ?photo= in the URL, or what the native Browse
+    // dialog returned (forward slashes). tests/frontend/path-helpers.test.mjs fails
+    // on a separator conversion anywhere else in this file.
+
+    /**
+     * The one comparable form of a path. Separators are unified to backslashes,
+     * trailing ones dropped, and case folded -- what Windows' os.path.normcase does,
+     * and what the server's paths.key() does. Case-insensitive because the library
+     * lives on a Windows filesystem, where D:\Run and d:\run are the same folder.
+     */
+    function pathKey(p) {
+        if (!p) return '';
+        return String(p).trim().replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+    }
+
+    /** Whether two spellings name the same file or folder. */
+    function samePath(a, b) {
+        if (!a || !b) return false;
+        return pathKey(a) === pathKey(b);
+    }
+
+    /** The last segment of a path: a photo's file name, or a folder's name. */
     function basename(p) {
         const parts = String(p).replace(/[\\/]+$/, '').split(/[\\/]/);
         return parts[parts.length - 1] || p;
@@ -1203,12 +1229,6 @@ ${summary}${note}`)) {
                 document.body.style.userSelect = '';
             }
         });
-    }
-
-    // Helper to compare paths robustly on Windows (ignore slash direction and casing)
-    function pathsEqual(p1, p2) {
-        if (!p1 || !p2) return false;
-        return p1.replace(/\\/g, '/').toLowerCase() === p2.replace(/\\/g, '/').toLowerCase();
     }
 
     function updateURLParams() {
@@ -1413,10 +1433,7 @@ ${summary}${note}`)) {
                 
                 const folderTitle = document.createElement('span');
                 folderTitle.className = 'folder-title';
-                const cleanPath = folderGroup.name.replace(/\\/g, '/');
-                const parts = cleanPath.split('/');
-                const baseName = parts[parts.length - 1] || cleanPath;
-                folderTitle.textContent = baseName;
+                folderTitle.textContent = basename(folderGroup.name);
                 folderTitle.title = folderGroup.name;
                 folderHeader.appendChild(folderTitle);
                 
@@ -1465,7 +1482,7 @@ ${summary}${note}`)) {
                     li.className = 'photo-item folder-photo-item';
                     li.photo = photo;
                     
-                    if (pathsEqual(photo.path, activePhotoPath)) {
+                    if (samePath(photo.path, activePhotoPath)) {
                         li.classList.add('active');
                         // Ensure parent folders / years are expanded if photo is active
                         yearContent.style.display = 'block';
@@ -1514,7 +1531,7 @@ ${summary}${note}`)) {
         });
 
         if (activePhotoPath) {
-            const exists = allPhotos.some(p => pathsEqual(p.path, activePhotoPath));
+            const exists = allPhotos.some(p => samePath(p.path, activePhotoPath));
             if (exists) {
                 selectPhoto(activePhotoPath);
             } else {
@@ -1634,7 +1651,7 @@ ${summary}${note}`)) {
         let activeEl = element;
         if (!activeEl) {
             // Find the item matching path in list
-            activeEl = Array.from(items).find(item => item.photo && pathsEqual(item.photo.path, path));
+            activeEl = Array.from(items).find(item => item.photo && samePath(item.photo.path, path));
         }
         if (activeEl) {
             activeEl.classList.add('active');
@@ -1685,7 +1702,7 @@ ${summary}${note}`)) {
         currentPhotoDetails = details;
         // Update inline badge count on the sidebar list item (if present)
         const items = photoList.getElementsByClassName('photo-item');
-        const activeEl = Array.from(items).find(item => item.photo && pathsEqual(item.photo.path, details.path));
+        const activeEl = Array.from(items).find(item => item.photo && samePath(item.photo.path, details.path));
         if (activeEl && activeEl.photo) {
             // Count unmatched and matched faces in details.faces
             const unmatchedCount = (details.faces || []).filter(f => !f.name).length;
@@ -1731,7 +1748,7 @@ ${summary}${note}`)) {
         // Category / Keyword tags
         const tagsList = details.tags || [];
         tagsList.forEach(tag => {
-            const cleanTag = tag.replace(/\\/g, '/');
+            const cleanTag = tag.replace(/\\/g, '/'); // tag-hierarchy: a keyword, not a path
             const leaf = cleanTag.includes('/') ? cleanTag.split('/').pop().trim() : cleanTag.trim();
             if (peopleList.some(p => p.toLowerCase() === leaf.toLowerCase())) {
                 return;

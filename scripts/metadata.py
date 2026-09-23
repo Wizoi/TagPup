@@ -4,7 +4,12 @@ try:
     from . import db as tagpup_db
 except ImportError:  # imported as a top-level module
     import db as tagpup_db
+try:
+    from . import paths
+except ImportError:  # imported as a top-level module
+    import paths
 import logging
+from pathlib import PurePath
 from typing import List, Dict, Any, Optional, Set
 import exiftool
 
@@ -167,7 +172,7 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
     
     # Extract person name from hierarchical tags starting with any people roots
     for tag in tags:
-        normalized = tag.replace("|", "/").replace("\\", "/")
+        normalized = tag.replace("|", "/").replace("\\", "/")  # not a path: a keyword hierarchy
         parts = [p.strip() for p in normalized.split("/") if p.strip()]
         if len(parts) >= 2:
             root = parts[0].lower()
@@ -184,7 +189,7 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
                 cursor.execute("SELECT tag, name FROM tag_taxonomy WHERE has_face = 1")
                 people_tags = cursor.fetchall()
                 for tag in tags:
-                    norm = tag.replace("\\", "/").strip()
+                    norm = tag.replace("\\", "/").strip()  # not a path: a keyword hierarchy
                     for db_tag, db_name in people_tags:
                         # A face ROOT (People, Family, Pets, ...) is a category, not a person,
                         # so a photo tagged plainly "Family" must not gain a name.
@@ -208,7 +213,7 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
                     cursor.execute("SELECT tag, name FROM tag_taxonomy WHERE has_face = 1")
                     people_tags = cursor.fetchall()
                     for tag in tags:
-                        norm = tag.replace("\\", "/").strip()
+                        norm = tag.replace("\\", "/").strip()  # not a path: a keyword hierarchy
                         for db_tag, db_name in people_tags:
                             # A face ROOT (People, Family, Pets, ...) is a category, not a person,
                             # so a photo tagged plainly "Family" must not gain a name.
@@ -436,10 +441,9 @@ def parse_year_from_metadata(meta: Dict[str, Any]) -> Optional[int]:
 
     path = meta.get("path")
     if path:
-        # Normalize separators
-        norm_path = path.replace("\\", "/")
-        parts = norm_path.split("/")
-        
+        # The path's own components, whichever separators it was spelled with.
+        parts = PurePath(path).parts
+
         # Check filename
         if parts:
             filename = parts[-1]
@@ -460,7 +464,12 @@ def parse_year_from_metadata(meta: Dict[str, Any]) -> Optional[int]:
 
 
 def build_photo_ui_record(path: str, meta: Dict[str, Any], mtime: float = 0.0, size: int = 0) -> Dict[str, Any]:
-    """Builds a standardized dictionary of photo attributes for the GUI frontend."""
+    """Builds a standardized dictionary of photo attributes for the GUI frontend.
+
+    "path" is the stored spelling whatever the caller had, so the browser only ever
+    sees one spelling of a photo and hands back the one the index uses.
+    """
+    path = paths.stored(path)
     tags = meta.get("tags", [])
     people = meta.get("people", [])
     raw_meta = meta.get("raw_metadata", {})

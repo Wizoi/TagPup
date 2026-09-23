@@ -56,6 +56,7 @@ from taxonomy import TagTaxonomy
 from suggester import TagSuggester
 from writer import MetadataWriter
 from faces import FaceProcessor
+import paths
 
 # Default ExifTool path (uses local user profile dynamically to avoid hardcoded PII)
 if platform.system() == "Windows":
@@ -107,7 +108,7 @@ def get_db_paths(config, test_mode=False, cli_db=None):
         # Make sure it ends in .db
         db_name = cli_db if cli_db.endswith(".db") else (cli_db + ".db")
         # Check if it is a path or just a name
-        if os.path.isabs(db_name) or "/" in db_name.replace("\\", "/"):
+        if os.path.isabs(db_name) or "/" in db_name.replace("\\", "/"):  # not a path: is --db a name or a location
             db_path = db_name
             tax_path = os.path.splitext(db_path)[0] + "_taxonomy.json"
         else:
@@ -153,10 +154,16 @@ def get_db_paths(config, test_mode=False, cli_db=None):
     )
 
 def scan_for_images(dir_path: str) -> List[str]:
-    """Recursively scan directory for image files."""
+    """Recursively scan directory for image files, in the form the index stores.
+
+    Walked from paths.stored(dir_path), not from the string as typed: os.walk joins
+    onto whatever it is given, so a folder typed as D:/Photos produced
+    "D:/Photos\\a.jpg" -- both separators in one row -- and a relative folder
+    produced relative rows.
+    """
     valid_exts = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
     images = []
-    for root, _, files in os.walk(dir_path):
+    for root, _, files in os.walk(paths.stored(dir_path)):
         for file in files:
             ext = os.path.splitext(file)[1].lower()
             if ext in valid_exts:
@@ -236,7 +243,10 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
         return
 
     # Check for unchanged files using modification time and size
-    existing_entries = {meta["path"]: meta for meta in photo_index.metadata}
+    # By paths.key: a folder indexed under one spelling and scanned under another is
+    # the same photos, and keyed by the raw string every one of them was re-embedded
+    # and given a second row.
+    existing_entries = {paths.key(meta["path"]): meta for meta in photo_index.metadata}
     images_to_process = []
     skipped_count = 0
 
@@ -244,10 +254,10 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
         images_to_process = all_images
     else:
         for path in all_images:
-            if path in existing_entries:
+            saved = existing_entries.get(paths.key(path))
+            if saved is not None:
                 try:
                     stat = os.stat(path)
-                    saved = existing_entries[path]
                     if (saved.get("mtime") == stat.st_mtime and 
                         saved.get("size") == stat.st_size and 
                         saved.get("has_embedding", False)):
@@ -350,8 +360,10 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
                     batch_faces[path] = faces
                 
                 # If path already exists in current loaded index, mark it to remove before adding new version
-                if path in existing_entries:
-                    paths_to_remove.add(path)
+                # The row's own spelling, which is the one there is to remove.
+                previous = existing_entries.get(paths.key(path))
+                if previous is not None:
+                    paths_to_remove.add(previous["path"])
                     
                 batch_embeddings.append(emb)
                 batch_metas.append(meta)
@@ -797,17 +809,9 @@ def list_index(ctx, folder):
         
     try:
         # Filter paths and gather metadata
-        matches = []
-        filter_path = os.path.abspath(folder) if folder else None
-        
-        for meta in photo_index.metadata:
-            path = meta["path"]
-            abs_path = os.path.abspath(path)
-            if filter_path:
-                if abs_path.startswith(filter_path):
-                    matches.append(meta)
-            else:
-                matches.append(meta)
+        # paths.is_under, not startswith: C:\Photos2 starts with C:\Photos.
+        matches = [meta for meta in photo_index.metadata
+                   if not folder or paths.is_under(meta["path"], folder)]
 
         if not matches:
             console.print("[yellow]No matching photos found in the index.[/yellow]")
@@ -860,15 +864,14 @@ def remove(ctx, path, folder):
     try:
         to_remove = set()
         if path:
-            abs_target = os.path.abspath(path)
             for meta in photo_index.metadata:
-                if os.path.abspath(meta["path"]) == abs_target:
+                if paths.same(meta["path"], path):
                     to_remove.add(meta["path"])
-                    
+
         if folder:
-            abs_folder = os.path.abspath(folder)
+            # is_under, not startswith: removing C:\Photos must not take C:\Photos2.
             for meta in photo_index.metadata:
-                if os.path.abspath(meta["path"]).startswith(abs_folder):
+                if paths.is_under(meta["path"], folder):
                     to_remove.add(meta["path"])
 
         if not to_remove:
@@ -910,9 +913,12 @@ def index_faces(ctx, directory: str, force: bool):
         # Find all files in the directory that are already indexed in photos
         console.print(f"[bold cyan]Scanning directory for photos to index faces:[/bold cyan] {directory}")
         all_images = scan_for_images(directory)
-        indexed_paths = {meta["path"] for meta in photo_index.metadata}
-        
-        target_images = [img for img in all_images if img in indexed_paths]
+        # Compared by key, and each photo carried forward under its row's spelling so
+        # the faces recorded for it name the same path its photos row does.
+        indexed_paths = {paths.key(meta["path"]): meta["path"] for meta in photo_index.metadata}
+
+        target_images = [indexed_paths[paths.key(img)] for img in all_images
+                         if paths.key(img) in indexed_paths]
         console.print(f"Found {len(target_images)} photo(s) in directory that are in the photo index.")
 
         if not target_images:
@@ -927,8 +933,8 @@ def index_faces(ctx, directory: str, force: bool):
             # Query paths that already have face records in the faces table
             cursor = photo_index.conn.cursor()
             cursor.execute("SELECT DISTINCT photo_path FROM faces")
-            already_processed = {row[0] for row in cursor.fetchall()}
-            to_process = [img for img in target_images if img not in already_processed]
+            already_processed = {paths.key(row[0]) for row in cursor.fetchall()}
+            to_process = [img for img in target_images if paths.key(img) not in already_processed]
 
         if not to_process:
             console.print("[bold green]All faces are already indexed![/bold green]")

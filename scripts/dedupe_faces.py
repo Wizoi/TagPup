@@ -26,8 +26,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from . import db as tagpup_db
+    from . import paths
 except ImportError:  # imported as a top-level module
     import db as tagpup_db
+    import paths
 
 
 def knows_something(row):
@@ -45,19 +47,22 @@ def knows_something(row):
 
 def plan_for(db_path):
     """Which face rows duplicate another, and which copy to keep."""
-    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)
+    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)  # not a path: the database file's URI
     rows = conn.execute(
         "SELECT id, photo_path, box, name, name_source, excluded FROM faces").fetchall()
     conn.close()
 
+    # By paths.key: the same box on the same file is one face however each copy
+    # spelled the photo's path.
     groups = collections.defaultdict(list)
     for row in rows:
-        groups[(row[1], str(row[2]))].append(row)
+        groups[(paths.key(row[1]), str(row[2]))].append(row)
 
     redundant, disputed = [], []
-    for (photo_path, _box), copies in groups.items():
+    for copies in groups.values():
         if len(copies) < 2:
             continue
+        photo_path = copies[0][1]
 
         names = {r[3] for r in copies if r[3]}
         if len(names) > 1:

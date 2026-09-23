@@ -44,7 +44,7 @@ CANONICAL = {"not a person", "stranger", "bad crop", "duplicate"}
 
 def survey(db_path):
     """Every reason recorded, with how many faces carry it."""
-    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)
+    conn = tagpup_db.connect(tagpup_db.readonly_uri(db_path), uri=True)
     try:
         rows = conn.execute(
             "SELECT excluded_reason, COUNT(*) FROM faces WHERE excluded = 1 "

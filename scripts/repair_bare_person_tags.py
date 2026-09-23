@@ -31,8 +31,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from . import db as tagpup_db
+    from . import paths as photo_paths
 except ImportError:  # imported as a top-level module
     import db as tagpup_db
+    import paths as photo_paths   # `paths` here means taxonomy paths
 
 
 DEFAULT_PEOPLE_ROOTS = {"people", "family", "friends", "pets"}
@@ -131,20 +133,20 @@ def plan_for_folder(db_path, folder, exiftool_path=None):
     """
     import exiftool
 
-    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)
+    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)  # not a path: the database file's URI
     paths, roots = people_paths(conn)
     conn.close()
 
-    photo_paths = []
-    for root, _dirs, files in os.walk(folder):
+    in_folder = []
+    for root, _dirs, files in os.walk(photo_paths.stored(folder)):
         for name in sorted(files):
             if name.lower().endswith(IMAGE_SUFFIXES):
-                photo_paths.append(os.path.join(root, name))
+                in_folder.append(os.path.join(root, name))
 
     changes = []
     with exiftool.ExifToolHelper(executable=exiftool_path) as et:
-        for i in range(0, len(photo_paths), 100):
-            batch = photo_paths[i:i + 100]
+        for i in range(0, len(in_folder), 100):
+            batch = in_folder[i:i + 100]
             try:
                 rows = et.get_tags(batch, tags=["XMP:Subject"])
             except Exception:
@@ -164,7 +166,8 @@ def plan_for_folder(db_path, folder, exiftool_path=None):
                 after, replaced = repair_tags(subject, paths, roots)
                 if replaced:
                     changes.append({
-                        "path": os.path.normpath(photo_path),
+                        # ExifTool answers with forward slashes.
+                        "path": photo_paths.stored(photo_path),
                         "before": subject,
                         "after": after,
                         "replaced": [(b, p) for b, p in replaced if p],
@@ -180,7 +183,7 @@ def plan_for(db_path):
     re-read at apply time, since the index holds a tidied view and the file can hold
     debris the index never shows.
     """
-    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)
+    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)  # not a path: the database file's URI
     paths, roots = people_paths(conn)
 
     cur = conn.cursor()
@@ -255,10 +258,18 @@ def apply_changes(db_path, changes, paths, roots, exiftool_path=None):
 
     def store(conn):
         for photo_path, after in applied.items():
-            conn.execute(
+            # A plan from the index carries the row's own spelling, which matches
+            # exactly. A plan from a folder carries the stored spelling, and the row
+            # may differ from it in case, so that one is matched the way the
+            # filesystem matches.
+            cur = conn.execute(
                 "UPDATE photos SET tags = ? WHERE path = ?",
                 (json.dumps(after), photo_path),
             )
+            if cur.rowcount == 0:
+                clause, params = photo_paths.sql_equals("path", photo_path)
+                conn.execute("UPDATE photos SET tags = ? WHERE " + clause,
+                             (json.dumps(after),) + params)
 
     if applied:
         tagpup_db.write_with_connection(db_path, store, label="repair bare person tags")

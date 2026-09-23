@@ -193,7 +193,8 @@ class MatchingTestBase(unittest.TestCase):
             return e.code, e.read().decode("utf-8", errors="replace")
 
     def add_photo(self, name, people=()):
-        path = os.path.join(self.tmpdir, name).replace("\\", "/")
+        # As the indexer writes it: absolute, native separators.
+        path = os.path.abspath(os.path.join(self.tmpdir, name))
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(
             "INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions,"
@@ -468,7 +469,7 @@ class TestRemovingFacesKeepsTheGridWarm(MatchingTestBase):
         conn = sqlite3.connect(self.TEST_DB)
         ids = []
         for i in range(count):
-            photo = os.path.join(self.tmpdir, "IMG_%04d.jpg" % i).replace("\\", "/")
+            photo = os.path.abspath(os.path.join(self.tmpdir, "IMG_%04d.jpg" % i))
             conn.execute(
                 "INSERT OR REPLACE INTO photos (path, mtime, size, tags, people,"
                 " captions, raw_metadata) VALUES (?, 1.0, 1, '[]', ?, '[]', '{}')",

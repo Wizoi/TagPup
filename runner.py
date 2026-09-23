@@ -12,6 +12,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 # Add scripts directory to path to locate server handlers
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
+import paths
 from tuner_server import TunerHTTPRequestHandler, ThreadedHTTPServer as TunerThreadedHTTPServer
 from tagpup_server import TagPupHTTPRequestHandler, ThreadedHTTPServer as TagPupThreadedHTTPServer
 
@@ -743,10 +744,10 @@ class RunnerApp:
     def browse_directory(self, entry_widget):
         selected_dir = filedialog.askdirectory(initialdir=os.getcwd())
         if selected_dir:
-            # Standardize path separators for Windows / click
-            norm_path = os.path.abspath(selected_dir).replace("\\", "/")
+            # The stored spelling, so the folder handed to the CLI walks to paths
+            # the index already knows (the dialog answers with forward slashes).
             entry_widget.delete(0, tk.END)
-            entry_widget.insert(0, norm_path)
+            entry_widget.insert(0, paths.stored(selected_dir))
 
     def set_controls_state(self, state):
         # Disable or enable interactive buttons when task is running

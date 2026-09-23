@@ -88,12 +88,12 @@ def build_sandbox(source_db, sandbox):
     # reads this relative to the code, which is why the code is snapshotted at all.
     with open(os.path.join(sandbox, "config.ini"), "w", encoding="utf-8") as handle:
         handle.write("[paths]\ndata_dir = %s\ndefault_db = measured.db\n"
-                     % os.path.join(sandbox, "data").replace("\\", "/"))
+                     % os.path.join(sandbox, "data"))
 
     target = os.path.join(sandbox, "data", "measured.db")
     started = time.time()
     source = tagpup_db.connect(
-        "file:%s?mode=ro" % source_db.replace("\\", "/"), uri=True)
+        tagpup_db.readonly_uri(source_db), uri=True)
     destination = tagpup_db.connect(target)
     try:
         source.backup(destination)

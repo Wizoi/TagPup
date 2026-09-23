@@ -18,9 +18,9 @@ class TagTaxonomy:
                 # e.g. data/photo_index.db -> data/photo_index_taxonomy.json
                 # if it is default data/photo_index.db, we want data/photo_taxonomy.json for compatibility
                 if os.path.basename(db_path) == "photo_index.db":
-                    self.file_path = os.path.join(os.path.dirname(db_path), "photo_taxonomy.json").replace("\\", "/")
+                    self.file_path = os.path.join(os.path.dirname(db_path), "photo_taxonomy.json")
                 else:
-                    self.file_path = (os.path.splitext(db_path)[0] + "_taxonomy.json").replace("\\", "/")
+                    self.file_path = os.path.splitext(db_path)[0] + "_taxonomy.json"
             else:
                 self.file_path = file_path
         else:
@@ -28,7 +28,7 @@ class TagTaxonomy:
                 file_path = "data/photo_taxonomy.json"
             self.file_path = file_path
             if file_path.endswith("photo_taxonomy.json"):
-                self.db_path = os.path.join(os.path.dirname(file_path), "photo_index.db").replace("\\", "/")
+                self.db_path = os.path.join(os.path.dirname(file_path), "photo_index.db")
             elif file_path.endswith("_taxonomy.json"):
                 self.db_path = file_path.replace("_taxonomy.json", ".db")
             else:
@@ -142,7 +142,7 @@ class TagTaxonomy:
     def normalize_tag(tag: str) -> str:
         """Normalize a tag by replacing common hierarchy separators (e.g. '|' or '\') with '/'."""
         tag = tag.strip()
-        tag = tag.replace("|", "/").replace("\\", "/")
+        tag = tag.replace("|", "/").replace("\\", "/")  # not a path: tag hierarchy separators
         parts = [p.strip() for p in tag.split("/") if p.strip()]
         return "/".join(parts)
 
@@ -449,9 +449,9 @@ def seed_taxonomy_from_db(db_path: str):
                     
         # Check if taxonomy json file exists and seed from there too
         if os.path.basename(db_path) == "photo_index.db":
-            tax_path = os.path.join(os.path.dirname(db_path), "photo_taxonomy.json").replace("\\", "/")
+            tax_path = os.path.join(os.path.dirname(db_path), "photo_taxonomy.json")
         else:
-            tax_path = (os.path.splitext(db_path)[0] + "_taxonomy.json").replace("\\", "/")
+            tax_path = os.path.splitext(db_path)[0] + "_taxonomy.json"
             
         if os.path.exists(tax_path):
             try:

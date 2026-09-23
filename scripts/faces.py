@@ -17,6 +17,11 @@ from facenet_pytorch import MTCNN, InceptionResnetV1
 from sklearn.cluster import DBSCAN
 from tqdm import tqdm
 
+try:
+    from . import paths
+except ImportError:  # imported as a top-level module
+    import paths
+
 logger = logging.getLogger("tagpup_cli.faces")
 
 class FaceProcessor:
@@ -48,7 +53,7 @@ class FaceProcessor:
         """Lazily initialize MTCNN detector and InceptionResnetV1 face embedder."""
         if self.mtcnn is not None:
             return
-            
+
         logger.info(f"Initializing face detection (MTCNN) and embedding models (InceptionResnetV1) on {self.device.upper()}...")
         # MTCNN options: keep_all=True detects multiple faces, post_process=False keeps crops raw
         self.mtcnn = MTCNN(
@@ -230,8 +235,18 @@ class FaceProcessor:
 
         logger.info(f"Clustered {len(all_faces)} faces into {len(clusters)} distinct visual identities.")
 
-        # Build path-to-metadata lookup map to easily retrieve tags for face photos
-        meta_by_path = {meta["path"]: meta for meta in photo_index.metadata}
+        # Each face's photo metadata, keyed by the face's own photo_path. Built by
+        # paths.key because the two columns need not share a spelling: a raw lookup of
+        # faces.photo_path in a dict of photos.path missed every face whose row was
+        # spelled differently, and those faces lost their photo's people tags -- the
+        # anchors and votes this whole resolution runs on. Keying by the face's
+        # spelling keeps every lookup below exact and costs one key() per photo.
+        meta_by_key = {paths.key(meta["path"]): meta for meta in photo_index.metadata}
+        meta_by_path = {}
+        for face_path in {f["photo_path"] for f in all_faces}:
+            meta = meta_by_key.get(paths.key(face_path))
+            if meta is not None:
+                meta_by_path[face_path] = meta
         
         # Precompute face counts per photo to avoid O(N) scanning inside the cluster loop
         face_counts_by_photo = {}
