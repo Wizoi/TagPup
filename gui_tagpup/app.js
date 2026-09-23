@@ -1005,6 +1005,10 @@ document.addEventListener('DOMContentLoaded', () => {
             return res.json();
         })
         .then(data => {
+            // What moved, by the server's account -- not the selection, which is
+            // cleared below and was being counted after that, so this said 0.
+            const renamedCount = Object.entries(data.updated_paths || {})
+                .filter(([from, to]) => !samePath(from, to)).length;
             folderPhotos = data.updated_photos;
             selectedThumbnails = [];
             lastSelectedPath = null;
@@ -1018,7 +1022,7 @@ document.addEventListener('DOMContentLoaded', () => {
             updateSelectedThumbnailsCount();
             saveToLocalStorageCache();
             
-            setStatus('ready', `Renamed ${selectedThumbnails.length} photo(s)`);
+            setStatus('ready', `Renamed ${renamedCount} photo(s)`);
         })
         .catch(err => {
             console.error(err);
