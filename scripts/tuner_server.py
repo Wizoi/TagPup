@@ -4943,39 +4943,26 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.send_json({"success": True, "message": "No photos matched the camera model"})
             return
             
-        executable = self.get_exiftool_path()
-        from exiftool_session import ExifToolSession
-
-        sign = "+" if shift_minutes >= 0 else "-"
-        abs_minutes = abs(shift_minutes)
-        
-        shift_dto = f"-DateTimeOriginal{sign}=0:0:0 0:{abs_minutes}:0"
-        shift_cd = f"-CreateDate{sign}=0:0:0 0:{abs_minutes}:0"
-        
         try:
-            # check_execute=False: the plain ExifTool this replaced never raised on a
-            # non-zero status, and a batch with one unwritable photo still shifts the rest.
-            with ExifToolSession(executable=executable, check_execute=False) as et:
-                batch_size = 50
-                for i in range(0, len(target_paths), batch_size):
-                    batch = target_paths[i:i+batch_size]
-                    args = [shift_dto, shift_cd, "-overwrite_original"] + batch
-                    et.execute(*args)
-                    
-            # Re-read metadata for updated photos to refresh cache
-            from metadata import MetadataExtractor
-            extractor = MetadataExtractor(exiftool_path=executable)
-            updated_entries = extractor.batch_read(target_paths)
-            
+            # The same shift TagPup makes, which also tells the index.
+            from tagpup_server import shift_photo_times
+            updated_count, updated_entries = shift_photo_times(
+                self.db_path, self.get_exiftool_path(), target_paths, shift_minutes)
+
             from metadata import build_photo_ui_record
             for entry in updated_entries:
                 p = paths.stored(entry["path"])
                 p_key = paths.key(p)
                 if p_key in photos_map:
-                    photos_map[p_key] = build_photo_ui_record(p, entry, photos_map[p_key].get("mtime", 0.0), photos_map[p_key].get("size", 0))
-                    
+                    # The file's new stat: the old one describes the file before the write.
+                    photos_map[p_key] = build_photo_ui_record(
+                        p, entry, entry.get("mtime", photos_map[p_key].get("mtime", 0.0)),
+                        entry.get("size", photos_map[p_key].get("size", 0)))
+
             updated_photos = list(photos_map.values())
-            self.send_json({"success": True, "updated_photos": updated_photos})
+            self.send_json({"success": True, "updated_photos": updated_photos,
+                            "updated_count": updated_count,
+                            "requested_count": len(target_paths)})
         except Exception as e:
             logger.error(f"Error applying time shift to {folder_path}: {e}")
             self.send_json_error(500, str(e))

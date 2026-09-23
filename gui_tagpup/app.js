@@ -3911,7 +3911,16 @@ Click to add ${namesSomebody} to this photo.`;
                     folderPhotos = data.updated_photos;
                 }
                 
-                setStatus('ready', `Time shift applied to ${affected} photo(s)`);
+                // What ExifTool wrote, not what was asked: a photo it could not
+                // write keeps its old time, and saying so is the only way to know.
+                const done = data.updated_count ?? 0;
+                const asked = data.requested_count ?? affected;
+                if (done < asked) {
+                    setStatus('error', `Time shift applied to ${done} of ${asked} photo(s); ${asked - done} could not be written`,
+                        { transient: false });
+                } else {
+                    setStatus('ready', `Time shift applied to ${done} photo(s)`);
+                }
 
                 renderFileList();
                 renderThumbnails();

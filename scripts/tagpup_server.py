@@ -397,6 +397,46 @@ def record_file_stat_in_index(db_path, photo_path):
         db_path, store, label="file stat for %s" % os.path.basename(photo_path))
 
 
+def shift_photo_times(db_path, exiftool_path, photo_paths, shift_minutes):
+    """Move Date Taken in each photo by `shift_minutes`, and tell the index.
+
+    Returns (how many files ExifTool reports it updated, the photos re-read after).
+    The count is ExifTool's own: a photo it could not write is not counted, where
+    this used to answer with the number it had tried. The index rows get the new
+    Date Taken, which orders photos and picks the era a face is compared against,
+    and the file's new mtime and size, without which the next scan distrusts them.
+    """
+    from exiftool_session import ExifToolSession
+    from metadata import MetadataExtractor
+
+    sign = "+" if shift_minutes >= 0 else "-"
+    by = "0:0:0 0:%d:0" % abs(shift_minutes)
+    updated = 0
+    # check_execute=False: a batch with one unwritable photo still shifts the rest,
+    # and ExifTool's summary line says how many it did.
+    with ExifToolSession(executable=exiftool_path, check_execute=False) as et:
+        for i in range(0, len(photo_paths), 50):
+            out = et.execute("-DateTimeOriginal%s=%s" % (sign, by), "-CreateDate%s=%s" % (sign, by),
+                             "-overwrite_original", *photo_paths[i:i + 50])
+            updated += sum(int(n) for n in re.findall(r"(\d+) image files? updated", out or ""))
+
+    # Only reading: minting a DocumentID here would write the files a second time.
+    entries = MetadataExtractor(exiftool_path=exiftool_path, mint_identities=False).batch_read(
+        photo_paths, db_path=db_path)
+
+    def store(conn):
+        for entry in entries:
+            if not entry.get("raw_metadata"):
+                continue
+            where, where_params = paths.sql_equals("path", entry["path"])
+            conn.execute("UPDATE photos SET raw_metadata = ?, mtime = ?, size = ? WHERE " + where,
+                         (json.dumps(entry["raw_metadata"]), entry.get("mtime", 0.0),
+                          entry.get("size", 0)) + where_params)
+
+    tagpup_db.write_with_connection(db_path, store, label="time shift")
+    return updated, entries
+
+
 def turned_box(box, direction, width, height):
     """A face box after a quarter turn of a `width` x `height` image.
 
@@ -2750,30 +2790,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.send_json({"success": True, "message": "No photos matched the camera model"})
             return
             
-        executable = self.get_exiftool_path()
-        from exiftool_session import ExifToolSession
-
-        sign = "+" if shift_minutes >= 0 else "-"
-        abs_minutes = abs(shift_minutes)
-        
-        shift_dto = f"-DateTimeOriginal{sign}=0:0:0 0:{abs_minutes}:0"
-        shift_cd = f"-CreateDate{sign}=0:0:0 0:{abs_minutes}:0"
-        
         try:
-            # check_execute=False: the plain ExifTool this replaced never raised on a
-            # non-zero status, and a batch with one unwritable photo still shifts the rest.
-            with ExifToolSession(executable=executable, check_execute=False) as et:
-                batch_size = 50
-                for i in range(0, len(target_paths), batch_size):
-                    batch = target_paths[i:i+batch_size]
-                    args = [shift_dto, shift_cd, "-overwrite_original"] + batch
-                    et.execute(*args)
-                    
-            # Re-read metadata for updated photos to refresh cache
-            from metadata import MetadataExtractor
-            extractor = MetadataExtractor(exiftool_path=executable)
-            updated_entries = extractor.batch_read(target_paths)
-            
+            updated_count, updated_entries = shift_photo_times(
+                self.db_path, self.get_exiftool_path(), target_paths, shift_minutes)
+
             from metadata import build_photo_ui_record
             for entry in updated_entries:
                 p = paths.stored(entry["path"])
@@ -2785,7 +2805,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                         entry.get("size", previous.get("size", 0)))
                     
             updated_photos = list(photos_map.values())
-            self.send_json({"success": True, "updated_photos": updated_photos})
+            self.send_json({"success": True, "updated_photos": updated_photos,
+                            "updated_count": updated_count,
+                            "requested_count": len(target_paths)})
         except Exception as e:
             logger.error(f"Error applying time shift to {folder_path}: {e}")
             self.send_json_error(500, str(e))

@@ -282,7 +282,10 @@ class TestTimeShiftKeepsTheRealPaths(HandlerCase):
     def test_a_cold_folder_is_walked_and_returned_in_its_own_case(self):
         photo = self.make_file("IMG_0001.jpg")
         extractor = fake_extractor({"EXIF:Model": "Test Camera"})
-        with patch("metadata.MetadataExtractor", extractor), patch("exiftool_session.ExifToolSession", MagicMock()):
+        # ExifTool answers a write with a summary line, which the shift counts.
+        session = MagicMock()
+        session.return_value.__enter__.return_value.execute.return_value = "    1 image files updated"
+        with patch("metadata.MetadataExtractor", extractor), patch("exiftool_session.ExifToolSession", session):
             result = self.call("handle_post_folder_time_shift", {
                 "folder_path": forward(self.folder), "camera_model": "All Cameras",
                 "shift_minutes": 30})
