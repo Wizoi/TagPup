@@ -464,11 +464,26 @@ class PhotoIndex:
                 from identity import read_document_id
                 document_id = (meta.get("document_id")
                                or read_document_id(meta.get("raw_metadata", {})))
+                # Update a photo already indexed in place, under the spelling its row
+                # already has. faces.photo_path references photos.path ON DELETE
+                # CASCADE, so anything that deletes the row -- INSERT OR REPLACE is a
+                # delete and an insert -- takes every face with it: names given by
+                # hand, "nobody" decisions and exclusions. Re-indexing a changed photo
+                # did exactly that. The existing spelling is kept because the faces
+                # point at it, and a row under a second spelling would be a duplicate.
+                clause, params = paths.sql_equals("path", meta["path"])
+                existing = cursor.execute(
+                    "SELECT path FROM photos WHERE " + clause + " LIMIT 1", params).fetchone()
                 cursor.execute("""
-                    INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding, document_id)
+                    INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding, document_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(path) DO UPDATE SET
+                        mtime = excluded.mtime, size = excluded.size, tags = excluded.tags,
+                        people = excluded.people, captions = excluded.captions,
+                        raw_metadata = excluded.raw_metadata, embedding = excluded.embedding,
+                        document_id = COALESCE(excluded.document_id, photos.document_id)
                 """, (
-                    paths.stored(meta["path"]),
+                    existing[0] if existing else paths.stored(meta["path"]),
                     meta.get("mtime", 0.0),
                     meta.get("size", 0),
                     json.dumps(meta.get("tags", [])),

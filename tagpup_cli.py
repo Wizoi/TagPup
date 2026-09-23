@@ -336,7 +336,6 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
         batch_embeddings = []
         batch_metas = []
         batch_faces = {}  # Map path -> faces list
-        paths_to_remove = set()
         total_new_indexed = 0
         locked_out = []
 
@@ -359,12 +358,10 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
                     faces = face_processor.detect_and_embed_faces(path)
                     batch_faces[path] = faces
                 
-                # If path already exists in current loaded index, mark it to remove before adding new version
-                # The row's own spelling, which is the one there is to remove.
-                previous = existing_entries.get(paths.key(path))
-                if previous is not None:
-                    paths_to_remove.add(previous["path"])
-                    
+                # A photo already indexed is not removed first: build_or_update
+                # updates its row in place. Deleting the row cascaded to its faces
+                # and took every name given by hand, and every exclusion, with it.
+
                 batch_embeddings.append(emb)
                 batch_metas.append(meta)
                 
@@ -377,9 +374,6 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
                 
                 # Save progress incrementally in batches of 100
                 if len(batch_embeddings) >= 100:
-                    if paths_to_remove:
-                        photo_index.remove_paths(paths_to_remove)
-                        paths_to_remove.clear()
                     photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]), reload=False)
                     
                     # Save faces for the batch in a single transaction
@@ -401,10 +395,6 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
             except Exception as e:
                 logger.error(f"Error indexing {path}: {e}")
                 locker.release(path)
-
-        # Remove old entries for remaining modified files
-        if paths_to_remove:
-            photo_index.remove_paths(paths_to_remove)
 
         # Rebuild or update the FAISS index for the final batch
         if batch_embeddings:
