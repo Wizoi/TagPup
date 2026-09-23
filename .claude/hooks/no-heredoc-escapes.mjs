@@ -9,10 +9,10 @@
  * errors), a "\\" became "\" and a regex matched nothing. A rule to remember did not
  * hold; this does.
  *
- * Blocks: a heredoc (<<EOF, <<'EOF', <<-EOF) whose command line runs an interpreter
- * (python, python.exe, py, node, perl, ruby) and whose body contains \n \t \r \u \x
- * \0 or \\. Allows everything else -- including commit messages fed by heredoc, and
- * `python -c "..."`, which never went through a heredoc.
+ * Blocks: any heredoc (<<EOF, <<'EOF', <<-EOF) whose body contains \n \t \r \u \x
+ * \0 or \\ -- whether it feeds an interpreter or writes a file (cat > fix.py, tee),
+ * since a file written that way is run a moment later. Allows a heredoc that is a
+ * git message (git commit -F -), `python -c "..."`, and everything else.
  *
  * Reads the hook payload on stdin; exit 2 with a reason on stderr blocks the call and
  * shows the reason to Claude. Any error in the hook itself allows the call (exit 0):
@@ -20,8 +20,6 @@
  */
 import { readFileSync } from "node:fs";
 
-// Preceded by a path separator too: this repo runs .venv/Scripts/python.exe.
-const INTERPRETER = /(^|[\s;&|(/\\])(python3?|python(\.exe)?|py(\.exe)?|node(\.exe)?|perl|ruby)(\s|$)/i;
 const ESCAPE = /\\[ntrux0\\]/;
 const HEREDOC = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/g;
 
@@ -43,10 +41,20 @@ export function heredocs(command) {
   return found;
 }
 
-/** The reason to refuse this command, or null to let it run. */
+// A heredoc that is a git message (commit -F -, tag -F -) is prose, not code, and
+// is the one place this repo uses heredocs on purpose.
+const GIT_MESSAGE = /(^|[\s;&|(])git(\.exe)?\s/i;
+
+/** The reason to refuse this command, or null to let it run.
+ *
+ * Any heredoc, not only one piped into an interpreter: `cat > fix.py <<'EOF'` and
+ * `tee fix.py <<EOF` write the same mangled script to a file and run it a moment
+ * later, and a review found the interpreter-only rule let exactly that through.
+ */
 export function reasonToBlock(command) {
   for (const { opener, body } of heredocs(command || "")) {
-    if (INTERPRETER.test(opener) && ESCAPE.test(body)) {
+    if (GIT_MESSAGE.test(opener)) continue;
+    if (ESCAPE.test(body)) {
       return "Backslash escapes in a heredoc are mangled in transit (CLAUDE.md: write " +
         "patch scripts with a file tool, not a shell heredoc). Write the script with " +
         "the Write tool and run the file.";

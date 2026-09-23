@@ -23,10 +23,18 @@ const blocks = {
     "node - <<'EOF'\nconsole.log('a\\tb')\nEOF",
   "an indented heredoc (<<-)":
     "python3 - <<-EOF\n\tprint('x\\n')\n\tEOF",
+  "a patch script written with cat, then run":
+    "cat > fix.py <<'EOF'\ns = s.replace('\\n', ' ')\nEOF\npython fix.py",
+  "a script written with tee":
+    "tee fix.py <<EOF\nprint('a\\tb')\nEOF",
+  "an interpreter version the old pattern missed":
+    "python3.11 <<EOF\nprint('\\u00fc')\nEOF",
 };
 
 const allows = {
   "a commit message by heredoc": "git commit -F - <<'EOF'\nfix: a thing\n\nCo-Authored-By: x\nEOF",
+  "a commit message that quotes an escape": "git -c core.safecrlf=false commit -q -F - <<'EOF'\nfix: \"\\n\" in a string\nEOF",
+  "a heredoc with no escapes into a file": "cat > notes.txt <<'EOF'\nplain text\nEOF",
   "a python heredoc with no escapes": "python - <<'EOF'\nprint(1 + 1)\nEOF",
   "python -c": "python -c \"print('a\\nb')\"",
   "an ordinary command": "git status --short",
