@@ -801,14 +801,22 @@ class PhotoIndex:
             raise e
 
     def reset_face_assignments(self):
-        """Reset all face name assignments in faces table and restore original people metadata in database."""
+        """Clear the names clustering gave to faces, and rebuild photos.people.
+
+        Names given by hand (name_source = 'manual') are left alone: they are the
+        person's decisions and the anchors clustering starts from. Clearing their name
+        while leaving name_source = 'manual' turned every one of them into a binding
+        "this is nobody". Returns the number of faces whose name was cleared.
+        """
         if self.conn is None:
-            return False
+            return 0
         try:
             cursor = self.conn.cursor()
-            # 1. Reset faces name
-            cursor.execute("UPDATE faces SET name = NULL")
-            
+            # 1. Clear the automatic names only.
+            cleared = cursor.execute(
+                "UPDATE faces SET name = NULL"
+                " WHERE name IS NOT NULL AND COALESCE(name_source, '') <> 'manual'").rowcount
+
             # 2. Reset photos.people to original tags extracted from raw_metadata
             cursor.execute("SELECT path, raw_metadata, tags FROM photos")
             rows = cursor.fetchall()
@@ -824,13 +832,15 @@ class PhotoIndex:
                     raw_meta = {}
                     tags = []
                 orig_people = extract_people(raw_meta, tags, db_path=self.db_path, conn=self.conn)
-                updates.append((json.dumps(orig_people), path))
-                
+                # Plus the faces still named, which after the clear are the manual ones.
+                people = self._with_face_names({"path": path, "people": orig_people})
+                updates.append((json.dumps(people), path))
+
             if updates:
                 cursor.executemany("UPDATE photos SET people = ? WHERE path = ?", updates)
-                
+
             self.conn.commit()
-            return True
+            return cleared
         except Exception as e:
             logger.error(f"Error resetting face assignments in database: {e}")
             if self.conn:

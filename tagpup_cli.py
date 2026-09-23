@@ -946,7 +946,7 @@ def index_faces(ctx, directory: str, force: bool):
 
 
 @cli.command("cluster-faces")
-@click.option("--reset", is_flag=True, help="Reset all face name assignments back to NULL before clustering.")
+@click.option("--reset", is_flag=True, help="Clear the names clustering gave to faces before clustering again. Names given by hand are kept.")
 @click.option("--max-iterations", default=5, type=int, help="Maximum iterations for propagation loop (set to 0 for anchor only).")
 @click.pass_context
 def cluster_faces(ctx, reset: bool, max_iterations: int):
@@ -963,8 +963,8 @@ def cluster_faces(ctx, reset: bool, max_iterations: int):
 
     if reset:
         try:
-            photo_index.reset_face_assignments()
-            console.print("[bold yellow]Successfully reset all face name assignments and restored original people metadata in database.[/bold yellow]")
+            cleared = photo_index.reset_face_assignments()
+            console.print(f"[bold yellow]Cleared {cleared} automatically assigned face name(s); names given by hand are kept.[/bold yellow]")
         except Exception as e:
             console.print(f"[bold red]Failed to reset face assignments: {e}[/bold red]")
 

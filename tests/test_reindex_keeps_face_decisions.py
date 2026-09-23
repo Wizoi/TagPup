@@ -189,5 +189,49 @@ class TestBuildOrUpdateWritesInPlace(FaceDecisionCase):
         self.assertEqual({box: row[0] for box, row in self.faces().items()}, ids)
 
 
+class FakeClusterer:
+    def cluster_and_resolve_identities(self, photo_index, taxonomy, max_iterations=5):
+        return {}
+
+
+class TestResetKeepsHandGivenNames(FaceDecisionCase):
+    @patch("tagpup_cli.FaceProcessor", FakeClusterer)
+    def test_cluster_faces_reset_clears_only_automatic_names(self):
+        ids = self.seed()
+        result = self.run_cli(["cluster-faces", "--reset"])
+        self.assertEqual(result.exit_code, 0, result.output)
+
+        faces = self.faces()
+        self.assertEqual(faces["[0, 0, 4, 4]"][1:3], ("Rowan Thackeray", "manual"))
+        self.assertEqual(faces["[4, 0, 8, 4]"][1:3], (None, "manual"))
+        self.assertEqual(faces["[8, 0, 12, 4]"][1:], (None, "manual", 1, "passer-by"))
+        self.assertEqual(faces["[0, 8, 4, 12]"][1:3], (None, None),
+                         "an automatic name survived the reset")
+
+        index = PhotoIndex(db_path=self.db_path)
+        index.load()
+        try:
+            self.assertEqual(index.get_manual_face_names(), {
+                ids["[0, 0, 4, 4]"]: "Rowan Thackeray",
+                ids["[4, 0, 8, 4]"]: None,
+                ids["[8, 0, 12, 4]"]: None,
+            })
+            # The photo still lists the person named by hand; not the one clustering named.
+            self.assertEqual(index.metadata[0]["people"], ["Rowan Thackeray"])
+        finally:
+            index.close()
+
+    def test_reset_reports_the_faces_it_cleared(self):
+        self.seed()
+        index = PhotoIndex(db_path=self.db_path)
+        index.load()
+        try:
+            cleared = index.reset_face_assignments()
+            self.assertIsNot(cleared, True, "reported that it ran, not what it changed")
+            self.assertEqual(cleared, 1)
+        finally:
+            index.close()
+
+
 if __name__ == "__main__":
     unittest.main()

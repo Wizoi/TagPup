@@ -268,7 +268,7 @@ Manually scans photos and indexes face embeddings into the database.
 Runs self-tuning identity resolution to cluster face embeddings and assign names.
 - **Usage**: `run.bat [global-options] cluster-faces`
 - **Options**:
-  - `--reset`: Reset all face name assignments back to `NULL` before clustering.
+  - `--reset`: Clear the names clustering assigned (automatic names) before clustering again. Names a person gave (`name_source = 'manual'`), their "nobody" decisions and exclusions are kept: they are the anchors clustering works from.
   - `--max-iterations INTEGER`: Maximum iterations for propagation loop (default: `5`, set to `0` for anchor-only).
 
 ---
