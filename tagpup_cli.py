@@ -283,8 +283,10 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
 
     # Extract metadata in batches of 500
     console.print(f"[bold cyan]Reading metadata in batches for {len(images_to_process)} image(s)...[/bold cyan]")
-    extractor = MetadataExtractor(exiftool_path=exiftool_path)
-    
+    # The indexer records what it reads, so it may give a photo its identity as it
+    # goes; see MetadataExtractor.mint_identities.
+    extractor = MetadataExtractor(exiftool_path=exiftool_path, mint_identities=True)
+
     batch_size = 500
     all_metadata = []
     

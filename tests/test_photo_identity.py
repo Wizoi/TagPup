@@ -108,13 +108,41 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
             "D:/a.jpg", {"XMP:DocumentID": "xmp.did:abc", "XMP:Subject": ["Beach"]}, None)
         self.assertEqual(record["document_id"], "xmp.did:abc")
 
-    def test_minting_can_be_turned_off(self):
-        # For a read-only pass over somebody else's library, or a test.
+    def test_minting_is_asked_for_not_assumed(self):
+        # Reading a folder to show it used to write an identity into every photo that
+        # had none, and nothing told the index -- whose rows then looked out of date.
+        # The indexer, which records what it read, asks for minting; nothing else does.
         from metadata import MetadataExtractor
 
-        self.assertFalse(MetadataExtractor(mint_identities=False).mint_identities)
-        self.assertTrue(MetadataExtractor().mint_identities,
-                        "minting is off by default, so renames still strand rows")
+        self.assertFalse(MetadataExtractor().mint_identities,
+                         "reading a photo writes to it")
+        self.assertTrue(MetadataExtractor(mint_identities=True).mint_identities)
+
+    def test_the_indexer_mints_and_nothing_else_does(self):
+        """Indexing records what it read, so it may write an identity; a scan may not.
+
+        Without minting at index time renames still strand rows, so the indexer has to
+        ask for it. Every other reader -- the folder scans in both servers, suggest,
+        inspect -- must not.
+        """
+        import ast
+
+        def minting_calls(path):
+            with open(os.path.join(WORKSPACE_DIR, path), encoding="utf-8") as handle:
+                tree = ast.parse(handle.read())
+            found = []
+            for func in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
+                for call in (n for n in ast.walk(func) if isinstance(n, ast.Call)):
+                    name = getattr(call.func, "id", getattr(call.func, "attr", None))
+                    if name == "MetadataExtractor" and any(
+                            k.arg == "mint_identities" and getattr(k.value, "value", None) is True
+                            for k in call.keywords):
+                        found.append(func.name)
+            return found
+
+        self.assertEqual(["index"], minting_calls("tagpup_cli.py"))
+        for server in ("scripts/tagpup_server.py", "scripts/tuner_server.py"):
+            self.assertEqual([], minting_calls(server), server)
 
     def test_a_minted_identity_refreshes_the_change_stamps(self):
         """Writing the identity changes the file, so mtime and size must be re-read.

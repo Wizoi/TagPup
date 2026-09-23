@@ -302,14 +302,15 @@ def extract_captions(meta: Dict[str, Any]) -> List[str]:
     return list(dict.fromkeys(c for c in captions if c))
 
 class MetadataExtractor:
-    def __init__(self, exiftool_path: Optional[str] = None, mint_identities: bool = True):
+    def __init__(self, exiftool_path: Optional[str] = None, mint_identities: bool = False):
         self.exiftool_path = exiftool_path
         #: Write an identity into photos that lack one, as they are read.
         #:
-        #: On by default because the cost is small and the alternative is losing work:
-        #: without an identity a renamed photo strands its index row, and the row holds
-        #: the faces somebody named by hand. Pass False where the files must not be
-        #: written -- a read-only pass over somebody else's library, or a test.
+        #: Only the indexer asks for this, because it records what it read -- the
+        #: identity, and the file's new mtime and size -- in the index. Without an
+        #: identity a renamed photo strands its row, and the row holds the faces
+        #: somebody named by hand. It used to be on for every reader, so opening a
+        #: folder wrote into its photos and the index rows then looked out of date.
         self.mint_identities = mint_identities
 
     def batch_read(self, file_paths: List[str], db_path: Optional[str] = None) -> List[Dict[str, Any]]:
