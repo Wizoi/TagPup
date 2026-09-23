@@ -35,10 +35,15 @@ class TagTaxonomy:
                 self.db_path = os.path.splitext(file_path)[0] + ".db"
         # Store full paths of known hierarchical tags, e.g., {"Family/Immediate/Jane Doe", "Activity/Botanical Garden"}
         self.paths: Set[str] = set()
+        # What the database held when this was loaded or last saved. save_to_db adds
+        # only paths beyond these: everything else is either still there or was
+        # deleted or renamed by someone else since, and must stay that way.
+        self._in_db: Set[str] = set()
 
     def load(self):
         """Load taxonomy from database tag_taxonomy table, falling back to JSON file if DB doesn't have it."""
         self.paths = set()
+        self._in_db = set()
         loaded_from_db = False
         
         # 1. Try to load from database
@@ -51,6 +56,7 @@ class TagTaxonomy:
                     cursor.execute("SELECT tag FROM tag_taxonomy")
                     for row in cursor.fetchall():
                         self.paths.add(row[0])
+                    self._in_db = set(self.paths)
                     loaded_from_db = True
                 conn.close()
             except Exception as e:
@@ -102,8 +108,11 @@ class TagTaxonomy:
                 )
             """)
             
-            # For each path in self.paths, insert if not present
-            for path in sorted(list(self.paths)):
+            # Insert the paths added since this was loaded, and their ancestors. Not
+            # the whole set: a long-running indexer holds what it loaded, and a tag
+            # deleted or renamed in the app meanwhile came back on its next save.
+            added = self.paths - self._in_db
+            for path in sorted(added):
                 parts = self.normalize_tag(path).split("/")
                 parent_id = None
                 accumulated_path = ""
@@ -135,6 +144,7 @@ class TagTaxonomy:
                         parent_id = cursor.lastrowid
             conn.commit()
             conn.close()
+            self._in_db |= added
         except Exception as e:
             logger.error(f"Error syncing taxonomy paths to DB: {e}")
 
