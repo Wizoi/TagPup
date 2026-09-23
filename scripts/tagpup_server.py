@@ -619,24 +619,41 @@ def move_photo_rows(db_path, renames):
                     break
                 arriving.add(new_key)
 
+        has_cache = bool(cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'embedding_cache'").fetchone())
         staged = []
         for n, (old_path, new_path) in enumerate(plan.items()):
             photo_ids = rows_at(cursor, "photos", "path", "rowid", old_path)
             face_ids = rows_at(cursor, "faces", "photo_path", "id", old_path)
+            # The cached CLIP embedding too: a rename keeps the file's mtime and size,
+            # which is what the cache is checked against, so it is still good. Left
+            # behind, the renamed photo was embedded again from scratch.
+            cache_ids = (rows_at(cursor, "embedding_cache", "path", "rowid", old_path)
+                         if has_cache else [])
             # "<" cannot appear in a Windows file name, and this never outlives
             # the transaction.
             placeholder = "<moving %d>" % n
             cursor.executemany("UPDATE photos SET path = ? WHERE rowid = ?",
                                [(placeholder, rowid) for rowid in photo_ids])
-            staged.append((paths.stored(new_path), photo_ids, face_ids))
+            if cache_ids:
+                cursor.executemany("UPDATE embedding_cache SET path = ? WHERE rowid = ?",
+                                   [(placeholder, rowid) for rowid in cache_ids])
+            staged.append((paths.stored(new_path), photo_ids, face_ids, cache_ids))
 
         moved = 0
-        for new_stored, photo_ids, face_ids in staged:
+        for new_stored, photo_ids, face_ids, cache_ids in staged:
             for rowid in photo_ids:
                 cursor.execute("UPDATE photos SET path = ? WHERE rowid = ?", (new_stored, rowid))
                 moved += cursor.rowcount
             cursor.executemany("UPDATE faces SET photo_path = ? WHERE id = ?",
                                [(new_stored, face_id) for face_id in face_ids])
+            if cache_ids:
+                # Whatever was cached under the new name described another file; it
+                # is only derived data, keyed by path, and would block the move.
+                where, params = paths.sql_equals("path", new_stored)
+                cursor.execute("DELETE FROM embedding_cache WHERE " + where, params)
+                cursor.executemany("UPDATE embedding_cache SET path = ? WHERE rowid = ?",
+                                   [(new_stored, rowid) for rowid in cache_ids])
         return moved, skipped
 
     moved, skipped = tagpup_db.write_with_connection(
@@ -1996,6 +2013,36 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 logger.error(f"Error loading suggestions cache: {e}")
 
     @classmethod
+    def move_saved_suggestions(cls, db_path, renames):
+        """File each renamed photo's saved suggestions under its new name, and save.
+
+        `renames` maps old path to new, in any spelling. Returns how many moved. The
+        page looks suggestions up by path, so a renamed photo showed none, the next
+        Suggest ran it again from scratch, and the old entry stayed for ever.
+        """
+        by_key = {paths.key(old): paths.stored(new) for old, new in renames.items()}
+        moved = 0
+        with cls.model_lock:
+            for status in cls.suggest_status.values():
+                saved = status.get("suggestions") if isinstance(status, dict) else None
+                if not saved:
+                    continue
+                # Taken out first, then put back, so names shuffled among themselves
+                # never overwrite one another.
+                leaving = {path: saved.pop(path) for path in list(saved)
+                           if paths.key(path) in by_key}
+                for old_path, entry in leaving.items():
+                    new_path = by_key[paths.key(old_path)]
+                    raw = entry.get("raw_suggestions") if isinstance(entry, dict) else None
+                    if isinstance(raw, dict) and "path" in raw:
+                        raw["path"] = new_path
+                    saved[new_path] = entry
+                    moved += 1
+        if moved:
+            cls.save_suggestions_cache(db_path)
+        return moved
+
+    @classmethod
     def save_suggestions_cache(cls, db_path, min_interval=0.0):
         """Write this library's saved suggestions. True if the file was written.
 
@@ -3042,6 +3089,13 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     # with scripts/relink_renamed_photos.py.
                     logger.error("Renamed %d photo(s) but could not move their index "
                                  "rows: %s", len(renamed), e)
+                # The files moved whatever the index did, so their suggestions follow.
+                try:
+                    TagPupHTTPRequestHandler.move_saved_suggestions(
+                        self.db_path, {**occupant_moves, **renamed})
+                except Exception as e:
+                    logger.error("Renamed %d photo(s) but could not move their saved "
+                                 "suggestions: %s", len(renamed), e)
 
             # Clear old and scan new cache entries
             if paths.key(folder_path) in TagPupHTTPRequestHandler.folder_cache:
