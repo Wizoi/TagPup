@@ -238,6 +238,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const detailDateTaken = document.getElementById('detail-date-taken');
     const inputPhotoTitle = document.getElementById('input-photo-title');
     const btnSaveTitle = document.getElementById('btn-save-title');
+    const btnSaveDetails = document.getElementById('btn-save-details');
     const detailPeople = document.getElementById('detail-people');
     const inputAddPerson = document.getElementById('input-add-person');
     const btnAddPerson = document.getElementById('btn-add-person');
@@ -287,6 +288,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // initialization", inside scanFolder's promise chain, where it surfaced as
     // "Error scanning folder" and left the folder unopenable until the cache expired.
     let facesRequestToken = 0;
+
+    // The Image Details write in progress, and the "Save changes?" question being
+    // asked, if any. Up here for the same reason: restoring a cached folder at startup
+    // reaches selectPhoto and showFolderView, which read both.
+    let detailSaveInFlight = null;
+    let leavePrompt = null;
 
     // Abort controller for scan fetches
     let scanAbortController = null;
@@ -530,76 +537,349 @@ document.addEventListener('DOMContentLoaded', () => {
     inputAddPerson.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveSingleAddPerson(); });
     inputAddTag.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveSingleAddTag(); });
 
-    /**
-     * Commit what was typed when a field is left, not only when Enter is pressed.
-     *
-     * These fields used to commit on Enter alone, and nothing tracked unsaved text.
-     * Typing a tag and then clicking the next photo discarded it silently:
-     * selectPhoto simply repopulated the panel. Each loss is small, which is what
-     * made it easy to miss and tiresome to keep hitting.
-     *
-     * Escape is the way out for text you have decided against -- it clears the field
-     * so that leaving it commits nothing.
-     */
-    function commitFieldOnBlur(input, save, isPersonField) {
-        input.addEventListener('blur', async () => {
-            if (input.dataset.abandoned === 'true') {
-                input.dataset.abandoned = '';
-                return;
-            }
-            const typed = input.value.trim();
-            if (!typed) return;
+    // ---- Unsaved edits in Image Details -------------------------------------
+    //
+    // Enter, Add and a click on a pill still write at once, as they always have.
+    // What this covers is the text sitting in a field that nothing has written yet.
+    //
+    // It used to be committed when the field lost focus, and that lost it anyway:
+    // the commit resolved the tag first -- a round trip to the server for a pathed
+    // tag or a new person -- and clicking the next photo blurs the field on mousedown
+    // and navigates on click, long before that returns. selectPhoto had cleared the
+    // field by then, so the save found nothing to save. A title was never committed
+    // on leaving at all, and a brand-new keyword only said "press Enter".
+    //
+    // So nothing is written on blur. The panel knows when it holds something the
+    // photo does not; the header's Save button and Ctrl+S write it; and every way off
+    // the photo asks first. That is one question in one place, where the blur commit
+    // was a race against every route away.
 
-            // Would saving this have to ask where the tag belongs? If so, leave it
-            // for Enter or the Add button: a modal about the photo you just left,
-            // raised while you are looking at the next one, is its own kind of lost
-            // work.
-            const parts = typed.split(',').map(t => t.trim()).filter(Boolean);
-            for (const part of parts) {
-                const resolved = await resolveTagOrPerson(part, isPersonField, { prompt: false });
-                if (!resolved) {
-                    setStatus('ready',
-                        `"${part}" is new \u2014 press Enter to say where it belongs`);
-                    return;
-                }
-            }
-            save();
-        });
+    /** Does the panel show anything the photo does not hold yet? */
+    function hasUnsavedEdits() {
+        if (!activePhotoPath) return false;
+        const photo = folderPhotos.find(p => p.path === activePhotoPath);
+        if (!photo) return false;
+        if (inputAddTag.value.trim() || inputAddPerson.value.trim()) return true;
+        return inputPhotoTitle.value.trim() !== String(photo.title || '').trim();
+    }
+
+    function updateSaveButton() {
+        if (!btnSaveDetails) return;
+        btnSaveDetails.disabled = Boolean(detailSaveInFlight) || !hasUnsavedEdits();
+    }
+
+    /** Put the panel back to what the photo holds. */
+    function discardDetailEdits() {
+        inputAddTag.value = '';
+        inputAddPerson.value = '';
+        const photo = activePhotoPath && folderPhotos.find(p => p.path === activePhotoPath);
+        inputPhotoTitle.value = photo ? (photo.title || '') : '';
+        updateSaveButton();
+    }
+
+    [inputPhotoTitle, inputAddTag, inputAddPerson].forEach(input => {
+        input.addEventListener('input', updateSaveButton);
+    });
+
+    // Escape is the way out of text you have decided against: the tag and person
+    // fields empty, the title goes back to what the photo has.
+    [inputAddTag, inputAddPerson, inputPhotoTitle].forEach(input => {
         input.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
-            // Mark before clearing: clearing moves focus in some browsers, and the
-            // blur handler must know this text was abandoned on purpose.
-            input.dataset.abandoned = 'true';
-            input.value = '';
+            if (input === inputPhotoTitle) {
+                const photo = folderPhotos.find(p => p.path === activePhotoPath);
+                input.value = photo ? (photo.title || '') : '';
+            } else {
+                input.value = '';
+            }
+            updateSaveButton();
             input.blur();
         });
-    }
+    });
 
-    commitFieldOnBlur(inputAddPerson, saveSingleAddPerson, true);
-    commitFieldOnBlur(inputAddTag, saveSingleAddTag, false);
+    if (btnSaveDetails) btnSaveDetails.addEventListener('click', () => saveDetailEdits());
+
+    // Ctrl+S / Cmd+S. Captured, so it works from inside the field being typed in --
+    // which is where you are when you reach for it -- and always kept from the
+    // browser, whose Save Page dialog is never what was meant here.
+    document.addEventListener('keydown', (e) => {
+        if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+        if (e.key !== 's' && e.key !== 'S') return;
+        e.preventDefault();
+        if (leavePrompt) return;
+        if (hasUnsavedEdits()) saveDetailEdits();
+    }, true);
+
+    window.addEventListener('beforeunload', (e) => {
+        if (!hasUnsavedEdits()) return;
+        e.preventDefault();
+        e.returnValue = '';
+    });
 
     /**
-     * Uncommitted text belongs to the photo it was typed for, and to no other.
+     * Write what the panel holds and the photo does not, as one request.
      *
-     * These fields were never cleared on changing photo, so text typed for one
-     * survived into the next and Enter there applied it to the wrong photo. Clearing
-     * it says what was dropped rather than doing either silently.
+     * `fields` narrows it to what Enter or an Add button is about; the header's Save
+     * and Ctrl+S write everything. Resolves true once the photo holds what the panel
+     * showed -- including when that needed no write -- and false when it does not, in
+     * which case the typed text is left where it was.
+     *
+     * One at a time: a second call waits for the first and then looks again, so two
+     * requests never race each other with different ideas of the tag list.
      */
-    function clearPendingEntry() {
-        const dropped = [inputAddTag, inputAddPerson]
-            .filter(el => el && el.value.trim())
-            .map(el => {
-                const text = el.value.trim();
-                el.value = '';
-                return text;
+    function saveDetailEdits(fields = { title: true, tags: true, people: true }) {
+        if (detailSaveInFlight) {
+            return detailSaveInFlight.then(() => saveDetailEdits(fields));
+        }
+        const run = writeDetailEdits(fields).catch(err => {
+            // Resolving a name can fail too (the taxonomy write); that is a failed
+            // save like any other, and the text stays where it is.
+            console.error(err);
+            setStatus('error', `Not saved: ${err.message}`, { transient: false });
+            return false;
+        }).finally(() => {
+            if (detailSaveInFlight === run) detailSaveInFlight = null;
+            updateSaveButton();
+        });
+        detailSaveInFlight = run;
+        updateSaveButton();
+        return run;
+    }
+
+    async function writeDetailEdits(fields) {
+        const path = activePhotoPath;
+        const photo = path && folderPhotos.find(p => p.path === path);
+        if (!photo) return true;
+
+        const typedTitle = inputPhotoTitle.value.trim();
+        const tagText = fields.tags ? inputAddTag.value : '';
+        const personText = fields.people ? inputAddPerson.value : '';
+        const newTitle = fields.title && typedTitle !== String(photo.title || '').trim()
+            ? typedTitle
+            : null;
+
+        // Resolve everything before writing anything. A name whose placement was
+        // not settled stops the whole save, so that nothing is half-written and the
+        // text stays in the field to be tried again.
+        const typed = [
+            ...splitTyped(tagText).map(text => ({ text, isPerson: false })),
+            ...splitTyped(personText).map(text => ({ text, isPerson: true })),
+        ];
+        const resolved = [];
+        const unresolved = [];
+        for (const item of typed) {
+            const tag = await resolveTagOrPerson(item.text, item.isPerson);
+            if (tag) resolved.push({ tag, isPerson: item.isPerson });
+            else unresolved.push(item.text);
+        }
+        if (unresolved.length) {
+            setStatus('error', `Not saved: ${unresolved.join(', ')} still needs a place`,
+                { transient: false });
+            return false;
+        }
+
+        const tags = (photo.tags || []).slice();
+        const added = [];
+        for (const item of resolved) {
+            if (photoAlreadyHas({ tags }, item.tag)) continue;
+            tags.push(item.tag);
+            added.push(item);
+        }
+
+        const clearTyped = () => {
+            if (activePhotoPath !== photo.path) return;
+            // Only what was written: text typed while the request was out stays.
+            if (fields.tags && inputAddTag.value === tagText) inputAddTag.value = '';
+            if (fields.people && inputAddPerson.value === personText) inputAddPerson.value = '';
+        };
+
+        if (!added.length && newTitle === null) {
+            clearTyped();
+            return true;
+        }
+
+        setStatus('busy', 'Saving...');
+        let data;
+        try {
+            const res = await fetch('/api/photo/save-metadata', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    path,
+                    title: newTitle === null ? photo.title : newTitle,
+                    tags,
+                })
             });
-        if (dropped.length) {
-            setStatus('ready', `Not saved: ${dropped.join(', ')}`);
+            data = await res.json();
+            if (!data.success) throw new Error(data.error || 'Failed to save');
+        } catch (err) {
+            console.error(err);
+            setStatus('error', `Not saved: ${err.message}`, { transient: false });
+            alert(`Error saving ${photo.filename || baseName(path)}: ${err.message}`);
+            return false;
+        }
+
+        photo.tags = tags;
+        if (newTitle !== null) {
+            photo.title = newTitle;
+            photo.captions = newTitle ? [newTitle] : [];
+        }
+        const addedPeople = added.filter(item => item.isPerson);
+        if (addedPeople.length) {
+            if (!photo.people) photo.people = [];
+            addedPeople.forEach(item => {
+                const leaf = leafOf(item.tag);
+                if (!photo.people.includes(leaf)) photo.people.push(leaf);
+            });
+        }
+        clearTyped();
+        if (data.new_path && data.new_path !== path) {
+            photo.path = data.new_path;
+            photo.filename = baseName(data.new_path);
+        }
+
+        // The file is written. Whatever goes wrong redrawing the page from here on
+        // is logged, not reported as a failed save: saying "Not saved" about a
+        // photo that was saved would keep you on it, offering to save it again.
+        try {
+            refreshAfterDetailSave(photo, path, newTitle, added);
+        } catch (err) {
+            console.error('Saved, but redrawing the page failed:', err);
+        }
+        setStatus('ready', `Saved ${photo.filename || baseName(photo.path)}`);
+        return true;
+    }
+
+    function refreshAfterDetailSave(photo, path, newTitle, added) {
+        saveToLocalStorageCache();
+        if (path !== photo.path && activePhotoPath === path) {
+            activePhotoPath = photo.path;
+            selectPhoto(photo.path);
+        }
+        if (activePhotoPath === photo.path) renderTags(photo.tags);
+        if (newTitle !== null) {
+            renderFileList();
+            renderThumbnails();
+        }
+        if (added.length) {
+            updateTagsDatalist();
+            fetchKnownTagsAndPeople();
         }
     }
-    // The title field is not in this list on purpose: it is pre-filled with the
-    // photo's current title, so blurring it unchanged would re-save the same value
-    // on every pass through the panel. It commits on Enter and on its Save button.
+
+    /** "Beach, Rowan" typed into one field is two entries. */
+    function splitTyped(text) {
+        return String(text || '').split(',').map(t => t.trim()).filter(Boolean);
+    }
+
+    /**
+     * May the panel move off this photo? Asks when it holds unsaved edits.
+     *
+     * Resolves true to go ahead: nothing was pending, it was saved, or it was
+     * discarded. False means stay -- Cancel, or a save that failed. A save already
+     * under way is waited for rather than asked about.
+     */
+    async function confirmLeavingPhoto() {
+        if (detailSaveInFlight) await detailSaveInFlight;
+        if (!hasUnsavedEdits()) return true;
+        if (leavePrompt) return false;   // already asking; this route waits its turn
+
+        const photo = folderPhotos.find(p => p.path === activePhotoPath);
+        const name = (photo && photo.filename) || baseName(activePhotoPath);
+        leavePrompt = askToSaveEdits(name);
+        let choice;
+        try {
+            choice = await leavePrompt;
+        } finally {
+            leavePrompt = null;
+        }
+        if (choice === 'save') return saveDetailEdits();
+        if (choice === 'discard') {
+            discardDetailEdits();
+            setStatus('ready', `Discarded changes to ${name}`);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Run a move off the photo, asking first if that would drop unsaved edits.
+     *
+     * Returns true when the move ran now; otherwise it runs once the question is
+     * answered, if the answer allows it.
+     */
+    function leavePhotoThen(move, { onStay } = {}) {
+        if (!hasUnsavedEdits() && !detailSaveInFlight) {
+            move();
+            return true;
+        }
+        confirmLeavingPhoto().then(ok => {
+            if (ok) move();
+            else if (onStay) onStay();
+        });
+        return false;
+    }
+
+    /**
+     * "Save changes to IMG_0001.jpg?" -- Save, Discard or Cancel.
+     *
+     * Save is focused, so Enter saves; Escape cancels. Resolves 'save', 'discard' or
+     * 'cancel'. Built like showPlacementModal, from the page's modal classes.
+     */
+    function askToSaveEdits(fileName) {
+        return new Promise((resolve) => {
+            const returnFocusTo = document.activeElement;
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay active unsaved-edits-modal';
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
+            overlay.innerHTML = `
+                <div class="modal-container" style="max-width: 420px;">
+                    <div class="modal-header">
+                        <h2></h2>
+                    </div>
+                    <div class="modal-body">
+                        <p style="margin: 0; color: var(--text-secondary); line-height: 1.5; font-size: 14px;">
+                            This photo has edits that have not been written to the file.
+                        </p>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" data-choice="cancel">Cancel</button>
+                        <button class="btn btn-secondary" data-choice="discard">Discard</button>
+                        <button class="btn btn-primary" data-choice="save">Save</button>
+                    </div>
+                </div>
+            `;
+            // The file name goes in as text, never as markup.
+            overlay.querySelector('h2').textContent = `Save changes to ${fileName}?`;
+            document.body.appendChild(overlay);
+
+            const close = (choice) => {
+                overlay.remove();
+                if (choice === 'cancel' && returnFocusTo && returnFocusTo.focus) {
+                    returnFocusTo.focus();
+                }
+                resolve(choice);
+            };
+            overlay.querySelectorAll('[data-choice]').forEach(btn => {
+                btn.addEventListener('click', () => close(btn.dataset.choice));
+            });
+            overlay.addEventListener('keydown', (e) => {
+                // Nothing underneath hears these keys while the question is open.
+                e.stopPropagation();
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    close('cancel');
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const focused = document.activeElement;
+                    const choice = focused && overlay.contains(focused) && focused.dataset.choice;
+                    close(choice || 'save');
+                }
+            });
+            overlay.querySelector('[data-choice="save"]').focus();
+        });
+    }
 
     btnSuggestTitleWand.addEventListener('click', applySuggestedTitle);
     btnApplyAllSingleSugg.addEventListener('click', applyAllSingleSuggestions);
@@ -712,6 +992,12 @@ document.addEventListener('DOMContentLoaded', () => {
      * move, and someone flipping through a shoot should not have to know that.
      */
     function stepPhoto(delta) {
+        // Ask before working out where to go, so the list does not scroll to a
+        // photo you then decide not to leave for.
+        if (hasUnsavedEdits() || detailSaveInFlight) {
+            leavePhotoThen(() => stepPhoto(delta));
+            return false;
+        }
         const items = Array.from(photoList.querySelectorAll('.photo-item-file'));
         if (items.length === 0) return false;
 
@@ -749,6 +1035,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     document.addEventListener('keydown', (e) => {
+        if (leavePrompt) return;   // "Save changes?" is open; its keys are its own
         if (keystrokeBelongsToField(document.activeElement)) return;
 
         // Ctrl+D copies the previous photo's tags onto this one, so that tagging a
@@ -784,7 +1071,7 @@ document.addEventListener('DOMContentLoaded', () => {
             fetch('/api/tags')
                 .then(res => res.json())
                 .then(data => {
-                    knownTags = data;
+                    knownTags = Array.isArray(data) ? data : [];   // see knownPeople below
                     updateTagsDatalist();
                     updatePeopleDatalist();
                 })
@@ -793,7 +1080,10 @@ document.addEventListener('DOMContentLoaded', () => {
             fetch('/api/people')
                 .then(res => res.json())
                 .then(data => {
-                    knownPeople = data;
+                    // A failed lookup answers {error: ...}. Taken as the list, it made
+                    // isPersonTag throw, and with it every save that checks for a
+                    // person already on the photo -- on a library with no faces yet.
+                    knownPeople = Array.isArray(data) ? data : [];
                     updatePeopleDatalist();
                 })
                 .catch(err => console.error("Error loading database people:", err));
@@ -1142,6 +1432,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Scans a folder
     function scanFolder(forceRefresh = false) {
+        // Opening a folder, or refreshing this one, repopulates the panel from what
+        // was scanned -- so it asks first, like any other way off the photo. Staying
+        // puts the open folder back in the box rather than leave it naming another.
+        if (hasUnsavedEdits() || detailSaveInFlight) {
+            leavePhotoThen(() => scanFolder(forceRefresh), {
+                onStay: () => { if (scannedFolder) folderPathInput.value = scannedFolder; },
+            });
+            return;
+        }
         const path = folderPathInput.value.trim();
         if (!path) {
             flagField(folderPathInput, 'Choose or type a folder to scan');
@@ -1431,7 +1730,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Select Folder Thumbnail View
     function showFolderView() {
+        // Leaving the photo for the grid is leaving the photo.
+        leavePhotoThen(openFolderView);
+    }
+
+    function openFolderView() {
         activePhotoPath = null;
+        discardDetailEdits();              // nothing pending by now; empty the fields
         facesRequestToken++;               // abandon any in-flight face lookup
         if (facesSection) facesSection.classList.add('hidden');
         
@@ -2337,7 +2642,19 @@ Click to add ${namesSomebody} to this photo.`;
 
     // Select Single Photo View
     function selectPhoto(path) {
-        if (path !== activePhotoPath) clearPendingEntry();
+        // Every way to another photo comes through here -- rows, the grid, the
+        // context menu, the arrow keys and swipes -- so this is where it asks.
+        if (path === activePhotoPath) showPhoto(path);
+        else leavePhotoThen(() => showPhoto(path));
+    }
+
+    function showPhoto(path) {
+        // Typed text belongs to the photo it was typed for. By now it has been
+        // saved or discarded, but a field is never carried to another photo.
+        if (path !== activePhotoPath) {
+            inputAddTag.value = '';
+            inputAddPerson.value = '';
+        }
         activePhotoPath = path;
 
         // Highlight sidebar element
@@ -2382,7 +2699,8 @@ Click to add ${namesSomebody} to this photo.`;
         }
         detailDateTaken.textContent = dateVal;
         inputPhotoTitle.value = photo.title || '';
-        
+        updateSaveButton();
+
         renderTags(photo.tags);
         renderSuggestionsPanel(photo.path);
     }
@@ -2581,165 +2899,21 @@ Click to add ${namesSomebody} to this photo.`;
     }
 
     // Single Photo Actions
+    //
+    // Enter in a field, its Add button and the title's own Save each write just that
+    // field, straight away. They go through saveDetailEdits, the one place that
+    // resolves typed names, merges them into the photo's tags and writes -- these
+    // were three near-copies of it, and the header's Save would have been a fourth.
     function saveSingleTitle() {
-        const path = activePhotoPath;
-        if (!path) return;
-        
-        const newTitle = inputPhotoTitle.value.trim();
-        const photo = folderPhotos.find(p => p.path === path);
-        if (!photo) return;
-
-        statusDot.className = 'status-indicator-dot busy';
-        statusText.textContent = 'Saving...';
-
-        fetch('/api/photo/save-metadata', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, title: newTitle, tags: photo.tags })
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                photo.title = newTitle;
-                photo.captions = newTitle ? [newTitle] : [];
-                
-                if (data.new_path && data.new_path !== path) {
-                    photo.path = data.new_path;
-                    photo.filename = baseName(data.new_path);
-                    activePhotoPath = data.new_path;
-                    selectPhoto(data.new_path);
-                }
-                
-                statusDot.className = 'status-indicator-dot';
-                statusText.textContent = 'Ready';
-                saveToLocalStorageCache();
-                renderFileList();
-                renderThumbnails();
-            } else {
-                throw new Error(data.error || 'Failed to save');
-            }
-        })
-        .catch(err => {
-            console.error(err);
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Error';
-            alert("Error saving title: " + err.message);
-        });
+        return saveDetailEdits({ title: true });
     }
 
-    async function saveSingleAddPerson() {
-        const path = activePhotoPath;
-        if (!path) return;
-        
-        const newPersonVal = inputAddPerson.value.trim();
-        if (!newPersonVal) return;
-
-        const photo = folderPhotos.find(p => p.path === path);
-        if (!photo) return;
-
-        const inputPeople = newPersonVal.split(',').map(t => t.trim()).filter(t => t);
-        const resolvedPeople = [];
-        
-        for (const p of inputPeople) {
-            const resolved = await resolveTagOrPerson(p, true);
-            if (resolved) {
-                resolvedPeople.push(resolved);
-            }
-        }
-        
-        if (resolvedPeople.length === 0) return;
-
-        const updatedTags = Array.from(new Set([...photo.tags, ...resolvedPeople]));
-
-        statusDot.className = 'status-indicator-dot busy';
-        statusText.textContent = 'Adding person...';
-
-        fetch('/api/photo/save-metadata', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, title: photo.title, tags: updatedTags })
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                photo.tags = updatedTags;
-                
-                if (!photo.people) photo.people = [];
-                resolvedPeople.forEach(p => {
-                    const leaf = leafOf(p);
-                    if (!photo.people.includes(leaf)) photo.people.push(leaf);
-                });
-                
-                renderTags(updatedTags);
-                inputAddPerson.value = '';
-                statusDot.className = 'status-indicator-dot';
-                statusText.textContent = 'Ready';
-                saveToLocalStorageCache();
-                fetchKnownTagsAndPeople();
-            } else {
-                throw new Error(data.error || 'Failed to save');
-            }
-        })
-        .catch(err => {
-            console.error(err);
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Error';
-            alert("Error adding person: " + err.message);
-        });
+    function saveSingleAddPerson() {
+        return saveDetailEdits({ people: true });
     }
 
-    async function saveSingleAddTag() {
-        const path = activePhotoPath;
-        if (!path) return;
-        
-        const newTagVal = inputAddTag.value.trim();
-        if (!newTagVal) return;
-
-        const photo = folderPhotos.find(p => p.path === path);
-        if (!photo) return;
-
-        const inputTags = newTagVal.split(',').map(t => t.trim()).filter(t => t);
-        const resolvedTags = [];
-        for (const t of inputTags) {
-            const resolved = await resolveTagOrPerson(t, false);
-            if (resolved) {
-                resolvedTags.push(resolved);
-            }
-        }
-        
-        if (resolvedTags.length === 0) return;
-
-        const updatedTags = Array.from(new Set([...photo.tags, ...resolvedTags]));
-
-        statusDot.className = 'status-indicator-dot busy';
-        statusText.textContent = 'Adding tag...';
-
-        fetch('/api/photo/save-metadata', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, title: photo.title, tags: updatedTags })
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                photo.tags = updatedTags;
-                renderTags(updatedTags);
-                inputAddTag.value = '';
-                updateTagsDatalist();
-                statusDot.className = 'status-indicator-dot';
-                statusText.textContent = 'Ready';
-                saveToLocalStorageCache();
-                fetchKnownTagsAndPeople();
-            } else {
-                throw new Error(data.error || 'Failed to save');
-            }
-        })
-        .catch(err => {
-            console.error(err);
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Error';
-            alert("Error adding tag: " + err.message);
-        });
+    function saveSingleAddTag() {
+        return saveDetailEdits({ tags: true });
     }
 
     function deletePhotoTag(tagToRemove) {
@@ -2884,7 +3058,9 @@ Click to add ${namesSomebody} to this photo.`;
                 renderFileList();
                 renderThumbnails();
 
-                // Select the next photo or fall back to grid/folder view
+                // Select the next photo or fall back to grid/folder view. Edits
+                // typed for the deleted photo are not asked about: it is no longer
+                // in folderPhotos, so hasUnsavedEdits finds nothing to save them to.
                 if (folderPhotos.length === 0) {
                     showFolderView();
                 } else {

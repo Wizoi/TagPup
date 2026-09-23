@@ -277,23 +277,10 @@ describe("taking it back", () => {
 });
 
 describe("not losing what was typed", () => {
-  test("leaving the field commits a tag that needs no decision", async (t) => {
-    // A path spells out where it goes, so there is nothing to ask about.
-    const { document, window, server: s } = await scanned(t);
-    press(document, "ArrowDown");
-
-    const tagInput = document.getElementById("input-add-tag");
-    tagInput.value = "Places/Beach";
-    tagInput.dispatchEvent(new window.Event("blur"));
-    await new Promise((r) => window.setTimeout(r, 60));
-
-    const body = s.lastBody("save-metadata");
-    assert.ok(body && body.tags.includes("Places/Beach"), "the typed tag was discarded");
-  });
-
-  test("a brand-new bare tag waits for Enter rather than raising a modal", async (t) => {
-    // Placing a new tag is a question, and asking it about the photo you just left
-    // while you are looking at the next one is its own kind of lost work.
+  // Leaving a field used to commit what was in it. That commit raced the move to
+  // the next photo and lost it (see unsaved-edits.test.mjs, which covers the Save
+  // button, Ctrl+S and the prompt that replaced it). Blurring now writes nothing.
+  test("leaving the field neither writes nor asks", async (t) => {
     const { document, window, server: s } = await scanned(t);
     press(document, "ArrowDown");
 
@@ -302,23 +289,26 @@ describe("not losing what was typed", () => {
     tagInput.dispatchEvent(new window.Event("blur"));
     await new Promise((r) => window.setTimeout(r, 60));
 
-    assert.equal(s.lastBody("save-metadata"), undefined, "it saved without asking");
-    assert.match(document.getElementById("status-text").textContent, /press Enter/);
+    assert.equal(s.lastBody("save-metadata"), undefined, "it saved on blur");
+    assert.equal(document.querySelector(".modal-overlay.active"), null, "it asked on blur");
+    assert.equal(tagInput.value, "Sunset", "the typed text was cleared");
   });
 
   test("typed text never follows you to the next photo", async (t) => {
     // It used to: the field was only cleared on a successful save, so text typed
     // for one photo survived into the next and Enter applied it to the wrong one.
+    // Moving on now asks; discarding is the one answer that leaves the text behind.
     const { document, window } = await scanned(t);
     press(document, "ArrowDown");
 
     const tagInput = document.getElementById("input-add-tag");
     tagInput.value = "Sunset";
     press(document, "ArrowDown");
+    document.querySelector('.unsaved-edits-modal [data-choice="discard"]').click();
     await new Promise((r) => window.setTimeout(r, 40));
 
+    assert.equal(activePath(document), "D:\\p\\b.jpg");
     assert.equal(tagInput.value, "", "the text carried over to another photo");
-    assert.match(document.getElementById("status-text").textContent, /Not saved: Sunset/);
   });
 
   test("an empty field commits nothing", async (t) => {

@@ -281,9 +281,26 @@ body {
     color: white;
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
     background-color: var(--accent-hover);
     box-shadow: 0 0 12px rgba(99, 102, 241, 0.4);
+}
+
+/* Image Details' Save is disabled whenever there is nothing to save, and has to
+   read as disabled -- not as a live button that ignores you. */
+.btn-primary:disabled {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    cursor: not-allowed;
+}
+
+/* .btn drops the focus outline; the "Save changes?" prompt needs it back, because
+   which button Enter will press is the whole point of focusing one. */
+.unsaved-edits-modal .btn:focus-visible,
+.unsaved-edits-modal .btn:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
 }
 
 .btn-secondary {

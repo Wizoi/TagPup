@@ -58,20 +58,36 @@ on a partly tagged photo, which is the one you are most likely to be standing on
 is offered only when the previous photo has something this one lacks, and the button
 says what it would copy and from where.
 
-**Not losing what was typed.** The tag and person fields commit when they lose focus,
-not only on Enter. Two limits:
-- Only text that resolves **without a question** is committed this way. A brand-new
-  bare tag needs a placement decision, and raising that modal about the photo you just
-  left, while you are looking at the next one, is its own kind of lost work — so it
-  waits for Enter or the Add button, where a modal is expected.
-- Uncommitted text is cleared when the photo changes, and the status line says what was
-  dropped. The fields were previously cleared only on a successful save, so text typed
-  for one photo survived into the next and Enter there applied it to **the wrong
-  photo**.
+**Not losing what was typed.** Enter in a field, its Add button, the title's own Save
+and a click on a pill still write at once. What is typed and not yet written — text in
+the tag or person field, or a title that differs from the photo's — is an **unsaved
+edit**, and nothing is ever dropped silently:
+- **Save** at the right of the Image Details header writes all of it in one request.
+  It is disabled whenever the panel matches the photo: typing and deleting, or putting
+  the title back, leaves nothing to save. Its tooltip is `Save (Ctrl+S)`.
+- **`Ctrl+S`** (`Cmd+S` on macOS) does the same from anywhere, including from inside
+  the field being typed in. It is always kept from the browser, so its Save Page
+  dialog never opens.
+- **Every way off the photo asks first** — arrow keys, swipe, clicking or pressing
+  Enter on another row, the folder view, opening another folder, Refresh: "Save
+  changes to `<file>`?" with **Save** (focused; `Enter`), **Discard** and **Cancel**
+  (`Escape`). Save moves on only if the write succeeded; on failure you stay, with the
+  error and the edit. Discard drops the edit and moves on. Cancel stays with the edit
+  intact.
+- Closing or reloading the tab with an unsaved edit raises the browser's own prompt.
+- A typed name must resolve before anything is written. One whose placement is not
+  settled (a placement question cancelled) stops the save and stays in the field.
+  Names the photo already carries are not written again — compared the way the rest of
+  the app compares them (`photoAlreadyHas`, so a person matches by name).
 
-`Escape` abandons what is in a field, so leaving it commits nothing. The title field
-is deliberately excluded from blur-commit: it is pre-filled with the current title, so
-blurring it unchanged would re-save the same value on every pass.
+Leaving a field no longer commits it. It used to, and that lost the tag anyway: the
+commit resolved the name first — a round trip for a pathed tag or a new person — and
+clicking the next photo blurs the field on mousedown and navigates on click, long
+before that returns. By then the field had been cleared for the next photo, and the
+save found nothing. The prompt replaced it.
+
+`Escape` in the tag or person field empties it; in the title field it puts back the
+photo's title.
 
 ### 0.2 What the analysis found
 
