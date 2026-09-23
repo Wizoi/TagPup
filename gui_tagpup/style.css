@@ -1828,6 +1828,32 @@ input:checked + .slider:before {
    a pan. Vertical scrolling is left alone. */
 #main-image {
     touch-action: pan-y;
+    cursor: zoom-in;
+}
+
+/* Zoom: the whole window, above everything, the photo as large as fits. The image
+   element fills it and object-fit scales the original to fit; the 800px preview
+   sits behind as a background scaled the same way, so the first frame is not
+   empty. */
+.image-zoom-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    background: rgba(0, 0, 0, 0.94);
+    cursor: zoom-out;
+}
+
+.image-zoom-overlay img {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    padding: 4px;
+    object-fit: contain;
+    background-origin: content-box;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: contain;
 }
 
 /* A field the app has objected to. The message is on the status line and in the

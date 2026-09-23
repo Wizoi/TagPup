@@ -2836,6 +2836,7 @@ Click to add ${namesSomebody} to this photo.`;
      * matching every photo viewer people already use.
      */
     const SWIPE_MIN_PX = 60;
+    const DRAG_MIN_PX = 10;
     function enableSwipeNavigation(surface) {
         if (!surface) return;
         let startX = null;
@@ -2848,6 +2849,7 @@ Click to add ${namesSomebody} to this photo.`;
             pointerId = e.pointerId;
             startX = e.clientX;
             startY = e.clientY;
+            delete surface.dataset.dragged;
         });
 
         const finish = (e) => {
@@ -2858,6 +2860,11 @@ Click to add ${namesSomebody} to this photo.`;
             startX = null;
             startY = null;
 
+            // A drag is not a click. The browser still fires one after a mouse
+            // swipe, and the image opens the zoom on click -- this is how that
+            // handler tells the two apart.
+            if (Math.hypot(dx, dy) > DRAG_MIN_PX) surface.dataset.dragged = 'true';
+
             if (Math.abs(dx) < SWIPE_MIN_PX) return;      // a tap, or a twitch
             if (Math.abs(dx) <= Math.abs(dy)) return;      // a scroll that drifted
             stepPhoto(dx < 0 ? 1 : -1);
@@ -2865,6 +2872,83 @@ Click to add ${namesSomebody} to this photo.`;
 
         surface.addEventListener('pointerup', finish);
         surface.addEventListener('pointercancel', () => { pointerId = null; });
+    }
+
+    // ---- Zoom ---------------------------------------------------------------
+    //
+    // Click the photo to see it as large as the window allows -- for reading the
+    // writing on a sign or a name tag -- and click again, or Escape, to put it back.
+    // The 800px preview is already loaded, so it is shown at once, scaled up, as the
+    // image's background; the original is the image itself and paints over it when
+    // it arrives. The preview stays if the original is a format the browser cannot
+    // draw (TIFF, HEIC).
+    //
+    // Opening it is not leaving the photo: nothing in the panel changes, so it neither
+    // asks about unsaved edits nor makes any. While it is open the arrow keys do
+    // nothing, rather than change the photo underneath it.
+    const imageZoom = document.getElementById('image-zoom');
+    const imageZoomImg = document.getElementById('image-zoom-img');
+
+    function isZoomOpen() {
+        return Boolean(imageZoom) && !imageZoom.classList.contains('hidden');
+    }
+
+    function openZoom() {
+        if (!imageZoom || !activePhotoPath || !mainImage.getAttribute('src')) return;
+        const preview = mainImage.src;               // absolute, database prefix included
+        const original = new URL(preview, window.location.href);
+        original.searchParams.delete('size');      // no size: the file as it is on disk
+        imageZoomImg.style.backgroundImage = `url("${preview}")`;
+        imageZoomImg.src = original.href;
+        imageZoom.classList.remove('hidden');
+    }
+
+    function closeZoom() {
+        if (!isZoomOpen()) return;
+        imageZoom.classList.add('hidden');
+        imageZoomImg.removeAttribute('src');       // stop a large download nobody wants now
+        imageZoomImg.style.backgroundImage = '';
+    }
+
+    if (imageZoom) {
+        mainImage.addEventListener('click', () => {
+            if (mainImage.dataset.dragged === 'true') {
+                delete mainImage.dataset.dragged;  // that was a swipe
+                return;
+            }
+            openZoom();
+        });
+        imageZoom.addEventListener('click', closeZoom);
+        imageZoomImg.addEventListener('load', () => {
+            // The original has arrived; drop the preview so a transparent PNG does
+            // not show it through.
+            if (imageZoomImg.getAttribute('src')) imageZoomImg.style.backgroundImage = '';
+        });
+        imageZoomImg.addEventListener('error', () => {
+            // Not drawable here: fall back to the preview, scaled up. Once only --
+            // the preview failing too must not loop.
+            const preview = mainImage.src;
+            if (isZoomOpen() && preview && imageZoomImg.src !== preview) {
+                imageZoomImg.src = preview;
+            }
+        });
+
+        // Captured, so it is decided before the arrow-key navigation hears it.
+        // Ctrl+S is left alone: its own listener is registered first and saves.
+        document.addEventListener('keydown', (e) => {
+            if (!isZoomOpen()) return;
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                closeZoom();
+                return;
+            }
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', ' ',
+                 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        }, true);
     }
 
     function renderTags(tags) {

@@ -28,6 +28,15 @@ gesture must clear 60px **and** exceed its own vertical movement, so a tap and a
 scroll that drifts sideways are both ignored. Modifier combinations are left to the
 browser.
 
+**Zoom.** A click on the main image opens it over the whole window, as large as fits
+(`object-fit: contain`, a few pixels of margin), for reading the writing on a sign or
+a name tag. It loads the original — `/api/photo-file` without `size` — and shows the
+800px preview, scaled up, until that arrives; if the browser cannot draw the original
+(TIFF, HEIC) the preview stays. A click anywhere on it, or `Escape`, closes it. While
+it is open the arrow keys do nothing rather than change the photo underneath. It is
+not leaving the photo, so it neither asks about unsaved edits nor makes any. A drag
+across the image is a swipe, not a click, and does not open it.
+
 Arrow keys are ignored while the caret is in a field where they mean something to the
 text being typed — but **not** in the filter box, which is a search control. A blanket
 check on `INPUT` used to catch it and return before `preventDefault`, so the browser
