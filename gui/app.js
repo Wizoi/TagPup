@@ -2726,6 +2726,45 @@ ${summary}${note}`)) {
     }
 
     /**
+     * The faces a group holds now, read from the cards still in it.
+     *
+     * Faces leave a group in place -- assigned, excluded -- without the group being
+     * drawn again, so the list it was drawn with goes stale the moment one does. The
+     * cluster buttons used to act on that list: Ignore Cluster excluded faces that had
+     * just been named by hand, wiping their names, and "Assign N" named faces that had
+     * just been excluded. The cards are what the person is looking at, so they decide.
+     */
+    function sectionFaceIds(section) {
+        return [...section.querySelectorAll('[data-face-id]')]
+            .map(card => Number(card.dataset.faceId));
+    }
+
+    function sectionPhotoCount(section) {
+        const photos = new Set();
+        section.querySelectorAll('[data-face-id]')
+            .forEach(card => photos.add(card.dataset.photoPath || ''));
+        return photos.size;
+    }
+
+    function notAClusterNote() {
+        const note = document.createElement('span');
+        note.className = 'not-a-cluster-note';
+        note.textContent = 'these are unrelated — handle them one at a time';
+        note.title = 'Face grouping puts together the faces that resemble '
+            + 'each other. These resembled nothing, so they are listed '
+            + 'together only because they have nowhere else to go. Select '
+            + 'the ones you recognise and use Assign Selected, or Exclude.';
+        return note;
+    }
+
+    function labelClusterAssign(button, count) {
+        const guessName = button.dataset.guessName || '';
+        button.textContent = `✓ Assign ${count}`;
+        button.title = `Assign all ${count} face(s) in this `
+            + `group to ${guessName} now. You can undo it straight after.`;
+    }
+
+    /**
      * Take faces out of the grid that is already on screen.
      *
      * Assigning or ignoring used to remove the handful of cards involved and then call
@@ -2761,15 +2800,29 @@ ${summary}${note}`)) {
             const titleSpan = section.querySelector('.matching-group-title');
             if (!titleSpan || modeSelect.value !== 'unmatched-faces') return;
 
-            const note = titleSpan.querySelector('.not-a-cluster-note');
-            const photos = new Set();
-            cards.forEach(card => photos.add(card.dataset.photoPath || ''));
+            // One face left is not a cluster any more -- the server's
+            // _dissolve_stranded_clusters moves such a survivor to the Unclustered
+            // pile on the next load. Treat it that way now: no heading claiming a
+            // group, and no button acting on "all" of one face.
+            if (cards.length === 1 && !section.dataset.unclustered) {
+                section.dataset.unclustered = '1';
+                section.querySelectorAll('.cluster-action, .cluster-suggestion')
+                    .forEach(el => el.remove());
+            }
+
+            const note = titleSpan.querySelector('.not-a-cluster-note')
+                || (section.dataset.unclustered ? notAClusterNote() : null);
             titleSpan.textContent = groupHeadingText(
                 section.dataset.groupTitle || '',
                 Boolean(section.dataset.unclustered),
                 cards.length,
-                photos.size);
+                sectionPhotoCount(section));
             if (note) titleSpan.appendChild(note);
+
+            // The one-click assign says how many it will assign. While a request is
+            // in flight it says so instead, and puts its own count back when done.
+            const accept = section.querySelector('.cluster-suggestion-assign');
+            if (accept && !accept.disabled) labelClusterAssign(accept, cards.length);
         });
 
         renderedFaceOrder = renderedFaceOrder.filter(id => !leaving.has(id));
@@ -2938,14 +2991,7 @@ ${summary}${note}`)) {
                 titleSpan.textContent = groupHeadingText(title, isUnclustered, numFaces, numPhotos);
 
                 if (isUnclustered) {
-                    const note = document.createElement('span');
-                    note.className = 'not-a-cluster-note';
-                    note.textContent = 'these are unrelated \u2014 handle them one at a time';
-                    note.title = 'Face grouping puts together the faces that resemble '
-                        + 'each other. These resembled nothing, so they are listed '
-                        + 'together only because they have nowhere else to go. Select '
-                        + 'the ones you recognise and use Assign Selected, or Exclude.';
-                    titleSpan.appendChild(note);
+                    titleSpan.appendChild(notAClusterNote());
                 }
 
                 // Every other person these photos still have no face for. Without it,
@@ -2995,16 +3041,30 @@ ${summary}${note}`)) {
                     // name. The undo offered afterwards is what makes that fair.
                     const guessAccept = document.createElement('button');
                     guessAccept.className = 'cluster-suggestion-assign';
-                    guessAccept.textContent = `\u2713 Assign ${groupFaces.length}`;
-                    guessAccept.title = `Assign all ${groupFaces.length} face(s) in this `
-                        + `group to ${guessName} now. You can undo it straight after.`;
+                    guessAccept.dataset.guessName = guessName;
+                    labelClusterAssign(guessAccept, groupFaces.length);
                     guessAccept.addEventListener('click', (e) => {
                         e.stopPropagation();
-                        const ids = groupFaces.map(f => f.id);
+                        // The faces in the group now, not the ones it was drawn with.
+                        const ids = sectionFaceIds(section);
+                        if (!ids.length) return;
                         guessAccept.disabled = true;
                         guessAccept.textContent = 'Assigning...';
-                        postMatchBulk(ids, guessName);
-                        offerAssignUndo(ids, guessName, 'assign');
+                        Promise.resolve(postMatchBulk(ids, guessName)).then(assigned => {
+                            // Undo only for what the server says it did. Offered
+                            // before the reply, a refused batch still read
+                            // "Assigned 5" and its Undo unmatched faces nobody had
+                            // assigned.
+                            if (assigned && assigned.length) {
+                                offerAssignUndo(assigned, guessName, 'assign');
+                            }
+                            // Whatever is left -- all of it, on a failure -- can be
+                            // tried again.
+                            if (guessAccept.isConnected) {
+                                guessAccept.disabled = false;
+                                labelClusterAssign(guessAccept, sectionFaceIds(section).length);
+                            }
+                        });
                     });
 
                     guess.appendChild(guessLabel);
@@ -3036,7 +3096,7 @@ ${summary}${note}`)) {
             // faces without asking, once the confirmation was turned off.
             if (modeSelect.value === 'unmatched-faces' && !isUnclustered) {
                 const assignBtn = document.createElement('button');
-                assignBtn.className = 'btn btn-primary btn-sm';
+                assignBtn.className = 'btn btn-primary btn-sm cluster-action';
                 assignBtn.style.padding = '2px 8px';
                 assignBtn.style.fontSize = '11px';
                 assignBtn.textContent = '👤 Assign Cluster';
@@ -3048,16 +3108,20 @@ ${summary}${note}`)) {
                                 return;
                             }
                         } else {
-                            if (!confirm(`Are you sure you want to assign all ${groupFaces.length} faces in this cluster to "${name}"?`)) {
+                            if (!confirm(`Are you sure you want to assign all ${sectionFaceIds(section).length} faces in this cluster to "${name}"?`)) {
                                 return;
                             }
                         }
-                        const faceIds = groupFaces.map(f => f.id);
+                        // Read when the name is given, not when the button was drawn:
+                        // faces may have left the group since, or while the prompt
+                        // was open.
+                        const faceIds = sectionFaceIds(section);
+                        if (!faceIds.length) return;
                         postMatchBulk(faceIds, name);
                     };
 
                     if (activePersonName === 'Unknown Faces') {
-                        showAutocompletePopup(groupFaces.length, executeAssignment);
+                        showAutocompletePopup(sectionFaceIds(section).length, executeAssignment);
                     } else {
                         const name = inputReassignName.value.trim();
                         if (!name) {
@@ -3075,7 +3139,7 @@ ${summary}${note}`)) {
                 // should stop being offered as a candidate to anyone. Doing it per
                 // face meant ticking thirty boxes to say one thing.
                 const ignoreBtn = document.createElement('button');
-                ignoreBtn.className = 'btn btn-secondary btn-sm';
+                ignoreBtn.className = 'btn btn-secondary btn-sm cluster-action';
                 ignoreBtn.style.padding = '2px 8px';
                 ignoreBtn.style.fontSize = '11px';
                 ignoreBtn.style.marginLeft = '6px';
@@ -3085,11 +3149,17 @@ ${summary}${note}`)) {
                     + 'Excluded bucket and can be put back.';
                 ignoreBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    const ids = groupFaces.map(f => f.id);
-                    const numPhotos = new Set(groupFaces.map(f => f.photo_path)).size;
-                    askBeforeIgnoring(ids.length, numPhotos, () => {
-                        postExcludeBulk(ids, 'ignored cluster');
-                        offerAssignUndo(ids, null, 'ignore');
+                    // The faces still in the group. Excluding clears a face's name,
+                    // so acting on the group as first drawn wiped the names of any
+                    // faces assigned from it since.
+                    const shown = sectionFaceIds(section);
+                    if (!shown.length) return;
+                    askBeforeIgnoring(shown.length, sectionPhotoCount(section), () => {
+                        const ids = sectionFaceIds(section);
+                        if (!ids.length) return;
+                        Promise.resolve(postExcludeBulk(ids, 'ignored cluster')).then(ok => {
+                            if (ok) offerAssignUndo(ids, null, 'ignore');
+                        });
                     });
                 });
                 header.appendChild(ignoreBtn);
@@ -3569,13 +3639,14 @@ This photo also names ${face.other_names.join(', ')}. `
         });
     }
 
+    /** Resolves true once the server has excluded the faces, false otherwise. */
     function postExcludeBulk(faceIds, presetReason) {
-        if (!faceIds.length) return;
+        if (!faceIds.length) return Promise.resolve(false);
         // A caller that has already asked the question passes the reason in, rather
         // than putting a second modal in front of the same decision.
         if (presetReason === undefined) {
             return askExcludeReason(faceIds.length).then(chosen => {
-                if (chosen === null) return;   // declined
+                if (chosen === null) return false;   // declined
                 return postExcludeBulk(faceIds, chosen);
             });
         }
@@ -3585,7 +3656,7 @@ This photo also names ${face.other_names.join(', ')}. `
             btnExcludeSelected.disabled = true;
             btnExcludeSelected.textContent = 'Excluding...';
         }
-        fetch('/api/faces/exclude', {
+        return fetch('/api/faces/exclude', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ face_ids: faceIds, reason: (reason || '').trim() || 'not a person' })
@@ -3604,10 +3675,12 @@ This photo also names ${face.other_names.join(', ')}. `
             clearFaceDetails();
             // Go through the mode dispatcher so the sidebar always matches Tune target.
             fetchPhotos();
+            return true;
         })
         .catch(err => {
             console.error(err);
             alert('Error excluding faces: ' + err.message);
+            return false;
         })
         .finally(() => updateMatchingSelectionUI());
     }
@@ -4046,15 +4119,32 @@ This photo also names ${face.other_names.join(', ')}. `
         })
         .then(data => {
             if (data.success) {
-                const assigned = new Set(faceIds);
-                activePersonFaces = activePersonFaces.filter(f => !assigned.has(f.id));
+                // What the server says it named. It leaves an excluded face alone --
+                // naming one is how a face ends up both ruled out and claimed -- so
+                // this can be fewer than were sent. A face already under this name
+                // is not in it either: it leaves the grid, but Undo must not unname it.
+                const assignedIds = Array.isArray(data.matched_ids)
+                    ? data.matched_ids.map(Number)
+                    : faceIds;
+                const skippedIds = new Set(Array.isArray(data.skipped_excluded)
+                    ? data.skipped_excluded.map(Number) : []);
+                const leavingIds = faceIds.filter(id => !skippedIds.has(id));
+                const skipped = skippedIds.size;
+                if (skipped) {
+                    alert(`${skipped} of these face${skipped !== 1 ? 's were' : ' was'} `
+                        + `excluded, so ${skipped !== 1 ? 'they were' : 'it was'} not `
+                        + `assigned. Restore from the Excluded bucket first to name `
+                        + `${skipped !== 1 ? 'them' : 'it'}.`);
+                }
+                const leaving = new Set(leavingIds);
+                activePersonFaces = activePersonFaces.filter(f => !leaving.has(f.id));
 
                 // Update tab counts
                 updateTabLabels();
 
                 // In place: the cards that left are the only ones that changed, and
                 // rebuilding the rest cost ten seconds on a grid this size.
-                removeFacesFromGrid(faceIds);
+                removeFacesFromGrid(leavingIds);
 
                 // Clear the reassign name field
                 if (inputReassignName) {
@@ -4094,13 +4184,17 @@ This photo also names ${face.other_names.join(', ')}. `
                 // Fetch updated sidebar counts and known people in background silently
                 fetchPeopleWithCounts(true, true);
                 fetchKnownPeople();
+                // The ids actually named, so a caller offers Undo for exactly those.
+                return assignedIds;
             } else {
                 alert('Failed to reassign faces.');
+                return null;
             }
         })
         .catch(err => {
             console.error('Error in bulk reassign:', err);
             alert('Error reassigning faces: ' + err.message);
+            return null;
         })
         .finally(() => {
             btnReassignSelected.disabled = false;

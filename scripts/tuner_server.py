@@ -1757,14 +1757,22 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             fingerprint_before = self.faces_fingerprint(conn)
 
             # 1. Fetch face details: photo_path and old name
-            cursor.execute("SELECT photo_path, name FROM faces WHERE id = ?", (face_id,))
+            cursor.execute("SELECT photo_path, name, excluded FROM faces WHERE id = ?", (face_id,))
             face_row = cursor.fetchone()
             if not face_row:
                 self.send_error(404, "Face ID not found")
                 return
-                
-            photo_path, old_name = face_row
-            
+
+            photo_path, old_name, excluded = face_row
+
+            # An excluded face has been ruled out of identity work; naming it leaves a
+            # face that is both ruled out and claimed, which no view shows and no Undo
+            # reaches. Restoring it first is the way to name it.
+            if excluded:
+                self.send_json_error(
+                    409, "Cannot match: this face is excluded. Restore it first to name it.")
+                return
+
             # If name is unchanged (case-insensitive), just return success
             if old_name and old_name.strip().lower() == person_name.lower():
                 self.send_json({"success": True})
@@ -2131,7 +2139,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
             # 1. Fetch unmatched faces in this photo
             path_sql, path_args = paths.sql_equals("photo_path", photo_path)
-            cursor.execute("SELECT id, embedding FROM faces WHERE " + path_sql + " AND name IS NULL", path_args)
+            cursor.execute("SELECT id, embedding FROM faces WHERE " + path_sql + " AND name IS NULL AND excluded = 0", path_args)
             unmatched_rows = cursor.fetchall()
 
             if not unmatched_rows:
@@ -2139,7 +2147,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 return
 
             # 2. Fetch all resolved face embeddings in the database (faces that have a non-null name)
-            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL")
+            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL AND excluded = 0")
             resolved_rows = cursor.fetchall()
 
             if not resolved_rows:
@@ -2192,9 +2200,12 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 if matched_name not in conflicting_names:
                     # Automatch is a bulk guess, not a per-face human decision, so it is
                     # left as an automatic assignment that re-clustering may revise.
-                    cursor.execute("UPDATE faces SET name = ? WHERE id = ?", (matched_name, face_id))
-                    newly_matched_names.add(matched_name)
-                    matched_count += 1
+                    cursor.execute(
+                        "UPDATE faces SET name = ? WHERE id = ? AND excluded = 0",
+                        (matched_name, face_id))
+                    if cursor.rowcount:
+                        newly_matched_names.add(matched_name)
+                        matched_count += cursor.rowcount
 
             # 4. Append newly matched names to photos table people list
             if newly_matched_names:
@@ -2259,7 +2270,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             cursor.execute("""
                 SELECT id, embedding, photo_path
                 FROM faces
-                WHERE """ + under_sql + """ AND name IS NULL
+                WHERE """ + under_sql + """ AND name IS NULL AND excluded = 0
             """, under_args)
             unmatched_rows = cursor.fetchall()
 
@@ -2268,7 +2279,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 return
 
             # 2. Fetch all resolved face embeddings in the database (faces that have a non-null name)
-            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL")
+            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL AND excluded = 0")
             resolved_rows = cursor.fetchall()
 
             if not resolved_rows:
@@ -2331,11 +2342,15 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         
                 for face_id, name in proposed_list:
                     if name not in conflicting_names:
-                        cursor.execute("UPDATE faces SET name = ? WHERE id = ?", (name, face_id))
+                        cursor.execute(
+                            "UPDATE faces SET name = ? WHERE id = ? AND excluded = 0",
+                            (name, face_id))
+                        if not cursor.rowcount:
+                            continue
                         if photo_path not in photos_to_update:
                             photos_to_update[photo_path] = set()
                         photos_to_update[photo_path].add(name)
-                        matched_count += 1
+                        matched_count += cursor.rowcount
 
             # 4. Update photos table people lists for each affected photo
             for photo_path, newly_matched_names in photos_to_update.items():
@@ -2785,22 +2800,33 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             # names being displaced, and to group them by photo. A selection of fifty
             # was a hundred and fifty round trips for fifty rows.
             selected = {}
+            excluded_ids = set()
             for start in range(0, len(face_ids), 500):
                 chunk = face_ids[start:start + 500]
                 cursor.execute(
-                    "SELECT id, photo_path, name FROM faces WHERE id IN (%s)"
+                    "SELECT id, photo_path, name, excluded FROM faces WHERE id IN (%s)"
                     % ",".join("?" * len(chunk)), chunk)
-                for row_id, photo_path, current_name in cursor.fetchall():
-                    selected[row_id] = (photo_path, current_name)
+                for row_id, photo_path, current_name, excluded in cursor.fetchall():
+                    if excluded:
+                        excluded_ids.add(row_id)
+                    else:
+                        selected[row_id] = (photo_path, current_name)
 
-            # Faces already assigned to this person are nothing to do (case-insensitive).
+            # An excluded face is left alone. Naming one leaves a face both ruled out
+            # and claimed -- a page acting on a stale list of faces did exactly that --
+            # so it is skipped and reported, and the reply says which faces were named.
+            skipped_excluded = [fid for fid in face_ids if fid in excluded_ids]
+
+            # Faces already assigned to this person are nothing to do (case-insensitive),
+            # and neither is an id that is not in the table.
             face_ids = [
                 fid for fid in face_ids
-                if not (selected.get(fid, (None, None))[1] or "").strip().lower()
-                == person_name.lower()
+                if fid in selected
+                and not (selected[fid][1] or "").strip().lower() == person_name.lower()
             ]
             if not face_ids:
-                self.send_json({"success": True})
+                self.send_json({"success": True, "matched": 0, "matched_ids": [],
+                                "skipped_excluded": skipped_excluded})
                 return
 
             photos_to_check = {}
@@ -2852,7 +2878,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
             # 2. Update faces table in one transaction
             placeholders = ",".join("?" for _ in face_ids)
-            cursor.execute(f"UPDATE faces SET name = ?, name_source = 'manual' WHERE id IN ({placeholders})", [person_name] + face_ids)
+            cursor.execute(
+                f"UPDATE faces SET name = ?, name_source = 'manual'"
+                f" WHERE id IN ({placeholders}) AND excluded = 0",
+                [person_name] + face_ids)
+            # The rows this write named, which the reply reports rather than the
+            # number asked for.
+            matched = cursor.rowcount
 
             # 3. Update photos table people list for each affected photo
             for photo_path, old_names in photos_to_check.items():
@@ -2891,7 +2923,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             with tagpup_db.writing(self.db_path, label="name faces in bulk"):
                 conn.commit()
                 self.identify_cache_forget_faces(conn, face_ids, fingerprint_before)
-            self.send_json({"success": True})
+            self.send_json({"success": True, "matched": matched, "matched_ids": face_ids,
+                            "skipped_excluded": skipped_excluded})
         except Exception as e:
             logger.error(f"Error in handle_post_match_bulk: {e}")
             self.send_error(500, f"Internal error: {e}")
@@ -3410,6 +3443,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 " name_source = 'manual' WHERE id IN (%s)" % placeholders,
                 [reason] + face_ids,
             )
+            excluded_count = cursor.rowcount
 
             # Drop the person from the photo when no other face of theirs remains there.
             for _face_id, photo_path, old_name in affected:
@@ -3439,7 +3473,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 # Ignoring a cluster is the single most expensive thing to have
                 # invalidated the grid, and it is pure removal.
                 self.identify_cache_forget_faces(conn, face_ids, fingerprint_before)
-            self.send_json({"success": True, "excluded": len(face_ids)})
+            # The rows changed, not the ids sent: an id that is not in the table was
+            # never excluded, and saying it was is how a write reports success on
+            # nothing.
+            self.send_json({"success": True, "excluded": excluded_count})
         except Exception as e:
             logger.error("Error excluding faces: %s" % e)
             self.send_error(500, "Internal error: %s" % e)
@@ -3468,13 +3505,16 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
             placeholders = ",".join("?" for _ in face_ids)
-            conn.execute(
+            # Only faces that are excluded. Clearing name_source on any other face
+            # would unpin a manual name that re-clustering must not revise -- and
+            # Undo after Ignore Cluster sends whatever ids it was given.
+            restored = conn.execute(
                 "UPDATE faces SET excluded = 0, excluded_reason = NULL, name_source = NULL"
-                " WHERE id IN (%s)" % placeholders,
+                " WHERE id IN (%s) AND excluded = 1" % placeholders,
                 face_ids,
-            )
+            ).rowcount
             conn.commit()
-            self.send_json({"success": True, "restored": len(face_ids)})
+            self.send_json({"success": True, "restored": restored})
         except Exception as e:
             logger.error("Error restoring faces: %s" % e)
             self.send_error(500, "Internal error: %s" % e)
