@@ -884,7 +884,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     btnSuggestTitleWand.addEventListener('click', applySuggestedTitle);
     btnApplyAllSingleSugg.addEventListener('click', applyAllSingleSuggestions);
-    detailPath.addEventListener('click', openPhotoInExplorer);
+    detailPath.addEventListener('click', openPhotoInDefaultApp);
+    detailPath.title = 'Open in default app';
     btnApplyTimeshift.addEventListener('click', applyTimeShift);
     
     function setThumbnailSize(size) {
@@ -3061,31 +3062,33 @@ Click to add ${namesSomebody} to this photo.`;
         });
     }
 
-    function openPhotoInExplorer() {
+    // The path in Image Details opens the photo in the app Windows uses for it.
+    // It used to ask Explorer to select the file, with the whole "/select,<path>"
+    // switch quoted -- which Explorer does not parse as a selection, so what it did
+    // depended on how it handled the malformed argument. Opening the file is what
+    // clicking it was for; "Show in File Explorer" is on the right-click menu.
+    function openPhotoInDefaultApp() {
         const path = activePhotoPath;
         if (!path) return;
-        
+
         statusDot.className = 'status-indicator-dot busy';
-        statusText.textContent = 'Opening Explorer...';
-        
-        fetch('/api/photo/open-explorer', {
+        statusText.textContent = 'Opening photo...';
+
+        fetch('/api/photo/open', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path })
         })
         .then(res => res.json())
         .then(data => {
-            if (data.success) {
-                statusDot.className = 'status-indicator-dot';
-                statusText.textContent = 'Ready';
-            } else {
-                throw new Error(data.error);
-            }
+            if (!data.success) throw new Error(data.error || 'could not open the photo');
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Ready';
         })
         .catch(err => {
             console.error(err);
             statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Ready';
+            statusText.textContent = 'Could not open the photo: ' + err.message;
         });
     }
 

@@ -217,6 +217,7 @@ to be sitting on `<body>`.
 - `/api/photo/delete`: Expects JSON body `{"path": string}`. Sends the photo to the Windows Recycle Bin and removes it from the index.
 - `/api/photo/rotate`: Expects JSON body `{"path": string, "direction": string}`. Rotates the photo 90 degrees on disk. `direction` must be `"left"` or `"right"`; any other value is rejected with `400`.
 - `/api/photo/open-explorer`: Expects JSON body `{"path": string}`. Opens the photo's directory in Windows File Explorer and selects it.
+- `/api/photo/open`: Expects JSON body `{"path": string}`. Opens the photo in the application Windows associates with its type — what clicking the path in Image Details does. Refuses (`400`) anything that is not an existing file with a photo extension, since opening a file runs it.
 - `/api/photo/save-metadata`: Saves caption, people, and tags metadata directly to the image file via ExifTool and syncs the DB.
 - `/api/photos/bulk-tags`: Adds or removes tags in bulk across a selection of photo paths.
 - `/api/folder/auto-apply`: Expects JSON body `{"folder_path": string, "threshold": float, "photo_paths": list (optional)}`. Applies the folder's computed suggestions scoring at or above `threshold` (default `0.75`). Suggestions are read from the server's in-memory results for that folder, not sent in the request; omit `photo_paths` to apply across the whole folder. Returns `400` if no suggestions have been computed.

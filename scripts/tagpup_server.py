@@ -452,6 +452,21 @@ def move_photo_rows(db_path, renames):
                        "name; left both as they were.", old_path, new_path)
     return moved, skipped
 
+#: The files this app treats as photos.
+PHOTO_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"})
+
+
+def explorer_select_command(photo_path):
+    """The command line that opens Explorer with this photo selected.
+
+    Explorer parses its own command line and wants the path quoted after the
+    switch -- /select,"D:\\a b\\c.jpg" -- not the whole switch quoted, which is what
+    passing ["explorer.exe", "/select,<path>"] produced for any path with a space.
+    A Windows path cannot contain a quote, so quoting it is safe.
+    """
+    return 'explorer.exe /select,"%s"' % paths.stored(photo_path)
+
+
 def send_to_recycle_bin(file_path):
     import ctypes
     from ctypes import wintypes
@@ -817,6 +832,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             self.handle_post_photo_delete()
         elif path == "/api/photo/open-explorer":
             self.handle_post_photo_open_explorer()
+        elif path == "/api/photo/open":
+            self.handle_post_photo_open()
         elif path == "/api/photo/save-metadata":
             self.handle_post_photo_save_metadata()
         elif path == "/api/photos/bulk-tags":
@@ -2150,11 +2167,31 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             
         try:
             import subprocess
-            norm_path = paths.stored(photo_path)
-            subprocess.Popen(["explorer.exe", f"/select,{norm_path}"])
+            subprocess.Popen(explorer_select_command(photo_path))
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error opening explorer for {photo_path}: {e}")
+            self.send_json_error(500, str(e))
+
+    def handle_post_photo_open(self):
+        """Open a photo in the application Windows associates with its type."""
+        try:
+            data = self.read_json_body()
+        except Exception:
+            self.send_json_error(400, "Invalid JSON payload")
+            return
+
+        photo_path = paths.stored(data.get("path") or "")
+        # startfile runs whatever it is handed; this route only ever opens a photo.
+        if (not photo_path or not os.path.isfile(photo_path)
+                or os.path.splitext(photo_path)[1].lower() not in PHOTO_EXTENSIONS):
+            self.send_json_error(400, "Not a photo file")
+            return
+        try:
+            os.startfile(photo_path)
+            self.send_json({"success": True})
+        except Exception as e:
+            logger.error(f"Error opening {photo_path}: {e}")
             self.send_json_error(500, str(e))
 
     def handle_post_photo_rotate(self):

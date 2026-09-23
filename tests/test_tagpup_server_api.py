@@ -535,21 +535,26 @@ class TestAutocompleteFolder(TagPupAPITestBase):
 
 
 class TestOpenExplorer(TagPupAPITestBase):
-    def test_launches_explorer_with_list_arguments(self):
-        """Arguments must stay a list; a shell string here would be injectable."""
+    def test_launches_explorer_selecting_the_file_without_a_shell(self):
+        """Never through a shell, and with the path quoted after the switch.
+
+        An argument list can't express what Explorer needs: list2cmdline quotes the
+        whole "/select,<path>" for a path with a space, and Explorer does not parse
+        that as a selection. So the command is one string handed straight to
+        CreateProcess -- no shell, so nothing in it is interpreted -- built from a
+        path that must exist, and a Windows path cannot contain a quote.
+        """
         from unittest.mock import patch
 
-        photo = self.make_photo("a.jpg", [])
+        photo = self.make_photo("a b.jpg", [])
         with patch("subprocess.Popen") as mock_popen:
             status, body = self.post("/api/photo/open-explorer", {"path": photo})
 
         self.assertEqual(status, 200, body)
         self.assertTrue(mock_popen.called, "explorer was never launched")
         args, kwargs = mock_popen.call_args
-        self.assertIsInstance(args[0], list, "command was not passed as an argument list")
-        self.assertEqual(args[0][0], "explorer.exe")
         self.assertFalse(kwargs.get("shell", False), "command was run through a shell")
-        self.assertIn(os.path.basename(photo), args[0][1])
+        self.assertEqual(args[0], 'explorer.exe /select,"%s"' % os.path.abspath(photo))
 
     def test_rejects_missing_path(self):
         status, _ = self.post("/api/photo/open-explorer", {})
