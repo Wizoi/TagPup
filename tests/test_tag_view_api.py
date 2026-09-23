@@ -208,8 +208,9 @@ class TestMergingATag(TagViewTestBase):
 
     def test_applying_drops_the_cached_embedding(self):
         # The fault that kept a corrected tag alive: files clean, taxonomy clean, and
-        # zero-shot matching still reading the name out of tag_embeddings.
-        self.seed([("D:/gone.jpg", ["Regata"])],
+        # zero-shot matching still reading the name out of tag_embeddings. No photo
+        # carries the tag any more; only the cached name is left.
+        self.seed([("D:/elsewhere.jpg", ["Regatta"])],
                   taxonomy=[("Regata", False)], embeddings=["Regata"])
         _status, body = self.plan(**{"from": "Regata", "retire": True, "apply": True})
         self.assertTrue(body["applied"])
@@ -224,6 +225,25 @@ class TestMergingATag(TagViewTestBase):
             conn.close()
         self.assertEqual(left, 0, "the embedding survived, so it would still be suggested")
         self.assertEqual(tax, 0, "the taxonomy row survived, so it would still be offered")
+
+    def test_a_photo_that_could_not_be_rewritten_keeps_the_tag(self):
+        # The merge reported the photos it planned to change and retired the tag
+        # regardless, so a photo it could not write kept a tag nothing offered any more.
+        self.seed([("D:/gone.jpg", ["Regata"])],
+                  taxonomy=[("Regata", False)], embeddings=["Regata"])
+        _status, body = self.plan(**{"from": "Regata", "into": "Regatta", "apply": True})
+
+        self.assertFalse(body["applied"], body)
+        self.assertEqual(body["photos"], 1)
+        self.assertEqual(body["photos_rewritten"], 0)
+        self.assertIn("error", body)
+        conn = sqlite3.connect(self.TEST_DB)
+        try:
+            tax = conn.execute(
+                "SELECT COUNT(*) FROM tag_taxonomy WHERE tag = 'Regata'").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(tax, 1, "the tag was retired while a photo still carries it")
 
 
 if __name__ == "__main__":

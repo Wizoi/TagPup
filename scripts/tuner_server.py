@@ -1456,12 +1456,27 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_json(plan)
                 return
 
+            rewritten = 0
             if affected:
                 from tagpup_server import update_photo_metadata_tags
 
-                update_photo_metadata_tags(
+                rewritten = update_photo_metadata_tags(
                     self.db_path, self.get_exiftool_path(), affected,
                     source, target or None)
+            plan["photos_rewritten"] = rewritten
+
+            # A photo that could not be rewritten still carries the old tag, so it is
+            # not retired: the tree and zero-shot matching still describe that photo.
+            # This used to retire it regardless and report the photos it had planned.
+            if rewritten < len(affected):
+                conn.close()
+                conn = None
+                plan["error"] = ("%d of %d photo(s) could not be rewritten, so '%s' was kept; "
+                                 "they still carry it." % (len(affected) - rewritten,
+                                                           len(affected), source))
+                logger.warning("Tag merge of %r: %s", source, plan["error"])
+                self.send_json(plan)
+                return
 
             def clean_up(write_conn):
                 c = write_conn.cursor()
