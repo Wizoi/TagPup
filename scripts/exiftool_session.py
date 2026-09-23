@@ -17,6 +17,13 @@ ExifToolSession is pyexiftool's ExifToolHelper with that one method replaced:
   about, instead of the caller waiting for days. The next call starts a fresh
   process, as ExifToolHelper always does when it is not running.
 
+It also speaks UTF-8 both ways. pyexiftool otherwise encodes arguments and decodes
+answers with the locale's code page (cp1252 here) while ExifTool reads and writes
+UTF-8: a keyword "Zoë" reached the file as "Zo?", a caption the file held as "ü" came
+back as "Ã¼", and a photo named with a character outside cp1252 could not be passed
+at all. `-charset filename=utf8` tells ExifTool on Windows that file names arrive,
+and are to be reported, in UTF-8 too.
+
 Everything else -- get_tags, set_tags, check_execute, auto-start -- is ExifToolHelper's.
 """
 import os
@@ -33,6 +40,12 @@ __all__ = ["ExifToolSession", "ExifToolTimeout", "DEFAULT_TIMEOUT"]
 #: seconds; this is generous enough for a slow disk and still ends a stall the same
 #: afternoon rather than two days later.
 DEFAULT_TIMEOUT = 300
+
+#: What ExifTool reads and writes; never the locale's code page.
+ENCODING = "utf-8"
+
+#: pyexiftool's own defaults: group names on every tag, numeric values.
+DEFAULT_COMMON_ARGS = ("-G", "-n")
 
 
 class ExifToolTimeout(RuntimeError):
@@ -196,6 +209,10 @@ class ExifToolSession(exiftool.ExifToolHelper, _DrainingExifTool):
             rows = et.get_tags(batch, tags=["XMP:Subject"])
     """
 
-    def __init__(self, *args, timeout=DEFAULT_TIMEOUT, **kwargs):
+    def __init__(self, *args, timeout=DEFAULT_TIMEOUT, encoding=ENCODING,
+                 common_args=DEFAULT_COMMON_ARGS, **kwargs):
         self.timeout = timeout
-        super().__init__(*args, **kwargs)
+        common_args = list(common_args or [])
+        if not any(str(a).lower().startswith("filename=") for a in common_args):
+            common_args += ["-charset", "filename=utf8"]
+        super().__init__(*args, encoding=encoding, common_args=common_args, **kwargs)
