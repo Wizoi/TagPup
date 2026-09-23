@@ -3432,6 +3432,10 @@ def warmup_embedder_thread(embedder):
         with suggester._face_processor_lock:
             if suggester._global_face_processor is None:
                 suggester._global_face_processor = FaceProcessor()
+        # Constructing the processor loads nothing; the models load on first use. So
+        # this reported the face models warm while the first Suggest still paid for
+        # loading them.
+        suggester._global_face_processor._init_models()
         logger.info("Background Face model warmup completed successfully.")
     except Exception as e:
         logger.error(f"Error warming up Face models: {e}")

@@ -1,5 +1,6 @@
 # faces.py
 import os
+import threading
 import json
 import logging
 import io
@@ -29,6 +30,7 @@ class FaceProcessor:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.mtcnn: Optional[MTCNN] = None
         self.resnet: Optional[InceptionResnetV1] = None
+        self._init_lock = threading.Lock()
         
         # Load config.ini parameters if present
         config = configparser.ConfigParser(interpolation=None)
@@ -50,10 +52,16 @@ class FaceProcessor:
                     self.mtcnn_thresholds = [0.6, 0.7, 0.7]
 
     def _init_models(self):
-        """Lazily initialize MTCNN detector and InceptionResnetV1 face embedder."""
-        if self.mtcnn is not None:
-            return
+        """Lazily initialize MTCNN detector and InceptionResnetV1 face embedder.
 
+        Locked: the suggester shares one processor across a pool, and unlocked every
+        worker saw no model yet and loaded its own copy onto the GPU.
+        """
+        with self._init_lock:
+            if self.mtcnn is None:
+                self._load_models()
+
+    def _load_models(self):
         logger.info(f"Initializing face detection (MTCNN) and embedding models (InceptionResnetV1) on {self.device.upper()}...")
         # MTCNN options: keep_all=True detects multiple faces, post_process=False keeps crops raw
         self.mtcnn = MTCNN(

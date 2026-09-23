@@ -62,6 +62,30 @@ class TagSuggester:
         self.candidate_tags = combined
         self.candidate_embeddings = {}
         self.year_candidate_embeddings = {}
+        self._people = None
+        self._people_lock = threading.Lock()
+
+    def _known_people(self):
+        """(lower-cased names of everyone known, each named person's face centroid).
+
+        Loaded once per suggester -- one folder run -- rather than per photo. Both
+        halves used to come from reading the whole faces table, twice a photo.
+        """
+        with self._people_lock:
+            if self._people is None:
+                names = set()
+                for path in self.taxonomy.paths:
+                    parts = path.split("/")
+                    if len(parts) >= 2 and parts[0].lower() in ["family", "friends"]:
+                        names.add(parts[-1].lower())
+                centroids = {}
+                try:
+                    centroids = self.index.get_person_centroids()
+                except Exception as db_err:
+                    logger.warning(f"Failed to load known faces from database: {db_err}")
+                names.update(name.lower() for name in centroids)
+                self._people = (names, centroids)
+            return self._people
 
     def _precompute_candidates(self):
         """Precompute embeddings for candidate tags using a template."""
@@ -161,21 +185,7 @@ class TagSuggester:
         import numpy as np
         from metadata import parse_year_from_metadata
         
-        # Collect all known people names (from taxonomy and database) to suppress them from neighbor/CLIP suggestions
-        known_people = set()
-        for path in self.taxonomy.paths:
-            parts = path.split("/")
-            if len(parts) >= 2 and parts[0].lower() in ["family", "friends"]:
-                known_people.add(parts[-1].lower())
-        try:
-            db_faces = self.index.get_all_faces()
-            if db_faces:
-                for f in db_faces:
-                    name = f.get("name")
-                    if name:
-                        known_people.add(name.lower())
-        except Exception as db_err:
-            logger.warning(f"Failed to query known faces from database for suggestion pruning: {db_err}")
+        known_people, person_centroids = self._known_people()
 
         # 1. Search index for neighbors
         neighbors = self.index.search(embedding, k=k)
@@ -279,6 +289,7 @@ class TagSuggester:
         # 4b. Face recognition suggestions
         try:
             detected_faces = []
+            
             # Check database cache first
             if self.index and self.index.conn:
                 try:
@@ -342,22 +353,8 @@ class TagSuggester:
                     valid_detected_faces.append(f)
                 
                 if valid_detected_faces:
-                    db_faces = self.index.get_all_faces()
-                    if db_faces:
-                        # Group DB faces by name to compute mean embeddings
-                        by_name = {}
-                        for f in db_faces:
-                            name = f["name"]
-                            if name:
-                                by_name.setdefault(name, []).append(f["embedding"])
-                        
-                        mean_embeddings = {}
-                        for name, embs in by_name.items():
-                            mean = np.mean(embs, axis=0)
-                            norm = np.linalg.norm(mean)
-                            if norm > 0:
-                                mean_embeddings[name] = mean / norm
-                        
+                    if person_centroids:
+                        mean_embeddings = person_centroids
                         for face in valid_detected_faces:
                             face_emb = np.array(face["embedding"], dtype=np.float32)
                             

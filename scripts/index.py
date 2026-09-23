@@ -727,6 +727,33 @@ class PhotoIndex:
             logger.error(f"Error retrieving faces: {e}")
             return []
 
+    def get_person_centroids(self) -> Dict[str, np.ndarray]:
+        """Each named person's mean face embedding, scaled to unit length.
+
+        Reads only the named, non-excluded faces, which idx_faces_identify answers
+        without touching the rest of the table. get_all_faces reads every face and its
+        crop image -- 225,000 rows and ten seconds on a cold cache -- and the suggester
+        called it twice for every photo to use the few that carry a name.
+        """
+        conn = tagpup_db.connect(self.db_path, timeout=30.0)
+        try:
+            rows = conn.execute(
+                "SELECT name, embedding FROM faces WHERE excluded = 0 AND name IS NOT NULL"
+            ).fetchall()
+        finally:
+            conn.close()
+        by_name: Dict[str, List[np.ndarray]] = {}
+        for name, emb_bytes in rows:
+            if name and emb_bytes:
+                by_name.setdefault(name, []).append(np.frombuffer(emb_bytes, dtype=np.float32))
+        centroids = {}
+        for name, embs in by_name.items():
+            mean = np.mean(embs, axis=0)
+            norm = np.linalg.norm(mean)
+            if norm > 0:
+                centroids[name] = mean / norm
+        return centroids
+
     def save_face_names(self, face_updates: List[Tuple[Optional[str], int]]):
         """Batch update the resolved names of faces by their record ID."""
         if self.conn is None or not face_updates:
