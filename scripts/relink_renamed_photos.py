@@ -193,13 +193,15 @@ def plan_for(db_path, exiftool_path=None):
 
 def apply_moves(db_path, moves):
     def store(conn):
+        # Rows changed, not rows planned: a plan that matches nothing must say so.
         cursor = conn.cursor()
+        photos = faces = 0
         for move in moves:
-            cursor.execute("UPDATE photos SET path = ? WHERE path = ?",
-                           (move["to"], move["from"]))
-            cursor.execute("UPDATE faces SET photo_path = ? WHERE photo_path = ?",
-                           (move["to"], move["from"]))
-        return len(moves)
+            photos += cursor.execute("UPDATE photos SET path = ? WHERE path = ?",
+                                     (move["to"], move["from"])).rowcount
+            faces += cursor.execute("UPDATE faces SET photo_path = ? WHERE photo_path = ?",
+                                    (move["to"], move["from"])).rowcount
+        return photos, faces
 
     return tagpup_db.write_with_connection(db_path, store, label="relink renamed photos")
 
@@ -236,8 +238,8 @@ def main():
         print("\nNothing to re-point.")
         return
 
-    apply_moves(args.db, moves)
-    print("\nre-pointed %d row(s)." % len(moves))
+    photos, faces = apply_moves(args.db, moves)
+    print("\nre-pointed %d of %d planned row(s), and %d face(s)." % (photos, len(moves), faces))
 
     remaining, still_unmatched = plan_for(args.db, args.exiftool)
     print("rows still re-pointable: %d; dead rows remaining: %d"
