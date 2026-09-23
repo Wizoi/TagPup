@@ -76,7 +76,7 @@ def record(db_path, found):
 
 def backfill(db_path, paths, exiftool_path=None, batch_size=200, on_progress=None):
     """Read, mint where missing, and record. Returns (read, minted, failed)."""
-    import exiftool
+    from exiftool_session import ExifToolSession
 
     # ExifTool answers with forward slashes whatever it was handed, and the index
     # stores whatever spelling it was given -- usually backslashes on Windows. The
@@ -91,7 +91,7 @@ def backfill(db_path, paths, exiftool_path=None, batch_size=200, on_progress=Non
     read_count = minted_count = 0
     failed = []
 
-    with exiftool.ExifToolHelper(executable=exiftool_path) as et:
+    with ExifToolSession(executable=exiftool_path) as et:
         for start in range(0, len(paths), batch_size):
             batch = paths[start:start + batch_size]
             try:

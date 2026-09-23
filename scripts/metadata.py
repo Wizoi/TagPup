@@ -11,7 +11,7 @@ except ImportError:  # imported as a top-level module
 import logging
 from pathlib import PurePath
 from typing import List, Dict, Any, Optional, Set
-import exiftool
+from exiftool_session import ExifToolSession
 
 from identity import ensure_document_id, read_document_id
 
@@ -272,8 +272,8 @@ class MetadataExtractor:
         results = []
         try:
             # We initialize pyexiftool client
-            # ExifToolHelper manages the lifecycle
-            with exiftool.ExifToolHelper(executable=executable) as et:
+            # ExifToolSession manages the lifecycle, and cannot stall on stderr
+            with ExifToolSession(executable=executable) as et:
                 # Read specific fields we care about
                 # Passing tag names directly
                 batch_meta = et.get_tags(file_paths, tags=METADATA_FIELDS)
@@ -369,7 +369,7 @@ class MetadataExtractor:
         """
         results = []
         try:
-            et = exiftool.ExifToolHelper(executable=executable)
+            et = ExifToolSession(executable=executable)
             et.run()
         except Exception as e:
             logger.error(f"Could not start ExifTool for the per-file retry: {e}")

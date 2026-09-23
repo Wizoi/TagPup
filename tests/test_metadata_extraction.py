@@ -447,7 +447,7 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
     def test_the_good_files_keep_their_metadata(self):
         import metadata
 
-        with mock.patch.object(metadata.exiftool, "ExifToolHelper", self._fake_helper()):
+        with mock.patch.object(metadata, "ExifToolSession", self._fake_helper()):
             results = self.extractor.batch_read(self.paths)
 
         self.assertEqual([r["path"] for r in results], self.paths)
@@ -461,7 +461,7 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
     def test_the_bad_file_is_the_only_one_blanked(self):
         import metadata
 
-        with mock.patch.object(metadata.exiftool, "ExifToolHelper", self._fake_helper()):
+        with mock.patch.object(metadata, "ExifToolSession", self._fake_helper()):
             results = self.extractor.batch_read(self.paths)
 
         bad = next(r for r in results if r["path"] == self.bad)
@@ -472,7 +472,7 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
     def test_every_file_keeps_its_stats_so_it_is_not_re_indexed_forever(self):
         import metadata
 
-        with mock.patch.object(metadata.exiftool, "ExifToolHelper", self._fake_helper()):
+        with mock.patch.object(metadata, "ExifToolSession", self._fake_helper()):
             results = self.extractor.batch_read(self.paths)
 
         for r in results:
@@ -499,7 +499,7 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
         # retried, which is what this test is about; tests/test_photo_identity.py
         # covers the minting.
         reader = metadata.MetadataExtractor(mint_identities=False)
-        with mock.patch.object(metadata.exiftool, "ExifToolHelper", fake):
+        with mock.patch.object(metadata, "ExifToolSession", fake):
             results = reader.batch_read(good_only)
 
         self.assertEqual(len(calls), 1, f"took {len(calls)} ExifTool calls for a clean batch")
@@ -512,7 +512,7 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
             def __init__(self, executable=None):
                 raise OSError("exiftool not found")
 
-        with mock.patch.object(metadata.exiftool, "ExifToolHelper", DeadHelper):
+        with mock.patch.object(metadata, "ExifToolSession", DeadHelper):
             results = self.extractor.batch_read(self.paths)
 
         self.assertEqual([r["path"] for r in results], self.paths)

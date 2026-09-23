@@ -131,7 +131,7 @@ def plan_for_folder(db_path, folder, exiftool_path=None):
     its old keywords recorded, so planning from the index would report nothing to do
     on exactly the photos that need it most.
     """
-    import exiftool
+    from exiftool_session import ExifToolSession
 
     conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)  # not a path: the database file's URI
     paths, roots = people_paths(conn)
@@ -144,7 +144,7 @@ def plan_for_folder(db_path, folder, exiftool_path=None):
                 in_folder.append(os.path.join(root, name))
 
     changes = []
-    with exiftool.ExifToolHelper(executable=exiftool_path) as et:
+    with ExifToolSession(executable=exiftool_path) as et:
         for i in range(0, len(in_folder), 100):
             batch = in_folder[i:i + 100]
             try:
@@ -154,7 +154,9 @@ def plan_for_folder(db_path, folder, exiftool_path=None):
                 for one in batch:
                     try:
                         rows.extend(et.get_tags([one], tags=["XMP:Subject"]))
-                    except Exception:
+                    except Exception as exc:
+                        # Say so: a photo left out of the plan is one nobody checked.
+                        print("could not read %s: %s" % (one, exc), file=sys.stderr)
                         continue
             for row in rows:
                 photo_path = row.get("SourceFile") or ""
@@ -220,13 +222,13 @@ def apply_changes(db_path, changes, paths, roots, exiftool_path=None):
     but would also mean writing a set nobody had checked against the file. Reading
     first means a photo edited elsewhere since the last index is not quietly reverted.
     """
-    import exiftool
+    from exiftool_session import ExifToolSession
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from tagpup_server import write_keyword_fields
 
     written, missing, unchanged, failed = 0, 0, 0, []
     applied = {}
-    with exiftool.ExifToolHelper(executable=exiftool_path) as et:
+    with ExifToolSession(executable=exiftool_path) as et:
         for change in changes:
             photo_path = change["path"]
             if not os.path.exists(photo_path):
