@@ -224,10 +224,10 @@ def apply_changes(db_path, changes, paths, roots, exiftool_path=None):
     """
     from exiftool_session import ExifToolSession
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from tagpup_server import write_keyword_fields
+    from tagpup_server import record_tags_in_index, write_keyword_fields
 
     written, missing, unchanged, failed = 0, 0, 0, []
-    applied = {}
+    applied = {}   # path -> (tags, flat, hierarchical); flat None = derive from tags
     with ExifToolSession(executable=exiftool_path) as et:
         for change in changes:
             photo_path = change["path"]
@@ -249,32 +249,24 @@ def apply_changes(db_path, changes, paths, roots, exiftool_path=None):
                     # describing keywords that have since been fixed. Record what the
                     # file holds rather than leaving the row wrong.
                     unchanged += 1
-                    applied[photo_path] = subject
+                    applied[photo_path] = (subject, None, None)
                     continue
 
-                write_keyword_fields(et, photo_path, after)
-                applied[photo_path] = after
+                flat, hierarchical = write_keyword_fields(et, photo_path, after)
+                applied[photo_path] = (after, flat, hierarchical)
                 written += 1
             except Exception as exc:
                 failed.append((photo_path, str(exc)))
 
-    def store(conn):
-        for photo_path, after in applied.items():
-            # A plan from the index carries the row's own spelling, which matches
-            # exactly. A plan from a folder carries the stored spelling, and the row
-            # may differ from it in case, so that one is matched the way the
-            # filesystem matches.
-            cur = conn.execute(
-                "UPDATE photos SET tags = ? WHERE path = ?",
-                (json.dumps(after), photo_path),
-            )
-            if cur.rowcount == 0:
-                clause, params = photo_paths.sql_equals("path", photo_path)
-                conn.execute("UPDATE photos SET tags = ? WHERE " + clause,
-                             (json.dumps(after),) + params)
-
-    if applied:
-        tagpup_db.write_with_connection(db_path, store, label="repair bare person tags")
+    # Through the one recorder, like every other keyword write: this updated only
+    # the tags column, leaving raw_metadata's keyword fields, people and the file's
+    # new mtime and size describing the photo as it was before the repair.
+    recorded = 0
+    for photo_path, (tags, flat, hierarchical) in applied.items():
+        if record_tags_in_index(db_path, photo_path, tags, flat, hierarchical):
+            recorded += 1
+    if recorded < len(applied):
+        print("  %d photo(s) written but not in this index" % (len(applied) - recorded))
     return written, missing, unchanged, failed
 
 
