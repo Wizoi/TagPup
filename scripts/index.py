@@ -250,7 +250,11 @@ class PhotoIndex:
                 os.makedirs(db_dir, exist_ok=True)
                 
             # Set a 30-second timeout to handle concurrent lock waiting gracefully
-            self.conn = tagpup_db.connect(self.db_path, timeout=30.0, check_same_thread=False)
+            # Reloads (after remove_paths, build_or_update) reuse the connection. Each
+            # used to open a new one and drop the old one unclosed, and on Windows an
+            # unclosed handle keeps the database file locked.
+            if self.conn is None:
+                self.conn = tagpup_db.connect(self.db_path, timeout=30.0, check_same_thread=False)
             configure_connection(self.conn)
             self.conn.execute("PRAGMA foreign_keys = ON;")
             self._create_table()
