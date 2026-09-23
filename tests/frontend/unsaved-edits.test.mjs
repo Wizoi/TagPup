@@ -242,6 +242,20 @@ describe("every way off the photo asks first", () => {
     "the folder view": (ctx) => click(ctx.window, ctx.document.getElementById("folder-view-header")),
     "refreshing the list": (ctx) => click(ctx.window, ctx.document.getElementById("btn-refresh-list")),
     "opening another folder": (ctx) => openFolder(ctx, "D:\\q", { settle: 1 }),
+    // Closing the folder to change dog park cleared it in place, with no unload for
+    // the browser to catch, so the edits went without a word.
+    "changing dog park": (ctx) => {
+      ctx.window.confirm = () => true;
+      click(ctx.window, ctx.document.getElementById("btn-change-db"));
+    },
+    "picking another dog park": (ctx) => {
+      const select = ctx.document.getElementById("db-select");
+      const option = ctx.document.createElement("option");
+      option.value = "elsewhere";
+      select.appendChild(option);
+      select.value = "elsewhere";
+      select.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
+    },
   };
 
   for (const [name, go] of Object.entries(routes)) {

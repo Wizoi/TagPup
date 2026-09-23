@@ -89,6 +89,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         dbSelect.addEventListener('change', () => {
             const selectedDb = dbSelect.value;
+            // Another dog park is another page. Ask about unsaved edits here, with
+            // Save on offer, rather than leave it to the browser's bare "Leave site?";
+            // staying puts the list back on the dog park still open.
+            leavePhotoThen(() => switchDogPark(selectedDb), {
+                onStay: () => { dbSelect.value = activeDb; },
+            });
+        });
+
+        function switchDogPark(selectedDb) {
             fetch('api/databases/select', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -104,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             })
             .catch(err => alert('Error selecting database: ' + err));
-        });
+        }
 
         if (btnChangeDb) {
             btnChangeDb.addEventListener('click', () => {
@@ -116,16 +125,22 @@ document.addEventListener('DOMContentLoaded', () => {
                     `${leaf} will be closed. Its photos belong to this dog park's index, ` +
                     `and another one has its own people, tags and suggestions.`
                 )) return;
-                scannedFolder = null;
-                folderPhotos = [];
-                folderSuggestions = {};
-                folderPathInput.value = '';
-                const url = new URL(window.location);
-                url.searchParams.delete('path');
-                window.history.replaceState({}, '', url);
-                updateCurrentFolderLabel();
-                if (dbSelect) dbSelect.focus();
+                // Closing the folder clears it in place -- no unload for the browser
+                // to catch -- so unsaved edits are asked about first.
+                leavePhotoThen(closeFolderForDogPark);
             });
+        }
+
+        function closeFolderForDogPark() {
+            scannedFolder = null;
+            folderPhotos = [];
+            folderSuggestions = {};
+            folderPathInput.value = '';
+            const url = new URL(window.location);
+            url.searchParams.delete('path');
+            window.history.replaceState({}, '', url);
+            updateCurrentFolderLabel();
+            if (dbSelect) dbSelect.focus();
         }
 
         if (btnCreateDb) {
