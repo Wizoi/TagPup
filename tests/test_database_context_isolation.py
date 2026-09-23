@@ -33,6 +33,8 @@ from tagpup_server import (
     set_active_db_path,
 )
 import paths
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from free_port import free_port  # noqa: E402
 
 
 def _post(port, path, body):
@@ -66,7 +68,7 @@ def _poll_until(port, path, terminal, timeout=30.0, interval=0.1):
 class TestWorkerThreadDatabaseBinding(unittest.TestCase):
     """The startup DB and the DB addressed in the URL are deliberately different."""
 
-    TEST_PORT = 9933
+    TEST_PORT = free_port()
     # Server boots on this database...
     STARTUP_DB = os.path.join(WORKSPACE_DIR, "data", "test_ctx_startup.db")
     # ...but every request below is addressed to this one via the URL prefix.

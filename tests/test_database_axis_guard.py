@@ -21,6 +21,8 @@ import sqlite3
 import threading
 import unittest
 import urllib.request
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from free_port import free_port  # noqa: E402
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
@@ -281,7 +283,7 @@ class CrossDatabaseReadIsolationMixin:
 
 
 class TestTagPupCrossDatabaseReads(CrossDatabaseReadIsolationMixin, unittest.TestCase):
-    TEST_PORT = 9966
+    TEST_PORT = free_port()
     GUI_DIR = "gui_tagpup"
     STARTUP_DB = os.path.join(WORKSPACE_DIR, "data", "test_axis_tagpup_startup.db")
     OTHER_DB = os.path.join(WORKSPACE_DIR, "data", "test_axis_tagpup_other.db")
@@ -304,7 +306,7 @@ class TestTagPupCrossDatabaseReads(CrossDatabaseReadIsolationMixin, unittest.Tes
 
 
 class TestTunerCrossDatabaseReads(CrossDatabaseReadIsolationMixin, unittest.TestCase):
-    TEST_PORT = 9977
+    TEST_PORT = free_port()
     GUI_DIR = "gui"
     STARTUP_DB = os.path.join(WORKSPACE_DIR, "data", "test_axis_tuner_startup.db")
     OTHER_DB = os.path.join(WORKSPACE_DIR, "data", "test_axis_tuner_other.db")

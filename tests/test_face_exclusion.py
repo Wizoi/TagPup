@@ -28,10 +28,12 @@ from taxonomy import TagTaxonomy
 from faces import FaceProcessor
 from tuner_server import start_server as start_tuner_server, set_active_db_path
 from tests.test_face_clustering_rules import identity_vector, near
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from free_port import free_port  # noqa: E402
 
 
 class ExclusionTestBase(unittest.TestCase):
-    TEST_PORT = 9089
+    TEST_PORT = free_port()
     TEST_DB = os.path.join(WORKSPACE_DIR, "data", "test_face_exclusion.db")
 
     @classmethod

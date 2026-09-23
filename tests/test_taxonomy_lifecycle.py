@@ -29,6 +29,8 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from tagpup_server import start_server as start_tagpup_server, set_active_db_path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from free_port import free_port  # noqa: E402
 
 
 def _exiftool_path():
@@ -52,7 +54,7 @@ requires_exiftool = unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
 class TaxonomyTestBase(unittest.TestCase):
     """Boots one TagPup server against a scratch database, reset between tests."""
 
-    TEST_PORT = 9944
+    TEST_PORT = free_port()
     TEST_DB = os.path.join(WORKSPACE_DIR, "data", "test_taxonomy_lifecycle.db")
 
     @classmethod

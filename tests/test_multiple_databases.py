@@ -15,9 +15,11 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from tuner_server import start_server, TunerHTTPRequestHandler
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from free_port import free_port  # noqa: E402
 
 class TestMultipleDatabases(unittest.TestCase):
-    TEST_PORT = 9911
+    TEST_PORT = free_port()
     TEST_DB_PATH = os.path.join(WORKSPACE_DIR, "data", "test_multiple_db_startup.db")
     server_thread = None
     original_default_db = None
@@ -218,7 +220,7 @@ class TestMultipleDatabases(unittest.TestCase):
 
 
 class TestFolderIndexingAPI(unittest.TestCase):
-    TEST_PORT = 9922
+    TEST_PORT = free_port()
     TEST_DB_PATH = os.path.join(WORKSPACE_DIR, "data", "test_index_api.db")
     server_thread = None
 

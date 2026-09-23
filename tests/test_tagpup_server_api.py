@@ -30,10 +30,12 @@ from tagpup_server import (
 )
 import paths
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from free_port import free_port  # noqa: E402
 
 
 class TagPupAPITestBase(unittest.TestCase):
-    TEST_PORT = 9955
+    TEST_PORT = free_port()
     TEST_DB = os.path.join(WORKSPACE_DIR, "data", "test_tagpup_api.db")
 
     @classmethod

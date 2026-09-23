@@ -16,6 +16,8 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from index import PhotoIndex
 from tuner_server import start_server, TunerHTTPRequestHandler
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from free_port import free_port  # noqa: E402
 
 
 def native(path):
@@ -25,7 +27,7 @@ def native(path):
 
 class TestStability(unittest.TestCase):
     TEST_DB_PATH = os.path.join(WORKSPACE_DIR, "data", "test_validation_index.db")
-    TEST_PORT = 9898
+    TEST_PORT = free_port()
     server_thread = None
 
     @classmethod

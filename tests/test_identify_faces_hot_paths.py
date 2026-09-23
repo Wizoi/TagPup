@@ -42,6 +42,8 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 import tuner_server
 from index import PhotoIndex
 from tuner_server import start_server as start_tuner_server, set_active_db_path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from free_port import free_port  # noqa: E402
 
 
 class TestFacesTableIsIndexedForIdentifying(unittest.TestCase):
@@ -135,7 +137,7 @@ def unit_vector(seed):
 class MatchingTestBase(unittest.TestCase):
     """A running tuner server over a throwaway database."""
 
-    TEST_PORT = 9094
+    TEST_PORT = free_port()
     TEST_DB = os.path.join(WORKSPACE_DIR, "data", "test_identify_hot_paths.db")
 
     @classmethod

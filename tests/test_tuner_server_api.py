@@ -31,6 +31,8 @@ from tuner_server import (
     set_active_db_path,
     TunerHTTPRequestHandler,
 )
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from free_port import free_port  # noqa: E402
 
 FACE_DIM = 512
 
@@ -49,7 +51,7 @@ def blend(a, b, weight):
 
 
 class TunerAPITestBase(unittest.TestCase):
-    TEST_PORT = 9988
+    TEST_PORT = free_port()
     TEST_DB = os.path.join(WORKSPACE_DIR, "data", "test_tuner_api.db")
 
     @classmethod
