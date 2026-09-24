@@ -229,8 +229,8 @@ to be sitting on `<body>`.
 - `/api/taxonomy/create`: Expects JSON body `{"name": string, "parent_id": int, "has_face": int}`. Creates a new tag path. `name` may itself be a path, and must be a tag that may be set (above). With `parent_id`, `name` is placed below that tag, one node per level; a `name` typed as the whole path from the root does not repeat the levels the parent already is. Returns `{"success", "id", "tag"}` for the deepest node.
 - `/api/taxonomy/update`: Expects JSON body `{"id": int, "has_face": int, "hidden_from_autocomplete": int}`. Updates attributes for the tag and propagates to child nodes.
 - `/api/taxonomy/delete-check`: Expects JSON body `{"tag_id": int}`. Checks if a tag is used by any photo and returns the count of affected files.
-- `/api/taxonomy/delete-confirm`: Expects JSON body `{"tag_id": int, "action": string, "target_tag": string}`. Deletes the tag node, clearing or moving the tag on photos on disk/db.
-- `/api/taxonomy/rename`: Expects JSON body `{"tag_id": int, "new_name": string}`. Renames a tag node, cascades path updates to descendants, and updates photo metadata on disk/db. `new_name` is one level, so it may not hold `/` either (above).
+- `/api/taxonomy/delete-confirm`: Expects JSON body `{"tag_id": int, "action": string, "target_tag": string}`. Takes the tag, and every tag under it, off the photos carrying them, on disk and in the index. With `action` `move`, `target_tag` replaces them, and the node's branch goes on under the target in the tree, joining nodes already there. Otherwise the branch is deleted. `target_tag` may not be the tag or under it. A photo that could not be rewritten still carries the tag, so the tree keeps it and the reply is `{"success": false, "error"}` with the counts.
+- `/api/taxonomy/rename`: Expects JSON body `{"tag_id": int, "new_name": string}`. Renames a tag node, cascades path updates to descendants, and updates photo metadata on disk/db. `new_name` is one level, so it may not hold `/` either (above). For a node holding faces, the faces named for it and each photo's list of people follow, a name matching whatever its case.
 
 ## Database Schema (SQLite)
 

@@ -266,13 +266,13 @@ def read_tags(db_path, photo_paths):
 
 
 def carrying(db_path, tag):
-    """The photos whose tags hold `tag` or a tag under it, their paths as stored: the
-    photos renaming or deleting it rewrites (vocabulary.retag).
+    """{path as stored: its tags} of each photo whose tags hold `tag` or a tag under it:
+    the photos renaming or deleting it rewrites (vocabulary.retag).
 
     Each action changing a tag everywhere scanned for these with a copy of its own, and
     merging found only the photos carrying the tag itself (docs/findings.md, #38).
     """
-    found = []
+    found = {}
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         for path, tags_json in conn.execute("SELECT path, tags FROM photos WHERE tags IS NOT NULL"):
@@ -281,7 +281,7 @@ def carrying(db_path, tag):
             except (TypeError, ValueError):
                 continue
             if vocabulary.retag(tags, tag)[1]:
-                found.append(path)
+                found[path] = tags
     finally:
         conn.close()
     return found

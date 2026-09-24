@@ -572,6 +572,24 @@ class TestTaxonomyRename(TaxonomyTestBase):
         self.assertNotIn("Jane Doe", face_names)
         self.assertIn("Jane Smith", people)
 
+    def test_renaming_a_person_renames_their_faces_whatever_the_case(self):
+        """docs/findings.md, #38: TagTuner's rename of a person caught a face named in
+        another case and this one did not, so the two renames of one person disagreed."""
+        people_id, _ = self.create_tag("People")
+        person_id, _ = self.create_tag("Jane Doe", parent_id=people_id)
+        conn = sqlite3.connect(self.TEST_DB)
+        conn.execute("INSERT INTO faces (photo_path, box, embedding, name)"
+                     " VALUES ('D:/case.jpg', '[]', ?, 'jane doe')", (b"",))
+        conn.commit()
+        conn.close()
+
+        status, body = self.post("/api/taxonomy/rename", {"tag_id": person_id, "new_name": "Jane Smith"})
+        self.assertEqual(status, 200, body)
+        conn = sqlite3.connect(self.TEST_DB)
+        names = [r[0] for r in conn.execute("SELECT name FROM faces WHERE photo_path = 'D:/case.jpg'")]
+        conn.close()
+        self.assertEqual(names, ["Jane Smith"])
+
     def test_renaming_a_keyword_tag_does_not_touch_faces(self):
         """Only face categories propagate to the faces table."""
         parent_id, _ = self.create_tag("Activity")

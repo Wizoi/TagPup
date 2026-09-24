@@ -32,8 +32,8 @@ from tagpup.core.result import NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services import indexing
 from tagpup.services import people as people_service
+from tagpup.services import tags as tags_service
 from tagpup.services import photos as photo_actions
-from tagpup.services import tagging as tagging_actions
 
 logger = logging.getLogger("tagtuner.server")
 
@@ -920,149 +920,36 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 
 
     def handle_post_tags_merge(self):
-        """Rename a tag, or merge it into another, everywhere it lives.
-
-        A tag is in five places and a rename has to reach all of them, or the old name
-        comes back. That is not a guess: `Saskia Wrenn` was cleaned out of every photo
-        file and still went on being suggested, because its cached CLIP embedding was
-        never dropped and zero-shot matching reads from there.
-
-            photo files      XMP:Subject, IPTC:Keywords, XMP:HierarchicalSubject
-            photos.tags      the index's own copy, which goes stale silently
-            tag_taxonomy     or the retired name stays offerable
-            tag_embeddings   or zero-shot keeps matching it
-            suggest_status   TagPup's in-memory cache, in another process
-
-        The first four are handled here. The fifth cannot be reached from this process,
-        so the reply says how many folders hold suggestions that predate the merge
-        rather than pretending they were refreshed.
+        """Rename a tag, or merge it into another, everywhere it lives
+        (tagpup.services.tags.merge): the photo files, photos.tags, the tag tree, and
+        the tag's cached CLIP embedding.
 
         Defaults to a dry run: `apply` must be sent explicitly, and without it nothing
         is written and the plan comes back. Every destructive script in this repo works
-        that way, and it has caught real mistakes before they reached photos.
+        that way, and it has caught real mistakes before they reached photos. TagPup's
+        in-memory suggestions live in another process, which this cannot reach.
         """
         try:
             data = self.read_json_body()
         except Exception:
             self.send_json_error(400, "Invalid JSON payload")
             return
-
-        source = (data.get("from") or "").strip()
-        target = (data.get("into") or data.get("to") or "").strip()
-        apply_it = bool(data.get("apply"))
-        retire_only = bool(data.get("retire"))
-
-        if not source:
-            self.send_json_error(400, "Missing the tag to change")
-            return
-        if not target and not retire_only:
-            self.send_json_error(400, "Missing the tag to merge into")
-            return
-        problem = target and vocabulary.problem_with_tag(target)
-        if problem:
-            self.send_json_error(400, problem)
-            return
-        # In its one spelling, as the tag tree holds it: "School / Kentridge" was
-        # written into the files with its spaces.
-        target = vocabulary.normalize(target)
-        if target == source:
-            self.send_json_error(400, "That tag is already called that")
-            return
-
-        conn = None
         try:
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            cursor = conn.cursor()
-
-            affected = []
-            already = 0
-            cursor.execute("SELECT path, tags FROM photos")
-            for photo_path, tags_json in cursor.fetchall():
-                try:
-                    tags = json.loads(tags_json or "[]")
-                except Exception:
-                    continue
-                if source in tags:
-                    affected.append(photo_path)
-                    if target and target in tags:
-                        already += 1
-
-            embeddings = 0
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='tag_embeddings'")
-            has_embeddings = bool(cursor.fetchone())
-            if has_embeddings:
-                embeddings = cursor.execute(
-                    "SELECT COUNT(*) FROM tag_embeddings WHERE tag = ?", (source,)).fetchone()[0]
-
-            in_taxonomy = 0
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-            has_taxonomy = bool(cursor.fetchone())
-            if has_taxonomy:
-                in_taxonomy = cursor.execute(
-                    "SELECT COUNT(*) FROM tag_taxonomy WHERE tag = ?", (source,)).fetchone()[0]
-
-            plan = {
-                "from": source,
-                "into": target or None,
-                "retire_only": retire_only,
-                "photos": len(affected),
-                "photos_already_carrying_the_target": already,
-                "embeddings_to_drop": embeddings,
-                "taxonomy_rows_to_drop": in_taxonomy,
-                "examples": [os.path.basename(p) for p in affected[:5]],
-                "applied": False,
-            }
-
-            if not apply_it:
-                conn.close()
-                self.send_json(plan)
-                return
-
-            rewritten = 0
-            if affected:
-                rewritten = tagging_actions.replace_tag(
-                    Library(self.db_path), affected, source, target or None,
-                    self.get_exiftool_path()).changed
-            plan["photos_rewritten"] = rewritten
-
-            # A photo that could not be rewritten still carries the old tag, so it is
-            # not retired: the tree and zero-shot matching still describe that photo.
-            # This used to retire it regardless and report the photos it had planned.
-            if rewritten < len(affected):
-                conn.close()
-                conn = None
-                plan["error"] = ("%d of %d photo(s) could not be rewritten, so '%s' was kept; "
-                                 "they still carry it." % (len(affected) - rewritten,
-                                                           len(affected), source))
-                logger.warning("Tag merge of %r: %s", source, plan["error"])
-                self.send_json(plan)
-                return
-
-            def clean_up(write_conn):
-                c = write_conn.cursor()
-                if has_embeddings:
-                    c.execute("DELETE FROM tag_embeddings WHERE tag = ?", (source,))
-                if has_taxonomy:
-                    c.execute("DELETE FROM tag_taxonomy WHERE tag = ?", (source,))
-                return True
-
-            conn.close()
-            conn = None
-            tagpup_db.write_with_connection(
-                self.db_path, clean_up, label="retire tag %s" % source)
-
-            plan["applied"] = True
-            logger.info("Merged tag %r into %r across %d photo(s)",
-                        source, target or "(nothing)", len(affected))
-            self.send_json(plan)
+            result = tags_service.merge(
+                Library(self.db_path), data.get("from"), data.get("into") or data.get("to"),
+                self.get_exiftool_path(), retire=bool(data.get("retire")),
+                apply=bool(data.get("apply")))
         except Exception as e:
-            logger.error(f"Error merging tag {source!r}: {e}")
+            logger.error(f"Error merging tag {data.get('from')!r}: {e}")
             self.send_json_error(500, str(e))
-        finally:
-            if conn:
-                conn.close()
+            return
+        if result.refused:
+            self.send_json_error(400, result.refused)
+            return
+        reply = dict(result.details)
+        if not result.ok:
+            reply["error"] = result.message()
+        self.send_json(reply)
 
     def handle_get_people(self, query=None):
         """Everyone the library knows, the people keywords name included
@@ -2767,152 +2654,30 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 conn.close()
 
     def handle_post_person_rename(self):
-        conn = None
+        """Rename a person everywhere (tagpup.services.tags.rename_person)."""
         try:
-            try:
-                data = self.read_json_body()
-            except Exception as json_err:
-                self.send_error(400, f"Malformed JSON: {json_err}")
-                return
-
-            old_name = data.get("old_name")
-            new_name = data.get("new_name")
-
-            if not old_name or not new_name:
-                self.send_error(400, "Missing old_name or new_name")
-                return
-
-            old_name = str(old_name).strip()
-            new_name = str(new_name).strip()
-
-            if old_name == new_name:
-                self.send_json({"success": True})
-                return
-
-            if old_name == "Unmatched" or new_name == "Unmatched":
-                self.send_error(400, "Cannot rename to/from 'Unmatched'")
-                return
-            problem = vocabulary.problem_with_name(new_name)
-            if problem:
-                self.send_json_error(400, problem)
-                return
-
-            if not os.path.exists(self.db_path):
-                self.send_error(404, "Database not found")
-                return
-
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-
-            # 1. Update faces table
-            cursor.execute("UPDATE faces SET name = ? WHERE name = ?", (new_name, old_name))
-            cursor.execute("UPDATE faces SET name = ? WHERE LOWER(name) = LOWER(?)", (new_name, old_name))
-
-            # 2. Find and update all photos containing the old name in their people metadata list
-            cursor.execute("SELECT path, people FROM photos WHERE people LIKE ?", (f"%{old_name}%",))
-            photo_rows = cursor.fetchall()
-
-            for path, people_json in photo_rows:
-                if not people_json:
-                    continue
-                try:
-                    people = json.loads(people_json)
-                except Exception:
-                    continue
-                
-                updated_people = []
-                changed = False
-                for name in people:
-                    if name.strip().lower() == old_name.lower():
-                        if new_name not in updated_people:
-                            updated_people.append(new_name)
-                        changed = True
-                    else:
-                        if name not in updated_people:
-                            updated_people.append(name)
-                
-                if changed and updated_people != people:
-                    path_sql, path_args = paths.sql_equals("path", path)
-                    cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (json.dumps(updated_people),) + path_args)
-
-            # Follow the rename into the tag taxonomy and the photo files themselves.
-            # Previously this endpoint only touched the faces and photos tables, so the
-            # taxonomy kept the old name and -- worse -- nothing was written to disk, so
-            # the next rescan of that folder restored the old name from the file.
-            cursor.execute(
-                "SELECT id, tag FROM tag_taxonomy WHERE name = ? AND has_face = 1", (old_name,)
-            )
-            person_nodes = cursor.fetchall()
-            # (node id, old path, new path, whether the new path already has a node)
-            renamed_paths = []
-            for node_id, node_tag in person_nodes:
-                new_tag = vocabulary.with_leaf(node_tag, new_name)
-                cursor.execute(
-                    "SELECT id FROM tag_taxonomy WHERE tag = ? AND id != ?", (new_tag, node_id)
-                )
-                if cursor.fetchone():
-                    # Two spellings of one person becoming one. The node for the new
-                    # name is kept, and the old one goes once no photo carries it. This
-                    # used to leave the tree and the files alone, so the files kept the
-                    # old path and the next scan brought the old name back.
-                    renamed_paths.append((node_id, node_tag, new_tag, True))
-                    continue
-                cursor.execute(
-                    "UPDATE tag_taxonomy SET name = ?, tag = ? WHERE id = ?",
-                    (new_name, new_tag, node_id),
-                )
-                renamed_paths.append((node_id, node_tag, new_tag, False))
-
-            conn.commit()
-
-            # Rewrite the keyword metadata on any photo carrying the old tag path, and
-            # count what was rewritten rather than what was meant to be.
-            affected_total = rewritten_total = 0
-            write_error = None
-            if renamed_paths:
-                try:
-
-                    executable = self.get_exiftool_path()
-                    for node_id, old_tag, new_tag, merged in renamed_paths:
-                        cursor.execute("SELECT path, tags FROM photos WHERE tags IS NOT NULL")
-                        affected = []
-                        for p_path, tags_json in cursor.fetchall():
-                            try:
-                                for t in json.loads(tags_json or "[]"):
-                                    norm = t.replace("\\", "/").strip()  # not a path: a keyword's hierarchy separator
-                                    if norm == old_tag or norm.startswith(old_tag + "/"):
-                                        affected.append(p_path)
-                                        break
-                            except Exception:
-                                continue
-                        rewritten = 0
-                        if affected:
-                            rewritten = tagging_actions.replace_tag(
-                                Library(self.db_path), affected, old_tag, new_tag, executable
-                            ).changed
-                        affected_total += len(affected)
-                        rewritten_total += rewritten
-                        if merged and rewritten == len(affected):
-                            cursor.execute("DELETE FROM tag_taxonomy WHERE id = ?", (node_id,))
-                            conn.commit()
-                except Exception as write_err:
-                    logger.error(f"Person rename: failed to update photo files: {write_err}")
-                    write_error = str(write_err)
-
-            reply = {"success": True, "photos_affected": affected_total,
-                     "photos_rewritten": rewritten_total}
-            if rewritten_total < affected_total or write_error:
-                reply["warning"] = "%d of %d photo(s) could not be rewritten and still name %s%s." % (
-                    affected_total - rewritten_total, affected_total, old_name,
-                    " (%s)" % write_error if write_error else "")
-            self.send_json(reply)
+            data = self.read_json_body()
+        except Exception as json_err:
+            self.send_error(400, f"Malformed JSON: {json_err}")
+            return
+        try:
+            result = tags_service.rename_person(Library(self.db_path), data.get("old_name"),
+                                                data.get("new_name"), self.get_exiftool_path())
+        except NotFound as missing:
+            self.send_error(404, str(missing))
+            return
         except Exception as e:
             logger.error(f"Error in handle_post_person_rename: {e}")
             self.send_error(500, f"Internal error: {e}")
-        finally:
-            if conn:
-                conn.close()
+            return
+        if result.refused:
+            self.send_json_error(400, result.refused)
+            return
+        reply = {"success": True, "photos_affected": result.details["photos_affected"],
+                 "photos_rewritten": result.details["photos_rewritten"]}
+        if not result.ok:
+            reply["warning"] = result.message()
+        self.send_json(reply)
 
     def faces_fingerprint(self, conn):
         """Cheap signature of the faces table; changes whenever a face is added or named."""

@@ -255,18 +255,67 @@ def repair(db_path):
     return count
 
 
+def branch(db_path, path):
+    """The node `path` and every node under it, parents first."""
+    where, params = sql_branch(path)
+    return _nodes(db_path, "WHERE %s ORDER BY length(tag)" % where, params)
+
+
 def move_branch(conn, old, new):
-    """Give the node `old` the path `new`, and every node under it the same move. The
-    nodes keep their ids, their parents and their flags. The caller commits. Returns
-    the nodes moved."""
-    conn.execute("UPDATE tag_taxonomy SET tag = ?, name = ? WHERE tag = ?",
-                 (new, vocabulary.leaf_of(new), old))
-    prefix = old + vocabulary.SEPARATOR
-    below = conn.execute("SELECT id, tag FROM tag_taxonomy WHERE substr(tag, 1, ?) = ?",
-                         (len(prefix), prefix)).fetchall()
-    for node_id, tag in below:
-        conn.execute("UPDATE tag_taxonomy SET tag = ? WHERE id = ?", (new + tag[len(old):], node_id))
-    return 1 + len(below)
+    """Move the node `old`, and every node under it, to its place under `new`. A node
+    whose place is free moves there, keeping its id and flags; one whose place is taken
+    joins the node already there, and goes. The caller commits. Returns the nodes moved
+    or joined.
+
+    Renaming a node moves its branch to a free place. Merging one tag into another joins
+    the branches.
+    """
+    where, params = sql_branch(old)
+    nodes = conn.execute("SELECT id, tag FROM tag_taxonomy WHERE %s ORDER BY length(tag)" % where,
+                         params).fetchall()
+    if nodes and vocabulary.parent_of(new):
+        add_path(conn, vocabulary.parent_of(new))
+    joined = []
+    # Parents first, so each node's new parent is in place when the node gets there.
+    for node_id, tag in nodes:
+        place = new + tag[len(old):]
+        if conn.execute("SELECT 1 FROM tag_taxonomy WHERE tag = ?", (place,)).fetchone():
+            joined.append(node_id)
+            continue
+        parent = vocabulary.parent_of(place)
+        parent_id = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?",
+                                 (parent,)).fetchone()[0] if parent else None
+        conn.execute("UPDATE tag_taxonomy SET tag = ?, name = ?, parent_id = ? WHERE id = ?",
+                     (place, vocabulary.leaf_of(place), parent_id, node_id))
+    if joined:
+        conn.execute("DELETE FROM tag_taxonomy WHERE id IN (%s)" % ", ".join("?" * len(joined)), joined)
+    return len(nodes)
+
+
+def people_nodes(db_path, name):
+    """The nodes holding faces whose name is `name`: where that person is filed."""
+    return _nodes(db_path, "WHERE name = ? AND has_face = 1", (name,))
+
+
+def tag_embeddings(db_path, tag):
+    """How many CLIP embeddings the library caches for the word `tag`."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not conn.execute("SELECT name FROM sqlite_master WHERE type='table'"
+                            " AND name='tag_embeddings'").fetchone():
+            return 0
+        return conn.execute("SELECT COUNT(*) FROM tag_embeddings WHERE tag = ?", (tag,)).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def forget_tag_embeddings(conn, tag):
+    """Drop the CLIP embeddings cached for the word `tag`. The caller commits. Returns
+    the rows dropped."""
+    if not conn.execute("SELECT name FROM sqlite_master WHERE type='table'"
+                        " AND name='tag_embeddings'").fetchone():
+        return 0
+    return conn.execute("DELETE FROM tag_embeddings WHERE tag = ?", (tag,)).rowcount
 
 
 def delete_branch(conn, path):

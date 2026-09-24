@@ -112,10 +112,17 @@ class Deleting(TreeCase):
         self.assertEqual(self.rewrites, [(sorted([self.on_it, self.under_it]), "Activity/Rowing", None)])
         self.assertEqual(sorted(self.tree()), ["Activity"])
 
-    def test_moved_to_a_tag_the_tree_gains(self):
+    def test_moved_to_a_tag_under_which_its_branch_goes_on(self):
+        """The photos carrying Activity/Rowing/Juniors now carry Sport/Rowing/Juniors, and
+        so does the tree (docs/findings.md, #38)."""
         tags.delete(self.lib.library, self.rowing, "move", " Sport / Rowing ", "exiftool")
         self.assertEqual(self.rewrites[0][1:], ("Activity/Rowing", "Sport/Rowing"))
-        self.assertEqual(sorted(self.tree()), ["Activity", "Sport", "Sport/Rowing"])
+        self.assertEqual(sorted(self.tree()), ["Activity", "Sport", "Sport/Rowing", "Sport/Rowing/Juniors"])
+
+    def test_it_cannot_be_moved_under_itself(self):
+        result = tags.delete(self.lib.library, self.rowing, "move", "Activity/Rowing/Masters", "exiftool")
+        self.assertTrue(result.refused)
+        self.assertEqual(self.rewrites, [])
 
     def test_moving_needs_somewhere_to_move_to(self):
         self.assertTrue(tags.delete(self.lib.library, self.rowing, "move", "", "exiftool").refused)
@@ -172,6 +179,100 @@ class Renaming(TreeCase):
     def test_a_name_holding_a_separator_is_refused(self):
         crew = self.node("Crew")
         self.assertTrue(tags.rename(self.lib.library, crew, "Crew/Divers", "exiftool").refused)
+
+
+class Merging(TreeCase):
+    """TagTuner's Rename, Merge and Retire (docs/findings.md, #38)."""
+
+    def setUp(self):
+        super().setUp()
+        for path in ("Crew/Divers/Jane Olsen", "Crew/Divers/Ann Kerr", "Crew/Swimmers/Ann Kerr"):
+            self.node(path)
+        self.jane = self.id_of("Crew/Divers/Jane Olsen")
+
+    def merge(self, source, target, **options):
+        return tags.merge(self.lib.library, source, target, "exiftool", **options)
+
+    def test_the_plan_counts_the_photos_carrying_a_tag_under_it_and_writes_nothing(self):
+        on_it = self.photo("a.jpg", ["Crew/Divers"])
+        under_it = self.photo("b.jpg", ["Crew/Divers/Jane Olsen", "Crew/Swimmers"])
+        plan = self.merge("Crew/Divers", "Crew/Swimmers").details
+        self.assertEqual((plan["photos"], plan["photos_already_carrying_the_target"],
+                          plan["taxonomy_rows_to_drop"], plan["applied"]), (2, 1, 3, False))
+        self.assertEqual(sorted(plan["examples"]), sorted(os.path.basename(p) for p in (on_it, under_it)))
+        self.assertEqual(self.rewrites, [])
+        self.assertIn("Crew/Divers", self.tree())
+
+    def test_the_branch_joins_the_one_there_and_what_is_free_moves(self):
+        result = self.merge("Crew/Divers", "Crew/Swimmers", apply=True)
+        self.assertTrue(result.details["applied"], result.message())
+        self.assertEqual(sorted(self.tree()), ["Crew", "Crew/Swimmers", "Crew/Swimmers/Ann Kerr",
+                                               "Crew/Swimmers/Jane Olsen"])
+        self.assertEqual(self.id_of("Crew/Swimmers/Jane Olsen"), self.jane, "a moved node keeps its id")
+
+    def test_renaming_a_tag_no_photo_carries_keeps_it_under_its_new_name(self):
+        self.merge("Crew/Divers", "Crew/Rowers", apply=True)
+        self.assertIn("Crew/Rowers/Jane Olsen", self.tree())
+
+    def test_retiring_takes_the_branch_out_and_its_cached_embedding(self):
+        self.lib.execute("INSERT INTO tag_embeddings (tag, prompt, model_name, pretrained, embedding)"
+                         " VALUES ('Crew/Divers', 'p', 'm', 'x', x'00')")
+        self.assertEqual(self.merge("Crew/Divers", None, retire=True).details["embeddings_to_drop"], 1)
+        self.merge("Crew/Divers", None, retire=True, apply=True)
+        self.assertEqual(sorted(self.tree()), ["Crew", "Crew/Swimmers", "Crew/Swimmers/Ann Kerr"])
+        self.assertEqual(self.lib.rows("SELECT COUNT(*) FROM tag_embeddings"), [(0,)])
+
+    def test_a_photo_not_rewritten_keeps_the_tag_in_the_tree(self):
+        self.unwritable.add(self.photo("a.jpg", ["Crew/Divers/Jane Olsen"]))
+        result = self.merge("Crew/Divers", "Crew/Swimmers", apply=True)
+        self.assertFalse(result.ok)
+        self.assertFalse(result.details["applied"])
+        self.assertIn("Crew/Divers/Jane Olsen", self.tree())
+
+    def test_what_cannot_be_asked(self):
+        for source, target, options in (("", "X", {}), ("Crew", "", {}), ("Crew", "Crew", {}),
+                                        ("Crew", "Crew|X", {}), ("Crew", "Crew/Divers", {})):
+            self.assertTrue(self.merge(source, target, **options).refused, (source, target))
+
+
+class RenamingAPerson(TreeCase):
+    def setUp(self):
+        super().setUp()
+        self.node("People/Rowan Thackeray")
+        self.node("Family/Rowan Thackeray")
+
+    def rename(self, old, new):
+        return tags.rename_person(self.lib.library, old, new, "exiftool")
+
+    def test_every_node_filed_under_the_name_and_the_photos_carrying_them(self):
+        photo = self.photo("a.jpg", ["People/Rowan Thackeray"])
+        result = self.rename("Rowan Thackeray", "Rowan Vale")
+        self.assertTrue(result.ok, result.message())
+        self.assertEqual(sorted(self.tree()), ["Family", "Family/Rowan Vale", "People", "People/Rowan Vale"])
+        self.assertEqual(self.rewrites, [([photo], "People/Rowan Thackeray", "People/Rowan Vale")])
+        self.assertEqual(result.details["photos_affected"], 1)
+
+    def test_faces_whatever_their_case_and_each_photos_people(self):
+        photo = self.photo("a.jpg", people=["rowan thackeray", "Ada Pembrook"])
+        self.lib.add_face(photo, [0, 0, 10, 10], name="Rowan Thackeray")
+        self.lib.add_face(photo, [10, 10, 20, 20], name="rowan thackeray")
+        result = self.rename("Rowan Thackeray", "Rowan Vale")
+        self.assertEqual(result.details["faces_renamed"], 2)
+        self.assertEqual(self.lib.rows("SELECT DISTINCT name FROM faces"), [("Rowan Vale",)])
+        self.assertEqual(json.loads(self.lib.rows("SELECT people FROM photos")[0][0]),
+                         ["Rowan Vale", "Ada Pembrook"])
+
+    def test_into_a_name_filed_already_the_two_become_one(self):
+        self.node("People/Rowan Vale")
+        photo = self.photo("a.jpg", ["People/Rowan Thackeray"])
+        self.rename("Rowan Thackeray", "Rowan Vale")
+        self.assertEqual(sorted(self.tree()), ["Family", "Family/Rowan Vale", "People", "People/Rowan Vale"])
+        self.assertIn(([photo], "People/Rowan Thackeray", "People/Rowan Vale"), self.rewrites)
+
+    def test_what_cannot_be_asked(self):
+        for old, new in (("", "X"), ("Rowan Thackeray", tags.UNMATCHED), ("Rowan Thackeray", "A/B")):
+            self.assertTrue(self.rename(old, new).refused, (old, new))
+        self.assertEqual(self.rename("Rowan Thackeray", "Rowan Thackeray").changed, 0)
 
 
 class TheTreeView(TreeCase):

@@ -245,6 +245,32 @@ class TestMergingATag(TagViewTestBase):
             conn.close()
         self.assertEqual(tax, 1, "the tag was retired while a photo still carries it")
 
+    def tree(self):
+        """Each node of the tree, and its parent's path."""
+        conn = sqlite3.connect(self.TEST_DB)
+        try:
+            return dict(conn.execute("SELECT t.tag, p.tag FROM tag_taxonomy t"
+                                     " LEFT JOIN tag_taxonomy p ON p.id = t.parent_id").fetchall())
+        finally:
+            conn.close()
+
+    def test_a_photo_carrying_only_a_tag_under_it_is_counted(self):
+        """docs/findings.md, #38: merging found only the photos carrying the tag itself,
+        so a photo carrying a tag under it kept the old path."""
+        self.seed([("D:/a.jpg", ["Crew/Divers"]), ("D:/b.jpg", ["Crew/Divers/Jane Olsen"])])
+        _status, body = self.plan(**{"from": "Crew/Divers", "into": "Crew/Swimmers"})
+        self.assertEqual(body["photos"], 2)
+
+    def test_renaming_a_tag_moves_its_branch_in_the_tree(self):
+        """docs/findings.md, #38: the node went, the nodes under it stayed below a parent
+        that was gone, and the new name was never added."""
+        self.seed([], taxonomy=[("Crew", False), ("Crew/Divers", False),
+                                ("Crew/Divers/Jane Olsen", False)])
+        _status, body = self.plan(**{"from": "Crew/Divers", "into": "Crew/Swimmers", "apply": True})
+        self.assertTrue(body["applied"], body)
+        self.assertEqual(self.tree(), {"Crew": None, "Crew/Swimmers": "Crew",
+                                       "Crew/Swimmers/Jane Olsen": "Crew/Swimmers"})
+
 
 if __name__ == "__main__":
     unittest.main()

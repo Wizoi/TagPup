@@ -2,9 +2,13 @@
 
 A tag lives in the photo files, in the index's copy of each photo's tags, and in the tree
 (tag_taxonomy); a person's name is also on the faces named for them and in each photo's
-list of people. The tree's edits were TagPup's route handlers, each with SQL of its own.
+list of people. The tree's edits were TagPup's route handlers, each with SQL of its own,
+and TagTuner's merge and person rename were copies of their own again. Each reached a
+different set of those places (docs/findings.md, #38). They all come here now, and
+through _retag and _rename_in_place.
 """
 import logging
+import os
 
 from tagpup.core import vocabulary
 from tagpup.core.result import NotFound, Result
@@ -12,6 +16,9 @@ from tagpup.services import tagging
 from tagpup.store import db, people, photos, taxonomy
 
 logger = logging.getLogger(__name__)
+
+#: The name TagTuner shows the faces nobody is named on. Nobody can be called it.
+UNMATCHED = "Unmatched"
 
 
 def tree(library):
@@ -88,49 +95,37 @@ def usage(library, node_id):
     """The photos carrying a node's tag or one under it, which deleting it would change:
     {"tag", "used", "count", "affected_photos"}, the last the first 100 of them."""
     node = _node(library, node_id)
-    carrying = photos.carrying(library.path, node["tag"])
+    carrying = list(photos.carrying(library.path, node["tag"]))
     return {"tag": node["tag"], "used": bool(carrying), "count": len(carrying),
             "affected_photos": carrying[:100]}
 
 
 def delete(library, node_id, action, target, exiftool_path):
     """Take a node, and every node under it, out of the tree and off the photos carrying
-    them: removed, or with `action` "move", replaced by the tag `target`, which the tree
-    gains. Deleting in the tree view.
+    them: removed, or with `action` "move", replaced by the tag `target`, under which
+    the branch goes on in the tree. Deleting in the tree view.
 
-    A photo that could not be rewritten still carries the tag, so the tag still
-    describes it and stays in the tree, and the Result fails. It used to be deleted
-    anyway, and the reply said success.
+    A photo that could not be rewritten still carries the tag, so the tag still describes
+    it and stays in the tree, and the Result fails. It used to be deleted anyway, and the
+    reply said success.
 
     details: `tag`, `photos_affected`, `photos_rewritten`.
     """
     node = _node(library, node_id)
     old = node["tag"]
     result = Result(attempted=1)
-    affected = photos.carrying(library.path, old)
-    rewritten = 0
-    if affected:
-        new = None
-        if action == "move":
-            new = vocabulary.normalize(target or "")
-            if not new:
-                result.refuse("Target tag path is required for move action")
-                return result
-            db.write_with_connection(library.path, lambda conn: taxonomy.add_path(conn, new),
-                                     label="tag tree: add %s" % new)
-            # The writes resolve names against the tree, which now has the target.
-            taxonomy.forget_people_paths(library.path)
-        rewritten = tagging.replace_tag(library, affected, old, new, exiftool_path).changed
-
-    result.details.update(tag=old, photos_affected=len(affected), photos_rewritten=rewritten)
-    if rewritten < len(affected):
-        result.fail(old, "%d of %d photo(s) could not be rewritten, so '%s' was kept; they "
-                         "still carry it." % (len(affected) - rewritten, len(affected), old))
-        return result
-    db.write_with_connection(library.path, lambda conn: taxonomy.delete_branch(conn, old),
-                             label="tag tree: delete %s" % old)
-    result.changed = 1
-    _tree_changed(library)
+    carrying = photos.carrying(library.path, old)
+    new = None
+    if action == "move" and carrying:
+        new = vocabulary.normalize(target or "")
+        if not new:
+            result.refuse("Target tag path is required for move action")
+            return result
+        if _under(new, old):
+            result.refuse("A tag cannot be moved under itself.")
+            return result
+    _retag(library, old, new, list(carrying), exiftool_path, result)
+    result.details["tag"] = old
     return result
 
 
@@ -168,35 +163,201 @@ def rename(library, node_id, new_name, exiftool_path):
         result.refuse("A tag with path '%s' already exists." % new)
         return result
 
+    _rename_in_place(library, old, new, exiftool_path, result)
+    # Faces keep the bare name, so renaming a person in the tree follows through to them.
+    # Without this the tree, the files and the photos table all say the new name while
+    # every matched face still says the old one, and TagTuner keeps showing it.
+    old_leaf, new_leaf = vocabulary.leaf_of(old), vocabulary.leaf_of(new)
+    if node["has_face"] and old_leaf != new_leaf:
+        result.details["faces_renamed"] = _rename_person_records(library, old_leaf, new_leaf)
+    _tree_changed(library)
+    return result
+
+
+def merge(library, source, target, exiftool_path, retire=False, apply=False):
+    """Rename the tag `source` to `target` everywhere it lives, joining it with `target`
+    where that is a tag already -- or, with `retire`, take it off everything. TagTuner's
+    Rename, Merge and Retire.
+
+    Without `apply` nothing is written, and details is the plan: `photos`,
+    `photos_already_carrying_the_target`, `embeddings_to_drop`, `taxonomy_rows_to_drop`
+    and `examples`. Applied, a photo that could not be rewritten still carries the tag, so
+    the tree keeps it and the Result fails; the tag's cached CLIP embedding is dropped.
+
+    details, applied: `applied`, `photos_rewritten`.
+    """
+    result = Result(attempted=1)
+    source, target = (source or "").strip(), (target or "").strip()
+    if not source:
+        result.refuse("Missing the tag to change")
+        return result
+    if not target and not retire:
+        result.refuse("Missing the tag to merge into")
+        return result
+    problem = target and vocabulary.problem_with_tag(target)
+    if problem:
+        result.refuse(problem)
+        return result
+    # In its one spelling, as the tag tree holds it: "School / Kentridge" was written into
+    # the files with its spaces.
+    target = vocabulary.normalize(target)
+    if target == source:
+        result.refuse("That tag is already called that")
+        return result
+    if target and _under(target, source):
+        result.refuse("A tag cannot be moved under itself.")
+        return result
+
+    carrying = photos.carrying(library.path, source)
+    result.details.update({
+        "from": source, "into": target or None, "retire_only": retire,
+        "photos": len(carrying),
+        "photos_already_carrying_the_target": sum(1 for tags in carrying.values() if target and target in tags),
+        "embeddings_to_drop": taxonomy.tag_embeddings(library.path, source),
+        "taxonomy_rows_to_drop": len(taxonomy.branch(library.path, source)),
+        "examples": [os.path.basename(p) for p in list(carrying)[:5]],
+        "applied": False,
+    })
+    if not apply:
+        return result
+
+    if _retag(library, source, target or None, list(carrying), exiftool_path, result, always_move=True):
+        db.write_with_connection(library.path, lambda conn: taxonomy.forget_tag_embeddings(conn, source),
+                                 label="tag embeddings of %s" % source)
+        result.details["applied"] = True
+        logger.info("Merged tag %r into %r across %d photo(s)", source, target or "(nothing)", len(carrying))
+    else:
+        logger.warning("Tag merge of %r: %s", source, result.message())
+    return result
+
+
+def rename_person(library, old_name, new_name, exiftool_path):
+    """Rename a person everywhere: the faces named for them, each photo's list of people,
+    each node of the tree filed under their name, and the photos carrying those tags.
+    TagTuner's Rename Person.
+
+    Into the name of a node there already, the two become one: the photos are rewritten
+    first, and the old node goes once none carries it. A photo that could not be
+    rewritten still names the person the old way; the Result fails for it.
+
+    details: `photos_affected`, `photos_rewritten`, `faces_renamed`.
+    """
+    result = Result(attempted=1)
+    old_name, new_name = str(old_name or "").strip(), str(new_name or "").strip()
+    if not old_name or not new_name:
+        result.refuse("Missing old_name or new_name")
+        return result
+    result.details.update(photos_affected=0, photos_rewritten=0, faces_renamed=0)
+    if old_name == new_name:
+        return result
+    if UNMATCHED in (old_name, new_name):
+        result.refuse("Cannot rename to/from '%s'" % UNMATCHED)
+        return result
+    problem = vocabulary.problem_with_name(new_name)
+    if problem:
+        result.refuse(problem)
+        return result
+    if not os.path.exists(library.path):
+        raise NotFound("Database not found")
+
+    result.details["faces_renamed"] = _rename_person_records(library, old_name, new_name)
+    # Follow the rename into the tree and the photo files themselves. This once touched
+    # only the faces and photos tables, so nothing was written to disk and the next scan
+    # of the folder brought the old name back from the files.
+    try:
+        for node in taxonomy.people_nodes(library.path, old_name):
+            old_tag = node["tag"]
+            new_tag = vocabulary.with_leaf(old_tag, new_name)
+            if taxonomy.find(library.path, new_tag):
+                # Two spellings of one person becoming one. This used to leave the tree
+                # and the files alone, so the files kept the old path and the next scan
+                # brought the old name back.
+                _retag(library, old_tag, new_tag, list(photos.carrying(library.path, old_tag)),
+                       exiftool_path, result, add_up=True)
+            else:
+                _rename_in_place(library, old_tag, new_tag, exiftool_path, result, add_up=True)
+    except Exception as e:
+        # The faces already have the new name; what is left is said, not thrown.
+        logger.error("Person rename: failed to update the tree or the photo files: %s", e)
+        result.fail(old_name, e)
+    _tree_changed(library)
+    return result
+
+
+def _retag(library, old, new, carrying, exiftool_path, result, always_move=False, add_up=False):
+    """Take the tag `old` off the photos in `carrying` -- replaced by `new`, if given --
+    and then out of its place in the tree: its branch moved under `new`, joining the
+    nodes there, or taken out.
+
+    The tree changes only once every photo is rewritten: a photo that still carries the
+    tag is still described by it. Without photos, a delete takes the branch out, unless
+    `always_move` (a rename: the branch goes to its new place anyway). Fails the Result
+    for photos not rewritten. Returns whether the tree was changed.
+    """
+    rewritten = 0
+    if carrying:
+        if new:
+            db.write_with_connection(library.path, lambda conn: taxonomy.add_path(conn, new),
+                                     label="tag tree: add %s" % new)
+            # The writes resolve names against the tree, which now has the target.
+            taxonomy.forget_people_paths(library.path)
+        rewritten = tagging.replace_tag(library, carrying, old, new, exiftool_path).changed
+    _count(result, len(carrying), rewritten, add_up)
+    if rewritten < len(carrying):
+        result.fail(old, "%d of %d photo(s) could not be rewritten, so '%s' was kept; they "
+                         "still carry it." % (len(carrying) - rewritten, len(carrying), old))
+        return False
+    moving = new and (carrying or always_move)
+    db.write_with_connection(
+        library.path,
+        lambda conn: taxonomy.move_branch(conn, old, new) if moving else taxonomy.delete_branch(conn, old),
+        label="tag tree: %s %s" % ("move" if moving else "delete", old))
+    result.changed = 1
+    _tree_changed(library)
+    return True
+
+
+def _rename_in_place(library, old, new, exiftool_path, result, add_up=False):
+    """Move the branch `old` to the free place `new` in the tree, then rewrite the photos
+    carrying it. A photo that could not be rewritten keeps the old tag, and the Result
+    fails for it; the tree keeps the new name."""
     db.write_with_connection(library.path, lambda conn: taxonomy.move_branch(conn, old, new),
                              label="tag tree: rename %s" % old)
     # The tree has the new name now. The writes below resolve people against it, and with
     # the cache still holding the old tree a photo that also carries the bare name had the
     # old path written straight back.
     taxonomy.forget_people_paths(library.path)
-    affected = photos.carrying(library.path, old)
-    rewritten = tagging.replace_tag(library, affected, old, new, exiftool_path).changed if affected else 0
-
-    # Faces keep the bare name, so renaming a person in the tree follows through to them.
-    # Without this the tree, the files and the photos table all say the new name while
-    # every matched face still says the old one, and TagTuner keeps showing it.
-    faces_renamed = 0
-    old_leaf, new_leaf = vocabulary.leaf_of(old), vocabulary.leaf_of(new)
-    if node["has_face"] and old_leaf != new_leaf:
-        faces_renamed, _ = db.write_with_connection(
-            library.path, lambda conn: people.rename(conn, old_leaf, new_leaf),
-            label="rename %s's faces" % old_leaf)
-        if faces_renamed:
-            logger.info("Tag rename also renamed %d resolved face(s).", faces_renamed)
-
+    carrying = list(photos.carrying(library.path, old))
+    rewritten = tagging.replace_tag(library, carrying, old, new, exiftool_path).changed if carrying else 0
     result.changed = 1
-    result.details.update(photos_affected=len(affected), photos_rewritten=rewritten,
-                          faces_renamed=faces_renamed)
-    if rewritten < len(affected):
+    _count(result, len(carrying), rewritten, add_up)
+    if rewritten < len(carrying):
         result.fail(old, "%d of %d photo(s) could not be rewritten and still carry '%s'."
-                    % (len(affected) - rewritten, len(affected), old))
-    _tree_changed(library)
-    return result
+                    % (len(carrying) - rewritten, len(carrying), old))
+
+
+def _rename_person_records(library, old, new):
+    """The person `old` renamed `new` on their faces and in each photo's list of people.
+    Returns the faces renamed."""
+    faces_renamed, _ = db.write_with_connection(
+        library.path, lambda conn: people.rename(conn, old, new), label="rename a person's faces")
+    if faces_renamed:
+        logger.info("Renamed %d resolved face(s).", faces_renamed)
+    return faces_renamed
+
+
+def _count(result, affected, rewritten, add_up):
+    """Record the photos an edit touched: added to what the Result holds with `add_up`
+    (a person filed in more than one place), else in place of it."""
+    if add_up:
+        affected += result.details.get("photos_affected", 0)
+        rewritten += result.details.get("photos_rewritten", 0)
+    result.details.update(photos_affected=affected, photos_rewritten=rewritten)
+
+
+def _under(tag, other):
+    """Is `tag` the tag `other`, or under it?"""
+    return vocabulary.retag([tag], other)[1]
 
 
 def _node(library, node_id):
