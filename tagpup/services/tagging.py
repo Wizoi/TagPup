@@ -22,17 +22,31 @@ def replace_tag(library, photo_paths, old, new, exiftool_path):
     fields and not the file's new mtime, so a renamed tag's photos were re-read on every
     scan and a stale IPTC:Keywords was re-derived straight back into the tags.
 
+    Each photo's keywords are read from its file first. The write replaces the whole
+    keyword set, and the index can lag the file: starting from the index's copy dropped
+    a keyword written elsewhere since, and wrote back one taken off elsewhere (finding
+    #30). A photo whose file does not carry the tag is left alone, and its row, which
+    said it did, is made to say what the file holds.
+
     attempted: the photos the index has a row for. changed: the rows rewritten. A photo
-    not carrying the tag is skipped; one that could not be written is an error.
+    not carrying the tag is skipped; one that could not be read or written is an error.
     """
     rows = photos.read_tags(library.path, photo_paths)
     result = Result(attempted=len(rows))
     people = taxonomy.people_paths(library.path)
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-        for path, current_tags, raw_meta in rows:
+        for path, indexed_tags, raw_meta in rows:
+            try:
+                current_tags = keywords.tags_in_file(et, path)
+            except Exception as err:
+                logger.error("Could not read the keywords of %s: %s", path, err)
+                result.fail(path, err)
+                continue
             new_tags, changed = vocabulary.retag(current_tags, old, new)
             if not changed:
                 result.skip(path, "does not carry the tag")
+                if set(current_tags) != set(indexed_tags):
+                    photos.record_tags(library.path, path, current_tags)
                 continue
             try:
                 flat, hierarchical = keywords.write_keywords(
