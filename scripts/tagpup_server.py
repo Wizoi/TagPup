@@ -2116,21 +2116,18 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 self.send_json_error(404, "Tag not found")
                 return
             tag_path, parent_id = row
-            
+            branch, branch_params = store_taxonomy.sql_branch(tag_path)
+
             if has_face is not None:
                 cursor.execute("UPDATE tag_taxonomy SET has_face = ? WHERE id = ?", (has_face, tag_id))
-                cursor.execute(
-                    "UPDATE tag_taxonomy SET has_face = ? WHERE tag = ? OR tag LIKE ?",
-                    (has_face, tag_path, tag_path + "/%")
-                )
-                
+                cursor.execute("UPDATE tag_taxonomy SET has_face = ? WHERE " + branch,
+                               (has_face,) + branch_params)
+
             if hidden_from_autocomplete is not None:
                 cursor.execute("UPDATE tag_taxonomy SET hidden_from_autocomplete = ? WHERE id = ?", (hidden_from_autocomplete, tag_id))
-                cursor.execute(
-                    "UPDATE tag_taxonomy SET hidden_from_autocomplete = ? WHERE tag = ? OR tag LIKE ?",
-                    (hidden_from_autocomplete, tag_path, tag_path + "/%")
-                )
-                
+                cursor.execute("UPDATE tag_taxonomy SET hidden_from_autocomplete = ? WHERE " + branch,
+                               (hidden_from_autocomplete,) + branch_params)
+
             conn.commit()
             conn.close()
             self.send_json({"success": True})

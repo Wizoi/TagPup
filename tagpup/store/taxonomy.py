@@ -28,6 +28,16 @@ def generation(conn):
     return row[0] if row else 0
 
 
+def sql_branch(path, column="tag"):
+    """(SQL, parameters) matching the tag `path` and every tag under it, in `column`.
+
+    Not LIKE '<path>/%': LIKE ignores case and reads `_` and `%` as wildcards, so it
+    matched ClubXA/... and club_a/... under Club_A (docs/findings.md, #36).
+    """
+    prefix = path + vocabulary.SEPARATOR
+    return "(%s = ? OR substr(%s, 1, ?) = ?)" % (column, column), (path, len(prefix), prefix)
+
+
 def add_path(conn, path, root_has_face=0):
     """Put a tag in the tree on `conn`, with each of its levels that is missing, and
     return the id of its node: None for a tag with no levels. The caller commits.

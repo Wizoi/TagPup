@@ -336,6 +336,23 @@ class TestTaxonomyUpdate(TaxonomyTestBase):
         self.assertEqual(rows["BranchA/Leaf"]["has_face"], 1)
         self.assertEqual(rows["BranchB/Leaf"]["has_face"], 0, "sibling branch was modified")
 
+    def test_only_the_tags_under_it_are_its_branch(self):
+        """docs/findings.md, #36: LIKE 'Club_A/%' also matched ClubXA/..., and club_a/...:
+        LIKE reads `_` as any character and ignores case."""
+        club_id, _ = self.create_tag("Club_A")
+        self.create_tag("Relay", parent_id=club_id)
+        for other in ("ClubXA", "club_a"):
+            other_id, _ = self.create_tag(other)
+            self.create_tag("Relay", parent_id=other_id)
+
+        self.post("/api/taxonomy/update", {"id": club_id, "has_face": 1, "hidden_from_autocomplete": 1})
+        rows = self.taxonomy_rows()
+        self.assertEqual({tag: (row["has_face"], row["hidden"]) for tag, row in rows.items()}, {
+            "Club_A": (1, 1), "Club_A/Relay": (1, 1),
+            "ClubXA": (0, 0), "ClubXA/Relay": (0, 0),
+            "club_a": (0, 0), "club_a/Relay": (0, 0),
+        })
+
     def test_rejects_unknown_tag(self):
         status, _ = self.post("/api/taxonomy/update", {"id": 999999, "has_face": 1})
         self.assertEqual(status, 404)
