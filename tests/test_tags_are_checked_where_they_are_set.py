@@ -142,6 +142,56 @@ class TagPupRefuses(ServerCase):
                          ["Activity", "Activity/Hiking"])
 
 
+def subjects_written(et):
+    """Every XMP:Subject value the session was asked to write."""
+    written = []
+    for call in et.set_tags.call_args_list:
+        tags = call.kwargs.get("tags") or (call.args[1] if len(call.args) > 1 else {})
+        written.extend(tags.get("XMP:Subject") or [])
+    return written
+
+
+class ANewTagIsWrittenInItsOneSpelling(ServerCase):
+    """As the tag tree spells it. A typed "People / Rowan" was written with its spaces,
+    beside the tree's People/Rowan -- two tags where there should be one."""
+
+    def test_a_photo_save(self):
+        session, et = fake_exiftool(["Places/Harbour"])
+        with patch("exiftool_session.ExifToolSession", session), \
+                patch("metadata.sync_title_to_filename", side_effect=lambda p, t, e: p):
+            status, reply = self.call(TagPupHTTPRequestHandler, "handle_post_photo_save_metadata",
+                                      {"path": self.photo, "title": "",
+                                       "tags": ["Places/Harbour", "People / Rowan Thackeray"]})
+        self.assertEqual(status, 200, reply)
+        self.assertEqual(subjects_written(et), ["Places/Harbour", "People/Rowan Thackeray"])
+
+    def test_a_tag_the_photo_already_holds_is_left_as_it_is(self):
+        # Rewriting what another program wrote is not this save's business.
+        session, et = fake_exiftool(["Legacy / Keyword"])
+        with patch("exiftool_session.ExifToolSession", session), \
+                patch("metadata.sync_title_to_filename", side_effect=lambda p, t, e: p):
+            status, reply = self.call(TagPupHTTPRequestHandler, "handle_post_photo_save_metadata",
+                                      {"path": self.photo, "title": "",
+                                       "tags": ["Legacy / Keyword"]})
+        self.assertEqual(status, 200, reply)
+        self.assertEqual(subjects_written(et), ["Legacy / Keyword"])
+
+    def test_adding_to_many_photos(self):
+        session, et = fake_exiftool([])
+        with patch("exiftool_session.ExifToolSession", session):
+            status, reply = self.call(TagPupHTTPRequestHandler, "handle_post_photos_bulk_tags",
+                                      {"paths": [self.photo], "add_tags": [" Places / Harbour "],
+                                       "remove_tags": []})
+        self.assertEqual(status, 200, reply)
+        self.assertEqual(subjects_written(et), ["Places/Harbour"])
+
+    def test_merging_into_a_tag(self):
+        status, plan = self.call(TunerHTTPRequestHandler, "handle_post_tags_merge",
+                                 {"from": "Kentridge", "into": "School / Kentridge"})
+        self.assertEqual(status, 200, plan)
+        self.assertEqual(plan["into"], "School/Kentridge")
+
+
 class TagTunerRefuses(ServerCase):
     def seed_face(self, name=None):
         conn = tagpup_db.connect(self.db_path)

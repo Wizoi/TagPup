@@ -60,6 +60,18 @@ for (const file of Object.keys(PAGES)) {
   });
 }
 
+describe("gui_tagpup/app.js: a typed tag is set in its one spelling", () => {
+  // Only TagPup's page turns typed text into a tag path.
+  const source = fs.readFileSync(PAGES["gui_tagpup/app.js"], "utf8");
+  const normalizeTag = new Function(`${functionSource(source, "normalizeTag")}\nreturn normalizeTag;`)();
+
+  test("as the server spells it", () => {
+    for (const [typed, stored] of RULES.spelled) {
+      assert.equal(normalizeTag(typed), stored, JSON.stringify(typed));
+    }
+  });
+});
+
 afterEach(() => closeAllApps());
 
 const TAXONOMY = [
@@ -121,6 +133,32 @@ describe("TagPup: a tag that cannot be set", () => {
 
     assert.deepEqual(writes(ctx), []);
     assert.match(ctx.alerts[0] || "", /control character/);
+  });
+
+  test("a path typed with spaces is written as the tree spells it", async (t) => {
+    // It was written as typed, beside the tree's People/Rowan Thackeray.
+    const ctx = await onAPhoto(t);
+    typeAndEnter(ctx, "input-add-tag", "People / Rowan Thackeray");
+    await flush(ctx.window, 12);
+
+    const saved = ctx.server.lastBody("/api/photo/save-metadata");
+    assert.ok(saved, "nothing was saved");
+    assert.ok(saved.tags.includes("People/Rowan Thackeray"), `wrote: ${saved.tags}`);
+    assert.ok(!saved.tags.includes("People / Rowan Thackeray"), `wrote: ${saved.tags}`);
+  });
+
+  test("a tag the server refuses to create is not written", async (t) => {
+    const ctx = await onAPhoto(t);
+    ctx.server.routes.unshift({
+      match: "/api/taxonomy/create",
+      body: { success: false, error: "Tag name cannot be empty" },
+      status: 400,
+    });
+    typeAndEnter(ctx, "input-add-tag", "Places/Harbour");
+    await flush(ctx.window, 12);
+
+    assert.equal(ctx.server.lastBody("/api/photo/save-metadata"), undefined);
+    assert.match(ctx.alerts[0] || "", /Tag name cannot be empty/);
   });
 
   test("a good tag typed beside it is not written either", async (t) => {

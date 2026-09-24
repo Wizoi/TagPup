@@ -2494,6 +2494,9 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 if problem:
                     self.send_json_error(400, problem)
                     return
+                # A new tag goes in in its one spelling, as the tag tree holds it: a
+                # typed "People / Rowan" was written with its spaces.
+                tags = [t if t in held else vocabulary.normalize(t) for t in tags]
                 new_flat_tags, new_hierarchical_tags = write_keyword_fields(
                     et, photo_path, tags, extra_params=params, db_path=self.db_path)
                 
@@ -2599,6 +2602,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         if problem:
             self.send_json_error(400, problem)
             return
+        add_tags = [vocabulary.normalize(t) for t in add_tags]
 
         executable = self.get_exiftool_path()
         from exiftool_session import ExifToolSession

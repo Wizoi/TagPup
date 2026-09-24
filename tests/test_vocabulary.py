@@ -106,6 +106,12 @@ class WhatMayBeSet(unittest.TestCase):
             with self.subTest(name=text):
                 self.assertEqual(vocabulary.problem_with_name(text), expected)
 
+    def test_an_allowed_tag_is_set_in_its_one_spelling(self):
+        for typed, stored in self.rules["spelled"]:
+            with self.subTest(tag=typed):
+                self.assertIsNone(vocabulary.problem_with_tag(typed))
+                self.assertEqual(vocabulary.normalize(typed), stored)
+
     def test_the_cases_cover_every_refusal(self):
         # Each message is one branch; a branch no case reaches is one the pages were
         # never checked against.

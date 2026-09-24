@@ -1169,12 +1169,15 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         if not target and not retire_only:
             self.send_json_error(400, "Missing the tag to merge into")
             return
-        if target == source:
-            self.send_json_error(400, "That tag is already called that")
-            return
         problem = target and vocabulary.problem_with_tag(target)
         if problem:
             self.send_json_error(400, problem)
+            return
+        # In its one spelling, as the tag tree holds it: "School / Kentridge" was
+        # written into the files with its spaces.
+        target = vocabulary.normalize(target)
+        if target == source:
+            self.send_json_error(400, "That tag is already called that")
             return
 
         conn = None

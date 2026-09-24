@@ -31,7 +31,7 @@ const SOURCE = fs.readFileSync(APP_JS, "utf8");
 const LINES = SOURCE.split(/\r?\n/);
 
 /** The helpers that are allowed to split a tag, by the name they are declared with. */
-const VOCABULARY = ["leafOf", "rootOf", "ancestorsOf"];
+const VOCABULARY = ["leafOf", "rootOf", "ancestorsOf", "normalizeTag"];
 
 function inVocabularyBlock(lineIndex) {
   // Walk back to the nearest `function <name>(` and see whether it is one of ours.

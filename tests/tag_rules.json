@@ -1,5 +1,5 @@
 {
-  "about": "What may be set as a tag or a name, and what each refusal says. Read by tests/test_vocabulary.py (the servers) and tests/frontend/tag-rules.test.mjs (both pages), so the two cannot drift apart. null means allowed.",
+  "about": "What may be set as a tag or a name, what each refusal says, and how an allowed tag is spelled once set. Read by tests/test_vocabulary.py (the servers) and tests/frontend/tag-rules.test.mjs (the pages), so they cannot drift apart. null means allowed.",
   "tags": [
     ["People/Rowan Thackeray", null],
     [" People / Rowan Thackeray ", null],
@@ -39,5 +39,12 @@
     ["Rowan\\Thackeray", "A name cannot contain \"\\\": other programs read it as a break between levels."],
     ["Rowan\tThackeray", "A name cannot contain a tab, a line break or another control character."],
     ["Rowan Thackeray\r\n", "A name cannot contain a tab, a line break or another control character."]
+  ],
+  "spelled": [
+    [" People / Rowan Thackeray ", "People/Rowan Thackeray"],
+    ["Family /  Immediate/Elias Marchetti-Oakes", "Family/Immediate/Elias Marchetti-Oakes"],
+    ["Activity/Cross Country", "Activity/Cross Country"],
+    ["Trips/Zoë's 10th Birthday ", "Trips/Zoë's 10th Birthday"],
+    ["Hazel Brookmire", "Hazel Brookmire"]
   ]
 }

@@ -1237,6 +1237,15 @@ document.addEventListener('DOMContentLoaded', () => {
         return String(tag).split('/')[0].trim();
     }
 
+    /**
+     * The one spelling of a tag, as the server stores it: each level trimmed.
+     * " People / Hazel Brookmire " -> "People/Hazel Brookmire". Only for a tag that
+     * tagProblem allows; the cases are in tests/tag_rules.json with the server's.
+     */
+    function normalizeTag(tag) {
+        return String(tag || '').split('/').map(level => level.trim()).filter(Boolean).join('/');
+    }
+
     /** Each tag on the way down to this one: People, then People/Hazel Brookmire. */
     function ancestorsOf(tag) {
         const parts = String(tag || '').split('/');
@@ -4950,13 +4959,20 @@ Click to add ${namesSomebody} to this photo.`;
         const askWhereItGoes = (...args) => (prompt ? showPlacementModal(...args) : null);
         
         if (inputName.includes('/')) {
-            await fetch('/api/taxonomy/create', {
+            const created = await fetch('/api/taxonomy/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: inputName })
-            });
+            }).then(res => res.json());
+            if (created && created.success === false) {
+                alert("Error creating tag: " + created.error);
+                return null;
+            }
             await loadTaxonomy();
-            return inputName;
+            // As the tree spells it. Returning the text as typed wrote
+            // "People / Rowan Thackeray" into the photo beside the tree's
+            // People/Rowan Thackeray.
+            return normalizeTag(inputName);
         }
         
         const allRoots = taxonomyNodes.filter(n => n.parent_id === null);
