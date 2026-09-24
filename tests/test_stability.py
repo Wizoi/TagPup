@@ -18,6 +18,7 @@ from index import PhotoIndex
 from tuner_server import start_server, TunerHTTPRequestHandler
 from tagpup_server import TagPupHTTPRequestHandler
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_vector, configured_model  # noqa: E402
 from free_port import free_port  # noqa: E402
 
 
@@ -79,8 +80,8 @@ class TestStability(unittest.TestCase):
         
         # Insert parent photo
         cursor.execute("""
-            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             "C:/photos/test_photo.jpg",
             12345.67,
@@ -88,9 +89,9 @@ class TestStability(unittest.TestCase):
             json.dumps(["Nature", "Forest"]),
             json.dumps(["John Doe"]),
             json.dumps(["A beautiful forest"]),
-            json.dumps({"Make": "Canon", "Model": "EOS 5D"}),
-            dummy_emb_bytes
+            json.dumps({"Make": "Canon", "Model": "EOS 5D"})
         ))
+        add_vector(photo_index.conn, "C:/photos/test_photo.jpg", dummy_emb_bytes)
         
         # Insert linked face
         dummy_face_emb = np.random.rand(512).astype(np.float32).tobytes()
@@ -214,10 +215,10 @@ class TestStability(unittest.TestCase):
         
         # Photo 1: Tagged with "Alice"
         cursor.execute("""
-            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
-            "C:/photos/photo1.jpg", 1000.0, 500, json.dumps([]), json.dumps(["Alice"]), json.dumps([]), json.dumps({}), None
+            "C:/photos/photo1.jpg", 1000.0, 500, json.dumps([]), json.dumps(["Alice"]), json.dumps([]), json.dumps({})
         ))
         cursor.execute("""
             INSERT INTO faces (photo_id, box, embedding, name, prob)
@@ -228,10 +229,10 @@ class TestStability(unittest.TestCase):
         
         # Photo 2: Untagged
         cursor.execute("""
-            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
-            "C:/photos/photo2.jpg", 2000.0, 500, json.dumps([]), json.dumps([]), json.dumps([]), json.dumps({}), None
+            "C:/photos/photo2.jpg", 2000.0, 500, json.dumps([]), json.dumps([]), json.dumps([]), json.dumps({})
         ))
         cursor.execute("""
             INSERT INTO faces (photo_id, box, embedding, name, prob)
@@ -299,10 +300,10 @@ class TestStability(unittest.TestCase):
         
         # Photo 1: Single face, tagged with "Alice" (Anchor photo)
         cursor.execute("""
-            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
-            "C:/photos/photo1.jpg", 1000.0, 500, json.dumps([]), json.dumps(["Alice"]), json.dumps([]), json.dumps({}), None
+            "C:/photos/photo1.jpg", 1000.0, 500, json.dumps([]), json.dumps(["Alice"]), json.dumps([]), json.dumps({})
         ))
         cursor.execute("""
             INSERT INTO faces (photo_id, box, embedding, name, prob)
@@ -313,10 +314,10 @@ class TestStability(unittest.TestCase):
         
         # Photo 2: Two faces, tagged with "Alice", but both faces have similarity < 0.80 to Alice
         cursor.execute("""
-            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
-            "C:/photos/photo2.jpg", 2000.0, 500, json.dumps([]), json.dumps(["Alice"]), json.dumps([]), json.dumps({}), None
+            "C:/photos/photo2.jpg", 2000.0, 500, json.dumps([]), json.dumps(["Alice"]), json.dumps([]), json.dumps({})
         ))
         # Face 2 (in Photo 2)
         cursor.execute("""
@@ -385,8 +386,7 @@ class TestStability(unittest.TestCase):
                 json.dumps(["tag"]),
                 json.dumps(["John Doe"]),
                 json.dumps(["caption"]),
-                json.dumps({"EXIF:DateTimeOriginal": "2026:06:24 18:00:00", "Make": "Canon"}),
-                dummy_emb
+                json.dumps({"EXIF:DateTimeOriginal": "2026:06:24 18:00:00", "Make": "Canon"})
             ))
             face_rows.append((
                 path,
@@ -398,9 +398,14 @@ class TestStability(unittest.TestCase):
             
         cursor.execute("BEGIN TRANSACTION")
         cursor.executemany("""
-            INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, photo_rows)
+        model = configured_model()
+        cursor.executemany(
+            "INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector)"
+            " SELECT id, ?, mtime, size, ? FROM photos WHERE path = ?",
+            [(model, dummy_emb, row[0]) for row in photo_rows])
         cursor.executemany("""
             INSERT OR REPLACE INTO faces (photo_id, box, embedding, name, prob)
             VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)
@@ -916,7 +921,7 @@ class TestPhotoActions(unittest.TestCase):
         conn = sqlite3.connect(self.TEST_DB_PATH)
         conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM photos")
-        conn.execute("DELETE FROM embedding_cache")
+        conn.execute("DELETE FROM embeddings")
         conn.commit()
         conn.close()
         set_active_db_path(self.TEST_DB_PATH)
@@ -1208,7 +1213,7 @@ class TestPhotoActions(unittest.TestCase):
             conn = sqlite3.connect(self.TEST_DB_PATH)
             c = conn.cursor()
             c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags) VALUES (?, 1.0, 10, '[]')", (p,))
-            c.execute("INSERT OR REPLACE INTO embedding_cache (path, mtime, size, model_name, pretrained, preserve_full_frame, max_aspect_ratio, force_image_size, embedding) VALUES (?, 1.0, 10, 'm', 'p', 0, 1.0, 100, ?)", (p, b'\x00'*512))
+            c.execute("INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector) SELECT id, 'm|p|cropped|1.0|100', 1.0, 10, ? FROM photos WHERE path = ?", (b'\x00'*512, p))
             c.execute("INSERT INTO faces (photo_id, box, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', 'Rowan Thackeray', 1.0)", (p,))
             conn.commit()
             conn.close()
@@ -1238,7 +1243,10 @@ class TestPhotoActions(unittest.TestCase):
 
             # Verify records are gone from DB
             photos_count = self._rows("SELECT COUNT(*) FROM photos WHERE path = ?", (p,))[0][0]
-            cache_count = self._rows("SELECT COUNT(*) FROM embedding_cache WHERE path = ?", (p,))[0][0]
+            # By the photo's path, or pointing at no photo row at all: a vector whose
+            # photo went while it stayed would otherwise count as gone.
+            cache_count = self._rows("SELECT COUNT(*) FROM embeddings e LEFT JOIN photos p ON p.id = e.photo_id"
+                                     " WHERE p.path = ? OR p.id IS NULL", (p,))[0][0]
             faces_count = self._rows("SELECT COUNT(*) FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (p,))[0][0]
 
             self.assertEqual(photos_count, 0)

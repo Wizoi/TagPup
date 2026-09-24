@@ -17,6 +17,8 @@ import backfill_document_ids as backfill  # noqa: E402
 import db as tagpup_db  # noqa: E402
 import paths  # noqa: E402
 
+from tagpup.store import schema  # noqa: E402
+
 
 class BackfillRecordsWhatItWrote(unittest.TestCase):
     def setUp(self):
@@ -27,9 +29,9 @@ class BackfillRecordsWhatItWrote(unittest.TestCase):
         os.makedirs(os.path.dirname(self.photo))
         with open(self.photo, "wb") as handle:
             handle.write(b"a photo, with its identity just written")
+        schema.ensure(self.db)
         conn = tagpup_db.connect(self.db)
-        conn.execute("CREATE TABLE photos (path TEXT PRIMARY KEY, mtime REAL, size INTEGER, document_id TEXT)")
-        conn.execute("INSERT INTO photos VALUES (?, 1.0, 1, NULL)", (self.photo,))
+        conn.execute("INSERT INTO photos (path, mtime, size, document_id) VALUES (?, 1.0, 1, NULL)", (self.photo,))
         conn.commit()
         conn.close()
 

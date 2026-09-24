@@ -10,32 +10,49 @@ import logging
 import os
 
 from tagpup.core import fields, paths, vocabulary
-from tagpup.store import db, faces, taxonomy
+from tagpup.store import db, embeddings, faces, taxonomy
 
 logger = logging.getLogger(__name__)
 
 
-def record_file_stat(db_path, photo_path):
+def _stamp(conn, photo_path, mtime, size, looks_different=False):
+    """Record the stamp a write of the app's own left on a photo's file, and bring its
+    vectors with it (tagpup.store.embeddings): carried forward when only metadata
+    changed, taken away when the photo `looks_different` -- a rotation, whose
+    Orientation the embedder applies. Returns the photo's id, or None without a row.
+    The caller commits."""
+    where, params = paths.sql_equals("path", photo_path)
+    row = conn.execute("SELECT id, mtime, size FROM photos WHERE " + where + " LIMIT 1", params).fetchone()
+    if row is None:
+        return None
+    photo_id, old_mtime, old_size = row
+    conn.execute("UPDATE photos SET mtime = ?, size = ? WHERE id = ?", (mtime, size, photo_id))
+    if looks_different:
+        conn.execute("DELETE FROM embeddings WHERE photo_id = ?", (photo_id,))
+    else:
+        embeddings.restamp(conn, photo_id, (old_mtime, old_size), (mtime, size))
+    return photo_id
+
+
+def record_file_stat(db_path, photo_path, looks_different=False):
     """Record a photo's current mtime and size in its index row. Returns rows changed.
 
-    For a write that changes the file but not what the index describes -- a rotation
-    changes only the Orientation tag. Left stale, the folder scan would distrust the
-    row and re-read the photo with ExifTool on every scan.
+    For a write that changes the file but not what the index describes: a caption, or
+    a rotation, which changes only the Orientation tag -- and so how the photo looks to
+    the embedder, `looks_different`, which takes its vectors away. Left stale, the
+    folder scan would distrust the row and re-read the photo with ExifTool on every scan.
     """
     stat = os.stat(photo_path)
-    where, where_params = paths.sql_equals("path", photo_path)
 
     def store(conn):
-        cursor = conn.execute("UPDATE photos SET mtime = ?, size = ? WHERE " + where,
-                              (stat.st_mtime, stat.st_size) + where_params)
-        return cursor.rowcount
+        return 0 if _stamp(conn, photo_path, stat.st_mtime, stat.st_size, looks_different) is None else 1
 
     return db.write_with_connection(
         db_path, store, label="file stat for %s" % os.path.basename(photo_path))
 
 
 def forget_photo(db_path, photo_path):
-    """Remove a deleted photo's row, its faces and its cached embedding.
+    """Remove a deleted photo's row and its faces; its vectors go with the row.
 
     Returns how many rows of each were removed. The faces are deleted explicitly
     rather than left to the foreign key's cascade: db.connect() does not turn foreign
@@ -43,9 +60,8 @@ def forget_photo(db_path, photo_path):
     """
     def forget(conn):
         removed = {"faces": faces.remove_for_photo(conn, photo_path)}
-        for table in ("photos", "embedding_cache"):
-            where, params = paths.sql_equals("path", photo_path)
-            removed[table] = conn.execute("DELETE FROM %s WHERE %s" % (table, where), params).rowcount
+        where, params = paths.sql_equals("path", photo_path)
+        removed["photos"] = conn.execute("DELETE FROM photos WHERE " + where, params).rowcount
         return removed
 
     removed = db.write_with_connection(
@@ -55,17 +71,22 @@ def forget_photo(db_path, photo_path):
     return removed
 
 
-def record_reads(db_path, records, label="photos read back"):
+def record_reads(db_path, records, label="photos read back", own_write=False):
     """Record what was just read from each photo's file: its raw metadata, mtime and
     size. Returns how many rows changed.
 
     A record with no metadata -- a file that could not be read -- is left as it was.
+    `own_write` says the files changed by a metadata write of the app's own, so their
+    vectors are carried forward; a file read back after changing elsewhere might look
+    different, and keeps the stamp that tells the embedder so.
     """
     def store(conn):
         changed = 0
         for entry in records:
             if not entry.get("raw_metadata"):
                 continue
+            if own_write:
+                _stamp(conn, entry["path"], entry.get("mtime", 0.0), entry.get("size", 0))
             where, where_params = paths.sql_equals("path", entry["path"])
             changed += conn.execute(
                 "UPDATE photos SET raw_metadata = ?, mtime = ?, size = ? WHERE " + where,
@@ -121,38 +142,22 @@ def move_rows(db_path, renames):
                     break
                 arriving.add(new_key)
 
-        has_cache = bool(cursor.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'embedding_cache'").fetchone())
         staged = []
         for n, (old_path, new_path) in enumerate(plan.items()):
+            # Its faces and vectors point at the row by id, and go with it.
             photo_ids = rows_at(cursor, "photos", "path", "id", old_path)
-            # The cached CLIP embedding too: a rename keeps the file's mtime and size,
-            # which is what the cache is checked against, so it is still good. Left
-            # behind, the renamed photo was embedded again from scratch.
-            cache_ids = (rows_at(cursor, "embedding_cache", "path", "rowid", old_path)
-                         if has_cache else [])
             # "<" cannot appear in a Windows file name, and this never outlives
             # the transaction.
             placeholder = "<moving %d>" % n
             cursor.executemany("UPDATE photos SET path = ? WHERE id = ?",
                                [(placeholder, photo_id) for photo_id in photo_ids])
-            if cache_ids:
-                cursor.executemany("UPDATE embedding_cache SET path = ? WHERE rowid = ?",
-                                   [(placeholder, rowid) for rowid in cache_ids])
-            staged.append((paths.stored(new_path), photo_ids, cache_ids))
+            staged.append((paths.stored(new_path), photo_ids))
 
         moved = 0
-        for new_stored, photo_ids, cache_ids in staged:
+        for new_stored, photo_ids in staged:
             for photo_id in photo_ids:
                 cursor.execute("UPDATE photos SET path = ? WHERE id = ?", (new_stored, photo_id))
                 moved += cursor.rowcount
-            if cache_ids:
-                # Whatever was cached under the new name described another file; it
-                # is only derived data, keyed by path, and would block the move.
-                where, params = paths.sql_equals("path", new_stored)
-                cursor.execute("DELETE FROM embedding_cache WHERE " + where, params)
-                cursor.executemany("UPDATE embedding_cache SET path = ? WHERE rowid = ?",
-                                   [(new_stored, rowid) for rowid in cache_ids])
         return moved, skipped
 
     moved, skipped = db.write_with_connection(
@@ -190,11 +195,11 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None):
 
     def store(conn):
         cursor = conn.cursor()
-        cursor.execute("SELECT id, raw_metadata FROM photos WHERE " + where, where_params)
+        cursor.execute("SELECT id, raw_metadata, mtime, size FROM photos WHERE " + where, where_params)
         row = cursor.fetchone()
         if not row:
             return False   # never indexed; adding it here would be an index, not an edit
-        photo_id, raw_json = row
+        photo_id, raw_json, old_mtime, old_size = row
 
         try:
             raw_meta = json.loads(raw_json) if raw_json else {}
@@ -217,6 +222,9 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None):
                 (json.dumps(tags), json.dumps(people), json.dumps(raw_meta),
                  stat.st_mtime, stat.st_size, photo_id),
             )
+            changed = cursor.rowcount > 0
+            embeddings.restamp(conn, photo_id, (old_mtime, old_size), (stat.st_mtime, stat.st_size))
+            return changed
         return cursor.rowcount > 0
 
     try:
@@ -353,11 +361,11 @@ def record_saved(db_path, photo_path, tags, people, captions, raw_meta):
     where, where_params = paths.sql_equals("path", photo_path)
 
     def update_row(conn):
+        _stamp(conn, photo_path, stat.st_mtime, stat.st_size)
         return conn.execute(
-            "UPDATE photos SET mtime = ?, size = ?, tags = ?, people = ?, captions = ?,"
-            " raw_metadata = ? WHERE " + where,
-            (stat.st_mtime, stat.st_size, json.dumps(tags), json.dumps(people),
-             json.dumps(captions), json.dumps(raw_meta)) + where_params).rowcount
+            "UPDATE photos SET tags = ?, people = ?, captions = ?, raw_metadata = ? WHERE " + where,
+            (json.dumps(tags), json.dumps(people), json.dumps(captions), json.dumps(raw_meta))
+            + where_params).rowcount
 
     return db.write_with_connection(
         db_path, update_row, label="index row for %s" % os.path.basename(photo_path))
@@ -365,13 +373,17 @@ def record_saved(db_path, photo_path, tags, people, captions, raw_meta):
 
 # ---- What PhotoIndex reads and writes ---------------------------------------------------
 
-#: A photo row as the index holds it. `embedding` is float32 bytes, or None.
-INDEX_COLUMNS = ("path", "mtime", "size", "tags", "people", "captions", "raw_metadata", "embedding")
+#: A photo row as the index holds it, and its vector under one model: float32 bytes,
+#: or None.
+INDEX_COLUMNS = ("path", "mtime", "size", "tags", "people", "captions", "raw_metadata", "vector")
 
 
-def index_rows(conn):
-    """Every photo row, INDEX_COLUMNS each: the whole library, as PhotoIndex loads it."""
-    return conn.execute("SELECT " + ", ".join(INDEX_COLUMNS) + " FROM photos").fetchall()
+def index_rows(conn, model):
+    """Every photo row, INDEX_COLUMNS each, with its vector under `model`: the whole
+    library, as PhotoIndex loads it."""
+    return conn.execute(
+        "SELECT p.path, p.mtime, p.size, p.tags, p.people, p.captions, p.raw_metadata, e.vector"
+        " FROM photos p LEFT JOIN embeddings e ON e.photo_id = p.id AND e.model = ?", (model,)).fetchall()
 
 
 def ensure_row(conn, photo_path):
@@ -398,9 +410,10 @@ def stored_spelling(conn, photo_path):
     return row[0] if row else None
 
 
-def record_indexed(conn, photo_path, row):
+def record_indexed(conn, photo_path, row, model=None):
     """Record what indexing read of a photo: `row` has mtime, size, tags, people,
-    captions, raw_metadata (as values), embedding (bytes) and document_id. The caller
+    captions, raw_metadata (as values), embedding (bytes) and document_id; the
+    embedding is kept under `model`, stamped with the row's mtime and size. The caller
     commits.
 
     A photo indexed before is updated in place, under the spelling its row already has.
@@ -409,18 +422,20 @@ def record_indexed(conn, photo_path, row):
     names given by hand, "nobody" decisions and exclusions. Re-indexing a changed photo
     did exactly that. A document_id already recorded is kept when the file has none.
     """
+    stored = stored_spelling(conn, photo_path) or paths.stored(photo_path)
     conn.execute(
-        "INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding, document_id)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, document_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(path) DO UPDATE SET"
         " mtime = excluded.mtime, size = excluded.size, tags = excluded.tags,"
         " people = excluded.people, captions = excluded.captions,"
-        " raw_metadata = excluded.raw_metadata, embedding = excluded.embedding,"
+        " raw_metadata = excluded.raw_metadata,"
         " document_id = COALESCE(excluded.document_id, photos.document_id)",
-        (stored_spelling(conn, photo_path) or paths.stored(photo_path),
-         row.get("mtime", 0.0), row.get("size", 0), json.dumps(row.get("tags", [])),
+        (stored, row.get("mtime", 0.0), row.get("size", 0), json.dumps(row.get("tags", [])),
          json.dumps(row.get("people", [])), json.dumps(row.get("captions", [])),
-         json.dumps(row.get("raw_metadata", {})), row.get("embedding"), row.get("document_id")))
+         json.dumps(row.get("raw_metadata", {})), row.get("document_id")))
+    if row.get("embedding") is not None and model is not None:
+        embeddings.put(conn, stored, model, row.get("mtime", 0.0), row.get("size", 0), row["embedding"])
 
 
 def remove(conn, photo_paths):
@@ -435,8 +450,8 @@ def remove(conn, photo_paths):
 
 
 def clear_embeddings(conn):
-    """Forget every photo's CLIP embedding. Returns rows changed. The caller commits."""
-    return conn.execute("UPDATE photos SET embedding = NULL WHERE embedding IS NOT NULL").rowcount
+    """Forget every photo's CLIP vectors. Returns rows deleted. The caller commits."""
+    return embeddings.clear(conn)
 
 
 def keyword_sources(conn):
@@ -605,7 +620,6 @@ def record_identity(conn, photo_path, document_id, stat=None):
     was written to. Returns rows changed. The caller commits."""
     where, params = paths.sql_equals("path", photo_path)
     if stat is not None:
-        return conn.execute("UPDATE photos SET document_id = ?, mtime = ?, size = ? WHERE " + where,
-                            (document_id, stat.st_mtime, stat.st_size) + params).rowcount
+        _stamp(conn, photo_path, stat.st_mtime, stat.st_size)
     return conn.execute("UPDATE photos SET document_id = ? WHERE " + where,
                         (document_id,) + params).rowcount

@@ -127,7 +127,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
     # Only reading: minting a DocumentID here would write the files a second time.
     records = metadata.MetadataExtractor(exiftool_path=exiftool_path, mint_identities=False).batch_read(
         photo_paths, people=taxonomy.people_vocabulary(library.path))
-    photos.record_reads(library.path, records, label="time shift")
+    photos.record_reads(library.path, records, label="time shift", own_write=True)
     result.details["records"] = records
     return result
 
@@ -179,7 +179,9 @@ def rotate(library, photo_path, direction, exiftool_path):
     result.details["orientation"] = orientation
     result.details["faces_turned"] = (
         faces.turn_boxes(library.path, photo_path, direction, width, height) if oriented else 0)
-    photos.record_file_stat(library.path, photo_path)
+    # The embedder applies the Orientation, so the photo's vectors describe the turn
+    # before; they go, and are computed again.
+    photos.record_file_stat(library.path, photo_path, looks_different=True)
     stat = os.stat(photo_path)
     result.details.update(mtime=stat.st_mtime, size=stat.st_size)
     return result

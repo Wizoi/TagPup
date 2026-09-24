@@ -22,6 +22,8 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 import db as tagpup_db
 from backfill_document_ids import record, rows_without_identity
 
+from tagpup.store import schema  # noqa: E402
+
 
 class BackfillCase(unittest.TestCase):
     def setUp(self):
@@ -30,13 +32,7 @@ class BackfillCase(unittest.TestCase):
         os.close(fd)
         os.remove(self.db_path)
 
-        conn = tagpup_db.connect(self.db_path)
-        conn.execute("""CREATE TABLE photos (
-            path TEXT PRIMARY KEY, mtime REAL, size INTEGER, tags TEXT, people TEXT,
-            captions TEXT, raw_metadata TEXT, embedding BLOB, document_id TEXT
-        )""")
-        conn.commit()
-        conn.close()
+        schema.ensure(self.db_path)
 
         def cleanup():
             for suffix in ("", "-wal", "-shm"):

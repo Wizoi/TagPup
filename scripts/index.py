@@ -14,7 +14,9 @@ import time
 from typing import List, Dict, Any, Tuple, Optional, Set
 import numpy as np
 
+from tagpup import config as tagpup_config
 from tagpup.ml.vector_index import VectorIndex
+from tagpup.store import embeddings as store_embeddings
 from tagpup.store import faces as store_faces
 from tagpup.store import generations, schema
 from tagpup.store import photos as store_photos
@@ -169,8 +171,12 @@ class PhotoIndex:
     have always used.
     """
 
-    def __init__(self, db_path: str = "data/photo_index.db"):
+    def __init__(self, db_path: str = "data/photo_index.db", model: Optional[str] = None):
         self.db_path = db_path
+        #: Whose vectors are searched: tagpup.store.embeddings.model_key of the model the
+        #: config names, unless another is given. Vectors from other settings cannot be
+        #: compared with a query embedded under these.
+        self.model = model or store_embeddings.model_key(**tagpup_config.embedder_settings())
         self.conn: Optional[sqlite3.Connection] = None
         self.index: Optional[VectorIndex] = None
         self.metadata: List[Dict[str, Any]] = []
@@ -206,7 +212,7 @@ class PhotoIndex:
             self.indexed_metadata = []
             embeddings = []
             for path, mtime, size, tags_json, people_json, captions_json, raw_meta_json, emb_bytes in (
-                    store_photos.index_rows(self.conn)):
+                    store_photos.index_rows(self.conn, self.model)):
                 try:
                     tags = json.loads(tags_json)
                     people = json.loads(people_json)
@@ -288,7 +294,7 @@ class PhotoIndex:
                     # minted one into the file by now.
                     "document_id": (meta.get("document_id")
                                     or read_document_id(meta.get("raw_metadata", {}))),
-                })
+                }, model=self.model)
             self.conn.commit()
 
             if reload:

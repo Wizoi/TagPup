@@ -41,6 +41,9 @@ class ClipEmbedder:
         self.preserve_full_frame = preserve_full_frame
         self.max_aspect_ratio = max_aspect_ratio
         self.force_image_size = force_image_size
+        #: The name its vectors are kept under in a library (tagpup.store.embeddings).
+        self.model_key = store_embeddings.model_key(model_name, pretrained, preserve_full_frame,
+                                                    max_aspect_ratio, force_image_size)
         self.photo_index = photo_index
         
         # Lazy initialization
@@ -94,9 +97,10 @@ class ClipEmbedder:
                 raise e
 
     def get_cached_embedding(self, file_path: str) -> Optional[List[float]]:
-        """The embedding cached in the library for this file, if the file and the model
-        settings are as they were. Without a library, nothing is cached: the JSON files
-        that stood in for one were imported into it, and retired with it on 2026-09-24."""
+        """The vector kept in the library for this file under these model settings, if
+        the file is as it was when it was computed. Without a library, nothing is kept:
+        the JSON files that stood in for one were imported into it, and retired with it
+        on 2026-09-24."""
         if not os.path.exists(file_path):
             return None
             
@@ -104,19 +108,9 @@ class ClipEmbedder:
         if self.photo_index is not None and self.photo_index.conn is not None:
             try:
                 stat = os.stat(file_path)
-                row = store_embeddings.cached(self.photo_index.conn, file_path)
-                if row:
-                    mtime, size, model_name, pretrained, preserve_full_frame, max_aspect_ratio, force_image_size, emb_bytes = row
-                    preserve_full_frame_bool = bool(preserve_full_frame)
-                    
-                    if (mtime == stat.st_mtime and 
-                        size == stat.st_size and 
-                        model_name == self.model_name and 
-                        pretrained == self.pretrained and 
-                        preserve_full_frame_bool == self.preserve_full_frame and 
-                        max_aspect_ratio == self.max_aspect_ratio and 
-                        force_image_size == self.force_image_size):
-                        return np.frombuffer(emb_bytes, dtype=np.float32).tolist()
+                row = store_embeddings.get(self.photo_index.conn, file_path, self.model_key)
+                if row and row.mtime == stat.st_mtime and row.size == stat.st_size:
+                    return np.frombuffer(row.vector, dtype=np.float32).tolist()
             except Exception as e:
                 logger.warning(f"Failed to read/validate database cache for {file_path}: {e}")
             return None
@@ -129,10 +123,8 @@ class ClipEmbedder:
             # In the library, when there is one.
             if self.photo_index is not None and self.photo_index.conn is not None:
                 def store(conn):
-                    store_embeddings.put(conn, file_path, store_embeddings.Cached(
-                        stat.st_mtime, stat.st_size, self.model_name, self.pretrained,
-                        self.preserve_full_frame, self.max_aspect_ratio, self.force_image_size,
-                        np.array(embedding, dtype=np.float32).tobytes()))
+                    store_embeddings.put(conn, file_path, self.model_key, stat.st_mtime, stat.st_size,
+                                         np.array(embedding, dtype=np.float32).tobytes())
 
                 # On a connection of its own. Every worker in the suggestion pool
                 # writes its embedding here, and they were all going through the

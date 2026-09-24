@@ -310,11 +310,60 @@ def _photo_ids(conn):
                  " BEGIN DELETE FROM face_crops WHERE face_id = OLD.id; END")
 
 
+def _embeddings(conn):
+    """Each photo's CLIP vectors in `embeddings`, one per model, stamped with the file
+    they were computed from (tagpup.store.embeddings; docs/findings.md, #62, #65).
+
+    `photos.embedding` and `embedding_cache` held the same vectors -- identical, byte for
+    byte, in every photo both had -- but only the cache said which model made them. So
+    the cache says which model; the stamp is the photo row's, which the app's own
+    metadata writes kept in step with the file, where the cache's fell behind at every
+    keyword write. A vector in `photos.embedding` with no cache row to name its model
+    is left out: nothing says what it can be compared with, and the next Suggest or
+    index computes it again. Cached vectors for photos the library no longer has go:
+    derived data about files that are not in it. Both old stores go.
+    """
+    from tagpup.store import embeddings   # the store imports this module
+    conn.execute("CREATE TABLE embeddings ("
+                 " photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,"
+                 " model TEXT NOT NULL, mtime REAL, size INTEGER, vector BLOB NOT NULL,"
+                 " PRIMARY KEY (photo_id, model))")
+    conn.execute("CREATE TRIGGER embeddings_go_with_their_photo AFTER DELETE ON photos"
+                 " BEGIN DELETE FROM embeddings WHERE photo_id = OLD.id; END")
+    rows = {}
+    for photo_id, path, mtime, size, vector in conn.execute(
+            "SELECT id, path, mtime, size, embedding FROM photos").fetchall():
+        rows[paths.key(path)] = (photo_id, mtime, size, vector)
+    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    kept = set()
+    if "embedding_cache" in tables:
+        for (path, mtime, size, model_name, pretrained, full_frame, aspect, image_size,
+             vector) in conn.execute(
+                "SELECT path, mtime, size, model_name, pretrained, preserve_full_frame,"
+                " max_aspect_ratio, force_image_size, embedding FROM embedding_cache").fetchall():
+            photo = rows.get(paths.key(path))
+            if photo is None or not vector or model_name is None:
+                continue
+            photo_id, row_mtime, row_size, row_vector = photo
+            model = embeddings.model_key(model_name, pretrained, bool(full_frame), aspect, image_size)
+            # The row's stamp where the row holds this very vector; the cache's own else.
+            stamp = (row_mtime, row_size) if row_vector == vector else (mtime, size)
+            conn.execute("INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector)"
+                         " VALUES (?, ?, ?, ?, ?)", (photo_id,) + (model,) + stamp + (vector,))
+            kept.add(photo_id)
+        conn.execute("DROP TABLE embedding_cache")
+    unnamed = sum(1 for photo_id, _m, _s, vector in rows.values() if vector and photo_id not in kept)
+    if unnamed:
+        logger.info("%d photo vector(s) had no model to name them; they are computed again", unnamed)
+    conn.execute("ALTER TABLE photos DROP COLUMN embedding")
+
+
 MIGRATIONS = (
     Migration(1, "the tables as of 2026-09", _tables, changes_data=False),
     Migration(2, "one generations table", _generations, changes_data=False),
     Migration(3, "face crops in their own table", _face_crops, changes_data=True),
     Migration(4, "photos by id", _photo_ids, changes_data=True),
+    Migration(5, "one embeddings table", _embeddings, changes_data=True),
 )
 
 LATEST = MIGRATIONS[-1].version

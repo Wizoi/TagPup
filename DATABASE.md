@@ -4,7 +4,7 @@
 [◀ Back to README](README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
 ---
 
-TagPup uses an SQLite database (by default stored at `data/photo_index.db`) to manage photo metadata, visual embeddings, detected face crops, identity assignments, and embedding caches.
+TagPup uses an SQLite database (by default stored at `data/photo_index.db`) to manage photo metadata, each photo's CLIP vectors, detected face crops and identity assignments.
 
 ---
 
@@ -51,10 +51,10 @@ Any new connection should go through `configure_connection()`.
 
 ## Database Schema
 
-The database consists of five primary tables: `photos`, `faces`, `embedding_cache`, `tag_taxonomy`, and `tag_embeddings`.
+The database consists of five primary tables: `photos`, `faces`, `embeddings`, `tag_taxonomy`, and `tag_embeddings`.
 
 ### 1. `photos` Table
-Stores high-level image metadata, tags (keywords), captions, resolved people lists, and the primary visual embedding vector used for semantic searches.
+Stores high-level image metadata, tags (keywords), captions and resolved people lists. Its CLIP vectors are in `embeddings`.
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
@@ -66,7 +66,6 @@ Stores high-level image metadata, tags (keywords), captions, resolved people lis
 | `people` | TEXT | | JSON-serialized array of resolved names present in the photo (sync'd from faces). |
 | `captions` | TEXT | | JSON-serialized array of caption/description strings. |
 | `raw_metadata` | TEXT | | JSON-serialized key-value dictionary of raw EXIF/IPTC properties. |
-| `embedding` | BLOB | | FAISS / visual feature vector representation (binary representation of float array). |
 | `document_id` | TEXT | INDEXED | The photo's identity, independent of its path: `XMP-xmpMM:DocumentID`. Read from the file where present — most photos already carry one, written by Lightroom or Camera Raw — and minted as `xmp.did:<uuid>` where absent. A path is a bad name for a photo: rename it and the row describes something that no longer exists, while the photo looks unindexed. `scripts/relink_renamed_photos.py` matches on this first. NULL on rows indexed before this column existed; they fill in as those photos are re-indexed. |
 
 ### 2. `faces` Table
@@ -84,20 +83,16 @@ Stores details of faces detected within photos, including face crop coordinates,
 | `excluded` | INTEGER | DEFAULT 0 | `1` marks a face as not-a-person: a passer-by in a crowd shot, or a detection that is not a face at all. Excluded faces are dropped before identity resolution runs, and are hidden from match suggestions and the Identify Faces queue, so they cannot cluster, vote, or pull a person's centroid around. Reversible. |
 | `excluded_reason` | TEXT | | Free text recorded alongside `excluded`, e.g. `stranger`, `bad crop`. |
 
-### 3. `embedding_cache` Table
-Acts as a cache layer for photo visual embeddings to avoid recalculating heavy image representations when configuration profiles are modified.
+### 3. `embeddings` Table
+Each photo's CLIP vector, one per set of model settings, with the stamp of the file it was computed from (`tagpup/store/embeddings.py`). Search reads the vectors of the model the config names; Suggest reads one when the file still matches its stamp, and computes it again when not. Replaced `photos.embedding` and the path-keyed `embedding_cache` in migration 5, which held the same vectors twice and let them drift apart (findings #62, #65).
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
-| `path` | TEXT | PRIMARY KEY | The image file, in stored form (see `photos.path`). |
-| `mtime` | REAL | | Last modification time. |
-| `size` | INTEGER | | File size in bytes. |
-| `model_name` | TEXT | | Name of the feature extraction model used. |
-| `pretrained` | TEXT | | Pretrained weights identifier. |
-| `preserve_full_frame` | INTEGER | | Flag (0 or 1) indicating if full frame aspect ratio was preserved. |
-| `max_aspect_ratio` | REAL | | Max aspect ratio limit. |
-| `force_image_size` | INTEGER | | Image dimension limit used for embedding calculation. |
-| `embedding` | BLOB | | Visual feature vector representation. |
+| `photo_id` | INTEGER | PRIMARY KEY (with `model`), FOREIGN KEY | The photo, `photos(id)`. A trigger, `embeddings_go_with_their_photo`, deletes a photo's vectors with its row on any connection; a rename moves nothing. |
+| `model` | TEXT | PRIMARY KEY (with `photo_id`) | `embeddings.model_key` of the five settings that change what a photo embeds to: model, weights, full frame or cropped, maximum aspect ratio, image size. Vectors compare only under one key. |
+| `mtime` | REAL | | The file's mtime when the vector was computed. A metadata write of the app's own carries it forward (`restamp`); a rotation deletes the vector, since the embedder applies the Orientation. |
+| `size` | INTEGER | | The file's size then, likewise. |
+| `vector` | BLOB | NOT NULL | float32 bytes. |
 
 ### 4. `tag_taxonomy` Table
 Stores the hierarchical tag relationships, autocomplete status, and person designations.
@@ -170,7 +165,7 @@ erDiagram
         TEXT people
         TEXT captions
         TEXT raw_metadata
-        BLOB embedding
+        TEXT document_id
     }
     
     faces {
@@ -185,16 +180,12 @@ erDiagram
         TEXT excluded_reason
     }
     
-    embedding_cache {
-        TEXT path PK
+    embeddings {
+        INTEGER photo_id PK
+        TEXT model PK
         REAL mtime
         INTEGER size
-        TEXT model_name
-        TEXT pretrained
-        INTEGER preserve_full_frame
-        REAL max_aspect_ratio
-        INTEGER force_image_size
-        BLOB embedding
+        BLOB vector
     }
 
     tag_taxonomy {
@@ -231,6 +222,7 @@ erDiagram
     }
 
     photos ||--o{ faces : "contains"
+    photos ||--o{ embeddings : "embedded as"
     faces ||--o| face_crops : "cropped as"
     tag_taxonomy ||--o{ tag_taxonomy : "parent of"
 ```
@@ -257,12 +249,12 @@ flowchart TD
     subgraph DB [SQLite Database: photo_index.db]
         T1[(photos)]
         T2[(faces)]
-        T3[(embedding_cache)]
+        T3[(embeddings)]
     end
 
     %% CLI Indexing Interactions
     A -->|1. Scan filesystem & compute visual embeddings| T3
-    A -->|2. Save primary metadata & visual embeddings| T1
+    A -->|2. Save primary metadata| T1
     
     %% CLI Face Extraction Interactions
     B -->|3. Read parent photo paths| T1

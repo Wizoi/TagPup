@@ -22,14 +22,17 @@ import db as tagpup_db  # noqa: E402
 from index import PhotoIndex  # noqa: E402
 from tagpup_server import TagPupHTTPRequestHandler, set_active_db_path  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_vector  # noqa: E402
+
 
 def add_photo(db_path, name):
     conn = tagpup_db.connect(db_path)
     try:
-        conn.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding)"
-                     " VALUES (?, 1.0, 1, '[\"Activity/Rowing\"]', '[]', '[]', '{}', ?)",
-                     (os.path.join(os.path.dirname(db_path), name),
-                      np.ones(512, dtype=np.float32).tobytes()))
+        path = os.path.join(os.path.dirname(db_path), name)
+        conn.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
+                     " VALUES (?, 1.0, 1, '[\"Activity/Rowing\"]', '[]', '[]', '{}')", (path,))
+        add_vector(conn, path, np.ones(512, dtype=np.float32).tobytes())
         conn.commit()
     finally:
         conn.close()

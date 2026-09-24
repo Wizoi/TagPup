@@ -32,7 +32,7 @@ from tagpup.core.library import Library
 from tagpup.jobs import suggestions as suggestion_jobs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from face_rows import add_face  # noqa: E402
+from face_rows import VECTORS_WITH_PATHS, add_face, add_vector  # noqa: E402
 
 WINDOWS = os.name == "nt"
 
@@ -86,10 +86,11 @@ class HandlerCase(unittest.TestCase):
         conn = tagpup_db.connect(self.db_path)
         try:
             conn.execute(
-                "INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding)"
-                " VALUES (?, ?, ?, ?, '[]', '[]', ?, ?)",
+                "INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
+                " VALUES (?, ?, ?, ?, '[]', '[]', ?)",
                 (stored, mtime, size, json.dumps(list(tags)),
-                 json.dumps({"XMP:Subject": list(tags)}), embedding))
+                 json.dumps({"XMP:Subject": list(tags)})))
+            add_vector(conn, stored, embedding)
             for name in faces:
                 add_face(conn, stored, box="[]", name=name, prob=1.0)
             conn.commit()
@@ -146,13 +147,9 @@ def fake_extractor(raw_metadata=None):
 class TestDeletingAPhotoForgetsIt(HandlerCase):
     def test_the_row_its_faces_and_its_cached_embedding_all_go(self):
         photo = self.make_file("IMG_0001.jpg")
-        stored = os.path.abspath(photo)
+        # seed() keeps a vector for it, as the indexer does.
         self.seed(photo, faces=["Rowan Thackeray", None])
-        conn = tagpup_db.connect(self.db_path)
-        conn.execute("INSERT INTO embedding_cache (path, mtime, size, embedding) VALUES (?, 1, 1, ?)",
-                     (stored, b"\x00" * 8))
-        conn.commit()
-        conn.close()
+        self.assertEqual(self.count("SELECT COUNT(*) FROM embeddings"), 1)
 
         def recycle(path):
             os.remove(path)
@@ -165,7 +162,8 @@ class TestDeletingAPhotoForgetsIt(HandlerCase):
         self.assertEqual(self.count("SELECT COUNT(*) FROM photos"), 0)
         self.assertEqual(self.count("SELECT COUNT(*) FROM faces"), 0,
                          "the faces outlived their photo")
-        self.assertEqual(self.count("SELECT COUNT(*) FROM embedding_cache"), 0)
+        self.assertEqual(self.count("SELECT COUNT(*) FROM embeddings"), 0,
+                         "the vectors outlived their photo")
 
 
 class TestSavingTagsAndACaption(HandlerCase):
@@ -223,7 +221,8 @@ class TestSavingACaptionThatRenamesThePhoto(HandlerCase):
             rows = [r[0] for r in conn.execute("SELECT path FROM photos")]
             names = sorted(r[0] for r in conn.execute(
                 "SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (new_stored,)))
-            embedding = conn.execute("SELECT embedding FROM photos").fetchone()[0]
+            embedding = conn.execute("SELECT e.vector FROM " + VECTORS_WITH_PATHS + " WHERE p.path = ?",
+                                     (new_stored,)).fetchone()[0]
             captions = conn.execute("SELECT captions FROM photos").fetchone()[0]
         finally:
             conn.close()

@@ -14,7 +14,7 @@ import unittest
 from unittest import mock
 
 from tagpup.core import paths
-from tagpup.store import db, generations, schema
+from tagpup.store import db, embeddings, generations, schema
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_face  # noqa: E402
@@ -96,7 +96,7 @@ class ANewLibrary(SchemaTestCase):
         conn = self.connect()
         self.assertEqual([m.name for m in schema.MIGRATIONS], applied)
         self.assertEqual(schema.LATEST, schema.version(conn))
-        self.assertEqual({"photos", "faces", "face_crops", "embedding_cache", "tag_taxonomy",
+        self.assertEqual({"photos", "faces", "face_crops", "embeddings", "tag_taxonomy",
                           "tag_embeddings", "generations", "schema_version"}, tables(conn))
 
     def test_has_the_document_id_index(self):
@@ -314,6 +314,48 @@ class ALibraryWhoseFacesNamedTheirPhotoByPath(SchemaTestCase):
         conn = self.connect()
         self.assertEqual(before, conn.execute("SELECT id, box FROM faces ORDER BY id").fetchall())
         self.assertEqual([(before[0][0],)], conn.execute("SELECT face_id FROM face_crops").fetchall())
+
+
+class ALibraryWithTwoCopiesOfEachVector(SchemaTestCase):
+    """Before migration 5 a photo's CLIP vector was in photos.embedding, and again in
+    embedding_cache, which alone said which model made it (#62, #65)."""
+
+    VECTOR = b"\x00\x00\x80\x3f" * 4
+
+    def setUp(self):
+        super().setUp()
+        make_unmigrated_library(self.db_path)
+        conn = self.connect()
+        conn.execute("CREATE TABLE embedding_cache (path TEXT PRIMARY KEY, mtime REAL, size INTEGER,"
+                     " model_name TEXT, pretrained TEXT, preserve_full_frame INTEGER,"
+                     " max_aspect_ratio REAL, force_image_size INTEGER, embedding BLOB)")
+        conn.execute("UPDATE photos SET embedding = ? WHERE path = 'D:/a.jpg'", (self.VECTOR,))
+        conn.execute("INSERT INTO photos (path, mtime, size, tags, people, embedding)"
+                     " VALUES ('D:/b.jpg', 2.0, 2, '[]', '[]', ?)", (self.VECTOR,))
+        # a.jpg's cache row fell behind its row's stamp at a keyword write; gone.jpg left
+        # the library.
+        for path in ("D:/a.jpg", "D:/gone.jpg"):
+            conn.execute("INSERT INTO embedding_cache VALUES (?, 0.5, 9, 'ViT-T', 'tiny', 1, 1.4, 512, ?)",
+                         (path, self.VECTOR))
+        conn.commit()
+        schema.ensure(self.db_path)
+
+    def test_a_vector_keeps_its_model_and_the_stamp_its_row_kept(self):
+        model = embeddings.model_key("ViT-T", "tiny", True, 1.4, 512)
+        self.assertEqual([("D:/a.jpg", model, 1.0, 1, self.VECTOR)], self.connect().execute(
+            "SELECT p.path, e.model, e.mtime, e.size, e.vector FROM embeddings e"
+            " JOIN photos p ON p.id = e.photo_id").fetchall())
+
+    def test_the_old_stores_go(self):
+        conn = self.connect()
+        self.assertNotIn("embedding_cache", tables(conn))
+        self.assertNotIn("embedding", columns(conn, "photos"))
+
+    def test_deleting_a_photo_takes_its_vectors_on_any_connection(self):
+        conn = self.connect()
+        conn.execute("DELETE FROM photos WHERE path = 'D:/a.jpg'")
+        conn.commit()
+        self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0])
 
 
 class ThePhotoIdMigration(SchemaTestCase):

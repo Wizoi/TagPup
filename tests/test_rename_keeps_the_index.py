@@ -29,7 +29,7 @@ import tagpup_server
 from tagpup.store import schema  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from face_rows import FACES_WITH_PATHS, add_face  # noqa: E402
+from face_rows import FACES_WITH_PATHS, VECTORS_WITH_PATHS, add_face, add_vector  # noqa: E402
 
 OLD = "D:/Library/2020/2Z6A5820.jpg"
 NEW = "D:/Library/2020/Meet - 01.jpg"
@@ -64,11 +64,12 @@ class RenameCase(unittest.TestCase):
         conn = tagpup_db.connect(self.db_path)
         try:
             conn.execute(
-                "INSERT INTO photos (path, tags, people, raw_metadata, embedding) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO photos (path, tags, people, raw_metadata) "
+                "VALUES (?, ?, ?, ?)",
                 (native(path), json.dumps(["Cross Country"]), json.dumps([]),
-                 json.dumps({}), embedding),
+                 json.dumps({})),
             )
+            add_vector(conn, native(path), embedding)
             for name in face_names:
                 add_face(conn, native(path), name=name)
             conn.commit()
@@ -88,7 +89,7 @@ class RenameCase(unittest.TestCase):
     def embedding_at(self, path):
         conn = tagpup_db.connect(self.db_path)
         try:
-            row = conn.execute("SELECT embedding FROM photos WHERE path = ?",
+            row = conn.execute("SELECT e.vector FROM " + VECTORS_WITH_PATHS + " WHERE p.path = ?",
                                (native(path),)).fetchone()
         finally:
             conn.close()

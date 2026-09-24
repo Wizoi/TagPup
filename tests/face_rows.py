@@ -20,6 +20,28 @@ def photo_id(conn, photo_path):
                         " VALUES (?, '[]', '[]', '[]', '{}')", (photo_path,)).lastrowid
 
 
+def configured_model():
+    """The model key search reads: the one the config names, as PhotoIndex uses it."""
+    from tagpup import config
+    from tagpup.store import embeddings
+    return embeddings.model_key(**config.embedder_settings())
+
+
+#: A photo's vectors with its path: `SELECT p.path, e.vector FROM ` + VECTORS_WITH_PATHS.
+VECTORS_WITH_PATHS = "embeddings e JOIN photos p ON p.id = e.photo_id"
+
+
+def add_vector(conn, photo_path, vector, model=None, mtime=None, size=None):
+    """Keep `vector` (float32 bytes) as the photo's CLIP vector under `model`, the
+    configured one unless given, stamped `mtime` and `size` (the photo row's, unless
+    given). The photo's row is made if it has none. The caller commits."""
+    photo = photo_id(conn, photo_path)
+    if mtime is None and size is None:
+        mtime, size = conn.execute("SELECT mtime, size FROM photos WHERE id = ?", (photo,)).fetchone()
+    conn.execute("INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector) VALUES (?, ?, ?, ?, ?)",
+                 (photo, model or configured_model(), mtime, size, vector))
+
+
 def add_face(conn, photo_path, box=(0, 0, 10, 10), **columns):
     """Insert a face into the photo at `photo_path`; `columns` are any others of faces
     (embedding, name, prob, name_source, excluded, excluded_reason, id). A box that is

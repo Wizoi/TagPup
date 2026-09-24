@@ -22,9 +22,8 @@ class DeletingAPhoto(unittest.TestCase):
         for path in (self.photo, self.other):
             self.lib.add_row(path)
             self.lib.add_face(path, [0, 0, 10, 8], name="Rowan Thackeray")
-            self.lib.execute("INSERT INTO embedding_cache (path, mtime, size, model_name, pretrained,"
-                             " preserve_full_frame, max_aspect_ratio, force_image_size, embedding)"
-                             " VALUES (?, 1.0, 1, 'm', 'p', 0, 1.0, 1, x'00')", (path,))
+            self.lib.execute("INSERT INTO embeddings (photo_id, model, mtime, size, vector)"
+                             " SELECT id, 'm|p|cropped|1.0|1', 1.0, 1, x'00' FROM photos WHERE path = ?", (path,))
 
     def delete(self, moved=True):
         def recycle(path):
@@ -44,12 +43,13 @@ class DeletingAPhoto(unittest.TestCase):
             "SELECT COUNT(*) FROM photos WHERE path = ?",
             "SELECT COUNT(*) FROM faces f LEFT JOIN photos p ON p.id = f.photo_id"
             " WHERE p.path = ? OR p.id IS NULL",
-            "SELECT COUNT(*) FROM embedding_cache WHERE path = ?"))
+            "SELECT COUNT(*) FROM embeddings e LEFT JOIN photos p ON p.id = e.photo_id"
+            " WHERE p.path = ? OR p.id IS NULL"))
 
     def test_the_photo_and_everything_the_index_held_for_it_go(self):
         result = self.delete()
         self.assertEqual((result.attempted, result.changed, result.errors), (1, 1, []))
-        self.assertEqual(result.details["removed"], {"faces": 1, "photos": 1, "embedding_cache": 1})
+        self.assertEqual(result.details["removed"], {"faces": 1, "photos": 1})
         self.assertEqual(self.counts(self.photo), (0, 0, 0))
         self.assertFalse(os.path.exists(self.photo))
 
