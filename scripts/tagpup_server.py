@@ -889,6 +889,14 @@ def resolve_library_from_url(handler, set_active):
     startup_db = os.path.basename(handler.__class__.db_path)
     test_mode = startup_db.startswith("test_")
 
+    def library_file(db_name):
+        # The startup library is the file the server was started on. Looking it up by
+        # name in data_dir found the same file only while it lived there; one started
+        # anywhere else was served -- and created -- as an empty namesake in data/.
+        if db_name == startup_db:
+            return os.path.abspath(handler.__class__.db_path).replace("\\", "/")  # not a path: a database file
+        return os.path.join(data_dir, db_name).replace("\\", "/")  # not a path: a database file
+
     db_match = re.match(r"^/([^/]+)(/.*)?$", path)
     if db_match:
         potential_db = db_match.group(1)
@@ -905,7 +913,7 @@ def resolve_library_from_url(handler, set_active):
                 if db_name.startswith("test_"):
                     db_name = db_name[5:]
 
-            resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")  # not a path: a database file
+            resolved_db_path = library_file(db_name)
             if not os.path.exists(resolved_db_path) and db_name != startup_db:
                 handler.send_error(404, "There is no library called %s" % potential_db)
                 return False
@@ -932,7 +940,7 @@ def resolve_library_from_url(handler, set_active):
         handler.end_headers()
         return False
 
-    resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")  # not a path: a database file
+    resolved_db_path = library_file(db_name)
     set_active(resolved_db_path)
     handler.db_path = resolved_db_path
     return True

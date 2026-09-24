@@ -7,9 +7,12 @@ which then sat in the library list. Making one is what Create is for.
 """
 import io
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 import uuid
+from unittest import mock
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
@@ -18,6 +21,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 import tagpup_server  # noqa: E402
 import tuner_server  # noqa: E402
 from taxonomy import TagTaxonomy  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
 
 
 def fake(handler_cls, url):
@@ -86,6 +90,48 @@ class AMistypedLibraryIsNotCreated(unittest.TestCase):
                        "/%s/api/tags" % os.path.splitext(startup)[0])
         self.assertTrue(handler.resolve_db_from_url())
         self.assertEqual("/api/tags", handler.path)
+
+
+class TheStartupLibraryIsTheFileTheServerStartedOn(unittest.TestCase):
+    """A request with no library in its URL, or naming the startup library, went to
+    data/<its name>.db rather than to the file the server was started on.
+
+    They are the same file when the library is in data/, as the launchers arrange. A
+    server started on a library anywhere else served -- and created -- an empty namesake
+    in data/ instead. Found when tests moved their libraries out of the checkout.
+    """
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="tagpup_routing_")
+        self.addCleanup(shutil.rmtree, self.home, True)
+        environ = mock.patch.dict(os.environ, {"TAGPUP_HOME": self.home})
+        environ.start()
+        self.addCleanup(environ.stop)
+        self.library = os.path.join(self.home, "elsewhere", "harbour.db")
+        os.makedirs(os.path.dirname(self.library))
+        open(self.library, "wb").close()
+        for module, handler_cls in ((tagpup_server, tagpup_server.TagPupHTTPRequestHandler),
+                                    (tuner_server, tuner_server.TunerHTTPRequestHandler)):
+            started_on = mock.patch.object(handler_cls, "db_path", self.library)
+            started_on.start()
+            self.addCleanup(started_on.stop)
+            self.addCleanup(module.set_active_db_path, None)
+
+    def check(self, url):
+        for handler_cls in (tagpup_server.TagPupHTTPRequestHandler,
+                            tuner_server.TunerHTTPRequestHandler):
+            handler = fake(handler_cls, url)
+            self.assertTrue(handler.resolve_db_from_url(), handler_cls.__name__)
+            self.assertEqual(Library(handler.db_path), Library(self.library),
+                             "%s served %s" % (handler_cls.__name__, handler.db_path))
+        self.assertFalse(os.path.exists(os.path.join(self.home, "data", "harbour.db")),
+                         "an empty namesake was made in data/")
+
+    def test_with_no_library_in_the_url(self):
+        self.check("/api/tags")
+
+    def test_naming_the_startup_library(self):
+        self.check("/harbour/api/tags")
 
 
 if __name__ == "__main__":
