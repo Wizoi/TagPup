@@ -120,7 +120,7 @@ initialization` — two removes from the line at fault, and it survived one fix 
 addressed only the symptom. `tests/frontend/tag-vocabulary.test.mjs` enforces the
 position.
 
-**Never call `sqlite3.connect` directly — use `scripts/db.py`.** This program is always
+**Never call `sqlite3.connect` directly — use `tagpup/store/db.py`.** This program is always
 a reader and a writer at once, from many threads: both servers handle each request on
 its own thread, the suggester runs a thread pool, and indexing runs in a background
 thread beside all of it. `db.py` owns the journal mode, the busy timeout, the per-file
@@ -134,7 +134,7 @@ embeddings, then the embedding cache — because each site had its own settings.
 
 **Indexing writes to photos that have no identity.** A path is a bad name for a photo —
 rename it and the index row describes something that no longer exists, while the photo
-looks unindexed. `scripts/identity.py` reads `XMP-xmpMM:DocumentID`, which most photos
+looks unindexed. `tagpup/files/identity.py` reads `XMP-xmpMM:DocumentID`, which most photos
 already carry (1,075 of 1,129 sampled here), and mints `xmp.did:<uuid>` into the few
 that do not. That means a normal index pass *writes* to some files, which is new: pass
 `MetadataExtractor(mint_identities=False)` where that must not happen. A minted

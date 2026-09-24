@@ -1,4 +1,4 @@
-"""scripts/paths.py: the two spellings a photo path has, and nothing else."""
+"""tagpup/core/paths.py: the two spellings a photo path has, and nothing else."""
 import os
 import sys
 import unittest

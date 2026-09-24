@@ -10,6 +10,11 @@ before adding a module, a route or a query. **Record every review finding in
 [docs/findings.md](docs/findings.md) before fixing it.** Findings that lived only in a
 conversation were lost, and decisions were made twice.
 
+New code imports from the package (`from tagpup.store import db`). A module that has
+moved leaves a shim at its old name in `scripts/`, so `import db` in old code still
+works and is the same module; `tests/test_layers.py` fails package code that imports
+an old name or goes up a layer.
+
 ## Running things
 
 ```
@@ -30,16 +35,16 @@ any indexer. Check for one before editing; run long indexes through the CLI.
 
 ## Rules that keep being broken
 
-**Never call `sqlite3.connect`.** Use `scripts/db.py`. It owns journal mode, busy
+**Never call `sqlite3.connect`.** Use `tagpup/store/db.py`. It owns journal mode, busy
 timeout, the per-file write lock and the retry. `tests/test_db_access.py` enforces it.
 
 **Never construct `ExifToolHelper` or `ExifTool` directly.** Use `ExifToolSession` from
-`scripts/exiftool_session.py`. pyexiftool reads stdout to the end before stderr; a batch
+`tagpup/files/exiftool_session.py`. pyexiftool reads stdout to the end before stderr; a batch
 with ~4 KB of warnings fills the stderr pipe and both sides wait forever -- two scripts
 sat at 0% CPU for two days. The session drains both and gives each command a deadline.
 `tests/test_exiftool_single_owner.py` enforces it.
 
-**Never spell or compare a photo path by hand.** `scripts/paths.py` owns it: `stored()`
+**Never spell or compare a photo path by hand.** `tagpup/core/paths.py` owns it: `stored()`
 for anything written to the database, walked or sent to the browser; `key()` for
 in-memory comparison; `sql_equals()` / `sql_under()` for SQL. A helper that turned
 `D:\x` into `D:/x` made tag writes, renames and deletes match no row for three

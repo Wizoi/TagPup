@@ -24,7 +24,7 @@ import numpy as np
 
 logger = logging.getLogger("tagpup.server")
 
-# A photo path has two spellings, and both come from scripts/paths.py: paths.key() for
+# A photo path has two spellings, and both come from tagpup/core/paths.py: paths.key() for
 # the in-memory caches, paths.stored() for the index, the browser and the disk. This
 # file used to have its own pair, and the one for the index turned the native paths the
 # indexer writes into forward slashes, so every lookup made through it on Windows

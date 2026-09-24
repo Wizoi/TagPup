@@ -1,4 +1,4 @@
-"""Nothing but scripts/paths.py decides how a photo path is spelled or compared.
+"""Nothing but tagpup/core/paths.py decides how a photo path is spelled or compared.
 
 Every component used to convert paths by hand, each its own way, and the database
 was looked up in a spelling it never stored. Tag writes, renames and deletes reported
@@ -18,15 +18,14 @@ exception visible where it is made.
 """
 import os
 import re
+import sys
 import unittest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shipped_sources import ROOT, python_sources  # noqa: E402
 
-SOURCES = ["tagpup_cli.py", "runner.py", "tagtuner.py", "tagpup_gui.py"] + [
-    os.path.join("scripts", name) for name in sorted(os.listdir(os.path.join(ROOT, "scripts")))
-    if name.endswith(".py")
-]
-OWNER = os.path.join("scripts", "paths.py")
+SOURCES = python_sources()
+OWNER = os.path.join("tagpup", "core", "paths.py")
 MARKER = "# not a path:"
 
 FORBIDDEN = [
@@ -57,7 +56,7 @@ class PathsHaveOneOwner(unittest.TestCase):
                     for pattern, label in FORBIDDEN:
                         if pattern.search(line):
                             problems.append("%s:%d  %s\n    %s" % (relative, number, label, line.strip()))
-        self.assertEqual(problems, [], "\n\nPaths are spelled and compared by scripts/paths.py "
+        self.assertEqual(problems, [], "\n\nPaths are spelled and compared by tagpup/core/paths.py "
                          "only (stored / key / same / is_under / sql_equals / sql_under):\n\n"
                          + "\n".join(problems))
 

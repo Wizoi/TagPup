@@ -14,7 +14,7 @@ This program is a reader and a writer at the same time, constantly: the server a
 the page while a background thread indexes a folder or runs tag suggestions, and the
 suggester records the faces it detects through a connection of its own.
 
-**Every connection comes from `scripts/db.py`.** It opens in **WAL** mode with an
+**Every connection comes from `tagpup/store/db.py`.** It opens in **WAL** mode with an
 explicit **`busy_timeout`** (30s) and `synchronous=NORMAL`, and it owns a **write lock
 keyed by database file** so that this process writes to one database one thread at a
 time. There were 71 places opening a connection and 72 statements writing through one,

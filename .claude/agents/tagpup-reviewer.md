@@ -59,7 +59,7 @@ nothing, for three months. Look for:
 - cache keys computed differently at the write site and the read site;
 - anything persisted (JSON cache files, localStorage) whose key format the change
   alters: are old entries re-keyed or silently orphaned?
-The project owns these conversions in one place each (`scripts/paths.py`,
+The project owns these conversions in one place each (`tagpup/core/paths.py`,
 `taxonomy.find_person_path`, `leafOf`/`samePerson` in `gui_tagpup/app.js`). Any
 conversion done by hand elsewhere is a finding.
 
@@ -74,9 +74,9 @@ conversion done by hand elsewhere is a finding.
 - A query inside a per-item loop that returns the same answer every iteration
   (the suggester read every face in the library twice per photo).
 - One sqlite connection shared by a thread pool: serialized, and transaction state
-  interleaves. Pool work gets its own connection or goes through `scripts/db.py`.
+  interleaves. Pool work gets its own connection or goes through `tagpup/store/db.py`.
 - `UPDATE`/`DELETE` whose WHERE may match nothing: is `rowcount` checked?
-- Anything that bypasses `scripts/db.py`.
+- Anything that bypasses `tagpup/store/db.py`.
 
 ### 3. Writes that report what they attempted
 "Renamed 12 photos" when zero rows changed. "Recorded faces" when the insert was

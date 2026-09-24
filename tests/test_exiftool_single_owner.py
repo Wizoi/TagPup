@@ -1,4 +1,4 @@
-"""Every ExifTool process TagPup starts comes from scripts/exiftool_session.py.
+"""Every ExifTool process TagPup starts comes from tagpup/files/exiftool_session.py.
 
 pyexiftool's own ExifTool / ExifToolHelper read a command's stdout to the end before
 they read any stderr. On Windows the stderr pipe holds about 4 KB; a batch that draws
@@ -11,15 +11,14 @@ fails the build on a direct construction of pyexiftool's classes anywhere else.
 """
 import os
 import re
+import sys
 import unittest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shipped_sources import ROOT, python_sources  # noqa: E402
 
-SOURCES = ["tagpup_cli.py", "runner.py", "tagtuner.py", "tagpup_gui.py"] + [
-    os.path.join("scripts", name) for name in sorted(os.listdir(os.path.join(ROOT, "scripts")))
-    if name.endswith(".py")
-]
-OWNER = os.path.join("scripts", "exiftool_session.py")
+SOURCES = python_sources()
+OWNER = os.path.join("tagpup", "files", "exiftool_session.py")
 
 # A call of any of pyexiftool's session classes, qualified or imported bare.
 # ExifToolSession( is not matched: the class name must end where the paren begins.

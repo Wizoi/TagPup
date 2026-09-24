@@ -5,7 +5,7 @@ This file records every review finding, bug report and known problem: what was f
 - **Add a row when something is found**, before fixing it.
 - **Status** is one of:
   - `open`
-  - `fixed`: give the commit.
+  - `fixed`: give the commit, by its hash or, for a row added in the same commit, its subject.
   - `not reproduced`: say what was tried.
   - `left as is`: say why.
   - `tabled`: say until when.
@@ -25,3 +25,6 @@ Findings fixed before 2026-09-23 are in the git log (`git log --grep="^fix"`). T
 | 6 | 2026-09-23 | Duplicate face-resolution trace entries for paths that differ only in case. | not reproduced. Each library now writes its own trace file. |
 | 7 | 2026-09-23 | `backups/` holds 28 GB in 41 copies. Scripts also wrote copies next to the code they ran from. | open: the owner decides which copies to keep. Phase 1 moves backups beside the library. |
 | 8 | 2026-09-23 | Eight TagTuner routes are reached only by tests: its copies of rename, time shift, delete, open in Explorer, rotate, save metadata and bulk tags, plus `/api/faces/recluster`, which no page calls. | planned: phase 2 |
+| 9 | 2026-09-23 | `runner.py` opened the database with `sqlite3.connect`, without WAL mode or the write lock. The database guard never saw it: each guard kept its own list of files, and that one skipped `runner.py` and the launchers. | fixed: *refactor: the foundation modules move into tagpup/*. Every guard now checks one list. |
+| 10 | 2026-09-23 | `runner.py` keeps its own copy of the `photos` and `faces` schema, and two column migrations, separate from `PhotoIndex`'s. Two definitions of one schema drift apart. | planned: phase 3, where the store owns the schema |
+| 11 | 2026-09-23 | `tests/test_multiple_databases.py` changes the checkout's own `config.ini`: selecting a library through the API makes the server write `default_db` there. The test restores the old value afterwards, so a run stopped in between leaves the app pointing at a test library. | planned: phase 1, `tagpup.config` with `TAGPUP_HOME`, so tests get a config of their own |

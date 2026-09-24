@@ -1,4 +1,4 @@
-"""Every database connection comes from scripts/db.py.
+"""Every database connection comes from tagpup/store/db.py.
 
 This program is a reader and a writer at once, from many threads: both servers handle
 each request on its own thread, the tag suggester runs a thread pool, and indexing runs
@@ -22,18 +22,18 @@ import unittest
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import db as tagpup_db
+from tagpup.store import db as tagpup_db  # noqa: E402
+from shipped_sources import python_sources  # noqa: E402
 
-SCRIPTS = os.path.join(WORKSPACE_DIR, "scripts")
+OWNER = os.path.join("tagpup", "store", "db.py")
 
 
 def source_files():
-    for name in sorted(os.listdir(SCRIPTS)):
-        if name.endswith(".py") and name != "db.py":
-            yield os.path.join(SCRIPTS, name)
-    yield os.path.join(WORKSPACE_DIR, "tagpup_cli.py")
+    for relative in python_sources():
+        if relative != OWNER:
+            yield os.path.join(WORKSPACE_DIR, relative)
 
 
 class TestNobodyConnectsDirectly(unittest.TestCase):
@@ -44,7 +44,7 @@ class TestNobodyConnectsDirectly(unittest.TestCase):
                 source = f.read()
             for line_no, line in enumerate(source.splitlines(), 1):
                 if re.search(r"\bsqlite3\.connect\s*\(", line):
-                    offenders.append("%s:%d" % (os.path.basename(path), line_no))
+                    offenders.append("%s:%d" % (os.path.relpath(path, WORKSPACE_DIR), line_no))
 
         self.assertEqual(
             offenders, [],
@@ -54,8 +54,14 @@ class TestNobodyConnectsDirectly(unittest.TestCase):
 
     def test_db_itself_is_allowed_to(self):
         """The check above is worthless if it matches nothing anywhere."""
-        with open(os.path.join(SCRIPTS, "db.py"), encoding="utf-8") as f:
+        with open(os.path.join(WORKSPACE_DIR, OWNER), encoding="utf-8") as f:
             self.assertIn("sqlite3.connect", f.read())
+
+    def test_every_launcher_is_checked(self):
+        """runner.py opened its own connection unseen, because the list skipped it."""
+        checked = {os.path.relpath(p, WORKSPACE_DIR) for p in source_files()}
+        for launcher in ("runner.py", "tagpup_cli.py", "tagtuner.py", "tagpup_gui.py"):
+            self.assertIn(launcher, checked)
 
 
 class TestConnectionsAreConfigured(unittest.TestCase):

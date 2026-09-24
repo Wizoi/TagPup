@@ -68,19 +68,24 @@ Imports only go down:
 | files | `tagpup.files` | The photo files: ExifTool sessions, reading metadata, writing keyword, caption and orientation fields, identities, opening images (upright or as stored), crops and thumbnails | `core` |
 | ml | `tagpup.ml` | Models: CLIP embeddings, face detection and embeddings, the vector index | `core`, `files` |
 | services | `tagpup.services` | One function per user action. The only code that writes. Returns a `Result` | all of the above |
-| jobs | `tagpup.jobs` | Background work: queue, status, cancel, persistence, worker processes for GPU work | `services` |
+| jobs | `tagpup.jobs` | Background work: queue, status, cancel, persistence, worker processes for GPU work | `core`, `services` |
 | entry points | `tagpup.web`, `tagpup.cli`, `scripts/`, `tools/` | HTTP, the command line, maintenance and development tools | `services`, `jobs` (and `core` for formatting) |
 
-Guard tests, each of which fails the build:
+Guard tests, each of which fails the build. The ones marked *exists* are in place; the rest arrive with their phase.
 
+- Imports inside `tagpup/` go down the layers, and package code never imports an old module from `scripts/` by name. *Exists:* `tests/test_layers.py`.
+- `sqlite3.connect` only in `tagpup.store.db`. *Exists:* `tests/test_db_access.py`.
+- pyexiftool's classes constructed only in `tagpup.files.exiftool_session`. *Exists:* `tests/test_exiftool_single_owner.py`.
+- Photo paths spelled and compared only by `tagpup.core.paths`. *Exists:* `tests/test_paths_single_owner.py`.
 - SQL only inside `tagpup.store`.
-- `sqlite3.connect` only in `tagpup.store.db` (exists today as `tests/test_db_access.py`).
 - ExifTool and `Image.open` only inside `tagpup.files`.
 - `config.ini` read only by `tagpup.config`.
 - Entry points import services and jobs, never store, files or ml directly.
 - Every POST route returns a `Result`.
 - Derived tables written only by their rebuild functions.
-- Pages: `/api/` URLs built only by `web/common/api.js`; tags split only by the vocabulary helpers (the second exists today).
+- Pages: `/api/` URLs built only by `web/common/api.js`. Tags split only by the vocabulary helpers (*exists:* `tests/frontend/tag-vocabulary.test.mjs`).
+
+Every guard checks the same list of files, `tests/shipped_sources.py`: the launchers, `scripts/`, and `tagpup/`.
 
 ## Runtime
 
@@ -135,7 +140,7 @@ Target: the full check in under a minute.
 |---|---|
 | `scripts/paths.py` | `tagpup/core/paths.py` |
 | `scripts/db.py` | `tagpup/store/db.py` |
-| `scripts/exiftool_session.py` | `tagpup/files/exiftool.py` |
+| `scripts/exiftool_session.py` | `tagpup/files/exiftool_session.py` (not `exiftool.py`: it imports pyexiftool's `exiftool`, and a module of the same name reads as importing itself) |
 | `scripts/identity.py` | `tagpup/files/identity.py` |
 | `scripts/metadata.py` | `tagpup/files/metadata.py` (reading), `tagpup/core/vocabulary.py` (tags, people, captions) |
 | keyword writing in `tagpup_server.py` | `tagpup/files/keywords.py`, `tagpup/core/vocabulary.py` |
@@ -162,13 +167,13 @@ A moved module leaves a short shim at its old name until nothing imports it, so 
 Each phase ships on its own with the full check green. Nothing changes behaviour unless the phase says so.
 
 ### Phase 1: Foundations
-- This document, and a findings tracker in `docs/findings.md`.
-- The `tagpup/` package, with the foundation modules moved into it: paths, db, the ExifTool session, identity.
-- `tagpup.config`: one loader, honouring `TAGPUP_HOME`, used by all 26 places that read `config.ini`.
-- `tagpup.logs`: file logs, and slow-request logging for both servers.
-- `tagpup.result.Result` and `tagpup.store.library.Library`, with backups kept beside the library.
-- The installed-copy launcher.
-- `.gitattributes` for line endings.
+- [x] This document, and a findings tracker in `docs/findings.md`.
+- [x] `.gitattributes` for line endings.
+- [x] The `tagpup/` package, with the foundation modules moved into it: paths, db, the ExifTool session, identity. One list of shipped files for every guard, and the layer guard.
+- [ ] `tagpup.config`: one loader, honouring `TAGPUP_HOME`, used by all 26 places that read `config.ini`.
+- [ ] `tagpup.logs`: file logs, and slow-request logging for both servers.
+- [ ] `tagpup.result.Result` and `tagpup.store.library.Library`, with backups kept beside the library.
+- [ ] The installed-copy launcher.
 
 Exit: the guard tests for config, database connections, ExifTool and layers pass; both servers log to files; the app can run from an installed copy.
 

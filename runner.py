@@ -1,7 +1,6 @@
 # runner.py
 import os
 import sys
-import sqlite3
 import subprocess
 import threading
 import webbrowser
@@ -13,6 +12,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 # Add scripts directory to path to locate server handlers
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
 import paths
+from tagpup.store import db as tagpup_db
 from tuner_server import TunerHTTPRequestHandler, ThreadedHTTPServer as TunerThreadedHTTPServer
 from tagpup_server import TagPupHTTPRequestHandler, ThreadedHTTPServer as TagPupThreadedHTTPServer
 
@@ -881,7 +881,7 @@ class RunnerApp:
         try:
             # Ensure data dir exists
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
-            conn = sqlite3.connect(db_path, timeout=30.0)
+            conn = tagpup_db.connect(db_path)
             cursor = conn.cursor()
             # If the database is completely empty/new, load the PhotoIndex schema
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")

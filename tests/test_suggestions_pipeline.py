@@ -36,6 +36,9 @@ import tagpup_server  # noqa: E402
 from suggester import TagSuggester as RealSuggester  # noqa: E402
 from tagpup_server import TagPupHTTPRequestHandler as Handler  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shipped_sources import python_sources  # noqa: E402
+
 
 class _LibraryFixture(unittest.TestCase):
     def setUp(self):
@@ -289,8 +292,8 @@ class CompletedMeansConsensusIsDone(_RunFixture):
 class OneFileOneOwner(unittest.TestCase):
     def test_only_one_function_names_the_suggestions_cache_file(self):
         owners = []
-        for module in glob.glob(os.path.join(SCRIPTS_DIR, "*.py")):
-            with open(module, encoding="utf-8") as f:
+        for module in python_sources():
+            with open(os.path.join(WORKSPACE_DIR, module), encoding="utf-8") as f:
                 if "gui_suggestions_cache" in f.read():
                     owners.append(os.path.basename(module))
         self.assertEqual(owners, ["tagpup_server.py"],
