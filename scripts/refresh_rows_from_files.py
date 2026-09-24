@@ -96,21 +96,60 @@ def distinct_captions(captions_json):
     return distinct if len(distinct) != len(captions) else None
 
 
+def people_checker(conn):
+    """A test for rows whose people lack someone their own data names.
+
+    A row's people are its keyword people and the names on its faces
+    (metadata.photo_people). Rows written before either rule reached every writer
+    miss some: 741 names on 597 rows of one library -- mostly face names, then people
+    under Pets, Family and Friends. None of the other reasons notices, since the file
+    and the tags agree; only the people column is short. The taxonomy and the face
+    names are read once, not per row.
+    """
+    import paths
+    from metadata import PeopleVocabulary, extract_people
+
+    vocabulary = PeopleVocabulary.load(conn=conn)
+    named = {}
+    try:
+        for photo_path, name in conn.execute(
+                "SELECT photo_path, name FROM faces WHERE name IS NOT NULL AND excluded = 0"):
+            named.setdefault(paths.key(photo_path), set()).add(name)
+    except Exception:
+        pass   # no faces table: keyword people only
+
+    def missing(path, raw_json, tags_json, people_json):
+        try:
+            stored = set(json.loads(people_json or "[]"))
+            wanted = set(extract_people(json.loads(raw_json or "{}"), json.loads(tags_json or "[]"),
+                                        vocabulary=vocabulary))
+        except Exception:
+            return False
+        wanted |= named.get(paths.key(path), set())
+        return bool(wanted - stored)
+
+    return missing
+
+
 def plan(conn, folder=None, seen=None):
     """(rows whose file must be re-read, {path: captions} fixable from the row alone).
 
     `seen`, if given, is filled with each stale row's (mtime, size) as found here --
     before any file is read. It is what the write checks the row still has.
     """
+    import paths
+
     stale, captions_only = {}, {}
-    query = "SELECT path, mtime, size, tags, captions, raw_metadata FROM photos"
+    query = "SELECT path, mtime, size, tags, captions, raw_metadata, people FROM photos"
     params = ()
     if folder:
-        import paths
         clause, params = paths.sql_under("path", folder)
         query += " WHERE " + clause
+    missing_people = people_checker(conn)
     for row in conn.execute(query, params):
-        reasons = why_stale(row)
+        reasons = why_stale(row[:6])
+        if reasons is not None and missing_people(row[0], row[5], row[3], row[6]):
+            reasons.append("people incomplete")
         if reasons:
             stale[row[0]] = reasons   # re-reading the file fixes its captions too
             if seen is not None:
