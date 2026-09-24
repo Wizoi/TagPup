@@ -16,14 +16,15 @@ import os
 
 import numpy as np
 
-from tagpup.core import vocabulary
+from tagpup.core import clustering, vocabulary
 from tagpup.core.result import Conflict, NotFound, Result
 from tagpup.store import db, faces, photos
 
 logger = logging.getLogger(__name__)
 
-#: How like a named face an unnamed one must be for automatch to give it that name.
-AUTOMATCH_SIMILARITY = 0.8
+#: How like a named face an unnamed one must be for automatch to give it that name: the
+#: value for naming a face with no one looking (tagpup.core.clustering).
+AUTOMATCH_SIMILARITY = clustering.NAME_WITHOUT_ASKING
 
 #: Why a face may be excluded: the four TagTuner's page offers (EXCLUDE_REASONS in
 #: gui/app.js), and the one it sets itself when a cluster is ignored. The reason used to

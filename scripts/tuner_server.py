@@ -25,6 +25,7 @@ from sklearn.neighbors import sort_graph_by_row_values
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
+from tagpup.core import clustering as face_rules  # this file has a clustering() of its own
 from tagpup.core import dates, vocabulary
 from tagpup.core.library import Library
 from tagpup.core.result import Conflict, NotFound
@@ -977,7 +978,8 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             matches = []
             for idx in sorted_indices:
                 sim = float(similarities[idx])
-                if sim >= 0.8:
+                # Gathered for New Person without a look at each (tagpup.core.clustering).
+                if sim >= face_rules.NAME_WITHOUT_ASKING:
                     matches.append({
                         "id": face_ids[idx],
                         "photo_path": photo_paths[idx],
@@ -2143,12 +2145,12 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 self.send_json({"faces": [], "total_count": 0, "has_more": False})
                 return
 
-            #: Below this a suggestion is more distraction than help. Set at 0.70
-            #: rather than higher because a weaker guess is still a shortlist of one,
-            #: and confirming or rejecting it costs a glance -- which beats reading a
-            #: nameless grid. The number is always shown, and a guess under
-            #: SUGGEST_CONFIDENT is labelled as the weaker thing it is.
-            SUGGEST_FLOOR = 0.70
+            #: Below this a suggestion is more distraction than help: the floor every
+            #: screen offers a name from (tagpup.core.clustering). A weaker guess is
+            #: still a shortlist of one, and confirming or rejecting it costs a glance
+            #: -- which beats reading a nameless grid. The number is always shown, and a
+            #: guess under SUGGEST_CONFIDENT is labelled as the weaker thing it is.
+            SUGGEST_FLOOR = face_rules.OFFER_A_NAME
             SUGGEST_CONFIDENT = 0.85
             self.build_progress(
                 name, "reading", 0.7, "Reading the faces already named")

@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = 500000000
 import numpy as np
+
 import torch
 
 # Import facenet-pytorch elements
@@ -24,6 +25,7 @@ except ImportError:  # imported as a top-level module
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
+from tagpup.core import clustering
 from tagpup.core.library import Library
 
 logger = logging.getLogger("tagpup_cli.faces")
@@ -637,10 +639,11 @@ class FaceProcessor:
                         cost_matrix = np.array(cost_matrix)
                         row_ind, col_ind = linear_sum_assignment(cost_matrix)
                         
-                        # Assign matches if distance is within threshold (dist < 0.63246 corresponds to cosine similarity >= 0.80)
+                        # Assign matches as close as naming a face with no one looking
+                        # allows (tagpup.core.clustering), as a distance.
                         for r, c in zip(row_ind, col_ind):
                             dist = cost_matrix[r, c]
-                            if dist < 0.63246:
+                            if dist < clustering.distance(clustering.NAME_WITHOUT_ASKING):
                                 f = unassigned_faces[r]
                                 tag = known_unused[c]
                                 face_resolved[f["id"]] = tag
@@ -826,8 +829,10 @@ class FaceProcessor:
 
                 if photo_tags:
                     # Photo is tagged with people. We only match if the best matching name is in those tags.
-                    # Since we have confirmation via tags, we use a high confidence threshold (>= 0.80) to prevent false assignments in multi-face photos
-                    if best_name in photo_tags and best_sim >= 0.80:
+                    # Since we have confirmation via tags, we name without asking at the
+                    # value for that (tagpup.core.clustering), to prevent false
+                    # assignments in multi-face photos
+                    if best_name in photo_tags and best_sim >= clustering.NAME_WITHOUT_ASKING:
                         final_name = best_name
                         names_taken_here.add(final_name)
                         traces[face["id"]] = {

@@ -187,7 +187,7 @@ to be sitting on `<body>`.
 ### 5. Detected Faces Strip
 - The details panel lists the faces detected on the selected photo, each as a cropped thumbnail.
 - Face recognition already runs during tag suggestion; this shows its result rather than only the resulting name pill, so an unidentified face is visible while tagging instead of being discovered later in TagTuner.
-- A face carrying a name shows it. An unidentified face shows the closest match and its confidence when one clears 0.5 similarity, and reads *Unidentified* otherwise. Excluded faces appear dimmed with their reason.
+- A face carrying a name shows it. An unidentified face shows the closest match and its confidence when one clears 0.70 similarity -- the floor every screen offers a name from (`tagpup.core.clustering.OFFER_A_NAME`) -- and reads *Unidentified* otherwise. Excluded faces appear dimmed with their reason.
 - Clicking a suggested face adds that person to the photo — the small correction TagPup is for; grouping and confidence work belongs to TagTuner.
 
 ### 6. Camera Time-Shifting
@@ -202,7 +202,7 @@ to be sitting on `<body>`.
 - `/api/autocomplete-folder?path=<path_prefix>`: Returns autocomplete folder path suggestions based on Windows folder hierarchies.
 - `/api/folder/scan?path=<path>`: Scans folder and returns JSON array of photos.
 - `/api/folder/suggest-status?path=<folder_path>`: Returns the status, counts, and computed suggestions of the background tag suggest thread. Status values are `idle`, `preparing`, `running`, `completed`, or `error`.
-- `/api/photo-faces?path=<photo_path>`: Returns `{"faces": list, "total": int, "unmatched": int}` for the faces detected on one photo. Each entry carries its box, any assigned `name`, whether it is `excluded`, and for unidentified faces the closest `suggestion` with its `similarity` — measured against the nearest single resolved face of that person, the same way TagTuner's suggestion list measures it. A suggestion is only offered at 0.5 similarity or above; below that the nearest name is noise rather than a candidate. Named faces are listed first, then by confidence, then by size.
+- `/api/photo-faces?path=<photo_path>`: Returns `{"faces": list, "total": int, "unmatched": int}` for the faces detected on one photo. Each entry carries its box, any assigned `name`, whether it is `excluded`, and for unidentified faces the closest `suggestion` with its `similarity` — measured against the nearest single resolved face of that person, the same way TagTuner's suggestion list measures it. A suggestion is only offered at 0.70 similarity or above (`tagpup.core.clustering.OFFER_A_NAME`); below that the nearest name is noise rather than a candidate, and two strangers in three reached the 0.5 this used (docs/findings.md, #75). Named faces are listed first, then by confidence, then by size.
 - `/api/face-crop?id=<face_id>`: Serves the face thumbnail as JPEG, cropping from the original photo and caching the result in `faces.crop_image` when it is not already stored.
 - `/api/photo-file?path=<photo_path>`: Serves the photo image binary (supports resizing via `size` parameter).
 - `/api/tags`: Returns all autocomplete-visible tags.

@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
 import db as tagpup_db  # noqa: E402
+from tagpup.core import clustering  # noqa: E402
 from tagpup.store import checks  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 
@@ -317,7 +318,7 @@ def run_checks(report, work_db, args):
         suggested = [f for f in faces.get("faces", []) if f.get("suggestion")]
         if suggested:
             sims = [f["similarity"] for f in suggested]
-            report.check("every suggestion clears the 0.5 floor", min(sims) >= 0.5,
+            report.check("every suggestion clears the offer floor", min(sims) >= clustering.OFFER_A_NAME,
                          f"{len(suggested)} suggested, min={min(sims):.3f}")
         else:
             report.check("suggestions behave", True, "none confident enough, which is valid")

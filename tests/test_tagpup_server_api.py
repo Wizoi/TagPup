@@ -659,6 +659,32 @@ class TestPhotoFaces(TagPupAPITestBase):
         self.assertEqual(entry["suggestion"], "Jane Doe")
         self.assertGreater(entry["similarity"], 0.9)
 
+    def face_at(self, photo, vec, name=None):
+        conn = sqlite3.connect(self.TEST_DB)
+        cur = conn.execute("INSERT INTO faces (photo_path, box, embedding, name, prob, excluded)"
+                           " VALUES (?, '[0, 0, 50, 50]', ?, ?, 0.99, 0)", (photo, vec.tobytes(), name))
+        conn.commit()
+        conn.close()
+        return cur.lastrowid
+
+    def test_a_face_only_as_alike_as_strangers_are_is_offered_nobody(self):
+        """0.6 alike is below the floor every screen offers a name from: two strangers in
+        three reached the 0.5 this used (tagpup.core.clustering, docs/findings.md #75)."""
+        import numpy as np
+        from tagpup.core import clustering
+
+        known, target = np.zeros(512, dtype="float32"), np.zeros(512, dtype="float32")
+        known[0] = 1.0
+        target[0], target[1] = 0.6, 0.8
+        self.face_at(self.make_photo("known.jpg", []), known, name="Jane Doe")
+        photo = self.make_photo("target.jpg", [])
+        face = self.face_at(photo, target)
+
+        body = self.get(f"/api/photo-faces?path={urllib.parse.quote(photo)}")
+        entry = next(f for f in body["faces"] if f["id"] == face)
+        self.assertLess(0.6, clustering.OFFER_A_NAME)
+        self.assertIsNone(entry["suggestion"])
+
     def test_a_named_face_carries_no_suggestion(self):
         photo = self.make_photo("a.jpg", [])
         self.add_face(photo, 1, name="Jane Doe")

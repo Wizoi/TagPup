@@ -20,7 +20,7 @@ import numpy as np
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
-from tagpup.core import dates, fields, renaming, vocabulary
+from tagpup.core import clustering, dates, fields, renaming, vocabulary
 from tagpup.core.library import Library
 from tagpup.files import keywords as file_keywords
 from tagpup.store.photos import move_rows as move_photo_rows  # noqa: F401  (saving, tests)
@@ -691,9 +691,10 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     box = []
 
                 # Below this the nearest name is not a suggestion, it is just the
-                # least-bad of a bad set. Offering "Jane Doe? 4%" for a stranger is
-                # worse than saying nothing: it invites a wrong click.
-                SUGGESTION_FLOOR = 0.5
+                # least-bad of a bad set, and it invites a wrong click. The floor is
+                # the one every screen offers a name from (tagpup.core.clustering): it
+                # was 0.5 here, which two strangers in three reach.
+                SUGGESTION_FLOOR = clustering.OFFER_A_NAME
 
                 suggestion, similarity = None, None
                 if known_matrix is not None and emb and not excluded:
