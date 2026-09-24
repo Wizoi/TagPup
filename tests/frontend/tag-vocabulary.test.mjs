@@ -63,6 +63,27 @@ describe("the tag vocabulary is used, not reinvented", () => {
     );
   });
 
+  test("TagTuner's page keeps the same rule, with the same helpers", () => {
+    // It converted a keyword to a name by hand in the photo panel, and the rule
+    // above only read TagPup's page.
+    const lines = fs.readFileSync(path.join(REPO_ROOT, "gui", "app.js"), "utf8").split(/\r?\n/);
+    const offenders = [];
+    lines.forEach((line, i) => {
+      if (!line.includes("split('/')") && !line.includes('split("/")')) return;
+      if (line.includes("window.location.pathname")) return;
+      if (line.trimStart().startsWith("//")) return;
+      for (let j = i; j >= 0 && j > i - 12; j--) {
+        const declared = lines[j].match(/^\s*function\s+(\w+)\s*\(/);
+        if (declared) {
+          if (VOCABULARY.includes(declared[1])) return;
+          break;
+        }
+      }
+      offenders.push(`gui/app.js:${i + 1}: ${line.trim()}`);
+    });
+    assert.deepEqual(offenders, [], "split by hand instead of leafOf:\n" + offenders.join("\n"));
+  });
+
   test("the helpers themselves are allowed to", () => {
     // The check above is worthless if it matches nothing anywhere.
     assert.ok(

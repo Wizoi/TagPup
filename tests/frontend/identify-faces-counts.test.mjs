@@ -165,7 +165,8 @@ describe("assigning a mixed selection", () => {
     await new Promise((r) => ctx.window.setTimeout(r, 40));
 
     const button = ctx.document.getElementById("btn-reassign-selected");
-    assert.equal(button.textContent, "Assign Selected");
+    // The button names who the click will send them to: the typed name.
+    assert.equal(button.textContent, "Assign 2 to Rory Olwen");
     assert.match(input.placeholder, /Assign to name/);
   });
 

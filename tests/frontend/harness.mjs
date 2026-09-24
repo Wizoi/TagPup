@@ -83,10 +83,19 @@ export class FakeServer {
         json: () => Promise.resolve(payload),
         text: () => Promise.resolve(JSON.stringify(payload)),
       });
-      if (route && typeof route.body === "function") {
-        return Promise.resolve(route.body(url)).then(reply);
-      }
-      return Promise.resolve(reply(route ? route.body : []));
+      const answer = route && typeof route.body === "function"
+        ? Promise.resolve(route.body(url)).then(reply)
+        : Promise.resolve(reply(route ? route.body : []));
+      // An aborted request rejects with AbortError, as a browser's does. Ignoring the
+      // signal hid every bug where one request cancelled another's.
+      const signal = init && init.signal;
+      if (!signal) return answer;
+      const aborted = () => new window.DOMException("The operation was aborted.", "AbortError");
+      if (signal.aborted) return Promise.reject(aborted());
+      return new Promise((resolve, reject) => {
+        signal.addEventListener("abort", () => reject(aborted()), { once: true });
+        answer.then(resolve, reject);
+      });
     };
     return this;
   }

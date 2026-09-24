@@ -654,7 +654,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
         # API: get list of all known people
         elif path == "/api/people":
-            self.handle_get_people()
+            self.handle_get_people(query)
 
         # API: get list of all known people with face counts
         elif path == "/api/tags/list":
@@ -1448,7 +1448,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             if conn:
                 conn.close()
 
-    def handle_get_people(self):
+    def handle_get_people(self, query=None):
         if not os.path.exists(self.db_path):
             self.send_json([])
             return
@@ -1477,9 +1477,13 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         
             all_people = faces_names.union(photos_people)
 
-            # Filter out people hidden from autocomplete
+            # Filter out people hidden from autocomplete -- for the list offered while
+            # typing. ?include_hidden=1 answers "does this person exist?", which a
+            # hidden person does: asked of the filtered list, assigning one offered to
+            # create them as someone new.
+            include_hidden = (query or {}).get("include_hidden", ["0"])[0] == "1"
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-            if cursor.fetchone():
+            if not include_hidden and cursor.fetchone():
                 cursor.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")
                 hidden_tags = {row[0] for row in cursor.fetchall()}
 
@@ -2677,7 +2681,12 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         photos_to_check[photo_path].add(old_name)
 
             placeholders = ",".join("?" for _ in face_ids)
-            cursor.execute(f"UPDATE faces SET name = NULL, name_source = 'manual' WHERE id IN ({placeholders})", face_ids)
+            # Unmatching is a decision -- "this is nobody" -- recorded as manual. Undoing
+            # an assignment is not: it puts the faces back as they were, unreviewed, and
+            # used to leave them marked as deliberately nobody instead.
+            source = None if data.get("undo") else "manual"
+            cursor.execute(f"UPDATE faces SET name = NULL, name_source = ? WHERE id IN ({placeholders})",
+                           [source] + face_ids)
 
             for photo_path, old_names in photos_to_check.items():
                 path_sql, path_args = paths.sql_equals("path", photo_path)
@@ -2966,7 +2975,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             self.send_json_error(500, "Could not read %s: %s" % (parent, e))
             return
 
-        indexed_prefixes = self._indexed_folder_counts()
+        indexed_by_folder = self._indexed_folder_counts()
         folders = []
         for name in entries:
             full = os.path.join(parent, name)
@@ -2976,7 +2985,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 "name": name,
                 "images": images,
                 "has_subfolders": subdirs,
-                "indexed": indexed_prefixes.get(paths.key(full), 0),
+                # Counted like `images`, which is every photo under the folder. This
+                # counted only photos directly in it, so a folder of subfolders, fully
+                # indexed, read "8756 image(s)" as though new and was preselected.
+                "indexed": sum(n for folder, n in indexed_by_folder.items()
+                               if folder == paths.key(full) or paths.is_under(folder, full)),
             })
 
         own_images, own_subdirs = self._count_images(parent, recursive=False)
@@ -2984,6 +2997,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             "parent": parent,
             "folders": folders,
             "own_images": own_images,
+            "own_indexed": indexed_by_folder.get(paths.key(parent), 0),
             "has_subfolders": own_subdirs,
         })
 

@@ -217,12 +217,21 @@ document.addEventListener('DOMContentLoaded', () => {
     let allPhotos = [];
     let activePhotoPath = null;
     let allKnownPeople = [];
+    // Everyone, including people hidden from autocomplete. allKnownPeople is what is
+    // offered while typing; this answers whether a name already exists. Asking the
+    // filtered list offered to create a hidden person as somebody new.
+    let everyKnownPerson = [];
     let currentPhotoDetails = null;
 
     // Face Matching Mode State
     let allPeopleWithCounts = [];
     let activePersonName = null;
     let lastLoadedPersonName = null;
+    //: The person whose grid is being fetched right now. Redrawing the sidebar asks
+    //: for the active person's grid unless it is already loaded; one still on its way
+    //: was asked for again, cancelling the first request and starting the server's
+    //: build over -- fifty seconds, on the largest grids.
+    let loadingPersonName = null;
     //: How many unclustered faces exist when the response only carries the first
     //: 500 of them. Null when the list is complete.
     let activeFacesTotal = null;
@@ -251,6 +260,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let suggestionByFaceId = new Map();
     //: The faces as rendered, in order, so Shift can mean "everything between".
     let renderedFaceOrder = [];
+    //: Each rendered face's record, by id, and the cards taken out of this grid by an
+    //: assign or an ignore -- with where they sat -- so Undo can put them back in
+    //: place. Undo rebuilt the grid from a list that no longer held them: ten seconds
+    //: on Unknown Faces, and the faces it had just restored were not in it.
+    let renderedFacesById = new Map();
+    let removedFromGrid = new Map();
     //: Where a Shift range measures from: the last face clicked on its own.
     let selectionAnchorId = null;
     //: The faces a badge-filled name was meant for. A name typed by hand is the
@@ -396,7 +411,7 @@ ${summary}${note}`)) {
             }
 
             if (!name) return;
-            if (!allKnownPeople.includes(name)) {
+            if (!personExists(name)) {
                 if (!confirm(`"${name}" is not currently in the database. Do you want to create a new person tag and assign it to the selected face(s)?`)) {
                     return;
                 }
@@ -442,15 +457,20 @@ ${summary}${note}`)) {
         btnMatchingSelectAll.addEventListener('click', () => {
             const faceItems = matchingFacesGrid.querySelectorAll('.face-match-item');
             const faceIds = Array.from(faceItems).map(item => parseInt(item.getAttribute('data-face-id')));
-            
-            const allSelected = faceIds.every(id => selectedFaceIds.includes(id));
-            
+            // Sets, not Array.includes inside a loop over every card: on a grid of
+            // 24,000 faces that was hundreds of millions of comparisons per click.
+            const selected = new Set(selectedFaceIds);
+            const onScreen = new Set(faceIds);
+
+            const allSelected = faceIds.every(id => selected.has(id));
+
             if (allSelected) {
-                selectedFaceIds = selectedFaceIds.filter(id => !faceIds.includes(id));
+                selectedFaceIds = selectedFaceIds.filter(id => !onScreen.has(id));
                 faceItems.forEach(item => item.classList.remove('selected'));
             } else {
                 faceIds.forEach(id => {
-                    if (!selectedFaceIds.includes(id)) {
+                    if (!selected.has(id)) {
+                        selected.add(id);
                         selectedFaceIds.push(id);
                     }
                 });
@@ -627,7 +647,7 @@ ${summary}${note}`)) {
             return false;
         }
 
-        const isDup = allKnownPeople.some(p => p.toLowerCase() === val.toLowerCase());
+        const isDup = [...everyKnownPerson, ...allKnownPeople].some(p => p.toLowerCase() === val.toLowerCase());
         if (isDup) {
             modalNameError.textContent = 'This name already exists in the database. Please enter a unique name.';
             modalNameError.classList.remove('hidden');
@@ -883,7 +903,7 @@ ${summary}${note}`)) {
                     }
                     setIndexingUI(false);
                     indexProgressContainer.classList.add('hidden');
-                    fetchPhotos();
+                    refreshSidebarQuietly();
                 })
                 .catch(() => {});
         }, delay === undefined ? 400 : delay);
@@ -925,7 +945,7 @@ ${summary}${note}`)) {
                     // fetchPeopleWithCounts directly rendered the people list into the
                     // sidebar whatever Tune target said, so finishing an index while in
                     // Folder Matches left the list and the dropdown disagreeing.
-                    fetchPhotos();
+                    refreshSidebarQuietly();
                     // Whatever was queued behind this folder is already starting.
                     followQueue();
                 })
@@ -976,7 +996,9 @@ ${summary}${note}`)) {
                         path: data.parent,
                         name: `${basename(data.parent)}  (this folder itself)`,
                         images: data.own_images,
-                        indexed: 0,
+                        // Its own photos, counted the same way as its images. This
+                        // said 0, so an indexed leaf folder was always offered as new.
+                        indexed: data.own_indexed || 0,
                         isParent: true,
                     });
                 }
@@ -1031,6 +1053,23 @@ ${summary}${note}`)) {
     function samePath(a, b) {
         if (!a || !b) return false;
         return pathKey(a) === pathKey(b);
+    }
+
+    /**
+     * A person's name out of their tag: People/Rowan Thackeray -> Rowan Thackeray.
+     * The same as TagPup's (gui_tagpup/app.js). Identity is the leaf; the tag is a
+     * path. Converting by hand is how the two drift apart, so both pages use these.
+     */
+    function leafOf(tag) {
+        if (!tag) return '';
+        const text = String(tag);
+        return text.includes('/') ? text.split('/').pop().trim() : text.trim();
+    }
+
+    /** Do these two tags name the same person, however each is spelled? */
+    function samePerson(a, b) {
+        const left = leafOf(a).toLowerCase();
+        return Boolean(left) && left === leafOf(b).toLowerCase();
     }
 
     /** The last segment of a path: a photo's file name, or a folder's name. */
@@ -1116,6 +1155,10 @@ ${summary}${note}`)) {
             if ((data.already_queued || []).length) {
                 console.info('Already queued or running, skipped:', data.already_queued);
             }
+            // A folder that finished earlier and has just been queued again is a new
+            // job. Left set, followQueue took it for the finished one and stopped
+            // following: no progress, and Remove Folder enabled while it indexed.
+            lastFinishedFolder = null;
             followQueue();
         })
         .catch(err => {
@@ -1260,6 +1303,23 @@ ${summary}${note}`)) {
     }
 
     // Fetch photos list from API
+    /**
+     * Bring the sidebar's counts up to date without touching the panel.
+     *
+     * fetchPhotos also aborts the panel's request, which is right when the user picks
+     * something new and wrong after an exclude, a restore or a finished index: those
+     * came back while a grid was loading, cancelled it, and left the panel on
+     * "Loading faces..." for good. In the face modes only the counts need refreshing.
+     */
+    function refreshSidebarQuietly() {
+        const mode = modeSelect.value;
+        if (mode === 'face-matching' || mode === 'unmatched-faces') {
+            fetchPeopleWithCounts(true, true);
+            return;
+        }
+        fetchPhotos();
+    }
+
     function fetchPhotos() {
         const mode = modeSelect.value;
         updateEmptyState();
@@ -1273,6 +1333,9 @@ ${summary}${note}`)) {
         // Abort any ongoing details fetches
         if (detailsAbortController) {
             detailsAbortController.abort();
+            // A grid load cancelled here is no longer on its way, so the sidebar
+            // must be free to ask for it again.
+            loadingPersonName = null;
         }
 
         // Review Tags has its own sidebar contents and its own panel; it shares the
@@ -1628,6 +1691,15 @@ ${summary}${note}`)) {
                 updatePeopleDatalist();
             })
             .catch(err => console.error('Error fetching people list:', err));
+        fetch('/api/people?include_hidden=1')
+            .then(res => res.ok ? res.json() : [])
+            .then(data => { everyKnownPerson = Array.isArray(data) ? data : []; })
+            .catch(err => console.error('Error fetching people list:', err));
+    }
+
+    /** Is this somebody the library already knows, hidden from autocomplete or not? */
+    function personExists(name) {
+        return everyKnownPerson.includes(name) || allKnownPeople.includes(name);
     }
 
     // Update global datalist elements with known people names
@@ -1678,6 +1750,9 @@ ${summary}${note}`)) {
         // Abort any ongoing details fetches
         if (detailsAbortController) {
             detailsAbortController.abort();
+            // A grid load cancelled here is no longer on its way, so the sidebar
+            // must be free to ask for it again.
+            loadingPersonName = null;
         }
         detailsAbortController = new AbortController();
 
@@ -1748,9 +1823,8 @@ ${summary}${note}`)) {
         // Category / Keyword tags
         const tagsList = details.tags || [];
         tagsList.forEach(tag => {
-            const cleanTag = tag.replace(/\\/g, '/'); // tag-hierarchy: a keyword, not a path
-            const leaf = cleanTag.includes('/') ? cleanTag.split('/').pop().trim() : cleanTag.trim();
-            if (peopleList.some(p => p.toLowerCase() === leaf.toLowerCase())) {
+            // A keyword that names somebody already shown as a person is not repeated.
+            if (peopleList.some(p => samePerson(p, tag))) {
                 return;
             }
             const pill = document.createElement('span');
@@ -1981,7 +2055,7 @@ ${summary}${note}`)) {
                     return;
                 }
                 // Validate against known people
-                if (!allKnownPeople.includes(nameVal)) {
+                if (!personExists(nameVal)) {
                     if (!confirm(`"${nameVal}" is not currently in the database. Do you want to create a new person tag with this name?`)) {
                         return;
                     }
@@ -2396,7 +2470,8 @@ ${summary}${note}`)) {
         if (activePersonName) {
             const exists = allPeopleWithCounts.some(p => p.name === activePersonName);
             if (exists) {
-                if (activePersonName === lastLoadedPersonName) {
+                if (activePersonName === lastLoadedPersonName
+                        || activePersonName === loadingPersonName) {
                     selectPerson(activePersonName, null, true);
                 } else {
                     selectPerson(activePersonName, null, false, keepTab);
@@ -2528,10 +2603,19 @@ ${summary}${note}`)) {
         });
         matchingFacesGrid.innerHTML = '';
         renderedFaceOrder = [];
+        // Suggestions belong to the grid they were drawn with. Kept across grids, a
+        // badge no longer on any card still filled the name box and split assigns.
+        suggestionByFaceId = new Map();
+        renderedFacesById = new Map();
+        removedFromGrid = new Map();
+        nameFilledForFaceIds = null;
 
         // Abort any ongoing details fetches
         if (detailsAbortController) {
             detailsAbortController.abort();
+            // A grid load cancelled here is no longer on its way, so the sidebar
+            // must be free to ask for it again.
+            loadingPersonName = null;
         }
         detailsAbortController = new AbortController();
 
@@ -2547,6 +2631,7 @@ ${summary}${note}`)) {
             startGridBuildProgress(name);
         }
 
+        loadingPersonName = name;
         fetch(apiPath, { signal: detailsAbortController.signal })
             .then(res => {
                 if (!res.ok) throw new Error('Failed to load faces');
@@ -2554,6 +2639,7 @@ ${summary}${note}`)) {
             })
             .then(data => {
                 stopGridBuildProgress();
+                if (loadingPersonName === name) loadingPersonName = null;
                 activePersonFaces = data.faces;
                 lastLoadedPersonName = name;
                 // A capped list presented as a total makes the remainder look lost.
@@ -2569,6 +2655,8 @@ ${summary}${note}`)) {
             })
             .catch(err => {
                 stopGridBuildProgress();
+                // Only if it is still this load: an aborted one was replaced by the next.
+                if (loadingPersonName === name && err.name !== 'AbortError') loadingPersonName = null;
                 if (err.name === 'AbortError') return;
                 console.error('Error loading person faces:', err);
                 matchingPersonCount.textContent = 'Error loading faces';
@@ -2785,6 +2873,17 @@ ${summary}${note}`)) {
             const card = matchingFacesGrid.querySelector(`[data-face-id="${id}"]`);
             if (!card) return;
             const section = card.closest('.matching-group-section');
+            // Where it sat, for Undo.
+            removedFromGrid.set(id, {
+                card,
+                grid: card.parentElement,
+                next: card.nextElementSibling,
+                section,
+                sectionParent: section ? section.parentElement : null,
+                sectionNext: section ? section.nextElementSibling : null,
+                face: renderedFacesById.get(id),
+                suggestion: suggestionByFaceId.get(id),
+            });
             card.remove();
             if (section) touched.add(section);
         });
@@ -2797,8 +2896,7 @@ ${summary}${note}`)) {
                 section.remove();
                 return;
             }
-            const titleSpan = section.querySelector('.matching-group-title');
-            if (!titleSpan || modeSelect.value !== 'unmatched-faces') return;
+            if (modeSelect.value !== 'unmatched-faces') return;
 
             // One face left is not a cluster any more -- the server's
             // _dissolve_stranded_clusters moves such a survivor to the Unclustered
@@ -2809,25 +2907,67 @@ ${summary}${note}`)) {
                 section.querySelectorAll('.cluster-action, .cluster-suggestion')
                     .forEach(el => el.remove());
             }
-
-            const note = titleSpan.querySelector('.not-a-cluster-note')
-                || (section.dataset.unclustered ? notAClusterNote() : null);
-            titleSpan.textContent = groupHeadingText(
-                section.dataset.groupTitle || '',
-                Boolean(section.dataset.unclustered),
-                cards.length,
-                sectionPhotoCount(section));
-            if (note) titleSpan.appendChild(note);
-
-            // The one-click assign says how many it will assign. While a request is
-            // in flight it says so instead, and puts its own count back when done.
-            const accept = section.querySelector('.cluster-suggestion-assign');
-            if (accept && !accept.disabled) labelClusterAssign(accept, cards.length);
+            refreshSectionHeading(section);
         });
 
         renderedFaceOrder = renderedFaceOrder.filter(id => !leaving.has(id));
         selectedFaceIds = selectedFaceIds.filter(id => !leaving.has(id));
         leaving.forEach(id => suggestionByFaceId.delete(id));
+        updateMatchingSelectionUI();
+        updateFacesHeadingCount();
+    }
+
+    /** A group's heading and one-click assign, recounted from the cards it holds now. */
+    function refreshSectionHeading(section) {
+        const titleSpan = section.querySelector('.matching-group-title');
+        if (!titleSpan || modeSelect.value !== 'unmatched-faces') return;
+        const cards = section.querySelectorAll('[data-face-id]');
+        const note = titleSpan.querySelector('.not-a-cluster-note')
+            || (section.dataset.unclustered ? notAClusterNote() : null);
+        titleSpan.textContent = groupHeadingText(
+            section.dataset.groupTitle || '',
+            Boolean(section.dataset.unclustered),
+            cards.length,
+            sectionPhotoCount(section));
+        if (note) titleSpan.appendChild(note);
+
+        // The one-click assign says how many it will assign. While a request is
+        // in flight it says so instead, and puts its own count back when done.
+        const accept = section.querySelector('.cluster-suggestion-assign');
+        if (accept && !accept.disabled) labelClusterAssign(accept, cards.length);
+    }
+
+    /**
+     * Put faces an Undo has just restored back where they were in the grid.
+     *
+     * Only cards this grid took out: if the grid has been rebuilt since -- another
+     * person chosen, another tab -- they are not on screen to put back, and the
+     * restored faces show the next time that grid is loaded.
+     */
+    function putFacesBack(faceIds) {
+        const touched = new Set();
+        // Last out, first back: each goes in before the card that followed it, which
+        // may itself be one of these, already back.
+        [...faceIds].reverse().forEach(id => {
+            const saved = removedFromGrid.get(id);
+            if (!saved) return;
+            removedFromGrid.delete(id);
+            const { card, grid, next, section, sectionParent, sectionNext, face, suggestion } = saved;
+            if (section && !section.isConnected && sectionParent && sectionParent.isConnected) {
+                sectionParent.insertBefore(section,
+                    sectionNext && sectionNext.parentElement === sectionParent ? sectionNext : null);
+            }
+            if (!grid || !grid.isConnected) return;
+            grid.insertBefore(card, next && next.parentElement === grid ? next : null);
+            card.classList.remove('selected');
+            if (section) touched.add(section);
+            if (face && !activePersonFaces.some(f => f.id === id)) activePersonFaces.push(face);
+            if (face) renderedFacesById.set(id, face);
+            if (!renderedFaceOrder.includes(id)) renderedFaceOrder.push(id);
+            if (suggestion) suggestionByFaceId.set(id, suggestion);
+        });
+        touched.forEach(refreshSectionHeading);
+        updateTabLabels();
         updateMatchingSelectionUI();
         updateFacesHeadingCount();
     }
@@ -2840,6 +2980,12 @@ ${summary}${note}`)) {
         });
         matchingFacesGrid.innerHTML = '';
         renderedFaceOrder = [];
+        // Suggestions belong to the grid they were drawn with. Kept across grids, a
+        // badge no longer on any card still filled the name box and split assigns.
+        suggestionByFaceId = new Map();
+        renderedFacesById = new Map();
+        removedFromGrid = new Map();
+        nameFilledForFaceIds = null;
         selectedFaceIds = [];
         updateMatchingSelectionUI();
         clearFaceDetails();
@@ -3030,7 +3176,20 @@ ${summary}${note}`)) {
                     guessLabel.addEventListener('click', (e) => {
                         e.stopPropagation();
                         if (inputReassignName) {
+                            // The name, and the faces it is a guess for. The box used to
+                            // take the name alone, as if typed, and it stayed for every
+                            // selection after -- "Assign 3" sent faces from other groups
+                            // to this group's guess. Selecting the group's faces makes the
+                            // name, the selection and the button agree; filled in rather
+                            // than typed, it goes when the selection changes.
+                            matchingFacesGrid.querySelectorAll('.face-match-item.selected')
+                                .forEach(card => card.classList.remove('selected'));
+                            section.querySelectorAll('.face-match-item')
+                                .forEach(card => card.classList.add('selected'));
+                            selectedFaceIds = sectionFaceIds(section);
                             inputReassignName.value = guessName;
+                            nameFilledForFaceIds = [...selectedFaceIds];
+                            updateMatchingSelectionUI();
                             inputReassignName.focus();
                         }
                     });
@@ -3103,7 +3262,7 @@ ${summary}${note}`)) {
                 assignBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const executeAssignment = (name) => {
-                        if (!allKnownPeople.includes(name)) {
+                        if (!personExists(name)) {
                             if (!confirm(`"${name}" is not currently in the database. Do you want to create a new person tag and assign this cluster to it?`)) {
                                 return;
                             }
@@ -3174,6 +3333,7 @@ ${summary}${note}`)) {
                 const item = document.createElement('div');
                 item.className = 'face-match-item';
                 item.dataset.faceId = String(face.id);
+                renderedFacesById.set(face.id, face);
                 renderedFaceOrder.push(face.id);
 
                 // Why this face was ruled out, on the face. It has been recorded since
@@ -3674,7 +3834,7 @@ This photo also names ${face.other_names.join(', ')}. `
             updateTabLabels();
             clearFaceDetails();
             // Go through the mode dispatcher so the sidebar always matches Tune target.
-            fetchPhotos();
+            refreshSidebarQuietly();
             return true;
         })
         .catch(err => {
@@ -3685,7 +3845,7 @@ This photo also names ${face.other_names.join(', ')}. `
         .finally(() => updateMatchingSelectionUI());
     }
 
-    function postRestoreBulk(faceIds) {
+    function postRestoreBulk(faceIds, { undo = false } = {}) {
         if (!faceIds.length) return;
         if (btnRestoreSelected) {
             btnRestoreSelected.disabled = true;
@@ -3701,17 +3861,20 @@ This photo also names ${face.other_names.join(', ')}. `
             return res.json();
         })
         .then(() => {
-            faceIds.forEach(id => {
-                const card = matchingFacesGrid.querySelector(`[data-face-id="${id}"]`);
-                if (card) card.remove();
-            });
-            activePersonFaces = activePersonFaces.filter(f => !faceIds.includes(f.id));
-            selectedFaceIds = [];
-            renderPersonFaces(activePersonFaces);
+            if (undo) {
+                // Undoing an ignore: the faces come back to the grid they left.
+                putFacesBack(faceIds);
+            } else {
+                // Restoring from Excluded: they leave this grid, in place. This rebuilt
+                // every card on screen to account for the few that went.
+                const leaving = new Set(faceIds);
+                activePersonFaces = activePersonFaces.filter(f => !leaving.has(f.id));
+                removeFacesFromGrid(faceIds);
+            }
             updateMatchingSelectionUI();
             clearFaceDetails();
             // Go through the mode dispatcher so the sidebar always matches Tune target.
-            fetchPhotos();
+            refreshSidebarQuietly();
         })
         .catch(err => {
             console.error(err);
@@ -3840,13 +4003,14 @@ This photo also names ${face.other_names.join(', ')}. `
         //
         // Filled rather than assumed: it is visible, it is editable, and it clears
         // when the selection changes, like any other badge-filled name.
-        if (inputReassignName && count > 0 && distinct.size === 1
-            && !inputReassignName.value.trim()) {
+        // "Agrees" means every selected face carries that one badge. One badged face
+        // among nine unbadged ones filled the box with its name, and all ten went to
+        // that person -- while the by-badge path leaves unbadged faces alone.
+        const agreed = count > 0 && distinct.size === 1 && suggested.length === count;
+        if (inputReassignName && agreed && !inputReassignName.value.trim()) {
             inputReassignName.value = [...distinct][0];
             nameFilledForFaceIds = [...selectedFaceIds];
         }
-
-        const agreed = count > 0 && distinct.size === 1;
         if (inputReassignName) {
             inputReassignName.placeholder = assignByBadge
                 ? `Multiple (${distinct.size} people) — or type one name for all`
@@ -3857,9 +4021,13 @@ This photo also names ${face.other_names.join(', ')}. `
         if (btnReassignSelected) {
             btnReassignSelected.disabled = count === 0
                 || (!inputReassignName.value.trim() && !assignByBadge);
+            // The label names who the click will send them to: the box, which is what
+            // the click reads. It named the badges' person, so in Rowan's grid three
+            // faces badged Imogen read "Assign 3 to Imogen" and went to Rowan.
+            const sending = inputReassignName.value.trim();
             btnReassignSelected.textContent = assignByBadge
                 ? `Assign ${suggested.length} to their matches`
-                : (agreed ? `Assign ${count} to ${[...distinct][0]}` : 'Assign Selected');
+                : (sending ? `Assign ${count} to ${sending}` : 'Assign Selected');
             btnReassignSelected.title = assignByBadge
                 ? 'Each selected face goes to the person its badge names'
                 : '';
@@ -3895,15 +4063,16 @@ This photo also names ${face.other_names.join(', ')}. `
                 btnMatchingSelectAll.textContent = 'Select All';
             } else {
                 btnMatchingSelectAll.disabled = false;
-                const faceIds = Array.from(faceItems).map(item => parseInt(item.getAttribute('data-face-id')));
-                const allSelected = faceIds.every(id => selectedFaceIds.includes(id));
+                const selected = new Set(selectedFaceIds);
+                const allSelected = Array.from(faceItems)
+                    .every(item => selected.has(parseInt(item.getAttribute('data-face-id'))));
                 btnMatchingSelectAll.textContent = allSelected ? 'Select None' : 'Select All';
             }
         }
     }
 
     // POST bulk unmatch to backend API
-    function postUnmatchBulk(faceIds) {
+    function postUnmatchBulk(faceIds, { undo = false } = {}) {
         btnUnmatchSelected.disabled = true;
         const originalText = btnUnmatchSelected.textContent;
         btnUnmatchSelected.textContent = 'Unmatching...';
@@ -3913,40 +4082,31 @@ This photo also names ${face.other_names.join(', ')}. `
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ face_ids: faceIds })
+            // An Undo puts them back unreviewed; an unmatch records "nobody".
+            body: JSON.stringify({ face_ids: faceIds, undo })
         })
         .then(res => {
             if (!res.ok) throw new Error('Bulk unmatch operation failed');
             return res.json();
         })
         .then(data => {
+            if (data.success && undo) {
+                // Undoing an assign: the faces come back to the grid they left.
+                putFacesBack(faceIds);
+                clearFaceDetails();
+                fetchPeopleWithCounts(true, true);
+                return;
+            }
             if (data.success) {
-                // In-place DOM removal of selected cards
-                faceIds.forEach(id => {
-                    const card = matchingFacesGrid.querySelector(`[data-face-id="${id}"]`);
-                    if (card) {
-                        const grid = card.parentElement;
-                        card.remove();
-                        if (grid && grid.children.length === 0) {
-                            const section = grid.parentElement;
-                            if (section && section.classList.contains('matching-group-section')) {
-                                section.remove();
-                            }
-                        }
-                    }
-                });
-
-                // Update activePersonFaces
-                activePersonFaces = activePersonFaces.filter(f => !faceIds.includes(f.id));
+                // In place: only the cards that left. This removed them and then
+                // rebuilt every card on screen as well.
+                const leaving = new Set(faceIds);
+                activePersonFaces = activePersonFaces.filter(f => !leaving.has(f.id));
+                removeFacesFromGrid(faceIds);
 
                 // Update tab counts
                 updateTabLabels();
 
-                // Render remaining faces inline immediately
-                renderPersonFaces(activePersonFaces);
-
-                // Clear selection state and details
-                selectedFaceIds = [];
                 updateMatchingSelectionUI();
                 clearFaceDetails();
 
@@ -4084,8 +4244,8 @@ This photo also names ${face.other_names.join(', ')}. `
             if (!ids.length) return;
             // Each action has its own way back: an assignment is unmatched, an
             // exclusion is restored. Getting this wrong would quietly do nothing.
-            if (kind === 'ignore') postRestoreBulk(ids);
-            else postUnmatchBulk(ids);
+            if (kind === 'ignore') postRestoreBulk(ids, { undo: true });
+            else postUnmatchBulk(ids, { undo: true });
         });
     }
     if (btnAssignUndoDismiss) {
