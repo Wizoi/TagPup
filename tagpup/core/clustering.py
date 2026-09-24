@@ -87,6 +87,18 @@ def looks_wrong(similarity):
     return similarity is not None and similarity < OFFER_A_NAME
 
 
+# ---- Faces in the background ---------------------------------------------------------
+
+def background_faces(boxes):
+    """Indexes of the faces of one photo, by their boxes ([x1, y1, x2, y2], or None),
+    that are noise in the background: under a tenth the area of the largest and under
+    2,000 pixels outright. Clustering names none of them and the suggester offers no
+    name for them; each wrote this rule itself (docs/findings.md, #74)."""
+    areas = [(box[2] - box[0]) * (box[3] - box[1]) if box else 0 for box in boxes]
+    largest = max(areas, default=0)
+    return {i for i, area in enumerate(areas) if area < 0.10 * largest and area < 2000}
+
+
 # ---- Everyone's faces ----------------------------------------------------------------
 
 def _window(age):

@@ -518,21 +518,13 @@ class FaceProcessor:
                 for fid in decided:
                     face_resolved[fid] = manual_names[fid]
                 
-                # Calculate face areas and find maximum area
-                face_areas = []
-                for f in photo_faces:
-                    box = f.get("box", [0, 0, 0, 0])
-                    area = (box[2] - box[0]) * (box[3] - box[1])
-                    face_areas.append((area, f["id"]))
-                
-                max_area = max(area for area, _ in face_areas) if face_areas else 0
-                
-                # Identify tiny/noise background faces and force them to None
+                # Tiny faces in the background are noise: they keep no name
+                # (tagpup.core.clustering).
+                background = clustering.background_faces([f.get("box") for f in photo_faces])
                 valid_photo_faces = []
-                for area, fid in face_areas:
-                    f = next(x for x in photo_faces if x["id"] == fid)
-                    if area < 0.10 * max_area and area < 2000:
-                        face_resolved[fid] = None
+                for i, f in enumerate(photo_faces):
+                    if i in background:
+                        face_resolved[f["id"]] = None
                     else:
                         valid_photo_faces.append(f)
                 

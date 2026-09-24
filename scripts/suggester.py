@@ -349,19 +349,10 @@ class TagSuggester:
                         logger.warning(f"Could not record detected faces: {save_err}")
 
             if detected_faces:
-                # Calculate areas and filter out tiny background/noise faces
-                face_areas = []
-                for f in detected_faces:
-                    box = f.get("box", [0, 0, 0, 0])
-                    area = (box[2] - box[0]) * (box[3] - box[1])
-                    face_areas.append(area)
-                max_area = max(face_areas) if face_areas else 0
-                
-                valid_detected_faces = []
-                for area, f in zip(face_areas, detected_faces):
-                    if area < 0.10 * max_area and area < 2000:
-                        continue
-                    valid_detected_faces.append(f)
+                # Tiny faces in the background are noise: no name is offered for them
+                # (tagpup.core.clustering).
+                background = clustering.background_faces([f.get("box") for f in detected_faces])
+                valid_detected_faces = [f for i, f in enumerate(detected_faces) if i not in background]
                 
                 if valid_detected_faces:
                     if known_faces.names():
