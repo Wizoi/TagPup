@@ -71,7 +71,7 @@ Imports only go down:
 | ml | `tagpup.ml` | Models: CLIP embeddings, face detection and embeddings, the vector index | `core`, `files` |
 | services | `tagpup.services` | One function per user action. The only code that writes. Returns a `Result` | all of the above |
 | jobs | `tagpup.jobs` | Background work: queue, status, cancel, persistence, worker processes for GPU work | `core`, `services` |
-| entry points | `tagpup.web`, `tagpup.cli`, `scripts/`, `tools/` | HTTP, the command line, maintenance and development tools | `config`, `logs`, `services`, `jobs` (and `core` for formatting) |
+| entry points | `tagpup.web`, `tagpup.cli`, `tagpup.mcp`, `scripts/`, `tools/` | HTTP, the command line, the MCP server Claude works through, maintenance and development tools | `config`, `logs`, `services`, `jobs` (and `core` for formatting) |
 
 Guard tests, each of which fails the build. The ones marked *exists* are in place; the rest arrive with their phase.
 
@@ -234,6 +234,15 @@ Exit: one server process, and no test opens a socket to check logic it could che
 
 Exit: no page file over about 1,000 lines, and the two pages share every common helper.
 
+### Phase 7: MCP
+An MCP server, `tagpup.mcp`, so that Claude works with a library through the same services the apps use, rather than through a one-off script per question. Settling #42 in docs/findings.md took four throwaway scripts to learn that its 35 names sat on 28 rows of a folder deleted on purpose. Its reads need the repositories, so it follows phase 3; its order among phases 4 to 6 does not matter.
+- An entry point beside web and cli, over stdio, in a process of its own. It opens the library `TAGPUP_HOME` names and never talks to a running app's port.
+- Read tools first, read-only (`db.readonly_uri`): what a library holds, photos by folder, tag or person, a photo's row against its file, the faces in a photo, the consistency checks (face names missing from people, rows whose file is gone, rows that disagree with their file), and the query plan of a query.
+- Answers give counts and ids by default, and paths and names only when asked: the library is photographs of real people, many of them minors.
+- Write tools only by calling a service. Each is a dry run unless told to apply, backs the library up before it applies, and returns the service's `Result`.
+
+Exit: every check in `tools/doctor.py`, and each question asked of the library while settling a finding, is one tool call. Every tool calls a service, and each has a test.
+
 ## Decisions
 
 | Date | Decision |
@@ -258,3 +267,4 @@ Exit: no page file over about 1,000 lines, and the two pages share every common 
 | 4. Data model | not started |
 | 5. One server | not started |
 | 6. Pages | not started |
+| 7. MCP | not started |
