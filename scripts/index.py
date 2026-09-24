@@ -772,10 +772,19 @@ class PhotoIndex:
         """
         if not faces:
             return 0
-        return self.write(
-            lambda: self._insert_faces_if_absent(photo_path, faces),
-            label="recording faces for %s" % os.path.basename(photo_path),
-        )
+        try:
+            return self.write(
+                lambda: self._insert_faces_if_absent(photo_path, faces),
+                label="recording faces for %s" % os.path.basename(photo_path),
+            )
+        except Exception as e:
+            # Only once the retries are spent. Losing the faces for a photo is not a
+            # warning-shaped event: they are gone until it is indexed again.
+            logger.error(
+                "Detected faces for %s were NOT saved (%s). Re-index this folder to "
+                "recover them.", photo_path, e
+            )
+            return 0
 
     def _insert_faces_if_absent(self, photo_path: str, faces: List[Dict[str, Any]]) -> int:
         """One attempt at the insert above. Separated so it can simply be retried."""
@@ -808,20 +817,16 @@ class PhotoIndex:
                 inserted += 1
             conn.commit()
             return inserted
-        except Exception as e:
-            # Losing the faces for a photo is not a warning-shaped event: they are
-            # gone until it is indexed again, and this scrolled past in a wall of
-            # yellow while the run reported success.
-            logger.error(
-                "Detected faces for %s were NOT saved (%s). Re-index this folder to "
-                "recover them.", photo_path, e
-            )
+        except Exception:
+            # Raised on, not swallowed: this runs inside self.write, whose retry
+            # waits out a locked database. Catching here returned 0 before the retry
+            # ever saw the error, so a moment's lock lost a photo's faces for good.
             if conn:
                 try:
                     conn.rollback()
                 except Exception:
                     pass
-            return 0
+            raise
         finally:
             if conn:
                 conn.close()
