@@ -23,7 +23,7 @@ import numpy as np
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
-from tagpup.core import dates, vocabulary
+from tagpup.core import dates, renaming, vocabulary
 from tagpup.core.library import Library
 from tagpup.files import keywords as file_keywords
 from tagpup.services import photos as photo_actions
@@ -2555,7 +2555,11 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         if not photo_paths:
             self.send_json_error(400, "No photos selected for renaming")
             return
-            
+        problem = renaming.problem_with_grouping(grouping)
+        if problem:
+            self.send_json_error(400, problem)
+            return
+
         try:
             format_pattern = tagpup_config.rename_format()
 

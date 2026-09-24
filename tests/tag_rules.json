@@ -1,5 +1,5 @@
 {
-  "about": "What may be set as a tag or a name, what each refusal says, and how an allowed tag is spelled once set. Read by tests/test_vocabulary.py (the servers) and tests/frontend/tag-rules.test.mjs (the pages), so they cannot drift apart. null means allowed.",
+  "about": "What may be set as a tag, a name or a Smart Rename grouping, what each refusal says, and how an allowed tag is spelled once set. Read by tests/test_vocabulary.py (the servers) and tests/frontend/tag-rules.test.mjs (the pages), so they cannot drift apart. null means allowed.",
   "tags": [
     ["People/Rowan Thackeray", null],
     [" People / Rowan Thackeray ", null],
@@ -39,6 +39,14 @@
     ["Rowan\\Thackeray", "A name cannot contain \"\\\": other programs read it as a break between levels."],
     ["Rowan\tThackeray", "A name cannot contain a tab, a line break or another control character."],
     ["Rowan Thackeray\r\n", "A name cannot contain a tab, a line break or another control character."]
+  ],
+  "groupings": [
+    ["2019-06 Summer Camp", null],
+    ["2019-06-15 Relays", null],
+    ["Harbour Day", null],
+    ["Meet -Day 1", null],
+    ["2019-06 - Summer Camp", "A grouping cannot contain \" - \": it separates the parts of a photo's name. A dash without spaces, as in 2019-06, is fine."],
+    ["Relays - Day 2", "A grouping cannot contain \" - \": it separates the parts of a photo's name. A dash without spaces, as in 2019-06, is fine."]
   ],
   "spelled": [
     [" People / Rowan Thackeray ", "People/Rowan Thackeray"],

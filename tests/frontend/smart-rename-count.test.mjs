@@ -9,6 +9,35 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { loadApp, FakeServer, photoRecord, flush, click, openFolder } from "./harness.mjs";
 
+test("a grouping holding ' - ' is refused beside the field, and nothing is sent", async (t) => {
+  // Editing a caption later splits the name on " - " to find the photo's number.
+  const records = ["a.jpg", "b.jpg"].map((filename) => photoRecord({ filename }));
+  const server = new FakeServer()
+    .on("/api/tags", [])
+    .on("/api/people", [])
+    .on("/api/taxonomy/tree", [])
+    .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
+    .on("/api/folder/suggest-status", { status: "idle" })
+    .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
+    .on("/api/folder/scan", records);
+
+  const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
+  ctx.window.confirm = () => true;
+  await openFolder(ctx, "D:\\Library\\2020", { settle: 6 });
+  click(ctx.window, ctx.document.querySelector(".thumbnail-card .thumbnail-checkbox"));
+
+  const field = ctx.document.getElementById("rename-grouping-input");
+  field.value = "2019-06 - Summer Camp";
+  const apply = ctx.document.getElementById("btn-apply-rename");
+  apply.disabled = false;
+  click(ctx.window, apply);
+  await flush(ctx.window, 4);
+
+  assert.ok(!server.calls.some((c) => c.url.includes("rename-photos")), "the rename was sent");
+  assert.ok(field.classList.contains("field-invalid"));
+  assert.match(ctx.document.getElementById("status-text").textContent, /cannot contain " - "/);
+});
+
 test("Smart Rename reports the photos it renamed, not zero", async (t) => {
   const files = ["a.jpg", "b.jpg", "c.jpg"];
   const records = files.map((filename) => photoRecord({ filename }));

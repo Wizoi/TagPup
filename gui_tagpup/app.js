@@ -360,6 +360,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     /**
+     * Why a Smart Rename grouping cannot be used, or null if it can.
+     *
+     * " - " separates the parts of a photo's name, and editing a caption later finds
+     * the photo's number by splitting the name there: a grouping holding one
+     * ("2019-06 - Summer Camp") lost its photos their numbers. The server refuses it
+     * too (tagpup/core/renaming.py), held to the same cases (tests/tag_rules.json).
+     */
+    function groupingProblem(grouping) {
+        if (String(grouping || '').includes(' - ')) {
+            return 'A grouping cannot contain " - ": it separates the parts of a photo\'s name. '
+                + 'A dash without spaces, as in 2019-06, is fine.';
+        }
+        return null;
+    }
+
+    /**
      * Put a validation message beside the field it is about.
      *
      * "Please enter a grouping name" in a modal hides the form you need to correct.
@@ -1006,6 +1022,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const grouping = renameGroupingInput.value.trim();
         if (!grouping) {
             flagField(renameGroupingInput, 'Enter a grouping name to rename by');
+            return;
+        }
+        const groupingRefused = groupingProblem(grouping);
+        if (groupingRefused) {
+            flagField(renameGroupingInput, groupingRefused);
             return;
         }
 

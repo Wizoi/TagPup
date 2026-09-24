@@ -60,6 +60,18 @@ for (const file of Object.keys(PAGES)) {
   });
 }
 
+describe("gui_tagpup/app.js: what a Smart Rename grouping may hold", () => {
+  const source = fs.readFileSync(PAGES["gui_tagpup/app.js"], "utf8");
+  const groupingProblem = new Function(
+    `${functionSource(source, "groupingProblem")}\nreturn groupingProblem;`)();
+
+  test("as the server answers it", () => {
+    for (const [grouping, expected] of RULES.groupings) {
+      assert.equal(groupingProblem(grouping), expected, JSON.stringify(grouping));
+    }
+  });
+});
+
 describe("gui_tagpup/app.js: a typed tag is set in its one spelling", () => {
   // Only TagPup's page turns typed text into a tag path.
   const source = fs.readFileSync(PAGES["gui_tagpup/app.js"], "utf8");
