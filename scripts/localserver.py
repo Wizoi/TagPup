@@ -29,6 +29,8 @@ import urllib.parse
 from socketserver import ThreadingTCPServer
 
 import _root  # noqa: F401
+from tagpup import config as tagpup_config
+from tagpup.core import library as libraries
 from tagpup.core.result import NotFound, Refused
 from tagpup.logs import REQUESTS
 from tagpup.services import photos as photo_actions
@@ -187,6 +189,57 @@ def ask_for_folder():
     picked = subprocess.run([sys.executable, "-c", _FOLDER_DIALOG], stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, creationflags=CREATE_NO_WINDOW)
     return picked.stdout.strip()
+
+
+def list_libraries(handler):
+    """GET /api/databases: the libraries the picker offers, and the one chosen last. A
+    server started on a test library offers only test libraries (tagpup.core.library)."""
+    settings = tagpup_config.load()
+    data_dir = tagpup_config.data_dir(settings)
+    files = os.listdir(data_dir) if os.path.exists(data_dir) else []
+    handler.send_json({
+        "databases": sorted(libraries.picker_names(files, _test_mode(handler))),
+        "selected": libraries.picker_name(tagpup_config.default_db(settings)),
+    })
+
+
+def select_library(handler, db_name):
+    """POST /api/databases/select: remember the library chosen, so the apps open it next."""
+    if not db_name:
+        handler.send_json_error(400, "Invalid database name")
+        return
+    try:
+        tagpup_config.remember_library(libraries.file_name_for(db_name))
+        handler.send_json({"success": True})
+    except Exception as e:
+        handler.send_json_error(500, f"Error saving default database: {e}")
+
+
+def create_library(handler, db_name, create):
+    """POST /api/databases/create: make the library `db_name` with `create(db_path)`, unless
+    it is there already, and remember it as the one chosen."""
+    if not db_name:
+        handler.send_json_error(400, "Invalid database name")
+        return
+    db_name = libraries.file_name_for(db_name)
+    problem = libraries.problem_with_new_name(db_name)
+    if problem:
+        handler.send_json_error(400, problem)
+        return
+    file_name = libraries.TEST_PREFIX + db_name if _test_mode(handler) else db_name
+    db_path = tagpup_config.library_path(file_name).replace("\\", "/")  # not a path: a database file
+    try:
+        if not os.path.exists(db_path):
+            create(db_path)
+        tagpup_config.remember_library(db_name)
+        handler.send_json({"success": True, "db_name": os.path.splitext(db_name)[0]})
+    except Exception as e:
+        handler.send_json_error(500, f"Error creating database: {e}")
+
+
+def _test_mode(handler):
+    """Was this server started on a test library?"""
+    return os.path.basename(type(handler).db_path).startswith(libraries.TEST_PREFIX)
 
 
 def send_image(handler, content, content_type, cache_seconds=None):

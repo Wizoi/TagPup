@@ -27,7 +27,6 @@ import _root  # noqa: F401
 from tagpup import config as tagpup_config
 from tagpup.core import dates, vocabulary
 from tagpup.core.library import Library
-from tagpup.core import library as libraries
 from tagpup.core.result import NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services import indexing
@@ -330,22 +329,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         return localserver.is_local_request(self)
 
     def handle_get_databases(self):
-        # List all .db files in the data directory
-        settings = tagpup_config.load()
-        data_dir = tagpup_config.data_dir(settings)
-        default_db = tagpup_config.default_db(settings)
-
-        startup_db = os.path.basename(self.__class__.db_path)
-        test_mode = startup_db.startswith("test_")
-        
-        files = os.listdir(data_dir) if os.path.exists(data_dir) else []
-        databases = libraries.picker_names(files, test_mode)
-        clean_default_db = libraries.picker_name(default_db)
-            
-        self.send_json({
-            "databases": sorted(databases),
-            "selected": clean_default_db
-        })
+        localserver.list_libraries(self)
 
     def handle_post_databases_select(self):
         try:
@@ -353,19 +337,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         except Exception:
             self.send_json_error(400, "Invalid JSON body")
             return
-            
-        db_name = data.get("db_name")
-        if not db_name:
-            self.send_json_error(400, "Invalid database name")
-            return
-            
-        db_name = libraries.file_name_for(db_name)
-            
-        try:
-            tagpup_config.remember_library(db_name)
-            self.send_json({"success": True})
-        except Exception as e:
-            self.send_json_error(500, f"Error saving default database: {e}")
+        localserver.select_library(self, data.get("db_name"))
 
     def handle_post_databases_create(self):
         try:
@@ -373,35 +345,8 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         except Exception:
             self.send_json_error(400, "Invalid JSON body")
             return
-            
-        db_name = data.get("db_name")
-        if not db_name:
-            self.send_json_error(400, "Invalid database name")
-            return
-            
-        db_name = libraries.file_name_for(db_name)
-            
-        problem = libraries.problem_with_new_name(db_name)
-        if problem:
-            self.send_json_error(400, problem)
-            return
-            
-        startup_db = os.path.basename(self.__class__.db_path)
-        test_mode = startup_db.startswith("test_")
-        
-        fs_db_name = libraries.TEST_PREFIX + db_name if test_mode else db_name
-            
-        db_path = tagpup_config.library_path(fs_db_name).replace("\\", "/")  # not a path: a database file, spelled as the other db paths here are
-
-        try:
-            if not os.path.exists(db_path):
-                from tagpup_server import create_library
-                create_library(db_path)
-
-            tagpup_config.remember_library(db_name)
-            self.send_json({"success": True, "db_name": os.path.splitext(db_name)[0]})
-        except Exception as e:
-            self.send_json_error(500, f"Error creating database: {e}")
+        from tagpup_server import create_library
+        localserver.create_library(self, data.get("db_name"), create_library)
 
     def do_GET(self):
         if not self.resolve_db_from_url():
