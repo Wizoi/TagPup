@@ -97,6 +97,27 @@ class ANewLibrary(SchemaTestCase):
         self.assertIn("faces", tables(self.connect()))
 
 
+class ABackupBeforeRewritingDecisions(SchemaTestCase):
+    def backups(self):
+        folder = os.path.join(self.dir, "backups")
+        return os.listdir(folder) if os.path.isdir(folder) else []
+
+    def test_a_library_whose_decisions_migration_1_rewrites_is_backed_up_first(self):
+        # 'Non Person' names become exclusions, is_people becomes has_face (#59).
+        make_old_library(self.db_path)
+        schema.ensure(self.db_path)
+        self.assertEqual(1, len(self.backups()), self.backups())
+
+    def test_a_library_with_nothing_to_rewrite_is_not_copied(self):
+        make_old_library(self.db_path)
+        conn = self.connect()
+        conn.execute("DELETE FROM faces WHERE name = 'Non Person'")
+        conn.execute("ALTER TABLE tag_taxonomy ADD COLUMN has_face INTEGER DEFAULT 0")
+        conn.commit()
+        schema.ensure(self.db_path)
+        self.assertEqual([], self.backups())
+
+
 class ALibraryRestoredInPlace(SchemaTestCase):
     def test_is_migrated_again(self):
         # Copying a backup over the file keeps its id and creation time on Windows, and

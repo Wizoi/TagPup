@@ -24,8 +24,8 @@ from tagpup.store import db
 
 logger = logging.getLogger(__name__)
 
-#: One step. `changes_data` says it rewrites what people decided or what files hold,
-#: and so is worth a backup first; adding a column, an index or a trigger is not.
+#: One step. `changes_data` says whether it rewrites what people decided or what files
+#: hold, which is worth a backup first; adding a column, an index or a trigger is not.
 Migration = collections.namedtuple("Migration", "version name apply changes_data")
 
 
@@ -188,8 +188,23 @@ def _generations(conn):
                          % (name, event, when, table, bump))
 
 
+def _old_decisions(conn):
+    """Does migration 1 have decisions to rewrite here: faces named 'Non Person', or a
+    tree whose face flag is still is_people or is_face? (docs/findings.md, #59)"""
+    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "faces" in tables and conn.execute(
+            "SELECT 1 FROM faces WHERE name = 'Non Person' LIMIT 1").fetchone():
+        return True
+    if "tag_taxonomy" in tables:
+        columns = _columns(conn, "tag_taxonomy")
+        return "has_face" not in columns and bool({"is_people", "is_face"} & set(columns))
+    return False
+
+
+#: `changes_data` is True, False, or a question of the library: a backup of a large
+#: library for a migration with nothing to rewrite in it is minutes for nothing.
 MIGRATIONS = (
-    Migration(1, "the tables as of 2026-09", _tables, changes_data=False),
+    Migration(1, "the tables as of 2026-09", _tables, changes_data=_old_decisions),
     Migration(2, "one generations table", _generations, changes_data=False),
 )
 
@@ -298,7 +313,9 @@ def _ensure(db_path):
             for migration in MIGRATIONS:
                 if version(conn) >= migration.version:
                     continue
-                if migration.changes_data and _has_rows(conn):
+                changes_data = (migration.changes_data(conn) if callable(migration.changes_data)
+                                else migration.changes_data)
+                if changes_data and _has_rows(conn):
                     logger.info("Backed up to %s", db.backup(db_path, "migration-%d" % migration.version))
                 conn.execute("BEGIN IMMEDIATE")
                 try:
