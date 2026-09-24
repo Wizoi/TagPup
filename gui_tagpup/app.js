@@ -3942,6 +3942,13 @@ Click to add ${namesSomebody} to this photo.`;
         btnFolderAutoApply.disabled = !hasSomethingToApply;
     }
 
+    // The camera a photo came from, as tagpup.core.fields names it for the server's
+    // time shift (tests/test_rules_have_one_owner.py holds this copy to it): the first
+    // of CAMERA_FIELDS the photo has, else UNKNOWN_CAMERA. ALL_CAMERAS asks for every one.
+    const CAMERA_FIELDS = ['EXIF:Model', 'Model', 'EXIF:Make', 'Make'];
+    const UNKNOWN_CAMERA = 'Unknown Camera';
+    const ALL_CAMERAS = 'All Cameras';
+
     function populateCameraModelsDropdown() {
         if (!folderPhotos || folderPhotos.length === 0) {
             timeshiftPanel.classList.add('hidden');
@@ -3959,10 +3966,10 @@ Click to add ${namesSomebody} to this photo.`;
             modelCounts[model] = (modelCounts[model] || 0) + 1;
         });
 
-        // Add "All Cameras" option
+        // The option for every camera
         const optAll = document.createElement('option');
-        optAll.value = "All Cameras";
-        optAll.textContent = `All Cameras (${folderPhotos.length} photos)`;
+        optAll.value = ALL_CAMERAS;
+        optAll.textContent = `${ALL_CAMERAS} (${folderPhotos.length} photos)`;
         timeshiftCameraSelect.appendChild(optAll);
 
         // Sort camera models alphabetically
@@ -3981,9 +3988,13 @@ Click to add ${namesSomebody} to this photo.`;
     /** The camera a photo came from, as the time-shift dropdown labels it. */
     function cameraModelOf(photo) {
         const raw = (photo && photo.raw_metadata) || {};
-        return raw["EXIF:Model"] || raw["Model"]
-            || raw["EXIF:Make"] || raw["Make"]
-            || "Unknown Camera";
+        const field = CAMERA_FIELDS.find(name => raw[name]);
+        return field ? raw[field] : UNKNOWN_CAMERA;
+    }
+
+    /** Is `photo` one a time shift for `camera` is about? As the server decides it. */
+    function onCamera(photo, camera) {
+        return camera === ALL_CAMERAS || cameraModelOf(photo) === camera;
     }
 
     function applyTimeShift() {
@@ -4002,9 +4013,7 @@ Click to add ${namesSomebody} to this photo.`;
         // How many photos this is actually about. "All photos for camera X" does not
         // say whether that is four or four hundred, and the two deserve different
         // amounts of hesitation.
-        const affected = cameraModel === 'All Cameras'
-            ? folderPhotos.length
-            : folderPhotos.filter(p => cameraModelOf(p) === cameraModel).length;
+        const affected = folderPhotos.filter(p => onCamera(p, cameraModel)).length;
         const direction = minutes > 0 ? 'later' : 'earlier';
         const promptMsg = [
             `Shift Date Taken by ${Math.abs(minutes)} minute(s) ${direction}?`,
@@ -4177,10 +4186,7 @@ Click to add ${namesSomebody} to this photo.`;
             const path = card.getAttribute('data-path');
             const photo = folderPhotos.find(p => p.path === path);
             if (photo) {
-                const raw = photo.raw_metadata || {};
-                const model = raw["EXIF:Model"] || raw["Model"] || raw["EXIF:Make"] || raw["Make"] || "Unknown Camera";
-                
-                if (cameraModel === "All Cameras" || model === cameraModel) {
+                if (onCamera(photo, cameraModel)) {
                     card.classList.add('timeshift-highlighted');
                 } else {
                     card.classList.remove('timeshift-highlighted');

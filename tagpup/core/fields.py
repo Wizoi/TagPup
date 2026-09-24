@@ -48,6 +48,31 @@ METADATA_FIELDS = [
 ]
 
 
+#: The fields a photo's camera is named from, the first it has: what Shift Date Taken
+#: chooses photos by. The TagPup page names cameras the same way, to offer them and to
+#: show which photos a shift is about, from a copy of these that
+#: tests/test_rules_have_one_owner.py holds to them (docs/findings.md, #74).
+CAMERA_FIELDS = ("EXIF:Model", "Model", "EXIF:Make", "Make")
+
+#: The camera of a photo that names none.
+UNKNOWN_CAMERA = "Unknown Camera"
+
+#: The camera a time shift is asked for to shift every photo, whatever its camera.
+ALL_CAMERAS = "All Cameras"
+
+
+def camera_of(raw_metadata):
+    """The camera a photo came from, by its metadata: the first of CAMERA_FIELDS it has,
+    else UNKNOWN_CAMERA."""
+    raw = raw_metadata or {}
+    return next((raw[field] for field in CAMERA_FIELDS if raw.get(field)), UNKNOWN_CAMERA)
+
+
+def on_camera(raw_metadata, camera):
+    """Is a photo with this metadata one a time shift for `camera` is about?"""
+    return camera == ALL_CAMERAS or camera_of(raw_metadata) == camera
+
+
 #: The fields a photo's tags are read from: exactly what vocabulary.extract_tags
 #: reads, so tags read here are the tags a folder scan would have found.
 TAG_SOURCE_FIELDS = ("IPTC:Keywords", "XMP:Subject", "XMP:HierarchicalSubject")

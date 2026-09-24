@@ -1326,13 +1326,9 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 
         photos_map = TagPupHTTPRequestHandler.folder_cache[folder_key]
 
-        # Filter photos by camera model
-        target_paths = []
-        for entry in photos_map.values():
-            raw = entry.get("raw_metadata", {})
-            model = raw.get("EXIF:Model") or raw.get("Model") or raw.get("EXIF:Make") or raw.get("Make") or "Unknown Camera"
-            if camera_model == "All Cameras" or model == camera_model:
-                target_paths.append(paths.stored(entry["path"]))
+        # The photos of the camera asked for (tagpup.core.fields).
+        target_paths = [paths.stored(entry["path"]) for entry in photos_map.values()
+                        if fields.on_camera(entry.get("raw_metadata"), camera_model)]
                 
         if not target_paths:
             self.send_json({"success": True, "message": "No photos matched the camera model"})

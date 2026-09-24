@@ -257,5 +257,41 @@ class WhyAFaceIsExcluded(unittest.TestCase):
         self.assertEqual([], lines)
 
 
+class TheCameraOfATimeShift(unittest.TestCase):
+    """Which camera a photo came from, for Shift Date Taken, is tagpup.core.fields's: the
+    server chose the photos to shift by it, and the TagPup page labelled its choices and
+    highlighted the photos by it, twice. The page keeps a copy, held here to the server's."""
+
+    def page(self):
+        return read(os.path.join("gui_tagpup", "app.js"))
+
+    def test_the_server_names_it(self):
+        from tagpup.core import fields
+        self.assertEqual("X100V", fields.camera_of({"Model": "X100V", "EXIF:Make": "Fujifilm"}))
+        self.assertEqual("Fujifilm", fields.camera_of({"EXIF:Make": "Fujifilm", "Model": ""}))
+        self.assertEqual(fields.UNKNOWN_CAMERA, fields.camera_of({}))
+        self.assertEqual(fields.UNKNOWN_CAMERA, fields.camera_of(None))
+        self.assertTrue(fields.on_camera({}, fields.ALL_CAMERAS))
+        self.assertTrue(fields.on_camera({"EXIF:Model": "X100V"}, "X100V"))
+        self.assertFalse(fields.on_camera({"EXIF:Model": "X100V"}, "Pixel 8"))
+
+    def test_the_page_names_it_as_the_server_does(self):
+        from tagpup.core import fields
+        page = self.page()
+        listed = re.search(r"const CAMERA_FIELDS = \[([^\]]*)\];", page)
+        self.assertIsNotNone(listed, "the page's copy of the camera fields moved")
+        self.assertEqual(fields.CAMERA_FIELDS, tuple(re.findall(r"'([^']*)'", listed.group(1))))
+        self.assertIn("const UNKNOWN_CAMERA = '%s';" % fields.UNKNOWN_CAMERA, page)
+        self.assertIn("const ALL_CAMERAS = '%s';" % fields.ALL_CAMERAS, page)
+
+    def test_nobody_else_spells_it(self):
+        spelled = r"[\"'](Unknown Camera|All Cameras|EXIF:Model)[\"']"
+        self.assertEqual([], [path for path in sources_matching(spelled, os.path.join("tagpup", "core", "fields.py"))
+                              if re.search(r"[\"'](Unknown Camera|All Cameras)[\"']|get\([\"']EXIF:Model", read(path))])
+        lines = [n for n, line in enumerate(self.page().splitlines(), 1)
+                 if re.search(spelled, line) and not re.search(r"const (CAMERA_FIELDS|UNKNOWN_CAMERA|ALL_CAMERAS) =", line)]
+        self.assertEqual([], lines)
+
+
 if __name__ == "__main__":
     unittest.main()
