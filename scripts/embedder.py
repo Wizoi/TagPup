@@ -229,6 +229,11 @@ class ClipEmbedder:
         
         try:
             with Image.open(file_path) as img:
+                # Upright, as the photo is seen. A camera turned on its side stores the
+                # pixels sideways with an Orientation tag, and so does Rotate now; CLIP
+                # was describing the sideways picture.
+                from PIL import ImageOps
+                img = ImageOps.exif_transpose(img)
                 # Convert palette images, grayscale, etc. to RGB
                 if img.mode != "RGB":
                     img = img.convert("RGB")
