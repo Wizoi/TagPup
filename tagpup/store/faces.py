@@ -188,9 +188,11 @@ def remove_for_photo(conn, photo_path):
 def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
     """Record one detected face: `box` as a list, `embedding` as float32 bytes, and its
     crop, if one was cut, in face_crops. Returns the face's id. The caller commits."""
+    from tagpup.store import photos   # photos imports this module
+    stored = photos.ensure_row(conn, photo_path)
     face_id = conn.execute(
         "INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-        (paths.stored(photo_path), json.dumps(box), embedding, name, prob)).lastrowid
+        (stored, json.dumps(box), embedding, name, prob)).lastrowid
     if crop:
         conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, crop))
     return face_id

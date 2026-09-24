@@ -382,6 +382,24 @@ def index_rows(conn):
     return conn.execute("SELECT " + ", ".join(INDEX_COLUMNS) + " FROM photos").fetchall()
 
 
+def ensure_row(conn, photo_path):
+    """The path a photo's row is stored under, making the row if it has none.
+
+    Every photo a face or an embedding is recorded for has a row (docs/findings.md,
+    #48): Suggest detects faces in photos never indexed, and they were recorded against
+    a path no row had. A row made here holds the path and nothing read from the file:
+    its mtime and size stay empty, so the folder scan and the refresh read the file
+    rather than trust it. The caller commits.
+    """
+    existing = stored_spelling(conn, photo_path)
+    if existing is not None:
+        return existing
+    stored = paths.stored(photo_path)
+    conn.execute("INSERT INTO photos (path, tags, people, captions, raw_metadata)"
+                 " VALUES (?, '[]', '[]', '[]', '{}')", (stored,))
+    return stored
+
+
 def stored_spelling(conn, photo_path):
     """The path a photo's row is stored under, or None if it has no row."""
     clause, params = paths.sql_equals("path", photo_path)
