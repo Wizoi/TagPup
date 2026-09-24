@@ -289,7 +289,11 @@ def carrying(db_path, tag):
 
 def tag_usage(db_path):
     """Photos per tag, a photo counting toward each level above its tags as well: a
-    photo tagged "Activity/Hiking" counts for "Activity". What the tree view shows."""
+    photo tagged "Activity/Hiking" counts for "Activity". What the tree view shows.
+
+    Once per photo: a photo carrying two tags under a node counted twice toward it and
+    toward everything above it (docs/findings.md, #41).
+    """
     counts = {}
     if not os.path.exists(db_path):
         return counts
@@ -298,11 +302,11 @@ def tag_usage(db_path):
         try:
             for (tags_json,) in conn.execute("SELECT tags FROM photos WHERE tags IS NOT NULL"):
                 try:
-                    for tag in json.loads(tags_json):
-                        for level in vocabulary.lineage(tag):
-                            counts[level] = counts.get(level, 0) + 1
+                    levels = {level for tag in json.loads(tags_json) for level in vocabulary.lineage(tag)}
                 except Exception:
-                    pass
+                    continue
+                for level in levels:
+                    counts[level] = counts.get(level, 0) + 1
         finally:
             conn.close()
     except Exception:

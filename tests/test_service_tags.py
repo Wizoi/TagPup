@@ -181,6 +181,15 @@ class TheTreeView(TreeCase):
         counts = {node["tag"]: node["usage_count"] for node in tags.tree(self.lib.library)}
         self.assertEqual(counts, {"Activity": 1, "Activity/Hiking": 1})
 
+    def test_a_photo_counts_once_toward_a_node_however_many_of_its_tags_are_under_it(self):
+        """docs/findings.md, #41: a photo counted once for each of its tags under a node."""
+        self.node("Family/Immediate/Ada Pembrook")
+        self.node("Family/Immediate/Wren Halloway")
+        self.photo("a.jpg", ["Family/Immediate/Ada Pembrook", "Family/Immediate/Wren Halloway"])
+        counts = {node["tag"]: node["usage_count"] for node in tags.tree(self.lib.library)}
+        self.assertEqual(counts, {"Family": 1, "Family/Immediate": 1,
+                                  "Family/Immediate/Ada Pembrook": 1, "Family/Immediate/Wren Halloway": 1})
+
     def test_a_node_whose_parent_is_missing_is_put_right(self):
         self.lib.execute("INSERT INTO tag_taxonomy (tag, name, parent_id, has_face)"
                          " VALUES ('Trips/Boston MA', 'Boston MA', NULL, 0)")
