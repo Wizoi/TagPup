@@ -27,6 +27,7 @@ import _root  # noqa: F401
 from tagpup import config as tagpup_config
 from tagpup.core import clustering as face_rules  # this file has a clustering() of its own
 from tagpup.core import vocabulary
+from tagpup.files import images
 from tagpup.core.library import Library
 from tagpup.core.result import Conflict, NotFound
 from tagpup.jobs import indexing as indexing_jobs
@@ -1314,7 +1315,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
     @staticmethod
     def _count_images(folder, recursive=True):
         """How many indexable images are under a folder, and has it subfolders."""
-        valid = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
+        valid = images.PHOTO_EXTENSIONS
         count = 0
         has_subdirs = False
         try:

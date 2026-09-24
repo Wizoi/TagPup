@@ -10,9 +10,22 @@ import os
 
 from PIL import Image, ImageOps
 
-#: The photo types the servers send. Anything else is refused: the path is the caller's.
-SERVABLE = frozenset({".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff", ".tif",
-                      ".heic", ".heif"})
+from tagpup.core import paths
+
+#: What counts as a photo, by its extension, and the Content-Type its own bytes go out
+#: under: what the indexer scans, the folder views list, relink points a row at, and the
+#: servers send. It was written eight times, with members of its own in two: relink
+#: took .heic, which nothing scans, and the image server sent bmp, gif, heic and heif --
+#: and all but png and webp as image/jpeg (docs/findings.md, #72).
+PHOTO_TYPES = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".tif": "image/tiff", ".tiff": "image/tiff",
+    ".webp": "image/webp",
+}
+
+#: The extensions of PHOTO_TYPES, lower case with the dot.
+PHOTO_EXTENSIONS = frozenset(PHOTO_TYPES)
 
 #: The largest side of a face crop, as face detection cuts them.
 CROP_SIZE = 256
@@ -34,14 +47,29 @@ def shown_size(photo_path):
     return width, height, oriented
 
 
-def is_servable(photo_path):
-    return os.path.splitext(photo_path.lower())[1] in SERVABLE
+def is_photo(path):
+    """Does `path` name a photo, by its extension (PHOTO_EXTENSIONS)?"""
+    return os.path.splitext(str(path).lower())[1] in PHOTO_EXTENSIONS
+
+
+#: The servers send a photo's bytes only for a photo: the path is the caller's.
+is_servable = is_photo
+
+
+def photos_under(folder):
+    """The photos under `folder`, at any depth, in the form the index stores: walked from
+    paths.stored(folder), as os.walk joins onto whatever it is given, and a folder typed
+    D:/Photos gave D:/Photos\\a.jpg. Five walks each had a copy of this, two walking the
+    folder as typed."""
+    found = []
+    for root, _dirs, files in os.walk(paths.stored(folder)):
+        found += [os.path.join(root, name) for name in files if is_photo(name)]
+    return found
 
 
 def content_type(photo_path):
     """The Content-Type a photo's own bytes go out under."""
-    ext = os.path.splitext(photo_path)[1].lower()
-    return {".png": "image/png", ".webp": "image/webp"}.get(ext, "image/jpeg")
+    return PHOTO_TYPES.get(os.path.splitext(photo_path)[1].lower(), "application/octet-stream")
 
 
 def smaller_copy(photo_path, max_size, upright):

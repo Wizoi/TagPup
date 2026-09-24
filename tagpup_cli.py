@@ -60,6 +60,7 @@ from tagpup import config as tagpup_config
 from tagpup.store import faces as store_faces
 from tagpup.store import taxonomy as store_taxonomy
 from tagpup.core import suggesting, vocabulary
+from tagpup.files import images as image_files
 from tagpup.core.library import Library
 
 def get_config():
@@ -100,14 +101,7 @@ def scan_for_images(dir_path: str) -> List[str]:
     "D:/Photos\\a.jpg" -- both separators in one row -- and a relative folder
     produced relative rows.
     """
-    valid_exts = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
-    images = []
-    for root, _, files in os.walk(paths.stored(dir_path)):
-        for file in files:
-            ext = os.path.splitext(file)[1].lower()
-            if ext in valid_exts:
-                images.append(os.path.join(root, file))
-    return images
+    return image_files.photos_under(dir_path)
 
 @click.group()
 @click.option("--db", type=str, help="Specify active database name or path (e.g. 'my_photos.db' or absolute path).")

@@ -29,13 +29,13 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
+from tagpup.files import images  # noqa: E402
 import db as tagpup_db  # noqa: E402
 import paths as photo_paths  # noqa: E402  -- not `paths`: the walks below use that name
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 
 
-IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".heic", ".webp")
 
 
 def stem_of(path):
@@ -60,7 +60,7 @@ def identities(folder, exiftool_path=None):
     paths = []
     for root, _dirs, files in os.walk(folder):
         for name in sorted(files):
-            if name.lower().endswith(IMAGE_SUFFIXES):
+            if images.is_photo(name):
                 paths.append(os.path.join(root, name))
 
     by_id = {}
@@ -107,7 +107,7 @@ def preserved_names(folder, exiftool_path=None):
     paths = []
     for root, _dirs, files in os.walk(folder):
         for name in sorted(files):
-            if name.lower().endswith(IMAGE_SUFFIXES):
+            if images.is_photo(name):
                 paths.append(os.path.join(root, name))
 
     by_original = {}

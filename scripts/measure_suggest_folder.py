@@ -44,9 +44,9 @@ except ImportError:  # imported as a top-level module
     from measure_identify_faces import free_port, remove_sandbox
 
 import _root  # noqa: E402,F401
+from tagpup.files import images  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 
-IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp")
 
 
 def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
@@ -82,7 +82,7 @@ def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
         folder = os.path.join(sandbox, "photos", "copy%d" % (n + 1), leaf)
         os.makedirs(folder)
         for name in os.listdir(photos):
-            if name.lower().endswith(IMAGE_EXTENSIONS):
+            if images.is_photo(name):
                 shutil.copy2(os.path.join(photos, name), folder)
         folders.append(folder)
     return target, folders

@@ -242,7 +242,7 @@ The sweep of 2026-09-24 found rules, lists and thresholds written in more than o
 - [x] Date Taken read by the pages as the server reads it (#67): each record carries `taken`.
 - [ ] Names reserved for TagTuner's buckets refused as people's names, and the buckets named by the server (#68).
 - [x] One way to compare a face with a person, used by clustering, the person grid and the suggester (#71): `tagpup.core.clustering.KnownFaces`, the closest face of the years around the photo, as measured.
-- [ ] What counts as a photo, once, in `tagpup.files.images` (#72).
+- [x] What counts as a photo, once, in `tagpup.files.images` (#72).
 - [ ] Library names the URLs reserve refused (#73).
 - [ ] The agreeing copies (#74), each to one owner.
 - [ ] The tests that use the checkout's `data/` or `config.ini` in homes of their own (#14), so `tools/run_tests.py` spreads the whole suite across the cores.

@@ -22,6 +22,7 @@ import _root  # noqa: F401
 from tagpup import config as tagpup_config
 from tagpup.core import clustering, dates, fields, renaming, suggesting, vocabulary
 from tagpup.core.library import Library
+from tagpup.files import images
 from tagpup.files import keywords as file_keywords
 from tagpup.store.photos import move_rows as move_photo_rows  # noqa: F401  (saving, tests)
 from tagpup.store.photos import record_tags as record_tags_in_index  # noqa: F401  (writers, tests)
@@ -116,7 +117,7 @@ def zero_shot_candidates(taxonomy, configured):
 
 
 #: The files this app treats as photos.
-PHOTO_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"})
+PHOTO_EXTENSIONS = images.PHOTO_EXTENSIONS   # what counts as a photo (tagpup.files.images)
 
 
 def explorer_select_command(photo_path):
@@ -818,13 +819,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             return
             
         # Scan folder for image files
-        valid_exts = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
-        image_files = []
-        for root, _, files in os.walk(folder_path):
-            for file in files:
-                ext = os.path.splitext(file)[1].lower()
-                if ext in valid_exts:
-                    image_files.append(os.path.join(root, file))
+        image_files = images.photos_under(folder_path)
                     
         if not image_files:
             self.send_json([])
@@ -1021,13 +1016,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 
     @classmethod
     def rescan_folder_to_cache_classmethod(cls, folder_path):
-        valid_exts = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
-        image_files = []
-        for root, _, files in os.walk(paths.stored(folder_path)):
-            for file in files:
-                ext = os.path.splitext(file)[1].lower()
-                if ext in valid_exts:
-                    image_files.append(os.path.join(root, file))
+        image_files = images.photos_under(folder_path)
         if not image_files:
             cls.folder_cache[paths.key(folder_path)] = {}
             return
@@ -1351,13 +1340,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 executable = self.get_exiftool_path()
                 extractor = MetadataExtractor(exiftool_path=executable)
 
-                valid_exts = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
-                image_files = []
-                for root, _, files in os.walk(folder_path):
-                    for file in files:
-                        ext = os.path.splitext(file)[1].lower()
-                        if ext in valid_exts:
-                            image_files.append(os.path.join(root, file))
+                image_files = images.photos_under(folder_path)
 
                 from metadata import build_photo_ui_record
                 results = extractor.batch_read(image_files)
@@ -1409,13 +1392,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             logger.error(f"Error applying time shift to {folder_path}: {e}")
             self.send_json_error(500, str(e))
     def rescan_folder_to_cache(self, folder_path):
-        valid_exts = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
-        image_files = []
-        for root, _, files in os.walk(paths.stored(folder_path)):
-            for file in files:
-                ext = os.path.splitext(file)[1].lower()
-                if ext in valid_exts:
-                    image_files.append(os.path.join(root, file))
+        image_files = images.photos_under(folder_path)
         if not image_files:
             TagPupHTTPRequestHandler.folder_cache[paths.key(folder_path)] = {}
             return
