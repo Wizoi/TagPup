@@ -7,6 +7,7 @@ from exiftool_session import ExifToolSession
 
 import _root  # noqa: F401
 from tagpup.core import vocabulary
+from tagpup.files.keywords import caption_fields
 
 logger = logging.getLogger("tagpup_cli.writer")
 
@@ -205,14 +206,8 @@ class MetadataWriter:
                         # The caption first, so the stat recorded with the keywords
                         # below is the file's final one.
                         if caption:
-                            et.set_tags([path], tags={
-                                "XMP:Description": caption,
-                                "IPTC:Caption-Abstract": caption,
-                                # EXIF ImageDescription maps to System.Title (Title) in C# code
-                                "EXIF:ImageDescription": caption,
-                                # EXIF XPComment maps to System.Comment (Caption) in C# code
-                                "EXIF:XPComment": caption,
-                            }, params=["-overwrite_original"] if nobackup else None)
+                            et.set_tags([path], tags=caption_fields(caption),
+                                        params=["-overwrite_original"] if nobackup else None)
                             if db_path:
                                 record_caption_in_index(db_path, path, caption)
 

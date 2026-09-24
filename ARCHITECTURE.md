@@ -186,7 +186,7 @@ Exit: the guard tests for config, database connections, ExifTool and layers pass
   - [x] When a photo was taken: `tagpup.core.dates` (seven copies became one).
   - [x] The tag vocabulary: `tagpup.core.vocabulary` (55 hand-written splits became one reading).
   - [x] Reading photo files: `tagpup.files.metadata`. `metadata.py` split by layer: what the fields mean (tags, people, captions) went to `tagpup.core.vocabulary`, and the library's people and face names to `tagpup.store.taxonomy` and `tagpup.store.faces`. `scripts/metadata.py` joins them for the old callers.
-  - [ ] Writing keyword and caption fields: `tagpup.files.keywords`.
+  - [x] Writing keyword and caption fields: `tagpup.files.keywords`. Which person a bare name means is still resolved in `tagpup_server.py` before the write, until saving becomes a service.
   - [ ] The tables: `tagpup.store` (taxonomy, photos, faces).
 - `tagpup.result.Result`, shaped by the first services that return it.
 - One service per user action. Start with the ones both servers implement (rename, rotate, delete, save metadata, bulk tags, time shift, indexing), then tag-tree edits, face identification and suggestions.

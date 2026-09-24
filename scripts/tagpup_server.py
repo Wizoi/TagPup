@@ -25,6 +25,10 @@ import _root  # noqa: F401
 from tagpup import config as tagpup_config
 from tagpup.core import dates, vocabulary
 from tagpup.core.library import Library
+from tagpup.files import keywords as file_keywords
+from tagpup.files.keywords import (  # noqa: F401  (imported from here by other scripts)
+    TAG_SOURCE_FIELDS, caption_fields, expand_tag_fields, keyword_fields,
+    record_keyword_fields, tags_in_file)
 
 logger = logging.getLogger("tagpup.server")
 
@@ -150,27 +154,6 @@ def index_folder_with_cli(folder_path, db_path, run_clustering, status, while_cl
     return True
 
 
-def expand_tag_fields(tags):
-    """Split a tag list into the flat and hierarchical keyword forms written to files.
-
-    A tag is written whole. It used to be written whole *and* broken into its
-    segments, so "Family/Immediate/Cora Ingersoll" became four keywords -- the path plus
-    "Family", "Immediate" and "Cora Ingersoll". That buries a deliberate hierarchy under
-    its own fragments, and the bare leaf is the form that gave one person two entries
-    in the Add Person list.
-
-    The convention comes from the library rather than from a default: of 18,502
-    keyword values in this one, 18,364 are full paths separated by "/" and none are
-    bare leaves.
-    """
-    flat, hierarchical = [], []
-    for tag in tags:
-        if tag not in flat:
-            flat.append(tag)
-        if "/" in tag and tag not in hierarchical:
-            hierarchical.append(tag)
-    return flat, hierarchical
-
 #: One loaded taxonomy per database, so resolving on every write costs nothing after
 #: the first. Each entry is (the tree's generation when it was read, the mapping):
 #: this process clears it when it writes the tree (invalidate_people_cache), and the
@@ -275,50 +258,6 @@ def resolve_people_tags(tags, db_path):
     return resolved
 
 
-def keyword_fields(flat, hierarchical):
-    """Every field a keyword write sets, and what it sets it to.
-
-    The one list of them. write_keyword_fields writes exactly these, and
-    record_keyword_fields records exactly these, so the file and its index row cannot
-    drift apart one field at a time. They did: the index recorded the two XMP fields
-    and not IPTC:Keywords, which metadata.extract_tags also reads, so a tag removed in
-    bulk stayed in raw_metadata and came back the next time anything re-derived tags
-    from it -- renaming an unrelated tag, for one.
-
-    An empty value means the field is cleared.
-    """
-    return {
-        "XMP:Subject": list(flat),
-        "IPTC:Keywords": list(flat),
-        "EXIF:XPKeywords": ";".join(flat),
-        "XMP:HierarchicalSubject": list(hierarchical),
-    }
-
-
-def record_keyword_fields(raw_meta, flat, hierarchical):
-    """Make `raw_meta` say what a keyword write just put in the file. Returns it.
-
-    Only fields the scan reads are recorded, so a row written here looks the same as
-    one read back from the file. A field under its bare name ("Keywords") is the same
-    value the scan stored twice, and is rewritten too; a stale copy there would be
-    read back just the same. A cleared field is removed, as a scan would find nothing.
-    """
-    from metadata import METADATA_FIELDS
-
-    for field, value in keyword_fields(flat, hierarchical).items():
-        if field not in METADATA_FIELDS:
-            continue
-        bare = field.split(":", 1)[1]
-        for name in (field, bare):
-            if name != field and name not in raw_meta:
-                continue
-            if value:
-                raw_meta[name] = list(value)
-            else:
-                raw_meta.pop(name, None)
-    return raw_meta
-
-
 def record_tags_in_index(db_path, photo_path, tags, flat=None, hierarchical=None):
     """Tell the index what a photo's keywords now are.
 
@@ -386,37 +325,14 @@ def record_tags_in_index(db_path, photo_path, tags, flat=None, hierarchical=None
 
 
 def write_keyword_fields(et, path, tags, extra_params=None, db_path=None):
-    """Write `tags` into a photo's keyword fields, clearing fields that end up empty.
-
-    ExifTool treats an empty list as "no change", so assigning [] silently leaves the
-    old keywords in place. Removing a photo's last tag therefore has to be expressed as
-    an explicit '-TAG=' deletion instead.
+    """Write `tags` into a photo's keyword fields (tagpup.files.keywords).
 
     Pass `db_path` and a person named by a bare leaf is written as the tag they are
     filed under instead. Every write path through this function should pass it.
     """
     if db_path:
         tags = resolve_people_tags(tags, db_path)
-    flat, hierarchical = expand_tag_fields(tags)
-
-    params = dict(extra_params or {})
-    clear_args = []
-
-    # The fields come from keyword_fields(), which record_keyword_fields() also reads,
-    # so whatever is written here is what the index records. An empty string clears a
-    # field as written; an empty list does not, and needs the explicit deletion.
-    for field, value in keyword_fields(flat, hierarchical).items():
-        if value or isinstance(value, str):
-            params[field] = value
-        else:
-            clear_args.append("-%s=" % field)
-
-    if params:
-        et.set_tags([path], tags=params, params=["-overwrite_original"])
-    if clear_args:
-        et.execute(*clear_args, "-overwrite_original", path)
-
-    return flat, hierarchical
+    return file_keywords.write_keywords(et, path, tags, extra_params=extra_params)
 
 def indexed_tags_for_photo(db_path, photo_path):
     """Tags recorded for a photo in the index, used when the folder cache is cold.
@@ -436,28 +352,6 @@ def indexed_tags_for_photo(db_path, photo_path):
     except Exception as e:
         logger.warning(f"Could not read indexed tags for {photo_path}: {e}")
     return []
-
-
-#: The fields a photo's tags are read from: exactly what metadata.extract_tags reads,
-#: so tags read here are the tags a folder scan would have found.
-TAG_SOURCE_FIELDS = ("IPTC:Keywords", "XMP:Subject", "XMP:HierarchicalSubject")
-
-
-def tags_in_file(et, photo_path):
-    """The tags a photo carries now, read from the file itself.
-
-    The bulk writers replace a photo's whole keyword set, so they must start from
-    what it holds. They used to start from the folder cache, then the index, then
-    nothing: the cache is empty after a restart while the page still shows the folder,
-    and a photo the index has no row for then kept only the tags being added. The
-    file is the truth; it is read in the ExifTool session the writer already has open.
-    Raises if the file cannot be read, rather than treat it as having no tags.
-    """
-    from metadata import clean_metadata_value, extract_tags
-
-    found = et.get_tags([photo_path], tags=list(TAG_SOURCE_FIELDS))
-    meta = found[0] if found else {}
-    return extract_tags({k: clean_metadata_value(v) for k, v in meta.items()})
 
 
 def record_file_stat_in_index(db_path, photo_path):
@@ -2449,17 +2343,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         try:
             new_flat_tags, new_hierarchical_tags = expand_tag_fields(tags)
 
-            params = {}
-            if title:
-                params["XMP:Description"] = title
-                params["IPTC:Caption-Abstract"] = title
-                params["EXIF:ImageDescription"] = title
-                params["EXIF:XPComment"] = title
-            else:
-                params["XMP:Description"] = ""
-                params["IPTC:Caption-Abstract"] = ""
-                params["EXIF:ImageDescription"] = ""
-                params["EXIF:XPComment"] = ""
+            params = caption_fields(title or "")
                 
             if date_taken:
                 # Normalize ISO T separator to space, and replace dash in date with colon
