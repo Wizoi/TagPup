@@ -12,7 +12,20 @@ holding a "|" was a test tag on one photo, since removed. tests/test_vocabulary.
 the build on a raw split of a tag anywhere else.
 """
 
+import re
+
 SEPARATOR = "/"
+
+#: Other programs' separators between levels. Written into a keyword, one is a level
+#: to one program and part of a name to the next.
+OTHER_SEPARATORS = ("|", "\\")  # not a path: tag separators
+
+#: A tab, a line break, any other control character, and the invisible byte-order
+#: mark: none can be seen in a tag, or typed back to find it.
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029\ufeff]")
+
+#: Nothing between two separators, or before the first, or after the last.
+EMPTY_LEVEL = re.compile(r"(?:^|/)\s*(?:/|$)")
 
 
 def normalize(tag):
@@ -70,3 +83,43 @@ def same_person(a, b):
 def hidden_by(tag, hidden):
     """Is the tag, or any path above it, in `hidden`? (A hidden branch hides its leaves.)"""
     return any(path in hidden for path in lineage(tag))
+
+
+def problem_with_tag(tag):
+    """Why this cannot be set as a tag, or None if it can.
+
+    Asked where a tag is set -- typed, created, merged into -- never where one is
+    read: a photo holding a bad tag from elsewhere must still open, and lose it. The
+    pages ask the same question first (tagProblem), and tests/tag_rules.json holds
+    the answers both must give.
+    """
+    return _problem(tag, "A tag", levels=True)
+
+
+def problem_with_tags(tags):
+    """The first reason any of these cannot be set as a tag, or None."""
+    return next(filter(None, (problem_with_tag(tag) for tag in tags)), None)
+
+
+def problem_with_name(name):
+    """Why this cannot be a person's name, or one level of a tag, or None if it can."""
+    return _problem(name, "A name", levels=False)
+
+
+def _problem(value, what, levels):
+    # Controls first: Python and JavaScript disagree on whether some of them are
+    # space, and asked in this order the two give the same answer.
+    text = "" if value is None else str(value)
+    if CONTROL.search(text):
+        return "%s cannot contain a tab, a line break or another control character." % what
+    for mark in OTHER_SEPARATORS:
+        if mark in text:
+            return ('%s cannot contain "%s": other programs read it as a break between levels.%s'
+                    % (what, mark, ' Use "/" instead.' if levels else ""))
+    if not text.strip():
+        return "%s cannot be empty." % what
+    if not levels and SEPARATOR in text:
+        return 'A name cannot contain "/": it separates the levels of a tag.'
+    if levels and EMPTY_LEVEL.search(text):
+        return '%s cannot have an empty level, as in "A//B" or "A/".' % what
+    return None

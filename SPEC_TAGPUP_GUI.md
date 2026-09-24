@@ -210,6 +210,9 @@ to be sitting on `<body>`.
 - `/api/taxonomy/tree`: Returns the hierarchical tree nodes of tags with counts of photo usage and status attributes (`has_face`, `hidden_from_autocomplete`).
 
 ### `POST` Endpoints
+
+**What may be set as a tag.** A tag being set is refused with `400` and a message saying why if it holds `|` or `\` (which other programs read as a break between levels), a control character such as a tab or a line break, or an empty level (`A//B`, `A/`). A tag's own name, as on rename, is one level and also may not hold `/`. Only what is being set is checked: a photo holding such a tag from another program still saves, and can lose it. The rules are `problem_with_tag` and `problem_with_name` in `tagpup/core/vocabulary.py`, and the page asks the same question before sending (`tests/tag_rules.json` holds both to one list).
+
 - `/api/databases/select`: Expects JSON body `{"db_name": string}`. Persists the chosen database as `default_db` in `config.ini`, changing which database every subsequent launch opens by default.
 - `/api/databases/create`: Expects JSON body `{"db_name": string}`. Creates a new empty database file, seeded with the default taxonomy categories.
 - `/api/folder/suggest-start`: Expects JSON body `{"folder_path": string}`. Starts the background tagging suggest thread for a folder.
@@ -218,16 +221,16 @@ to be sitting on `<body>`.
 - `/api/photo/rotate`: Expects JSON body `{"path": string, "direction": string}`. Rotates the photo 90 degrees on disk. `direction` must be `"left"` or `"right"`; any other value is rejected with `400`.
 - `/api/photo/open-explorer`: Expects JSON body `{"path": string}`. Opens the photo's directory in Windows File Explorer and selects it.
 - `/api/photo/open`: Expects JSON body `{"path": string}`. Opens the photo in the application Windows associates with its type — what clicking the path in Image Details does. Refuses (`400`) anything that is not an existing file with a photo extension, since opening a file runs it.
-- `/api/photo/save-metadata`: Saves caption, people, and tags metadata directly to the image file via ExifTool and syncs the DB.
-- `/api/photos/bulk-tags`: Adds or removes tags in bulk across a selection of photo paths.
+- `/api/photo/save-metadata`: Saves caption, people, and tags metadata directly to the image file via ExifTool and syncs the DB. Each tag the file does not already hold must be one that may be set (above).
+- `/api/photos/bulk-tags`: Expects JSON body `{"paths": list, "add_tags": list, "remove_tags": list}`. Adds or removes tags in bulk across a selection of photo paths. `add_tags` must be tags that may be set (above); `remove_tags` are not checked, so a bad tag can always be taken off.
 - `/api/folder/auto-apply`: Expects JSON body `{"folder_path": string, "threshold": float, "photo_paths": list (optional)}`. Applies the folder's computed suggestions scoring at or above `threshold` (default `0.75`). Suggestions are read from the server's in-memory results for that folder, not sent in the request; omit `photo_paths` to apply across the whole folder. Returns `400` if no suggestions have been computed.
 - `/api/folder/time-shift`: Shifts timestamps recursively by camera model.
 - `/api/folder/rename-photos`: Expects JSON body `{"photo_paths": list, "grouping": string}`. Sequentially renames selected photos based on the custom pattern and grouping template.
-- `/api/taxonomy/create`: Expects JSON body `{"name": string, "parent_id": int, "has_face": int}`. Creates a new tag path.
+- `/api/taxonomy/create`: Expects JSON body `{"name": string, "parent_id": int, "has_face": int}`. Creates a new tag path. `name` may itself be a path, and must be a tag that may be set (above).
 - `/api/taxonomy/update`: Expects JSON body `{"id": int, "has_face": int, "hidden_from_autocomplete": int}`. Updates attributes for the tag and propagates to child nodes.
 - `/api/taxonomy/delete-check`: Expects JSON body `{"tag_id": int}`. Checks if a tag is used by any photo and returns the count of affected files.
 - `/api/taxonomy/delete-confirm`: Expects JSON body `{"tag_id": int, "action": string, "target_tag": string}`. Deletes the tag node, clearing or moving the tag on photos on disk/db.
-- `/api/taxonomy/rename`: Expects JSON body `{"tag_id": int, "new_name": string}`. Renames a tag node, cascades path updates to descendants, and updates photo metadata on disk/db.
+- `/api/taxonomy/rename`: Expects JSON body `{"tag_id": int, "new_name": string}`. Renames a tag node, cascades path updates to descendants, and updates photo metadata on disk/db. `new_name` is one level, so it may not hold `/` either (above).
 
 ## Database Schema (SQLite)
 

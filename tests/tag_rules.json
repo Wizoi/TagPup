@@ -1,0 +1,43 @@
+{
+  "about": "What may be set as a tag or a name, and what each refusal says. Read by tests/test_vocabulary.py (the servers) and tests/frontend/tag-rules.test.mjs (both pages), so the two cannot drift apart. null means allowed.",
+  "tags": [
+    ["People/Rowan Thackeray", null],
+    [" People / Rowan Thackeray ", null],
+    ["Activity/Cross Country", null],
+    ["Hazel Brookmire", null],
+    ["Trips/Zoë's 10th Birthday", null],
+    ["Family/Immediate/Elias Marchetti-Oakes", null],
+    ["", "A tag cannot be empty."],
+    ["   ", "A tag cannot be empty."],
+    ["\u00a0", "A tag cannot be empty."],
+    ["People|Rowan Thackeray", "A tag cannot contain \"|\": other programs read it as a break between levels. Use \"/\" instead."],
+    ["People\\Rowan Thackeray", "A tag cannot contain \"\\\": other programs read it as a break between levels. Use \"/\" instead."],
+    ["People/Rowan\tThackeray", "A tag cannot contain a tab, a line break or another control character."],
+    ["People/Rowan Thackeray\n", "A tag cannot contain a tab, a line break or another control character."],
+    ["People/Rowan\r\nThackeray", "A tag cannot contain a tab, a line break or another control character."],
+    ["People/Rowan\u0000", "A tag cannot contain a tab, a line break or another control character."],
+    ["People/Rowan\u007fThackeray", "A tag cannot contain a tab, a line break or another control character."],
+    ["\u0085", "A tag cannot contain a tab, a line break or another control character."],
+    ["People/Rowan\u2028Thackeray", "A tag cannot contain a tab, a line break or another control character."],
+    ["\ufeffPeople/Rowan Thackeray", "A tag cannot contain a tab, a line break or another control character."],
+    ["People//Rowan Thackeray", "A tag cannot have an empty level, as in \"A//B\" or \"A/\"."],
+    ["People/ /Rowan Thackeray", "A tag cannot have an empty level, as in \"A//B\" or \"A/\"."],
+    ["/People/Rowan Thackeray", "A tag cannot have an empty level, as in \"A//B\" or \"A/\"."],
+    ["People/Rowan Thackeray/", "A tag cannot have an empty level, as in \"A//B\" or \"A/\"."],
+    ["/", "A tag cannot have an empty level, as in \"A//B\" or \"A/\"."]
+  ],
+  "names": [
+    ["Rowan Thackeray", null],
+    [" Rowan Thackeray ", null],
+    ["Elias Marchetti-Oakes", null],
+    ["Zoë O'Neill", null],
+    ["", "A name cannot be empty."],
+    ["  ", "A name cannot be empty."],
+    ["People/Rowan Thackeray", "A name cannot contain \"/\": it separates the levels of a tag."],
+    ["Rowan/", "A name cannot contain \"/\": it separates the levels of a tag."],
+    ["Rowan|Thackeray", "A name cannot contain \"|\": other programs read it as a break between levels."],
+    ["Rowan\\Thackeray", "A name cannot contain \"\\\": other programs read it as a break between levels."],
+    ["Rowan\tThackeray", "A name cannot contain a tab, a line break or another control character."],
+    ["Rowan Thackeray\r\n", "A name cannot contain a tab, a line break or another control character."]
+  ]
+}

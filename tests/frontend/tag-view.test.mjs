@@ -233,6 +233,22 @@ describe("changing a tag", () => {
       ctx.server.calls.filter((c) => c.url.includes("/api/tags/merge")).length, 0);
   });
 
+  test("a name that cannot be set is refused before the plan is asked for", async (t) => {
+    // The server refuses it too; asking first keeps a doomed rename from reaching it.
+    const alerts = [];
+    const ctx = await openTagView(t, (s) => s.on("/api/tags/merge", { photos: 12 }));
+    click(ctx.window, rows(ctx).find((r) => r.dataset.tag === "Kentridge"));
+    await flush(ctx.window, 6);
+    ctx.window.prompt = () => "School|Kentridge";
+    ctx.window.alert = (message) => alerts.push(message);
+    ctx.document.getElementById("btn-tag-rename").click();
+    await flush(ctx.window, 8);
+
+    assert.equal(
+      ctx.server.calls.filter((c) => c.url.includes("/api/tags/merge")).length, 0);
+    assert.match(alerts[0] || "", /cannot contain "\|"/);
+  });
+
   test("renaming a tag to itself does nothing", async (t) => {
     const ctx = await renameKentridge(t, { answer: "Kentridge" });
     assert.equal(

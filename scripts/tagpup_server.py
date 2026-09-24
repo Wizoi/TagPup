@@ -2486,6 +2486,14 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             executable = self.get_exiftool_path()
             from exiftool_session import ExifToolSession
             with ExifToolSession(executable=executable) as et:
+                # Only the tags being added are checked. One the file already holds,
+                # written by another program, must not stop the photo being saved --
+                # least of all a save that removes it.
+                held = set(tags_in_file(et, photo_path))
+                problem = vocabulary.problem_with_tags(t for t in tags if t not in held)
+                if problem:
+                    self.send_json_error(400, problem)
+                    return
                 new_flat_tags, new_hierarchical_tags = write_keyword_fields(
                     et, photo_path, tags, extra_params=params, db_path=self.db_path)
                 
@@ -2586,7 +2594,12 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         if not photo_list:
             self.send_json_error(400, "Missing paths list")
             return
-            
+        # What is added, not what is removed: taking a bad tag off must stay possible.
+        problem = vocabulary.problem_with_tags(add_tags)
+        if problem:
+            self.send_json_error(400, problem)
+            return
+
         executable = self.get_exiftool_path()
         from exiftool_session import ExifToolSession
         from metadata import photo_people
@@ -3215,11 +3228,15 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             name = data.get("name", "").strip()
             parent_id = data.get("parent_id")
             has_face = data.get("has_face", 0)
-            
+
             if not name:
                 self.send_json_error(400, "Tag name cannot be empty")
                 return
-                
+            problem = vocabulary.problem_with_tag(name)
+            if problem:
+                self.send_json_error(400, problem)
+                return
+
             conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             
@@ -3491,7 +3508,14 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             if tag_id is None or not new_name:
                 self.send_json_error(400, "Missing parameters")
                 return
-                
+            # A node's own name is one level. A "/" in it gave the node a path deeper
+            # than its parent's by two levels, with no node between, and a name that
+            # was a path.
+            problem = vocabulary.problem_with_name(new_name)
+            if problem:
+                self.send_json_error(400, problem)
+                return
+
             conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             cursor.execute("SELECT tag, parent_id, name FROM tag_taxonomy WHERE id = ?", (tag_id,))

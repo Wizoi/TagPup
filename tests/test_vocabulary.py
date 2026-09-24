@@ -9,6 +9,7 @@ So this checks the rules, and fails the build on a raw `.split("/")` -- or rspli
 partition, rpartition -- anywhere outside vocabulary.py. A line splitting something
 that is not a tag can say so with a `# not a tag: <why>` comment.
 """
+import json
 import os
 import re
 import sys
@@ -82,6 +83,39 @@ class ComparingTags(unittest.TestCase):
         self.assertFalse(vocabulary.hidden_by("Internals/Secret", hidden))
         self.assertFalse(vocabulary.hidden_by("Public/Internal", hidden))
         self.assertFalse(vocabulary.hidden_by("", hidden))
+
+
+RULES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tag_rules.json")
+
+
+class WhatMayBeSet(unittest.TestCase):
+    """The cases the pages are held to as well (tests/frontend/tag-rules.test.mjs)."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(RULES, encoding="utf-8") as handle:
+            cls.rules = json.load(handle)
+
+    def test_tags(self):
+        for text, expected in self.rules["tags"]:
+            with self.subTest(tag=text):
+                self.assertEqual(vocabulary.problem_with_tag(text), expected)
+
+    def test_names(self):
+        for text, expected in self.rules["names"]:
+            with self.subTest(name=text):
+                self.assertEqual(vocabulary.problem_with_name(text), expected)
+
+    def test_the_cases_cover_every_refusal(self):
+        # Each message is one branch; a branch no case reaches is one the pages were
+        # never checked against.
+        said = {expected for _, expected in self.rules["tags"] + self.rules["names"] if expected}
+        for kind in ("empty", "control character", '"|"', '"\\"', "empty level", 'contain "/"'):
+            self.assertTrue(any(kind in message for message in said), kind)
+
+    def test_nothing_is_nothing(self):
+        self.assertEqual(vocabulary.problem_with_tag(None), "A tag cannot be empty.")
+        self.assertEqual(vocabulary.problem_with_name(None), "A name cannot be empty.")
 
 
 OWNER = os.path.join("tagpup", "core", "vocabulary.py")

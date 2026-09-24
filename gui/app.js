@@ -647,6 +647,14 @@ ${summary}${note}`)) {
             return false;
         }
 
+        const problem = nameProblem(val);
+        if (problem) {
+            modalNameError.textContent = problem;
+            modalNameError.classList.remove('hidden');
+            btnModalSave.disabled = true;
+            return false;
+        }
+
         const isDup = [...everyKnownPerson, ...allKnownPeople].some(p => p.toLowerCase() === val.toLowerCase());
         if (isDup) {
             modalNameError.textContent = 'This name already exists in the database. Please enter a unique name.';
@@ -1070,6 +1078,44 @@ ${summary}${note}`)) {
     function samePerson(a, b) {
         const left = leafOf(a).toLowerCase();
         return Boolean(left) && left === leafOf(b).toLowerCase();
+    }
+
+    /**
+     * Why this cannot be set as a tag, or null if it can. The same as TagPup's, and
+     * the server's (problem_with_tag, tagpup/core/vocabulary.py): tests/tag_rules.json
+     * holds all three to one list. Asking here first keeps the typed text in front
+     * of whoever typed it.
+     */
+    function tagProblem(tag) {
+        return textProblem(tag, 'A tag', true);
+    }
+
+    /** The same for a person's name, which cannot hold a "/" either. */
+    function nameProblem(name) {
+        return textProblem(name, 'A name', false);
+    }
+
+    function textProblem(value, what, levels) {
+        // Controls first, as the server asks: the two languages disagree on whether
+        // some of them count as space.
+        const text = value == null ? '' : String(value);
+        if (/[\u0000-\u001F\u007F-\u009F\u2028\u2029\uFEFF]/.test(text)) {
+            return `${what} cannot contain a tab, a line break or another control character.`;
+        }
+        for (const mark of ['|', '\\']) {
+            if (text.includes(mark)) {
+                return `${what} cannot contain "${mark}": other programs read it as a break between levels.`
+                    + (levels ? ' Use "/" instead.' : '');
+            }
+        }
+        if (!text.trim()) return `${what} cannot be empty.`;
+        if (!levels && text.includes('/')) {
+            return 'A name cannot contain "/": it separates the levels of a tag.';
+        }
+        if (levels && /(?:^|\/)\s*(?:\/|$)/.test(text)) {
+            return `${what} cannot have an empty level, as in "A//B" or "A/".`;
+        }
+        return null;
     }
 
     /** The last segment of a path: a photo's file name, or a folder's name. */
@@ -2100,6 +2146,11 @@ ${summary}${note}`)) {
 
     // POST face match update
     function postMatch(faceId, personName) {
+        const problem = nameProblem(personName);
+        if (problem) {
+            alert(problem);
+            return;
+        }
         // Client-side conflict check to prevent second match in same photo
         if (currentPhotoDetails && currentPhotoDetails.faces) {
             const alreadyMatched = currentPhotoDetails.faces.some(f => f.id !== faceId && f.name === personName);
@@ -4253,6 +4304,11 @@ This photo also names ${face.other_names.join(', ')}. `
     }
 
     function postMatchBulk(faceIds, name) {
+        const problem = nameProblem(name);
+        if (problem) {
+            alert(problem);
+            return Promise.resolve(null);
+        }
         btnReassignSelected.disabled = true;
         const originalText = btnReassignSelected.textContent;
         btnReassignSelected.textContent = 'Assigning...';
@@ -4365,6 +4421,11 @@ This photo also names ${face.other_names.join(', ')}. `
 
     // POST rename person to backend API
     function postRenamePerson(oldName, newName) {
+        const problem = nameProblem(newName);
+        if (problem) {
+            alert(problem);
+            return;
+        }
         if (btnRenamePerson) btnRenamePerson.disabled = true;
         const originalText = btnRenamePerson.textContent;
         btnRenamePerson.textContent = '✏️ Renaming...';
@@ -4785,6 +4846,11 @@ This photo also names ${face.other_names.join(', ')}. `
         if (needsTarget) {
             target = (window.prompt(prompt, activeTag) || '').trim();
             if (!target || target === activeTag) return;
+            const problem = tagProblem(target);
+            if (problem) {
+                alert(problem);
+                return;
+            }
         }
 
         const body = { from: activeTag, into: target || null, retire: Boolean(retire) };

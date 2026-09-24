@@ -1172,6 +1172,10 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         if target == source:
             self.send_json_error(400, "That tag is already called that")
             return
+        problem = target and vocabulary.problem_with_tag(target)
+        if problem:
+            self.send_json_error(400, problem)
+            return
 
         conn = None
         try:
@@ -1517,6 +1521,10 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 person_name = str(person_name).strip()
             except (ValueError, TypeError):
                 self.send_error(400, "Invalid parameters")
+                return
+            problem = vocabulary.problem_with_name(person_name)
+            if problem:
+                self.send_json_error(400, problem)
                 return
 
             if not os.path.exists(self.db_path):
@@ -2430,6 +2438,10 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             except (ValueError, TypeError):
                 self.send_error(400, "Invalid parameters format")
                 return
+            problem = vocabulary.problem_with_name(person_name)
+            if problem:
+                self.send_json_error(400, problem)
+                return
 
             if not os.path.exists(self.db_path):
                 self.send_error(404, "Database not found")
@@ -3230,6 +3242,10 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 
             if old_name == "Unmatched" or new_name == "Unmatched":
                 self.send_error(400, "Cannot rename to/from 'Unmatched'")
+                return
+            problem = vocabulary.problem_with_name(new_name)
+            if problem:
+                self.send_json_error(400, problem)
                 return
 
             if not os.path.exists(self.db_path):

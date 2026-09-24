@@ -730,6 +730,13 @@ document.addEventListener('DOMContentLoaded', () => {
             ...splitTyped(tagText).map(text => ({ text, isPerson: false })),
             ...splitTyped(personText).map(text => ({ text, isPerson: true })),
         ];
+        // A tag that cannot be set stops the save the same way, and says why.
+        const refused = typed.map(item => tagProblem(item.text)).find(Boolean);
+        if (refused) {
+            setStatus('error', `Not saved: ${refused}`, { transient: false });
+            alert(refused);
+            return false;
+        }
         const resolved = [];
         const unresolved = [];
         for (const item of typed) {
@@ -1240,6 +1247,46 @@ document.addEventListener('DOMContentLoaded', () => {
     function samePerson(a, b) {
         const left = leafOf(a).toLowerCase();
         return Boolean(left) && left === leafOf(b).toLowerCase();
+    }
+
+    /**
+     * Why this cannot be set as a tag, or null if it can.
+     *
+     * The server refuses the same tags (problem_with_tag, tagpup/core/vocabulary.py),
+     * with the same words; tests/tag_rules.json holds both to one list. Asking here
+     * first only means nothing is created for a tag that will be refused, and the
+     * text stays where it was typed.
+     */
+    function tagProblem(tag) {
+        return textProblem(tag, 'A tag', true);
+    }
+
+    /** The same for a person's name or one level of a tag, which cannot hold a "/" either. */
+    function nameProblem(name) {
+        return textProblem(name, 'A name', false);
+    }
+
+    function textProblem(value, what, levels) {
+        // Controls first, as the server asks: the two languages disagree on whether
+        // some of them count as space.
+        const text = value == null ? '' : String(value);
+        if (/[\u0000-\u001F\u007F-\u009F\u2028\u2029\uFEFF]/.test(text)) {
+            return `${what} cannot contain a tab, a line break or another control character.`;
+        }
+        for (const mark of ['|', '\\']) {
+            if (text.includes(mark)) {
+                return `${what} cannot contain "${mark}": other programs read it as a break between levels.`
+                    + (levels ? ' Use "/" instead.' : '');
+            }
+        }
+        if (!text.trim()) return `${what} cannot be empty.`;
+        if (!levels && text.includes('/')) {
+            return 'A name cannot contain "/": it separates the levels of a tag.';
+        }
+        if (levels && /(?:^|\/)\s*(?:\/|$)/.test(text)) {
+            return `${what} cannot have an empty level, as in "A//B" or "A/".`;
+        }
+        return null;
     }
 
     /**
@@ -3666,6 +3713,12 @@ Click to add ${namesSomebody} to this photo.`;
         
         const peopleList = val.split(',').map(p => p.trim()).filter(p => p);
         if (peopleList.length === 0) return;
+        // All or nothing, and the text stays to be corrected.
+        const refused = peopleList.map(tagProblem).find(Boolean);
+        if (refused) {
+            alert(refused);
+            return;
+        }
 
         const resolvedPeople = [];
         for (const p of peopleList) {
@@ -3727,6 +3780,12 @@ Click to add ${namesSomebody} to this photo.`;
         
         const tagsList = val.split(',').map(t => t.trim()).filter(t => t);
         if (tagsList.length === 0) return;
+        // All or nothing, and the text stays to be corrected.
+        const refused = tagsList.map(tagProblem).find(Boolean);
+        if (refused) {
+            alert(refused);
+            return;
+        }
 
         const resolvedTags = [];
         for (const t of tagsList) {
@@ -4553,6 +4612,11 @@ Click to add ${namesSomebody} to this photo.`;
     }
 
     function createTaxonomyNode(name, parentId = null, hasFace = 0) {
+        const problem = tagProblem(name);
+        if (problem) {
+            alert(problem);
+            return;
+        }
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Creating tag...';
         
@@ -4660,6 +4724,12 @@ Click to add ${namesSomebody} to this photo.`;
     }
 
     function renameTaxonomyNode(tagId, newName) {
+        // A node's own name is one level: no "/" either.
+        const problem = nameProblem(newName);
+        if (problem) {
+            alert(problem);
+            return;
+        }
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Renaming tag...';
         
@@ -4870,6 +4940,12 @@ Click to add ${namesSomebody} to this photo.`;
     async function resolveTagOrPerson(inputName, isPersonField = false, { prompt = true } = {}) {
         inputName = inputName.trim();
         if (!inputName) return null;
+        // Before anything is created for it: the server would refuse to write it.
+        const problem = tagProblem(inputName);
+        if (problem) {
+            alert(problem);
+            return null;
+        }
 
         const askWhereItGoes = (...args) => (prompt ? showPlacementModal(...args) : null);
         
