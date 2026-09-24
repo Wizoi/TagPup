@@ -234,6 +234,31 @@ class TestTaxonomyCreate(TaxonomyTestBase):
         # Leaf name must be the bare name, never the full path.
         self.assertEqual(rows["Activity/Hiking"]["name"], "Hiking")
 
+    def test_a_child_two_levels_down_is_one_new_node(self):
+        """Under Crew/Divers, "Jane" also made Crew/Divers/Crew, Crew/Divers/Crew/Divers
+        and Crew/Divers/Crew/Divers/Jane, and the reply named the last of them."""
+        root_id, _ = self.create_tag("Crew")
+        mid_id, _ = self.create_tag("Divers", parent_id=root_id)
+        jane_id, tag = self.create_tag("Jane", parent_id=mid_id)
+        self.assertEqual(tag, "Crew/Divers/Jane")
+        self.assertEqual(sorted(self.taxonomy_rows()), ["Crew", "Crew/Divers", "Crew/Divers/Jane"])
+        self.assertEqual(jane_id, self.tag_id("Crew/Divers/Jane"))
+
+    def test_a_child_typed_as_its_whole_path_is_not_doubled(self):
+        root_id, _ = self.create_tag("Crew")
+        mid_id, _ = self.create_tag("Divers", parent_id=root_id)
+        _, tag = self.create_tag("Crew/Divers/Jane", parent_id=mid_id)
+        self.assertEqual(tag, "Crew/Divers/Jane")
+        self.assertEqual(sorted(self.taxonomy_rows()), ["Crew", "Crew/Divers", "Crew/Divers/Jane"])
+
+    def test_a_child_may_be_a_path_below_its_parent(self):
+        root_id, _ = self.create_tag("Crew")
+        _, tag = self.create_tag("Divers/Jane", parent_id=root_id)
+        self.assertEqual(tag, "Crew/Divers/Jane")
+        rows = self.taxonomy_rows()
+        self.assertEqual(sorted(rows), ["Crew", "Crew/Divers", "Crew/Divers/Jane"])
+        self.assertEqual(rows["Crew/Divers"]["name"], "Divers")
+
     def test_builds_missing_intermediate_ancestors(self):
         """Creating 'People/Smith/Jane' must materialise every ancestor node."""
         _, tag = self.create_tag("People/Smith/Jane")

@@ -3240,6 +3240,12 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             conn = tagpup_db.connect(self.db_path, timeout=10.0)
             cursor = conn.cursor()
             
+            # The name goes below the parent, one node per level. This used to walk the
+            # parent's own levels again below it, so "Jane" under Crew/Divers also made
+            # Crew/Divers/Crew, Crew/Divers/Crew/Divers and Crew/Divers/Crew/Divers/Jane.
+            levels = vocabulary.segments(name)
+            above = []
+            current_parent_id = None
             if parent_id:
                 cursor.execute("SELECT tag, has_face FROM tag_taxonomy WHERE id = ?", (parent_id,))
                 parent_row = cursor.fetchone()
@@ -3247,42 +3253,20 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     conn.close()
                     self.send_json_error(404, "Parent tag not found")
                     return
-                parent_path, parent_has_face = parent_row
-                tag_path = parent_path + "/" + name
-                has_face = parent_has_face
-            else:
-                tag_path = name
-                
-            from taxonomy import TagTaxonomy
-            tag_path = TagTaxonomy.normalize_tag(tag_path)
-            
-            # Recursive build of hierarchy
-            parts = vocabulary.segments(tag_path)
-            current_parent_id = None
-            current_path = ""
-            parent_has_face = has_face
-            new_id = None
-            
-            if parent_id:
+                parent_path, has_face = parent_row
+                above = vocabulary.segments(parent_path)
+                # Typed as the whole path from the root: the part the parent already is.
+                if [vocabulary.key(p) for p in levels[:len(above)]] == [vocabulary.key(p) for p in above]:
+                    levels = levels[len(above):]
                 current_parent_id = parent_id
-                cursor.execute("SELECT tag, has_face FROM tag_taxonomy WHERE id = ?", (parent_id,))
-                p_row = cursor.fetchone()
-                if p_row:
-                    current_path = p_row[0]
-                    parent_has_face = p_row[1]
-            
-            for i, part in enumerate(parts):
-                if parent_id and i == 0:
-                    if current_path and current_path.lower() == part.lower():
-                        continue
-                        
-                if current_path:
-                    if vocabulary.leaf_of(current_path).lower() == part.lower():
-                        continue
-                    current_path = current_path + "/" + part
-                else:
-                    current_path = part
-                    
+
+            from taxonomy import TagTaxonomy
+            tag_path = vocabulary.SEPARATOR.join(above + levels)
+            parent_has_face = has_face
+            # Nothing named below the parent: the parent is the tag asked for.
+            new_id = parent_id if parent_id and not levels else None
+
+            for part, current_path in zip(levels, vocabulary.lineage(tag_path)[len(above):]):
                 cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (current_path,))
                 row = cursor.fetchone()
                 if row:
