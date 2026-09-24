@@ -80,7 +80,7 @@ class IdentifyCacheKeepsOthersWrites(unittest.TestCase):
             "fingerprint": self.fingerprint(),
             "value": {"faces": [{"id": f} for f in self.faces], "total_count": 3},
         }
-        handler = Handler(self.db, {"face_ids": [self.faces[0]], "reason": "passer-by"})
+        handler = Handler(self.db, {"face_ids": [self.faces[0]], "reason": "stranger"})
         pending = []
         real = store_faces.fingerprint
 

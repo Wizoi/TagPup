@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 #: How like a named face an unnamed one must be for automatch to give it that name.
 AUTOMATCH_SIMILARITY = 0.8
 
+#: Why a face may be excluded: the four TagTuner's page offers (EXCLUDE_REASONS in
+#: gui/app.js), and the one it sets itself when a cluster is ignored. The reason used to
+#: be free text, and collected "fuzzy" beside "bad crop" (docs/findings.md, #53).
+EXCLUSION_REASONS = ("not a person", "stranger", "bad crop", "duplicate", "ignored cluster")
+
 
 def name_face(library, face_id, person_name):
     """Name one face. Clicking a suggestion, or typing a name, on a face card.
@@ -197,12 +202,18 @@ def exclude(library, face_ids, reason="not a person"):
     cannot quietly put one back.
 
     `changed`: the rows excluded, not the ids sent. details: `face_ids`, `fingerprints`.
+    Refused for a reason not in EXCLUSION_REASONS; none is "not a person".
     """
     _library_there(library)
     result = Result(attempted=len(face_ids))
+    reason = (reason or "").strip().lower() or "not a person"
+    if reason not in EXCLUSION_REASONS:
+        result.refuse("'%s' is not a reason to exclude a face: use one of %s."
+                      % (reason, ", ".join(EXCLUSION_REASONS)))
+        return result
     with faces.accounted_write(library.path, "exclude faces") as write:
         named = faces.rows(write.conn, face_ids).values()
-        result.changed = faces.exclude(write.conn, face_ids, reason or "not a person")
+        result.changed = faces.exclude(write.conn, face_ids, reason)
         for photo_path, old_name, _excluded in named:
             if old_name:
                 photos.update_people(write.conn, photo_path, lost=[old_name])

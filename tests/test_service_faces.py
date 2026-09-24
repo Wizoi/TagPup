@@ -154,9 +154,30 @@ class ExcludingAndRestoring(FacesCase):
     def test_an_excluded_face_loses_its_name_and_leaves_the_photos_people(self):
         photo = self.photo("a.jpg", people=["Wren Halloway"])
         face = self.face(photo, name="Wren Halloway")
-        result = faces.exclude(self.lib.library, [face, 999], "passer-by")
+        result = faces.exclude(self.lib.library, [face, 999], "stranger")
         self.assertEqual((result.changed, result.details["face_ids"]), (1, [face, 999]))
         self.assertEqual((self.face_row(face), self.people(photo)), ((None, "manual", 1), []))
+
+    def reason(self, face_id):
+        return self.lib.rows("SELECT excluded_reason FROM faces WHERE id = ?", (face_id,))[0][0]
+
+    def test_a_reason_the_page_does_not_offer_is_refused(self):
+        # Free text got in before, and needed a script to fold (docs/findings.md, #53).
+        face = self.face(self.photo("a.jpg"))
+        result = faces.exclude(self.lib.library, [face], "fuzzy")
+        self.assertIn("fuzzy", result.refused)
+        self.assertEqual((result.changed, self.face_row(face)[2]), (0, 0))
+
+    def test_a_reason_is_kept_as_the_page_spells_it(self):
+        face = self.face(self.photo("a.jpg"))
+        faces.exclude(self.lib.library, [face], "  Bad Crop ")
+        self.assertEqual(self.reason(face), "bad crop")
+
+    def test_no_reason_is_not_a_person_and_an_ignored_cluster_says_so(self):
+        first, second = self.face(self.photo("a.jpg")), self.face(self.photo("b.jpg"))
+        faces.exclude(self.lib.library, [first], None)
+        faces.exclude(self.lib.library, [second], "ignored cluster")
+        self.assertEqual((self.reason(first), self.reason(second)), ("not a person", "ignored cluster"))
 
     def test_restoring_brings_back_only_what_was_excluded(self):
         photo = self.photo("a.jpg")
