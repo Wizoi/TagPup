@@ -162,5 +162,28 @@ class TheLengthOfAPhotosVector(unittest.TestCase):
         self.assertEqual([], found)
 
 
+class TheEmbeddersSettings(unittest.TestCase):
+    """The model a photo is embedded with is config.ini's (tagpup.config.embedder_settings):
+    the embedder had defaults of its own, ViT-B-32 among them, that nothing checked
+    against the config's."""
+
+    def test_an_embedder_given_none_takes_the_configs(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        from embedder import ClipEmbedder
+
+        from tagpup import config
+        from tagpup.store import embeddings
+        self.assertEqual(embeddings.model_key(**config.embedder_settings()), ClipEmbedder().model_key)
+
+    def test_it_has_no_model_of_its_own(self):
+        self.assertNotRegex(read(os.path.join("scripts", "embedder.py")), r"[\"'](ViT-|laion)|max_aspect_ratio:\s*float\s*=")
+
+    def test_a_setting_it_does_not_know_is_refused(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        from embedder import ClipEmbedder
+        with self.assertRaises(TypeError):
+            ClipEmbedder(model="ViT-T")
+
+
 if __name__ == "__main__":
     unittest.main()

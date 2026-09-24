@@ -9,6 +9,7 @@ import numpy as np
 import open_clip
 
 import _root  # noqa: F401
+from tagpup import config as tagpup_config
 from tagpup.files import images
 from tagpup.store import embeddings as store_embeddings
 
@@ -61,15 +62,22 @@ class ClipEmbedder:
     _shared_tokenizer = None
     _shared_model_lock = threading.Lock()
 
-    def __init__(self, model_name: str = "ViT-B-32", pretrained: str = "laion2b_s34b_b79k", preserve_full_frame: bool = False, max_aspect_ratio: float = 2.0, force_image_size: Optional[int] = None, photo_index: Optional[Any] = None):
-        self.model_name = model_name
-        self.pretrained = pretrained
-        self.preserve_full_frame = preserve_full_frame
-        self.max_aspect_ratio = max_aspect_ratio
-        self.force_image_size = force_image_size
+    def __init__(self, photo_index: Optional[Any] = None, **settings):
+        """`settings` are tagpup.config.embedder_settings()'s: the config's, where the model
+        is chosen, for any not given. The embedder had defaults of its own -- ViT-B-32
+        among them -- beside the config's (docs/findings.md, #74)."""
+        chosen = tagpup_config.embedder_settings()
+        unknown = set(settings) - set(chosen)
+        if unknown:
+            raise TypeError("ClipEmbedder has no setting %s" % ", ".join(sorted(unknown)))
+        chosen.update(settings)
+        self.model_name = chosen["model_name"]
+        self.pretrained = chosen["pretrained"]
+        self.preserve_full_frame = chosen["preserve_full_frame"]
+        self.max_aspect_ratio = chosen["max_aspect_ratio"]
+        self.force_image_size = chosen["force_image_size"]
         #: The name its vectors are kept under in a library (tagpup.store.embeddings).
-        self.model_key = store_embeddings.model_key(model_name, pretrained, preserve_full_frame,
-                                                    max_aspect_ratio, force_image_size)
+        self.model_key = store_embeddings.model_key(**chosen)
         self.photo_index = photo_index
         
         # Lazy initialization
