@@ -67,6 +67,22 @@ class ConfigHasOneOwner(unittest.TestCase):
             hit = any(pattern.search(sample) for pattern, _ in FORBIDDEN)
             self.assertEqual(hit, expected, sample)
 
+    def test_only_config_knows_where_the_code_is(self):
+        """A package module that finds folders from its own __file__ breaks when it moves.
+
+        tagpup/store/db.py found its backup folder two levels up: the repository while it
+        was scripts/db.py, the inside of tagpup/ after the move. tagpup.config.CODE_ROOT
+        is the one place that knows where the code is.
+        """
+        prefix = "tagpup" + os.sep
+        offenders = []
+        for relative in python_sources():
+            if relative.startswith(prefix) and relative != OWNER:
+                with open(os.path.join(ROOT, relative), encoding="utf-8") as handle:
+                    if "__file__" in handle.read():
+                        offenders.append(relative)
+        self.assertEqual(offenders, [])
+
     def test_the_owner_is_where_the_file_is_read(self):
         """The check is worthless if the one allowed place stops matching too."""
         with open(os.path.join(ROOT, OWNER), encoding="utf-8") as handle:

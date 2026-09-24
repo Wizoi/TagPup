@@ -57,6 +57,7 @@ from faces import FaceProcessor
 import paths
 import db as tagpup_db
 from tagpup import config as tagpup_config
+from tagpup.core.library import Library
 
 def get_config():
     """The settings, config.ini over the defaults (tagpup.config)."""
@@ -74,17 +75,17 @@ def get_db_paths(config, test_mode=False, cli_db=None):
         # Check if it is a path or just a name
         if os.path.isabs(db_name) or "/" in db_name.replace("\\", "/"):  # not a path: is --db a name or a location
             db_path = db_name
-            tax_path = os.path.splitext(db_path)[0] + "_taxonomy.json"
+            tax_path = Library(db_path).taxonomy_file
         else:
             data_dir = tagpup_config.data_dir(config)
             db_path = os.path.join(data_dir, db_name)
-            tax_path = os.path.join(data_dir, os.path.splitext(db_name)[0] + "_taxonomy.json")
+            tax_path = Library(db_path).taxonomy_file
         return db_path, tax_path
 
     env_db = os.environ.get("TAGPUP_DB_PATH")
     env_tax = os.environ.get("TAGPUP_TAXONOMY_PATH")
     if env_db:
-        tax_path = env_tax or (os.path.splitext(env_db)[0] + "_taxonomy.json")
+        tax_path = env_tax or Library(env_db).taxonomy_file
         return env_db, tax_path
 
     data_dir = tagpup_config.data_dir(config)

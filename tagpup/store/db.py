@@ -35,6 +35,7 @@ import time
 from contextlib import contextmanager
 
 from tagpup.core import paths
+from tagpup.core.library import Library
 
 logger = logging.getLogger("tagpup_cli.db")
 
@@ -189,9 +190,9 @@ def backup(db_path, reason, into=None):
     """Copy a database before a bulk write, and return where the copy went.
 
     Through SQLite's backup API, from a read-only connection, so the copy is
-    consistent even while an app has the database open. Into backups/ at the top of
-    the repository unless `into` says otherwise, named for the database, the reason
-    and the time: photo_index.before-dedupe-faces-20260923_151200.db.
+    consistent even while an app has the database open. Into backups/ beside the
+    library unless `into` says otherwise, named for the database, the reason and the
+    time: data/backups/photo_index.before-dedupe-faces-20260923_151200.db.
 
     Every script that writes in bulk calls this before it writes; three had their
     own copy of it and six had none. tests/test_bulk_scripts_back_up.py holds them
@@ -199,8 +200,7 @@ def backup(db_path, reason, into=None):
     """
     import os
 
-    into = into or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                "backups")
+    into = into or Library(db_path).backups
     os.makedirs(into, exist_ok=True)
     target = os.path.join(into, "%s.before-%s-%s.db" % (
         os.path.splitext(os.path.basename(db_path))[0], reason,

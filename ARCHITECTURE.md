@@ -63,7 +63,7 @@ Imports only go down:
 
 | Layer | Package | Owns | May import |
 |---|---|---|---|
-| core | `tagpup.core` | Pure rules: path identity, the tag vocabulary (leaf, root, person), people derivation, suggestion scoring, clustering decisions | nothing but `core` |
+| core | `tagpup.core` | Pure rules: path identity, a library's name and the files that belong to it (`Library`), the tag vocabulary (leaf, root, person), people derivation, suggestion scoring, clustering decisions | nothing but `core` |
 | config | `tagpup.config` | `TAGPUP_HOME`, `config.ini` and what it says: where the libraries are, which ExifTool, model settings, the library to open next. Read by entry points, which pass the values down | nothing |
 | logs | `tagpup.logs` | Each program's log file in `data/logs/`. Set up by entry points | `config` |
 | store | `tagpup.store` | The library database: connections and locks, schema and migrations, generations, one repository per table, caches keyed by generation, backups | `core` |
@@ -80,7 +80,7 @@ Guard tests, each of which fails the build. The ones marked *exists* are in plac
 - pyexiftool's classes constructed only in `tagpup.files.exiftool_session`. *Exists:* `tests/test_exiftool_single_owner.py`.
 - Photo paths spelled and compared only by `tagpup.core.paths`. *Exists:* `tests/test_paths_single_owner.py`.
 - SQL only inside `tagpup.store`.
-- `config.ini` read, and path settings resolved, only by `tagpup.config`. *Exists:* `tests/test_config_single_owner.py`.
+- `config.ini` read, and path settings resolved, only by `tagpup.config`; inside `tagpup/`, only it finds folders from `__file__`. *Exists:* `tests/test_config_single_owner.py`.
 - ExifTool and `Image.open` only inside `tagpup.files`.
 - Entry points import services and jobs, never store, files or ml directly.
 - Every POST route returns a `Result`.
@@ -174,13 +174,14 @@ Each phase ships on its own with the full check green. Nothing changes behaviour
 - [x] The `tagpup/` package, with the foundation modules moved into it: paths, db, the ExifTool session, identity. One list of shipped files for every guard, and the layer guard.
 - [x] `tagpup.config`: one loader, honouring `TAGPUP_HOME`, used by all 26 places that read `config.ini`.
 - [x] `tagpup.logs`: file logs, and slow-request logging for both servers.
-- [ ] `tagpup.result.Result` and `tagpup.store.library.Library`, with backups kept beside the library.
+- [x] `tagpup.core.library.Library`: one name for a library and the files that belong to it, and backups beside the library.
 - [ ] The installed-copy launcher.
 
 Exit: the guard tests for config, database connections, ExifTool and layers pass; both servers log to files; the app can run from an installed copy.
 
 ### Phase 2: Services
 - Delete TagTuner's eight unused routes: its copies of rename, time shift, delete, open in Explorer, rotate, save metadata and bulk tags (the TagPup page calls its own server's), and `/api/faces/recluster`, which no page calls.
+- `tagpup.result.Result`, shaped by the first services that return it.
 - One service per user action. Start with the ones both servers implement (rename, rotate, delete, save metadata, bulk tags, time shift, indexing), then tag-tree edits, face identification and suggestions.
 - Tests move down to the service level.
 
@@ -221,6 +222,7 @@ Exit: no page file over about 1,000 lines, and the two pages share every common 
 | 2026-09-23 | Photo ids arrive in phase 4, after the store layer exists. |
 | 2026-09-23 | Face detection on sideways photos is tabled for a future discussion. |
 | 2026-09-23 | PNG rotation is left as it is. |
+| 2026-09-23 | `Library` lives in `core`: it only names files, and the web layer, which builds one per request, may not import `store`. `Result` moves to phase 2, so that its first real callers set its shape. |
 
 ## Progress
 

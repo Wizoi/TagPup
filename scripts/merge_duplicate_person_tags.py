@@ -28,6 +28,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import _root  # noqa: E402,F401
+from tagpup.core.library import Library  # noqa: E402
+
 
 def leaf_of(tag):
     return tag.split("/")[-1].strip().lower()
@@ -100,7 +103,7 @@ def apply_plan(db_path, duplicates, affected):
     removed = tagpup_db.write_with_connection(db_path, delete, label="merge duplicate person tags")
 
     # Keep the JSON copy of the taxonomy in step with the table.
-    tax_path = os.path.splitext(db_path)[0] + "_taxonomy.json"
+    tax_path = Library(db_path).taxonomy_file
     if os.path.exists(tax_path):
         try:
             from taxonomy import TagTaxonomy

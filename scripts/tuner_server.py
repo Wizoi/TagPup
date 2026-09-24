@@ -27,6 +27,7 @@ from sklearn.neighbors import sort_graph_by_row_values
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
+from tagpup.core.library import Library
 
 logger = logging.getLogger("tagtuner.server")
 
@@ -320,7 +321,7 @@ def set_active_db_path(db_path):
         if hasattr(_thread_local, "active_db_path"):
             delattr(_thread_local, "active_db_path")
     else:
-        _thread_local.active_db_path = os.path.abspath(db_path).replace("\\", "/").lower()  # not a path: the database-file key the per-database registries are filed under
+        _thread_local.active_db_path = Library(db_path).key
 
 def get_active_db_path():
     active_db = getattr(_thread_local, "active_db_path", None)
@@ -329,7 +330,7 @@ def get_active_db_path():
     handler_cls = globals().get("TunerHTTPRequestHandler")
     if handler_cls:
         try:
-            return os.path.abspath(handler_cls.db_path).replace("\\", "/").lower()  # not a path: the database-file key the per-database registries are filed under
+            return Library(handler_cls.db_path).key
         except Exception:
             pass
     return "data/photo_index.db"
@@ -4508,7 +4509,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
     def handle_get_tags(self):
         try:
             from taxonomy import TagTaxonomy
-            tax_path = os.path.splitext(self.db_path)[0] + "_taxonomy.json"
+            tax_path = Library(self.db_path).taxonomy_file
             taxonomy = TagTaxonomy(file_path=tax_path)
             taxonomy.load()
             

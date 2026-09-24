@@ -172,8 +172,10 @@ only itself; it once cost 500 files their metadata.
 
 ## Maintenance scripts
 
-All of these are dry-run by default and take `--apply` to write. Take a backup first —
-`sqlite3.Connection.backup()` into `backups/` — for anything that touches a database.
+All of these are dry-run by default and take `--apply` to write, and back the database
+up first through `db.backup()`: SQLite's backup API, into `backups/` beside the library
+(`data/backups/` for the libraries in `data/`). Copies made before 2026-09-23 are in the
+`backups/` folder at the top of the repository.
 
 | script | what it does |
 | --- | --- |

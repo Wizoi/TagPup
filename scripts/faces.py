@@ -24,6 +24,7 @@ except ImportError:  # imported as a top-level module
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
+from tagpup.core.library import Library
 
 logger = logging.getLogger("tagpup_cli.faces")
 
@@ -34,7 +35,7 @@ def resolution_trace_path(db_path):
     It was face_resolution_trace.json beside the database -- one file for every
     library in the folder, so clustering one overwrote the record of another.
     """
-    return os.path.splitext(db_path)[0] + "_face_resolution_trace.json"
+    return Library(db_path).face_trace_file
 
 
 class FaceProcessor:

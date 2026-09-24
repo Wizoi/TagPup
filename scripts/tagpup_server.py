@@ -23,6 +23,7 @@ import numpy as np
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
+from tagpup.core.library import Library
 
 logger = logging.getLogger("tagpup.server")
 
@@ -844,7 +845,7 @@ def set_active_db_path(db_path):
         if hasattr(_thread_local, "active_db_path"):
             delattr(_thread_local, "active_db_path")
     else:
-        _thread_local.active_db_path = os.path.abspath(db_path).replace("\\", "/").lower()  # not a path: the database file, as a registry key
+        _thread_local.active_db_path = Library(db_path).key
 
 
 def create_library(db_path):
@@ -943,7 +944,7 @@ def get_active_db_path():
     handler_cls = globals().get("TagPupHTTPRequestHandler")
     if handler_cls:
         try:
-            return os.path.abspath(handler_cls.db_path).replace("\\", "/").lower()  # not a path: the database file, as a registry key
+            return Library(handler_cls.db_path).key
         except Exception:
             pass
     return "data/photo_index.db"
@@ -1682,7 +1683,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 
             # Also load from taxonomy file
             from taxonomy import TagTaxonomy
-            tax_path = os.path.splitext(self.db_path)[0] + "_taxonomy.json"
+            tax_path = Library(self.db_path).taxonomy_file
             taxonomy = TagTaxonomy(file_path=tax_path)
             taxonomy.load()
             for p in taxonomy.paths:
@@ -2244,7 +2245,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             from taxonomy import TagTaxonomy
             from suggester import TagSuggester
 
-            tax_path = os.path.splitext(db_path)[0] + "_taxonomy.json"
+            tax_path = Library(db_path).taxonomy_file
             taxonomy = TagTaxonomy(file_path=tax_path)
             taxonomy.load()
             
