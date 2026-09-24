@@ -1,7 +1,7 @@
 """Actions on photos' tags."""
 import logging
 
-from tagpup.core import fields, vocabulary
+from tagpup.core import fields, paths, vocabulary
 from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
@@ -9,6 +9,54 @@ from tagpup.files import exiftool_session, keywords
 from tagpup.store import photos, taxonomy
 
 logger = logging.getLogger(__name__)
+
+
+def change_tags(library, photo_paths, add, remove, exiftool_path):
+    """Add the same tags to many photos and take the same tags off them. Adding or
+    removing tags on a selection of photos. See _change_each."""
+    return _change_each(library, [(path, add, remove) for path in photo_paths], exiftool_path)
+
+
+def add_tags(library, additions, exiftool_path):
+    """Add each photo in `additions` (path -> tags) its own tags. Apply All on a folder's
+    suggestions: suggestions deal in people's bare names, which are written as the tags
+    they are filed under. A photo with nothing to add is left alone. See _change_each."""
+    return _change_each(library, [(path, tags, ()) for path, tags in additions.items() if tags],
+                        exiftool_path)
+
+
+def _change_each(library, plan, exiftool_path):
+    """Write each photo in `plan` -- (path, tags to add, tags to take off) -- in one
+    ExifTool session.
+
+    Each write replaces the photo's whole keyword set, so it starts from what the file
+    holds now -- never from a cache that may be cold or an index that may never have
+    seen the photo. People are written as the tags they are filed under, and the index
+    is told what was written.
+
+    Stops at the first photo that cannot be read or written, which is the error; the
+    photos before it keep their changes. details: `written`, path -> (tags, flat,
+    hierarchical) for each photo written.
+    """
+    result = Result(attempted=len(plan))
+    written = result.details["written"] = {}
+    people = taxonomy.people_paths(library.path)
+    with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
+        for path, add, remove in plan:
+            path = paths.stored(path)
+            try:
+                tags = set(keywords.tags_in_file(et, path))
+                tags.update(add)
+                tags.difference_update(remove)
+                new_tags = vocabulary.resolve_people(list(tags), people)
+                flat, hierarchical = keywords.write_keywords(et, path, new_tags)
+                photos.record_tags(library.path, path, new_tags, flat, hierarchical)
+            except Exception as err:
+                result.fail(path, err)
+                break
+            written[path] = (new_tags, flat, hierarchical)
+            result.changed += 1
+    return result
 
 
 def replace_tag(library, photo_paths, old, new, exiftool_path):

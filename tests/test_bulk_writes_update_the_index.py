@@ -201,10 +201,12 @@ class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
         )
 
     def test_the_guard_is_looking_at_something(self):
-        self.assertGreaterEqual(
-            len(list(self.write_sites())), 4,
-            "the write sites moved; the guard above is checking nothing"
-        )
+        # The number falls as copies of the write become one service; what matters is
+        # that the writes are among what it reads.
+        sites = [where for where, _ in self.write_sites()]
+        for writer in ("tagpup_server.py", "tagging.py"):
+            self.assertTrue(any(writer in where for where in sites),
+                            "the write sites moved; the guard above is checking nothing")
 
 
 if __name__ == "__main__":

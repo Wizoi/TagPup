@@ -194,6 +194,7 @@ Exit: the guard tests for config, database connections, ExifTool and layers pass
   - [x] Delete: `tagpup.services.photos.delete`.
   - [x] Time shift: `tagpup.services.photos.shift_date_taken`.
   - [x] Smart Rename: `tagpup.services.photos.smart_rename`. The route still orders the photos, by the Date Taken in its folder cache.
+  - [x] Bulk tags, and Apply All on a folder's suggestions: `tagpup.services.tagging.change_tags` and `add_tags`, one write loop.
   - [x] Replacing a tag on every photo carrying it: `tagpup.services.tagging.replace_tag`. TagPup's tag-tree rename and delete, and TagTuner's merge and person rename, which reached into TagPup's server for it.
 - Tests move down to the service level.
 

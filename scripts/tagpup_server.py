@@ -2058,35 +2058,21 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             return
         add_tags = [vocabulary.normalize(t) for t in add_tags]
 
-        executable = self.get_exiftool_path()
-        from exiftool_session import ExifToolSession
         from metadata import photo_people
 
         try:
-            with ExifToolSession(executable=executable) as et:
-                for path in photo_list:
-                    path = paths.stored(path)
-                    # This write replaces the photo's whole keyword set, so it starts
-                    # from what the file holds now -- never from a cache that may be
-                    # cold or an index that may never have seen the photo.
-                    new_tags_set = set(tags_in_file(et, path))
-                    for t in add_tags:
-                        new_tags_set.add(t)
-                    for t in remove_tags:
-                        new_tags_set.discard(t)
-
-                    new_tags = list(new_tags_set)
-
-                    new_tags = resolve_people_tags(new_tags, self.db_path)
-                    flat, hierarchical = write_keyword_fields(
-                        et, path, new_tags, db_path=self.db_path)
-                    record_tags_in_index(self.db_path, path, new_tags, flat, hierarchical)
-
-                    for _folder_map, photo_entry in self.cached_photo_entries(path):
-                        photo_entry["tags"] = new_tags
-                        raw_meta = record_keyword_fields(
-                            photo_entry.setdefault("raw_metadata", {}), flat, hierarchical)
-                        photo_entry["people"] = photo_people(raw_meta, new_tags, path, db_path=self.db_path)
+            result = tagging_actions.change_tags(
+                Library(self.db_path), photo_list, add_tags, remove_tags, self.get_exiftool_path())
+            # The photos written before any failure are written; the page's copy of
+            # them has to say so either way.
+            for path, (new_tags, flat, hierarchical) in result.details["written"].items():
+                for _folder_map, photo_entry in self.cached_photo_entries(path):
+                    photo_entry["tags"] = new_tags
+                    raw_meta = record_keyword_fields(
+                        photo_entry.setdefault("raw_metadata", {}), flat, hierarchical)
+                    photo_entry["people"] = photo_people(raw_meta, new_tags, path, db_path=self.db_path)
+            if not result.ok:
+                raise RuntimeError(result.message())
 
             self.send_json({"success": True})
         except Exception as e:
@@ -2122,57 +2108,41 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         if photo_paths:
             wanted = {paths.key(p) for p in photo_paths}
             suggestions_map = {k: v for k, v in suggestions_map.items() if paths.key(k) in wanted}
-        executable = self.get_exiftool_path()
-        from exiftool_session import ExifToolSession
         from metadata import photo_people
 
+        # Apply exactly what the panel offered.
+        #
+        # This used to read `raw_suggestions`, which is everything the suggester
+        # produced down to its own floor, while the panel shows only what scored 0.6 or
+        # better. The two lists were built in different places and drifted: a photo came
+        # back from Apply All carrying two people the panel had never mentioned, and the
+        # suggestions it *had* listed were still sitting there unapplied.
+        #
+        # One list, two consumers. `tags` and `people` are what the page was shown, so
+        # they are what gets written.
+        additions = {}
+        for path, sugg_info in suggestions_map.items():
+            offered = list(sugg_info.get("tags") or [])
+            offered_people = list(sugg_info.get("people") or [])
+            apply_tags = [t["tag"] for t in offered if t.get("score", 0.0) >= threshold]
+            apply_tags += [p["name"] for p in offered_people if p.get("score", 0.0) >= threshold]
+            additions[path] = apply_tags
+
         try:
-            with ExifToolSession(executable=executable) as et:
-                for path, sugg_info in suggestions_map.items():
-                    # Apply exactly what the panel offered.
-                    #
-                    # This used to read `raw_suggestions`, which is everything the
-                    # suggester produced down to its own floor, while the panel shows
-                    # only what scored 0.6 or better. The two lists were built in
-                    # different places and drifted: a photo came back from Apply All
-                    # carrying two people the panel had never mentioned, and the
-                    # suggestions it *had* listed were still sitting there unapplied.
-                    #
-                    # One list, two consumers. `tags` and `people` are what the page
-                    # was shown, so they are what gets written.
-                    offered = list(sugg_info.get("tags") or [])
-                    offered_people = list(sugg_info.get("people") or [])
-
-                    apply_tags = [t["tag"] for t in offered
-                                  if t.get("score", 0.0) >= threshold]
-                    apply_tags += [p["name"] for p in offered_people
-                                   if p.get("score", 0.0) >= threshold]
-                    if not apply_tags:
-                        continue
-                        
-                    # The whole keyword set is written, so it starts from what the
-                    # file holds now, not from the folder cache or the index.
-                    path = paths.stored(path)
-                    new_tags = list(set(tags_in_file(et, path) + apply_tags))
-
-                    # Apply All writes whatever the suggester proposed, and the
-                    # suggester deals in leaf names. Resolve before writing.
-                    new_tags = resolve_people_tags(new_tags, self.db_path)
-                    flat, hierarchical = write_keyword_fields(
-                        et, path, new_tags, db_path=self.db_path)
-                    record_tags_in_index(self.db_path, path, new_tags, flat, hierarchical)
-
-                    for _folder_map, photo_entry in self.cached_photo_entries(path):
-                        photo_entry["tags"] = new_tags
-                        raw_meta = record_keyword_fields(
-                            photo_entry.setdefault("raw_metadata", {}), flat, hierarchical)
-                        photo_entry["people"] = photo_people(raw_meta, new_tags, path, db_path=self.db_path)
+            result = tagging_actions.add_tags(Library(self.db_path), additions, self.get_exiftool_path())
+            for path, (new_tags, flat, hierarchical) in result.details["written"].items():
+                for _folder_map, photo_entry in self.cached_photo_entries(path):
+                    photo_entry["tags"] = new_tags
+                    raw_meta = record_keyword_fields(
+                        photo_entry.setdefault("raw_metadata", {}), flat, hierarchical)
+                    photo_entry["people"] = photo_people(raw_meta, new_tags, path, db_path=self.db_path)
+            if not result.ok:
+                raise RuntimeError(result.message())
 
             self.send_json({"success": True})
         except Exception as e:
             logger.error(f"Error auto-applying suggestions: {e}")
             self.send_json_error(500, str(e))
-
     def handle_post_folder_time_shift(self):
         try:
             data = self.read_json_body()
