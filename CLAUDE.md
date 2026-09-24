@@ -30,8 +30,13 @@ this codebase, add it there with a comment saying why rather than working around
 No `pip.exe`, no `Activate.ps1`, no pytest — invoke the interpreter by path. Use the
 glob for the frontend suite; `node --test tests/frontend/` fails on `harness.mjs`.
 
-**Saving any `.py` restarts a running server**, wiping its in-memory state and orphaning
-any indexer. Check for one before editing; run long indexes through the CLI.
+**The owner runs the apps from an installed copy** (`%LOCALAPPDATA%\TagPup\*.cmd`,
+made by `scripts/install_app.py`), with `TAGPUP_HOME` set to the repository. Saving a
+file here changes nothing they are running, and a merge reaches them only when the
+app is installed again. Ask before installing; offer to after a merge they want to
+use. An app started from the repository itself still restarts whenever a `.py` is
+saved, wiping its in-memory state and orphaning any indexer, so check for one before
+editing. Run long indexes through the CLI (`TagPup CLI.cmd`).
 
 ## Rules that keep being broken
 
@@ -153,9 +158,10 @@ used `rmtree(..., ignore_errors=True)` and quietly left 2.7 GB in the temp direc
 every run, because Windows had not released the server's file handles yet. Retry, then
 report.
 
-**Don't edit `.py` while somebody is testing.** The reloader restarts the server and
-wipes every in-memory cache, so their run and yours are both measuring a cold start.
-Say when you are about to, or wait.
+**Don't edit `.py` while somebody is testing from the repository.** The reloader
+restarts the server and wipes every in-memory cache, so their run and yours are both
+measuring a cold start. Say when you are about to, or wait. (The installed apps are not
+affected.)
 
 ## Before committing
 
