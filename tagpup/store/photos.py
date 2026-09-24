@@ -265,6 +265,51 @@ def read_tags(db_path, photo_paths):
     return found
 
 
+def carrying(db_path, tag):
+    """The photos whose tags hold `tag` or a tag under it, their paths as stored: the
+    photos renaming or deleting it rewrites (vocabulary.retag).
+
+    Each action changing a tag everywhere scanned for these with a copy of its own, and
+    merging found only the photos carrying the tag itself (docs/findings.md, #38).
+    """
+    found = []
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        for path, tags_json in conn.execute("SELECT path, tags FROM photos WHERE tags IS NOT NULL"):
+            try:
+                tags = json.loads(tags_json)
+            except (TypeError, ValueError):
+                continue
+            if vocabulary.retag(tags, tag)[1]:
+                found.append(path)
+    finally:
+        conn.close()
+    return found
+
+
+def tag_usage(db_path):
+    """Photos per tag, a photo counting toward each level above its tags as well: a
+    photo tagged "Activity/Hiking" counts for "Activity". What the tree view shows."""
+    counts = {}
+    if not os.path.exists(db_path):
+        return counts
+    try:
+        conn = db.connect(db.readonly_uri(db_path), uri=True)
+        try:
+            for (tags_json,) in conn.execute("SELECT tags FROM photos WHERE tags IS NOT NULL"):
+                try:
+                    for tag in json.loads(tags_json):
+                        for level in vocabulary.lineage(tag):
+                            counts[level] = counts.get(level, 0) + 1
+                except Exception:
+                    pass
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return counts
+
+
 def record_saved(db_path, photo_path, tags, people, captions, raw_meta):
     """Record what saving one photo left in its file, and the file's mtime and size.
     Returns rows changed.

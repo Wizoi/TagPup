@@ -1,8 +1,9 @@
-"""The tag tree's table, tag_taxonomy.
+"""The tag tree's table, tag_taxonomy: what it says about people, and its nodes.
 
-For now, what the tree says about people. The rest of scripts/taxonomy.py moves here
-with the store step of phase 2 (ARCHITECTURE.md).
+The in-memory TagTaxonomy in scripts/taxonomy.py still moves here (ARCHITECTURE.md,
+phase 2).
 """
+import json
 import logging
 import os
 import sqlite3
@@ -176,3 +177,198 @@ def read_people_vocabulary(conn):
         "SELECT name FROM tag_taxonomy WHERE (parent_id IS NULL OR tag NOT LIKE '%/%') AND has_face = 1")]
     faces = conn.execute("SELECT tag, name FROM tag_taxonomy WHERE has_face = 1").fetchall()
     return PeopleVocabulary.from_rows(roots, faces)
+
+
+# ---- The tree's nodes ------------------------------------------------------------------
+
+#: A node as the tree view and the services see it.
+NODE_COLUMNS = ("id", "tag", "parent_id", "name", "has_face", "hidden_from_autocomplete")
+
+
+def has_tree(db_path):
+    """Does the library have its tag tree's table yet?"""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        return bool(conn.execute("SELECT name FROM sqlite_master WHERE type='table'"
+                                 " AND name='tag_taxonomy'").fetchone())
+    finally:
+        conn.close()
+
+
+def _nodes(db_path, where="", params=()):
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        rows = conn.execute("SELECT %s FROM tag_taxonomy %s" % (", ".join(NODE_COLUMNS), where),
+                            params).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(NODE_COLUMNS, row)) for row in rows]
+
+
+def node(db_path, node_id):
+    """The node `node_id`, as a dict of NODE_COLUMNS, or None."""
+    found = _nodes(db_path, "WHERE id = ?", (node_id,))
+    return found[0] if found else None
+
+
+def find(db_path, tag):
+    """The node whose path is `tag`, or None."""
+    found = _nodes(db_path, "WHERE tag = ?", (tag,))
+    return found[0] if found else None
+
+
+def nodes(db_path):
+    """Every node, ordered by path."""
+    return _nodes(db_path, "ORDER BY tag")
+
+
+def repair(db_path):
+    """Put right what older writers left in the tree -- a node whose parent is missing,
+    a name holding "/" -- and return how many nodes that was.
+
+    Each read of the tree asks, so it writes only when there is something to put right,
+    and then through the write lock: it wrote on a connection of its own
+    (docs/findings.md, #37).
+    """
+    if not os.path.exists(db_path) or not has_tree(db_path):
+        return 0
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        orphans = conn.execute("SELECT id, tag, has_face FROM tag_taxonomy"
+                               " WHERE instr(tag, '/') > 0 AND parent_id IS NULL").fetchall()
+        misnamed = conn.execute("SELECT id, tag FROM tag_taxonomy WHERE instr(name, '/') > 0").fetchall()
+    finally:
+        conn.close()
+    if not orphans and not misnamed:
+        return 0
+
+    def put_right(conn):
+        for node_id, tag, has_face in orphans:
+            parent_id = add_path(conn, vocabulary.parent_of(tag), root_has_face=has_face)
+            conn.execute("UPDATE tag_taxonomy SET parent_id = ? WHERE id = ?", (parent_id, node_id))
+        for node_id, tag in misnamed:
+            conn.execute("UPDATE tag_taxonomy SET name = ? WHERE id = ?", (vocabulary.leaf_of(tag), node_id))
+        return len(orphans) + len(misnamed)
+
+    count = db.write_with_connection(db_path, put_right, label="tag tree repair")
+    logger.info("Put right %d node(s) of the tag tree in %s", count, os.path.basename(db_path))
+    return count
+
+
+def move_branch(conn, old, new):
+    """Give the node `old` the path `new`, and every node under it the same move. The
+    nodes keep their ids, their parents and their flags. The caller commits. Returns
+    the nodes moved."""
+    conn.execute("UPDATE tag_taxonomy SET tag = ?, name = ? WHERE tag = ?",
+                 (new, vocabulary.leaf_of(new), old))
+    prefix = old + vocabulary.SEPARATOR
+    below = conn.execute("SELECT id, tag FROM tag_taxonomy WHERE substr(tag, 1, ?) = ?",
+                         (len(prefix), prefix)).fetchall()
+    for node_id, tag in below:
+        conn.execute("UPDATE tag_taxonomy SET tag = ? WHERE id = ?", (new + tag[len(old):], node_id))
+    return 1 + len(below)
+
+
+def delete_branch(conn, path):
+    """Take the node `path` and every node under it out of the tree. The caller commits.
+    Returns the nodes taken out."""
+    where, params = sql_branch(path)
+    return conn.execute("DELETE FROM tag_taxonomy WHERE " + where, params).rowcount
+
+
+def set_branch_flags(conn, path, has_face=None, hidden=None):
+    """Set a node's flags -- holding faces, hidden from autocomplete -- and the same on
+    every node under it. None leaves a flag as it is. The caller commits. Returns the
+    nodes the branch holds, when a flag was set."""
+    where, params = sql_branch(path)
+    changed = 0
+    for column, value in (("has_face", has_face), ("hidden_from_autocomplete", hidden)):
+        if value is not None:
+            changed = conn.execute("UPDATE tag_taxonomy SET %s = ? WHERE %s" % (column, where),
+                                   (value,) + params).rowcount
+    return changed
+
+
+# ---- The JSON file beside a library ----------------------------------------------------
+#
+# The tree used to live in a JSON file. The table replaced it, and the file is read only
+# where the table is missing -- by TagTaxonomy.load and by seed() -- but the tree's edits
+# still keep it in step. It goes in phase 4 (docs/findings.md, #13).
+
+def json_file(db_path):
+    """The JSON file kept beside a library: photo_taxonomy.json beside photo_index.db,
+    <library>_taxonomy.json beside any other. The servers' Library.taxonomy_file names
+    the first one differently (docs/findings.md, #13)."""
+    if os.path.basename(db_path) == "photo_index.db":
+        return os.path.join(os.path.dirname(db_path), "photo_taxonomy.json")
+    return os.path.splitext(db_path)[0] + "_taxonomy.json"
+
+
+def export_json(db_path):
+    """Write the tree's paths to the JSON file beside the library, as TagTaxonomy.save
+    did after each edit. A file that cannot be written is logged, not raised: the table
+    is the tree."""
+    try:
+        conn = db.connect(db.readonly_uri(db_path), uri=True)
+        try:
+            tags = sorted(tag for (tag,) in conn.execute("SELECT tag FROM tag_taxonomy"))
+        finally:
+            conn.close()
+        with open(json_file(db_path), "w", encoding="utf-8") as f:
+            json.dump({"paths": tags}, f, indent=2)
+    except Exception as e:
+        logger.error("Could not write the taxonomy JSON beside %s: %s", db_path, e)
+
+
+def seed(db_path):
+    """Give a library whose tree is empty its first nodes: the usual roots, every tag
+    its photos carry, everyone its faces name (under People), and the paths in its JSON
+    file. A tree with nodes in it is left alone."""
+    try:
+        conn = db.connect(db_path, timeout=30.0)
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tag_taxonomy (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tag TEXT UNIQUE,
+                    parent_id INTEGER,
+                    name TEXT,
+                    has_face INTEGER DEFAULT 0,
+                    hidden_from_autocomplete INTEGER DEFAULT 0,
+                    FOREIGN KEY(parent_id) REFERENCES tag_taxonomy(id) ON DELETE CASCADE
+                )
+            """)
+            if conn.execute("SELECT COUNT(*) FROM tag_taxonomy").fetchone()[0] > 0:
+                return
+            for root in ("People", "Activity", "Pets", "School", "Trips"):
+                add_path(conn, root)
+
+            tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "photos" in tables:
+                carried = set()
+                for (tags_json,) in conn.execute("SELECT tags FROM photos WHERE tags IS NOT NULL").fetchall():
+                    try:
+                        carried.update(json.loads(tags_json))
+                    except (TypeError, ValueError):
+                        pass
+                for tag in carried:
+                    add_path(conn, tag)
+            # Under People, which holds faces.
+            if "faces" in tables:
+                for (name,) in conn.execute("SELECT DISTINCT name FROM faces WHERE name IS NOT NULL").fetchall():
+                    if name.strip():
+                        add_path(conn, "People/" + name)
+
+            if os.path.exists(json_file(db_path)):
+                try:
+                    with open(json_file(db_path), encoding="utf-8") as f:
+                        for path in json.load(f).get("paths", []):
+                            add_path(conn, path)
+                except Exception as json_err:
+                    logger.error("Error seeding from taxonomy json: %s", json_err)
+            conn.commit()
+            logger.info("Successfully seeded tag taxonomy database table.")
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error("Error seeding taxonomy from DB: %s", e)

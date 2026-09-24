@@ -1,4 +1,5 @@
-"""Who the library knows: the names the pages offer while a person is typed.
+"""Who the library knows: the names the pages offer while a person is typed, and
+renaming somebody in the places that hold a bare name.
 
 Both servers listed them with their own copy of this, asking the tag tree about each
 person with a query of its own.
@@ -44,3 +45,32 @@ def names(db_path, keywords_too=False, include_hidden=False):
     finally:
         conn.close()
     return sorted(person for person in people if person)
+
+
+def rename(conn, old, new):
+    """Faces named `old` are named `new`, and so is `old` in each photo's list of
+    people, listed once. Names match exactly. The caller commits. Returns (faces
+    renamed, photos changed).
+
+    Both apps did this with a copy of their own. TagTuner matched faces whatever their
+    case, with LOWER(name), which no index serves. Both found the photos with LIKE over
+    the JSON text, which spells a name past ASCII with escapes, so a name with an
+    accent was not found (docs/findings.md, #38). Both spellings are looked for here.
+    """
+    faces = conn.execute("UPDATE faces SET name = ? WHERE name = ?", (new, old)).rowcount
+    spellings = sorted({old, json.dumps(old)[1:-1]})
+    rows = conn.execute("SELECT rowid, people FROM photos WHERE "
+                        + " OR ".join("instr(people, ?) > 0" for _ in spellings),
+                        spellings).fetchall()
+    changed = 0
+    for rowid, people_json in rows:
+        try:
+            people = json.loads(people_json or "[]")
+        except (TypeError, ValueError):
+            continue
+        if old not in people:
+            continue
+        renamed = list(dict.fromkeys(new if person == old else person for person in people))
+        conn.execute("UPDATE photos SET people = ? WHERE rowid = ?", (json.dumps(renamed), rowid))
+        changed += 1
+    return faces, changed

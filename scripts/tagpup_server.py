@@ -31,6 +31,7 @@ from tagpup.core.result import NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services import indexing
 from tagpup.services import people as people_service
+from tagpup.services import tags as tags_service
 from tagpup.services import photos as photo_actions
 from tagpup.services import tagging as tagging_actions
 from tagpup.store.photos import record_file_stat as record_file_stat_in_index  # noqa: F401  (writer.py)
@@ -1966,515 +1967,116 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 
     def handle_get_taxonomy_tree(self):
         try:
-            # Self-healing helper to resolve parent linkage for existing database entries
-            def heal_taxonomy_parents(db_path):
-                try:
-                    conn = tagpup_db.connect(db_path, timeout=30.0)
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-                    if not cursor.fetchone():
-                        conn.close()
-                        return
-                        
-                    cursor.execute("SELECT id, tag, has_face FROM tag_taxonomy WHERE tag LIKE '%/%' AND parent_id IS NULL")
-                    orphans = cursor.fetchall()
-                    
-                    if orphans:
-                        logger.info(f"Taxonomy self-healing: found {len(orphans)} orphaned paths. Healing...")
-                        for node_id, tag_path, has_face in orphans:
-                            # Every ancestor, not the node itself.
-                            parent_id = store_taxonomy.add_path(
-                                conn, vocabulary.parent_of(tag_path), root_has_face=has_face)
-                            cursor.execute("UPDATE tag_taxonomy SET parent_id = ? WHERE id = ?", (parent_id, node_id))
-                        conn.commit()
-                        
-                    # Heal name column if it contains '/'
-                    cursor.execute("SELECT id, tag, name FROM tag_taxonomy WHERE name LIKE '%/%'")
-                    bad_names = cursor.fetchall()
-                    if bad_names:
-                        logger.info(f"Taxonomy self-healing: found {len(bad_names)} nodes with bad name values. Healing...")
-                        for node_id, tag_path, name in bad_names:
-                            leaf_name = vocabulary.leaf_of(tag_path)
-                            cursor.execute("UPDATE tag_taxonomy SET name = ? WHERE id = ?", (leaf_name, node_id))
-                        conn.commit()
-
-                    # Nodes under a root named People, Family, Friends or Pets were set
-                    # back to holding faces here, which undid the Face Matching switch
-                    # on such a root (docs/findings.md, #40). A node is made with its
-                    # parent's flag (tagpup.store.taxonomy.add_path), so one under such
-                    # a root without it is one somebody switched off.
-                    conn.close()
-                except Exception as e:
-                    logger.error(f"Error healing taxonomy: {e}")
-
-            heal_taxonomy_parents(self.db_path)
-
-            conn = tagpup_db.connect(self.db_path, timeout=10.0)
-            cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-            if not cursor.fetchone():
-                from taxonomy import seed_taxonomy_from_db
-                seed_taxonomy_from_db(self.db_path)
-            
-            cursor.execute("SELECT id, tag, parent_id, name, has_face, hidden_from_autocomplete FROM tag_taxonomy ORDER BY tag")
-            rows = cursor.fetchall()
-            conn.close()
-            
-            counts = get_tag_usage_counts(self.db_path)
-            
-            tree_nodes = []
-            for row in rows:
-                node = {
-                    "id": row[0],
-                    "tag": row[1],
-                    "parent_id": row[2],
-                    "name": row[3],
-                    "has_face": row[4],
-                    "hidden_from_autocomplete": row[5],
-                    "usage_count": counts.get(row[1], 0)
-                }
-                tree_nodes.append(node)
-                
-            self.send_json(tree_nodes)
+            self.send_json(tags_service.tree(Library(self.db_path)))
         except Exception as e:
             self.send_json_error(500, str(e))
+
+    def _tree_edit(self, edit):
+        """Run an edit of the tag tree (tagpup.services.tags) on this request's library,
+        and answer what went wrong: 404 for a node that is not there, 400 for a request
+        refused, 500 for anything else. Returns its Result, or None once answered."""
+        try:
+            result = edit(Library(self.db_path))
+        except NotFound as missing:
+            self.send_json_error(404, str(missing))
+            return None
+        except Exception as e:
+            self.send_json_error(500, str(e))
+            return None
+        if result.refused:
+            self.send_json_error(400, result.refused)
+            return None
+        return result
 
     def handle_post_taxonomy_create(self):
         try:
             data = self.read_json_body()
-            name = data.get("name", "").strip()
-            parent_id = data.get("parent_id")
-            has_face = data.get("has_face", 0)
-
-            if not name:
-                self.send_json_error(400, "Tag name cannot be empty")
-                return
-            problem = vocabulary.problem_with_tag(name)
-            if problem:
-                self.send_json_error(400, problem)
-                return
-
-            conn = tagpup_db.connect(self.db_path, timeout=10.0)
-            cursor = conn.cursor()
-            
-            # The name goes below the parent, one node per level. This used to walk the
-            # parent's own levels again below it, so "Jane" under Crew/Divers also made
-            # Crew/Divers/Crew, Crew/Divers/Crew/Divers and Crew/Divers/Crew/Divers/Jane.
-            levels = vocabulary.segments(name)
-            above = []
-            if parent_id:
-                cursor.execute("SELECT tag, has_face FROM tag_taxonomy WHERE id = ?", (parent_id,))
-                parent_row = cursor.fetchone()
-                if not parent_row:
-                    conn.close()
-                    self.send_json_error(404, "Parent tag not found")
-                    return
-                parent_path, has_face = parent_row
-                above = vocabulary.segments(parent_path)
-                # Typed as the whole path from the root: the part the parent already is.
-                if [vocabulary.key(p) for p in levels[:len(above)]] == [vocabulary.key(p) for p in above]:
-                    levels = levels[len(above):]
-
-            conn.close()
-            from taxonomy import TagTaxonomy
-            tag_path = vocabulary.SEPARATOR.join(above + levels)
-            # Nothing named below the parent: the parent is the tag asked for, and
-            # add_path answers with its id.
-            new_id = tagpup_db.write_with_connection(
-                self.db_path,
-                lambda conn: store_taxonomy.add_path(conn, tag_path, root_has_face=has_face),
-                label="tag tree: %s" % tag_path)
-
-            taxonomy = TagTaxonomy(db_path=self.db_path)
-            taxonomy.load()
-            taxonomy.add_tag(tag_path)
-            taxonomy.save()
-            invalidate_people_cache(self.db_path)
-            
-            self.send_json({"success": True, "id": new_id, "tag": tag_path})
-        except Exception as e:
-            self.send_json_error(500, str(e))
+        except Exception:
+            self.send_json_error(400, "Invalid JSON payload")
+            return
+        result = self._tree_edit(lambda library: tags_service.create(
+            library, data.get("name", ""), data.get("parent_id"), data.get("has_face", 0)))
+        if result:
+            self.send_json({"success": True, "id": result.details["id"], "tag": result.details["tag"]})
 
     def handle_post_taxonomy_update(self):
         try:
             data = self.read_json_body()
-            tag_id = data.get("id")
-            has_face = data.get("has_face")
-            hidden_from_autocomplete = data.get("hidden_from_autocomplete")
-            
-            if tag_id is None:
-                self.send_json_error(400, "Missing 'id' parameter")
-                return
-                
-            conn = tagpup_db.connect(self.db_path, timeout=10.0)
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT tag, parent_id FROM tag_taxonomy WHERE id = ?", (tag_id,))
-            row = cursor.fetchone()
-            if not row:
-                conn.close()
-                self.send_json_error(404, "Tag not found")
-                return
-            tag_path, parent_id = row
-            branch, branch_params = store_taxonomy.sql_branch(tag_path)
-
-            if has_face is not None:
-                cursor.execute("UPDATE tag_taxonomy SET has_face = ? WHERE id = ?", (has_face, tag_id))
-                cursor.execute("UPDATE tag_taxonomy SET has_face = ? WHERE " + branch,
-                               (has_face,) + branch_params)
-
-            if hidden_from_autocomplete is not None:
-                cursor.execute("UPDATE tag_taxonomy SET hidden_from_autocomplete = ? WHERE id = ?", (hidden_from_autocomplete, tag_id))
-                cursor.execute("UPDATE tag_taxonomy SET hidden_from_autocomplete = ? WHERE " + branch,
-                               (hidden_from_autocomplete,) + branch_params)
-
-            conn.commit()
-            conn.close()
+        except Exception:
+            self.send_json_error(400, "Invalid JSON payload")
+            return
+        tag_id = data.get("id")
+        if tag_id is None:
+            self.send_json_error(400, "Missing 'id' parameter")
+            return
+        if self._tree_edit(lambda library: tags_service.set_flags(
+                library, tag_id, data.get("has_face"), data.get("hidden_from_autocomplete"))):
             self.send_json({"success": True})
-        except Exception as e:
-            self.send_json_error(500, str(e))
 
     def handle_post_taxonomy_delete_check(self):
         try:
             data = self.read_json_body()
-            tag_id = data.get("tag_id")
-            if tag_id is None:
-                self.send_json_error(400, "Missing 'tag_id' parameter")
-                return
-                
-            conn = tagpup_db.connect(self.db_path, timeout=10.0)
-            cursor = conn.cursor()
-            cursor.execute("SELECT tag FROM tag_taxonomy WHERE id = ?", (tag_id,))
-            row = cursor.fetchone()
-            if not row:
-                conn.close()
-                self.send_json_error(404, "Tag not found")
-                return
-            tag_path = row[0]
-            conn.close()
-            
-            conn = tagpup_db.connect(self.db_path, timeout=10.0)
-            cursor = conn.cursor()
-            cursor.execute("SELECT path, tags FROM photos WHERE tags IS NOT NULL")
-            affected_photos = []
-            for path, tags_json in cursor.fetchall():
-                try:
-                    tags_list = json.loads(tags_json)
-                    for tag in tags_list:
-                        from taxonomy import TagTaxonomy
-                        normalized = TagTaxonomy.normalize_tag(tag)
-                        if normalized == tag_path or normalized.startswith(tag_path + "/"):
-                            affected_photos.append(path)
-                            break
-                except Exception:
-                    pass
-            conn.close()
-            
-            self.send_json({
-                "success": True,
-                "tag": tag_path,
-                "used": len(affected_photos) > 0,
-                "count": len(affected_photos),
-                "affected_photos": affected_photos[:100]
-            })
+        except Exception:
+            self.send_json_error(400, "Invalid JSON payload")
+            return
+        tag_id = data.get("tag_id")
+        if tag_id is None:
+            self.send_json_error(400, "Missing 'tag_id' parameter")
+            return
+        try:
+            usage = tags_service.usage(Library(self.db_path), tag_id)
+        except NotFound as missing:
+            self.send_json_error(404, str(missing))
+            return
         except Exception as e:
             self.send_json_error(500, str(e))
+            return
+        self.send_json(dict(usage, success=True))
 
     def handle_post_taxonomy_delete_confirm(self):
         try:
             data = self.read_json_body()
-            tag_id = data.get("tag_id")
-            action = data.get("action")
-            target_tag = data.get("target_tag")
-            
-            if tag_id is None or not action:
-                self.send_json_error(400, "Missing parameters")
-                return
-                
-            conn = tagpup_db.connect(self.db_path, timeout=10.0)
-            cursor = conn.cursor()
-            cursor.execute("SELECT tag FROM tag_taxonomy WHERE id = ?", (tag_id,))
-            row = cursor.fetchone()
-            if not row:
-                conn.close()
-                self.send_json_error(404, "Tag not found")
-                return
-            tag_path = row[0]
-            conn.close()
-            
-            conn = tagpup_db.connect(self.db_path, timeout=10.0)
-            cursor = conn.cursor()
-            cursor.execute("SELECT path, tags FROM photos WHERE tags IS NOT NULL")
-            affected_photos = []
-            for path, tags_json in cursor.fetchall():
-                try:
-                    tags_list = json.loads(tags_json)
-                    for tag in tags_list:
-                        from taxonomy import TagTaxonomy
-                        normalized = TagTaxonomy.normalize_tag(tag)
-                        if normalized == tag_path or normalized.startswith(tag_path + "/"):
-                            affected_photos.append(path)
-                            break
-                except Exception:
-                    pass
-            conn.close()
-            
-            rewritten = 0
-            if affected_photos:
-                executable = self.get_exiftool_path()
-                if action == "move":
-                    if not target_tag:
-                        self.send_json_error(400, "Target tag path is required for move action")
-                        return
-                    target_tag = vocabulary.normalize(target_tag)
-                    tagpup_db.write_with_connection(
-                        self.db_path, lambda conn: store_taxonomy.add_path(conn, target_tag),
-                        label="tag tree: %s" % target_tag)
-                    # The writes resolve names against the tree, which now has the target.
-                    invalidate_people_cache(self.db_path)
-
-                    rewritten = tagging_actions.replace_tag(
-                        Library(self.db_path), affected_photos, tag_path, target_tag,
-                        executable).changed
-                else:
-                    rewritten = tagging_actions.replace_tag(
-                        Library(self.db_path), affected_photos, tag_path, None,
-                        executable).changed
-
-            # A photo that could not be rewritten still carries the tag, so the tag
-            # still describes it and stays in the tree. It used to be deleted anyway,
-            # and the reply said success.
-            if rewritten < len(affected_photos):
-                TagPupHTTPRequestHandler.folder_cache.clear()
-                self.send_json({
-                    "success": False,
-                    "photos_affected": len(affected_photos),
-                    "photos_rewritten": rewritten,
-                    "error": "%d of %d photo(s) could not be rewritten, so '%s' was kept; "
-                             "they still carry it." % (len(affected_photos) - rewritten,
-                                                       len(affected_photos), tag_path),
-                })
-                return
-
-            conn = tagpup_db.connect(self.db_path, timeout=10.0)
-            cursor = conn.cursor()
-            cursor.execute("PRAGMA foreign_keys = ON")
-            cursor.execute("DELETE FROM tag_taxonomy WHERE id = ?", (tag_id,))
-            conn.commit()
-            conn.close()
-            
-            from taxonomy import TagTaxonomy
-            taxonomy = TagTaxonomy(db_path=self.db_path)
-            taxonomy.load()
-            paths_to_remove = [p for p in taxonomy.paths if p == tag_path or p.startswith(tag_path + "/")]
-            for p in paths_to_remove:
-                taxonomy.paths.discard(p)
-            taxonomy.save()
-            invalidate_people_cache(self.db_path)
-
-            TagPupHTTPRequestHandler.folder_cache.clear()
-            self.send_json({"success": True, "photos_affected": len(affected_photos),
-                            "photos_rewritten": rewritten})
-        except Exception as e:
-            self.send_json_error(500, str(e))
+        except Exception:
+            self.send_json_error(400, "Invalid JSON payload")
+            return
+        tag_id, action = data.get("tag_id"), data.get("action")
+        if tag_id is None or not action:
+            self.send_json_error(400, "Missing parameters")
+            return
+        result = self._tree_edit(lambda library: tags_service.delete(
+            library, tag_id, action, data.get("target_tag"), self.get_exiftool_path()))
+        if result is None:
+            return
+        # The photos rewritten are no longer what their cached scans say.
+        TagPupHTTPRequestHandler.folder_cache.clear()
+        reply = {"success": result.ok, "photos_affected": result.details["photos_affected"],
+                 "photos_rewritten": result.details["photos_rewritten"]}
+        if not result.ok:
+            reply["error"] = result.message()
+        self.send_json(reply)
 
     def handle_post_taxonomy_rename(self):
         try:
             data = self.read_json_body()
-            tag_id = data.get("tag_id")
-            new_name = data.get("new_name", "").strip()
-            
-            if tag_id is None or not new_name:
-                self.send_json_error(400, "Missing parameters")
-                return
-            # A node's own name is one level. A "/" in it gave the node a path deeper
-            # than its parent's by two levels, with no node between, and a name that
-            # was a path.
-            problem = vocabulary.problem_with_name(new_name)
-            if problem:
-                self.send_json_error(400, problem)
-                return
+        except Exception:
+            self.send_json_error(400, "Invalid JSON payload")
+            return
+        tag_id, new_name = data.get("tag_id"), str(data.get("new_name") or "").strip()
+        if tag_id is None or not new_name:
+            self.send_json_error(400, "Missing parameters")
+            return
+        result = self._tree_edit(lambda library: tags_service.rename(
+            library, tag_id, new_name, self.get_exiftool_path()))
+        if result is None:
+            return
+        TagPupHTTPRequestHandler.folder_cache.clear()
+        reply = {"success": True, "photos_affected": result.details["photos_affected"],
+                 "photos_rewritten": result.details["photos_rewritten"]}
+        # The tree has the new name; a photo that could not be rewritten keeps the old.
+        if not result.ok:
+            reply["warning"] = result.message()
+        self.send_json(reply)
 
-            conn = tagpup_db.connect(self.db_path, timeout=10.0)
-            cursor = conn.cursor()
-            cursor.execute("SELECT tag, parent_id, name FROM tag_taxonomy WHERE id = ?", (tag_id,))
-            row = cursor.fetchone()
-            if not row:
-                conn.close()
-                self.send_json_error(404, "Tag not found")
-                return
-            old_tag_path, parent_id, current_name = row
-            
-            if current_name == new_name:
-                conn.close()
-                self.send_json({"success": True})
-                return
-                
-            # Compute new path
-            if parent_id is not None:
-                cursor.execute("SELECT tag FROM tag_taxonomy WHERE id = ?", (parent_id,))
-                parent_row = cursor.fetchone()
-                if not parent_row:
-                    conn.close()
-                    self.send_json_error(500, "Parent tag not found in DB")
-                    return
-                new_tag_path = parent_row[0] + "/" + new_name
-            else:
-                new_tag_path = new_name
-                
-            from taxonomy import TagTaxonomy
-            new_tag_path = TagTaxonomy.normalize_tag(new_tag_path)
-            
-            # Check for conflict
-            cursor.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (new_tag_path,))
-            conflict = cursor.fetchone()
-            if conflict:
-                conn.close()
-                self.send_json_error(400, f"A tag with path '{new_tag_path}' already exists.")
-                return
-                
-            # Retrieve descendants: tags that begin with exactly this path and a slash.
-            # LIKE read `_` as any character and ignored case, so renaming `Club_A`
-            # renamed everything under `ClubXA` too.
-            prefix = old_tag_path + "/"
-            cursor.execute("SELECT id, tag FROM tag_taxonomy WHERE substr(tag, 1, ?) = ?",
-                           (len(prefix), prefix))
-            descendants = cursor.fetchall()
-            
-            # Update the node itself
-            cursor.execute("UPDATE tag_taxonomy SET name = ?, tag = ? WHERE id = ?", (new_name, new_tag_path, tag_id))
-            
-            # Update descendants paths
-            for desc_id, desc_tag in descendants:
-                new_desc_tag = new_tag_path + desc_tag[len(old_tag_path):]
-                cursor.execute("UPDATE tag_taxonomy SET tag = ? WHERE id = ?", (new_desc_tag, desc_id))
-                
-            conn.commit()
-            conn.close()
-            
-            # Find and update affected photos
-            conn = tagpup_db.connect(self.db_path, timeout=10.0)
-            cursor = conn.cursor()
-            cursor.execute("SELECT path, tags FROM photos WHERE tags IS NOT NULL")
-            affected_photos = []
-            for path, tags_json in cursor.fetchall():
-                try:
-                    tags_list = json.loads(tags_json)
-                    for tag in tags_list:
-                        normalized = TagTaxonomy.normalize_tag(tag)
-                        if normalized == old_tag_path or normalized.startswith(old_tag_path + "/"):
-                            affected_photos.append(path)
-                            break
-                except Exception:
-                    pass
-            conn.close()
-            
-            # The tree has the new name now. The writes below resolve people against
-            # it, and with the cache still holding the old tree a photo that also
-            # carries the bare name had the old path written straight back.
-            invalidate_people_cache(self.db_path)
-
-            rewritten = 0
-            if affected_photos:
-                executable = self.get_exiftool_path()
-                rewritten = tagging_actions.replace_tag(
-                    Library(self.db_path), affected_photos, old_tag_path, new_tag_path,
-                    executable).changed
-
-            # Resolved faces store the bare leaf name, so renaming a person in the tag
-            # tree has to follow through to the faces table. Without this the taxonomy,
-            # the photo files and the photos table all say the new name while every
-            # matched face still says the old one, and TagTuner keeps showing it.
-            old_leaf = vocabulary.leaf_of(old_tag_path)
-            new_leaf = vocabulary.leaf_of(new_tag_path)
-            if old_leaf != new_leaf:
-                conn = tagpup_db.connect(self.db_path, timeout=10.0)
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT has_face FROM tag_taxonomy WHERE id = ?", (tag_id,)
-                )
-                row = cursor.fetchone()
-                is_person = bool(row and row[0])
-                renamed_faces = 0
-                if is_person:
-                    cursor.execute(
-                        "UPDATE faces SET name = ? WHERE name = ?", (new_leaf, old_leaf)
-                    )
-                    renamed_faces = cursor.rowcount
-                    # Keep the photos.people list in step with the faces it came from.
-                    cursor.execute("SELECT rowid, people FROM photos WHERE people LIKE ?", (f"%{old_leaf}%",))
-                    for p_rowid, people_json in cursor.fetchall():
-                        try:
-                            people = json.loads(people_json or "[]")
-                        except Exception:
-                            continue
-                        if old_leaf not in people:
-                            continue
-                        updated = [new_leaf if x == old_leaf else x for x in people]
-                        seen, deduped = set(), []
-                        for x in updated:
-                            if x not in seen:
-                                seen.add(x)
-                                deduped.append(x)
-                        cursor.execute(
-                            "UPDATE photos SET people = ? WHERE rowid = ?",
-                            (json.dumps(deduped), p_rowid),
-                        )
-                conn.commit()
-                conn.close()
-                if renamed_faces:
-                    logger.info(f"Tag rename also renamed {renamed_faces} resolved face(s) to '{new_leaf}'.")
-
-            # Update taxonomy fallback JSON
-            taxonomy = TagTaxonomy(db_path=self.db_path)
-            taxonomy.load()
-            
-            # Remove old paths
-            paths_to_remove = [p for p in taxonomy.paths if p == old_tag_path or p.startswith(old_tag_path + "/")]
-            for p in paths_to_remove:
-                taxonomy.paths.discard(p)
-                
-            # Add new paths
-            taxonomy.paths.add(new_tag_path)
-            for desc_id, desc_tag in descendants:
-                new_desc_tag = new_tag_path + desc_tag[len(old_tag_path):]
-                taxonomy.paths.add(new_desc_tag)
-                
-            taxonomy.save()
-            invalidate_people_cache(self.db_path)
-
-            TagPupHTTPRequestHandler.folder_cache.clear()
-            reply = {"success": True, "photos_affected": len(affected_photos),
-                     "photos_rewritten": rewritten}
-            if rewritten < len(affected_photos):
-                reply["warning"] = ("%d of %d photo(s) could not be rewritten and still carry "
-                                    "'%s'." % (len(affected_photos) - rewritten,
-                                               len(affected_photos), old_tag_path))
-            self.send_json(reply)
-        except Exception as e:
-            self.send_json_error(500, str(e))
-
-
-def get_tag_usage_counts(db_path):
-    counts = {}
-    if not os.path.exists(db_path):
-        return counts
-    try:
-        conn = tagpup_db.connect(db_path, timeout=10.0)
-        cursor = conn.cursor()
-        cursor.execute("SELECT tags FROM photos WHERE tags IS NOT NULL")
-        for row in cursor.fetchall():
-            try:
-                tags_list = json.loads(row[0])
-                for tag in tags_list:
-                    for ancestor in vocabulary.lineage(tag):
-                        counts[ancestor] = counts.get(ancestor, 0) + 1
-            except Exception:
-                pass
-        conn.close()
-    except Exception:
-        pass
-    return counts
 
 #: Listens on IPv4 and IPv6 alike -- see scripts/localserver.py for why that is
 #: worth two seconds on every click.
