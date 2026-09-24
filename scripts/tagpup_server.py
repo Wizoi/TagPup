@@ -1997,21 +1997,12 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                             leaf_name = vocabulary.leaf_of(tag_path)
                             cursor.execute("UPDATE tag_taxonomy SET name = ? WHERE id = ?", (leaf_name, node_id))
                         conn.commit()
-                        
-                    # Heal has_face column for nodes nested under face-matching roots (People, Pets, Family, Friends)
-                    cursor.execute("SELECT id, tag FROM tag_taxonomy WHERE has_face = 0")
-                    zero_faces = cursor.fetchall()
-                    if zero_faces:
-                        healed_face_nodes = 0
-                        for node_id, tag_path in zero_faces:
-                            parts = vocabulary.segments(tag_path)
-                            if len(parts) >= 2 and vocabulary.root_holds_faces(parts[0]):
-                                cursor.execute("UPDATE tag_taxonomy SET has_face = 1 WHERE id = ?", (node_id,))
-                                healed_face_nodes += 1
-                        if healed_face_nodes > 0:
-                            logger.info(f"Taxonomy self-healing: healed has_face flags for {healed_face_nodes} nodes.")
-                            conn.commit()
-                        
+
+                    # Nodes under a root named People, Family, Friends or Pets were set
+                    # back to holding faces here, which undid the Face Matching switch
+                    # on such a root (docs/findings.md, #40). A node is made with its
+                    # parent's flag (tagpup.store.taxonomy.add_path), so one under such
+                    # a root without it is one somebody switched off.
                     conn.close()
                 except Exception as e:
                     logger.error(f"Error healing taxonomy: {e}")

@@ -629,6 +629,18 @@ class TestTaxonomyTree(TaxonomyTestBase):
         # Usage rolls up: a photo tagged with the child also counts toward the parent.
         self.assertEqual(flat["Activity"].get("usage_count"), 2)
 
+    def test_face_matching_turned_off_stays_off_when_the_tree_is_read_again(self):
+        """docs/findings.md, #40: reading the tree set every node under a root named
+        Pets back to holding faces, so the switch the page shows on a root undid
+        nothing below it."""
+        root_id, _ = self.create_tag("Pets")
+        self.create_tag("Biscuit", parent_id=root_id)
+        self.post("/api/taxonomy/update", {"id": root_id, "has_face": 0})
+
+        self.get("/api/taxonomy/tree")
+        rows = self.taxonomy_rows()
+        self.assertEqual((rows["Pets"]["has_face"], rows["Pets/Biscuit"]["has_face"]), (0, 0))
+
 
 if __name__ == "__main__":
     unittest.main()
