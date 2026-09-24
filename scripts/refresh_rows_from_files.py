@@ -96,8 +96,12 @@ def distinct_captions(captions_json):
     return distinct if len(distinct) != len(captions) else None
 
 
-def plan(conn, folder=None):
-    """(rows whose file must be re-read, {path: captions} fixable from the row alone)."""
+def plan(conn, folder=None, seen=None):
+    """(rows whose file must be re-read, {path: captions} fixable from the row alone).
+
+    `seen`, if given, is filled with each stale row's (mtime, size) as found here --
+    before any file is read. It is what the write checks the row still has.
+    """
     stale, captions_only = {}, {}
     query = "SELECT path, mtime, size, tags, captions, raw_metadata FROM photos"
     params = ()
@@ -109,6 +113,8 @@ def plan(conn, folder=None):
         reasons = why_stale(row)
         if reasons:
             stale[row[0]] = reasons   # re-reading the file fixes its captions too
+            if seen is not None:
+                seen[row[0]] = (row[1], row[2])
             continue
         fixed = distinct_captions(row[4])
         if fixed is not None:
@@ -116,8 +122,21 @@ def plan(conn, folder=None):
     return stale, captions_only
 
 
-def read_files(photo_paths, db_path):
-    extractor = MetadataExtractor(mint_identities=False)
+def configured_exiftool():
+    """The ExifTool config.ini names, as the apps use it; None to look on PATH."""
+    import configparser
+
+    config = configparser.ConfigParser(interpolation=None)
+    config.read(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "config.ini"), encoding="utf-8")
+    configured = config.get("paths", "exiftool", fallback="").strip()
+    return os.path.expandvars(configured) if configured else None
+
+
+def read_files(photo_paths, db_path, exiftool_path=None):
+    # The ExifTool the apps use. Without it this looked on PATH, and where ExifTool is
+    # not there every file read as unreadable and nothing was refreshed.
+    extractor = MetadataExtractor(exiftool_path=exiftool_path, mint_identities=False)
     records = {}
     for start in range(0, len(photo_paths), BATCH):
         batch = photo_paths[start:start + BATCH]
@@ -151,21 +170,33 @@ def differences(conn, path, record):
         changed.append("mtime/size")
     if not doc_id and record.get("document_id"):
         changed.append("document_id")
-    return changed, json.loads(captions or "[]")
+    return changed, json.loads(captions or "[]"), (mtime, size)
 
 
-def record_all(db_path, records, to_write, captions_only):
-    """Write both kinds of fix in one transaction. Returns (from files, captions only)."""
+def record_all(db_path, records, to_write, captions_only, seen=None):
+    """Write both kinds of fix in one transaction. Returns (from files, captions only).
+
+    `seen` is each row's (mtime, size) as plan() found it, before the files were
+    read. A row only takes the file's contents if it still has them: one the app saved
+    while this run was reading already describes something newer, and writing the
+    older read over it would take the save back.
+    """
+    seen = seen or {}
+
     def store(conn):
         from_files = 0
         for path in to_write:
             r = records[path]
+            guard, guard_params = "", ()
+            if path in seen:
+                guard, guard_params = " AND mtime IS ? AND size IS ?", seen[path]
             from_files += conn.execute(
                 "UPDATE photos SET tags = ?, people = ?, captions = ?, raw_metadata = ?,"
-                " mtime = ?, size = ?, document_id = COALESCE(document_id, ?) WHERE path = ?",
+                " mtime = ?, size = ?, document_id = COALESCE(document_id, ?) WHERE path = ?"
+                + guard,
                 (json.dumps(r["tags"]), json.dumps(r["people"]), json.dumps(r["captions"]),
                  json.dumps(r["raw_metadata"]), r["mtime"], r["size"], r.get("document_id"),
-                 path)).rowcount
+                 path) + tuple(guard_params)).rowcount
         captions = 0
         for path, fixed in captions_only.items():
             captions += conn.execute("UPDATE photos SET captions = ? WHERE path = ?",
@@ -181,12 +212,14 @@ def main(argv=None):
     parser.add_argument("--folder", help="only rows under this folder")
     parser.add_argument("--apply", action="store_true", help="write; the default is a dry run")
     parser.add_argument("--show", type=int, default=5, help="examples to print")
+    parser.add_argument("--exiftool", default=None,
+                        help="ExifTool to read with; the one config.ini names by default")
     args = parser.parse_args(argv)
 
     conn = tagpup_db.connect(tagpup_db.readonly_uri(args.db), uri=True)
-    records, to_write, fields, unreadable, examples = {}, [], Counter(), 0, []
+    records, to_write, fields, unreadable, examples, seen = {}, [], Counter(), 0, [], {}
     try:
-        stale, captions_only = plan(conn, args.folder)
+        stale, captions_only = plan(conn, args.folder, seen)
         print("%s\n" % args.db)
         print("rows that may not describe their file: %d" % len(stale))
         for reason, count in Counter(r for rs in stale.values() for r in rs).most_common():
@@ -196,13 +229,13 @@ def main(argv=None):
 
         if stale:
             print("\nreading %d file(s) (read-only)..." % len(stale))
-            records = read_files(sorted(stale), args.db)
+            records = read_files(sorted(stale), args.db, args.exiftool or configured_exiftool())
         for path in sorted(stale):
             record = records.get(path)
             if record is None or not record.get("raw_metadata"):
                 unreadable += 1
                 continue
-            changed, old_captions = differences(conn, path, record)
+            changed, old_captions, _now = differences(conn, path, record)
             if changed:
                 to_write.append(path)
                 fields.update(changed)
@@ -228,8 +261,11 @@ def main(argv=None):
         print("\nNothing to write.")
         return 0
     print("\nbacked up to %s" % tagpup_db.backup(args.db, "refresh"))
-    from_files, captions = record_all(args.db, records, to_write, captions_only)
+    from_files, captions = record_all(args.db, records, to_write, captions_only, seen)
     print("rows changed from their files: %d" % from_files)
+    if from_files < len(to_write):
+        print("rows left alone because they changed after this run read them: %d"
+              % (len(to_write) - from_files))
     print("rows with repeated captions removed: %d" % captions)
     return 0
 
