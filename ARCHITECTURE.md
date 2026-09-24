@@ -80,7 +80,7 @@ Guard tests, each of which fails the build. The ones marked *exists* are in plac
 - pyexiftool's classes constructed only in `tagpup.files.exiftool_session`. *Exists:* `tests/test_exiftool_single_owner.py`.
 - Photo paths spelled and compared only by `tagpup.core.paths`. *Exists:* `tests/test_paths_single_owner.py`.
 - Tags taken apart only by `tagpup.core.vocabulary`. *Exists:* `tests/test_vocabulary.py`.
-- SQL only inside `tagpup.store`.
+- SQL only inside `tagpup.store`. *Exists:* `tests/test_sql_single_owner.py`.
 - `config.ini` read, and path settings resolved, only by `tagpup.config`; inside `tagpup/`, only it finds folders from `__file__`. *Exists:* `tests/test_config_single_owner.py`.
 - ExifTool and `Image.open` only inside `tagpup.files`.
 - Entry points import services and jobs, never store, files or ml directly.
@@ -217,7 +217,7 @@ On 2026-09-24, 210 SQL calls sat outside `tagpup.store`: 65 in `scripts/index.py
 - [x] TagTuner's reads: the Identify queue and grids, the person grid, counts, the excluded list, the tag list and the people list (#49, #50), as store functions. Every read route answered byte for byte as before on copies of both libraries.
 - [x] TagPup's reads, the runner, the CLI, the embedder, the suggester and the writer.
 - [x] The maintenance scripts: each calls store functions, or retires once a dry run shows it has nothing left to do on either library. Five retired *(owner, 2026-09-24)*: `canonicalize_paths`, `repair_bare_person_tags`, `tidy_exclusion_reasons`, `restore_face_names`, `cache_all_crops`.
-- [ ] Guard: no SQL outside `tagpup.store`.
+- [x] Guard: no SQL outside `tagpup.store` (`tests/test_sql_single_owner.py`). It finds all 43 statements in TagTuner's server as it was.
 - [ ] `tools/doctor.py`: the library's invariants, read-only, with counts. The schema is current; every face points at a photo; no named face is excluded; face names are among their photo's people (#42); the tree has no orphans; rows whose file is gone, by folder.
 
 Exit: the servers contain no SQL.
