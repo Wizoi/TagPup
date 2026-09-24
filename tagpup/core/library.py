@@ -83,6 +83,19 @@ NOT_LIBRARIES = frozenset({"validation_index.db", "validation_perf.db",
 #: creates only test libraries, under their names without it.
 TEST_PREFIX = "test_"
 
+def for_mode(file_name, test_mode):
+    """`file_name`, a library's file name, as test mode names it or not: with
+    TEST_PREFIX, or without. The runner, the TagPup server and the CLI each added and
+    took off the prefix by hand (docs/findings.md, #74)."""
+    plain = file_name[len(TEST_PREFIX):] if file_name.startswith(TEST_PREFIX) else file_name
+    return TEST_PREFIX + plain if test_mode else plain
+
+
+def is_test_library(db_path):
+    """Is the library at `db_path` (or of that file name) a test library?"""
+    return os.path.basename(db_path).startswith(TEST_PREFIX)
+
+
 #: The one library a picker offers when the data folder holds none.
 FIRST_LIBRARY = "photo_index"
 

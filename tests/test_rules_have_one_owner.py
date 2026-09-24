@@ -185,5 +185,25 @@ class TheEmbeddersSettings(unittest.TestCase):
             ClipEmbedder(model="ViT-T")
 
 
+class ATestLibrarysName(unittest.TestCase):
+    """A test library's file starts with tagpup.core.library.TEST_PREFIX, and the library
+    module adds and takes it off: the runner, the TagPup server and the CLI each did it
+    by hand, eleven times, with a [5:] for its length."""
+
+    def test_the_library_module_says_it(self):
+        from tagpup.core import library
+        self.assertEqual("test_harbour.db", library.for_mode("harbour.db", True))
+        self.assertEqual("test_harbour.db", library.for_mode("test_harbour.db", True))
+        self.assertEqual("harbour.db", library.for_mode("test_harbour.db", False))
+        self.assertEqual("harbour.db", library.for_mode("harbour.db", False))
+        self.assertTrue(library.is_test_library("D:/data/test_harbour.db"))
+        self.assertFalse(library.is_test_library("D:/test_data/harbour.db"))
+
+    def test_nobody_else_spells_it(self):
+        # tools/ names test modules, not libraries.
+        found = sources_matching(r"[\"']test_[\"']", os.path.join("tagpup", "core", "library.py"))
+        self.assertEqual([], [path for path in found if not path.startswith("tools")])
+
+
 if __name__ == "__main__":
     unittest.main()

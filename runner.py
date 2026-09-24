@@ -643,13 +643,7 @@ class RunnerApp:
         self.refresh_database_list()
 
     def sync_test_mode_db(self):
-        default_db = tagpup_config.default_db()
-        if self.var_test_db.get():
-            if not default_db.startswith("test_"):
-                default_db = "test_" + default_db
-        else:
-            if default_db.startswith("test_"):
-                default_db = default_db[5:]
+        default_db = libraries.for_mode(tagpup_config.default_db(), self.var_test_db.get())
         tagpup_config.remember_library(default_db)
 
     def refresh_database_list(self):
@@ -675,7 +669,7 @@ class RunnerApp:
             
         # Determine actual file name based on test mode
         test_mode = self.var_test_db.get()
-        db_name = (("test_" if test_mode else "") + selected_name + ".db")
+        db_name = libraries.for_mode(selected_name + ".db", test_mode)
         
         tagpup_config.remember_library(db_name)
         self.log_text(f"Switched working database to: {db_name}\n", tag="info")
@@ -794,13 +788,7 @@ class RunnerApp:
                         port += 1
 
         # Select correct database depending on global setting and config.ini
-        default_db = tagpup_config.default_db()
-        if self.var_test_db.get():
-            if not default_db.startswith("test_"):
-                default_db = "test_" + default_db
-        else:
-            if default_db.startswith("test_"):
-                default_db = default_db[5:]
+        default_db = libraries.for_mode(tagpup_config.default_db(), self.var_test_db.get())
         db_path = tagpup_config.library_path(default_db)
 
         port = find_available_port(8080)
@@ -908,13 +896,7 @@ class RunnerApp:
                         port += 1
 
         # Select correct database depending on global setting and config.ini
-        default_db = tagpup_config.default_db()
-        if self.var_test_db.get():
-            if not default_db.startswith("test_"):
-                default_db = "test_" + default_db
-        else:
-            if default_db.startswith("test_"):
-                default_db = default_db[5:]
+        default_db = libraries.for_mode(tagpup_config.default_db(), self.var_test_db.get())
         db_path = tagpup_config.library_path(default_db)
 
         port = find_available_port(8090)
@@ -1014,7 +996,7 @@ class RunnerApp:
             cmd.append("--test")
         db_val = self.combo_db.get()
         if db_val:
-            db_name = ("test_" if self.var_test_db.get() else "") + db_val + ".db"
+            db_name = libraries.for_mode(db_val + ".db", self.var_test_db.get())
             cmd.extend(["--db", db_name])
             
         cmd.extend(["index", directory])
@@ -1042,7 +1024,7 @@ class RunnerApp:
             cmd.append("--test")
         db_val = self.combo_db.get()
         if db_val:
-            db_name = ("test_" if self.var_test_db.get() else "") + db_val + ".db"
+            db_name = libraries.for_mode(db_val + ".db", self.var_test_db.get())
             cmd.extend(["--db", db_name])
             
         cmd.extend(["index-faces", directory])
@@ -1055,7 +1037,7 @@ class RunnerApp:
             cmd.append("--test")
         db_val = self.combo_db.get()
         if db_val:
-            db_name = ("test_" if self.var_test_db.get() else "") + db_val + ".db"
+            db_name = libraries.for_mode(db_val + ".db", self.var_test_db.get())
             cmd.extend(["--db", db_name])
             
         cmd.append("cluster-faces")
@@ -1092,7 +1074,7 @@ class RunnerApp:
             cmd.append("--test")
         db_val = self.combo_db.get()
         if db_val:
-            db_name = ("test_" if self.var_test_db.get() else "") + db_val + ".db"
+            db_name = libraries.for_mode(db_val + ".db", self.var_test_db.get())
             cmd.extend(["--db", db_name])
             
         cmd.extend(["suggest", directory, "--output", output_file])

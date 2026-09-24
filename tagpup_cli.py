@@ -61,6 +61,7 @@ from tagpup.store import faces as store_faces
 from tagpup.store import taxonomy as store_taxonomy
 from tagpup.core import suggesting
 from tagpup.files import images as image_files
+from tagpup.core import library as libraries
 from tagpup.core.library import Library
 
 def get_config():
@@ -89,9 +90,8 @@ def get_db_path(config, test_mode=False, cli_db=None):
     if env_db:
         return env_db
 
-    default_db = tagpup_config.default_db(config)
-    plain = default_db[5:] if default_db.startswith("test_") else default_db
-    return os.path.join(tagpup_config.data_dir(config), "test_" + plain if test_mode else plain)
+    return os.path.join(tagpup_config.data_dir(config),
+                        libraries.for_mode(tagpup_config.default_db(config), test_mode))
 
 def scan_for_images(dir_path: str) -> List[str]:
     """Recursively scan directory for image files, in the form the index stores.

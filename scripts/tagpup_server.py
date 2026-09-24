@@ -175,7 +175,7 @@ def resolve_library_from_url(handler, set_active):
 
     # Determine if we are in test mode based on startup database
     startup_db = os.path.basename(handler.__class__.db_path)
-    test_mode = startup_db.startswith("test_")
+    test_mode = libraries.is_test_library(startup_db)
 
     def library_file(db_name):
         # The startup library is the file the server was started on. Looking it up by
@@ -194,14 +194,7 @@ def resolve_library_from_url(handler, set_active):
         # page's own files.
         RESERVED_PATHS = set(libraries.ROUTES) | {"index.html", "style.css", "app.js", "favicon.ico", ""}
         if potential_db not in RESERVED_PATHS and not potential_db.endswith((".css", ".js", ".html", ".png", ".jpg", ".jpeg", ".ico")):
-            db_name = potential_db + ".db"
-
-            if test_mode:
-                if not db_name.startswith("test_"):
-                    db_name = "test_" + db_name
-            else:
-                if db_name.startswith("test_"):
-                    db_name = db_name[5:]
+            db_name = libraries.for_mode(potential_db + ".db", test_mode)
 
             resolved_db_path = library_file(db_name)
             if not os.path.exists(resolved_db_path) and db_name != startup_db:
@@ -230,9 +223,7 @@ def resolve_library_from_url(handler, set_active):
     db_name = startup_db
 
     if path in ["/", "/index.html", "/style.css", "/app.js"]:
-        clean_url_name = os.path.splitext(db_name)[0]
-        if clean_url_name.startswith("test_"):
-            clean_url_name = clean_url_name[5:]
+        clean_url_name = libraries.picker_name(db_name)
         new_path = f"/{clean_url_name}{handler.path}"
         handler.send_response(302)
         handler.send_header("Location", new_path)

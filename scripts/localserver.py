@@ -226,7 +226,7 @@ def create_library(handler, db_name, create):
     if problem:
         handler.send_json_error(400, problem)
         return
-    file_name = libraries.TEST_PREFIX + db_name if _test_mode(handler) else db_name
+    file_name = libraries.for_mode(db_name, _test_mode(handler))
     db_path = tagpup_config.library_path(file_name).replace("\\", "/")  # not a path: a database file
     try:
         if not os.path.exists(db_path):
@@ -239,7 +239,7 @@ def create_library(handler, db_name, create):
 
 def _test_mode(handler):
     """Was this server started on a test library?"""
-    return os.path.basename(type(handler).db_path).startswith(libraries.TEST_PREFIX)
+    return libraries.is_test_library(type(handler).db_path)
 
 
 def send_image(handler, content, content_type, cache_seconds=None):
