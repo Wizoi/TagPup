@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 from tagpup.store import db, generations, schema
 
@@ -153,9 +154,13 @@ class AnUnmigratedLibrary(SchemaTestCase):
         conn = self.connect()
         self.assertEqual(("Wren Halloway", 0), conn.execute("SELECT name, excluded FROM faces").fetchone())
 
-    def test_is_copied_once_before_its_crops_move(self):
-        # Migration 3 moves data; the others add tables, columns and triggers.
-        schema.ensure(self.db_path)
+    def test_is_copied_once_before_it_is_migrated(self):
+        # However many pending migrations rewrite data, one copy from before the first
+        # holds the library as it was for all of them: a second was another 3 GB of
+        # photo_index, and another of the five kept (#76).
+        another = schema.Migration(schema.LATEST + 1, "another rewrite", lambda conn: None, changes_data=True)
+        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS + (another,)):
+            schema.ensure(self.db_path)
         self.assertEqual(1, len(os.listdir(os.path.join(self.dir, "backups"))))
 
     def test_its_crops_move_to_their_own_table_and_go_with_their_face(self):

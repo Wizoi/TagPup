@@ -310,11 +310,15 @@ def _ensure(db_path):
             conn.execute("CREATE TABLE IF NOT EXISTS schema_version ("
                          " version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)")
             conn.commit()
+            # One copy, from before the first migration that rewrites data: it holds the
+            # library as it was for every one after it too.
+            backed_up = False
             for migration in MIGRATIONS:
                 if version(conn) >= migration.version:
                     continue
-                if migration.changes_data and _has_rows(conn):
+                if migration.changes_data and not backed_up and _has_rows(conn):
                     logger.info("Backed up to %s", db.backup(db_path, "migration-%d" % migration.version))
+                    backed_up = True
                 conn.execute("BEGIN IMMEDIATE")
                 try:
                     # Again inside the transaction: another process may have got here first.
