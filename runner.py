@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
 import paths
 from tagpup import config as tagpup_config
+from tagpup.core import library as libraries
 from tagpup.store import db as tagpup_db
 from tuner_server import TunerHTTPRequestHandler, ThreadedHTTPServer as TunerThreadedHTTPServer
 from tagpup_server import TagPupHTTPRequestHandler, ThreadedHTTPServer as TagPupThreadedHTTPServer
@@ -657,45 +658,9 @@ class RunnerApp:
 
         test_mode = self.var_test_db.get()
         
-        EXCLUDED_DBS = {
-            "validation_index.db",
-            "validation_perf.db",
-            "multiple_db_startup.db",
-            "tag_emb_cache.db"
-        }
-        
-        databases = []
-        if os.path.exists(data_dir):
-            for file in os.listdir(data_dir):
-                if file.endswith(".db"):
-                    if file in EXCLUDED_DBS or file.startswith("test_tag_emb_cache.db"):
-                        continue
-                    
-                    if test_mode:
-                        if file.startswith("test_"):
-                            clean_name = file[5:]
-                            if clean_name in EXCLUDED_DBS:
-                                continue
-                            db_base = os.path.splitext(clean_name)[0]
-                            if db_base not in databases:
-                                databases.append(db_base)
-                    else:
-                        if not file.startswith("test_"):
-                            db_base = os.path.splitext(file)[0]
-                            if db_base not in databases:
-                                databases.append(db_base)
-                                
-        if not databases:
-            databases = ["photo_index"]
-            
-        # Sort and update combobox
-        databases = sorted(databases)
-        self.combo_db["values"] = databases
-        
-        # Determine currently selected
-        clean_default_db = os.path.splitext(default_db)[0]
-        if clean_default_db.startswith("test_"):
-            clean_default_db = clean_default_db[5:]
+        files = os.listdir(data_dir) if os.path.exists(data_dir) else []
+        databases = libraries.picker_names(files, test_mode)
+        clean_default_db = libraries.picker_name(default_db)
             
         if clean_default_db in databases:
             self.combo_db.set(clean_default_db)

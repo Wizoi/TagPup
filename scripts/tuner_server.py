@@ -29,6 +29,7 @@ import _root  # noqa: F401
 from tagpup import config as tagpup_config
 from tagpup.core import dates, vocabulary
 from tagpup.core.library import Library
+from tagpup.core import library as libraries
 from tagpup.services import tagging as tagging_actions
 
 logger = logging.getLogger("tagtuner.server")
@@ -345,39 +346,9 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         startup_db = os.path.basename(self.__class__.db_path)
         test_mode = startup_db.startswith("test_")
         
-        EXCLUDED_DBS = {
-            "validation_index.db",
-            "validation_perf.db",
-            "multiple_db_startup.db",
-            "tag_emb_cache.db"
-        }
-        
-        databases = []
-        if os.path.exists(data_dir):
-            for file in os.listdir(data_dir):
-                if file.endswith(".db"):
-                    if file in EXCLUDED_DBS or file.startswith("test_tag_emb_cache.db"):
-                        continue
-                    if test_mode:
-                        if file.startswith("test_"):
-                            clean_name = file[5:]
-                            if clean_name in EXCLUDED_DBS:
-                                continue
-                            db_base = os.path.splitext(clean_name)[0]
-                            if db_base not in databases:
-                                databases.append(db_base)
-                    else:
-                        if not file.startswith("test_"):
-                            db_base = os.path.splitext(file)[0]
-                            if db_base not in databases:
-                                databases.append(db_base)
-                        
-        if not databases:
-            databases = ["photo_index"]
-            
-        clean_default_db = os.path.splitext(default_db)[0]
-        if clean_default_db.startswith("test_"):
-            clean_default_db = clean_default_db[5:]
+        files = os.listdir(data_dir) if os.path.exists(data_dir) else []
+        databases = libraries.picker_names(files, test_mode)
+        clean_default_db = libraries.picker_name(default_db)
             
         self.send_json({
             "databases": sorted(databases),
@@ -396,11 +367,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             self.send_json_error(400, "Invalid database name")
             return
             
-        if not db_name.endswith(".db"):
-            db_name = db_name + ".db"
-            
-        if db_name.startswith("test_"):
-            db_name = db_name[5:]
+        db_name = libraries.file_name_for(db_name)
             
         try:
             tagpup_config.remember_library(db_name)
@@ -420,33 +387,17 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             self.send_json_error(400, "Invalid database name")
             return
             
-        if not db_name.endswith(".db"):
-            db_name = db_name + ".db"
+        db_name = libraries.file_name_for(db_name)
             
-        if db_name.startswith("test_"):
-            db_name = db_name[5:]
-            
-        import re
-        if not re.match(r"^[a-zA-Z0-9_\-]+\.db$", db_name):
-            self.send_json_error(400, "Invalid characters in database name")
-            return
-            
-        EXCLUDED_DBS = {
-            "validation_index.db",
-            "validation_perf.db",
-            "multiple_db_startup.db",
-            "tag_emb_cache.db"
-        }
-        if db_name in EXCLUDED_DBS:
-            self.send_json_error(400, "Cannot create database with reserved test name")
+        problem = libraries.problem_with_new_name(db_name)
+        if problem:
+            self.send_json_error(400, problem)
             return
             
         startup_db = os.path.basename(self.__class__.db_path)
         test_mode = startup_db.startswith("test_")
         
-        fs_db_name = db_name
-        if test_mode:
-            fs_db_name = "test_" + db_name
+        fs_db_name = libraries.TEST_PREFIX + db_name if test_mode else db_name
             
         db_path = tagpup_config.library_path(fs_db_name).replace("\\", "/")  # not a path: a database file, spelled as the other db paths here are
 

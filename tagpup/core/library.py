@@ -10,6 +10,7 @@ Names only: no connection is opened here. It takes the path as given, so every
 file name it derives is spelled exactly as before.
 """
 import os
+import re
 
 
 class Library:
@@ -77,3 +78,73 @@ class Library:
 
     def _beside(self, suffix):
         return os.path.splitext(self.path)[0] + suffix
+
+
+# The library picker. Both servers and the runner each listed the libraries in the data
+# folder, and chose and created them, with their own copy of these rules -- five copies
+# of the list below among them.
+
+#: Files in a data folder that are not libraries anybody made: test fixtures, and the
+#: shared cache of tag embeddings.
+NOT_LIBRARIES = frozenset({"validation_index.db", "validation_perf.db",
+                           "multiple_db_startup.db", "tag_emb_cache.db"})
+
+#: What a test library's file name starts with. A server started on one shows and
+#: creates only test libraries, under their names without it.
+TEST_PREFIX = "test_"
+
+#: The one library a picker offers when the data folder holds none.
+FIRST_LIBRARY = "photo_index"
+
+
+def picker_names(file_names, test_mode):
+    """The library names a picker offers, from the file names in a data folder, sorted.
+
+    A server started on a test library offers only the test libraries, by their names
+    without the prefix; any other offers only the rest.
+    """
+    names = []
+    for file_name in file_names:
+        if not file_name.endswith(".db"):
+            continue
+        if file_name in NOT_LIBRARIES or file_name.startswith(TEST_PREFIX + "tag_emb_cache.db"):
+            continue
+        if test_mode:
+            if not file_name.startswith(TEST_PREFIX):
+                continue
+            clean = file_name[len(TEST_PREFIX):]
+            if clean in NOT_LIBRARIES:
+                continue
+            name = os.path.splitext(clean)[0]
+        else:
+            if file_name.startswith(TEST_PREFIX):
+                continue
+            name = os.path.splitext(file_name)[0]
+        if name not in names:
+            names.append(name)
+    return sorted(names) or [FIRST_LIBRARY]
+
+
+def picker_name(file_name):
+    """The name a picker shows for a library file: photo_index.db -> photo_index."""
+    name = os.path.splitext(file_name)[0]
+    return name[len(TEST_PREFIX):] if name.startswith(TEST_PREFIX) else name
+
+
+def file_name_for(name):
+    """The file a library name from a page names: "Harbour" -> "Harbour.db". A test
+    prefix is the server's to add, never the page's, and is taken off."""
+    if not name.endswith(".db"):
+        name = name + ".db"
+    if name.startswith(TEST_PREFIX):
+        name = name[len(TEST_PREFIX):]
+    return name
+
+
+def problem_with_new_name(file_name):
+    """Why a library cannot be created under this file name, or None if it can."""
+    if not re.match(r"^[a-zA-Z0-9_\-]+\.db$", file_name):
+        return "Invalid characters in database name"
+    if file_name in NOT_LIBRARIES:
+        return "Cannot create database with reserved test name"
+    return None

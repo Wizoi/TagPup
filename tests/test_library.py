@@ -9,6 +9,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
+from tagpup.core import library  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
@@ -78,6 +79,32 @@ class BackupsGoBesideTheLibrary(unittest.TestCase):
         db.connect(library).close()
         elsewhere = os.path.join(home, "kept")
         self.assertEqual(os.path.dirname(db.backup(library, "test", into=elsewhere)), elsewhere)
+
+
+class ThePicker(unittest.TestCase):
+    """What both servers and the runner offer, choose and create -- one set of rules."""
+
+    FOLDER = ["photo_index.db", "kr-track.db", "notes.txt", "tag_emb_cache.db",
+              "validation_index.db", "test_photo_index.db", "test_kr-track.db",
+              "test_validation_perf.db", "test_tag_emb_cache.db"]
+
+    def test_it_offers_the_libraries_and_nothing_else(self):
+        self.assertEqual(library.picker_names(self.FOLDER, test_mode=False), ["kr-track", "photo_index"])
+
+    def test_a_test_server_offers_only_the_test_libraries_by_their_plain_names(self):
+        self.assertEqual(library.picker_names(self.FOLDER, test_mode=True), ["kr-track", "photo_index"])
+        self.assertEqual(library.picker_names(["photo_index.db"], test_mode=True), ["photo_index"],
+                         "an empty list offers the first library")
+
+    def test_a_name_from_the_page_names_a_file(self):
+        self.assertEqual(library.file_name_for("Harbour"), "Harbour.db")
+        self.assertEqual(library.file_name_for("test_Harbour.db"), "Harbour.db")
+        self.assertEqual(library.picker_name("test_photo_index.db"), "photo_index")
+
+    def test_a_new_library_needs_a_plain_name(self):
+        self.assertIsNone(library.problem_with_new_name("kr-track_2.db"))
+        self.assertIsNotNone(library.problem_with_new_name("kr track.db"))
+        self.assertIsNotNone(library.problem_with_new_name("tag_emb_cache.db"))
 
 
 if __name__ == "__main__":
