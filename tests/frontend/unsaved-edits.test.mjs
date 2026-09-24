@@ -406,6 +406,22 @@ describe("leaving a field is not saving", () => {
   });
 });
 
+describe("changing dog park closes the folder", () => {
+  test("no photo is left open, and its rows are gone", async (t) => {
+    // The folder was emptied underneath the photo on screen: its details stayed
+    // editable and its rows clickable, for a folder no longer open.
+    const { window, document } = await onFirstPhoto(t);
+    window.confirm = () => true;
+    click(window, document.getElementById("btn-change-db"));
+    await settle(window);
+
+    assert.equal(activePath(document), null);
+    assert.equal(rows(document).length, 0);
+    assert.ok(document.getElementById("panel-content").classList.contains("hidden"),
+      "the closed folder's photo is still in Image Details");
+  });
+});
+
 describe("typing while a scan is still running", () => {
   // The scan asks before it starts, and nothing asked when it came back: what was
   // typed in between was overwritten by a refresh, or dropped by another folder.

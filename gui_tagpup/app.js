@@ -140,6 +140,11 @@ document.addEventListener('DOMContentLoaded', () => {
             url.searchParams.delete('path');
             window.history.replaceState({}, '', url);
             updateCurrentFolderLabel();
+            // Close the photo too, and the list: both still showed the folder just
+            // closed, editable and clickable. Edits were settled before this ran.
+            openFolderView();
+            renderFileList();
+            updateListStats();
             if (dbSelect) dbSelect.focus();
         }
 
