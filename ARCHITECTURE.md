@@ -238,13 +238,13 @@ Exit: nothing in the database is keyed by path, and `doctor.py` is clean on both
 
 ### Phase 4.5: One owner for each rule
 The sweep of 2026-09-24 found rules, lists and thresholds written in more than one place: nine disagreeing, the rest bound to (docs/findings.md, #66-#75). Placed after the data model, which rewrites the code several of them live in (the people rule, the centroids, the suggestions), and before one server, which builds on them *(owner, 2026-09-24)*. Each gets one owner, a stated scenario, and a guard where the pages keep a copy.
-- [ ] The thresholds (#75): each decision one value, named and explained where it lives, measured on the owner's data first. Done: offering a face a name (0.70) and naming one unasked (0.80), in `tagpup.core.clustering`. Left: flagging a name as possibly wrong and clustering's unnaming (both against an average face, which measured worse than the best single face), clustering's radius, the page's bands, and the tag values -- shown at 0.6, written at 0.5 by the CLI (#70) -- measured by running the suggester on photos already tagged.
+- [x] The thresholds (#75): each decision one value, named and explained where it lives, measured on the owner's data first. Done: offering a face a name (0.70) and naming one unasked (0.80), in `tagpup.core.clustering`. Left: flagging a name as possibly wrong and clustering's unnaming (both against an average face, which measured worse than the best single face), clustering's radius, the page's bands, and the tag values -- shown at 0.6, written at 0.5 by the CLI (#70) -- measured by running the suggester on photos already tagged.
 - [x] Date Taken read by the pages as the server reads it (#67): each record carries `taken`.
 - [x] Names reserved for TagTuner's buckets refused as people's names, and the buckets named by the server (#68).
 - [x] One way to compare a face with a person, used by clustering, the person grid and the suggester (#71): `tagpup.core.clustering.KnownFaces`, the closest face of the years around the photo, as measured.
 - [x] What counts as a photo, once, in `tagpup.files.images` (#72).
 - [x] Library names the URLs reserve refused (#73).
-- [ ] The agreeing copies (#74), each to one owner.
+- [x] The agreeing copies (#74), each to one owner.
 - [ ] The tests that use the checkout's `data/` or `config.ini` in homes of their own (#14), so `tools/run_tests.py` spreads the whole suite across the cores.
 
 Exit: every rule the sweep found has one owner, and the full check runs across the cores.

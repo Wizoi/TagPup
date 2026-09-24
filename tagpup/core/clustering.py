@@ -58,6 +58,36 @@ OFFER_A_NAME = 0.70
 NAME_WITHOUT_ASKING = 0.80
 
 
+#: Faces at least this alike are grouped together before anyone is named: clustering's
+#: radius, and TagTuner's grouping of the nameless (DBSCAN, as a distance). Measured on
+#: `kr-track` (2026-09-24), each hand-named face against the nearest face of its own
+#: person, of anyone else, and of a stranger, never one of its own photo:
+#:
+#:     similarity   own person's reaches   someone else's   a stranger's
+#:       0.80              81%                  3.4%             0.6%
+#:       0.85              63%                  1.8%             0.1%
+#:       0.885             46%                  0.6%             0.0%
+#:       0.90              38%                  0.5%             0.0%
+#:
+#: Grouping chains faces, so each that reaches someone else can pull two people into one
+#: group; naming, from anchors and keywords, does the rest. It was 0.48 as a distance in
+#: two places. The owner kept it (2026-09-24).
+GROUPING = 0.885
+
+
+def band(similarity):
+    """The band a face this alike a person is shown in: "likely" when it could be named
+    unasked, "possible" when it would be offered, else None. TagTuner's candidates,
+    suggestions and diagnostics had four sets of numbers for this (0.75/0.60, 0.85,
+    0.8/0.65, 0.8); the server now names the band and the page shows it *(owner,
+    2026-09-24)*."""
+    if names_unasked(similarity):
+        return "likely"
+    if is_offered(similarity):
+        return "possible"
+    return None
+
+
 def distance(similarity):
     """The distance between two unit vectors whose cosine similarity is `similarity`:
     what the clustering code, which works in distances, compares against."""

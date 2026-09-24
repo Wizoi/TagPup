@@ -31,6 +31,17 @@ class TheDecisions(unittest.TestCase):
         self.assertTrue(clustering.looks_wrong(0.69))
         self.assertFalse(clustering.looks_wrong(0.70))
 
+    def test_the_bands_follow_the_two_values(self):
+        self.assertEqual("likely", clustering.band(0.80))
+        self.assertEqual("possible", clustering.band(0.79))
+        self.assertEqual("possible", clustering.band(0.70))
+        self.assertIsNone(clustering.band(0.69))
+        self.assertIsNone(clustering.band(None))
+
+    def test_grouping_is_the_radius_the_owner_kept(self):
+        self.assertEqual(0.885, clustering.GROUPING)
+        self.assertAlmostEqual(0.48, clustering.distance(clustering.GROUPING), places=2)
+
     def test_nothing_is_decided_about_nothing(self):
         for decide in (clustering.is_offered, clustering.names_unasked, clustering.looks_wrong):
             self.assertFalse(decide(None))
@@ -98,6 +109,20 @@ class OneOwner(unittest.TestCase):
             page = f.read()
         self.assertNotRegex(page, r"similarity\s*<\s*0\.\d")
         self.assertIn("possibly_wrong", page)
+
+    def test_the_page_shows_the_bands_the_server_names(self):
+        # Four sets of numbers decided Likely and Possible on the page; it keeps none.
+        with open(os.path.join(ROOT, "gui", "app.js"), encoding="utf-8") as f:
+            page = f.read()
+        self.assertEqual([], re.findall(r"(?:similarity|sim|ranked)\s*>=\s*0\.\d+", page))
+
+    def test_nobody_writes_the_radius_as_a_number(self):
+        for path in self.shipped():
+            if path.endswith(os.path.join("core", "clustering.py")):
+                continue
+            with open(path, encoding="utf-8") as f:
+                self.assertNotRegex(f.read(), r"eps\s*=\s*0\.\d|CLUSTER_EPS\s*=\s*0\.\d",
+                                    os.path.relpath(path, ROOT))
 
 
 if __name__ == "__main__":

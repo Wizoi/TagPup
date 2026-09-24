@@ -16,6 +16,13 @@ import { loadApp, FakeServer, closeAllApps } from "./harness.mjs";
 
 const NAME = "Lena Zorina";
 
+/** The band the server names for a face this alike (tagpup.core.clustering.band):
+ *  likely from 0.80, possible from 0.70. The page decides nothing from the number. */
+function bandFor(similarity) {
+  if (similarity >= 0.80) return "likely";
+  return similarity >= 0.70 ? "possible" : null;
+}
+
 /** A face as the server sends it. */
 function face(id, similarity, clusterId) {
   return {
@@ -27,6 +34,7 @@ function face(id, similarity, clusterId) {
     mtime: 0,
     year: 2025,
     similarity,
+    band: bandFor(similarity),
     cluster_id: clusterId,
     cluster_name: clusterId === -1 ? "Unclustered" : `Cluster ${clusterId + 1}`,
   };
@@ -109,7 +117,7 @@ describe("candidates that did cluster", () => {
   const mixed = [
     face(1, 0.95, 0),
     face(2, 0.93, 0),
-    face(3, 0.84, 1),
+    face(3, 0.74, 1),   // possible: from 0.70, not yet 0.80
     face(4, 0.0, -1),
   ];
 
@@ -781,7 +789,7 @@ describe("ranking a person's candidates against that person", () => {
   // cluster centroid, a number about the crowd it arrived with rather than about
   // her, so the confidence tabs read Likely (0), Possible (0) over 105 faces.
   function candidate(id, personSimilarity) {
-    return { ...face(id, 0.0, -1), person_similarity: personSimilarity };
+    return { ...face(id, 0.0, -1), person_similarity: personSimilarity, band: bandFor(personSimilarity) };
   }
 
   const crowd = [
@@ -793,10 +801,12 @@ describe("ranking a person's candidates against that person", () => {
 
   test("the tabs use resemblance to the person, not to the crowd", async (t) => {
     const { document } = await openPerson(t, crowd);
-    assert.match(document.getElementById("tab-outliers").textContent, /Possible \(2\)/);
+    // Possible from 0.70, as a name is offered (tagpup.core.clustering): 0.728 is,
+    // 0.648 is not.
+    assert.match(document.getElementById("tab-outliers").textContent, /Possible \(1\)/);
     // Named for what it holds: these are being ranked against a person, so the
     // leftovers are the ones that do not look like them.
-    assert.match(document.getElementById("tab-low-conf").textContent, /Unlikely \(2\)/);
+    assert.match(document.getElementById("tab-low-conf").textContent, /Unlikely \(3\)/);
   });
 
   test("a strong resemblance lands in Likely", async (t) => {
@@ -835,7 +845,7 @@ describe("ranking a person's candidates against that person", () => {
     const { document, window } = await openPerson(t, crowd);
     document.getElementById("tab-outliers").click();
     await new Promise((r) => window.setTimeout(r, 30));
-    assert.equal(document.querySelectorAll(".face-match-item").length, 2);
+    assert.equal(document.querySelectorAll(".face-match-item").length, 1);
   });
 });
 
@@ -847,7 +857,7 @@ describe("the third tab is named for what it holds", () => {
   // the old name. Two meanings, one word, depending on whether the person happens
   // to have reference faces.
   function ranked(id, sim) {
-    return { ...face(id, 0.0, -1), person_similarity: sim };
+    return { ...face(id, 0.0, -1), person_similarity: sim, band: bandFor(sim) };
   }
 
   test("when ranking against somebody it is Unlikely", async (t) => {

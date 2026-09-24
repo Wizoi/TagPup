@@ -54,7 +54,8 @@ UNCLUSTERED_LIMIT = 500
 
 #: How alike two faces must be to be neighbours, as a distance between unit vectors.
 #: The clustering below and the DBSCAN call it replaced use the same number.
-CLUSTER_EPS = 0.48
+#: clustering's radius as a distance (tagpup.core.clustering.GROUPING).
+CLUSTER_EPS = face_rules.distance(face_rules.GROUPING)
 
 #: How much of one row-block of the similarity matrix to hold at once, in bytes. The
 #: block is (rows x every face) float32, so this is what decides the block size -- and
@@ -91,7 +92,7 @@ def cluster_candidates(embeddings, on_progress=None):
     if count < 2:
         return np.full(count, -1, dtype=int)
 
-    similarity_floor = 1.0 - (CLUSTER_EPS * CLUSTER_EPS) / 2.0
+    similarity_floor = face_rules.GROUPING
     block_rows = int(CLUSTER_BLOCK_BYTES / (4 * max(count, 1)))
     block_rows = max(1, min(block_rows, 4096, count))
 
@@ -850,7 +851,8 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 seen.add(name)
                 top_matches.append({
                     "name": name,
-                    "similarity": float(similarities[idx])
+                    "similarity": float(similarities[idx]),
+                    "band": face_rules.band(float(similarities[idx])),
                 })
                 if len(top_matches) >= 5:
                     break
@@ -2021,12 +2023,11 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 self.send_json({"faces": [], "total_count": 0, "has_more": False})
                 return
 
-            #: Below this a suggestion is more distraction than help: the floor every
-            #: screen offers a name from (tagpup.core.clustering.is_offered). A weaker guess is
-            #: still a shortlist of one, and confirming or rejecting it costs a glance
-            #: -- which beats reading a nameless grid. The number is always shown, and a
-            #: guess under SUGGEST_CONFIDENT is labelled as the weaker thing it is.
-            SUGGEST_CONFIDENT = 0.85
+            # A group is offered a name from the value every screen offers one from
+            # (tagpup.core.clustering.is_offered): below it a suggestion is more
+            # distraction than help. A weaker guess is still a shortlist of one, and
+            # confirming or rejecting it costs a glance -- which beats reading a nameless
+            # grid. The number is always shown, and its band says how sure it is.
             self.build_progress(
                 name, "reading", 0.7, "Reading the faces already named")
             _known_ids, known_names, known_matrix = self.named_face_matrix(conn, fingerprint)
@@ -2192,8 +2193,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                         "suggested_name": suggested_name,
                         "suggested_similarity": round(suggested_sim, 3),
                         "suggestion_strength": (
-                            "likely" if suggested_sim >= SUGGEST_CONFIDENT else "possible"
-                        ) if suggested_name else None,
+                            face_rules.band(suggested_sim)) if suggested_name else None,
                         "_emb_idx": global_idx
                     })
 
@@ -2259,7 +2259,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     "suggested_name": lone_name,
                     "suggested_similarity": round(lone_sim, 3),
                     "suggestion_strength": (
-                        "likely" if lone_sim >= SUGGEST_CONFIDENT else "possible"
+                        face_rules.band(lone_sim)
                     ) if lone_name else None,
                     "_emb_idx": global_idx
                 })
@@ -2281,10 +2281,13 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     face["person_similarity"] = round(
                         float(np.max(np.dot(seeking, embs[face.pop("_emb_idx")]))), 3
                     )
+                    face["band"] = face_rules.band(face["person_similarity"])
                 faces.sort(key=lambda x: x["person_similarity"], reverse=True)
             else:
+                # Nobody named yet: how like its own group a face is, in the same bands.
                 for face in faces:
                     face.pop("_emb_idx", None)
+                    face["band"] = face_rules.band(face["similarity"])
                 faces.sort(key=lambda x: x["similarity"], reverse=True)
 
             payload = {

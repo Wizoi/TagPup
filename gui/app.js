@@ -226,6 +226,8 @@ document.addEventListener('DOMContentLoaded', () => {
     //: TagTuner's lists of faces that are not a person's, as the server names them
     //: (tagpup.core.vocabulary.BUCKETS; tests/test_bucket_names_have_one_owner.py holds
     //: this copy to it). Nobody can be called one of them (#68).
+    //: The grids' tabs for each band the server names (tagpup.core.clustering.band).
+    const BAND_OF = Object.freeze({likely: 'high', possible: 'lower'});
     const BUCKET = Object.freeze({UNKNOWN: 'Unknown Faces', UNGROUPED: 'Ungrouped', EXCLUDED: 'Excluded'});
     const isBucket = name => Object.values(BUCKET).includes(name);
 
@@ -548,7 +550,7 @@ ${summary}${note}`)) {
             noMatches.style.textAlign = 'center';
             noMatches.style.padding = '20px';
             noMatches.style.color = 'var(--text-muted)';
-            noMatches.textContent = 'No similar unmatched faces found (similarity >= 0.8).';
+            noMatches.textContent = 'No unmatched faces alike enough to name without asking.';
             modalMatchesList.appendChild(noMatches);
             return;
         }
@@ -2737,15 +2739,7 @@ ${summary}${note}`)) {
             // One rule for which band a candidate is in, used by the counts here and
             // by the render below. They disagreeing is how a tab comes to say a number
             // it then does not show.
-            const bandOf = (f) => {
-                if (f.person_similarity !== undefined) {
-                    if (f.person_similarity >= 0.75) return 'high';
-                    return f.person_similarity >= 0.60 ? 'lower' : 'rest';
-                }
-                if (f.similarity === undefined) return 'rest';
-                if (f.similarity >= 0.9) return 'high';
-                return f.similarity >= 0.8 ? 'lower' : 'rest';
-            };
+            const bandOf = (f) => BAND_OF[f.band] || 'rest';
             const high = filteredFaces.filter(f => bandOf(f) === 'high');
             const lower = filteredFaces.filter(f => bandOf(f) === 'lower');
             
@@ -3068,21 +3062,12 @@ ${summary}${note}`)) {
                 // there is is a candidate's similarity to its own cluster -- a number
                 // about the crowd it arrived with, which is why a hundred candidates
                 // used to read Likely (0), Possible (0).
-                const ranked = face.person_similarity;
-                if (ranked !== undefined) {
-                    // Bands from the measured spread: across the people here with
-                    // reference faces, the best candidate scores a median of 0.83.
-                    if (ranked >= 0.75) high.push(face);
-                    else if (ranked >= 0.60) lower.push(face);
-                    else unclustered.push(face);
-                } else if (face.similarity !== undefined && face.similarity >= 0.9) {
-                    high.push(face);
-                } else if (face.similarity !== undefined && face.similarity >= 0.8) {
-                    lower.push(face);
-                } else {
-                    // Previously fell off the end of this chain and was dropped.
-                    unclustered.push(face);
-                }
+                // The server names the band (tagpup.core.clustering.band): against the
+                // person's faces when they have any, else against the face's own group.
+                const band = BAND_OF[face.band] || 'rest';
+                if (band === 'high') high.push(face);
+                else if (band === 'lower') lower.push(face);
+                else unclustered.push(face);
             } else {
                 if (face.possibly_wrong) {
                     outliers.push(face);
@@ -3766,13 +3751,8 @@ This photo also names ${face.other_names.join(', ')}. `
                         const sim = item.similarity;
                         simSpan.textContent = sim.toFixed(3);
                         
-                        if (sim >= 0.8) {
-                            simSpan.style.color = '#10b981';
-                        } else if (sim >= 0.65) {
-                            simSpan.style.color = '#f59e0b';
-                        } else {
-                            simSpan.style.color = '#ef4444';
-                        }
+                        simSpan.style.color = item.band === 'likely' ? '#10b981'
+                            : item.band === 'possible' ? '#f59e0b' : '#ef4444';
 
                         itemDiv.appendChild(nameSpan);
                         itemDiv.appendChild(simSpan);

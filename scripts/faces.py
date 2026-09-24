@@ -205,17 +205,18 @@ class FaceProcessor:
         # Since embeddings are L2 normalized, Cosine Distance = 0.5 * (Euclidean Distance)^2.
         # A cosine similarity cutoff of 0.85 equals a cosine distance of 0.15.
         # Euclidean eps = sqrt(2 * 0.15) = sqrt(0.3) ≈ 0.547.
-        # We use metric='euclidean' and eps=0.48. min_samples=1 so single faces can form their own cluster.
+        # Euclidean, at clustering's radius (tagpup.core.clustering.GROUPING, as a
+        # distance). min_samples=1 so single faces can form their own cluster.
         try:
             # pyrefly: ignore [missing-import] The codebase is written defensively to support both GPU and CPU execution. It wraps the import in a standard Python try/except ImportError block
             from cuml.cluster import DBSCAN as cuDBSCAN
-            db = cuDBSCAN(eps=0.48, min_samples=1, metric='euclidean')
+            db = cuDBSCAN(eps=clustering.distance(clustering.GROUPING), min_samples=1, metric='euclidean')
             labels = db.fit_predict(embeddings)
             logger.info("Using GPU-accelerated cuML DBSCAN for clustering.")
         except ImportError:
             # Fallback to CPU DBSCAN
             # n_jobs=-1 enables multi-threaded distance computation for large datasets.
-            db = DBSCAN(eps=0.48, min_samples=1, metric='euclidean', n_jobs=-1)
+            db = DBSCAN(eps=clustering.distance(clustering.GROUPING), min_samples=1, metric='euclidean', n_jobs=-1)
             labels = db.fit_predict(embeddings)
         
         # Group face index records by cluster ID
