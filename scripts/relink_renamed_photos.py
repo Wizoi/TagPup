@@ -214,18 +214,17 @@ def plan_for(db_path, exiftool_path=None):
 
 
 def apply_moves(db_path, moves):
-    def store(conn):
-        # Rows changed, not rows planned: a plan that matches nothing must say so.
-        cursor = conn.cursor()
-        photos = faces = 0
-        for move in moves:
-            photos += cursor.execute("UPDATE photos SET path = ? WHERE path = ?",
-                                     (move["to"], move["from"])).rowcount
-            faces += cursor.execute("UPDATE faces SET photo_path = ? WHERE photo_path = ?",
-                                    (move["to"], move["from"])).rowcount
-        return photos, faces
+    """Re-point each row, and its faces, at the renamed file. Returns (moved, skipped).
 
-    return tagpup_db.write_with_connection(db_path, store, label="relink renamed photos")
+    Through move_photo_rows, as Smart Rename does: it checks what the new name holds
+    first and leaves the row where it is if anything is there. This re-pointed with
+    WHERE path = ? and never looked, so a photo already browsed under its new name --
+    its faces saved there -- got a second set, which is how 233 duplicate faces were
+    made. `moved` counts rows changed, not rows planned.
+    """
+    from tagpup_server import move_photo_rows
+
+    return move_photo_rows(db_path, {move["from"]: move["to"] for move in moves})
 
 
 def main():
@@ -262,8 +261,13 @@ def main():
 
     print("\nbacked up to %s" % tagpup_db.backup(args.db, "relink"))
 
-    photos, faces = apply_moves(args.db, moves)
-    print("\nre-pointed %d of %d planned row(s), and %d face(s)." % (photos, len(moves), faces))
+    moved, skipped = apply_moves(args.db, moves)
+    print("\nre-pointed %d of %d planned row(s), with their faces." % (moved, len(moves)))
+    if skipped:
+        print("left %d where they were: the new name already has rows (look at these by hand):"
+              % len(skipped))
+        for old, new in skipped[:10]:
+            print("   %s -> %s" % (os.path.basename(old), os.path.basename(new)))
 
     remaining, still_unmatched = plan_for(args.db, args.exiftool)
     print("rows still re-pointable: %d; dead rows remaining: %d"

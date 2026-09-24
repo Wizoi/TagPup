@@ -40,7 +40,15 @@ class RelinkReportsRowsChanged(unittest.TestCase):
             {"from": r"D:\Pictures\Run\2Z6A0001.jpg", "to": r"D:\Pictures\Run\Run - 01.jpg"},
             {"from": r"D:\Pictures\Run\2Z6A0002.jpg", "to": r"D:\Pictures\Run\Run - 02.jpg"},
         ]
-        self.assertEqual(relink_renamed_photos.apply_moves(self.db, moves), (1, 2))
+        # One row moved, of the two planned; the second had nothing to move.
+        self.assertEqual(relink_renamed_photos.apply_moves(self.db, moves), (1, []))
+        conn = db.connect(self.db)
+        try:
+            faces = conn.execute("SELECT COUNT(*) FROM faces WHERE photo_path = ?",
+                                 (r"D:\Pictures\Run\Run - 01.jpg",)).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(2, faces, "the faces did not come with the row")
 
 
 if __name__ == "__main__":
