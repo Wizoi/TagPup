@@ -14,6 +14,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from tagpup_cli import cli, get_config, get_exiftool_path
+from embedder import output_dim
 import exiftool
 
 def create_dummy_jpeg(path):
@@ -82,7 +83,7 @@ class TestFunctionalCLI(unittest.TestCase):
         # Mock ML models behavior to match database expected dimensionality
         config = get_config()
         model_name = config.get("model", "name", fallback="ViT-B-32")
-        expected_dim = 768 if "ViT-L" in model_name else (1024 if "ViT-H" in model_name else 512)
+        expected_dim = output_dim(model_name) or 512   # as the CLI checks it
         mock_embed_image.return_value = [0.1] * expected_dim
         mock_embed_text.return_value = [0.1] * expected_dim
         

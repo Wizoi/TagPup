@@ -14,6 +14,33 @@ from tagpup.store import embeddings as store_embeddings
 
 logger = logging.getLogger("tagpup_cli.embedder")
 
+
+def output_dim(model_name):
+    """How long the vectors `model_name` makes are, from open_clip's own description of
+    the model; None for one it does not describe (from the hub), known only once loaded.
+
+    The CLI guessed it from the name in three places -- 768 for ViT-L, 1024 for ViT-H,
+    else 512 -- and ViT-bigG-14's are 1280: every index cleared the library's vectors,
+    and Suggest and search refused to run (docs/findings.md, #74).
+    """
+    if model_name.startswith("hf-hub:"):
+        return None   # open_clip would fetch its description from the hub to answer
+    try:
+        config = open_clip.get_model_config(model_name)
+    except Exception:
+        return None
+    return config.get("embed_dim") if config else None
+
+
+def stored_mismatch(photo_index, model_name):
+    """(stored, made) when the vectors `photo_index` holds for these settings are not the
+    length `model_name` makes; None when they are, or when either is not known."""
+    stored = photo_index.index.d if photo_index.index is not None else None
+    made = output_dim(model_name)
+    if stored is None or made is None or stored == made:
+        return None
+    return (stored, made)
+
 def pad_to_square(image: Image.Image, background_color=(0, 0, 0)) -> Image.Image:
     """Pad the image to a square with a solid background color (default black) to preserve entire frame."""
     width, height = image.size

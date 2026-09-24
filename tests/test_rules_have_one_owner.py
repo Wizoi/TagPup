@@ -127,5 +127,40 @@ class WhatClipIsAsked(unittest.TestCase):
                     self.assertIn("zero_shot_words(", line, path)
 
 
+class TheLengthOfAPhotosVector(unittest.TestCase):
+    """How long a model's vectors are is asked of open_clip, in the embedder: the CLI
+    guessed it from the model's name three times, 512 for anything not ViT-L or ViT-H,
+    and so cleared every vector on each index with ViT-bigG-14, whose are 1280."""
+
+    def test_is_the_models_own(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import embedder
+        self.assertEqual(1280, embedder.output_dim("ViT-bigG-14"))
+        self.assertEqual(1024, embedder.output_dim("ViT-H-14"))
+        self.assertEqual(512, embedder.output_dim("ViT-B-32"))
+        self.assertIsNone(embedder.output_dim("hf-hub:somebody/unknown-model"))
+
+    def test_the_library_is_compared_with_it(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import embedder
+
+        class Index:
+            def __init__(self, d):
+                self.index = type("Vectors", (), {"d": d})() if d else None
+
+        self.assertIsNone(embedder.stored_mismatch(Index(1280), "ViT-bigG-14"))
+        self.assertIsNone(embedder.stored_mismatch(Index(None), "ViT-bigG-14"))
+        self.assertIsNone(embedder.stored_mismatch(Index(7), "hf-hub:somebody/unknown-model"))
+        self.assertEqual((512, 1280), embedder.stored_mismatch(Index(512), "ViT-bigG-14"))
+
+    def test_nobody_guesses_it_from_the_name(self):
+        guess = r"[\"']ViT-[LH][\"']\s+in\b"
+        found = sources_matching(guess)
+        tests = os.path.join(ROOT, "tests")
+        found += [name for name in os.listdir(tests) if name.endswith(".py")
+                  and name != "test_rules_have_one_owner.py" and re.search(guess, read(os.path.join("tests", name)))]
+        self.assertEqual([], found)
+
+
 if __name__ == "__main__":
     unittest.main()

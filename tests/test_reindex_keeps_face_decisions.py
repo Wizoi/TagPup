@@ -29,6 +29,7 @@ import db as tagpup_db
 import paths
 from index import PhotoIndex
 from tagpup_cli import cli, get_config
+from embedder import output_dim
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_face  # noqa: E402
@@ -40,8 +41,8 @@ def make_jpeg(path, color="green"):
 
 
 def expected_dim():
-    model_name = get_config().get("model", "name", fallback="ViT-B-32")
-    return 768 if "ViT-L" in model_name else (1024 if "ViT-H" in model_name else 512)
+    # The length the configured model makes, as the CLI checks it (embedder.output_dim).
+    return output_dim(get_config().get("model", "name", fallback="ViT-B-32")) or 512
 
 
 def swap_case(text):

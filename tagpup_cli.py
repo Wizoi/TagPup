@@ -48,7 +48,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scr
 
 # Load components
 from metadata import MetadataExtractor
-from embedder import ClipEmbedder
+from embedder import ClipEmbedder, stored_mismatch
 from index import PhotoIndex
 from taxonomy import TagTaxonomy
 from suggester import TagSuggester
@@ -146,15 +146,14 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     photo_index = PhotoIndex(db_path=db_path)
     photo_index.load()
 
-    # Detect dimensionality mismatch between index and current model selection
-    if photo_index.index is not None:
-        expected_dim = 768 if "ViT-L" in model_name else (1024 if "ViT-H" in model_name else 512)
-        if photo_index.index.d != expected_dim:
-            console.print(f"[yellow]Warning: Index dimensionality ({photo_index.index.d}) does not match current model {model_name} expected dimensionality ({expected_dim}). Clearing cached photo embeddings to reindex with the new model...[/yellow]")
-            try:
-                photo_index.clear_clip_embeddings()
-            except Exception as e:
-                console.print(f"[bold red]Failed to clear CLIP embeddings: {e}[/bold red]")
+    # The library's vectors against the length this model makes (embedder.stored_mismatch).
+    mismatch = stored_mismatch(photo_index, model_name)
+    if mismatch:
+        console.print(f"[yellow]Warning: Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Clearing cached photo embeddings to reindex with the new model...[/yellow]")
+        try:
+            photo_index.clear_clip_embeddings()
+        except Exception as e:
+            console.print(f"[bold red]Failed to clear CLIP embeddings: {e}[/bold red]")
 
     taxonomy = TagTaxonomy(db_path)
     taxonomy.load()
@@ -396,10 +395,10 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
         return
     
     try:
-        # Detect dimensionality mismatch
-        expected_dim = 768 if "ViT-L" in model_name else (1024 if "ViT-H" in model_name else 512)
-        if photo_index.index is not None and photo_index.index.d != expected_dim:
-            console.print(f"[bold red]Error:[/bold red] Index dimensionality ({photo_index.index.d}) does not match current model {model_name} expected dimensionality ({expected_dim}). Please run 'index' first to rebuild the index using the new model.")
+        # The library's vectors against the length this model makes (embedder.stored_mismatch).
+        mismatch = stored_mismatch(photo_index, model_name)
+        if mismatch:
+            console.print(f"[bold red]Error:[/bold red] Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Please run 'index' first to rebuild the index using the new model.")
             return
 
         taxonomy = TagTaxonomy(db_path)
@@ -566,10 +565,10 @@ def search(ctx, query: str, k: int):
         return
         
     try:
-        # Detect dimensionality mismatch
-        expected_dim = 768 if "ViT-L" in model_name else (1024 if "ViT-H" in model_name else 512)
-        if photo_index.index is not None and photo_index.index.d != expected_dim:
-            console.print(f"[bold red]Error:[/bold red] Index dimensionality ({photo_index.index.d}) does not match current model {model_name} expected dimensionality ({expected_dim}). Please run 'index' first to rebuild the index using the new model.")
+        # The library's vectors against the length this model makes (embedder.stored_mismatch).
+        mismatch = stored_mismatch(photo_index, model_name)
+        if mismatch:
+            console.print(f"[bold red]Error:[/bold red] Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Please run 'index' first to rebuild the index using the new model.")
             return
 
         # Embed text query
