@@ -311,6 +311,11 @@ document.addEventListener('DOMContentLoaded', () => {
     let detailSaveInFlight = null;
     let leavePrompt = null;
 
+    // The title showPhoto last put in the field, and for which photo. A refresh shows
+    // the same photo again; if the field no longer holds what was put there, somebody
+    // is typing, and the refresh must not write over it. Up here for the same reason.
+    let titleShown = { path: null, title: '' };
+
     // Abort controller for scan fetches
     let scanAbortController = null;
 
@@ -1589,50 +1594,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 return res.json();
             })
             .then(data => {
-                scannedFolder = path;
-                updateCurrentFolderLabel();
-                folderPhotos = data;
-                updateListStats();
-                
-                // Update URL search path parameter
-                const url = new URL(window.location);
-                url.searchParams.set('path', path);
-                window.history.replaceState({}, '', url);
-                
-                // Save to cache
-                saveToLocalStorageCache();
-                
-                // Show folder view header item
-                folderViewHeader.classList.remove('hidden');
-                
-                // Enable suggest tags button
-                updateSuggestButtonState();
-                btnToggleRename.disabled = false;
-                btnToggleTimeshift.disabled = false;
-                btnFolderAutoApply.disabled = true;
-                
-                renderFileList();
-                updateTagsDatalist();
-                updatePeopleDatalist();
-                populateCameraModelsDropdown();
-                
-                // Start tracking background progress check
-                checkSuggestionsStatus(path);
-                
-                // If active photo path is set, reload its data
-                if (activePhotoPath) {
-                    const matched = folderPhotos.find(p => p.path === activePhotoPath);
-                    if (matched) {
-                        selectPhoto(activePhotoPath);
-                    } else {
-                        showFolderView();
-                    }
-                } else {
-                    showFolderView();
+                // The scan asked about unsaved edits before it began; anything typed
+                // while it ran has not been asked about. The photo being edited is
+                // still here after a refresh, and showPhoto keeps what is being typed.
+                // If it is not -- another folder -- ask now, before it is replaced.
+                const stillHere = activePhotoPath && data.some(p => samePath(p.path, activePhotoPath));
+                if (!stillHere && hasUnsavedEdits()) {
+                    leavePhotoThen(() => showScannedFolder(path, data), {
+                        onStay: () => {
+                            // Keep editing: the folder still open goes back on screen.
+                            folderPathInput.value = scannedFolder || '';
+                            renderFileList();
+                            updateListStats();
+                            statusDot.className = 'status-indicator-dot';
+                            statusText.textContent = 'Ready';
+                        },
+                    });
+                    return;
                 }
-
-                statusDot.className = 'status-indicator-dot';
-                statusText.textContent = 'Ready';
+                showScannedFolder(path, data);
             })
             .catch(err => {
                 if (err.name === 'AbortError') return;
@@ -1642,6 +1622,53 @@ document.addEventListener('DOMContentLoaded', () => {
                 statusText.textContent = 'Error';
                 alert("Error scanning folder: " + err.message);
             });
+    }
+
+    function showScannedFolder(path, data) {
+        scannedFolder = path;
+        updateCurrentFolderLabel();
+        folderPhotos = data;
+        updateListStats();
+
+        // Update URL search path parameter
+        const url = new URL(window.location);
+        url.searchParams.set('path', path);
+        window.history.replaceState({}, '', url);
+
+        // Save to cache
+        saveToLocalStorageCache();
+
+        // Show folder view header item
+        folderViewHeader.classList.remove('hidden');
+
+        // Enable suggest tags button
+        updateSuggestButtonState();
+        btnToggleRename.disabled = false;
+        btnToggleTimeshift.disabled = false;
+        btnFolderAutoApply.disabled = true;
+
+        renderFileList();
+        updateTagsDatalist();
+        updatePeopleDatalist();
+        populateCameraModelsDropdown();
+
+        // Start tracking background progress check
+        checkSuggestionsStatus(path);
+
+        // If active photo path is set, reload its data
+        if (activePhotoPath) {
+            const matched = folderPhotos.find(p => p.path === activePhotoPath);
+            if (matched) {
+                selectPhoto(activePhotoPath);
+            } else {
+                showFolderView();
+            }
+        } else {
+            showFolderView();
+        }
+
+        statusDot.className = 'status-indicator-dot';
+        statusText.textContent = 'Ready';
     }
 
     /**
@@ -2785,7 +2812,10 @@ Click to add ${namesSomebody} to this photo.`;
             }
         }
         detailDateTaken.textContent = dateVal;
-        inputPhotoTitle.value = photo.title || '';
+        // The same photo shown again -- a refresh -- keeps a title being typed.
+        const typing = titleShown.path === path && inputPhotoTitle.value !== titleShown.title;
+        if (!typing) inputPhotoTitle.value = photo.title || '';
+        titleShown = { path, title: photo.title || '' };
         updateSaveButton();
 
         renderTags(photo.tags);

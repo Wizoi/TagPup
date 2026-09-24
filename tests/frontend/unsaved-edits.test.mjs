@@ -405,3 +405,86 @@ describe("leaving a field is not saving", () => {
     assert.equal(saveButton(document).disabled, true);
   });
 });
+
+describe("typing while a scan is still running", () => {
+  // The scan asks before it starts, and nothing asked when it came back: what was
+  // typed in between was overwritten by a refresh, or dropped by another folder.
+  const OTHER = [{ path: "D:\\q\\x.jpg", filename: "x.jpg", tags: [], people: [], captions: [], title: "" }];
+
+  /** A server whose next scan waits until released. */
+  function heldServer() {
+    const s = server();
+    let gate = null;
+    s.routes.unshift({
+      match: "/api/folder/scan",
+      status: 200,
+      body: (url) => {
+        const photos = decodeURIComponent(url).includes("D:\\q") ? OTHER
+          : PHOTOS.map((p) => ({ ...p, tags: [...p.tags], people: [...p.people] }));
+        return gate ? gate.then(() => photos) : photos;
+      },
+    });
+    s.hold = () => {
+      let release;
+      gate = new Promise((r) => { release = r; });
+      return () => { gate = null; release(); };
+    };
+    return s;
+  }
+
+  test("a refresh keeps a title typed while it ran", async (t) => {
+    const s = heldServer();
+    const { window, document } = await onFirstPhoto(t, s);
+    const release = s.hold();
+    click(window, document.getElementById("btn-refresh-list"));
+    await settle(window);
+
+    type(window, document.getElementById("input-photo-title"), "Harbour at dusk");
+    release();
+    await settle(window, 60);
+
+    assert.equal(activePath(document), "D:\\p\\a.jpg");
+    assert.equal(document.getElementById("input-photo-title").value, "Harbour at dusk");
+    assert.equal(saveButton(document).disabled, false, "the typed title is not waiting to be saved");
+  });
+
+  test("another folder arriving asks first, and Cancel keeps this one", async (t) => {
+    const s = heldServer();
+    const { window, document } = await onFirstPhoto(t, s);
+    const release = s.hold();
+    await openFolder({ window, document }, "D:\\q", { settle: 1 });
+
+    const tagInput = document.getElementById("input-add-tag");
+    type(window, tagInput, "Sunset");
+    release();
+    await settle(window, 60);
+
+    assert.ok(prompt(document), "the new folder replaced the photo being edited without asking");
+    press(document, "Escape", document.activeElement);
+    await settle(window);
+
+    assert.equal(activePath(document), "D:\\p\\a.jpg");
+    assert.equal(tagInput.value, "Sunset");
+    assert.equal(document.getElementById("folder-path-input").value, "D:\\p");
+    assert.equal(rows(document).length, PHOTOS.length, "the open folder's rows are gone");
+  });
+
+  test("another folder arriving, Save writes the edit and then opens it", async (t) => {
+    const s = heldServer();
+    const { window, document } = await onFirstPhoto(t, s);
+    const release = s.hold();
+    await openFolder({ window, document }, "D:\\q", { settle: 1 });
+
+    // A pathed tag: a new bare keyword asks where to file it before any write.
+    type(window, document.getElementById("input-add-tag"), "Places/Beach");
+    release();
+    await settle(window, 60);
+    press(document, "Enter", document.activeElement);
+    await settle(window, 60);
+
+    const sent = saves(s);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].body.path, "D:\\p\\a.jpg");
+    assert.deepEqual(rows(document).map((r) => r.getAttribute("data-path")), ["D:\\q\\x.jpg"]);
+  });
+});

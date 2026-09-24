@@ -29,7 +29,12 @@ export class FakeServer {
     this.imageRequests = [];
   }
 
-  /** Reply with `body` (JSON-encoded) for any URL containing `match`. */
+  /**
+   * Reply with `body` (JSON-encoded) for any URL containing `match`.
+   *
+   * `body` may be a function of the URL returning the body or a promise of it, for a
+   * reply that has to arrive later -- a scan still running while someone types.
+   */
   on(match, body, { status = 200 } = {}) {
     this.routes.push({ match, body, status });
     return this;
@@ -71,14 +76,17 @@ export class FakeServer {
       const route = self.routes.find(
         (r) => url.includes(r.match) || url.includes(r.match.replace(/^\//, ""))
       );
-      const payload = route ? route.body : [];
       const status = route ? route.status : 200;
-      return Promise.resolve({
+      const reply = (payload) => ({
         ok: status >= 200 && status < 300,
         status,
         json: () => Promise.resolve(payload),
         text: () => Promise.resolve(JSON.stringify(payload)),
       });
+      if (route && typeof route.body === "function") {
+        return Promise.resolve(route.body(url)).then(reply);
+      }
+      return Promise.resolve(reply(route ? route.body : []));
     };
     return this;
   }
