@@ -12,6 +12,11 @@ from PIL import Image, ImageOps
 
 from tagpup.core import paths
 
+#: Pillow refuses a picture over about 179 million pixels as a possible decompression
+#: bomb; a stitched panorama is larger. The photos are the owner's own. Four modules
+#: raised the limit each for itself (docs/findings.md, #74); every photo is opened here.
+Image.MAX_IMAGE_PIXELS = 500_000_000
+
 #: What counts as a photo, by its extension, and the Content-Type its own bytes go out
 #: under: what the indexer scans, the folder views list, relink points a row at, and the
 #: servers send. It was written eight times, with members of its own in two: relink
@@ -90,6 +95,22 @@ def smaller_copy(photo_path, max_size, upright):
         out = io.BytesIO()
         img.save(out, format="JPEG", quality=85)
         return out.getvalue()
+
+
+def opened(photo_path, upright):
+    """The photo's picture as an RGB Pillow image, read in full and the file closed.
+
+    `upright` turns it by its Orientation, as a person sees it -- what CLIP is shown.
+    Without, it is the pixels as Pillow shows them, the coordinates face boxes are in
+    (shown_size).
+    """
+    with Image.open(photo_path) as img:
+        if upright:
+            img = ImageOps.exif_transpose(img)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.load()
+        return img
 
 
 def parse_box(box):

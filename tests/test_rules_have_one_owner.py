@@ -69,5 +69,35 @@ class TheFaceCrop(unittest.TestCase):
                                               os.path.join("tagpup", "files", "images.py")))
 
 
+class OpeningAPhoto(unittest.TestCase):
+    """A photo's pixels are read by tagpup.files.images: the embedder opened photos and
+    turned them upright itself, and four modules each raised Pillow's size limit."""
+
+    def test_images_opens_it_upright_or_as_stored(self):
+        import tempfile
+
+        from PIL import Image
+
+        from tagpup.files import images
+        folder = tempfile.mkdtemp(prefix="open_photo_")
+        self.addCleanup(__import__("shutil").rmtree, folder, True)
+        photo = os.path.join(folder, "sideways.png")
+        img = Image.new("L", (40, 20))
+        exif = img.getexif()
+        exif[0x0112] = 6
+        img.save(photo, exif=exif.tobytes())
+        upright = images.opened(photo, upright=True)
+        self.assertEqual(((20, 40), "RGB"), (upright.size, upright.mode))
+        self.assertEqual((40, 20), images.opened(photo, upright=False).size)
+        self.assertGreaterEqual(Image.MAX_IMAGE_PIXELS, 500_000_000)
+
+    def test_nothing_else_opens_one(self):
+        # The tutorial's seeding copies a PNG without its metadata: a file, not a photo.
+        found = sources_matching(r"Image\.open\(|exif_transpose\(|MAX_IMAGE_PIXELS")
+        self.assertEqual([], [path for path in found
+                              if not path.startswith(os.path.join("tagpup", "files"))
+                              and path != os.path.join("scripts", "prepare_test_environment.py")])
+
+
 if __name__ == "__main__":
     unittest.main()

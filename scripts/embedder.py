@@ -4,13 +4,12 @@ import logging
 import threading
 from typing import List, Optional, Any
 from PIL import Image
-# Disable Pillow image size check limit to support large photos / panoramas
-Image.MAX_IMAGE_PIXELS = 500000000
 import torch
 import numpy as np
 import open_clip
 
 import _root  # noqa: F401
+from tagpup.files import images
 from tagpup.store import embeddings as store_embeddings
 
 logger = logging.getLogger("tagpup_cli.embedder")
@@ -157,27 +156,22 @@ class ClipEmbedder:
         
         try:
             stamp = store_embeddings.stamp_of(file_path)
-            with Image.open(file_path) as img:
-                # Upright, as the photo is seen. A camera turned on its side stores the
-                # pixels sideways with an Orientation tag, and so does Rotate now; CLIP
-                # was describing the sideways picture.
-                from PIL import ImageOps
-                img = ImageOps.exif_transpose(img)
-                # Convert palette images, grayscale, etc. to RGB
-                if img.mode != "RGB":
-                    img = img.convert("RGB")
-                
-                # Pad to square to preserve full frame if configured and within aspect ratio limit
-                if self.preserve_full_frame:
-                    width, height = img.size
-                    aspect = max(width, height) / min(width, height)
-                    if aspect <= self.max_aspect_ratio:
-                        img = pad_to_square(img)
-                
-                image_input = self.preprocess(img).unsqueeze(0).to(self.device)
-                if self.device == "cuda":
-                    image_input = image_input.half()
-                
+            # Upright, as the photo is seen. A camera turned on its side stores the
+            # pixels sideways with an Orientation tag, and so does Rotate now; CLIP
+            # was describing the sideways picture.
+            img = images.opened(file_path, upright=True)
+
+            # Pad to square to preserve full frame if configured and within aspect ratio limit
+            if self.preserve_full_frame:
+                width, height = img.size
+                aspect = max(width, height) / min(width, height)
+                if aspect <= self.max_aspect_ratio:
+                    img = pad_to_square(img)
+
+            image_input = self.preprocess(img).unsqueeze(0).to(self.device)
+            if self.device == "cuda":
+                image_input = image_input.half()
+
             with self.model_lock:
                 with torch.no_grad():
                     image_features = self.model.encode_image(image_input)

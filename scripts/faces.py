@@ -5,7 +5,6 @@ import json
 import logging
 from typing import List, Dict, Any, Optional
 from PIL import Image
-Image.MAX_IMAGE_PIXELS = 500000000
 import numpy as np
 
 import torch
@@ -94,73 +93,71 @@ class FaceProcessor:
             return []
             
         try:
-            with Image.open(img_path) as img:
-                if img.mode != "RGB":
-                    img = img.convert("RGB")
-                    
-                width, height = img.size
+            # As stored: the coordinates face boxes are kept in (tagpup.files.images).
+            img = images.opened(img_path, upright=False)
+            width, height = img.size
+            
+            # Detect bounding boxes and probability scores
+            boxes, probs = self.mtcnn.detect(img)
+            
+            if boxes is None or len(boxes) == 0:
+                return []
                 
-                # Detect bounding boxes and probability scores
-                boxes, probs = self.mtcnn.detect(img)
+            detected_faces = []
+            face_crops_info = []
+            for box, prob in zip(boxes, probs):
+                if prob < self.confidence_threshold:  # Configurable confidence threshold to filter out false face detections
+                    continue
+                    
+                x1, y1, x2, y2 = box
+                # Clamp coordinates to image boundaries
+                x1, y1 = max(0, int(x1)), max(0, int(y1))
+                x2, y2 = min(width, int(x2)), min(height, int(y2))
                 
-                if boxes is None or len(boxes) == 0:
-                    return []
+                if (x2 - x1) < 15 or (y2 - y1) < 15:
+                    continue # Skip tiny/noise crops
                     
-                detected_faces = []
-                face_crops_info = []
-                for box, prob in zip(boxes, probs):
-                    if prob < self.confidence_threshold:  # Configurable confidence threshold to filter out false face detections
-                        continue
-                        
-                    x1, y1, x2, y2 = box
-                    # Clamp coordinates to image boundaries
-                    x1, y1 = max(0, int(x1)), max(0, int(y1))
-                    x2, y2 = min(width, int(x2)), min(height, int(y2))
-                    
-                    if (x2 - x1) < 15 or (y2 - y1) < 15:
-                        continue # Skip tiny/noise crops
-                        
-                    # Crop face from PIL image
-                    face_crop = img.crop((x1, y1, x2, y2))
-                    # Preprocess crop to match InceptionResnetV1 inputs (160x160 RGB normalized)
-                    face_crop_resized = face_crop.resize((160, 160), Image.BILINEAR)
-                    face_tensor = torch.tensor(np.array(face_crop_resized), dtype=torch.float32).permute(2, 0, 1)
-                    # Normalize tensor elements from [0, 255] to [-1, 1] range as expected by facenet
-                    face_tensor = (face_tensor - 127.5) / 128.0
-                    
-                    # The crop kept with the face, at the size and quality every crop
-                    # is kept at (tagpup.files.images).
-                    crop_bytes = images.crop_jpeg(face_crop)
-                    
-                    face_crops_info.append({
-                        "box": [x1, y1, x2, y2],
-                        "tensor": face_tensor,
-                        "crop_image": crop_bytes,
-                        "prob": float(prob)
+                # Crop face from PIL image
+                face_crop = img.crop((x1, y1, x2, y2))
+                # Preprocess crop to match InceptionResnetV1 inputs (160x160 RGB normalized)
+                face_crop_resized = face_crop.resize((160, 160), Image.BILINEAR)
+                face_tensor = torch.tensor(np.array(face_crop_resized), dtype=torch.float32).permute(2, 0, 1)
+                # Normalize tensor elements from [0, 255] to [-1, 1] range as expected by facenet
+                face_tensor = (face_tensor - 127.5) / 128.0
+                
+                # The crop kept with the face, at the size and quality every crop
+                # is kept at (tagpup.files.images).
+                crop_bytes = images.crop_jpeg(face_crop)
+                
+                face_crops_info.append({
+                    "box": [x1, y1, x2, y2],
+                    "tensor": face_tensor,
+                    "crop_image": crop_bytes,
+                    "prob": float(prob)
+                })
+
+            if face_crops_info:
+                # Stack all face tensors into a single batch and move to device
+                batch_tensors = torch.stack([x["tensor"] for x in face_crops_info]).to(self.device)
+                if self.device == "cuda":
+                    batch_tensors = batch_tensors.half()
+
+                # Generate 512-dimensional embeddings in a single forward pass
+                with torch.no_grad():
+                    emb_tensors = self.resnet(batch_tensors)
+                    emb_tensors /= emb_tensors.norm(dim=-1, keepdim=True)
+                    embeddings = emb_tensors.cpu().numpy().tolist()
+
+                for info, emb in zip(face_crops_info, embeddings):
+                    detected_faces.append({
+                        "box": info["box"],
+                        "embedding": emb,
+                        "name": None,
+                        "crop_image": info["crop_image"],
+                        "prob": info["prob"]
                     })
-
-                if face_crops_info:
-                    # Stack all face tensors into a single batch and move to device
-                    batch_tensors = torch.stack([x["tensor"] for x in face_crops_info]).to(self.device)
-                    if self.device == "cuda":
-                        batch_tensors = batch_tensors.half()
-
-                    # Generate 512-dimensional embeddings in a single forward pass
-                    with torch.no_grad():
-                        emb_tensors = self.resnet(batch_tensors)
-                        emb_tensors /= emb_tensors.norm(dim=-1, keepdim=True)
-                        embeddings = emb_tensors.cpu().numpy().tolist()
-
-                    for info, emb in zip(face_crops_info, embeddings):
-                        detected_faces.append({
-                            "box": info["box"],
-                            "embedding": emb,
-                            "name": None,
-                            "crop_image": info["crop_image"],
-                            "prob": info["prob"]
-                        })
-                    
-                return detected_faces
+                
+            return detected_faces
         except Exception as e:
             logger.error(f"Error processing faces in {img_path}: {e}")
             return []

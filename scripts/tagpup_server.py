@@ -14,8 +14,6 @@ import logging
 import re
 import threading
 from http.server import BaseHTTPRequestHandler
-from PIL import Image
-Image.MAX_IMAGE_PIXELS = 500000000
 import numpy as np
 
 import _root  # noqa: F401

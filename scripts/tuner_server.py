@@ -16,8 +16,6 @@ except ImportError:  # imported as a top-level module
 import urllib.parse
 import logging
 from http.server import BaseHTTPRequestHandler
-from PIL import Image
-Image.MAX_IMAGE_PIXELS = 500000000
 import numpy as np
 from scipy import sparse
 from sklearn.cluster import DBSCAN
