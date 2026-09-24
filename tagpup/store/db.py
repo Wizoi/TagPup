@@ -223,4 +223,34 @@ def backup(db_path, reason, into=None):
     finally:
         destination.close()
         source.close()
+    prune_backups(into, os.path.splitext(os.path.basename(db_path))[0])
     return target
+
+
+#: How many backups each library keeps; the oldest beyond it goes when a new one is made.
+#: Nothing deleted a copy before, and backups/ once held 28 GB in 41 of them
+#: (docs/findings.md, #7). Per library, so one library's never push out another's
+#: *(owner, 2026-09-24)*.
+KEEP_BACKUPS = 5
+
+
+def prune_backups(folder, library_name, keep=KEEP_BACKUPS):
+    """Delete all but the newest `keep` backups of `library_name` in `folder`, with the
+    -wal and -shm files beside them. Newest by the time in the name. Returns the paths
+    deleted."""
+    import os
+    import re
+
+    stamped = re.compile(r"^%s\.before-.*-(\d{8}_\d{6})\.db$" % re.escape(library_name))
+    copies = sorted((match.group(1), name) for name in os.listdir(folder)
+                    for match in [stamped.match(name)] if match)
+    deleted = []
+    for _stamp, name in copies[:-keep] if keep else copies:
+        for suffix in ("", "-wal", "-shm"):
+            path = os.path.join(folder, name + suffix)
+            if os.path.exists(path):
+                os.remove(path)
+                deleted.append(path)
+    if deleted:
+        logger.info("Deleted %d old backup file(s) of %s", len(deleted), library_name)
+    return deleted
