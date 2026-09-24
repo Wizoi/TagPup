@@ -63,7 +63,18 @@ class WhereThingsAre(WithAHome):
         self.assertEqual(config.data_dir(), os.path.join(self.home, "data"))
         self.assertEqual(config.default_db(), "photo_index.db")
         self.assertEqual(config.rename_format(), "{grouping} - {index} - {caption}")
-        self.assertEqual(config.candidate_tags(), [])
+        self.assertEqual(config.candidate_tags()[:3], ["Landscape", "Portrait", "Nature"])
+
+    def test_the_defaults_are_the_example(self):
+        """config.ini is not in git. Without one, the settings must be the project's: a
+        different model makes the CLI's index clear every embedding in the library."""
+        import configparser
+
+        example = configparser.ConfigParser(interpolation=None)
+        example.read(os.path.join(WORKSPACE_DIR, "config.example.ini"), encoding="utf-8")
+        written = {section: dict(example[section]) for section in example.sections()}
+        written["paths"].pop("exiftool")   # the platform decides: config.default_exiftool()
+        self.assertEqual(written, config.DEFAULTS)
 
 
 class WhatTheSettingsSay(WithAHome):
@@ -92,6 +103,7 @@ class WhatTheSettingsSay(WithAHome):
         })
 
     def test_no_forced_image_size_is_none(self):
+        self.write_config("[model]\nforce_image_size =\n")
         self.assertIsNone(config.embedder_settings()["force_image_size"])
 
     def test_candidate_tags_are_trimmed_and_in_order(self):

@@ -24,8 +24,10 @@ import threading
 
 CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-#: A setting config.ini does not give. These were the fallbacks at the read sites;
-#: where sites disagreed, the servers' won, since they are what people use.
+#: A setting config.ini does not give: the project's settings, as config.example.ini
+#: gives them (tests/test_config.py keeps the two in step). config.ini is not in git, so
+#: a checkout can lack one, and these must then be the settings its libraries were built
+#: with -- the CLI's index clears every embedding when the model's dimensions differ.
 DEFAULTS = {
     "paths": {
         "data_dir": "data",
@@ -33,13 +35,15 @@ DEFAULTS = {
         "default_db": "photo_index.db",
     },
     "model": {
-        "name": "ViT-B-32",
-        "pretrained": "laion2b_s34b_b79k",
-        "preserve_full_frame": "false",
-        "max_aspect_ratio": "2.0",
-        "force_image_size": "",
+        "name": "ViT-H-14",
+        "pretrained": "laion2b_s32b_b79k",
+        "preserve_full_frame": "true",
+        "max_aspect_ratio": "1.4",
+        "force_image_size": "512",
     },
-    "candidates": {"tags": ""},
+    "candidates": {"tags": "Landscape, Portrait, Nature, Urban, Sunset, Sunrise, Night, Ocean, "
+                           "Mountain, Forest, Animal, Cat, Dog, Food, Indoor, Outdoor, Vehicle, "
+                           "Flower, Architecture, Party, Wedding, Beach, Sports, Concert"},
     "faces": {
         "min_face_size": "20",
         "confidence_threshold": "0.85",

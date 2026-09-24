@@ -4,6 +4,9 @@
 # Local data files and cache directories
 data/
 
+# This installation's settings, which the app writes to. The template is config.example.ini.
+config.ini
+
 # Python compilation and cache files
 __pycache__/
 *.py[cod]

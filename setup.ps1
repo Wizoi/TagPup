@@ -29,4 +29,10 @@ if (-not (Test-Path $cacheDir)) {
     Write-Host "Created directory: $cacheDir" -ForegroundColor Green
 }
 
+# The settings: config.ini is not in git, so a new checkout starts from the example.
+if (-not (Test-Path "config.ini")) {
+    Copy-Item "config.example.ini" "config.ini"
+    Write-Host "Created config.ini from config.example.ini" -ForegroundColor Green
+}
+
 Write-Host "Setup complete!" -ForegroundColor Green

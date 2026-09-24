@@ -139,7 +139,7 @@ For guides, tutorials, specifications, and schemas:
 
 ## ⚙️ Configuration (`config.ini`)
 
-Settings live in [config.ini](config.ini), next to the code, unless the `TAGPUP_HOME` environment variable names another folder. Relative paths in it, such as `data_dir`, are relative to that folder, wherever the program is started from. A setting the file leaves out takes its default from `tagpup/config.py`.
+Settings live in `config.ini`, next to the code, unless the `TAGPUP_HOME` environment variable names another folder. Relative paths in it, such as `data_dir`, are relative to that folder, wherever the program is started from. `config.ini` is not in git, since it belongs to one installation and the app writes the library you last opened into it. `setup.bat` makes one from [config.example.ini](config.example.ini), and a setting it leaves out takes the example's value.
 
 ```ini
 [paths]

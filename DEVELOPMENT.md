@@ -182,8 +182,8 @@ only itself; it once cost 500 files their metadata.
 
 All of these are dry-run by default and take `--apply` to write, and back the database
 up first through `db.backup()`: SQLite's backup API, into `backups/` beside the library
-(`data/backups/` for the libraries in `data/`). Copies made before 2026-09-23 are in the
-`backups/` folder at the top of the repository.
+(`data/backups/` for the libraries in `data/`). Copies from before backups moved there are
+in `backups/` at the top of the repository.
 
 | script | what it does |
 | --- | --- |
