@@ -230,8 +230,9 @@ Each step that changes a table is a migration in `tagpup.store.schema` that take
 - [x] Photo ids. `photos` rebuilt with `id INTEGER PRIMARY KEY` and `path` unique; `faces.photo_id` in place of `faces.photo_path`, and every join by id (joins by path were case-sensitive where lookups were not). A photo the apps see gets a row the first time -- Suggest's faces and embeddings for photos never indexed included (`photos.ensure_row`). A rename is one update of `photos.path`.
 - [x] `embeddings`: one vector per photo and model, keyed by `photo_id` and all five model settings, with the stamp of what it was computed from. Replaces `photos.embedding` and `embedding_cache` (#62, #65).
 - [x] `photo_people`: each photo's people, written only by `tagpup.store.people.rebuild`, from its keywords, its faces and the tree, by the one rule in `tagpup.core.vocabulary`. Replaces `photos.people` and the seven patches of it (#63); tree edits that change who is a person rebuild what they change.
-- [x] `suggestions`: keyed by `photo_id`, with the model and the stamp they were made from. Replaces the JSON cache files and their re-keying on rename; a deleted photo takes its suggestions (#64). Run status stays in memory until `jobs`.
-- [ ] Doctor rules for each: no crop without a face, no embedding or suggestion without a photo, people as the rule gives them.
+- [x] `suggestions`: keyed by `photo_id`, with the model they were made with and when. Replaces the JSON cache files and their re-keying on rename; a deleted photo takes its suggestions (#64). Run status stays in memory until `jobs`.
+- [x] Doctor rules for each: no crop without a face, no vector, people or suggestion without a photo, people as the rule gives them; photos without a vector for the configured model are counted.
+- [x] `tagpup_cli.py compact`: the space the migrations left free given back, backed up first.
 
 Exit: nothing in the database is keyed by path, and `doctor.py` is clean on both libraries.
 
@@ -306,7 +307,7 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 1. Foundations | done, 2026-09-23 (the installed copy is opt-in) |
 | 2. Services | done, 2026-09-24 |
 | 3. Store | done, 2026-09-24 |
-| 4. Data model | in progress |
+| 4. Data model | done, 2026-09-24 |
 | 4.5. One owner for each rule | not started |
 | 5. One server | not started |
 | 6. Pages | not started |
