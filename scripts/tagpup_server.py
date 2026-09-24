@@ -231,8 +231,14 @@ def resolve_library_from_url(handler, set_active):
             set_active(resolved_db_path)
             handler.db_path = resolved_db_path
             # A library first reached by its URL was never opened through PhotoIndex,
-            # and without its generations every cache on it goes stale.
-            schema.ensure(resolved_db_path)
+            # and without its generations every cache on it goes stale. When that
+            # cannot happen just now, the library is served as it is and the next
+            # request tries again: failing the request failed every page and file
+            # (docs/findings.md, #57).
+            try:
+                schema.ensure(resolved_db_path)
+            except Exception as e:
+                logger.warning("Could not bring %s up to date: %s", resolved_db_path, e)
 
             # Rewrite path
             if parsed_url.query:
