@@ -27,13 +27,11 @@ class TestFunctionalCLI(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.workspace_path = self.temp_dir.name
 
-        # Define isolated database and taxonomy paths
+        # An isolated library; its tag tree is in it
         self.db_path = os.path.join(self.workspace_path, "functional_photo_index.db")
-        self.tax_path = os.path.join(self.workspace_path, "functional_photo_taxonomy.json")
 
-        # Inject environment variable overrides to get_db_paths
+        # The library the CLI works on (get_db_path)
         os.environ["TAGPUP_DB_PATH"] = self.db_path
-        os.environ["TAGPUP_TAXONOMY_PATH"] = self.tax_path
 
         # Create isolated dummy photos library folder
         self.library_dir = os.path.join(self.workspace_path, "library")
@@ -74,7 +72,6 @@ class TestFunctionalCLI(unittest.TestCase):
             pass
         # Clear environment variables
         os.environ.pop("TAGPUP_DB_PATH", None)
-        os.environ.pop("TAGPUP_TAXONOMY_PATH", None)
 
     @patch('embedder.ClipEmbedder._init_model')
     @patch('embedder.ClipEmbedder.embed_image')

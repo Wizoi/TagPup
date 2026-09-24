@@ -47,16 +47,6 @@ class Library:
         return os.path.abspath(self.path).replace("\\", "/").lower()  # not a path: the library, as a registry key
 
     @property
-    def taxonomy_file(self):
-        """The tag tree's JSON copy, as the servers name it: photo_index_taxonomy.json.
-
-        taxonomy.TagTaxonomy and the CLI call the main library's photo_taxonomy.json
-        instead, and the owner's data folder holds both (docs/findings.md, #13). Both
-        go when the tag tree lives only in the database.
-        """
-        return self._beside("_taxonomy.json")
-
-    @property
     def face_trace_file(self):
         """Where clustering records how it named each face, for this library alone."""
         return self._beside("_face_resolution_trace.json")

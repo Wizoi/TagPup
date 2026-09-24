@@ -237,10 +237,7 @@ class TestStability(unittest.TestCase):
         photo_index.load()
         
         # Initialize taxonomy file
-        tax_path = self.TEST_DB_PATH.replace(".db", ".json")
-        if os.path.exists(tax_path):
-            os.remove(tax_path)
-        taxonomy = TagTaxonomy(file_path=tax_path)
+        taxonomy = TagTaxonomy(self.TEST_DB_PATH)
         taxonomy.load()
         taxonomy.add_tags(["Alice"])
         taxonomy.save()
@@ -257,10 +254,6 @@ class TestStability(unittest.TestCase):
         
         photo_index.close()
         
-        # Clean up taxonomy
-        if os.path.exists(tax_path):
-            os.remove(tax_path)
-            
         # Assertions:
         # Photo 1 (tagged with "Alice") should have its face resolved to "Alice"
         # Photo 2 (untagged) should remain None
@@ -337,10 +330,7 @@ class TestStability(unittest.TestCase):
         photo_index.load()
         
         # Initialize taxonomy
-        tax_path = self.TEST_DB_PATH.replace(".db", ".json")
-        if os.path.exists(tax_path):
-            os.remove(tax_path)
-        taxonomy = TagTaxonomy(file_path=tax_path)
+        taxonomy = TagTaxonomy(self.TEST_DB_PATH)
         taxonomy.load()
         taxonomy.add_tags(["Alice"])
         taxonomy.save()
@@ -356,9 +346,6 @@ class TestStability(unittest.TestCase):
         resolved_faces = cursor.fetchall()
         
         photo_index.close()
-        if os.path.exists(tax_path):
-            os.remove(tax_path)
-            
         # Assertions:
         # Photo 1 (anchor) face resolved to Alice
         # Photo 2 faces (similarities 0.50 and 0.00, below 0.80) should NOT be resolved to Alice

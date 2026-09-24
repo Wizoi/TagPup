@@ -73,14 +73,12 @@ class FaceDecisionCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "decisions.db")
         os.environ["TAGPUP_DB_PATH"] = self.db_path
-        os.environ["TAGPUP_TAXONOMY_PATH"] = os.path.join(self.tmp.name, "decisions_taxonomy.json")
         self.library = os.path.join(self.tmp.name, "Harbour Walk")
         self.photo = os.path.join(self.library, "jetty.jpg")
         make_jpeg(self.photo)
 
     def tearDown(self):
         os.environ.pop("TAGPUP_DB_PATH", None)
-        os.environ.pop("TAGPUP_TAXONOMY_PATH", None)
         gc.collect()
         self.tmp.cleanup()
 

@@ -73,11 +73,9 @@ class CliDatabaseCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "spelling.db")
         os.environ["TAGPUP_DB_PATH"] = self.db_path
-        os.environ["TAGPUP_TAXONOMY_PATH"] = os.path.join(self.tmp.name, "spelling_taxonomy.json")
 
     def tearDown(self):
         os.environ.pop("TAGPUP_DB_PATH", None)
-        os.environ.pop("TAGPUP_TAXONOMY_PATH", None)
         # PhotoIndex.remove_paths reloads, and load() opens a connection over the one
         # it had without closing it; collecting the orphan releases the file.
         gc.collect()

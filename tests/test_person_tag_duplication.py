@@ -25,11 +25,11 @@ from taxonomy import TagTaxonomy
 
 class TaxonomyTestBase(unittest.TestCase):
     def taxonomy(self, paths=()):
-        fd, path = tempfile.mkstemp(suffix="_taxonomy.json")
+        # A library that does not exist: the tree is held in memory only.
+        fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         os.remove(path)
-        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
-        tax = TagTaxonomy(file_path=path)
+        tax = TagTaxonomy(path)
         for p in paths:
             tax.add_tag(p)
         return tax

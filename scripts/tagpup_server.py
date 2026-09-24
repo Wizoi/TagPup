@@ -774,8 +774,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 
             # Also load from taxonomy file
             from taxonomy import TagTaxonomy
-            tax_path = Library(self.db_path).taxonomy_file
-            taxonomy = TagTaxonomy(file_path=tax_path)
+            taxonomy = TagTaxonomy(self.db_path)
             taxonomy.load()
             for p in taxonomy.paths:
                 db_tags.add(p)
@@ -969,7 +968,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 from suggester import TagSuggester
 
                 settings = tagpup_config.load()
-                taxonomy = TagTaxonomy(file_path=Library(db_path).taxonomy_file)
+                taxonomy = TagTaxonomy(db_path)
                 taxonomy.load()
                 candidates = zero_shot_candidates(taxonomy, tagpup_config.candidate_tags(settings))
                 embedder = cls.library_embedder(db_path, tagpup_config.embedder_settings(settings))

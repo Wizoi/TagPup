@@ -45,7 +45,6 @@ except ImportError:  # imported as a top-level module
 
 import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
-from tagpup.core.library import Library  # noqa: E402
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp")
 
@@ -65,10 +64,6 @@ def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
     config.set("paths", "data_dir", data_dir)
     config.set("paths", "default_db", "measured.db")
     tagpup_config.write_file(config, folder=sandbox)
-
-    taxonomy = Library(source_db).taxonomy_file
-    if os.path.exists(taxonomy):
-        shutil.copy2(taxonomy, os.path.join(sandbox, "data", "measured_taxonomy.json"))
 
     target = os.path.join(sandbox, "data", "measured.db")
     started = time.time()

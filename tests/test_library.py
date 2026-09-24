@@ -19,7 +19,6 @@ class NamesALibrary(unittest.TestCase):
         library = Library(os.path.join("data", "photo_index.db"))
         self.assertEqual(library.name, "photo_index")
         self.assertEqual(library.folder, os.path.abspath("data"))
-        self.assertEqual(library.taxonomy_file, os.path.join("data", "photo_index_taxonomy.json"))
         self.assertEqual(library.face_trace_file,
                          os.path.join("data", "photo_index_face_resolution_trace.json"))
         self.assertEqual(library.backups, os.path.join(os.path.abspath("data"), "backups"))

@@ -285,7 +285,7 @@ class TestExcludedFacesSurviveClustering(ExclusionTestBase):
     def cluster(self):
         index = PhotoIndex(db_path=self.TEST_DB)
         index.load()
-        taxonomy = TagTaxonomy(file_path=os.path.join(self.tmpdir, "tax.json"))
+        taxonomy = TagTaxonomy(os.path.join(self.tmpdir, "tax.db"))
         taxonomy.paths = set()
         try:
             return FaceProcessor.__new__(FaceProcessor).cluster_and_resolve_identities(

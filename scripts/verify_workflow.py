@@ -149,18 +149,14 @@ def main():
 
     # test_ prefix keeps the copy out of the database selector in both interfaces.
     work_db = os.path.join("data", "test_verify_workflow.db")
-    for leftover in (work_db, work_db.replace(".db", "_taxonomy.json")):
-        if os.path.exists(leftover):
-            os.remove(leftover)
+    if os.path.exists(work_db):
+        os.remove(work_db)
 
     src = tagpup_db.connect(f"file:{args.source}?mode=ro", uri=True, timeout=60.0)
     dst = tagpup_db.connect(work_db, timeout=60.0)
     src.backup(dst)
     dst.close()
     src.close()
-    tax = args.source.replace(".db", "_taxonomy.json")
-    if os.path.exists(tax):
-        shutil.copyfile(tax, work_db.replace(".db", "_taxonomy.json"))
     print(f"working on a copy: {work_db} ({os.path.getsize(work_db)/1e6:.1f} MB)\n")
 
     import tempfile
@@ -196,11 +192,10 @@ def main():
             # The servers run in daemon threads that hold their connections open for as
             # long as this process lives, so on Windows the copy usually cannot be
             # deleted from inside it. That is why the next run clears it on startup.
-            for leftover in (work_db, work_db.replace(".db", "_taxonomy.json")):
-                try:
-                    os.remove(leftover)
-                except OSError:
-                    print(f"  ({leftover} is still open; the next run will clear it)")
+            try:
+                os.remove(work_db)
+            except OSError:
+                print(f"  ({work_db} is still open; the next run will clear it)")
         else:
             print(f"\ncopy kept at {work_db}")
         # The photo copies go whatever --keep says: they are only ever a copy.

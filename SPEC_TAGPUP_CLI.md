@@ -22,7 +22,7 @@ The tool is built as a modular Python application with script wrappers. It relie
                        [TagTaxonomy]             ---> [TagSuggester] (Face Match)
                                |                              | (Aggregate & Score)
                                v                              v
-                       [photo_taxonomy.json]    ---> [suggestions.json]
+                       [photo_index.db: tree]   ---> [suggestions.json]
                                                               |
                                                               v
                                                       [MetadataWriter (ExifTool)]
@@ -152,7 +152,7 @@ Tags and captions are written back using ExifTool:
   re-read one file at a time. Only the file that actually fails is recorded with empty tags,
   people and captions; it keeps its `mtime` and `size` so that change detection does not treat
   it as new on every later run. A clean batch still costs exactly one ExifTool call.
-- **Reset Option**: The CLI accepts a `--reset` option which deletes the existing database file (`photo_index.db`) and taxonomy configuration (`photo_taxonomy.json`), enabling developers and users to start a clean index scan.
+- **Reset Option**: The CLI accepts a `--reset` option which backs up and then deletes the library (`photo_index.db`), its tag tree with it, before indexing afresh.
 
 ### B. Similarity & Scoring
 - Neighbors are retrieved using Inner Product (equivalent to cosine similarity on L2-normalized CLIP vectors).
@@ -201,7 +201,7 @@ To resolve individual image noise by leveraging event-level folder context, reco
 The `tagpup_cli.py` engine is accessed via `click` subcommands. 
 
 ### Global Options
-- `--test`: Use test database paths (`test_photo_index.db` and `test_photo_taxonomy.json`) to avoid altering the production database.
+- `--test`: Use the test library (`test_photo_index.db`) to avoid altering the production one. The tag tree is in the library, so the test tree stays in the test library (docs/findings.md, #61).
 
 ---
 
@@ -274,3 +274,5 @@ Runs self-tuning identity resolution to cluster face embeddings and assign names
 ---
 [◀ Back to README](README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
 
+### `export-tree OUTPUT`
+Writes the library's tag tree to OUTPUT as JSON (`{"paths": [...]}`): a copy to keep or read. The tree lives in the library; nothing reads this file back.

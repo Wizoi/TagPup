@@ -63,7 +63,7 @@ class FaceClusteringTestBase(unittest.TestCase):
         self.index.load()
         self.addCleanup(self._close_index)
 
-        self.taxonomy = TagTaxonomy(file_path=os.path.join(self.tmpdir, "tax.json"))
+        self.taxonomy = TagTaxonomy(os.path.join(self.tmpdir, "tax.db"))
         self.taxonomy.paths = set()
 
     def _close_index(self):

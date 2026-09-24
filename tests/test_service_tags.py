@@ -59,12 +59,13 @@ class TreeCase(unittest.TestCase):
 
 
 class Creating(TreeCase):
-    def test_each_level_is_a_node_and_the_json_file_follows(self):
+    def test_each_level_is_a_node_and_no_file_is_written(self):
+        # The tree lives in the library; it kept a JSON copy beside it (docs/findings.md, #13).
         result = tags.create(self.lib.library, "Crew/Divers")
         self.assertEqual((result.ok, result.changed, result.details["tag"]), (True, 1, "Crew/Divers"))
         self.assertEqual(sorted(self.tree()), ["Crew", "Crew/Divers"])
-        with open(taxonomy.json_file(self.lib.library.path), encoding="utf-8") as f:
-            self.assertEqual(json.load(f)["paths"], ["Crew", "Crew/Divers"])
+        folder = os.path.dirname(self.lib.library.path)
+        self.assertEqual([], [name for name in os.listdir(folder) if name.endswith(".json")])
 
     def test_below_a_parent_typed_whole_or_not(self):
         crew = self.node("Crew")

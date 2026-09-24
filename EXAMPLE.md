@@ -71,7 +71,7 @@ run.bat --test suggest "test_library\Untagged"
 run.bat --test stats
 run.bat --test list-index
 ```
-This guarantees your production database files (`photo_index.db` / `photo_taxonomy.json`) remain clean and unaffected by testing.
+This guarantees your production library (`photo_index.db`, with its tag tree) remains clean and unaffected by testing.
 
 ---
 

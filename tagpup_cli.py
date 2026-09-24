@@ -58,6 +58,7 @@ import paths
 import db as tagpup_db
 from tagpup import config as tagpup_config
 from tagpup.store import faces as store_faces
+from tagpup.store import taxonomy as store_taxonomy
 from tagpup.core import vocabulary
 from tagpup.core.library import Library
 
@@ -69,56 +70,27 @@ def get_exiftool_path(config) -> str:
     """The configured ExifTool if it exists, else one on PATH (tagpup.config)."""
     return tagpup_config.exiftool_path(config)
 
-def get_db_paths(config, test_mode=False, cli_db=None):
+def get_db_path(config, test_mode=False, cli_db=None):
+    """The library the command works on: --db (a name in the data folder, or a path),
+    else TAGPUP_DB_PATH, else the configured library -- its test_ twin in test mode.
+
+    The tag tree is in the library. It had a JSON file of its own, named one way here
+    and another in the servers (docs/findings.md, #13), and the name decided which
+    library the tree was saved to: test mode's saved into photo_index.db (#61).
+    """
     if cli_db:
-        # If the user specified a custom db, use it!
-        # Make sure it ends in .db
         db_name = cli_db if cli_db.endswith(".db") else (cli_db + ".db")
-        # Check if it is a path or just a name
         if os.path.isabs(db_name) or "/" in db_name.replace("\\", "/"):  # not a path: is --db a name or a location
-            db_path = db_name
-            tax_path = Library(db_path).taxonomy_file
-        else:
-            data_dir = tagpup_config.data_dir(config)
-            db_path = os.path.join(data_dir, db_name)
-            tax_path = Library(db_path).taxonomy_file
-        return db_path, tax_path
+            return db_name
+        return os.path.join(tagpup_config.data_dir(config), db_name)
 
     env_db = os.environ.get("TAGPUP_DB_PATH")
-    env_tax = os.environ.get("TAGPUP_TAXONOMY_PATH")
     if env_db:
-        tax_path = env_tax or Library(env_db).taxonomy_file
-        return env_db, tax_path
+        return env_db
 
-    data_dir = tagpup_config.data_dir(config)
     default_db = tagpup_config.default_db(config)
-
-    if test_mode:
-        if default_db.startswith("test_"):
-            db_name = default_db
-        else:
-            db_name = "test_" + default_db
-            
-        clean_db_name = db_name[5:] if db_name.startswith("test_") else db_name
-        if clean_db_name == "photo_index.db":
-            tax_name = "test_photo_taxonomy.json"
-        else:
-            tax_name = "test_" + os.path.splitext(clean_db_name)[0] + "_taxonomy.json"
-    else:
-        if default_db.startswith("test_"):
-            db_name = default_db[5:]
-        else:
-            db_name = default_db
-            
-        if db_name == "photo_index.db":
-            tax_name = "photo_taxonomy.json"
-        else:
-            tax_name = os.path.splitext(db_name)[0] + "_taxonomy.json"
-            
-    return (
-        os.path.join(data_dir, db_name),
-        os.path.join(data_dir, tax_name)
-    )
+    plain = default_db[5:] if default_db.startswith("test_") else default_db
+    return os.path.join(tagpup_config.data_dir(config), "test_" + plain if test_mode else plain)
 
 def scan_for_images(dir_path: str) -> List[str]:
     """Recursively scan directory for image files, in the form the index stores.
@@ -162,21 +134,19 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
 
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
-    db_path, tax_path = get_db_paths(config, test_mode, cli_db)
+    db_path = get_db_path(config, test_mode, cli_db)
 
     # Handle reset flag
     if reset:
-        console.print("[bold red]Resetting index (deleting existing index and taxonomy files)...[/bold red]")
+        console.print("[bold red]Resetting index (deleting the library, its tag tree with it)...[/bold red]")
         # The database holds every face named by hand, and this deletes it.
         if os.path.exists(db_path):
             console.print(f"  Backed up to {tagpup_db.backup(db_path, 'index-reset')}")
-        for p in [db_path, tax_path]:
-            if os.path.exists(p):
-                try:
-                    os.remove(p)
-                    console.print(f"  Removed {p}")
-                except Exception as e:
-                    console.print(f"[bold red]Failed to delete {p}: {e}[/bold red]")
+            try:
+                os.remove(db_path)
+                console.print(f"  Removed {db_path}")
+            except Exception as e:
+                console.print(f"[bold red]Failed to delete {db_path}: {e}[/bold red]")
 
     # Setup / Load components
     photo_index = PhotoIndex(db_path=db_path)
@@ -192,7 +162,7 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
             except Exception as e:
                 console.print(f"[bold red]Failed to clear CLIP embeddings: {e}[/bold red]")
 
-    taxonomy = TagTaxonomy(file_path=tax_path)
+    taxonomy = TagTaxonomy(db_path)
     taxonomy.load()
 
     embedder = ClipEmbedder(photo_index=photo_index, **embedder_settings)
@@ -424,7 +394,7 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
     if test_mode and output == "suggestions.json":
         output = "test_suggestions.json"
     cli_db = ctx.obj.get("db")
-    db_path, tax_path = get_db_paths(config, test_mode, cli_db)
+    db_path = get_db_path(config, test_mode, cli_db)
 
     photo_index = PhotoIndex(db_path=db_path)
     if not photo_index.load():
@@ -438,7 +408,7 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
             console.print(f"[bold red]Error:[/bold red] Index dimensionality ({photo_index.index.d}) does not match current model {model_name} expected dimensionality ({expected_dim}). Please run 'index' first to rebuild the index using the new model.")
             return
 
-        taxonomy = TagTaxonomy(file_path=tax_path)
+        taxonomy = TagTaxonomy(db_path)
         taxonomy.load()
 
         # Load candidate tags from config
@@ -584,7 +554,7 @@ def write(ctx, suggestions_file: str, live: bool, min_score: float, nobackup: bo
     config = get_config()
     exiftool_path = get_exiftool_path(config)
     # The library: its taxonomy files people, and its index is told what was written.
-    db_path, _ = get_db_paths(config, ctx.obj.get("test", False), ctx.obj.get("db"))
+    db_path = get_db_path(config, ctx.obj.get("test", False), ctx.obj.get("db"))
 
     writer = MetadataWriter(exiftool_path=exiftool_path)
     writer.write_tags_to_photos(suggestions_file, live=live, min_score=min_score,
@@ -603,7 +573,7 @@ def search(ctx, query: str, k: int):
     # Load Index
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
-    db_path, _ = get_db_paths(config, test_mode, cli_db)
+    db_path = get_db_path(config, test_mode, cli_db)
     photo_index = PhotoIndex(db_path=db_path)
     if not photo_index.load():
         console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
@@ -650,7 +620,7 @@ def stats(ctx):
     
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
-    db_path, tax_path = get_db_paths(config, test_mode, cli_db)
+    db_path = get_db_path(config, test_mode, cli_db)
 
     photo_index = PhotoIndex(db_path=db_path)
     if not photo_index.load():
@@ -658,7 +628,7 @@ def stats(ctx):
         return
         
     try:
-        taxonomy = TagTaxonomy(file_path=tax_path)
+        taxonomy = TagTaxonomy(db_path)
         taxonomy.load()
 
         total_indexed = len(photo_index.metadata)
@@ -709,6 +679,20 @@ def stats(ctx):
     finally:
         photo_index.close()
 
+@cli.command("export-tree")
+@click.argument("output", type=click.Path(dir_okay=False))
+@click.pass_context
+def export_tree(ctx, output: str):
+    """Write the library's tag tree to OUTPUT as JSON: a copy to keep or read. The tree
+    itself lives in the library."""
+    config = get_config()
+    db_path = get_db_path(config, ctx.obj.get("test", False), ctx.obj.get("db"))
+    if not os.path.exists(db_path):
+        raise click.ClickException("There is no library at %s." % db_path)
+    count = store_taxonomy.export_json(db_path, output)
+    console.print(f"Wrote {count} tag(s) to [bold cyan]{output}[/bold cyan].")
+
+
 @cli.command()
 @click.argument("photo_path", type=click.Path(exists=True, dir_okay=False))
 @click.pass_context
@@ -717,7 +701,7 @@ def inspect(ctx, photo_path: str):
     config = get_config()
     exiftool_path = get_exiftool_path(config)
     # Who the keywords name depends on the library's taxonomy.
-    db_path, _ = get_db_paths(config, ctx.obj.get("test", False), ctx.obj.get("db"))
+    db_path = get_db_path(config, ctx.obj.get("test", False), ctx.obj.get("db"))
 
     console.print(f"Inspecting file: [bold cyan]{photo_path}[/bold cyan]")
     extractor = MetadataExtractor(exiftool_path=exiftool_path)
@@ -750,7 +734,7 @@ def list_index(ctx, folder):
     
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
-    db_path, _ = get_db_paths(config, test_mode, cli_db)
+    db_path = get_db_path(config, test_mode, cli_db)
 
     photo_index = PhotoIndex(db_path=db_path)
     if not photo_index.load():
@@ -804,7 +788,7 @@ def remove(ctx, path, folder):
     
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
-    db_path, _ = get_db_paths(config, test_mode, cli_db)
+    db_path = get_db_path(config, test_mode, cli_db)
 
     photo_index = PhotoIndex(db_path=db_path)
     if not photo_index.load():
@@ -852,7 +836,7 @@ def index_faces(ctx, directory: str, force: bool):
     config = get_config()
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
-    db_path, _ = get_db_paths(config, test_mode, cli_db)
+    db_path = get_db_path(config, test_mode, cli_db)
 
     photo_index = PhotoIndex(db_path=db_path)
     if not photo_index.load():
@@ -912,7 +896,7 @@ def cluster_faces(ctx, reset: bool, max_iterations: int):
     config = get_config()
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
-    db_path, tax_path = get_db_paths(config, test_mode, cli_db)
+    db_path = get_db_path(config, test_mode, cli_db)
 
     photo_index = PhotoIndex(db_path=db_path)
     if not photo_index.load():
@@ -926,7 +910,7 @@ def cluster_faces(ctx, reset: bool, max_iterations: int):
         except Exception as e:
             console.print(f"[bold red]Failed to reset face assignments: {e}[/bold red]")
 
-    taxonomy = TagTaxonomy(file_path=tax_path)
+    taxonomy = TagTaxonomy(db_path)
     taxonomy.load()
 
     try:

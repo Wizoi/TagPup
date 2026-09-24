@@ -13,6 +13,7 @@ SPEC_TAGPUP_CLI.md section 5.
 import os
 import sys
 import math
+import tempfile
 import unittest
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -90,7 +91,7 @@ class SuggesterTestBase(unittest.TestCase):
         suggester_module._global_face_processor = self._saved_processor
 
     def make_suggester(self, neighbors=(), taxonomy_paths=(), candidates=None, embedder=None):
-        taxonomy = TagTaxonomy(file_path=os.path.join(WORKSPACE_DIR, "data", "unused_taxonomy.json"))
+        taxonomy = TagTaxonomy(os.path.join(tempfile.gettempdir(), "tagpup_no_such_library.db"))
         taxonomy.paths = set(taxonomy_paths)
         index = StubIndex(neighbors=list(neighbors))
         return TagSuggester(index, taxonomy, embedder=embedder, candidate_tags=candidates or [])

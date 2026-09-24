@@ -26,7 +26,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _root  # noqa: E402,F401
 import db as tagpup_db  # noqa: E402
 from tagpup.core import vocabulary  # noqa: E402
-from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 
@@ -80,21 +79,7 @@ def apply_plan(db_path, duplicates, affected):
     def delete(conn):
         return sum(store_taxonomy.remove_node(conn, bare) for bare in duplicates)
 
-    removed = tagpup_db.write_with_connection(db_path, delete, label="merge duplicate person tags")
-
-    # Keep the JSON copy of the taxonomy in step with the table.
-    tax_path = Library(db_path).taxonomy_file
-    if os.path.exists(tax_path):
-        try:
-            from taxonomy import TagTaxonomy
-
-            taxonomy = TagTaxonomy(file_path=tax_path, db_path=db_path)
-            taxonomy.load()
-            taxonomy.paths = {p for p in taxonomy.paths if p not in duplicates}
-            taxonomy.save()
-        except Exception as exc:  # the table is the source of truth either way
-            print("  (could not rewrite %s: %s)" % (tax_path, exc))
-    return removed
+    return tagpup_db.write_with_connection(db_path, delete, label="merge duplicate person tags")
 
 
 def main():

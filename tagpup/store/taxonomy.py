@@ -383,39 +383,27 @@ def set_branch_flags(conn, path, has_face=None, hidden=None):
 
 # ---- The JSON file beside a library ----------------------------------------------------
 #
-# The tree used to live in a JSON file. The table replaced it, and the file is read only
-# where the table is missing -- by TagTaxonomy.load and by seed() -- but the tree's edits
-# still keep it in step. It goes in phase 4 (docs/findings.md, #13).
+# The tree lived in a JSON file beside each library, whose name decided which library it
+# belonged to. The table is its only home since phase 4 (docs/findings.md, #13, #61); a
+# copy is written only when asked for.
 
-def json_file(db_path):
-    """The JSON file kept beside a library: photo_taxonomy.json beside photo_index.db,
-    <library>_taxonomy.json beside any other. The servers' Library.taxonomy_file names
-    the first one differently (docs/findings.md, #13)."""
-    if os.path.basename(db_path) == "photo_index.db":
-        return os.path.join(os.path.dirname(db_path), "photo_taxonomy.json")
-    return os.path.splitext(db_path)[0] + "_taxonomy.json"
-
-
-def export_json(db_path):
-    """Write the tree's paths to the JSON file beside the library, as TagTaxonomy.save
-    did after each edit. A file that cannot be written is logged, not raised: the table
-    is the tree."""
+def export_json(db_path, target):
+    """Write the tree's paths to `target` as JSON, {"paths": [...]}, a copy to keep or to
+    read. Returns how many paths."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        conn = db.connect(db.readonly_uri(db_path), uri=True)
-        try:
-            tags = sorted(tag for (tag,) in conn.execute("SELECT tag FROM tag_taxonomy"))
-        finally:
-            conn.close()
-        with open(json_file(db_path), "w", encoding="utf-8") as f:
-            json.dump({"paths": tags}, f, indent=2)
-    except Exception as e:
-        logger.error("Could not write the taxonomy JSON beside %s: %s", db_path, e)
+        paths_ = sorted(tags(conn))
+    finally:
+        conn.close()
+    with open(target, "w", encoding="utf-8") as f:
+        json.dump({"paths": paths_}, f, indent=2)
+    return len(paths_)
 
 
 def seed(db_path):
     """Give a library whose tree is empty its first nodes: the usual roots, every tag
-    its photos carry, everyone its faces name (under People), and the paths in its JSON
-    file. A tree with nodes in it is left alone."""
+    its photos carry, and everyone its faces name (under People). A tree with nodes in
+    it is left alone."""
     try:
         schema.ensure(db_path)
         conn = db.connect(db_path, timeout=30.0)
@@ -441,13 +429,6 @@ def seed(db_path):
                     if name.strip():
                         add_path(conn, "People/" + name)
 
-            if os.path.exists(json_file(db_path)):
-                try:
-                    with open(json_file(db_path), encoding="utf-8") as f:
-                        for path in json.load(f).get("paths", []):
-                            add_path(conn, path)
-                except Exception as json_err:
-                    logger.error("Error seeding from taxonomy json: %s", json_err)
             conn.commit()
             logger.info("Successfully seeded tag taxonomy database table.")
         finally:
@@ -459,20 +440,13 @@ def seed(db_path):
 # ---- The tree in memory -----------------------------------------------------------------
 
 class TagTaxonomy:
-    def __init__(self, file_path: Optional[str] = None, db_path: Optional[str] = None):
-        if db_path is not None:
-            self.db_path = db_path
-            self.file_path = file_path if file_path is not None else json_file(db_path)
-        else:
-            if file_path is None:
-                file_path = "data/photo_taxonomy.json"
-            self.file_path = file_path
-            if file_path.endswith("photo_taxonomy.json"):
-                self.db_path = os.path.join(os.path.dirname(file_path), "photo_index.db")
-            elif file_path.endswith("_taxonomy.json"):
-                self.db_path = file_path.replace("_taxonomy.json", ".db")
-            else:
-                self.db_path = os.path.splitext(file_path)[0] + ".db"
+    """The tag tree of one library, held in memory by the indexer and the suggester."""
+
+    def __init__(self, db_path: str):
+        # The library, not a JSON file whose name decided the library: the CLI's test
+        # mode named test_photo_taxonomy.json and wrote into photo_index.db
+        # (docs/findings.md, #61).
+        self.db_path = db_path
         # Store full paths of known hierarchical tags, e.g., {"Family/Immediate/Jane Doe", "Activity/Botanical Garden"}
         self.paths: Set[str] = set()
         # What the database held when this was loaded or last saved. save_to_db adds
@@ -481,50 +455,24 @@ class TagTaxonomy:
         self._in_db: Set[str] = set()
 
     def load(self):
-        """Load taxonomy from database tag_taxonomy table, falling back to JSON file if DB doesn't have it."""
+        """Read the library's tree. A library that does not exist has none: opening it
+        would create it."""
         self.paths = set()
         self._in_db = set()
-        loaded_from_db = False
-        
-        # 1. Try to load from database
-        if os.path.exists(self.db_path):
+        if not os.path.exists(self.db_path):
+            return
+        try:
+            conn = db.connect(db.readonly_uri(self.db_path), uri=True)
             try:
-                conn = db.connect(self.db_path, timeout=10.0)
-                cursor = conn.cursor()
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-                if cursor.fetchone():
-                    cursor.execute("SELECT tag FROM tag_taxonomy")
-                    for row in cursor.fetchall():
-                        self.paths.add(row[0])
-                    self._in_db = set(self.paths)
-                    loaded_from_db = True
+                self.paths = set(tags(conn))
+            finally:
                 conn.close()
-            except Exception as e:
-                logger.error(f"Error loading taxonomy from DB: {e}")
-                
-        # 2. Fall back to JSON file if not loaded from DB and JSON exists
-        if not loaded_from_db and os.path.exists(self.file_path):
-            try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self.paths = set(data.get("paths", []))
-                logger.info(f"Loaded taxonomy from JSON fallback with {len(self.paths)} paths.")
-                # Since we have JSON but not DB, we can write it to DB if DB exists
-                if os.path.exists(self.db_path):
-                    self.save_to_db()
-            except Exception as e:
-                logger.error(f"Error loading taxonomy JSON fallback: {e}")
+            self._in_db = set(self.paths)
+        except Exception as e:
+            logger.error(f"Error loading taxonomy from DB: {e}")
 
     def save(self):
-        """Save taxonomy to both JSON file (for backward compatibility) and database."""
-        os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
-        try:
-            with open(self.file_path, "w", encoding="utf-8") as f:
-                json.dump({"paths": sorted(list(self.paths))}, f, indent=2)
-            logger.info(f"Saved taxonomy to JSON with {len(self.paths)} paths.")
-        except Exception as e:
-            logger.error(f"Error saving taxonomy to JSON: {e}")
-            
+        """Add the paths this has gained to the library's tree (save_to_db)."""
         self.save_to_db()
 
     def save_to_db(self):

@@ -381,7 +381,5 @@ def _node(library, node_id):
 
 
 def _tree_changed(library):
-    """What follows every edit of the tree: its JSON file kept in step, and what was
-    read of its people forgotten."""
-    taxonomy.export_json(library.path)
+    """What follows every edit of the tree: what was read of its people forgotten."""
     taxonomy.forget_people_paths(library.path)
