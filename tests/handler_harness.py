@@ -16,38 +16,26 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 import db as tagpup_db  # noqa: E402
 import tagpup_server  # noqa: E402
+from index import PhotoIndex  # noqa: E402
 from tagpup_server import TagPupHTTPRequestHandler, set_active_db_path, get_active_db_path  # noqa: E402
-
-SCHEMA = (
-    """CREATE TABLE photos (
-        path TEXT PRIMARY KEY, mtime REAL, size INTEGER, tags TEXT, people TEXT,
-        captions TEXT, raw_metadata TEXT, embedding BLOB, document_id TEXT)""",
-    """CREATE TABLE faces (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, photo_path TEXT, box TEXT, embedding BLOB,
-        name TEXT, crop_image BLOB, prob REAL, name_source TEXT,
-        excluded INTEGER DEFAULT 0, excluded_reason TEXT)""",
-    """CREATE TABLE tag_taxonomy (
-        id INTEGER PRIMARY KEY, tag TEXT, name TEXT, parent_id INTEGER, has_face INTEGER)""",
-    """CREATE TABLE embedding_cache (
-        path TEXT PRIMARY KEY, mtime REAL, size INTEGER, model_name TEXT, pretrained TEXT,
-        preserve_full_frame INTEGER, max_aspect_ratio REAL, force_image_size INTEGER,
-        embedding BLOB)""",
-)
 
 
 class Library:
-    """A scratch library: a folder of photos and a database, removed afterwards."""
+    """A scratch library: a folder of photos and a database, removed afterwards.
+
+    The tables are made the way the app makes them (PhotoIndex). This harness wrote its
+    own, and its tag tree lacked a column every library has, so code reading that
+    column failed here and nowhere else.
+    """
 
     def __init__(self, testcase, name="library"):
         self.root = tempfile.mkdtemp(prefix="tagpup_harness_")
         self.photos = os.path.join(self.root, "Photos")
         os.makedirs(self.photos)
         self.db_path = os.path.join(self.root, name + ".db")
-        conn = tagpup_db.connect(self.db_path)
-        for statement in SCHEMA:
-            conn.execute(statement)
-        conn.commit()
-        conn.close()
+        index = PhotoIndex(db_path=self.db_path)
+        index.load()
+        index.close()
         tagpup_server.invalidate_people_cache()
         set_active_db_path(self.db_path)
         self.registry_key = get_active_db_path()
