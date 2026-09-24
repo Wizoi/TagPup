@@ -252,21 +252,21 @@ class TestMultipleDatabases(unittest.TestCase):
         people_db2 = json.loads(response_db2.read().decode('utf-8'))
         self.assertEqual(people_db2, ["Bob"])
 
-        # Caches Isolation check - folders cache
+        # Caches Isolation check - the Identify Faces cache
         from tuner_server import set_active_db_path
-        
+
         set_active_db_path(db1_path)
-        TunerHTTPRequestHandler.folder_cache["shared_key"] = "value_1"
+        TunerHTTPRequestHandler.identify_cache["shared_key"] = "value_1"
 
         set_active_db_path(db2_path)
-        TunerHTTPRequestHandler.folder_cache["shared_key"] = "value_2"
+        TunerHTTPRequestHandler.identify_cache["shared_key"] = "value_2"
 
         # Verify they are isolated
         set_active_db_path(db1_path)
-        self.assertEqual(TunerHTTPRequestHandler.folder_cache["shared_key"], "value_1")
+        self.assertEqual(TunerHTTPRequestHandler.identify_cache["shared_key"], "value_1")
 
         set_active_db_path(db2_path)
-        self.assertEqual(TunerHTTPRequestHandler.folder_cache["shared_key"], "value_2")
+        self.assertEqual(TunerHTTPRequestHandler.identify_cache["shared_key"], "value_2")
 
 
 class TestFolderIndexingAPI(unittest.TestCase):

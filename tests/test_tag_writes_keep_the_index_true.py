@@ -29,11 +29,9 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 import db as tagpup_db
 import tagpup_server
-import tuner_server
 from index import PhotoIndex
 from metadata import extract_tags
 from tagpup_server import TagPupHTTPRequestHandler
-from tuner_server import TunerHTTPRequestHandler
 from tagpup.core.library import Library
 from tagpup.services import tagging
 
@@ -106,12 +104,10 @@ class IndexCase(unittest.TestCase):
         index.close()
 
         def forget_state():
-            for module, handler in ((tagpup_server, TagPupHTTPRequestHandler),
-                                    (tuner_server, TunerHTTPRequestHandler)):
-                module.set_active_db_path(self.db_path)
-                handler.folder_cache.clear()
-                module.set_active_db_path(None)
+            # Only TagPup keeps a folder cache: TagTuner's was written by a copy of
+            # TagPup's rescan that nothing called.
             tagpup_server.set_active_db_path(self.db_path)
+            TagPupHTTPRequestHandler.folder_cache.clear()
             TagPupHTTPRequestHandler.suggest_status.clear()
             tagpup_server.set_active_db_path(None)
             tagpup_server.invalidate_people_cache()

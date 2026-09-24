@@ -294,18 +294,11 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                               metaclass=TunerHTTPRequestHandlerMeta):
     db_path = "data/photo_index.db"
     gui_dir = "gui"
-    
-    # State cache and lock for folder tagging
-    model_lock = threading.Lock()
-    shared_embedder = None
-    
+
     # Database-specific registries
-    _db_folder_cache_registry = {}
-    _db_suggest_threads_registry = {}
     _db_identify_cache_registry = {}
     _db_identify_progress_registry = {}
 
-    folder_cache = DatabaseIsolatedDict(_db_folder_cache_registry)
     # Cache for the Identify Faces views. Clustering a person's unmatched candidates is
     # expensive (tens of thousands of 512-dimensional vectors for a large library), and
     # the answer only changes when faces are added or named, so it is cached against a
@@ -316,7 +309,6 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
     # read by a status request on another thread, which is what the threaded server is
     # for. Keyed by person, because two people's grids can be built at once.
     identify_progress = DatabaseIsolatedDict(_db_identify_progress_registry)
-    suggest_threads = DatabaseIsolatedDict(_db_suggest_threads_registry)
 
     # The suggestions cache file belongs to TagPup, which runs the suggestions and is
     # the only process that reads or writes it (TagPupHTTPRequestHandler.
@@ -3790,62 +3782,6 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         except Exception as e:
             self.send_json_error(500, str(e))
 
-    def handle_get_tags(self):
-        try:
-            from taxonomy import TagTaxonomy
-            tax_path = Library(self.db_path).taxonomy_file
-            taxonomy = TagTaxonomy(file_path=tax_path)
-            taxonomy.load()
-            
-            # Filter out hidden tags
-            hidden_tags = set()
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-            if cursor.fetchone():
-                cursor.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")
-                for row in cursor.fetchall():
-                    hidden_tags.add(row[0])
-            conn.close()
-
-            def is_tag_hidden(tag):
-                return vocabulary.hidden_by(tag, hidden_tags)
-                
-            final_paths = [p for p in taxonomy.paths if not is_tag_hidden(p)]
-            self.send_json(sorted(final_paths))
-        except Exception as e:
-            self.send_json_error(500, str(e))
-
-
-
-    def rescan_folder_to_cache(self, folder_path):
-        folder_path = paths.stored(folder_path)
-        valid_exts = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
-        image_files = []
-        for root, _, files in os.walk(folder_path):
-            for file in files:
-                ext = os.path.splitext(file)[1].lower()
-                if ext in valid_exts:
-                    image_files.append(os.path.join(root, file))
-        if not image_files:
-            TunerHTTPRequestHandler.folder_cache[paths.key(folder_path)] = {}
-            return
-            
-        from metadata import MetadataExtractor, build_photo_ui_record
-        extractor = MetadataExtractor(exiftool_path=self.get_exiftool_path())
-        batch_size = 500
-        results = []
-        for i in range(0, len(image_files), batch_size):
-            batch = image_files[i:i+batch_size]
-            batch_meta = extractor.batch_read(batch)
-            results.extend(batch_meta)
-            
-        folder_map = {}
-        for meta in results:
-            path = paths.stored(meta["path"])
-            folder_map[paths.key(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
-
-        TunerHTTPRequestHandler.folder_cache[paths.key(folder_path)] = folder_map
 
 #: Listens on IPv4 and IPv6 alike -- see scripts/localserver.py for why that is
 #: worth two seconds on every click.
