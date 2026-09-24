@@ -626,13 +626,17 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
 @click.option("-Live", "live", is_flag=True, help="Write tags to files for real (modifies files).")
 @click.option("-MinScore", "min_score", default=0.50, type=float, help="Write tags at or above this score threshold.")
 @click.option("--nobackup", is_flag=True, help="Avoid creating backup copies (_original files) during write operations.")
-def write(suggestions_file: str, live: bool, min_score: float, nobackup: bool):
+@click.pass_context
+def write(ctx, suggestions_file: str, live: bool, min_score: float, nobackup: bool):
     """Phase 3: Write suggested tags back to photos using ExifTool."""
     config = get_config()
     exiftool_path = get_exiftool_path(config)
-    
+    # The library: its taxonomy files people, and its index is told what was written.
+    db_path, _ = get_db_paths(config, ctx.obj.get("test", False), ctx.obj.get("db"))
+
     writer = MetadataWriter(exiftool_path=exiftool_path)
-    writer.write_tags_to_photos(suggestions_file, live=live, min_score=min_score, nobackup=nobackup)
+    writer.write_tags_to_photos(suggestions_file, live=live, min_score=min_score,
+                                nobackup=nobackup, db_path=db_path)
 
 @cli.command()
 @click.argument("query")

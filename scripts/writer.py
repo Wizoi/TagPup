@@ -85,6 +85,22 @@ def derive_caption_from_tags(tags: List[str]) -> Optional[str]:
             
     return caption
 
+def record_caption_in_index(db_path, photo_path, caption):
+    """The caption just written, in the photo's index row."""
+    import json
+
+    import db as tagpup_db
+    import paths
+
+    where, params = paths.sql_equals("path", photo_path)
+
+    def store(conn):
+        return conn.execute("UPDATE photos SET captions = ? WHERE " + where,
+                            (json.dumps([caption]),) + params).rowcount
+
+    return tagpup_db.write_with_connection(db_path, store, label="caption for %s" % photo_path)
+
+
 class MetadataWriter:
     def __init__(self, exiftool_path: Optional[str] = None):
         self.exiftool_path = exiftool_path
@@ -94,9 +110,15 @@ class MetadataWriter:
         suggestions_file: str, 
         live: bool = False, 
         min_score: float = 0.50,
-        nobackup: bool = False
+        nobackup: bool = False,
+        db_path: Optional[str] = None
     ) -> bool:
-        """Read suggestions from suggestions.json, filter by min_score, and write to files using ExifTool."""
+        """Read suggestions from suggestions.json, filter by min_score, and write to files using ExifTool.
+
+        `db_path` is the library: people are filed by its taxonomy and its index is told
+        what was written. Without it keywords are still written whole, and nothing
+        is recorded.
+        """
         if not os.path.exists(suggestions_file):
             logger.error(f"Suggestions file not found: {suggestions_file}")
             return False
@@ -171,72 +193,41 @@ class MetadataWriter:
 
         # We will write tags to XMP:Subject, IPTC:Keywords, and XMP:HierarchicalSubject
         # and captions to XMP:Description and IPTC:Caption-Abstract
+        from tagpup_server import (record_file_stat_in_index, record_tags_in_index,
+                                   tags_in_file, write_keyword_fields)
+
         try:
             with ExifToolSession(executable=executable) as et:
                 for path, tags, caption in write_tasks:
                     try:
-                        params = {}
-                        
-                        if tags:
-                            new_flat_tags = []
-                            new_hierarchical_tags = []
-                            for tag in tags:
-                                new_flat_tags.append(tag)
-                                if "/" in tag:
-                                    new_hierarchical_tags.append(tag)
-                                    for part in tag.split("/"):
-                                        new_flat_tags.append(part)
-                                        
-                            new_flat_tags = list(set(new_flat_tags))
-                            new_hierarchical_tags = list(set(new_hierarchical_tags))
-
-                            # Read existing tags to merge them (emulating append without using "+" key suffix)
-                            existing_flat = []
-                            existing_hierarchical = []
-                            try:
-                                existing_records = et.get_tags([path], ["XMP:Subject", "IPTC:Keywords", "XMP:HierarchicalSubject"])
-                                if existing_records:
-                                    rec = existing_records[0]
-                                    
-                                    def get_as_list(key):
-                                        val = rec.get(key) or rec.get(key.split(":")[-1])
-                                        if not val:
-                                            return []
-                                        if isinstance(val, list):
-                                            return [str(v) for v in val]
-                                        return [str(val)]
-                                        
-                                    existing_flat.extend(get_as_list("XMP:Subject"))
-                                    existing_flat.extend(get_as_list("IPTC:Keywords"))
-                                    existing_hierarchical.extend(get_as_list("XMP:HierarchicalSubject"))
-                            except Exception as read_err:
-                                logger.warning(f"Could not read existing tags for merging on {path}: {read_err}")
-
-                            flat_tags = sorted(list(set(existing_flat + new_flat_tags)))
-                            hierarchical_tags = sorted(list(set(existing_hierarchical + new_hierarchical_tags)))
-
-                            if flat_tags:
-                                params["XMP:Subject"] = flat_tags
-                                params["IPTC:Keywords"] = flat_tags
-                                # Windows-specific XPKeywords requires a semicolon-separated string
-                                params["EXIF:XPKeywords"] = ";".join(flat_tags)
-                            if hierarchical_tags:
-                                params["XMP:HierarchicalSubject"] = hierarchical_tags
-                        
+                        # The caption first, so the stat recorded with the keywords
+                        # below is the file's final one.
                         if caption:
-                            params["XMP:Description"] = caption
-                            params["IPTC:Caption-Abstract"] = caption
-                            # EXIF ImageDescription maps to System.Title (Title) in C# code
-                            params["EXIF:ImageDescription"] = caption
-                            # EXIF XPComment maps to System.Comment (Caption) in C# code
-                            params["EXIF:XPComment"] = caption
+                            et.set_tags([path], tags={
+                                "XMP:Description": caption,
+                                "IPTC:Caption-Abstract": caption,
+                                # EXIF ImageDescription maps to System.Title (Title) in C# code
+                                "EXIF:ImageDescription": caption,
+                                # EXIF XPComment maps to System.Comment (Caption) in C# code
+                                "EXIF:XPComment": caption,
+                            }, params=["-overwrite_original"] if nobackup else None)
+                            if db_path:
+                                record_caption_in_index(db_path, path, caption)
 
-                        if params:
-                            extra_params = ["-overwrite_original"] if nobackup else None
-                            et.set_tags([path], tags=params, params=extra_params)
-                            success_count += 1
-                        else:
-                            success_count += 1  # Nothing to write
+                        if tags:
+                            # Through the one keyword writer: whole paths only, people
+                            # filed where the taxonomy files them, starting from what
+                            # the file holds. This had its own ExifTool code that also
+                            # wrote every path's parts as loose keywords, wrote people
+                            # bare, and never told the index.
+                            current = tags_in_file(et, path)
+                            merged = current + [t for t in tags if t not in current]
+                            flat, hierarchical = write_keyword_fields(et, path, merged, db_path=db_path)
+                            if db_path:
+                                record_tags_in_index(db_path, path, flat, flat, hierarchical)
+                        elif caption and db_path:
+                            record_file_stat_in_index(db_path, path)
+                        success_count += 1
                     except Exception as e:
                         logger.error(f"Failed to write metadata to {path}: {e}")
                         error_count += 1
