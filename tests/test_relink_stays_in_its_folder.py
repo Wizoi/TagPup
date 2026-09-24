@@ -17,6 +17,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import db  # noqa: E402
 import paths  # noqa: E402
 import relink_renamed_photos  # noqa: E402
+from tagpup.store import schema  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_face  # noqa: E402
 
 
 class FakeExifTool:
@@ -62,11 +66,10 @@ class RelinkStaysInItsFolder(unittest.TestCase):
         self.dead_a = os.path.join(self.meet_a, "IMG_0421.jpg")
         self.dead_b = os.path.join(self.meet_b, "IMG_0002.jpg")
         self.db = os.path.join(self.dir, "lib.db")
+        schema.ensure(self.db)
         conn = db.connect(self.db)
-        conn.executescript("CREATE TABLE photos (path TEXT PRIMARY KEY, document_id TEXT);"
-                           "CREATE TABLE faces (id INTEGER PRIMARY KEY, photo_path TEXT, name TEXT);")
         conn.executemany("INSERT INTO photos (path) VALUES (?)", [(self.dead_a,), (self.dead_b,)])
-        conn.execute("INSERT INTO faces (photo_path, name) VALUES (?, ?)", (self.dead_a, "Rowan Thackeray"))
+        add_face(conn, self.dead_a, name="Rowan Thackeray")
         conn.commit()
         conn.close()
 

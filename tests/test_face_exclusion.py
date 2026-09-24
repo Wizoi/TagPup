@@ -30,6 +30,7 @@ from tuner_server import start_server as start_tuner_server, set_active_db_path
 from tests.test_face_clustering_rules import identity_vector, near
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
+from face_rows import add_face  # noqa: E402
 
 
 class ExclusionTestBase(unittest.TestCase):
@@ -115,11 +116,7 @@ class ExclusionTestBase(unittest.TestCase):
 
     def add_face(self, photo, embedding, name=None, box=(0, 0, 100, 100)):
         conn = sqlite3.connect(self.TEST_DB)
-        cur = conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, 0.99)",
-            (photo, json.dumps(list(box)), embedding.tobytes(), name),
-        )
-        fid = cur.lastrowid
+        fid = add_face(conn, photo, box=box, embedding=embedding.tobytes(), name=name, prob=0.99)
         conn.commit()
         conn.close()
         return fid
@@ -353,7 +350,7 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
 
         conn = sqlite3.connect(self.TEST_DB)
         rows = conn.execute(
-            "SELECT name, name_source, excluded FROM faces WHERE photo_path = ?", (photo,)
+            "SELECT name, name_source, excluded FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (photo,)
         ).fetchall()
         conn.close()
         self.assertEqual(len(rows), 2)
@@ -378,7 +375,7 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
 
         conn = sqlite3.connect(self.TEST_DB)
         count = conn.execute(
-            "SELECT COUNT(*) FROM faces WHERE photo_path = ?", (photo,)
+            "SELECT COUNT(*) FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (photo,)
         ).fetchone()[0]
         conn.close()
         self.assertEqual(count, 1)
@@ -523,7 +520,7 @@ class TestReindexingPreservesFaceCuration(ExclusionTestBase):
 
         conn = sqlite3.connect(self.TEST_DB)
         count = conn.execute(
-            "SELECT COUNT(*) FROM faces WHERE photo_path = ?", (photo,)
+            "SELECT COUNT(*) FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (photo,)
         ).fetchone()[0]
         conn.close()
         self.assertEqual(count, 2, "a photo with no faces was skipped")
@@ -541,7 +538,7 @@ class TestReindexingPreservesFaceCuration(ExclusionTestBase):
 
         conn = sqlite3.connect(self.TEST_DB)
         rows = conn.execute(
-            "SELECT name FROM faces WHERE photo_path = ?", (photo,)
+            "SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (photo,)
         ).fetchall()
         conn.close()
         self.assertEqual(len(rows), 1)

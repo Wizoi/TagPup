@@ -17,6 +17,9 @@ from tagpup.store import checks, db, schema
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 import doctor  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_face  # noqa: E402
+
 
 class Library(unittest.TestCase):
     def setUp(self):
@@ -40,8 +43,7 @@ class Library(unittest.TestCase):
         return path
 
     def face(self, photo_path, name=None, excluded=0):
-        self.conn.execute("INSERT INTO faces (photo_path, box, name, excluded) VALUES (?, '[0,0,1,1]', ?, ?)",
-                          (photo_path, name, excluded))
+        add_face(self.conn, photo_path, box="[0,0,1,1]", name=name, excluded=excluded)
         self.conn.commit()
 
     def broken(self):
@@ -62,7 +64,12 @@ class TheRules(Library):
         self.assertEqual({"faces named and excluded": 1}, self.broken())
 
     def test_a_face_whose_photo_has_no_row(self):
-        self.face(os.path.join(self.dir, "never-indexed.jpg"))
+        # A face points at its photo by id; the row goes on a connection without
+        # foreign keys, by something other than the store's own deletes.
+        photo = self.photo("deleted-by-hand.jpg")
+        self.face(photo)
+        self.conn.execute("DELETE FROM photos WHERE path = ?", (photo,))
+        self.conn.commit()
         self.assertEqual({"faces with no photo row": 1}, self.broken())
 
     def test_one_file_under_two_spellings(self):
@@ -76,6 +83,17 @@ class TheRules(Library):
         self.conn.execute("INSERT INTO tag_taxonomy (tag, name, parent_id) VALUES ('People/Wren Halloway', 'Wren Halloway', 999)")
         self.conn.commit()
         self.assertEqual({"tree nodes whose parent is missing": 1}, self.broken())
+
+    def test_a_library_from_before_photo_ids_is_reported_not_failed(self):
+        # The doctor reads a library as it is, and both real ones were at version 2
+        # when faces moved to photo ids (#78).
+        from test_schema import make_unmigrated_library
+        other = os.path.join(self.dir, "older.db")
+        make_unmigrated_library(other)
+        conn = db.connect(db.readonly_uri(other), uri=True)
+        self.addCleanup(conn.close)
+        found = {check.name: check.count for check in checks.run(conn) if check.count}
+        self.assertEqual({"migrations not applied": len(schema.MIGRATIONS)}, found)
 
     def test_a_library_not_yet_migrated(self):
         self.conn.execute("DELETE FROM schema_version WHERE version = ?", (schema.LATEST,))

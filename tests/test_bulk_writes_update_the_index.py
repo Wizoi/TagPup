@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 import db as tagpup_db
 import tagpup_server
+from tagpup.store import schema  # noqa: E402
 
 PHOTO = "D:/Library/2020/a.jpg"
 
@@ -37,14 +38,9 @@ class TestTheIndexHearsAboutBulkEdits(unittest.TestCase):
         os.close(fd)
         os.remove(self.db_path)
 
+        # The tables as the app makes them.
+        schema.ensure(self.db_path)
         conn = tagpup_db.connect(self.db_path)
-        conn.execute("""CREATE TABLE photos (
-            path TEXT PRIMARY KEY, mtime REAL, size INTEGER, tags TEXT, people TEXT,
-            captions TEXT, raw_metadata TEXT, embedding BLOB
-        )""")
-        conn.execute("""CREATE TABLE tag_taxonomy (
-            id INTEGER PRIMARY KEY, tag TEXT, name TEXT, parent_id INTEGER, has_face INTEGER
-        )""")
         conn.executemany(
             "INSERT INTO tag_taxonomy (tag, name, parent_id, has_face) VALUES (?,?,?,?)",
             [("People", "People", None, 1),

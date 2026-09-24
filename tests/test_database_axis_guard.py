@@ -23,6 +23,7 @@ import unittest
 import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
+from face_rows import add_face  # noqa: E402
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
@@ -245,10 +246,7 @@ class CrossDatabaseReadIsolationMixin:
                 json.dumps({}),
             ),
         )
-        conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name) VALUES (?, ?, ?, ?)",
-            (f"C:/{marker}.jpg", "[]", b"", marker),
-        )
+        add_face(conn, f"C:/{marker}.jpg", box="[]", embedding=b"", name=marker)
         conn.execute(
             "INSERT INTO tag_taxonomy (tag, parent_id, name) VALUES (?, NULL, ?)",
             (marker, marker),

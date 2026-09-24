@@ -244,12 +244,10 @@ class FaceProcessor:
 
         logger.info(f"Clustered {len(all_faces)} faces into {len(clusters)} distinct visual identities.")
 
-        # Each face's photo metadata, keyed by the face's own photo_path. Built by
-        # paths.key because the two columns need not share a spelling: a raw lookup of
-        # faces.photo_path in a dict of photos.path missed every face whose row was
-        # spelled differently, and those faces lost their photo's people tags -- the
-        # anchors and votes this whole resolution runs on. Keying by the face's
-        # spelling keeps every lookup below exact and costs one key() per photo.
+        # Each face's photo metadata, by paths.key of the photo's path. A face's path
+        # is its photo row's since faces point at photos by id; before, a face could
+        # spell its photo apart from the row, and a raw lookup missed it and lost the
+        # photo's people tags -- the anchors and votes this whole resolution runs on.
         meta_by_key = {paths.key(meta["path"]): meta for meta in photo_index.metadata}
 
         # What counts as evidence of who is in a photo: its keywords, and names given

@@ -86,8 +86,8 @@ def is_under(path, folder):
 def sql_equals(column, path):
     """(clause, params) matching rows whose `column` holds this file.
 
-        clause, params = paths.sql_equals("photo_path", photo)
-        cursor.execute("SELECT id FROM faces WHERE " + clause, params)
+        clause, params = paths.sql_equals("path", photo)
+        cursor.execute("SELECT id FROM photos WHERE " + clause, params)
 
     Not LIKE, which the tuner used for case-insensitivity: LIKE reads "_" -- in
     most camera filenames -- as any character, and cannot use the index.

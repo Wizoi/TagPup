@@ -34,6 +34,7 @@ from tagpup_server import (
 import paths
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
+from face_rows import add_face  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 
 
@@ -137,10 +138,7 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
                 "INSERT INTO photos (path, mtime, size, people, tags) VALUES (?, ?, ?, ?, ?)",
                 (f"C:/{person}.jpg", 1.0, 1, json.dumps([person]), json.dumps([])),
             )
-            conn.execute(
-                "INSERT INTO faces (photo_path, box, embedding, name) VALUES (?, ?, ?, ?)",
-                (f"C:/{person}.jpg", "[]", b"", person),
-            )
+            add_face(conn, f"C:/{person}.jpg", box="[]", embedding=b"", name=person)
             conn.commit()
             conn.close()
 

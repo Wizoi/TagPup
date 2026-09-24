@@ -16,6 +16,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_face_clustering_rules import FaceClusteringTestBase, identity_vector, near  # noqa: E402
+import face_rows  # noqa: E402
 
 from tagpup.store import db, taxonomy  # noqa: E402
 
@@ -33,12 +34,11 @@ class ClusteringDoesNotTrustItsOwnGuesses(FaceClusteringTestBase):
     def add_guessed_face(self, photo_path, embedding, name):
         """A face clustering named, as it leaves it: a name, no manual source."""
         conn = sqlite3.connect(self.db_path)
-        cur = conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-            (photo_path, json.dumps([0, 0, 100, 100]), embedding.tobytes(), name, 0.99))
+        face_id = face_rows.add_face(conn, photo_path, box=(0, 0, 100, 100),
+                                     embedding=embedding.tobytes(), name=name, prob=0.99)
         conn.commit()
         conn.close()
-        return cur.lastrowid
+        return face_id
 
     def set_tags(self, photo_path, tags):
         conn = sqlite3.connect(self.db_path)

@@ -112,7 +112,7 @@ class PersonCentroids(unittest.TestCase):
         index.conn.execute("INSERT INTO photos (path) VALUES (?)", (r"D:\Pictures\a.jpg",))
         for name, excluded, emb in rows:
             index.conn.execute(
-                "INSERT INTO faces (photo_path, box, embedding, name, excluded) VALUES (?,?,?,?,?)",
+                "INSERT INTO faces (photo_id, box, embedding, name, excluded) VALUES ((SELECT id FROM photos WHERE path = ?),?,?,?,?)",
                 (r"D:\Pictures\a.jpg", "[0,0,1,1]", np.asarray(emb, dtype=np.float32).tobytes(),
                  name, excluded))
         index.conn.commit()

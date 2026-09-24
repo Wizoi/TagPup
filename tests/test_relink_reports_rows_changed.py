@@ -14,21 +14,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import db  # noqa: E402
 import relink_renamed_photos  # noqa: E402
+from tagpup.store import schema  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import FACES_WITH_PATHS, add_face  # noqa: E402
 
 
 class RelinkReportsRowsChanged(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="relink_")
         self.db = os.path.join(self.dir, "lib.db")
+        schema.ensure(self.db)
         conn = db.connect(self.db)
-        conn.executescript("""
-            CREATE TABLE photos (path TEXT PRIMARY KEY);
-            CREATE TABLE faces (id INTEGER PRIMARY KEY, photo_path TEXT, name TEXT);
-        """)
-        conn.execute("INSERT INTO photos VALUES (?)", (r"D:\Pictures\Run\2Z6A0001.jpg",))
-        conn.executemany("INSERT INTO faces (photo_path, name) VALUES (?, ?)",
-                         [(r"D:\Pictures\Run\2Z6A0001.jpg", "Rowan Thackeray"),
-                          (r"D:\Pictures\Run\2Z6A0001.jpg", None)])
+        conn.execute("INSERT INTO photos (path) VALUES (?)", (r"D:\Pictures\Run\2Z6A0001.jpg",))
+        add_face(conn, r"D:\Pictures\Run\2Z6A0001.jpg", name="Rowan Thackeray")
+        add_face(conn, r"D:\Pictures\Run\2Z6A0001.jpg", name=None)
         conn.commit()
         conn.close()
 
@@ -44,7 +44,7 @@ class RelinkReportsRowsChanged(unittest.TestCase):
         self.assertEqual(relink_renamed_photos.apply_moves(self.db, moves), (1, []))
         conn = db.connect(self.db)
         try:
-            faces = conn.execute("SELECT COUNT(*) FROM faces WHERE photo_path = ?",
+            faces = conn.execute("SELECT COUNT(*) FROM " + FACES_WITH_PATHS + " WHERE p.path = ?",
                                  (r"D:\Pictures\Run\Run - 01.jpg",)).fetchone()[0]
         finally:
             conn.close()

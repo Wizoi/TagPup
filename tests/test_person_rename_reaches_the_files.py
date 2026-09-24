@@ -88,7 +88,7 @@ class PersonRenameReachesTheFiles(unittest.TestCase):
                 handle.write(b"not a picture")
         self.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
                      " VALUES (?, 1.0, 1, ?, ?, '[]', '{}')", (path, json.dumps(tags), json.dumps([OLD])))
-        self.execute("INSERT INTO faces (photo_path, box, name, name_source) VALUES (?, '[0,0,1,1]', ?, 'manual')",
+        self.execute("INSERT INTO faces (photo_id, box, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[0,0,1,1]', ?, 'manual')",
                      (path, OLD))
         return path
 

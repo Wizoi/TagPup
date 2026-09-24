@@ -31,6 +31,9 @@ from tagpup_server import TagPupHTTPRequestHandler, set_active_db_path
 from tagpup.core.library import Library
 from tagpup.jobs import suggestions as suggestion_jobs
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_face  # noqa: E402
+
 WINDOWS = os.name == "nt"
 
 
@@ -87,9 +90,8 @@ class HandlerCase(unittest.TestCase):
                 " VALUES (?, ?, ?, ?, '[]', '[]', ?, ?)",
                 (stored, mtime, size, json.dumps(list(tags)),
                  json.dumps({"XMP:Subject": list(tags)}), embedding))
-            conn.executemany(
-                "INSERT INTO faces (photo_path, box, name, prob) VALUES (?, '[]', ?, 1.0)",
-                [(stored, name) for name in faces])
+            for name in faces:
+                add_face(conn, stored, box="[]", name=name, prob=1.0)
             conn.commit()
         finally:
             conn.close()
@@ -220,7 +222,7 @@ class TestSavingACaptionThatRenamesThePhoto(HandlerCase):
         try:
             rows = [r[0] for r in conn.execute("SELECT path FROM photos")]
             names = sorted(r[0] for r in conn.execute(
-                "SELECT name FROM faces WHERE photo_path = ?", (new_stored,)))
+                "SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (new_stored,)))
             embedding = conn.execute("SELECT embedding FROM photos").fetchone()[0]
             captions = conn.execute("SELECT captions FROM photos").fetchone()[0]
         finally:
@@ -248,7 +250,7 @@ class TestSavingACaptionThatRenamesThePhoto(HandlerCase):
 
         self.assertIn("index_warning", result)
         self.assertEqual(self.count("SELECT COUNT(*) FROM photos"), 2)
-        self.assertEqual(self.count("SELECT COUNT(*) FROM faces WHERE photo_path = ?",
+        self.assertEqual(self.count("SELECT COUNT(*) FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)",
                                     os.path.abspath(renamed_to)), 1)
 
 

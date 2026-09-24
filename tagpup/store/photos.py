@@ -37,18 +37,15 @@ def record_file_stat(db_path, photo_path):
 def forget_photo(db_path, photo_path):
     """Remove a deleted photo's row, its faces and its cached embedding.
 
-    Returns how many rows of each were removed. The faces are deleted by name rather
-    than left to the foreign key's cascade: db.connect() does not turn foreign keys
-    on, and a face left behind points at a photo that no longer exists.
+    Returns how many rows of each were removed. The faces are deleted explicitly
+    rather than left to the foreign key's cascade: db.connect() does not turn foreign
+    keys on, and a face left behind points at a photo that no longer exists.
     """
     def forget(conn):
-        cursor = conn.cursor()
-        removed = {}
-        for table, column in (("faces", "photo_path"), ("photos", "path"),
-                              ("embedding_cache", "path")):
-            where, params = paths.sql_equals(column, photo_path)
-            cursor.execute("DELETE FROM %s WHERE %s" % (table, where), params)
-            removed[table] = cursor.rowcount
+        removed = {"faces": faces.remove_for_photo(conn, photo_path)}
+        for table in ("photos", "embedding_cache"):
+            where, params = paths.sql_equals("path", photo_path)
+            removed[table] = conn.execute("DELETE FROM %s WHERE %s" % (table, where), params).rowcount
         return removed
 
     removed = db.write_with_connection(
@@ -80,7 +77,8 @@ def record_reads(db_path, records, label="photos read back"):
 
 
 def move_rows(db_path, renames):
-    """Move index rows from each old path to its new one, and its faces with them.
+    """Move index rows from each old path to its new one. Its faces point at the row by
+    id, so they go with it.
 
     `renames` maps old path to new path, in any spelling. Returns (moved, skipped):
     how many photo rows actually changed, and the (old, new) pairs left where they
@@ -92,8 +90,8 @@ def move_rows(db_path, renames):
     that only changes case), or when whatever is there is itself moving away in this
     same call -- a rename that shuffles numbered files among themselves, or the
     occupant of a name that was moved aside to make room. The rows are moved in one
-    transaction, by rowid, through a placeholder, so a shuffle never collides with
-    itself on the way.
+    transaction, by id, through a placeholder, so a shuffle never collides with itself
+    on the way.
     """
     def rows_at(cursor, table, column, id_column, path):
         where, params = paths.sql_equals(column, path)
@@ -115,8 +113,7 @@ def move_rows(db_path, renames):
                 new_key = paths.key(new_path)
                 clash = new_key in arriving
                 if not clash and not paths.same(old_path, new_path) and new_key not in leaving:
-                    clash = bool(rows_at(cursor, "photos", "path", "rowid", new_path)
-                                 or rows_at(cursor, "faces", "photo_path", "id", new_path))
+                    clash = bool(rows_at(cursor, "photos", "path", "id", new_path))
                 if clash:
                     skipped.append((old_path, new_path))
                     del plan[old_path]
@@ -128,8 +125,7 @@ def move_rows(db_path, renames):
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'embedding_cache'").fetchone())
         staged = []
         for n, (old_path, new_path) in enumerate(plan.items()):
-            photo_ids = rows_at(cursor, "photos", "path", "rowid", old_path)
-            face_ids = rows_at(cursor, "faces", "photo_path", "id", old_path)
+            photo_ids = rows_at(cursor, "photos", "path", "id", old_path)
             # The cached CLIP embedding too: a rename keeps the file's mtime and size,
             # which is what the cache is checked against, so it is still good. Left
             # behind, the renamed photo was embedded again from scratch.
@@ -138,20 +134,18 @@ def move_rows(db_path, renames):
             # "<" cannot appear in a Windows file name, and this never outlives
             # the transaction.
             placeholder = "<moving %d>" % n
-            cursor.executemany("UPDATE photos SET path = ? WHERE rowid = ?",
-                               [(placeholder, rowid) for rowid in photo_ids])
+            cursor.executemany("UPDATE photos SET path = ? WHERE id = ?",
+                               [(placeholder, photo_id) for photo_id in photo_ids])
             if cache_ids:
                 cursor.executemany("UPDATE embedding_cache SET path = ? WHERE rowid = ?",
                                    [(placeholder, rowid) for rowid in cache_ids])
-            staged.append((paths.stored(new_path), photo_ids, face_ids, cache_ids))
+            staged.append((paths.stored(new_path), photo_ids, cache_ids))
 
         moved = 0
-        for new_stored, photo_ids, face_ids, cache_ids in staged:
-            for rowid in photo_ids:
-                cursor.execute("UPDATE photos SET path = ? WHERE rowid = ?", (new_stored, rowid))
+        for new_stored, photo_ids, cache_ids in staged:
+            for photo_id in photo_ids:
+                cursor.execute("UPDATE photos SET path = ? WHERE id = ?", (new_stored, photo_id))
                 moved += cursor.rowcount
-            cursor.executemany("UPDATE faces SET photo_path = ? WHERE id = ?",
-                               [(new_stored, face_id) for face_id in face_ids])
             if cache_ids:
                 # Whatever was cached under the new name described another file; it
                 # is only derived data, keyed by path, and would block the move.
@@ -196,11 +190,11 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None):
 
     def store(conn):
         cursor = conn.cursor()
-        cursor.execute("SELECT rowid, raw_metadata FROM photos WHERE " + where, where_params)
+        cursor.execute("SELECT id, raw_metadata FROM photos WHERE " + where, where_params)
         row = cursor.fetchone()
         if not row:
             return False   # never indexed; adding it here would be an index, not an edit
-        rowid, raw_json = row
+        photo_id, raw_json = row
 
         try:
             raw_meta = json.loads(raw_json) if raw_json else {}
@@ -213,15 +207,15 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None):
             taxonomy.people_vocabulary(conn=conn))
         if stat is None:
             cursor.execute(
-                "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE rowid = ?",
-                (json.dumps(tags), json.dumps(people), json.dumps(raw_meta), rowid),
+                "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE id = ?",
+                (json.dumps(tags), json.dumps(people), json.dumps(raw_meta), photo_id),
             )
         else:
             cursor.execute(
                 "UPDATE photos SET tags = ?, people = ?, raw_metadata = ?, mtime = ?, size = ?"
-                " WHERE rowid = ?",
+                " WHERE id = ?",
                 (json.dumps(tags), json.dumps(people), json.dumps(raw_meta),
-                 stat.st_mtime, stat.st_size, rowid),
+                 stat.st_mtime, stat.st_size, photo_id),
             )
         return cursor.rowcount > 0
 
@@ -297,7 +291,7 @@ def update_people(conn, photo_path, gained=(), lost=()):
     too (docs/findings.md, #42).
     """
     where, params = paths.sql_equals("path", photo_path)
-    row = conn.execute("SELECT path, people FROM photos WHERE " + where, params).fetchone()
+    row = conn.execute("SELECT id, people FROM photos WHERE " + where, params).fetchone()
     if not row:
         return False
     try:
@@ -308,18 +302,16 @@ def update_people(conn, photo_path, gained=(), lost=()):
     for name in gained:
         if name and name not in updated:
             updated.append(name)
-    faces_where, faces_params = paths.sql_equals("photo_path", photo_path)
     for name in lost:
         if not name or name in gained or name not in updated:
             continue
-        still = conn.execute("SELECT COUNT(*) FROM faces WHERE " + faces_where
-                             + " AND name = ? AND excluded = 0", faces_params + (name,)).fetchone()[0]
+        still = conn.execute("SELECT COUNT(*) FROM faces WHERE photo_id = ?"
+                             " AND name = ? AND excluded = 0", (row[0], name)).fetchone()[0]
         if not still:
             updated = [person for person in updated if person != name]
     if updated == people:
         return False
-    where, params = paths.sql_equals("path", row[0])
-    conn.execute("UPDATE photos SET people = ? WHERE " + where, (json.dumps(updated),) + params)
+    conn.execute("UPDATE photos SET people = ? WHERE id = ?", (json.dumps(updated), row[0]))
     return True
 
 
@@ -383,7 +375,7 @@ def index_rows(conn):
 
 
 def ensure_row(conn, photo_path):
-    """The path a photo's row is stored under, making the row if it has none.
+    """The id of a photo's row, making the row if it has none.
 
     Every photo a face or an embedding is recorded for has a row (docs/findings.md,
     #48): Suggest detects faces in photos never indexed, and they were recorded against
@@ -391,13 +383,12 @@ def ensure_row(conn, photo_path):
     its mtime and size stay empty, so the folder scan and the refresh read the file
     rather than trust it. The caller commits.
     """
-    existing = stored_spelling(conn, photo_path)
-    if existing is not None:
-        return existing
-    stored = paths.stored(photo_path)
-    conn.execute("INSERT INTO photos (path, tags, people, captions, raw_metadata)"
-                 " VALUES (?, '[]', '[]', '[]', '{}')", (stored,))
-    return stored
+    clause, params = paths.sql_equals("path", photo_path)
+    row = conn.execute("SELECT id FROM photos WHERE " + clause + " LIMIT 1", params).fetchone()
+    if row:
+        return row[0]
+    return conn.execute("INSERT INTO photos (path, tags, people, captions, raw_metadata)"
+                        " VALUES (?, '[]', '[]', '[]', '{}')", (paths.stored(photo_path),)).lastrowid
 
 
 def stored_spelling(conn, photo_path):
@@ -413,7 +404,7 @@ def record_indexed(conn, photo_path, row):
     commits.
 
     A photo indexed before is updated in place, under the spelling its row already has.
-    faces.photo_path references photos.path ON DELETE CASCADE, so anything that deletes
+    faces.photo_id references photos.id ON DELETE CASCADE, so anything that deletes
     the row -- INSERT OR REPLACE is a delete and an insert -- takes every face with it:
     names given by hand, "nobody" decisions and exclusions. Re-indexing a changed photo
     did exactly that. A document_id already recorded is kept when the file has none.
@@ -433,11 +424,11 @@ def record_indexed(conn, photo_path, row):
 
 
 def remove(conn, photo_paths):
-    """Delete the rows of `photo_paths`; their faces go with them on a connection that
-    enforces foreign keys (db.connect(..., foreign_keys=True)). Returns rows deleted.
-    The caller commits."""
+    """Delete the rows of `photo_paths` and their faces, whether or not the connection
+    enforces foreign keys. Returns photo rows deleted. The caller commits."""
     removed = 0
     for photo_path in photo_paths:
+        faces.remove_for_photo(conn, photo_path)
         clause, params = paths.sql_equals("path", photo_path)
         removed += conn.execute("DELETE FROM photos WHERE " + clause, params).rowcount
     return removed
@@ -466,12 +457,12 @@ def remove_under(conn, folder):
     excluded_lost}: what the deletes removed, and the face work that went with them. The
     caller commits.
 
-    Faces are matched on their own photo_path, so a face goes with its folder even where
-    its photo row is missing or spelled apart; and deleted explicitly, since the cascade
-    runs only where a connection turned foreign keys on.
+    Faces are deleted explicitly, since the cascade runs only where a connection turned
+    foreign keys on.
     """
-    faces_where, faces_params = paths.sql_under("photo_path", folder)
     photos_where, photos_params = paths.sql_under("path", folder)
+    faces_where = "photo_id IN (SELECT id FROM photos WHERE %s)" % photos_where
+    faces_params = photos_params
     manual = conn.execute("SELECT COUNT(*) FROM faces WHERE " + faces_where
                           + " AND name_source = 'manual'", faces_params).fetchone()[0]
     excluded = conn.execute("SELECT COUNT(*) FROM faces WHERE " + faces_where

@@ -25,6 +25,9 @@ from index import PhotoIndex  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tuner_server import TunerHTTPRequestHandler  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_face  # noqa: E402
+
 PHOTO = r"D:\Pictures\Regatta\start.jpg"
 KEY = "matches:Unknown Faces"
 
@@ -59,8 +62,7 @@ class IdentifyCacheKeepsOthersWrites(unittest.TestCase):
         index.close()
         conn = tagpup_db.connect(self.db)
         conn.execute("INSERT INTO photos (path, people) VALUES (?, '[]')", (PHOTO,))
-        self.faces = [conn.execute("INSERT INTO faces (photo_path, box) VALUES (?, '[1,2,3,4]')", (PHOTO,)).lastrowid
-                      for _ in range(3)]
+        self.faces = [add_face(conn, PHOTO, box="[1,2,3,4]") for _ in range(3)]
         conn.commit()
         conn.close()
         tuner_server.set_active_db_path(self.db)
@@ -91,7 +93,7 @@ class IdentifyCacheKeepsOthersWrites(unittest.TestCase):
                 # The indexer, writing while the exclude is under way.
                 other = sqlite3.connect(self.db, timeout=0.2)
                 try:
-                    other.execute("INSERT INTO faces (photo_path, box) VALUES (?, '[5,6,7,8]')", (PHOTO,))
+                    add_face(other, PHOTO, box="[5,6,7,8]")
                     other.commit()
                     pending.append("written")
                 except sqlite3.OperationalError:
@@ -107,7 +109,7 @@ class IdentifyCacheKeepsOthersWrites(unittest.TestCase):
         if pending == ["waiting"]:
             # Held off until the exclude committed; it lands now.
             conn = tagpup_db.connect(self.db)
-            conn.execute("INSERT INTO faces (photo_path, box) VALUES (?, '[5,6,7,8]')", (PHOTO,))
+            add_face(conn, PHOTO, box="[5,6,7,8]")
             conn.commit()
             conn.close()
 

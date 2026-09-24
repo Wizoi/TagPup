@@ -26,6 +26,9 @@ from index import PhotoIndex  # noqa: E402
 from tagpup_server import TagPupHTTPRequestHandler, set_active_db_path  # noqa: E402
 from tuner_server import TunerHTTPRequestHandler  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_face  # noqa: E402
+
 PIPE = 'A tag cannot contain "|": other programs read it as a break between levels. Use "/" instead.'
 
 
@@ -196,9 +199,7 @@ class TagTunerRefuses(ServerCase):
     def seed_face(self, name=None):
         conn = tagpup_db.connect(self.db_path)
         try:
-            face_id = conn.execute(
-                "INSERT INTO faces (photo_path, box, name, prob) VALUES (?, '[]', ?, 1.0)",
-                (os.path.abspath(self.photo), name)).lastrowid
+            face_id = add_face(conn, os.path.abspath(self.photo), box="[]", name=name, prob=1.0)
             conn.commit()
         finally:
             conn.close()

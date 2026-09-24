@@ -129,7 +129,7 @@ class TestFunctionalCLI(unittest.TestCase):
         self.assertEqual(json.loads(untagged[2] or "[]"), [])
         
         # Check faces are indexed
-        c.execute("SELECT photo_path, name FROM faces")
+        c.execute("SELECT p.path, f.name FROM faces f JOIN photos p ON p.id = f.photo_id")
         face_rows = c.fetchall()
         # All three photos are indexed now, and face detection runs on each of them --
         # which is the point: an untagged photo's faces are exactly what TagTuner needs

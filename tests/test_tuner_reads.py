@@ -76,8 +76,8 @@ class TunerReads(unittest.TestCase):
 
     def face(self, photo_path, name=None, embedding=None, excluded=0, source=None):
         face_id = self.conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name, name_source, excluded)"
-            " VALUES (?, '[0, 0, 10, 10]', ?, ?, ?, ?)",
+            "INSERT INTO faces (photo_id, box, embedding, name, name_source, excluded)"
+            " VALUES ((SELECT id FROM photos WHERE path = ?), '[0, 0, 10, 10]', ?, ?, ?, ?)",
             (photo_path, embedding if embedding is not None else vector(1), name, source, excluded)).lastrowid
         self.conn.commit()
         return face_id

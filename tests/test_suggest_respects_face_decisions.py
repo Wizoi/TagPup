@@ -69,8 +69,8 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         conn = self.index.conn
         conn.execute("INSERT OR IGNORE INTO photos (path) VALUES (?)", (path,))
         conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, prob, name, name_source, excluded)"
-            " VALUES (?, '[0, 0, 100, 100]', ?, 0.99, ?, ?, ?)",
+            "INSERT INTO faces (photo_id, box, embedding, prob, name, name_source, excluded)"
+            " VALUES ((SELECT id FROM photos WHERE path = ?), '[0, 0, 100, 100]', ?, 0.99, ?, ?, ?)",
             (path, np.asarray(ROWAN, dtype=np.float32).tobytes(), name, name_source, excluded))
         conn.commit()
 

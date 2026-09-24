@@ -463,7 +463,7 @@ class TestAutocompleteEndpoints(TagPupAPITestBase):
         photo = self.make_photo("a.jpg", [])
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name) VALUES (?, ?, ?, ?)",
+            "INSERT INTO faces (photo_id, box, embedding, name) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?)",
             (photo, "[]", b"", "Jane Doe"),
         )
         conn.commit()
@@ -623,8 +623,8 @@ class TestPhotoFaces(TagPupAPITestBase):
         vec = vec / np.linalg.norm(vec)
         conn = sqlite3.connect(self.TEST_DB)
         cur = conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name, prob, excluded, excluded_reason)"
-            " VALUES (?, ?, ?, ?, 0.99, ?, ?)",
+            "INSERT INTO faces (photo_id, box, embedding, name, prob, excluded, excluded_reason)"
+            " VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, 0.99, ?, ?)",
             (photo, json.dumps(list(box)), vec.tobytes(), name, excluded, reason),
         )
         fid = cur.lastrowid
@@ -661,8 +661,8 @@ class TestPhotoFaces(TagPupAPITestBase):
 
     def face_at(self, photo, vec, name=None):
         conn = sqlite3.connect(self.TEST_DB)
-        cur = conn.execute("INSERT INTO faces (photo_path, box, embedding, name, prob, excluded)"
-                           " VALUES (?, '[0, 0, 50, 50]', ?, ?, 0.99, 0)", (photo, vec.tobytes(), name))
+        cur = conn.execute("INSERT INTO faces (photo_id, box, embedding, name, prob, excluded)"
+                           " VALUES ((SELECT id FROM photos WHERE path = ?), '[0, 0, 50, 50]', ?, ?, 0.99, 0)", (photo, vec.tobytes(), name))
         conn.commit()
         conn.close()
         return cur.lastrowid
@@ -736,7 +736,7 @@ class TestTagPupFaceCrop(TagPupAPITestBase):
         vec = vec / np.linalg.norm(vec)
         conn = sqlite3.connect(self.TEST_DB)
         cur = conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, NULL, 0.9)",
+            "INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, NULL, 0.9)",
             (photo, json.dumps([0, 0, 20, 20]), vec.tobytes()),
         )
         face_id = cur.lastrowid

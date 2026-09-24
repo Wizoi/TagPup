@@ -14,8 +14,8 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from service_fixture import TempLibrary  # noqa: E402
+from face_rows import add_face  # noqa: E402
 
-from tagpup.core import paths  # noqa: E402
 from tagpup.core.result import Conflict, NotFound  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.services import faces  # noqa: E402
@@ -39,10 +39,15 @@ class FacesCase(unittest.TestCase):
         return path
 
     def face(self, photo, name=None, excluded=0, embedding=None, source=None):
-        return self.lib.execute(
-            "INSERT INTO faces (photo_path, box, name, excluded, embedding, name_source)"
-            " VALUES (?, '[0,0,10,10]', ?, ?, ?, ?)",
-            (photo, name, excluded, embedding.tobytes() if embedding is not None else None, source))
+        conn = db.connect(self.lib.library.path)
+        try:
+            face_id = add_face(conn, photo, box="[0,0,10,10]", name=name, excluded=excluded,
+                               embedding=embedding.tobytes() if embedding is not None else None,
+                               name_source=source)
+            conn.commit()
+            return face_id
+        finally:
+            conn.close()
 
     def people(self, photo):
         return json.loads(self.lib.rows("SELECT people FROM photos WHERE path = ?", (photo,))[0][0])
@@ -232,15 +237,26 @@ class TheWriteLockIsNotHeldThroughAScan(FacesCase):
     a scan of the whole table, while holding the write lock."""
 
     def test_the_names_on_a_photo_are_found_by_an_index(self):
+        # The query the store runs, planned: faces find their photo by id since
+        # migration 4, so neither table may be scanned to answer for one photo.
+        asked = []
+
+        class Recording:
+            def execute(self, sql, params=()):
+                asked.append((sql, params))
+                return []
+
+        store_faces.names_in_photo(Recording(), self.photo("a.jpg"))
+        self.assertEqual(1, len(asked))
+        sql, params = asked[0]
         conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
         try:
-            where, params = paths.sql_equals("photo_path", self.photo("a.jpg"))
-            plan = " ".join(row[-1] for row in conn.execute(
-                "EXPLAIN QUERY PLAN SELECT name FROM faces WHERE " + where + " AND name IS NOT NULL", params))
+            plan = " ".join(row[-1] for row in conn.execute("EXPLAIN QUERY PLAN " + sql, params))
         finally:
             conn.close()
         self.assertIn("USING INDEX", plan)
         self.assertNotIn("SCAN faces", plan)
+        self.assertNotIn("SCAN photos", plan)
 
     def test_automatching_a_folder_reads_names_only_of_the_photos_it_may_change(self):
         photo = self.photo("a.jpg")
@@ -258,7 +274,7 @@ class TheWriteLockIsNotHeldThroughAScan(FacesCase):
             faces.automatch_folder(self.lib.library, self.folder,
                                    lambda: ([1], ["Wren Halloway"], np.stack([vector(1)])))
         self.assertEqual(asked, [photo])
-        self.assertEqual(self.face_row(self.lib.rows("SELECT id FROM faces WHERE photo_path = ?",
+        self.assertEqual(self.face_row(self.lib.rows("SELECT id FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)",
                                                      (photo,))[0][0])[0], "Wren Halloway")
 
 

@@ -15,6 +15,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
+from face_rows import add_face  # noqa: E402
 from index import PhotoIndex  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -45,10 +46,16 @@ class TempLibrary:
                      " VALUES (?, ?, ?, ?, '[]', '[]', '{}')", (path, mtime, size, json.dumps(list(tags))))
 
     def add_face(self, path, box, name=None, crop=b"crop"):
-        face_id = self.execute("INSERT INTO faces (photo_path, box, name) VALUES (?, ?, ?)",
-                               (path, json.dumps(box), name))
-        if crop is not None:
-            self.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, crop))
+        """A face in the photo at `path`, which gets a row holding only the path if it
+        has none. Returns the face's id."""
+        conn = db.connect(self.library.path)
+        try:
+            face_id = add_face(conn, path, box, name=name)
+            if crop is not None:
+                conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, crop))
+            conn.commit()
+        finally:
+            conn.close()
         return face_id
 
     def execute(self, sql, params=()):

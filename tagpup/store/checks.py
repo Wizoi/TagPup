@@ -45,7 +45,9 @@ def schema_current(conn):
 def generations_kept(conn):
     """What stops the generations moving as they should: a row or a trigger missing, or
     the counters of an older version, made again beside them (docs/findings.md, #55,
-    #60)."""
+    #60). Before migration 2 makes them, nothing: schema_current says why."""
+    if schema.version(conn) < 2:
+        return _check("generations not kept", [])
     objects = {(kind, name) for kind, name in conn.execute("SELECT type, name FROM sqlite_master")}
     broken = []
     if ("table", "generations") not in objects:
@@ -60,12 +62,20 @@ def generations_kept(conn):
     return _check("generations not kept", broken)
 
 
+def _faces_by_id(conn):
+    """Whether faces point at photos by id (migration 4). The doctor reads a library as it
+    is: on one from before, the face checks wait, and schema_current says why (#78)."""
+    return "photo_id" in {row[1] for row in conn.execute("PRAGMA table_info(faces)")}
+
+
 def faces_without_a_photo(conn):
-    """Faces whose photo has no row. Faces need one to point at, and phase 4 gives them
-    one by id."""
-    rows = {paths.key(p) for (p,) in conn.execute("SELECT path FROM photos")}
-    return _check("faces with no photo row", sorted(
-        {p for (p,) in conn.execute("SELECT DISTINCT photo_path FROM faces") if paths.key(p) not in rows}))
+    """Faces whose photo row is gone: a photo deleted on a connection without foreign
+    keys, by something other than the store's own deletes."""
+    if not _faces_by_id(conn):
+        return _check("faces with no photo row", [])
+    return _check("faces with no photo row", [face_id for (face_id,) in conn.execute(
+        "SELECT f.id FROM faces f LEFT JOIN photos p ON p.id = f.photo_id"
+        " WHERE p.id IS NULL ORDER BY f.id")])
 
 
 def named_and_excluded(conn):
@@ -76,17 +86,19 @@ def named_and_excluded(conn):
 
 def face_names_missing_from_people(conn):
     """Names on a photo's faces that its people do not list (docs/findings.md, #42)."""
-    people = {}
-    for path, people_json in conn.execute("SELECT path, people FROM photos"):
-        try:
-            people[paths.key(path)] = set(json.loads(people_json or "[]"))
-        except (TypeError, ValueError):
-            people[paths.key(path)] = set()
+    if not _faces_by_id(conn):
+        return _check("face names missing from their photo's people", [])
     broken = []
-    for photo_path, name in conn.execute(
-            "SELECT photo_path, name FROM faces WHERE name IS NOT NULL AND excluded = 0 ORDER BY photo_path"):
-        listed = people.get(paths.key(photo_path))
-        if listed is not None and name not in listed:
+    listed = {}
+    for photo_path, people_json, name in conn.execute(
+            "SELECT p.path, p.people, f.name FROM faces f JOIN photos p ON p.id = f.photo_id"
+            " WHERE f.name IS NOT NULL AND f.excluded = 0 ORDER BY p.path"):
+        if photo_path not in listed:
+            try:
+                listed[photo_path] = set(json.loads(people_json or "[]"))
+            except (TypeError, ValueError):
+                listed[photo_path] = set()
+        if name not in listed[photo_path]:
             broken.append(photo_path)
     return _check("face names missing from their photo's people", broken)
 
@@ -100,7 +112,10 @@ def orphan_nodes(conn):
 
 def crops_without_a_face(conn):
     """Crops whose face is gone. The trigger that takes a crop with its face makes this
-    none, whichever connection deletes the face."""
+    none, whichever connection deletes the face. A library from before migration 3 keeps
+    its crops in faces, and has none to lose."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'face_crops'").fetchone():
+        return _check("crops whose face is gone", [])
     return _check("crops whose face is gone", [face_id for (face_id,) in conn.execute(
         "SELECT c.face_id FROM face_crops c LEFT JOIN faces f ON f.id = c.face_id"
         " WHERE f.id IS NULL ORDER BY c.face_id")])

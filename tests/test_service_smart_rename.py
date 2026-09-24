@@ -42,7 +42,8 @@ class SmartRenaming(unittest.TestCase):
         result = self.rename([a], {a: "Start"})
         new = os.path.join(self.lib.photos, "Regatta - 1 - Start.jpg")
         self.assertEqual(self.lib.rows("SELECT path FROM photos"), [(new,)])
-        self.assertEqual(self.lib.rows("SELECT photo_path, name FROM faces"), [(new, "Rowan Thackeray")])
+        self.assertEqual(self.lib.rows("SELECT p.path, f.name FROM faces f LEFT JOIN photos p ON p.id = f.photo_id"),
+                         [(new, "Rowan Thackeray")])
         self.assertEqual(result.details["index_rows_moved"], 1)
 
     def test_a_file_holding_a_new_name_is_moved_aside_with_its_row(self):

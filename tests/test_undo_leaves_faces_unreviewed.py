@@ -47,8 +47,9 @@ class UndoLeavesFacesUnreviewed(unittest.TestCase):
         index.close()
         conn = tagpup_db.connect(self.db)
         conn.execute("INSERT INTO photos (path, people) VALUES (?, '[\"Rowan Thackeray\"]')", (PHOTO,))
-        self.face = conn.execute("INSERT INTO faces (photo_path, box, name, name_source) VALUES"
-                                 " (?, '[1,2,3,4]', 'Rowan Thackeray', 'manual')", (PHOTO,)).lastrowid
+        self.face = conn.execute("INSERT INTO faces (photo_id, box, name, name_source) VALUES"
+                                 " ((SELECT id FROM photos WHERE path = ?), '[1,2,3,4]', 'Rowan Thackeray', 'manual')",
+                                 (PHOTO,)).lastrowid
         conn.commit()
         conn.close()
 

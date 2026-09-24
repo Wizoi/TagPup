@@ -18,6 +18,9 @@ import db as tagpup_db  # noqa: E402
 from index import PhotoIndex  # noqa: E402
 from tuner_server import TunerHTTPRequestHandler  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_face  # noqa: E402
+
 
 class Handler(TunerHTTPRequestHandler):
     def __init__(self, db_path):  # noqa: D107 -- no socket, on purpose
@@ -42,7 +45,7 @@ class HiddenPeopleStillExist(unittest.TestCase):
                      " VALUES (1, 'People', 'People', NULL, 1, 0),"
                      " (2, 'People/Rowan Thackeray', 'Rowan Thackeray', 1, 1, 1)")
         conn.execute("INSERT INTO photos (path) VALUES ('D:\\a.jpg')")
-        conn.execute("INSERT INTO faces (photo_path, box, name) VALUES ('D:\\a.jpg', '[]', 'Rowan Thackeray')")
+        add_face(conn, "D:\\a.jpg", box="[]", name="Rowan Thackeray")
         conn.commit()
         conn.close()
 

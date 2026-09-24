@@ -22,6 +22,21 @@ from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 import tagpup_server
 from exiftool_session import ExifToolSession
 from metadata import ROTATED_ORIENTATION, rotate_image_file
+from tagpup.store import db
+from tests.face_rows import add_face
+
+
+def face_in(lib, path, box, **columns):
+    """A face in the photo at `path`, which gets a row holding only the path if it has
+    none. Returns the face's id."""
+    conn = db.connect(lib.db_path)
+    try:
+        face_id = add_face(conn, path, box, **columns)
+        conn.commit()
+        return face_id
+    finally:
+        conn.close()
+
 
 FIELDS = {
     "XMP:Subject": ["Beach", "People", "Rowan Thackeray"],
@@ -183,9 +198,7 @@ class TestTheRotateRoute(unittest.TestCase):
             "INSERT INTO photos (path, mtime, size, tags, people, raw_metadata) VALUES (?,?,?,?,?,?)",
             (os.path.abspath(self.photo), stat.st_mtime, stat.st_size,
              json.dumps(["Beach"]), "[]", "{}"))
-        self.face = self.lib.execute(
-            "INSERT INTO faces (photo_path, box, name) VALUES (?,?,?)",
-            (os.path.abspath(self.photo), json.dumps([0, 0, 10, 8]), "Rowan Thackeray"))
+        self.face = face_in(self.lib, os.path.abspath(self.photo), [0, 0, 10, 8], name="Rowan Thackeray")
         self.lib.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (self.face, b"crop"))
         self.handler = self.lib.handler(EXIFTOOL)
         status, _ = self.handler.call("handle_get_folder_scan", None,
@@ -231,8 +244,7 @@ class TestTheRotateRoute(unittest.TestCase):
 
         tiff = make_picture(os.path.join(self.lib.photos, "scan.tif"), fmt="TIFF")
         box = [0, 0, 10, 8]
-        face = self.lib.execute("INSERT INTO faces (photo_path, box) VALUES (?,?)",
-                                (os.path.abspath(tiff), json.dumps(box)))
+        face = face_in(self.lib, os.path.abspath(tiff), box)
         self.lib.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face, b"crop"))
         with Image.open(tiff) as img:
             img.load()

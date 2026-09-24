@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 from tagpup_server import start_server as start_tagpup_server, set_active_db_path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
+from face_rows import add_face  # noqa: E402
 
 
 def _exiftool_path():
@@ -557,7 +558,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
 
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name) VALUES (?, '[]', ?, ?)",
+            "INSERT INTO faces (photo_id, box, embedding, name) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, ?)",
             (photo, b"", "Jane Doe"),
         )
         conn.execute(
@@ -587,15 +588,14 @@ class TestTaxonomyRename(TaxonomyTestBase):
         people_id, _ = self.create_tag("People", has_face=1)
         person_id, _ = self.create_tag("Jane Doe", parent_id=people_id)
         conn = sqlite3.connect(self.TEST_DB)
-        conn.execute("INSERT INTO faces (photo_path, box, embedding, name)"
-                     " VALUES ('D:/case.jpg', '[]', ?, 'jane doe')", (b"",))
+        add_face(conn, "D:/case.jpg", box="[]", embedding=b"", name="jane doe")
         conn.commit()
         conn.close()
 
         status, body = self.post("/api/taxonomy/rename", {"tag_id": person_id, "new_name": "Jane Smith"})
         self.assertEqual(status, 200, body)
         conn = sqlite3.connect(self.TEST_DB)
-        names = [r[0] for r in conn.execute("SELECT name FROM faces WHERE photo_path = 'D:/case.jpg'")]
+        names = [r[0] for r in conn.execute("SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = 'D:/case.jpg')")]
         conn.close()
         self.assertEqual(names, ["Jane Smith"])
 
@@ -607,7 +607,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
 
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name) VALUES (?, '[]', ?, ?)",
+            "INSERT INTO faces (photo_id, box, embedding, name) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, ?)",
             (photo, b"", "Hiking"),
         )
         conn.commit()

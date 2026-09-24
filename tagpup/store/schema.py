@@ -202,10 +202,119 @@ def _face_crops(conn):
         conn.execute("ALTER TABLE faces DROP COLUMN crop_image")
 
 
+#: What moves the faces generation once faces point at photos by id (migration 4).
+FACES_GENERATION_UPDATE = "UPDATE OF name, name_source, excluded, embedding, photo_id"
+
+
+def _photo_ids(conn):
+    """Photos get an integer id, and faces point at a photo by it (ARCHITECTURE.md,
+    principle 3). A photo's path was its identity: every rename re-pointed its faces by
+    hand, and a face spelled apart from its photo's row joined to nothing -- the joins
+    compared paths with case, where every lookup did not.
+
+    Each photo keeps its rowid as its id. A face whose photo has no row gets one first,
+    the path and nothing read from the file (photos.ensure_row), so no face is lost;
+    a face finds its photo by paths.key, so a face that spelled its photo apart from the
+    row -- in case, or in its separators, which no collation equates -- still finds it.
+    Both tables are rebuilt, with their indexes and triggers; a face keeps its id, so
+    its crop follows, and neither table gives out an id it gave before.
+
+    Dropping a table on a connection with foreign keys on deletes its rows first, and
+    every face and crop with them: schema._ensure connects without, and this checks.
+    """
+    if conn.execute("PRAGMA foreign_keys").fetchone()[0]:
+        raise RuntimeError("Migration 4 rebuilds photos and faces, which with foreign keys on"
+                           " would delete every face first; nothing was changed")
+    collate = paths.COLLATE
+    # A row for every photo a face is on, one per file however the faces spelled it. A
+    # face goes to the row it spells exactly, else to the file's row, else to a row
+    # made for it in the stored form, as photos.ensure_row makes one.
+    exact, ids = {}, {}
+    for photo_id, path in conn.execute("SELECT rowid, path FROM photos"):
+        exact[path] = photo_id
+        ids.setdefault(paths.key(path), photo_id)
+    conn.execute("CREATE TEMP TABLE face_photo (photo_path TEXT PRIMARY KEY, photo_id INTEGER NOT NULL)")
+    for (face_path,) in conn.execute("SELECT DISTINCT photo_path FROM faces WHERE photo_path IS NOT NULL").fetchall():
+        key = paths.key(face_path)
+        if face_path not in exact and key not in ids:
+            ids[key] = conn.execute("INSERT INTO photos (path, tags, people, captions, raw_metadata)"
+                                    " VALUES (?, '[]', '[]', '[]', '{}')", (paths.stored(face_path),)).lastrowid
+        conn.execute("INSERT INTO face_photo VALUES (?, ?)", (face_path, exact.get(face_path, ids.get(key))))
+    face_counter = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'faces'").fetchone()
+
+    conn.execute("""
+        CREATE TABLE photos_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL UNIQUE,
+            mtime REAL,
+            size INTEGER,
+            tags TEXT,
+            people TEXT,
+            captions TEXT,
+            raw_metadata TEXT,
+            embedding BLOB,
+            document_id TEXT
+        )
+    """)
+    conn.execute("INSERT INTO photos_new (id, path, mtime, size, tags, people, captions, raw_metadata,"
+                 " embedding, document_id) SELECT rowid, path, mtime, size, tags, people, captions,"
+                 " raw_metadata, embedding, document_id FROM photos")
+    conn.execute("DROP TABLE photos")
+    conn.execute("ALTER TABLE photos_new RENAME TO photos")
+    conn.execute("CREATE INDEX idx_photos_document_id ON photos(document_id)")
+    if collate != "BINARY":
+        conn.execute("CREATE INDEX idx_photos_path_nocase ON photos(path COLLATE %s)" % collate)
+
+    conn.execute("""
+        CREATE TABLE faces_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+            box TEXT,
+            embedding BLOB,
+            name TEXT,
+            prob REAL,
+            name_source TEXT,
+            excluded INTEGER DEFAULT 0,
+            excluded_reason TEXT
+        )
+    """)
+    # A face with no path at all has no photo to point at, and is reported rather than
+    # dropped: the NOT NULL would otherwise stop the migration with no word of why.
+    before, pathless = conn.execute("SELECT COUNT(*), COUNT(*) - COUNT(photo_path) FROM faces").fetchone()
+    if pathless:
+        raise RuntimeError("%d of %d faces name no photo; nothing was changed" % (pathless, before))
+    conn.execute("INSERT INTO faces_new (id, photo_id, box, embedding, name, prob, name_source, excluded,"
+                 " excluded_reason) SELECT f.id, m.photo_id, f.box, f.embedding, f.name, f.prob,"
+                 " f.name_source, f.excluded, f.excluded_reason"
+                 " FROM faces f JOIN temp.face_photo m ON m.photo_path = f.photo_path")
+    after = conn.execute("SELECT COUNT(*) FROM faces_new").fetchone()[0]
+    if after != before:
+        raise RuntimeError("%d of %d faces found no photo; nothing was changed" % (before - after, before))
+    conn.execute("DROP TABLE temp.face_photo")
+    conn.execute("DROP TABLE faces")
+    conn.execute("ALTER TABLE faces_new RENAME TO faces")
+    # The faces that exist set the new counter; the old one also counted those deleted.
+    if face_counter:
+        conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'faces'", (face_counter[0],))
+    conn.execute("CREATE INDEX idx_faces_photo_id ON faces(photo_id)")
+    conn.execute("CREATE INDEX idx_faces_name ON faces(name)")
+    conn.execute("CREATE INDEX idx_faces_identify ON faces(excluded, name)")
+
+    # Dropping the tables took their triggers.
+    for name, table, update in (("photos", "photos", "UPDATE"),
+                                ("faces", "faces", FACES_GENERATION_UPDATE)):
+        bump = "BEGIN UPDATE generations SET value = value + 1 WHERE name = '%s'; END" % name
+        for event, when in (("insert", "INSERT"), ("delete", "DELETE"), ("update", update)):
+            conn.execute("CREATE TRIGGER generation_%s_%s AFTER %s ON %s %s" % (name, event, when, table, bump))
+    conn.execute("CREATE TRIGGER face_crops_go_with_their_face AFTER DELETE ON faces"
+                 " BEGIN DELETE FROM face_crops WHERE face_id = OLD.id; END")
+
+
 MIGRATIONS = (
     Migration(1, "the tables as of 2026-09", _tables, changes_data=False),
     Migration(2, "one generations table", _generations, changes_data=False),
     Migration(3, "face crops in their own table", _face_crops, changes_data=True),
+    Migration(4, "photos by id", _photo_ids, changes_data=True),
 )
 
 LATEST = MIGRATIONS[-1].version

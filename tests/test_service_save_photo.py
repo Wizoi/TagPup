@@ -76,7 +76,8 @@ class SavingAPhoto(unittest.TestCase):
         result = self.save()
         self.assertEqual((result.details["new_path"], result.details["renamed"]), (self.renamed_to, True))
         self.assertEqual(self.lib.rows("SELECT path FROM photos"), [(self.renamed_to,)])
-        self.assertEqual(self.lib.rows("SELECT photo_path FROM faces"), [(self.renamed_to,)])
+        self.assertEqual(self.lib.rows("SELECT p.path FROM faces f LEFT JOIN photos p ON p.id = f.photo_id"),
+                         [(self.renamed_to,)])
 
 
 if __name__ == "__main__":

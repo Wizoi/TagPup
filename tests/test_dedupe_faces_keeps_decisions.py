@@ -17,6 +17,9 @@ import db as tagpup_db  # noqa: E402
 import dedupe_faces  # noqa: E402
 from index import PhotoIndex  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_face  # noqa: E402
+
 PHOTO = r"D:\Pictures\Regatta\start.jpg"
 
 
@@ -40,9 +43,14 @@ class DedupeKeepsDecisions(unittest.TestCase):
             conn.close()
 
     def face(self, name=None, source=None, excluded=0):
-        return self.execute(
-            "INSERT INTO faces (photo_path, box, name, name_source, excluded) VALUES (?, '[1, 2, 3, 4]', ?, ?, ?)",
-            (PHOTO, name, source, excluded))
+        conn = tagpup_db.connect(self.db)
+        try:
+            face_id = add_face(conn, PHOTO, box="[1, 2, 3, 4]", name=name, name_source=source,
+                               excluded=excluded)
+            conn.commit()
+            return face_id
+        finally:
+            conn.close()
 
     def plan(self):
         redundant, disputed = dedupe_faces.plan_for(self.db)

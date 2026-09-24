@@ -21,6 +21,7 @@ from tuner_server import start_server, TunerHTTPRequestHandler
 from tagpup import config as tagpup_config  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
+from face_rows import add_face  # noqa: E402
 
 CHECKOUT_CONFIG = os.path.join(WORKSPACE_DIR, "config.ini")
 
@@ -226,16 +227,14 @@ class TestMultipleDatabases(unittest.TestCase):
         conn1 = sqlite3.connect(db1_path)
         conn1.execute("INSERT INTO photos (path, mtime, size, people) VALUES (?, ?, ?, ?)",
                       ("C:/photo1.jpg", 1.0, 100, json.dumps(["Alice"])))
-        conn1.execute("INSERT INTO faces (photo_path, box, embedding, name) VALUES (?, ?, ?, ?)",
-                      ("C:/photo1.jpg", "[]", b"", "Alice"))
+        add_face(conn1, "C:/photo1.jpg", box="[]", embedding=b"", name="Alice")
         conn1.commit()
         conn1.close()
 
         conn2 = sqlite3.connect(db2_path)
         conn2.execute("INSERT INTO photos (path, mtime, size, people) VALUES (?, ?, ?, ?)",
                       ("C:/photo2.jpg", 2.0, 200, json.dumps(["Bob"])))
-        conn2.execute("INSERT INTO faces (photo_path, box, embedding, name) VALUES (?, ?, ?, ?)",
-                      ("C:/photo2.jpg", "[]", b"", "Bob"))
+        add_face(conn2, "C:/photo2.jpg", box="[]", embedding=b"", name="Bob")
         conn2.commit()
         conn2.close()
 

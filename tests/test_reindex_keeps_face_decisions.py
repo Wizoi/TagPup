@@ -1,7 +1,7 @@
 """Re-indexing a photo, and resetting clustering, keep the decisions made about its faces.
 
-faces.photo_path references photos.path ON DELETE CASCADE, and PhotoIndex turns
-foreign keys on. Re-indexing a photo whose file had changed deleted its row first
+faces.photo_path referenced photos.path ON DELETE CASCADE (faces.photo_id references
+photos.id now), and PhotoIndex turns foreign keys on. Re-indexing a photo whose file had changed deleted its row first
 (remove_paths) and then wrote it with INSERT OR REPLACE -- a delete and an insert --
 so either way every face on the photo went with it: hand-given names, deliberate
 "nobody" decisions and exclusions. The detector then wrote fresh unnamed faces.
@@ -29,6 +29,9 @@ import db as tagpup_db
 import paths
 from index import PhotoIndex
 from tagpup_cli import cli, get_config
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_face  # noqa: E402
 
 
 def make_jpeg(path, color="green"):
@@ -92,12 +95,9 @@ class FaceDecisionCase(unittest.TestCase):
         index.build_or_update([[0.1] * expected_dim()], [meta], dim=expected_dim(), reload=False)
         ids = {}
         for box, name, source, excluded, reason in CURATED:
-            cur = index.conn.execute(
-                "INSERT INTO faces (photo_path, box, embedding, name, name_source,"
-                " excluded, excluded_reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (paths.stored(stored_as), str(box), bytes(4 * 512), name, source,
-                 excluded, reason))
-            ids[str(box)] = cur.lastrowid
+            ids[str(box)] = add_face(index.conn, paths.stored(stored_as), box=str(box),
+                                     embedding=bytes(4 * 512), name=name, name_source=source,
+                                     excluded=excluded, excluded_reason=reason)
         index.conn.commit()
         index.close()
         return ids

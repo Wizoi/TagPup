@@ -7,12 +7,17 @@ the owner has was already that shape, and the conversions retired on 2026-09-24.
 """
 import os
 import shutil
+import sys
 import tempfile
 import threading
 import unittest
 from unittest import mock
 
+from tagpup.core import paths
 from tagpup.store import db, generations, schema
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_face  # noqa: E402
 
 
 def tables(conn):
@@ -163,6 +168,21 @@ class AnUnmigratedLibrary(SchemaTestCase):
             schema.ensure(self.db_path)
         self.assertEqual(1, len(os.listdir(os.path.join(self.dir, "backups"))))
 
+    def test_its_faces_point_at_their_photo_by_id(self):
+        schema.ensure(self.db_path)
+        conn = self.connect()
+        self.assertNotIn("photo_path", columns(conn, "faces"))
+        self.assertEqual([("D:/a.jpg", "Wren Halloway")], conn.execute(
+            "SELECT p.path, f.name FROM faces f JOIN photos p ON p.id = f.photo_id").fetchall())
+
+    def test_a_photo_keeps_its_row_number_as_its_id(self):
+        conn = self.connect()
+        rowid = conn.execute("SELECT rowid FROM photos WHERE path = 'D:/a.jpg'").fetchone()[0]
+        conn.close()
+        schema.ensure(self.db_path)
+        self.assertEqual([(rowid,)], self.connect().execute(
+            "SELECT id FROM photos WHERE path = 'D:/a.jpg'").fetchall())
+
     def test_its_crops_move_to_their_own_table_and_go_with_their_face(self):
         schema.ensure(self.db_path)
         conn = self.connect()
@@ -200,6 +220,113 @@ class AnUnmigratedLibrary(SchemaTestCase):
         self.assertEqual([(m.version,) for m in schema.MIGRATIONS], rows)
 
 
+class ALibraryWhoseFacesNamedTheirPhotoByPath(SchemaTestCase):
+    """Before migration 4 a face named its photo by path: one it was never indexed for,
+    or spelled the photo apart from its row. Each face finds its photo, and none is lost."""
+
+    def setUp(self):
+        super().setUp()
+        make_unmigrated_library(self.db_path)
+        conn = self.connect()
+        conn.execute("INSERT INTO faces (photo_path, box, name) VALUES ('D:/never indexed.jpg', '[0,0,1,1]', NULL)")
+        conn.execute("INSERT INTO faces (photo_path, box, name) VALUES ('D:/never indexed.jpg', '[2,2,3,3]', NULL)")
+        conn.commit()
+
+    def faces(self):
+        return self.connect().execute("SELECT p.path, f.box FROM faces f JOIN photos p ON p.id = f.photo_id"
+                                      " ORDER BY f.id").fetchall()
+
+    def test_a_photo_never_indexed_gets_one_row_holding_its_path(self):
+        # In the stored form, as photos.ensure_row makes it, or a lookup misses it (#82).
+        schema.ensure(self.db_path)
+        stored = paths.stored("D:/never indexed.jpg")
+        self.assertEqual([(stored, None, None)], self.connect().execute(
+            "SELECT path, mtime, size FROM photos WHERE path = ?", (stored,)).fetchall())
+        self.assertEqual(3, len(self.faces()))
+
+    @unittest.skipIf(paths.key("D:/a.jpg") != paths.key("d:/A.JPG"), "paths differ by case only on Windows")
+    def test_a_face_stays_on_the_row_it_names_exactly(self):
+        # Two rows for one file: a face goes to the one it spells, not the first (#82).
+        conn = self.connect()
+        conn.execute("INSERT INTO photos (path, mtime, size, tags, people) VALUES ('d:/A.JPG', 1.0, 1, '[]', '[]')")
+        conn.execute("INSERT INTO faces (photo_path, box) VALUES ('d:/A.JPG', '[4,4,5,5]')")
+        conn.commit()
+        schema.ensure(self.db_path)
+        self.assertIn(("d:/A.JPG", "[4,4,5,5]"), self.faces())
+
+    def test_a_face_that_names_no_photo_stops_the_migration_and_changes_nothing(self):
+        conn = self.connect()
+        conn.execute("INSERT INTO faces (photo_path, box) VALUES (NULL, '[4,4,5,5]')")
+        conn.commit()
+        with self.assertRaises(RuntimeError):
+            schema.ensure(self.db_path)
+        conn = self.connect()
+        self.assertEqual(3, schema.version(conn))
+        self.assertIn("photo_path", columns(conn, "faces"))
+
+    def test_ids_of_deleted_faces_are_not_given_out_again(self):
+        # Rebuilt from the faces still there, the counter fell back to their highest id
+        # (#80).
+        conn = self.connect()
+        gone = conn.execute("INSERT INTO faces (photo_path, box) VALUES ('D:/a.jpg', '[6,6,7,7]')").lastrowid
+        conn.execute("DELETE FROM faces WHERE id = ?", (gone,))
+        conn.commit()
+        schema.ensure(self.db_path)
+        conn = self.connect()
+        self.assertGreater(add_face(conn, "D:/a.jpg"), gone)
+
+    def test_the_id_of_a_deleted_photo_is_not_given_out_again(self):
+        # A face left on it would join the new photo, with its name (#81).
+        schema.ensure(self.db_path)
+        conn = self.connect()
+        highest = conn.execute("SELECT MAX(id) FROM photos").fetchone()[0]
+        conn.execute("DELETE FROM photos WHERE id = ?", (highest,))
+        new = conn.execute("INSERT INTO photos (path) VALUES ('D:/other.jpg')").lastrowid
+        self.assertGreater(new, highest)
+
+    @unittest.skipIf(paths.COLLATE == "BINARY", "paths differ by case only where the filesystem ignores it")
+    def test_a_face_spelled_apart_from_its_photo_finds_it(self):
+        conn = self.connect()
+        conn.execute("INSERT INTO faces (photo_path, box) VALUES ('d:/A.JPG', '[4,4,5,5]')")
+        conn.commit()
+        schema.ensure(self.db_path)
+        self.assertEqual(["D:/a.jpg"], sorted({path for path, _box in self.faces() if path.lower() == "d:/a.jpg"}))
+        self.assertEqual(1, self.connect().execute(
+            "SELECT COUNT(*) FROM photos WHERE path = 'D:/a.jpg' COLLATE NOCASE").fetchone()[0])
+
+    @unittest.skipIf(paths.key("D:/a.jpg") != paths.key("D:" + chr(92) + "a.jpg"),
+                     "both separators name one file only on Windows")
+    def test_a_face_spelled_with_the_other_separator_finds_its_photo(self):
+        # The stub rows matched by paths.key and the faces by collation, which does not
+        # equate the separators: the face found no photo and the library would not open.
+        conn = self.connect()
+        conn.execute("INSERT INTO faces (photo_path, box) VALUES (?, '[4,4,5,5]')", ("D:" + chr(92) + "a.jpg",))
+        conn.commit()
+        schema.ensure(self.db_path)
+        self.assertEqual(["D:/a.jpg", "D:/a.jpg"], [path for path, _box in self.faces() if "a.jpg" in path])
+        self.assertEqual(2, self.connect().execute("SELECT COUNT(*) FROM photos").fetchone()[0])
+
+    def test_a_face_keeps_its_id_and_so_its_crop(self):
+        conn = self.connect()
+        before = conn.execute("SELECT id, box FROM faces ORDER BY id").fetchall()
+        conn.close()
+        schema.ensure(self.db_path)
+        conn = self.connect()
+        self.assertEqual(before, conn.execute("SELECT id, box FROM faces ORDER BY id").fetchall())
+        self.assertEqual([(before[0][0],)], conn.execute("SELECT face_id FROM face_crops").fetchall())
+
+
+class ThePhotoIdMigration(SchemaTestCase):
+    def test_refuses_a_connection_with_foreign_keys_on(self):
+        # Dropping the tables to rebuild them would delete every face and crop first (#83).
+        make_unmigrated_library(self.db_path)
+        conn = db.connect(self.db_path, foreign_keys=True)
+        self.addCleanup(conn.close)
+        with self.assertRaises(RuntimeError):
+            schema._photo_ids(conn)
+        self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM faces").fetchone()[0])
+
+
 class AnOlderVersionStillRunning(SchemaTestCase):
     def test_its_counters_made_again_are_taken_away_on_the_next_open(self):
         # An older version of the app makes faces_generation again on each load, after
@@ -224,7 +351,7 @@ class Generations(SchemaTestCase):
         schema.ensure(self.db_path)
         self.conn = self.connect()
         self.conn.execute("INSERT INTO photos (path, mtime, size, people) VALUES ('D:/a.jpg', 1.0, 1, '[]')")
-        self.conn.execute("INSERT INTO faces (photo_path, box) VALUES ('D:/a.jpg', '[0,0,1,1]')")
+        add_face(self.conn, "D:/a.jpg")
         self.conn.commit()
 
     def moved(self, name, statement):

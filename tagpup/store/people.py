@@ -66,11 +66,11 @@ def rename(conn, old, new):
                 for spelling in spellings)
 
     written = sorted({old.lower(), json.dumps(old)[1:-1].lower()})
-    rows = conn.execute("SELECT rowid, people FROM photos WHERE "
+    rows = conn.execute("SELECT id, people FROM photos WHERE "
                         + " OR ".join("instr(lower(people), ?) > 0" for _ in written),
                         written).fetchall()
     changed = 0
-    for rowid, people_json in rows:
+    for photo_id, people_json in rows:
         try:
             people = json.loads(people_json or "[]")
         except (TypeError, ValueError):
@@ -79,6 +79,6 @@ def rename(conn, old, new):
             continue
         renamed = list(dict.fromkeys(new if vocabulary.key(person) == wanted else person
                                      for person in people))
-        conn.execute("UPDATE photos SET people = ? WHERE rowid = ?", (json.dumps(renamed), rowid))
+        conn.execute("UPDATE photos SET people = ? WHERE id = ?", (json.dumps(renamed), photo_id))
         changed += 1
     return faces, changed

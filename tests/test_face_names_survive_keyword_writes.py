@@ -21,6 +21,9 @@ import db  # noqa: E402
 import tagpup_server  # noqa: E402
 from index import PhotoIndex  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_face  # noqa: E402
+
 
 class FaceNamesSurviveKeywordWrites(unittest.TestCase):
     def setUp(self):
@@ -37,10 +40,9 @@ class FaceNamesSurviveKeywordWrites(unittest.TestCase):
             (self.photo, json.dumps(["Activity/Running"]), json.dumps(["Rowan Thackeray"]),
              json.dumps({"XMP:Subject": ["Activity/Running"]})))
         emb = np.zeros(4, dtype=np.float32).tobytes()
-        index.conn.executemany(
-            "INSERT INTO faces (photo_path, box, embedding, name, excluded) VALUES (?, '[0,0,1,1]', ?, ?, ?)",
-            [(self.photo, emb, "Rowan Thackeray", 0),   # named in Identify Faces only
-             (self.photo, emb, "Imogen Vale", 1)])      # excluded: not in the photo's people
+        # Named in Identify Faces only; and excluded, so not in the photo's people.
+        add_face(index.conn, self.photo, box="[0,0,1,1]", embedding=emb, name="Rowan Thackeray", excluded=0)
+        add_face(index.conn, self.photo, box="[0,0,1,1]", embedding=emb, name="Imogen Vale", excluded=1)
         index.conn.commit()
         index.close()
         tagpup_server.invalidate_people_cache()

@@ -32,6 +32,9 @@ from index import PhotoIndex
 from taxonomy import TagTaxonomy
 from faces import FaceProcessor, resolution_trace_path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import face_rows  # noqa: E402
+
 FACE_DIM = 512
 DBSCAN_EPS = 0.48
 
@@ -96,12 +99,8 @@ class FaceClusteringTestBase(unittest.TestCase):
         name = manual_name
         source = "manual" if (manual_name is not None or manual_cleared) else None
         conn = sqlite3.connect(self.db_path)
-        cur = conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name, prob, name_source)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (photo_path, json.dumps(list(box)), embedding.tobytes(), name, 0.99, source),
-        )
-        face_id = cur.lastrowid
+        face_id = face_rows.add_face(conn, photo_path, box=box, embedding=embedding.tobytes(),
+                                     name=name, prob=0.99, name_source=source)
         conn.commit()
         conn.close()
         return face_id

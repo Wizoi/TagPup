@@ -23,6 +23,9 @@ import tuner_server  # noqa: E402
 from index import PhotoIndex  # noqa: E402
 from tuner_server import TunerHTTPRequestHandler  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_face  # noqa: E402
+
 PHOTO = r"D:\Pictures\Regatta\start.jpg"
 
 
@@ -50,10 +53,8 @@ class FaceClickReadsNamedFacesOnce(unittest.TestCase):
         emb = lambda v: np.asarray(v, dtype=np.float32).tobytes()  # noqa: E731
         conn = tagpup_db.connect(self.db)
         conn.execute("INSERT INTO photos (path, tags, people, captions) VALUES (?, '[]', '[]', '[]')", (PHOTO,))
-        conn.execute("INSERT INTO faces (photo_path, box, embedding, name) VALUES (?, '[1,2,3,4]', ?, 'Rowan Thackeray')",
-                     (PHOTO, emb([1, 0, 0, 0])))
-        conn.execute("INSERT INTO faces (photo_path, box, embedding) VALUES (?, '[5,6,7,8]', ?)",
-                     (PHOTO, emb([0.8, 0.6, 0, 0])))
+        add_face(conn, PHOTO, box="[1,2,3,4]", embedding=emb([1, 0, 0, 0]), name="Rowan Thackeray")
+        add_face(conn, PHOTO, box="[5,6,7,8]", embedding=emb([0.8, 0.6, 0, 0]))
         conn.commit()
         conn.close()
         tuner_server.set_active_db_path(self.db)

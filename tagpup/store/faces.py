@@ -16,11 +16,27 @@ from tagpup.store import db, generations
 
 logger = logging.getLogger(__name__)
 
+#: A face's photo, by its id. Every read that answers with a photo's path joins it.
+PHOTO = " JOIN photos p ON p.id = f.photo_id"
+
+
+def _on_photo(photo_path, column="photo_id"):
+    """WHERE clause and parameters for the faces in one photo: its id, found by path the
+    way paths compare, which idx_photos_path_nocase serves."""
+    where, params = paths.sql_equals("path", photo_path)
+    return "%s IN (SELECT id FROM photos WHERE %s)" % (column, where), params
+
+
+def _under(folder, column="photo_id"):
+    """WHERE clause and parameters for the faces in the photos under a folder, at any
+    depth."""
+    where, params = paths.sql_under("path", folder)
+    return "%s IN (SELECT id FROM photos WHERE %s)" % (column, where), params
+
 
 def names_in_photo(conn, photo_path):
-    """The names given to faces in one photo, on `conn`. By equality, which the index on
-    photo_path serves."""
-    where, params = paths.sql_equals("photo_path", photo_path)
+    """The names given to faces in one photo, on `conn`."""
+    where, params = _on_photo(photo_path)
     return {name for (name,) in conn.execute(
         "SELECT name FROM faces WHERE " + where + " AND name IS NOT NULL", params)}
 
@@ -86,7 +102,7 @@ def face_names(photo_path, db_path=None, conn=None):
             if not db_path or not os.path.exists(db_path):
                 return []
             own = conn = db.connect(db.readonly_uri(db_path), uri=True)
-        clause, params = paths.sql_equals("photo_path", photo_path)
+        clause, params = _on_photo(photo_path)
         rows = conn.execute(
             "SELECT name FROM faces WHERE " + clause
             + " AND name IS NOT NULL AND COALESCE(excluded, 0) = 0 ORDER BY id", params).fetchall()
@@ -118,7 +134,7 @@ def turn_boxes(db_path, photo_path, direction, width, height):
     turned picture's coordinates once the Orientation changes. The cached crop is
     dropped so the next request cuts it again from the right place.
     """
-    where, where_params = paths.sql_equals("photo_path", photo_path)
+    where, where_params = _on_photo(photo_path)
 
     def turn(conn):
         cursor = conn.cursor()
@@ -148,8 +164,8 @@ def crop_of(db_path, face_id):
         return None
     conn = db.connect(db_path, timeout=30.0)
     try:
-        row = conn.execute("SELECT f.photo_path, f.box, c.jpeg FROM faces f"
-                           " LEFT JOIN face_crops c ON c.face_id = f.id WHERE f.id = ?",
+        row = conn.execute("SELECT p.path, f.box, c.jpeg FROM faces f" + PHOTO
+                           + " LEFT JOIN face_crops c ON c.face_id = f.id WHERE f.id = ?",
                            (face_id,)).fetchone()
     finally:
         conn.close()
@@ -174,14 +190,14 @@ def cache_crop(db_path, face_id, jpeg):
 
 def count_for_photo(conn, photo_path):
     """How many face rows a photo has."""
-    where, params = paths.sql_equals("photo_path", photo_path)
+    where, params = _on_photo(photo_path)
     return conn.execute("SELECT COUNT(*) FROM faces WHERE " + where, params).fetchone()[0]
 
 
 def remove_for_photo(conn, photo_path):
     """Delete a photo's face rows, names and decisions with them. Returns rows deleted.
     The caller commits."""
-    where, params = paths.sql_equals("photo_path", photo_path)
+    where, params = _on_photo(photo_path)
     return conn.execute("DELETE FROM faces WHERE " + where, params).rowcount
 
 
@@ -189,10 +205,10 @@ def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
     """Record one detected face: `box` as a list, `embedding` as float32 bytes, and its
     crop, if one was cut, in face_crops. Returns the face's id. The caller commits."""
     from tagpup.store import photos   # photos imports this module
-    stored = photos.ensure_row(conn, photo_path)
+    photo_id = photos.ensure_row(conn, photo_path)
     face_id = conn.execute(
-        "INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-        (stored, json.dumps(box), embedding, name, prob)).lastrowid
+        "INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        (photo_id, json.dumps(box), embedding, name, prob)).lastrowid
     if crop:
         conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, crop))
     return face_id
@@ -212,7 +228,8 @@ def excluded_ids(conn):
 def for_clustering(conn):
     """(id, photo_path, box JSON, embedding bytes, name, prob) of every face. The crop is
     left behind: 6 KB a face, and clustering never looks at it."""
-    return conn.execute("SELECT id, photo_path, box, embedding, name, prob FROM faces").fetchall()
+    return conn.execute("SELECT f.id, p.path, f.box, f.embedding, f.name, f.prob FROM faces f"
+                        + PHOTO).fetchall()
 
 
 def named_embeddings(conn):
@@ -225,7 +242,7 @@ def named_embeddings(conn):
 def in_photo(conn, photo_path):
     """(box JSON, embedding bytes, prob, excluded, name, name_source) of each face in one
     photo, for suggesting who is in it."""
-    where, params = paths.sql_equals("photo_path", photo_path)
+    where, params = _on_photo(photo_path)
     return conn.execute(
         "SELECT box, embedding, prob, excluded, name, name_source FROM faces WHERE " + where,
         params).fetchall()
@@ -267,7 +284,8 @@ def rows(conn, face_ids):
     found = {}
     for chunk in _chunks(face_ids):
         for face_id, photo_path, name, excluded in conn.execute(
-                "SELECT id, photo_path, name, excluded FROM faces WHERE " + _in(chunk), chunk):
+                "SELECT f.id, p.path, f.name, f.excluded FROM faces f" + PHOTO
+                + " WHERE f." + _in(chunk), chunk):
             found[face_id] = (photo_path, name, excluded)
     return found
 
@@ -299,7 +317,7 @@ def unname_photo(conn, photo_path):
     """Take the names off every face in a photo, as a decision. Returns rows changed. By
     equality: a LIKE pass as well cleared every name in IMG-1234.jpg along with
     IMG_1234.jpg. The caller commits."""
-    where, params = paths.sql_equals("photo_path", photo_path)
+    where, params = _on_photo(photo_path)
     return conn.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE " + where,
                         params).rowcount
 
@@ -324,30 +342,30 @@ def restore(conn, face_ids):
 def named_elsewhere_in_photo(conn, photo_path, person_name, face_id):
     """Does a face in the photo other than `face_id` carry the name? By equality: a LIKE
     retry scanned every face row, and read an underscore in a file name as any character."""
-    where, params = paths.sql_equals("photo_path", photo_path)
+    where, params = _on_photo(photo_path)
     return conn.execute("SELECT 1 FROM faces WHERE " + where + " AND name = ? AND id != ?",
                         params + (person_name, face_id)).fetchone() is not None
 
 
 def _scope(photo_path=None, folder=None):
     if photo_path is not None:
-        return paths.sql_equals("photo_path", photo_path)
-    return paths.sql_under("photo_path", folder)
+        return _on_photo(photo_path, "f.photo_id")
+    return _under(folder, "f.photo_id")
 
 
 def unnamed(conn, photo_path=None, folder=None):
     """(id, embedding bytes, photo_path) of the unnamed, unexcluded faces in one photo, or
     under a folder at any depth."""
     where, params = _scope(photo_path, folder)
-    return conn.execute("SELECT id, embedding, photo_path FROM faces WHERE " + where
-                        + " AND name IS NULL AND excluded = 0", params).fetchall()
+    return conn.execute("SELECT f.id, f.embedding, p.path FROM faces f" + PHOTO + " WHERE " + where
+                        + " AND f.name IS NULL AND f.excluded = 0", params).fetchall()
 
 
 def unnamed_counts(conn, folder):
     """{photo_path as stored: faces still unnamed} for the photos under a folder."""
-    where, params = paths.sql_under("photo_path", folder)
-    return dict(conn.execute("SELECT photo_path, COUNT(*) FROM faces WHERE " + where
-                             + " AND name IS NULL GROUP BY photo_path", params).fetchall())
+    where, params = _under(folder, "f.photo_id")
+    return dict(conn.execute("SELECT p.path, COUNT(*) FROM faces f" + PHOTO + " WHERE " + where
+                             + " AND f.name IS NULL GROUP BY f.photo_id", params).fetchall())
 
 
 # ---- What TagTuner's screens read -----------------------------------------------------
@@ -368,30 +386,29 @@ def identify_candidates(conn):
     to answer a question about integers.
     """
     return conn.execute(
-        "SELECT f.id, f.photo_path, p.people, LENGTH(f.embedding) FROM faces f"
-        " LEFT JOIN photos p ON p.path = f.photo_path"
-        " WHERE f.name IS NULL AND f.excluded = 0").fetchall()
+        "SELECT f.id, p.path, p.people, LENGTH(f.embedding) FROM faces f" + PHOTO
+        + " WHERE f.name IS NULL AND f.excluded = 0").fetchall()
 
 
 def unnamed_for_matching(conn):
     """(id, photo_path, box JSON, prob, mtime, embedding, raw_metadata JSON, people JSON)
     of every nameless face still in play, for a person's Identify grid."""
     return conn.execute(
-        "SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata, p.people"
-        " FROM faces f LEFT JOIN photos p ON p.path = f.photo_path"
-        " WHERE f.name IS NULL AND f.excluded = 0").fetchall()
+        "SELECT f.id, p.path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata, p.people"
+        " FROM faces f" + PHOTO + " WHERE f.name IS NULL AND f.excluded = 0").fetchall()
 
 
 def unnamed_except(conn, face_id):
     """(id, photo_path, box JSON, embedding) of every nameless face in play but one."""
-    return conn.execute("SELECT id, photo_path, box, embedding FROM faces"
-                        " WHERE name IS NULL AND excluded = 0 AND id != ?", (face_id,)).fetchall()
+    return conn.execute("SELECT f.id, p.path, f.box, f.embedding FROM faces f" + PHOTO
+                        + " WHERE f.name IS NULL AND f.excluded = 0 AND f.id != ?", (face_id,)).fetchall()
 
 
 def names_by_photo(conn):
     """{photo_path as stored: names on its faces}, for every photo with a named face."""
     named = {}
-    for photo_path, name in conn.execute("SELECT photo_path, name FROM faces WHERE name IS NOT NULL"):
+    for photo_path, name in conn.execute("SELECT p.path, f.name FROM faces f" + PHOTO
+                                         + " WHERE f.name IS NOT NULL"):
         named.setdefault(photo_path, set()).add(name)
     return named
 
@@ -415,7 +432,7 @@ def embedding_row(conn, face_id):
 
 def in_photo_with_names(conn, photo_path):
     """(id, box JSON, name, embedding) of each face in one photo."""
-    where, params = paths.sql_equals("photo_path", photo_path)
+    where, params = _on_photo(photo_path)
     return conn.execute("SELECT id, box, name, embedding FROM faces WHERE " + where, params).fetchall()
 
 
@@ -423,12 +440,12 @@ def photos_with_unnamed(conn):
     """(photo_path, unnamed faces, named faces, mtime, raw_metadata JSON) of every photo
     with a face still unnamed, newest first."""
     return conn.execute(
-        "SELECT f.photo_path,"
+        "SELECT p.path,"
         " SUM(CASE WHEN f.name IS NULL THEN 1 ELSE 0 END) AS unmatched,"
         " SUM(CASE WHEN f.name IS NOT NULL THEN 1 ELSE 0 END) AS matched,"
         " p.mtime, p.raw_metadata"
-        " FROM faces f LEFT JOIN photos p ON p.path = f.photo_path"
-        " GROUP BY f.photo_path HAVING unmatched > 0 ORDER BY p.mtime DESC").fetchall()
+        " FROM faces f" + PHOTO
+        + " GROUP BY f.photo_id HAVING unmatched > 0 ORDER BY p.mtime DESC").fetchall()
 
 
 def count_named(conn, person_name):
@@ -440,27 +457,25 @@ def person_embeddings(conn, person_name):
     """(embedding, mtime, raw_metadata JSON, photo_path) of each of a person's faces that
     has an embedding: what their era-aware centroids are made from."""
     return conn.execute(
-        "SELECT f.embedding, p.mtime, p.raw_metadata, f.photo_path FROM faces f"
-        " LEFT JOIN photos p ON p.path = f.photo_path"
-        " WHERE f.name = ? AND f.embedding IS NOT NULL", (person_name,)).fetchall()
+        "SELECT f.embedding, p.mtime, p.raw_metadata, p.path FROM faces f" + PHOTO
+        + " WHERE f.name = ? AND f.embedding IS NOT NULL", (person_name,)).fetchall()
 
 
 def person_page(conn, person_name, limit, offset):
     """(id, photo_path, box JSON, prob, mtime, embedding, raw_metadata JSON) of a page of a
     person's faces. A negative limit is no limit."""
     return conn.execute(
-        "SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata"
-        " FROM faces f LEFT JOIN photos p ON p.path = f.photo_path"
-        " WHERE f.name = ? LIMIT ? OFFSET ?", (person_name, limit, offset)).fetchall()
+        "SELECT f.id, p.path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata"
+        " FROM faces f" + PHOTO + " WHERE f.name = ? LIMIT ? OFFSET ?",
+        (person_name, limit, offset)).fetchall()
 
 
 def excluded_for_review(conn):
     """(id, photo_path, box JSON, prob, mtime, raw_metadata JSON, excluded_reason) of every
     excluded face, the latest excluded first."""
     return conn.execute(
-        "SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, p.raw_metadata, f.excluded_reason"
-        " FROM faces f LEFT JOIN photos p ON p.path = f.photo_path"
-        " WHERE f.excluded = 1 ORDER BY f.id DESC").fetchall()
+        "SELECT f.id, p.path, f.box, f.prob, p.mtime, p.raw_metadata, f.excluded_reason"
+        " FROM faces f" + PHOTO + " WHERE f.excluded = 1 ORDER BY f.id DESC").fetchall()
 
 
 # ---- What TagPup's photo panel and the CLI read -----------------------------------------
@@ -468,7 +483,7 @@ def excluded_for_review(conn):
 def in_photo_for_panel(conn, photo_path):
     """(id, box JSON, name, prob, embedding, excluded, excluded_reason) of each face in one
     photo, in detection order."""
-    where, params = paths.sql_equals("photo_path", photo_path)
+    where, params = _on_photo(photo_path)
     return conn.execute("SELECT id, box, name, prob, embedding, excluded, excluded_reason"
                         " FROM faces WHERE " + where + " ORDER BY id", params).fetchall()
 
@@ -476,7 +491,7 @@ def in_photo_for_panel(conn, photo_path):
 def named_embeddings_elsewhere(conn, photo_path):
     """(name, embedding) of every named, unexcluded face in any photo but this one: who a
     face in it might be."""
-    where, params = paths.sql_equals("photo_path", photo_path)
+    where, params = _on_photo(photo_path)
     return conn.execute("SELECT name, embedding FROM faces"
                         " WHERE name IS NOT NULL AND excluded = 0 AND NOT (" + where + ")",
                         params).fetchall()
@@ -484,21 +499,23 @@ def named_embeddings_elsewhere(conn, photo_path):
 
 def photos_with_faces(conn):
     """The photo paths, as stored, that have any face row."""
-    return {photo_path for (photo_path,) in conn.execute("SELECT DISTINCT photo_path FROM faces")}
+    return {photo_path for (photo_path,) in conn.execute(
+        "SELECT path FROM photos WHERE id IN (SELECT photo_id FROM faces)")}
 
 
 def names_by_photo_key(conn):
     """{paths.key of a photo: names on its faces that are not excluded}."""
     named = {}
     for photo_path, name in conn.execute(
-            "SELECT photo_path, name FROM faces WHERE name IS NOT NULL AND excluded = 0"):
+            "SELECT p.path, f.name FROM faces f" + PHOTO + " WHERE f.name IS NOT NULL AND f.excluded = 0"):
         named.setdefault(paths.key(photo_path), set()).add(name)
     return named
 
 
 def counts_on(conn, stored_path):
-    """(faces, named faces) recorded under exactly `stored_path`."""
-    return conn.execute("SELECT COUNT(*), COUNT(name) FROM faces WHERE photo_path = ?",
+    """(faces, named faces) of the photo stored under exactly `stored_path`."""
+    return conn.execute("SELECT COUNT(*), COUNT(name) FROM faces"
+                        " WHERE photo_id IN (SELECT id FROM photos WHERE path = ?)",
                         (stored_path,)).fetchone()
 
 
@@ -507,7 +524,8 @@ def counts_on(conn, stored_path):
 def decisions(conn):
     """(id, photo_path, box JSON, name, name_source, excluded) of every face: what was
     decided about each, without its embedding or crop."""
-    return conn.execute("SELECT id, photo_path, box, name, name_source, excluded FROM faces").fetchall()
+    return conn.execute("SELECT f.id, p.path, f.box, f.name, f.name_source, f.excluded FROM faces f"
+                        + PHOTO).fetchall()
 
 
 def delete(conn, face_ids):
@@ -532,6 +550,6 @@ def is_excluded(conn, face_id):
 
 def busiest_photo(conn):
     """The photo, as stored, with the most faces; None with no faces."""
-    row = conn.execute("SELECT photo_path FROM faces GROUP BY photo_path"
+    row = conn.execute("SELECT p.path FROM faces f" + PHOTO + " GROUP BY f.photo_id"
                        " ORDER BY COUNT(*) DESC LIMIT 1").fetchone()
     return row[0] if row else None

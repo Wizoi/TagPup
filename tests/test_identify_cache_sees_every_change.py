@@ -25,6 +25,9 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 import tuner_server  # noqa: E402
 from index import PhotoIndex  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_face  # noqa: E402
+
 PHOTO = r"D:\Pictures\Regatta\start.jpg"
 
 
@@ -37,9 +40,7 @@ class IdentifyCacheSeesEveryChange(unittest.TestCase):
         self.conn.execute("INSERT INTO photos (path) VALUES (?)", (PHOTO,))
         emb = np.zeros(4, dtype=np.float32).tobytes()
         for name in ("Rowan Thackeray", "Rowan Thackeray", "Imogen Vale"):
-            self.conn.execute(
-                "INSERT INTO faces (photo_path, box, embedding, name) VALUES (?, '[0,0,1,1]', ?, ?)",
-                (PHOTO, emb, name))
+            add_face(self.conn, PHOTO, box="[0,0,1,1]", embedding=emb, name=name)
         self.conn.commit()
 
     def tearDown(self):

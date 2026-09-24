@@ -33,6 +33,7 @@ from tuner_server import (
 )
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
+import face_rows  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
@@ -208,11 +209,8 @@ class TunerAPITestBase(unittest.TestCase):
 
     def add_face(self, photo_path, embedding, name=None, box=(10, 10, 50, 50), prob=0.99):
         conn = sqlite3.connect(self.TEST_DB)
-        cur = conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-            (photo_path, json.dumps(list(box)), embedding.tobytes(), name, prob),
-        )
-        face_id = cur.lastrowid
+        face_id = face_rows.add_face(conn, photo_path, box=box, embedding=embedding.tobytes(), name=name,
+                                     prob=prob)
         conn.commit()
         conn.close()
         return face_id
@@ -1162,11 +1160,11 @@ class TestTunerFolderRemoval(TunerAPITestBase):
             (photo,),
         )
         conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name, name_source) VALUES (?, '[]', ?, ?, 'manual')",
+            "INSERT INTO faces (photo_id, box, embedding, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, ?, 'manual')",
             (photo, unit_vector(500).tobytes(), "Jane Doe"),
         )
         conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name, excluded) VALUES (?, '[]', ?, NULL, 1)",
+            "INSERT INTO faces (photo_id, box, embedding, name, excluded) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, NULL, 1)",
             (photo, unit_vector(501).tobytes()),
         )
         conn.commit()
@@ -1378,13 +1376,25 @@ class TestFolderRemovalBySpelling(TunerAPITestBase):
         self.assertEqual(self.count("SELECT COUNT(*) FROM photos"), 0)
         self.assertEqual(self.count("SELECT COUNT(*) FROM faces"), 0)
 
-    def test_faces_whose_path_is_spelled_apart_from_their_photo_go_too(self):
-        """Faces are matched on their own photo_path, not through the photo rows."""
+    def test_a_face_recorded_under_another_spelling_of_its_photo_goes_too(self):
+        """Faces used to be matched on their own photo_path, which could be spelled apart
+        from the photo row. A face points at its photo by id since migration 4; what is
+        left to pin is that one recorded under another spelling lands on the photo's
+        row, and goes with it."""
         import paths
+        from tagpup.store import db, faces as store_faces
         if not paths.CASE_INSENSITIVE:
             self.skipTest("two spellings of one file need a case-insensitive filesystem")
         folder, photo = self.seed()
-        self.add_face(photo.swapcase(), unit_vector(911), name="Tamsin Okafor")
+        conn = db.connect(self.TEST_DB)
+        try:
+            store_faces.insert(conn, photo.swapcase(), [10, 10, 50, 50], unit_vector(911).tobytes(),
+                               name="Tamsin Okafor")
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertEqual(self.count("SELECT COUNT(*) FROM photos"), 1,
+                         "the face made a second row for its photo")
 
         status, body = self.post("/api/folder/remove", {"folder_path": folder})
         self.assertEqual(status, 200, body)

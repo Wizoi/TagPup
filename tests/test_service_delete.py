@@ -38,9 +38,13 @@ class DeletingAPhoto(unittest.TestCase):
             return photos.delete(self.lib.library, self.photo)
 
     def counts(self, path):
-        return tuple(self.lib.rows("SELECT COUNT(*) FROM %s WHERE %s = ?" % (table, column), (path,))[0][0]
-                     for table, column in (("photos", "path"), ("faces", "photo_path"),
-                                           ("embedding_cache", "path")))
+        # Faces by their photo's path, and the faces that point at no photo row at all:
+        # a face whose photo row went while it stayed would otherwise count as gone.
+        return tuple(self.lib.rows(sql, (path,))[0][0] for sql in (
+            "SELECT COUNT(*) FROM photos WHERE path = ?",
+            "SELECT COUNT(*) FROM faces f LEFT JOIN photos p ON p.id = f.photo_id"
+            " WHERE p.path = ? OR p.id IS NULL",
+            "SELECT COUNT(*) FROM embedding_cache WHERE path = ?"))
 
     def test_the_photo_and_everything_the_index_held_for_it_go(self):
         result = self.delete()

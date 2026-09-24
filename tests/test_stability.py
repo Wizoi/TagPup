@@ -55,7 +55,18 @@ class TestStability(unittest.TestCase):
                 
         photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
         photo_index.load()
-        
+        try:
+            self._seed(photo_index)
+        finally:
+            # A failed seed must not leave its write open: the failed test's traceback
+            # keeps the connection alive, and every later test then waits out the busy
+            # timeout and fails "database is locked" -- 30 seconds apiece.
+            photo_index.close()
+
+        # Reset handler state
+        TunerHTTPRequestHandler.clustering_in_progress = False
+
+    def _seed(self, photo_index):
         # Insert a dummy photo with a valid embedding
         dummy_emb = np.random.rand(512).astype(np.float32)
         dummy_emb_bytes = dummy_emb.tobytes()
@@ -84,8 +95,8 @@ class TestStability(unittest.TestCase):
         # Insert linked face
         dummy_face_emb = np.random.rand(512).astype(np.float32).tobytes()
         cursor.execute("""
-            INSERT INTO faces (photo_path, box, embedding, name, prob)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO faces (photo_id, box, embedding, name, prob)
+            VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)
         """, (
             "C:/photos/test_photo.jpg",
             json.dumps([10, 20, 50, 60]),
@@ -95,10 +106,6 @@ class TestStability(unittest.TestCase):
         ))
         
         photo_index.conn.commit()
-        photo_index.close()
-
-        # Reset handler state
-        TunerHTTPRequestHandler.clustering_in_progress = False
 
     def tearDown(self):
         from tuner_server import set_active_db_path
@@ -213,8 +220,8 @@ class TestStability(unittest.TestCase):
             "C:/photos/photo1.jpg", 1000.0, 500, json.dumps([]), json.dumps(["Alice"]), json.dumps([]), json.dumps({}), None
         ))
         cursor.execute("""
-            INSERT INTO faces (photo_path, box, embedding, name, prob)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO faces (photo_id, box, embedding, name, prob)
+            VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)
         """, (
             "C:/photos/photo1.jpg", json.dumps([10, 10, 50, 50]), face_emb_bytes, None, 0.95
         ))
@@ -227,8 +234,8 @@ class TestStability(unittest.TestCase):
             "C:/photos/photo2.jpg", 2000.0, 500, json.dumps([]), json.dumps([]), json.dumps([]), json.dumps({}), None
         ))
         cursor.execute("""
-            INSERT INTO faces (photo_path, box, embedding, name, prob)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO faces (photo_id, box, embedding, name, prob)
+            VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)
         """, (
             "C:/photos/photo2.jpg", json.dumps([10, 10, 50, 50]), face_emb_bytes, None, 0.95
         ))
@@ -249,7 +256,7 @@ class TestStability(unittest.TestCase):
         processor.cluster_and_resolve_identities(photo_index, taxonomy, max_iterations=1)
         
         # Query results from faces table
-        cursor.execute("SELECT photo_path, name FROM faces")
+        cursor.execute("SELECT p.path, f.name FROM faces f JOIN photos p ON p.id = f.photo_id")
         resolved_faces = cursor.fetchall()
         
         photo_index.close()
@@ -298,8 +305,8 @@ class TestStability(unittest.TestCase):
             "C:/photos/photo1.jpg", 1000.0, 500, json.dumps([]), json.dumps(["Alice"]), json.dumps([]), json.dumps({}), None
         ))
         cursor.execute("""
-            INSERT INTO faces (photo_path, box, embedding, name, prob)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO faces (photo_id, box, embedding, name, prob)
+            VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)
         """, (
             "C:/photos/photo1.jpg", json.dumps([10, 10, 50, 50]), emb1.tobytes(), None, 0.95
         ))
@@ -313,15 +320,15 @@ class TestStability(unittest.TestCase):
         ))
         # Face 2 (in Photo 2)
         cursor.execute("""
-            INSERT INTO faces (photo_path, box, embedding, name, prob)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO faces (photo_id, box, embedding, name, prob)
+            VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)
         """, (
             "C:/photos/photo2.jpg", json.dumps([10, 10, 50, 50]), emb2.tobytes(), None, 0.95
         ))
         # Face 3 (in Photo 2)
         cursor.execute("""
-            INSERT INTO faces (photo_path, box, embedding, name, prob)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO faces (photo_id, box, embedding, name, prob)
+            VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)
         """, (
             "C:/photos/photo2.jpg", json.dumps([100, 100, 150, 150]), emb3.tobytes(), None, 0.95
         ))
@@ -342,7 +349,7 @@ class TestStability(unittest.TestCase):
         processor.cluster_and_resolve_identities(photo_index, taxonomy, max_iterations=1)
         
         # Query results
-        cursor.execute("SELECT photo_path, name FROM faces")
+        cursor.execute("SELECT p.path, f.name FROM faces f JOIN photos p ON p.id = f.photo_id")
         resolved_faces = cursor.fetchall()
         
         photo_index.close()
@@ -395,8 +402,8 @@ class TestStability(unittest.TestCase):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, photo_rows)
         cursor.executemany("""
-            INSERT OR REPLACE INTO faces (photo_path, box, embedding, name, prob)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO faces (photo_id, box, embedding, name, prob)
+            VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)
         """, face_rows)
         photo_index.conn.commit()
         photo_index.close()
@@ -470,9 +477,9 @@ class TestStability(unittest.TestCase):
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
                        (native("C:/photos/john_doe.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
         
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/john_doe.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/automatch_test.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
         photo_index.conn.commit()
         photo_index.close()
@@ -493,7 +500,7 @@ class TestStability(unittest.TestCase):
         # Verify the face was successfully resolved to John Doe in the DB
         conn = sqlite3.connect(self.TEST_DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT name FROM faces WHERE photo_path = ?", (native("C:/photos/automatch_test.jpg"),))
+        c.execute("SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (native("C:/photos/automatch_test.jpg"),))
         name = c.fetchone()[0]
         self.assertEqual(name, "John Doe")
         
@@ -521,11 +528,11 @@ class TestStability(unittest.TestCase):
                        (native("C:/photos/folderA/john_doe.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
         
         # Insert faces
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/folderA/john_doe.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/folderA/photo1.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/folderA/photo2.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
         photo_index.conn.commit()
         photo_index.close()
@@ -547,7 +554,7 @@ class TestStability(unittest.TestCase):
         # Verify the faces were successfully resolved to John Doe in the DB
         conn = sqlite3.connect(self.TEST_DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT name FROM faces WHERE photo_path IN (?, ?)",
+        c.execute("SELECT name FROM faces WHERE photo_id IN (SELECT id FROM photos WHERE path IN (?, ?))",
                   (native("C:/photos/folderA/photo1.jpg"), native("C:/photos/folderA/photo2.jpg")))
         names = [r[0] for r in c.fetchall()]
         self.assertEqual(names, ["John Doe", "John Doe"])
@@ -567,12 +574,12 @@ class TestStability(unittest.TestCase):
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
                        (native("C:/photos/john_doe.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
         
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/john_doe.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
         # Insert two unmatched faces on the same photo that both match John Doe
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/duplicate_test.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), None, 0.95))
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/duplicate_test.jpg"), "[20,20,30,30]", resolved_emb.tobytes(), None, 0.95))
         photo_index.conn.commit()
         photo_index.close()
@@ -594,7 +601,7 @@ class TestStability(unittest.TestCase):
         # Verify both faces remain None in the DB
         conn = sqlite3.connect(self.TEST_DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT name FROM faces WHERE photo_path = ?", (native("C:/photos/duplicate_test.jpg"),))
+        c.execute("SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (native("C:/photos/duplicate_test.jpg"),))
         names = [r[0] for r in c.fetchall()]
         self.assertEqual(names, [None, None])
         conn.close()
@@ -613,12 +620,12 @@ class TestStability(unittest.TestCase):
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
                        (native("C:/photos/john_doe.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
         
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/john_doe.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
         # One face already matched to John Doe, another unmatched but matches John Doe's embedding
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/already_tagged_test.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/already_tagged_test.jpg"), "[20,20,30,30]", resolved_emb.tobytes(), None, 0.95))
         photo_index.conn.commit()
         photo_index.close()
@@ -640,7 +647,7 @@ class TestStability(unittest.TestCase):
         # Verify the unmatched face remains None in the DB
         conn = sqlite3.connect(self.TEST_DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT name FROM faces WHERE photo_path = ?", (native("C:/photos/already_tagged_test.jpg"),))
+        c.execute("SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (native("C:/photos/already_tagged_test.jpg"),))
         names = sorted([str(r[0]) for r in c.fetchall()])
         self.assertEqual(names, ["John Doe", "None"])
         conn.close()
@@ -655,11 +662,11 @@ class TestStability(unittest.TestCase):
                        (native("C:/photos/conflict_test.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
         
         # Face 1 is John Doe, Face 2 is unmatched
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/conflict_test.jpg"), "[0,0,10,10]", b"", "John Doe", 0.95))
         face1_id = cursor.lastrowid
         
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/conflict_test.jpg"), "[20,20,30,30]", b"", None, 0.95))
         face2_id = cursor.lastrowid
         photo_index.conn.commit()
@@ -690,16 +697,16 @@ class TestStability(unittest.TestCase):
         # Photo 1 has John Doe already, and an unmatched face
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
                        (native("C:/photos/conflict_p1.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/conflict_p1.jpg"), "[0,0,10,10]", b"", "John Doe", 0.95))
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/conflict_p1.jpg"), "[20,20,30,30]", b"", None, 0.95))
         face2_id = cursor.lastrowid
         
         # Photo 2 has another unmatched face
         cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
                        (native("C:/photos/conflict_p2.jpg"), 1000.0, 100, "[]", "[]", "[]", "{}"))
-        cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/conflict_p2.jpg"), "[0,0,10,10]", b"", None, 0.95))
         face3_id = cursor.lastrowid
         
@@ -814,14 +821,14 @@ class TestStability(unittest.TestCase):
             path = f"C:/photos/2010_child_{i}.jpg"
             raw_meta = {"EXIF:DateTimeOriginal": "2010:06:01 12:00:00"}
             cursor.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, 1000.0, 10, '[\"People/Wren\"]', '[\"Wren\"]', '[]', ?)", (path, json.dumps(raw_meta)))
-            cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, '[10, 10, 50, 50]', ?, 'Wren', 0.99)", (path, emb_child_bytes))
+            cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), '[10, 10, 50, 50]', ?, 'Wren', 0.99)", (path, emb_child_bytes))
             
         # Insert Era 2 teen faces (2026)
         for i in range(6):
             path = f"C:/photos/2026_teen_{i}.jpg"
             raw_meta = {"EXIF:DateTimeOriginal": "2026:06:01 12:00:00"}
             cursor.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, 2000.0, 10, '[\"People/Wren\"]', '[\"Wren\"]', '[]', ?)", (path, json.dumps(raw_meta)))
-            cursor.execute("INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, '[10, 10, 50, 50]', ?, 'Wren', 0.99)", (path, emb_teen_bytes))
+            cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), '[10, 10, 50, 50]', ?, 'Wren', 0.99)", (path, emb_teen_bytes))
             
         photo_index.conn.commit()
         
@@ -834,7 +841,7 @@ class TestStability(unittest.TestCase):
         fp.cluster_and_resolve_identities(photo_index, None, max_iterations=2)
         
         # Verify that teen faces from 2026 were NOT unassigned
-        cursor.execute("SELECT photo_path, name FROM faces WHERE photo_path LIKE '%2026%'")
+        cursor.execute("SELECT p.path, f.name FROM faces f JOIN photos p ON p.id = f.photo_id WHERE p.path LIKE '%2026%'")
         rows = cursor.fetchall()
         for path, name in rows:
             self.assertEqual(name, "Wren", f"Teen face {path} should remain resolved to Wren under era-aware centroids")
@@ -1002,7 +1009,7 @@ class TestPhotoActions(unittest.TestCase):
              json.dumps({"EXIF:DateTimeOriginal": taken} if taken else {})))
         if face_name:
             conn.execute(
-                "INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                 (path, "[0,0,10,10]", b"", face_name, 0.9))
 
     def _post_rename(self, temp_dir, photo_paths):
@@ -1073,8 +1080,8 @@ class TestPhotoActions(unittest.TestCase):
             self.assertNotIn(p2, db_paths)
 
             # And the faces go with them, names kept, none duplicated.
-            faces = dict(self._rows("SELECT photo_path, name FROM faces WHERE name IS NOT NULL"
-                                    " AND photo_path IN (?, ?, ?, ?)",
+            faces = dict(self._rows("SELECT p.path, f.name FROM faces f JOIN photos p ON p.id = f.photo_id WHERE f.name IS NOT NULL"
+                                    " AND p.path IN (?, ?, ?, ?)",
                                     (p1, p2, expected_p1_new, expected_p2_new)))
             self.assertEqual(faces, {expected_p1_new: "Rowan Thackeray",
                                      expected_p2_new: "Tamsin Okafor"})
@@ -1110,10 +1117,10 @@ class TestPhotoActions(unittest.TestCase):
             self.assertEqual(data["index_skipped"], [stale])
             self.assertEqual(data["index_rows_moved"], 0)
             self.assertEqual(
-                self._rows("SELECT name FROM faces WHERE photo_path = ?", (stale,)),
+                self._rows("SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (stale,)),
                 [("Tamsin Okafor",)], "faces were merged onto the rows already there")
             self.assertEqual(
-                self._rows("SELECT name FROM faces WHERE photo_path = ?", (p1,)),
+                self._rows("SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (p1,)),
                 [("Rowan Thackeray",)])
         finally:
             shutil.rmtree(temp_dir)
@@ -1178,7 +1185,7 @@ class TestPhotoActions(unittest.TestCase):
 
             # Each face followed its own photo: the occupant's to where it was moved
             # aside, the renamed photo's onto the name the occupant gave up.
-            faces = dict(self._rows("SELECT name, photo_path FROM faces WHERE name IS NOT NULL"))
+            faces = dict(self._rows("SELECT f.name, p.path FROM faces f JOIN photos p ON p.id = f.photo_id WHERE f.name IS NOT NULL"))
             self.assertEqual(faces["Ellis Marchetti"], expected_conflict_new)
             self.assertEqual(faces["Tamsin Okafor"], expected_p2_new)
             self.assertEqual(faces["Rowan Thackeray"], expected_p1_new)
@@ -1202,7 +1209,7 @@ class TestPhotoActions(unittest.TestCase):
             c = conn.cursor()
             c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags) VALUES (?, 1.0, 10, '[]')", (p,))
             c.execute("INSERT OR REPLACE INTO embedding_cache (path, mtime, size, model_name, pretrained, preserve_full_frame, max_aspect_ratio, force_image_size, embedding) VALUES (?, 1.0, 10, 'm', 'p', 0, 1.0, 100, ?)", (p, b'\x00'*512))
-            c.execute("INSERT INTO faces (photo_path, box, name, prob) VALUES (?, '[]', 'Rowan Thackeray', 1.0)", (p,))
+            c.execute("INSERT INTO faces (photo_id, box, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', 'Rowan Thackeray', 1.0)", (p,))
             conn.commit()
             conn.close()
 
@@ -1232,7 +1239,7 @@ class TestPhotoActions(unittest.TestCase):
             # Verify records are gone from DB
             photos_count = self._rows("SELECT COUNT(*) FROM photos WHERE path = ?", (p,))[0][0]
             cache_count = self._rows("SELECT COUNT(*) FROM embedding_cache WHERE path = ?", (p,))[0][0]
-            faces_count = self._rows("SELECT COUNT(*) FROM faces WHERE photo_path = ?", (p,))[0][0]
+            faces_count = self._rows("SELECT COUNT(*) FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (p,))[0][0]
 
             self.assertEqual(photos_count, 0)
             self.assertEqual(cache_count, 0)

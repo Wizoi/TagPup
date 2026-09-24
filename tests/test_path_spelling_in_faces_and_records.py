@@ -2,7 +2,9 @@
 
 Face resolution looked up each face's photo_path in a dict of photos.path. The two
 columns need not share a spelling, and where they did not the face lost its photo's
-people tags -- the anchors and votes resolution runs on -- without any error.
+people tags -- the anchors and votes resolution runs on -- without any error. Faces
+point at their photo by id since migration 4; a face recorded under another spelling
+must still land on the photo's own row.
 """
 import os
 import sys
@@ -15,14 +17,27 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 import paths
 from metadata import build_photo_ui_record, parse_year_from_metadata
 from tests.test_face_clustering_rules import FaceClusteringTestBase, identity_vector
+from tagpup.store import db, faces as store_faces
 
 
 @unittest.skipIf(os.sep == "/", "one separator, so one spelling")
 class TestFaceFindsItsPhotoUnderAnotherSpelling(FaceClusteringTestBase):
-    def test_a_face_spelled_differently_from_its_photo_still_anchors(self):
+    def test_a_face_recorded_under_another_spelling_still_anchors(self):
+        # A face points at its photo by id now (migration 4), so it cannot be spelled
+        # apart from it. What is left to pin: recording a face under another spelling
+        # finds the photo's row rather than making a second one without its people.
         vec = identity_vector(3)
-        photo = self.add_photo("picnic.jpg", people=["Mira Castellane"])  # forward slashes
-        face = self.add_face(paths.stored(photo), vec)                    # backslashes
+        typed = self.add_photo("picnic.jpg", people=["Mira Castellane"])  # forward slashes
+        conn = db.connect(self.db_path)
+        try:
+            # The row as the indexer writes it (paths.stored); the face as typed.
+            conn.execute("UPDATE photos SET path = ? WHERE path = ?", (paths.stored(typed), typed))
+            face = store_faces.insert(conn, typed, [0, 0, 100, 100], vec.tobytes(), prob=0.99)
+            conn.commit()
+            self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0],
+                             "the face made a second row for its photo")
+        finally:
+            conn.close()
 
         self.resolve()
         self.assertEqual(self.name_of(face), "Mira Castellane")

@@ -26,6 +26,10 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 import db as tagpup_db
 import tagpup_server
+from tagpup.store import schema  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import FACES_WITH_PATHS, add_face  # noqa: E402
 
 OLD = "D:/Library/2020/2Z6A5820.jpg"
 NEW = "D:/Library/2020/Meet - 01.jpg"
@@ -43,16 +47,7 @@ class RenameCase(unittest.TestCase):
         os.close(fd)
         os.remove(self.db_path)
 
-        conn = tagpup_db.connect(self.db_path)
-        conn.execute("""CREATE TABLE photos (
-            path TEXT PRIMARY KEY, mtime REAL, size INTEGER, tags TEXT, people TEXT,
-            captions TEXT, raw_metadata TEXT, embedding BLOB
-        )""")
-        conn.execute("""CREATE TABLE faces (
-            id INTEGER PRIMARY KEY, photo_path TEXT, name TEXT, embedding BLOB
-        )""")
-        conn.commit()
-        conn.close()
+        schema.ensure(self.db_path)
         self.seed(OLD, b"an-embedding", ["Rowan Thackeray", None])
 
         def cleanup():
@@ -74,10 +69,8 @@ class RenameCase(unittest.TestCase):
                 (native(path), json.dumps(["Cross Country"]), json.dumps([]),
                  json.dumps({}), embedding),
             )
-            conn.executemany(
-                "INSERT INTO faces (photo_path, name) VALUES (?, ?)",
-                [(native(path), name) for name in face_names],
-            )
+            for name in face_names:
+                add_face(conn, native(path), name=name)
             conn.commit()
         finally:
             conn.close()
@@ -105,7 +98,7 @@ class RenameCase(unittest.TestCase):
         conn = tagpup_db.connect(self.db_path)
         try:
             return sorted((r[0] or "") for r in conn.execute(
-                "SELECT name FROM faces WHERE photo_path = ?", (native(path),)))
+                "SELECT f.name FROM " + FACES_WITH_PATHS + " WHERE p.path = ?", (native(path),)))
         finally:
             conn.close()
 

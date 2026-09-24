@@ -44,6 +44,7 @@ from index import PhotoIndex
 from tuner_server import start_server as start_tuner_server, set_active_db_path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
+from face_rows import add_face  # noqa: E402
 
 
 class TestFacesTableIsIndexedForIdentifying(unittest.TestCase):
@@ -88,19 +89,12 @@ class TestFacesTableIsIndexedForIdentifying(unittest.TestCase):
 
     def test_an_existing_database_gains_the_index_on_open(self):
         """The libraries that need this most are the ones that already exist."""
-        pi = PhotoIndex(db_path=self.db)
-        pi.load()
-        pi.close()
-
         # A library from before the index, and so before migrations were recorded:
         # one that has had migration 1 is not looked at again (tagpup.store.schema).
-        conn = sqlite3.connect(self.db)
-        conn.execute("DROP INDEX IF EXISTS idx_faces_identify")
-        conn.execute("DROP TABLE schema_version")
-        conn.commit()
-        conn.close()
-        from tagpup.store import schema
-        schema._current.clear()
+        # Made in the shape such a library has, faces by photo_path: dropping
+        # schema_version from a library made today leaves a shape no library had.
+        from test_schema import make_unmigrated_library
+        make_unmigrated_library(self.db)
         self.assertNotIn("idx_faces_identify", self.indexes_on_faces(self.db))
 
         pi = PhotoIndex(db_path=self.db)
@@ -217,12 +211,8 @@ class MatchingTestBase(unittest.TestCase):
 
     def add_face(self, photo, seed, name=None):
         conn = sqlite3.connect(self.TEST_DB)
-        cur = conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name, prob)"
-            " VALUES (?, '[0,0,10,10]', ?, ?, 0.99)",
-            (photo, unit_vector(seed).tobytes(), name),
-        )
-        fid = cur.lastrowid
+        fid = add_face(conn, photo, box="[0,0,10,10]", embedding=unit_vector(seed).tobytes(),
+                       name=name, prob=0.99)
         conn.commit()
         conn.close()
         return fid
@@ -254,12 +244,8 @@ class TestTheQueueDoesNotReadEmbeddings(MatchingTestBase):
 
     def unreadable_embedding_face(self, photo):
         conn = sqlite3.connect(self.TEST_DB)
-        cur = conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name, prob)"
-            " VALUES (?, '[0,0,10,10]', ?, NULL, 0.99)",
-            (photo, b"\x01\x02\x03"),   # not a whole number of float32s
-        )
-        fid = cur.lastrowid
+        # Not a whole number of float32s.
+        fid = add_face(conn, photo, box="[0,0,10,10]", embedding=b"\x01\x02\x03", prob=0.99)
         conn.commit()
         conn.close()
         return fid
@@ -288,9 +274,7 @@ class TestTheQueueDoesNotReadEmbeddings(MatchingTestBase):
         self.add_face(photo, seed=12)
 
         conn = sqlite3.connect(self.TEST_DB)
-        conn.execute(
-            "INSERT INTO faces (photo_path, box, embedding, name, prob)"
-            " VALUES (?, '[0,0,10,10]', NULL, NULL, 0.99)", (photo,))
+        add_face(conn, photo, box="[0,0,10,10]", embedding=None, prob=0.99)
         conn.commit()
         conn.close()
 
@@ -414,14 +398,11 @@ class TestTheSharedNamedFaceMatrix(MatchingTestBase):
 
         conn = sqlite3.connect(self.TEST_DB)
         for photo in (first, second):
-            conn.execute(
-                "INSERT INTO faces (photo_path, box, embedding, name, prob)"
-                " VALUES (?, '[0,0,10,10]', ?, 'Ines Okonkwo', 0.99)",
-                (photo, vector.tobytes()),
-            )
+            add_face(conn, photo, box="[0,0,10,10]", embedding=vector.tobytes(), name="Ines Okonkwo",
+                     prob=0.99)
         conn.commit()
         face_id = conn.execute(
-            "SELECT id FROM faces WHERE photo_path = ?", (first,)).fetchone()[0]
+            "SELECT id FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (first,)).fetchone()[0]
         conn.close()
 
         names = [m["name"] for m in self.matches_for(face_id)]
@@ -488,12 +469,7 @@ class TestRemovingFacesKeepsTheGridWarm(MatchingTestBase):
             jitter = unit_vector(900 + i) * 0.02
             vec = base + jitter
             vec = (vec / np.linalg.norm(vec)).astype(np.float32)
-            cur = conn.execute(
-                "INSERT INTO faces (photo_path, box, embedding, name, prob)"
-                " VALUES (?, '[0,0,10,10]', ?, NULL, 0.99)",
-                (photo, vec.tobytes()),
-            )
-            ids.append(cur.lastrowid)
+            ids.append(add_face(conn, photo, box="[0,0,10,10]", embedding=vec.tobytes(), prob=0.99))
         conn.commit()
         conn.close()
         return ids

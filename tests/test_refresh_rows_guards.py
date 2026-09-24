@@ -53,7 +53,7 @@ class RefreshGuards(base.RefreshRowsFromFiles):
 
     def test_a_person_named_only_on_a_face_stays_in_people(self):
         conn = db.connect(self.db)
-        conn.execute("INSERT INTO faces (photo_path, box, name, name_source) VALUES (?, '[]', 'Rowan Thackeray', 'manual')",
+        conn.execute("INSERT INTO faces (photo_id, box, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', 'Rowan Thackeray', 'manual')",
                      (self.files["stale_keywords"],))
         conn.commit()
         conn.close()
@@ -69,7 +69,7 @@ class RefreshGuards(base.RefreshRowsFromFiles):
     def test_a_row_missing_a_face_name_is_found_and_fixed(self):
         # "fine" agrees with its file in every other way; only its people are short.
         conn = db.connect(self.db)
-        conn.execute("INSERT INTO faces (photo_path, box, name, name_source) VALUES (?, '[]', 'Imogen Vale', 'manual')",
+        conn.execute("INSERT INTO faces (photo_id, box, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', 'Imogen Vale', 'manual')",
                      (self.files["fine"],))
         conn.commit()
         conn.close()

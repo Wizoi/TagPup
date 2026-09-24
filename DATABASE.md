@@ -58,7 +58,8 @@ Stores high-level image metadata, tags (keywords), captions, resolved people lis
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
-| `path` | TEXT | PRIMARY KEY | The image file. Absolute path in stored form -- `paths.stored()`: native separators, as the indexer writes it. Compared case-insensitively on Windows through `paths.sql_equals()`, which the `*_path_nocase` indexes answer; never by `LOWER()` or `LIKE`. |
+| `id` | INTEGER | PRIMARY KEY | The photo's row, and what its faces point at. Kept when the photo is renamed or moved: only `path` changes, and its faces go with it. Migration 4 gave every row its old rowid. |
+| `path` | TEXT | NOT NULL UNIQUE | The image file. Absolute path in stored form -- `paths.stored()`: native separators, as the indexer writes it. Compared case-insensitively on Windows through `paths.sql_equals()`, which the `*_path_nocase` indexes answer; never by `LOWER()` or `LIKE`. |
 | `mtime` | REAL | | Last modification time (epoch timestamp) of the image file. |
 | `size` | INTEGER | | File size in bytes. |
 | `tags` | TEXT | | JSON-serialized array of metadata keyword strings (e.g., `["nature", "sunset"]`). |
@@ -69,12 +70,12 @@ Stores high-level image metadata, tags (keywords), captions, resolved people lis
 | `document_id` | TEXT | INDEXED | The photo's identity, independent of its path: `XMP-xmpMM:DocumentID`. Read from the file where present — most photos already carry one, written by Lightroom or Camera Raw — and minted as `xmp.did:<uuid>` where absent. A path is a bad name for a photo: rename it and the row describes something that no longer exists, while the photo looks unindexed. `scripts/relink_renamed_photos.py` matches on this first. NULL on rows indexed before this column existed; they fill in as those photos are re-indexed. |
 
 ### 2. `faces` Table
-Stores details of faces detected within photos, including face crop coordinates, resolved name identities, confidence scores, and raw crop images.
+Stores details of faces detected within photos, including face crop coordinates, resolved name identities and confidence scores. Their crops are in `face_crops`.
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | Unique face crop identifier. |
-| `photo_path` | TEXT | FOREIGN KEY | Path to parent photo, in the same stored form as `photos.path`. References `photos(path)` with `ON DELETE CASCADE`. May name a photo that was never indexed: the suggester records faces it detects. |
+| `photo_id` | INTEGER | NOT NULL, FOREIGN KEY, INDEXED | The photo the face is in. References `photos(id)` with `ON DELETE CASCADE`; the store deletes faces explicitly too, since most connections leave foreign keys off. A face found in a photo never indexed -- the suggester records the faces it detects -- first gets its photo a row holding only the path (`photos.ensure_row`), its `mtime` and `size` empty so the scan reads the file. |
 | `box` | TEXT | | JSON-serialized bounding box coordinates `[x1, y1, x2, y2]`. |
 | `embedding` | BLOB | | 512-dimensional face embedding vector (binary representation of float32 array). |
 | `name` | TEXT | | The resolved name of the person (or `NULL` if unmatched). |
@@ -133,7 +134,7 @@ Each face's crop, a JPEG no larger than 256 px on a side, cut when the face is d
 Counters that move whenever a table changes, whoever changes it: TagPup, TagTuner, the CLI or a script. A cache stores the generations it was built at and is current while they have not moved (`tagpup.store.generations`). Triggers made by `tagpup.store.schema` bump them:
 
 - `photos`: every insert, delete and update of a photo row (`generation_photos_insert`, `_delete`, `_update`). The Suggest index reloads when it moves.
-- `faces`: every insert and delete, and every update of `name`, `name_source`, `excluded`, `embedding` or `photo_path`. Caching a crop does not move it. Identify Faces keys its queue and match lists on it.
+- `faces`: every insert and delete, and every update of `name`, `name_source`, `excluded`, `embedding` or `photo_id`. Caching a crop does not move it. Identify Faces keys its queue and match lists on it.
 - `taxonomy`: every insert and delete in `tag_taxonomy`, and every update of `tag`, `name`, `parent_id` or `has_face`. TagPup keys who the tree says each person is on it, and so sees TagTuner's edits.
 
 Replaces `faces_generation` and `taxonomy_generation`, one table each, whose counts it carried over (migration 2).
@@ -161,7 +162,8 @@ The relationships between the tables are structured as follows:
 ```mermaid
 erDiagram
     photos {
-        TEXT path PK
+        INTEGER id PK
+        TEXT path UK
         REAL mtime
         INTEGER size
         TEXT tags
@@ -173,7 +175,7 @@ erDiagram
     
     faces {
         INTEGER id PK
-        TEXT photo_path FK
+        INTEGER photo_id FK
         TEXT box
         BLOB embedding
         TEXT name
