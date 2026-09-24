@@ -85,15 +85,20 @@ def summarize_indexer_line(line):
     return clean
 
 
-def index_folder_with_cli(folder_path, db_path, run_clustering, status):
+def index_folder_with_cli(folder_path, db_path, run_clustering, status, while_clustering=None):
     """Index a folder through the CLI, then optionally resolve faces, filling `status`.
 
     Both apps ran this as their own copy, and both reported "identities resolved" when
     cluster-faces had failed: its exit code was never read. The CLI is started from
     the repository, as TagTuner's copy did -- TagPup's relied on the server's working
     directory to find tagpup_cli.py. Returns True when every step succeeded.
+
+    `while_clustering`, if given, is a context held while cluster-faces runs: TagTuner
+    refuses assignments during it, as it does during Recluster, since clustering
+    rewrites the names an assignment would be setting.
     """
     import sys
+    from contextlib import nullcontext
 
     env = os.environ.copy()
     env["TAGPUP_DB_PATH"] = db_path
@@ -127,7 +132,8 @@ def index_folder_with_cli(folder_path, db_path, run_clustering, status):
         # Only on explicit request: this re-derives every face name in the database,
         # not just the folder that was indexed.
         status.update(message="Resolving and matching face identities...", percent=95)
-        code = run(["cluster-faces"], None)
+        with (while_clustering() if while_clustering else nullcontext()):
+            code = run(["cluster-faces"], None)
         if code != 0:
             status.update(status="failed", percent=100,
                           message="Folder indexed, but resolving face identities failed "

@@ -435,6 +435,12 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
     # through one at a time rather than in parallel -- but asking for ten of them
     # should not mean standing over the machine to start each one.
     index_queue = DatabaseIsolatedDict(_db_index_queue_registry)
+    # Every read-modify-write of "pending" and "runner" happens under this. Start,
+    # cancel and the runner each rewrote the list without one, so a job popped by the
+    # runner could be written back by a start and indexed twice; and a runner that had
+    # found the list empty still looked alive to a start in the moment before it
+    # cleared itself, leaving that start's job queued with nothing to run it.
+    _index_queue_lock = threading.RLock()
     suggest_threads = DatabaseIsolatedDict(_db_suggest_threads_registry)
 
     # The suggestions cache file belongs to TagPup, which runs the suggestions and is
@@ -889,17 +895,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             cursor.execute("SELECT id, box, name, embedding FROM faces WHERE " + path_sql, path_args)
             face_rows = cursor.fetchall()
 
-            # Load all resolved face embeddings to compute max correlation
-            cursor.execute("SELECT embedding FROM faces WHERE name IS NOT NULL")
-            known_rows = cursor.fetchall()
-            known_embs = []
-            for k_row in known_rows:
-                known_embs.append(np.frombuffer(k_row[0], dtype=np.float32))
-            
-            if known_embs:
-                known_matrix = np.array(known_embs, dtype=np.float32)
-            else:
-                known_matrix = None
+            # Every named face, from the matrix shared with /api/face-matches. This
+            # read all of them from SQLite on every click of a face card -- 35,826 rows,
+            # half a second -- for the one number per face shown beside it.
+            _known_ids, _known_names, known_matrix = self.named_face_matrix(
+                conn, self.faces_fingerprint(conn))
 
             faces = []
             for f_row in face_rows:
@@ -1719,7 +1719,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             # forward; anything older was built before something else changed the
             # table -- a folder removed, a batch of photos indexed -- and re-stamping
             # it would quietly revive a grid full of faces that no longer exist.
-            fingerprint_before = self.faces_fingerprint(conn)
+            fingerprint_before = self.begin_identify_write(conn)
 
             # 1. Fetch face details: photo_path and old name
             cursor.execute("SELECT photo_path, name, excluded FROM faces WHERE id = ?", (face_id,))
@@ -1807,16 +1807,18 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (people_json,) + path_args)
 
             with tagpup_db.writing(self.db_path, label="name a face"):
+                fingerprint_after = self.faces_fingerprint(conn)
                 conn.commit()
                 # This face has left the identify pool; take it out of the cached
                 # views rather than making the next click rebuild them.
-                self.identify_cache_forget_faces(conn, [face_id], fingerprint_before)
+                self.identify_cache_forget_faces(conn, [face_id], fingerprint_before, fingerprint_after)
             self.send_json({"success": True})
 
         except Exception as e:
             logger.error(f"Error in handle_post_match: {e}")
             self.send_error(500, f"Internal error: {e}")
         finally:
+            self.end_identify_write()
             if conn:
                 conn.close()
 
@@ -2111,22 +2113,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_json({"success": True, "matched_count": 0})
                 return
 
-            # 2. Fetch all resolved face embeddings in the database (faces that have a non-null name)
-            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL AND excluded = 0")
-            resolved_rows = cursor.fetchall()
+            # 2. Every named face, from the matrix shared with the rest of Identify
+            # Faces rather than read from SQLite again on each automatch.
+            _ids, resolved_names, resolved_matrix = self.named_face_matrix(
+                conn, self.faces_fingerprint(conn))
 
-            if not resolved_rows:
+            if resolved_matrix is None:
                 self.send_json({"success": True, "matched_count": 0})
                 return
-
-            # Compile resolved embeddings matrix and names
-            resolved_names = []
-            resolved_embs = []
-            for name, emb_bytes in resolved_rows:
-                resolved_names.append(name)
-                resolved_embs.append(np.frombuffer(emb_bytes, dtype=np.float32))
-
-            resolved_matrix = np.array(resolved_embs, dtype=np.float32)
 
             # Fetch names already resolved in this photo to avoid duplicate assignments
             path_sql, path_args = paths.sql_equals("photo_path", photo_path)
@@ -2243,22 +2237,14 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 self.send_json({"success": True, "matched_count": 0})
                 return
 
-            # 2. Fetch all resolved face embeddings in the database (faces that have a non-null name)
-            cursor.execute("SELECT name, embedding FROM faces WHERE name IS NOT NULL AND excluded = 0")
-            resolved_rows = cursor.fetchall()
+            # 2. Every named face, from the matrix shared with the rest of Identify
+            # Faces rather than read from SQLite again on each automatch.
+            _ids, resolved_names, resolved_matrix = self.named_face_matrix(
+                conn, self.faces_fingerprint(conn))
 
-            if not resolved_rows:
+            if resolved_matrix is None:
                 self.send_json({"success": True, "matched_count": 0})
                 return
-
-            # Compile resolved embeddings matrix and names
-            resolved_names = []
-            resolved_embs = []
-            for name, emb_bytes in resolved_rows:
-                resolved_names.append(name)
-                resolved_embs.append(np.frombuffer(emb_bytes, dtype=np.float32))
-
-            resolved_matrix = np.array(resolved_embs, dtype=np.float32)
 
             # Fetch all resolved names for photos in this folder to check for already-tagged conflicts
             cursor.execute("""
@@ -2761,7 +2747,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             # forward; anything older was built before something else changed the
             # table -- a folder removed, a batch of photos indexed -- and re-stamping
             # it would quietly revive a grid full of faces that no longer exist.
-            fingerprint_before = self.faces_fingerprint(conn)
+            fingerprint_before = self.begin_identify_write(conn)
 
             # Read the selected faces once.
             #
@@ -2891,14 +2877,16 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (json.dumps(updated_people),) + path_args)
 
             with tagpup_db.writing(self.db_path, label="name faces in bulk"):
+                fingerprint_after = self.faces_fingerprint(conn)
                 conn.commit()
-                self.identify_cache_forget_faces(conn, face_ids, fingerprint_before)
+                self.identify_cache_forget_faces(conn, face_ids, fingerprint_before, fingerprint_after)
             self.send_json({"success": True, "matched": matched, "matched_ids": face_ids,
                             "skipped_excluded": skipped_excluded})
         except Exception as e:
             logger.error(f"Error in handle_post_match_bulk: {e}")
             self.send_error(500, f"Internal error: {e}")
         finally:
+            self.end_identify_write()
             if conn:
                 conn.close()
 
@@ -3105,28 +3093,29 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             )
             return
 
-        queue = list(TunerHTTPRequestHandler.index_queue.get("pending", []))
-        queued_norms = {paths.key(job["folder"]) for job in queue}
+        with TunerHTTPRequestHandler._index_queue_lock:
+            queue = list(TunerHTTPRequestHandler.index_queue.get("pending", []))
+            queued_norms = {paths.key(job["folder"]) for job in queue}
 
-        accepted, already = [], []
-        for raw, norm in valid:
-            status = TunerHTTPRequestHandler.index_status.get(norm)
-            if status and status.get("status") == "running":
-                already.append(raw)
-                continue
-            if norm in queued_norms:
-                already.append(raw)
-                continue
-            queue.append({"folder": raw, "cluster": run_clustering})
-            queued_norms.add(norm)
-            TunerHTTPRequestHandler.index_status[norm] = {
-                "status": "queued", "percent": 0, "message": "Waiting to be indexed...",
-                "folder": raw,
-            }
-            accepted.append(raw)
+            accepted, already = [], []
+            for raw, norm in valid:
+                status = TunerHTTPRequestHandler.index_status.get(norm)
+                if status and status.get("status") == "running":
+                    already.append(raw)
+                    continue
+                if norm in queued_norms:
+                    already.append(raw)
+                    continue
+                queue.append({"folder": raw, "cluster": run_clustering})
+                queued_norms.add(norm)
+                TunerHTTPRequestHandler.index_status[norm] = {
+                    "status": "queued", "percent": 0, "message": "Waiting to be indexed...",
+                    "folder": raw,
+                }
+                accepted.append(raw)
 
-        TunerHTTPRequestHandler.index_queue["pending"] = queue
-        self._ensure_queue_runner()
+            TunerHTTPRequestHandler.index_queue["pending"] = queue
+            self._ensure_queue_runner()
 
         self.send_json({
             "success": True,
@@ -3159,32 +3148,39 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             return
 
         targets = {paths.key(p) for p in (wanted or []) if p}
-        queue = list(TunerHTTPRequestHandler.index_queue.get("pending", []))
-        kept, dropped = [], []
-        for job in queue:
-            norm = paths.key(job["folder"])
-            if cancel_all or norm in targets:
-                dropped.append(job["folder"])
-                TunerHTTPRequestHandler.index_status.pop(norm, None)
-            else:
-                kept.append(job)
+        with TunerHTTPRequestHandler._index_queue_lock:
+            queue = list(TunerHTTPRequestHandler.index_queue.get("pending", []))
+            kept, dropped = [], []
+            for job in queue:
+                norm = paths.key(job["folder"])
+                if cancel_all or norm in targets:
+                    dropped.append(job["folder"])
+                    # Said, not forgotten: with the entry gone, asking about the folder
+                    # answered "completed".
+                    TunerHTTPRequestHandler.index_status[norm] = {
+                        "status": "cancelled", "percent": 0, "message": "Cancelled.",
+                        "folder": job["folder"],
+                    }
+                else:
+                    kept.append(job)
 
-        TunerHTTPRequestHandler.index_queue["pending"] = kept
+            TunerHTTPRequestHandler.index_queue["pending"] = kept
         self.send_json({"success": True, "cancelled": dropped, "pending": len(kept)})
 
     def _ensure_queue_runner(self):
         """Start the worker that drains the queue, unless one is already draining it."""
-        runner = TunerHTTPRequestHandler.index_queue.get("runner")
-        if runner is not None and runner.is_alive():
-            return
-        t = threading.Thread(
-            target=TunerHTTPRequestHandler.run_index_queue,
-            args=(self.db_path,),
-            name="TunerIndexQueueRunner",
-            daemon=True,
-        )
-        TunerHTTPRequestHandler.index_queue["runner"] = t
-        t.start()
+        with TunerHTTPRequestHandler._index_queue_lock:
+            runner = TunerHTTPRequestHandler.index_queue.get("runner")
+            if runner is not None and runner.is_alive():
+                return
+            t = threading.Thread(
+                target=TunerHTTPRequestHandler.run_index_queue,
+                args=(self.db_path,),
+                name="TunerIndexQueueRunner",
+                daemon=True,
+            )
+            TunerHTTPRequestHandler.index_queue["runner"] = t
+            t.start()
 
     @classmethod
     def run_index_queue(cls, db_path):
@@ -3199,11 +3195,16 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         set_active_db_path(db_path)
         try:
             while True:
-                queue = list(cls.index_queue.get("pending", []))
-                if not queue:
-                    return
-                job = queue.pop(0)
-                cls.index_queue["pending"] = queue
+                with cls._index_queue_lock:
+                    queue = list(cls.index_queue.get("pending", []))
+                    if not queue:
+                        # Stop and say so in one step, so a start arriving now finds
+                        # no runner and starts one.
+                        if cls.index_queue.get("runner") is threading.current_thread():
+                            cls.index_queue["runner"] = None
+                        return
+                    job = queue.pop(0)
+                    cls.index_queue["pending"] = queue
 
                 folder_norm = paths.key(job["folder"])
                 cls.index_status[folder_norm] = {
@@ -3222,7 +3223,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                         "folder": paths.stored(job["folder"]),
                     }
         finally:
-            cls.index_queue["runner"] = None
+            # Only this runner's own entry: a newer one may have been started already.
+            with cls._index_queue_lock:
+                if cls.index_queue.get("runner") is threading.current_thread():
+                    cls.index_queue["runner"] = None
 
     @classmethod
     def run_folder_index_thread(cls, folder_path, db_path, run_clustering=False):
@@ -3243,8 +3247,22 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             # The same steps TagPup runs, which read both exit codes. The identify
             # queue is cached against a fingerprint of the faces table, which the new
             # rows change, so it recomputes on its own.
+            from contextlib import contextmanager
+
             from tagpup_server import index_folder_with_cli
-            index_folder_with_cli(folder_path, db_path, run_clustering, status)
+
+            # Assignments are refused while clustering runs, as during Recluster: it
+            # rewrites the names they would set. This queue ran it unguarded.
+            @contextmanager
+            def holding_clustering():
+                cls.clustering_in_progress = True
+                try:
+                    yield
+                finally:
+                    cls.clustering_in_progress = False
+
+            index_folder_with_cli(folder_path, db_path, run_clustering, status,
+                                  while_clustering=holding_clustering)
         except Exception as e:
             logger.exception("Error indexing folder %s: %s" % (folder_path, e))
             status["status"] = "failed"
@@ -3353,7 +3371,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             # forward; anything older was built before something else changed the
             # table -- a folder removed, a batch of photos indexed -- and re-stamping
             # it would quietly revive a grid full of faces that no longer exist.
-            fingerprint_before = self.faces_fingerprint(conn)
+            fingerprint_before = self.begin_identify_write(conn)
             placeholders = ",".join("?" for _ in face_ids)
 
             cursor.execute(
@@ -3395,10 +3413,11 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                             pass
 
             with tagpup_db.writing(self.db_path, label="exclude faces"):
+                fingerprint_after = self.faces_fingerprint(conn)
                 conn.commit()
                 # Ignoring a cluster is the single most expensive thing to have
                 # invalidated the grid, and it is pure removal.
-                self.identify_cache_forget_faces(conn, face_ids, fingerprint_before)
+                self.identify_cache_forget_faces(conn, face_ids, fingerprint_before, fingerprint_after)
             # The rows changed, not the ids sent: an id that is not in the table was
             # never excluded, and saying it was is how a write reports success on
             # nothing.
@@ -3407,6 +3426,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             logger.error("Error excluding faces: %s" % e)
             self.send_error(500, "Internal error: %s" % e)
         finally:
+            self.end_identify_write()
             if conn:
                 conn.close()
 
@@ -3752,7 +3772,32 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             dissolved.append(face)
         return dissolved
 
-    def identify_cache_forget_faces(self, conn, face_ids, expected_fingerprint):
+    def begin_identify_write(self, conn):
+        """Hold this library's write locks until the commit; return the fingerprint now.
+
+        Taking faces out of the cached grids needs the table's fingerprint before this
+        write and after it, and the difference has to be this write alone. It was read
+        before anything was locked and again after the commit, so a batch the indexer
+        or TagPup committed in between was stamped as accounted for, and its faces
+        never reached the grid. Both are now read inside one IMMEDIATE transaction:
+        nobody else can write between them. The in-process lock is taken first, in the
+        order every other writer here takes the two. end_identify_write releases it;
+        closing the connection ends the transaction if the handler returns early.
+        """
+        lock = tagpup_db.lock_for(self.db_path)
+        lock.acquire()
+        self._identify_write_lock = lock
+        conn.execute("BEGIN IMMEDIATE")
+        return self.faces_fingerprint(conn)
+
+    def end_identify_write(self):
+        lock = getattr(self, "_identify_write_lock", None)
+        if lock is not None:
+            self._identify_write_lock = None
+            lock.release()
+
+    def identify_cache_forget_faces(self, conn, face_ids, expected_fingerprint,
+                                    fingerprint_after=None):
         """Take faces out of the cached Identify Faces views instead of discarding them.
 
         The per-person grid costs about fifty seconds to build on a real library,
@@ -3782,7 +3827,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         if not removed:
             return
 
-        fingerprint = self.faces_fingerprint(conn)
+        # Read inside the write, when the caller has one (begin_identify_write).
+        fingerprint = fingerprint_after or self.faces_fingerprint(conn)
         cache = TunerHTTPRequestHandler.identify_cache
 
         for key in list(cache.keys()):
