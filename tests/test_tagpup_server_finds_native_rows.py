@@ -130,7 +130,7 @@ def fake_extractor(raw_metadata=None):
     """MetadataExtractor stand-in that reports each file it is asked about."""
     extractor_cls = MagicMock()
 
-    def batch_read(file_paths, db_path=None):
+    def batch_read(file_paths, db_path=None, people=None):
         return [{"path": p, "mtime": 0.0, "size": 0, "tags": [], "people": [],
                  "captions": [], "raw_metadata": dict(raw_metadata or {})}
                 for p in file_paths]
@@ -317,7 +317,11 @@ class TestTimeShiftKeepsTheRealPaths(HandlerCase):
         # ExifTool answers a write with a summary line, which the shift counts.
         session = MagicMock()
         session.return_value.__enter__.return_value.execute.return_value = "    1 image files updated"
-        with patch("metadata.MetadataExtractor", extractor), patch("exiftool_session.ExifToolSession", session):
+        # The route scans through scripts/metadata.py; the service shifts and reads back
+        # through tagpup.files.
+        with patch("metadata.MetadataExtractor", extractor), \
+                patch("tagpup.files.metadata.MetadataExtractor", extractor), \
+                patch("tagpup.files.times.ExifToolSession", session):
             result = self.call("handle_post_folder_time_shift", {
                 "folder_path": forward(self.folder), "camera_model": "All Cameras",
                 "shift_minutes": 30})

@@ -379,46 +379,6 @@ def zero_shot_candidates(taxonomy, configured):
     return candidates
 
 
-def shift_photo_times(db_path, exiftool_path, photo_paths, shift_minutes):
-    """Move Date Taken in each photo by `shift_minutes`, and tell the index.
-
-    Returns (how many files ExifTool reports it updated, the photos re-read after).
-    The count is ExifTool's own: a photo it could not write is not counted, where
-    this used to answer with the number it had tried. The index rows get the new
-    Date Taken, which orders photos and picks the era a face is compared against,
-    and the file's new mtime and size, without which the next scan distrusts them.
-    """
-    from exiftool_session import ExifToolSession
-    from metadata import MetadataExtractor
-
-    sign = "+" if shift_minutes >= 0 else "-"
-    by = "0:0:0 0:%d:0" % abs(shift_minutes)
-    updated = 0
-    # check_execute=False: a batch with one unwritable photo still shifts the rest,
-    # and ExifTool's summary line says how many it did.
-    with ExifToolSession(executable=exiftool_path, check_execute=False) as et:
-        for i in range(0, len(photo_paths), 50):
-            out = et.execute("-DateTimeOriginal%s=%s" % (sign, by), "-CreateDate%s=%s" % (sign, by),
-                             "-overwrite_original", *photo_paths[i:i + 50])
-            updated += sum(int(n) for n in re.findall(r"(\d+) image files? updated", out or ""))
-
-    # Only reading: minting a DocumentID here would write the files a second time.
-    entries = MetadataExtractor(exiftool_path=exiftool_path, mint_identities=False).batch_read(
-        photo_paths, db_path=db_path)
-
-    def store(conn):
-        for entry in entries:
-            if not entry.get("raw_metadata"):
-                continue
-            where, where_params = paths.sql_equals("path", entry["path"])
-            conn.execute("UPDATE photos SET raw_metadata = ?, mtime = ?, size = ? WHERE " + where,
-                         (json.dumps(entry["raw_metadata"]), entry.get("mtime", 0.0),
-                          entry.get("size", 0)) + where_params)
-
-    tagpup_db.write_with_connection(db_path, store, label="time shift")
-    return updated, entries
-
-
 def move_photo_rows(db_path, renames):
     """Move index rows from each old path to its new one, and its faces with them.
 
@@ -2523,11 +2483,13 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             return
             
         try:
-            updated_count, updated_entries = shift_photo_times(
-                self.db_path, self.get_exiftool_path(), target_paths, shift_minutes)
+            result = photo_actions.shift_date_taken(
+                Library(self.db_path), target_paths, shift_minutes, self.get_exiftool_path())
+            if not result.ok:
+                raise RuntimeError(result.message())
 
             from metadata import build_photo_ui_record
-            for entry in updated_entries:
+            for entry in result.details["records"]:
                 p = paths.stored(entry["path"])
                 # Every map holding the photo: this folder's, and an ancestor's scan
                 # that walked into it.
@@ -2538,8 +2500,8 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     
             updated_photos = list(photos_map.values())
             self.send_json({"success": True, "updated_photos": updated_photos,
-                            "updated_count": updated_count,
-                            "requested_count": len(target_paths)})
+                            "updated_count": result.changed,
+                            "requested_count": result.attempted})
         except Exception as e:
             logger.error(f"Error applying time shift to {folder_path}: {e}")
             self.send_json_error(500, str(e))

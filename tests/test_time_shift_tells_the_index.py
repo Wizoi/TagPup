@@ -6,7 +6,8 @@ picks the era a face is compared against -- and the old mtime and size, so the n
 scan distrusted every one of them. And it answered "success" with the number of
 photos it had tried, even when ExifTool wrote none of them.
 
-TagPup and TagTuner each had their own copy; both now call shift_photo_times.
+TagPup and TagTuner each had their own copy. TagTuner's is gone, and TagPup's handler
+calls the service, tagpup.services.photos.shift_date_taken.
 """
 import inspect
 import json
@@ -78,12 +79,12 @@ class TimeShiftTellsTheIndex(unittest.TestCase):
 
 class TheHandlerUsesTheSharedShift(unittest.TestCase):
     # TagTuner had a copy of this route too; its page never called it, and it is gone.
-    def test_it_shifts_through_shift_photo_times(self):
+    def test_it_shifts_through_the_service(self):
         handler = tagpup_server.TagPupHTTPRequestHandler
         source = inspect.getsource(handler.handle_post_folder_time_shift)
-        self.assertIn("shift_photo_times(", source)
+        self.assertIn("shift_date_taken(", source)
         self.assertNotIn("DateTimeOriginal", source,
-                         "the handler shifts files itself instead of through shift_photo_times")
+                         "the handler shifts files itself instead of through the service")
 
     def test_tagtuner_has_no_copy(self):
         self.assertFalse(hasattr(tuner_server.TunerHTTPRequestHandler,

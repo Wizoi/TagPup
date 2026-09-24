@@ -1,9 +1,34 @@
-"""Actions on one photo's file."""
+"""Actions on photo files."""
 import os
 
 from tagpup.core.result import Result
-from tagpup.files import images, metadata, recycle_bin
-from tagpup.store import faces, photos
+from tagpup.files import images, metadata, recycle_bin, times
+from tagpup.store import faces, photos, taxonomy
+
+
+def shift_date_taken(library, photo_paths, minutes, exiftool_path):
+    """Move Date Taken in each photo by `minutes`, and tell the index. Time Shift.
+
+    `changed` is ExifTool's own count of the files it wrote: a photo it could not
+    write is not counted, where this used to answer with the number it had tried. The
+    index rows get the new Date Taken, which orders photos and picks the era a face is
+    compared against, and each file's new mtime and size, without which the next scan
+    distrusts them.
+
+    details: `records`, each photo as read back afterwards.
+    """
+    result = Result(attempted=len(photo_paths))
+    try:
+        result.changed = times.shift_date_taken(exiftool_path, photo_paths, minutes)
+    except Exception as e:
+        result.fail("time shift", e)
+        return result
+    # Only reading: minting a DocumentID here would write the files a second time.
+    records = metadata.MetadataExtractor(exiftool_path=exiftool_path, mint_identities=False).batch_read(
+        photo_paths, people=taxonomy.people_vocabulary(library.path))
+    photos.record_reads(library.path, records, label="time shift")
+    result.details["records"] = records
+    return result
 
 
 def delete(library, photo_path):

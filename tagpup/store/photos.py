@@ -1,9 +1,10 @@
 """The photos table.
 
-For now, recording a file's new mtime and size after a write, and forgetting a
-deleted photo. The rest of the table's queries, in scripts/index.py and the servers,
-move here with the store step of phase 2 (ARCHITECTURE.md).
+For now, recording what a write did to a file, or what was read back from it, and
+forgetting a deleted photo. The rest of the table's queries, in scripts/index.py and
+the servers, move here with the store step of phase 2 (ARCHITECTURE.md).
 """
+import json
 import logging
 import os
 
@@ -54,3 +55,24 @@ def forget_photo(db_path, photo_path):
     if not removed.get("photos"):
         logger.info("Deleted %s, which the index had no row for.", photo_path)
     return removed
+
+
+def record_reads(db_path, records, label="photos read back"):
+    """Record what was just read from each photo's file: its raw metadata, mtime and
+    size. Returns how many rows changed.
+
+    A record with no metadata -- a file that could not be read -- is left as it was.
+    """
+    def store(conn):
+        changed = 0
+        for entry in records:
+            if not entry.get("raw_metadata"):
+                continue
+            where, where_params = paths.sql_equals("path", entry["path"])
+            changed += conn.execute(
+                "UPDATE photos SET raw_metadata = ?, mtime = ?, size = ? WHERE " + where,
+                (json.dumps(entry["raw_metadata"]), entry.get("mtime", 0.0),
+                 entry.get("size", 0)) + where_params).rowcount
+        return changed
+
+    return db.write_with_connection(db_path, store, label=label)
