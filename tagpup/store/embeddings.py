@@ -10,11 +10,13 @@ and a change of model settings replaced one copy and not the other.
 Here a vector belongs to a photo's row, by id, and goes with it: a trigger deletes it
 with the photo, whichever connection deletes it (#65), and a rename moves nothing. Its
 stamp is the file's mtime and size when it was computed. A write of the app's own that
-changes only metadata carries the stamp forward (`restamp`); one that changes how the
-photo looks takes the vector away (`forget`). A file changed any other way no longer
-matches its stamp, and is embedded again.
+changes only metadata carries the stamp forward (`restamp`), from the stamp the file had
+just before the write -- never the row's, which lags a file changed elsewhere (#84); one
+that changes how the photo looks takes the vector away (`forget`). A file changed any
+other way no longer matches its stamp, and is embedded again.
 """
 import collections
+import os
 
 from tagpup.core import paths
 
@@ -53,12 +55,23 @@ def put(conn, photo_path, model, mtime, size, vector):
                  " VALUES (?, ?, ?, ?, ?)", (photo_id, model, mtime, size, vector))
 
 
+def stamp_of(photo_path):
+    """(mtime, size) of the file now, or None when it cannot be read: what a writer takes
+    just before it writes, to carry the photo's vectors over its write."""
+    try:
+        stat = os.stat(photo_path)
+    except OSError:
+        return None
+    return (stat.st_mtime, stat.st_size)
+
+
 def restamp(conn, photo_id, before, after):
     """A write of the app's own changed only a photo's metadata, and the file's stamp
-    from `before` to `after`, each (mtime, size): its vectors computed from the file as
-    it was are still its vectors. Only those stamped `before` -- one already stale stays
-    so. Returns rows changed. The caller commits."""
-    if before == after or None in before:
+    from `before` -- read from the file just before the write -- to `after`, each
+    (mtime, size): its vectors computed from the file as it was are still its vectors.
+    Only those stamped `before`; one already stale stays so. Returns rows changed. The
+    caller commits."""
+    if before is None or after is None or before == after or None in before:
         return 0
     return conn.execute("UPDATE embeddings SET mtime = ?, size = ? WHERE photo_id = ? AND mtime = ? AND size = ?",
                         tuple(after) + (photo_id,) + tuple(before)).rowcount

@@ -15,37 +15,40 @@ from tagpup.store import db, embeddings, faces, taxonomy
 logger = logging.getLogger(__name__)
 
 
-def _stamp(conn, photo_path, mtime, size, looks_different=False):
+def _stamp(conn, photo_path, mtime, size, looks_different=False, before=None):
     """Record the stamp a write of the app's own left on a photo's file, and bring its
-    vectors with it (tagpup.store.embeddings): carried forward when only metadata
-    changed, taken away when the photo `looks_different` -- a rotation, whose
-    Orientation the embedder applies. Returns the photo's id, or None without a row.
-    The caller commits."""
+    vectors with it (tagpup.store.embeddings): carried forward from `before`, the
+    file's stamp just before the write (embeddings.stamp_of), when only metadata
+    changed; taken away when the photo `looks_different` -- a rotation, whose
+    Orientation the embedder applies. Without `before` they stay as they are, and a
+    vector the write left behind is computed again. Returns the photo's id, or None
+    without a row. The caller commits."""
     where, params = paths.sql_equals("path", photo_path)
     row = conn.execute("SELECT id, mtime, size FROM photos WHERE " + where + " LIMIT 1", params).fetchone()
     if row is None:
         return None
-    photo_id, old_mtime, old_size = row
+    photo_id = row[0]
     conn.execute("UPDATE photos SET mtime = ?, size = ? WHERE id = ?", (mtime, size, photo_id))
     if looks_different:
         conn.execute("DELETE FROM embeddings WHERE photo_id = ?", (photo_id,))
     else:
-        embeddings.restamp(conn, photo_id, (old_mtime, old_size), (mtime, size))
+        embeddings.restamp(conn, photo_id, before, (mtime, size))
     return photo_id
 
 
-def record_file_stat(db_path, photo_path, looks_different=False):
+def record_file_stat(db_path, photo_path, looks_different=False, before=None):
     """Record a photo's current mtime and size in its index row. Returns rows changed.
 
     For a write that changes the file but not what the index describes: a caption, or
     a rotation, which changes only the Orientation tag -- and so how the photo looks to
-    the embedder, `looks_different`, which takes its vectors away. Left stale, the
-    folder scan would distrust the row and re-read the photo with ExifTool on every scan.
+    the embedder, `looks_different`, which takes its vectors away. `before` is the
+    file's stamp just before the write (_stamp). Left stale, the folder scan would
+    distrust the row and re-read the photo with ExifTool on every scan.
     """
     stat = os.stat(photo_path)
 
     def store(conn):
-        return 0 if _stamp(conn, photo_path, stat.st_mtime, stat.st_size, looks_different) is None else 1
+        return 0 if _stamp(conn, photo_path, stat.st_mtime, stat.st_size, looks_different, before) is None else 1
 
     return db.write_with_connection(
         db_path, store, label="file stat for %s" % os.path.basename(photo_path))
@@ -71,22 +74,23 @@ def forget_photo(db_path, photo_path):
     return removed
 
 
-def record_reads(db_path, records, label="photos read back", own_write=False):
+def record_reads(db_path, records, label="photos read back", before=None):
     """Record what was just read from each photo's file: its raw metadata, mtime and
     size. Returns how many rows changed.
 
     A record with no metadata -- a file that could not be read -- is left as it was.
-    `own_write` says the files changed by a metadata write of the app's own, so their
-    vectors are carried forward; a file read back after changing elsewhere might look
-    different, and keeps the stamp that tells the embedder so.
+    `before` maps a path to its file's stamp just before a metadata write of the app's
+    own, whose vectors are carried forward (_stamp); a file read back after changing
+    elsewhere might look different, and keeps the stamp that tells the embedder so.
     """
     def store(conn):
         changed = 0
         for entry in records:
             if not entry.get("raw_metadata"):
                 continue
-            if own_write:
-                _stamp(conn, entry["path"], entry.get("mtime", 0.0), entry.get("size", 0))
+            if before and entry["path"] in before:
+                _stamp(conn, entry["path"], entry.get("mtime", 0.0), entry.get("size", 0),
+                       before=before[entry["path"]])
             where, where_params = paths.sql_equals("path", entry["path"])
             changed += conn.execute(
                 "UPDATE photos SET raw_metadata = ?, mtime = ?, size = ? WHERE " + where,
@@ -168,7 +172,7 @@ def move_rows(db_path, renames):
     return moved, skipped
 
 
-def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None):
+def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None, before=None):
     """Tell the index what a photo's keywords now are.
 
     Saving one photo has always done this; the bulk writers did not, so tagging fifty
@@ -184,6 +188,8 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None):
     The file's new mtime and size are recorded too. Writing keywords changes both, and
     the folder scan only trusts a row whose mtime and size match the file; without
     them every photo tagged in bulk was re-read with ExifTool on every scan after.
+    `before` is the file's stamp just before the write, over which its vectors are
+    carried (_stamp); without it, as when nothing was written, they are left alone.
     """
     if flat is None and hierarchical is None:
         flat, hierarchical = fields.expand_tag_fields(tags)
@@ -195,11 +201,11 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None):
 
     def store(conn):
         cursor = conn.cursor()
-        cursor.execute("SELECT id, raw_metadata, mtime, size FROM photos WHERE " + where, where_params)
+        cursor.execute("SELECT id, raw_metadata FROM photos WHERE " + where, where_params)
         row = cursor.fetchone()
         if not row:
             return False   # never indexed; adding it here would be an index, not an edit
-        photo_id, raw_json, old_mtime, old_size = row
+        photo_id, raw_json = row
 
         try:
             raw_meta = json.loads(raw_json) if raw_json else {}
@@ -223,7 +229,7 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None):
                  stat.st_mtime, stat.st_size, photo_id),
             )
             changed = cursor.rowcount > 0
-            embeddings.restamp(conn, photo_id, (old_mtime, old_size), (stat.st_mtime, stat.st_size))
+            embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
             return changed
         return cursor.rowcount > 0
 
@@ -350,7 +356,7 @@ def tag_usage(db_path):
     return counts
 
 
-def record_saved(db_path, photo_path, tags, people, captions, raw_meta):
+def record_saved(db_path, photo_path, tags, people, captions, raw_meta, before=None):
     """Record what saving one photo left in its file, and the file's mtime and size.
     Returns rows changed.
 
@@ -361,7 +367,7 @@ def record_saved(db_path, photo_path, tags, people, captions, raw_meta):
     where, where_params = paths.sql_equals("path", photo_path)
 
     def update_row(conn):
-        _stamp(conn, photo_path, stat.st_mtime, stat.st_size)
+        _stamp(conn, photo_path, stat.st_mtime, stat.st_size, before=before)
         return conn.execute(
             "UPDATE photos SET tags = ?, people = ?, captions = ?, raw_metadata = ? WHERE " + where,
             (json.dumps(tags), json.dumps(people), json.dumps(captions), json.dumps(raw_meta))
@@ -434,7 +440,10 @@ def record_indexed(conn, photo_path, row, model=None):
         (stored, row.get("mtime", 0.0), row.get("size", 0), json.dumps(row.get("tags", [])),
          json.dumps(row.get("people", [])), json.dumps(row.get("captions", [])),
          json.dumps(row.get("raw_metadata", {})), row.get("document_id")))
-    if row.get("embedding") is not None and model is not None:
+    if row.get("embedding") is not None:
+        if model is None:
+            # Dropped without a word, it left a library without the vector (#85).
+            raise ValueError("An embedding is kept under the model that made it; none was named.")
         embeddings.put(conn, stored, model, row.get("mtime", 0.0), row.get("size", 0), row["embedding"])
 
 
@@ -620,6 +629,8 @@ def record_identity(conn, photo_path, document_id, stat=None):
     was written to. Returns rows changed. The caller commits."""
     where, params = paths.sql_equals("path", photo_path)
     if stat is not None:
+        # Nobody kept the file's stamp from before the identity was written, so its
+        # vectors are not carried over it, and are computed again.
         _stamp(conn, photo_path, stat.st_mtime, stat.st_size)
     return conn.execute("UPDATE photos SET document_id = ? WHERE " + where,
                         (document_id,) + params).rowcount

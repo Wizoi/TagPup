@@ -14,8 +14,13 @@ import sys
 
 import _root  # noqa: F401
 import db as tagpup_db
+from tagpup import config as tagpup_config
+from tagpup.store import embeddings as store_embeddings
 from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
+
+#: The vectors below are kept under the model the config names, which search reads.
+MODEL = store_embeddings.model_key(**tagpup_config.embedder_settings())
 
 # Ensure project root is in search path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -118,7 +123,7 @@ def main():
             "EXIF:DateTimeOriginal": "2026:06:01 12:00:00"
         },
         "embedding": clip_emb.tobytes(),
-    })
+    }, model=MODEL)
 
     # Insert face for puppy representing already matched face
     store_faces.insert(conn, puppy_path, puppy_face_box, face_emb.tobytes(),
@@ -139,7 +144,7 @@ def main():
             "EXIF:DateTimeOriginal": "2026:06:20 15:30:00"
         },
         "embedding": clip_emb_puppy2.tobytes(),
-    })
+    }, model=MODEL)
 
     # Insert unmatched face for puppy2
     # The same face embedding as the puppy's, unnamed: face recognition matches them.

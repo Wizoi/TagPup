@@ -115,15 +115,20 @@ class ClipEmbedder:
                 logger.warning(f"Failed to read/validate database cache for {file_path}: {e}")
             return None
 
-    def save_to_cache(self, file_path: str, embedding: List[float]):
-        """Save embedding to cache with file stats."""
+    def save_to_cache(self, file_path: str, embedding: List[float], stamp=None):
+        """Keep the vector in the library, stamped with `stamp`: the file's (mtime, size)
+        as it was opened to be embedded, else as it is now. Taken after, a photo rotated
+        while it was embedded kept the vector from before the turn as current (#86)."""
         try:
-            stat = os.stat(file_path)
+            if stamp is None:
+                stamp = store_embeddings.stamp_of(file_path)
+            if stamp is None:
+                return
 
             # In the library, when there is one.
             if self.photo_index is not None and self.photo_index.conn is not None:
                 def store(conn):
-                    store_embeddings.put(conn, file_path, self.model_key, stat.st_mtime, stat.st_size,
+                    store_embeddings.put(conn, file_path, self.model_key, stamp[0], stamp[1],
                                          np.array(embedding, dtype=np.float32).tobytes())
 
                 # On a connection of its own. Every worker in the suggestion pool
@@ -151,6 +156,7 @@ class ClipEmbedder:
         self._init_model()
         
         try:
+            stamp = store_embeddings.stamp_of(file_path)
             with Image.open(file_path) as img:
                 # Upright, as the photo is seen. A camera turned on its side stores the
                 # pixels sideways with an Orientation tag, and so does Rotate now; CLIP
@@ -179,7 +185,7 @@ class ClipEmbedder:
                     image_features /= image_features.norm(dim=-1, keepdim=True)
                     embedding = image_features[0].cpu().numpy().tolist()
                 
-            self.save_to_cache(file_path, embedding)
+            self.save_to_cache(file_path, embedding, stamp)
             return embedding
         except Exception as e:
             logger.error(f"Error embedding image {file_path}: {e}")

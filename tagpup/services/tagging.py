@@ -6,7 +6,7 @@ from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, keywords, metadata
-from tagpup.store import faces, photos, taxonomy
+from tagpup.store import embeddings, faces, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
             result.refuse(problem)
             return result
         tags = [t if t in held else vocabulary.normalize(t) for t in tags]
+        before = embeddings.stamp_of(photo_path)
         flat, hierarchical = keywords.write_keywords(
             et, photo_path, vocabulary.resolve_people(tags, people), extra_params=params)
     result.changed = 1
@@ -61,7 +62,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
                 % new_path)
         else:
             photos.record_saved(library.path, new_path, recorded_tags, people_in_it,
-                                [title] if title else [], raw_meta)
+                                [title] if title else [], raw_meta, before=before)
     except Exception as e:
         logger.warning("Failed to update SQLite database metadata for %s: %s", new_path, e)
     return result
@@ -105,8 +106,9 @@ def _change_each(library, plan, exiftool_path):
                 tags.update(add)
                 tags.difference_update(remove)
                 new_tags = vocabulary.resolve_people(list(tags), people)
+                before = embeddings.stamp_of(path)
                 flat, hierarchical = keywords.write_keywords(et, path, new_tags)
-                photos.record_tags(library.path, path, new_tags, flat, hierarchical)
+                photos.record_tags(library.path, path, new_tags, flat, hierarchical, before=before)
             except Exception as err:
                 result.fail(path, err)
                 break
@@ -153,13 +155,14 @@ def replace_tag(library, photo_paths, old, new, exiftool_path):
                     photos.record_tags(library.path, path, current_tags)
                 continue
             try:
+                before = embeddings.stamp_of(path)
                 flat, hierarchical = keywords.write_keywords(
                     et, path, vocabulary.resolve_people(new_tags, people))
                 # The tags column holds the view extract_tags derives from the file's
                 # fields, as it did before; derived here from exactly the fields just
                 # written.
                 updated = vocabulary.extract_tags(fields.record_keyword_fields(raw_meta, flat, hierarchical))
-                if photos.record_tags(library.path, path, updated, flat, hierarchical):
+                if photos.record_tags(library.path, path, updated, flat, hierarchical, before=before):
                     result.changed += 1
             except Exception as err:
                 logger.error("Failed to update metadata on disk/db for %s: %s", path, err)

@@ -5,7 +5,7 @@ import os
 from tagpup.core import renaming
 from tagpup.core.result import NotFound, Refused, Result
 from tagpup.files import images, metadata, names, recycle_bin, times
-from tagpup.store import faces, photos, taxonomy
+from tagpup.store import embeddings, faces, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +119,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
     details: `records`, each photo as read back afterwards.
     """
     result = Result(attempted=len(photo_paths))
+    before = {photo_path: embeddings.stamp_of(photo_path) for photo_path in photo_paths}
     try:
         result.changed = times.shift_date_taken(exiftool_path, photo_paths, minutes)
     except Exception as e:
@@ -127,7 +128,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
     # Only reading: minting a DocumentID here would write the files a second time.
     records = metadata.MetadataExtractor(exiftool_path=exiftool_path, mint_identities=False).batch_read(
         photo_paths, people=taxonomy.people_vocabulary(library.path))
-    photos.record_reads(library.path, records, label="time shift", own_write=True)
+    photos.record_reads(library.path, records, label="time shift", before=before)
     result.details["records"] = records
     return result
 

@@ -198,11 +198,15 @@ class MetadataWriter:
         # and captions to XMP:Description and IPTC:Caption-Abstract
         from tagpup_server import (record_file_stat_in_index, record_tags_in_index,
                                    tags_in_file, write_keyword_fields)
+        from tagpup.store.embeddings import stamp_of
 
         try:
             with ExifToolSession(executable=executable) as et:
                 for path, tags, caption in write_tasks:
                     try:
+                        # The file's stamp before this write, over which its CLIP
+                        # vectors are carried (tagpup.store.embeddings).
+                        before = stamp_of(path)
                         # The caption first, so the stat recorded with the keywords
                         # below is the file's final one.
                         if caption:
@@ -221,9 +225,9 @@ class MetadataWriter:
                             merged = current + [t for t in tags if t not in current]
                             flat, hierarchical = write_keyword_fields(et, path, merged, db_path=db_path)
                             if db_path:
-                                record_tags_in_index(db_path, path, flat, flat, hierarchical)
+                                record_tags_in_index(db_path, path, flat, flat, hierarchical, before=before)
                         elif caption and db_path:
-                            record_file_stat_in_index(db_path, path)
+                            record_file_stat_in_index(db_path, path, before=before)
                         success_count += 1
                     except Exception as e:
                         logger.error(f"Failed to write metadata to {path}: {e}")
