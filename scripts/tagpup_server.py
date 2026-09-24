@@ -1911,7 +1911,12 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             return
         folder_path = paths.key(urllib.parse.unquote(folder_path_list[0]))
         self.ensure_suggestions_loaded(self.db_path)
-        status_info = TagPupHTTPRequestHandler.suggest_status.get(folder_path, {"status": "idle"})
+        # A copy taken under the lock the workers write under. Serialising the live
+        # dict while four workers added to it failed the poll with "dictionary
+        # changed size during iteration".
+        with TagPupHTTPRequestHandler.model_lock:
+            status_info = make_json_serializable(
+                TagPupHTTPRequestHandler.suggest_status.get(folder_path, {"status": "idle"}))
         self.send_json(status_info)
 
     def handle_post_folder_suggest_start(self):
