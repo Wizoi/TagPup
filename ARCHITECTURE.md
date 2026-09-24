@@ -286,7 +286,7 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 |---|---|
 | 1. Foundations | done, 2026-09-23 (the installed copy is opt-in) |
 | 2. Services | done, 2026-09-24 |
-| 3. Store | not started |
+| 3. Store | done, 2026-09-24 |
 | 4. Data model | not started |
 | 5. One server | not started |
 | 6. Pages | not started |
