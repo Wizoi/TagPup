@@ -17,8 +17,8 @@ from tagpup.store import db, people, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
-#: The name TagTuner shows the faces nobody is named on. Nobody can be called it.
-UNMATCHED = "Unmatched"
+#: The name TagTuner shows the faces nobody is named on (tagpup.core.vocabulary).
+UNMATCHED = vocabulary.UNMATCHED
 
 
 def tree(library):

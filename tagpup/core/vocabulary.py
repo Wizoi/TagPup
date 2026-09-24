@@ -113,8 +113,22 @@ def problem_with_tags(tags):
     return next(filter(None, (problem_with_tag(tag) for tag in tags)), None)
 
 
+#: TagTuner's lists of faces that are not a person's, named where its people are listed:
+#: the server names them from here, and its page keeps a copy a test holds to this.
+BUCKETS = {"unknown": "Unknown Faces", "ungrouped": "Ungrouped", "excluded": "Excluded"}
+
+#: What TagTuner shows on a face nobody is named on.
+UNMATCHED = "Unmatched"
+
+#: Names nobody can be given: a person called one opened that bucket instead of
+#: themselves (docs/findings.md, #68). Whatever the case.
+NOT_A_PERSON = frozenset(name.lower() for name in (*BUCKETS.values(), UNMATCHED))
+
+
 def problem_with_name(name):
     """Why this cannot be a person's name, or one level of a tag, or None if it can."""
+    if str(name or "").strip().lower() in NOT_A_PERSON:
+        return "'%s' is the name of one of TagTuner's lists, not a person's." % str(name).strip()
     return _problem(name, "A name", levels=False)
 
 

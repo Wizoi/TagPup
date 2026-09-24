@@ -223,6 +223,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let everyKnownPerson = [];
     let currentPhotoDetails = null;
 
+    //: TagTuner's lists of faces that are not a person's, as the server names them
+    //: (tagpup.core.vocabulary.BUCKETS; tests/test_bucket_names_have_one_owner.py holds
+    //: this copy to it). Nobody can be called one of them (#68).
+    const BUCKET = Object.freeze({UNKNOWN: 'Unknown Faces', UNGROUPED: 'Ungrouped', EXCLUDED: 'Excluded'});
+    const isBucket = name => Object.values(BUCKET).includes(name);
+
     // Face Matching Mode State
     let allPeopleWithCounts = [];
     let activePersonName = null;
@@ -2422,7 +2428,7 @@ ${summary}${note}`)) {
      * Ungrouped and Excluded are not people, and sorting them into the alphabet
      * would bury them somewhere between two names.
      */
-    const PINNED_BUCKETS = ['Unknown Faces', 'Ungrouped', 'Excluded'];
+    const PINNED_BUCKETS = [BUCKET.UNKNOWN, BUCKET.UNGROUPED, BUCKET.EXCLUDED];
     function sortedPeople() {
         const people = (allPeopleWithCounts || []).slice();
         const rank = (p) => {
@@ -2575,7 +2581,7 @@ ${summary}${note}`)) {
                     tabLowConf.classList.add('hidden');
                 }
                 if (inputReassignName) {
-                    if (name !== 'Unknown Faces' && name !== 'Ungrouped' && name !== 'Excluded') {
+                    if (!isBucket(name)) {
                         inputReassignName.value = name;
                     } else {
                         inputReassignName.value = '';
@@ -2615,7 +2621,7 @@ ${summary}${note}`)) {
             }
         }
         
-        if (name === 'Unknown Faces' || name === 'Ungrouped' || name === 'Excluded') {
+        if (isBucket(name)) {
             if (matchingTabs) matchingTabs.classList.remove('hidden');
             if (matchingStaticTitle) matchingStaticTitle.classList.add('hidden');
             if (btnRenamePerson) btnRenamePerson.classList.add('hidden');
@@ -2671,14 +2677,14 @@ ${summary}${note}`)) {
         detailsAbortController = new AbortController();
 
         // The Excluded bucket is not a person and has its own listing.
-        const apiPath = (name === 'Excluded')
+        const apiPath = (name === BUCKET.EXCLUDED)
             ? '/api/faces/excluded'
             : (mode === 'unmatched-faces')
                 ? `/api/unmatched-faces/person-matches?name=${encodeURIComponent(name)}`
                 : `/api/person-faces?name=${encodeURIComponent(name)}&limit=-1`;
 
         // Only the Identify Faces grid does work worth reporting on.
-        if (mode === 'unmatched-faces' && name !== 'Excluded') {
+        if (mode === 'unmatched-faces' && name !== BUCKET.EXCLUDED) {
             startGridBuildProgress(name);
         }
 
@@ -3331,7 +3337,7 @@ ${summary}${note}`)) {
                         postMatchBulk(faceIds, name);
                     };
 
-                    if (activePersonName === 'Unknown Faces') {
+                    if (activePersonName === BUCKET.UNKNOWN) {
                         showAutocompletePopup(sectionFaceIds(section).length, executeAssignment);
                     } else {
                         const name = inputReassignName.value.trim();
@@ -4092,7 +4098,7 @@ This photo also names ${face.other_names.join(', ')}. `
 
         // In the Excluded bucket the useful action is the opposite one, so the two
         // buttons swap rather than sitting side by side offering a contradiction.
-        const viewingExcluded = activePersonName === 'Excluded';
+        const viewingExcluded = activePersonName === BUCKET.EXCLUDED;
         if (btnExcludeSelected) {
             btnExcludeSelected.classList.toggle('hidden', viewingExcluded);
             btnExcludeSelected.textContent = `🚫 Exclude (${count})`;

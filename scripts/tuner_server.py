@@ -1907,7 +1907,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             # "4,739 faces" in the panel, two true numbers that read as a contradiction.
             if len(unknown_candidates) > 0:
                 people_counts.insert(0, {
-                    "name": "Unknown Faces",
+                    "name": vocabulary.BUCKETS["unknown"],
                     "count": len(unknown_candidates),
                     "unit": "face",
                     "photos": len(unknown_photos),
@@ -1917,7 +1917,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     len(tag_candidates[tag]) for tag in single_candidate_tags
                     if tag_candidates[tag][0] in ungrouped_photos)
                 people_counts.append({
-                    "name": "Ungrouped",
+                    "name": vocabulary.BUCKETS["ungrouped"],
                     "count": ungrouped_faces or len(ungrouped_photos),
                     "unit": "face",
                     "photos": len(ungrouped_photos),
@@ -1928,7 +1928,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             excluded_count = store_faces.count_excluded(conn)
             if excluded_count:
                 people_counts.append({
-                    "name": "Excluded", "count": excluded_count, "unit": "face"})
+                    "name": vocabulary.BUCKETS["excluded"], "count": excluded_count, "unit": "face"})
 
             self.identify_cache_put("queue", fingerprint, people_counts)
             self.send_json(people_counts)
@@ -1977,7 +1977,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             # How many unmatched candidates each tag has library-wide, so "Ungrouped" can
             # recognise the tags that cannot form a group. Mirrors the queue listing.
             tag_candidate_counts = {}
-            if name == "Ungrouped":
+            if name == vocabulary.BUCKETS["ungrouped"]:
                 for r in unmatched_rows:
                     try:
                         r_people = json.loads(r[7] or "[]")
@@ -2004,11 +2004,11 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 matched_names = matched_by_photo.get(photo_path, set())
                 unmatched_tags = [p for p in people if p not in matched_names]
 
-                if name == "Unknown Faces":
+                if name == vocabulary.BUCKETS["unknown"]:
                     # Photos with no unmatched tags
                     if not unmatched_tags:
                         candidate_rows.append(r)
-                elif name == "Ungrouped":
+                elif name == vocabulary.BUCKETS["ungrouped"]:
                     # Faces whose photo names someone, but where that name has only this
                     # one unmatched candidate in the whole library, so it can never form a
                     # group of its own. Without this bucket these faces are unreachable.
