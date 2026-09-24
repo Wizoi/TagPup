@@ -144,6 +144,24 @@ class AnOldLibrary(SchemaTestCase):
         self.assertEqual([(m.version,) for m in schema.MIGRATIONS], rows)
 
 
+class AnOlderVersionStillRunning(SchemaTestCase):
+    def test_its_counters_made_again_are_taken_away_on_the_next_open(self):
+        # An older version of the app makes faces_generation again on each load, after
+        # migration 2 dropped it, and schema_version says there is nothing left to do
+        # (docs/findings.md, #55).
+        schema.ensure(self.db_path)
+        conn = self.connect()
+        conn.execute("CREATE TABLE faces_generation (id INTEGER PRIMARY KEY, generation INTEGER NOT NULL)")
+        conn.execute("CREATE TRIGGER faces_generation_insert AFTER INSERT ON faces"
+                     " BEGIN UPDATE faces_generation SET generation = generation + 1 WHERE id = 1; END")
+        conn.commit()
+        schema._current.clear()   # the next process to open it
+        schema.ensure(self.db_path)
+        left = {name for (name,) in conn.execute(
+            "SELECT name FROM sqlite_master WHERE name LIKE 'faces_generation%'")}
+        self.assertEqual(set(), left)
+
+
 class Generations(SchemaTestCase):
     def setUp(self):
         super().setUp()

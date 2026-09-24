@@ -249,10 +249,42 @@ def ensure(db_path):
     return applied
 
 
+#: The counters migration 2 replaced. A version of the app from before it, still running
+#: while a new one opens the library, makes them again on its next load, and nothing
+#: would take them away: the library says it is current (docs/findings.md, #55).
+LEGACY_COUNTERS = ("faces_generation", "taxonomy_generation")
+
+
+def legacy_counters(conn):
+    """The tables and triggers of LEGACY_COUNTERS the library on `conn` still has."""
+    return sorted(name for kind, name in conn.execute("SELECT type, name FROM sqlite_master")
+                  if (kind == "table" and name in LEGACY_COUNTERS)
+                  or (kind == "trigger" and name.startswith(tuple(c + "_" for c in LEGACY_COUNTERS))))
+
+
+def _drop_legacy_counters(db_path, conn):
+    if not legacy_counters(conn):
+        return
+    with db.lock_for(db_path):
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for kind, name in conn.execute("SELECT type, name FROM sqlite_master").fetchall():
+                if kind == "trigger" and name.startswith(tuple(c + "_" for c in LEGACY_COUNTERS)):
+                    conn.execute("DROP TRIGGER IF EXISTS %s" % name)
+            for name in LEGACY_COUNTERS:
+                conn.execute("DROP TABLE IF EXISTS %s" % name)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+    logger.info("%s: took away the counters an older version made again", db_path)
+
+
 def _ensure(db_path):
     conn = db.connect(db_path, timeout=30.0)
     try:
         if version(conn) >= LATEST:
+            _drop_legacy_counters(db_path, conn)
             return []
         applied = []
         with db.lock_for(db_path):
