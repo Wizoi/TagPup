@@ -23,7 +23,7 @@ import numpy as np
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
-from tagpup.core import dates, renaming, vocabulary
+from tagpup.core import dates, fields, renaming, vocabulary
 from tagpup.core.library import Library
 from tagpup.files import keywords as file_keywords
 from tagpup.store.photos import move_rows as move_photo_rows  # noqa: F401  (saving, tests)
@@ -1911,98 +1911,15 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         photo_path = paths.stored(photo_path)
 
         try:
-            new_flat_tags, new_hierarchical_tags = expand_tag_fields(tags)
-
-            params = caption_fields(title or "")
-                
-            if date_taken:
-                # Normalize ISO T separator to space, and replace dash in date with colon
-                date_cleaned = str(date_taken).replace("T", " ").replace("-", ":").strip()
-                params["EXIF:DateTimeOriginal"] = date_cleaned
-                params["XMP:DateTimeOriginal"] = date_cleaned
-                params["EXIF:CreateDate"] = date_cleaned
-                
-                # Write subseconds explicitly if present (e.g. .123)
-                subsec_parts = date_cleaned.split(".")
-                if len(subsec_parts) > 1:
-                    subsec = subsec_parts[1]
-                    subsec_digits = ""
-                    for char in subsec:
-                        if char.isdigit():
-                            subsec_digits += char
-                        else:
-                            break
-                    if subsec_digits:
-                        params["EXIF:SubSecTimeOriginal"] = subsec_digits
-                        params["EXIF:SubSecTimeDigitized"] = subsec_digits
-                        params["EXIF:SubSecTime"] = subsec_digits
-
-            executable = self.get_exiftool_path()
-            from exiftool_session import ExifToolSession
-            with ExifToolSession(executable=executable) as et:
-                # Only the tags being added are checked. One the file already holds,
-                # written by another program, must not stop the photo being saved --
-                # least of all a save that removes it.
-                held = set(tags_in_file(et, photo_path))
-                problem = vocabulary.problem_with_tags(t for t in tags if t not in held)
-                if problem:
-                    self.send_json_error(400, problem)
-                    return
-                # A new tag goes in in its one spelling, as the tag tree holds it: a
-                # typed "People / Rowan" was written with its spaces.
-                tags = [t if t in held else vocabulary.normalize(t) for t in tags]
-                new_flat_tags, new_hierarchical_tags = write_keyword_fields(
-                    et, photo_path, tags, extra_params=params, db_path=self.db_path)
-                
-            from metadata import sync_title_to_filename, METADATA_FIELDS
-            new_path = paths.stored(sync_title_to_filename(photo_path, title, executable))
-            renamed = not paths.same(new_path, photo_path)
-            index_warning = None
-
-            # Update SQLite database
-            try:
-                # Get new file stats on disk
-                stat = os.stat(new_path)
-                mtime = stat.st_mtime
-                size = stat.st_size
-                
-                # Fetch new raw metadata from ExifTool
-                with ExifToolSession(executable=executable) as et:
-                    fresh_meta_list = et.get_tags([new_path], tags=METADATA_FIELDS)
-                    fresh_meta = fresh_meta_list[0] if fresh_meta_list else {}
-                    
-                # Clean metadata
-                from metadata import clean_metadata_value, extract_tags, photo_people
-                cleaned_meta = {k: clean_metadata_value(v) for k, v in fresh_meta.items()}
-                db_tags = extract_tags(cleaned_meta)
-                db_people = photo_people(cleaned_meta, db_tags, photo_path, db_path=self.db_path)
-                db_captions = [title] if title else []
-                # A rename moves the row -- embedding, faces and all -- rather than
-                # inserting a second one beside it and leaving the faces behind.
-                skipped = move_photo_rows(self.db_path, {photo_path: new_path})[1] if renamed else []
-                if skipped:
-                    index_warning = ("Renamed, but the index already has a photo at %s; "
-                                     "its rows were left as they were." % new_path)
-                else:
-                    where, where_params = paths.sql_equals("path", new_path)
-                    def update_row(conn):
-                        cursor = conn.cursor()
-                        cursor.execute(
-                            "UPDATE photos SET mtime = ?, size = ?, tags = ?, people = ?,"
-                            " captions = ?, raw_metadata = ? WHERE " + where,
-                            (mtime, size, json.dumps(db_tags), json.dumps(db_people),
-                             json.dumps(db_captions), json.dumps(cleaned_meta)) + where_params,
-                        )
-                        return cursor.rowcount
-
-                    # A photo the index has never seen is not added here: that would
-                    # be a row with no embedding and no faces, which is an index
-                    # entry in name only.
-                    tagpup_db.write_with_connection(
-                        self.db_path, update_row,
-                        label="index row for %s" % os.path.basename(new_path))
-            except Exception as db_err:
-                logger.warning(f"Failed to update SQLite database metadata for {new_path}: {db_err}")
+            result = tagging_actions.save_photo(
+                Library(self.db_path), photo_path, title, tags, date_taken,
+                self.get_exiftool_path(), tagpup_config.rename_format())
+            if result.refused:
+                self.send_json_error(400, result.refused)
+                return
+            new_path = result.details["new_path"]
+            renamed = result.details["renamed"]
+            tags = result.details["tags"]
 
             # Update in-memory cache: every folder map holding the photo, found under
             # the name it had (a rename stays in the same directory).
@@ -2018,25 +1935,21 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 # Every keyword field, not just the XMP pair: tags are re-derived
                 # from this on the next line, and a stale IPTC:Keywords brought a
                 # removed tag straight back.
-                record_keyword_fields(raw_meta, new_flat_tags, new_hierarchical_tags)
+                record_keyword_fields(raw_meta, result.details["flat"], result.details["hierarchical"])
                 if date_taken:
-                    date_cleaned = str(date_taken).replace("T", " ").replace("-", ":").strip()
-                    raw_meta["EXIF:DateTimeOriginal"] = date_cleaned
-                    raw_meta["XMP:DateTimeOriginal"] = date_cleaned
-                    raw_meta["EXIF:CreateDate"] = date_cleaned
+                    fields.record_date_taken(raw_meta, date_taken)
                 photo_entry["tags"] = extract_tags(raw_meta)
                 photo_entry["captions"] = [title] if title else []
                 photo_entry["title"] = title
                 photo_entry["people"] = photo_people(raw_meta, tags, new_path, db_path=self.db_path)
 
-            result = {"success": True, "new_path": new_path}
-            if index_warning:
-                result["index_warning"] = index_warning
-            self.send_json(result)
+            reply = {"success": True, "new_path": new_path}
+            if result.details["index_warning"]:
+                reply["index_warning"] = result.details["index_warning"]
+            self.send_json(reply)
         except Exception as e:
             logger.error(f"Error saving metadata for {photo_path}: {e}")
             self.send_json_error(500, str(e))
-
     def handle_post_photos_bulk_tags(self):
         try:
             data = self.read_json_body()

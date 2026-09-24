@@ -172,7 +172,8 @@ class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
     #: The rule is that the index hears about it, not that any one helper is used:
     #: saving a single photo writes its own row as part of a larger update, and
     #: rewriting that to funnel through the helper would be churn for its own sake.
-    RECORDS = ("record_tags_in_index", "record_tags(", "UPDATE photos", "INSERT OR REPLACE INTO photos")
+    RECORDS = ("record_tags_in_index", "record_tags(", "record_saved(", "UPDATE photos",
+               "INSERT OR REPLACE INTO photos")
 
     def write_sites(self):
         """(where, the source from there on) of every keyword write in the server and
@@ -204,9 +205,12 @@ class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
         # The number falls as copies of the write become one service; what matters is
         # that the writes are among what it reads.
         sites = [where for where, _ in self.write_sites()]
-        for writer in ("tagpup_server.py", "tagging.py"):
-            self.assertTrue(any(writer in where for where in sites),
-                            "the write sites moved; the guard above is checking nothing")
+        self.assertTrue(any("tagging.py" in where for where in sites),
+                        "the write sites moved; the guard above is checking nothing")
+
+    def test_the_server_writes_no_keywords_itself(self):
+        # Every keyword write it serves is a service's now (tagpup.services.tagging).
+        self.assertEqual([where for where, _ in self.write_sites() if "tagpup_server.py" in where], [])
 
 
 if __name__ == "__main__":

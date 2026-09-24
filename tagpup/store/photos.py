@@ -263,3 +263,24 @@ def read_tags(db_path, photo_paths):
     finally:
         conn.close()
     return found
+
+
+def record_saved(db_path, photo_path, tags, people, captions, raw_meta):
+    """Record what saving one photo left in its file, and the file's mtime and size.
+    Returns rows changed.
+
+    A photo the index has never seen is not added here: that would be a row with no
+    embedding and no faces, which is an index entry in name only.
+    """
+    stat = os.stat(photo_path)
+    where, where_params = paths.sql_equals("path", photo_path)
+
+    def update_row(conn):
+        return conn.execute(
+            "UPDATE photos SET mtime = ?, size = ?, tags = ?, people = ?, captions = ?,"
+            " raw_metadata = ? WHERE " + where,
+            (stat.st_mtime, stat.st_size, json.dumps(tags), json.dumps(people),
+             json.dumps(captions), json.dumps(raw_meta)) + where_params).rowcount
+
+    return db.write_with_connection(
+        db_path, update_row, label="index row for %s" % os.path.basename(photo_path))

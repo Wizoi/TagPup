@@ -309,3 +309,11 @@ def sync_title_to_filename(photo_path: str, new_title: str, exiftool_path: str,
         logging.getLogger("metadata").error(f"Error syncing title to filename: {e}")
 
     return photo_path
+
+
+def raw_metadata(et, photo_path):
+    """A photo's metadata as a save records it in the index: every field the reader
+    reads, cleaned, under the names ExifTool gives them. Read in the session given."""
+    found = et.get_tags([photo_path], tags=METADATA_FIELDS)
+    meta = found[0] if found else {}
+    return {k: clean_metadata_value(v) for k, v in meta.items()}

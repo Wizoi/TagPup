@@ -7,7 +7,7 @@ skipped with why, failed with how -- and carries whatever else the caller needs 
 such as a photo's new mtime.
 """
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -18,13 +18,16 @@ class Result:
     skipped: List[Tuple[str, str]] = field(default_factory=list)
     #: (what, the error): tried and failed.
     errors: List[Tuple[str, str]] = field(default_factory=list)
+    #: Why the request was refused before anything was written -- a tag that may not be
+    #: set, say. A web route answers it with 400, where an error is a 500.
+    refused: Optional[str] = None
     #: Anything else the caller needs back, by name.
     details: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self):
-        """Nothing failed. Something may still have been skipped."""
-        return not self.errors
+        """Nothing failed or was refused. Something may still have been skipped."""
+        return not self.errors and not self.refused
 
     def skip(self, what, why):
         self.skipped.append((str(what), str(why)))
@@ -32,6 +35,11 @@ class Result:
     def fail(self, what, error):
         self.errors.append((str(what), str(error)))
 
+    def refuse(self, why):
+        self.refused = str(why)
+
     def message(self):
-        """The errors, for a person to read."""
+        """Why it was refused, or the errors, for a person to read."""
+        if self.refused:
+            return self.refused
         return "; ".join(error for _, error in self.errors)

@@ -131,3 +131,38 @@ def record_keyword_fields(raw_meta, flat, hierarchical):
             else:
                 raw_meta.pop(name, None)
     return raw_meta
+
+
+def date_taken_value(date_taken):
+    """How a Date Taken set on the page is written: "2019-06-15T10:30:00" as
+    "2019:06:15 10:30:00", the way EXIF spells a date."""
+    return str(date_taken).replace("T", " ").replace("-", ":").strip()
+
+
+def date_taken_fields(date_taken):
+    """Every field a Date Taken write sets, the fraction of a second too when one is
+    given ("10:30:00.123")."""
+    value = date_taken_value(date_taken)
+    written = {"EXIF:DateTimeOriginal": value, "XMP:DateTimeOriginal": value, "EXIF:CreateDate": value}
+    parts = value.split(".")
+    if len(parts) > 1:
+        digits = ""
+        for char in parts[1]:
+            if char.isdigit():
+                digits += char
+            else:
+                break
+        if digits:
+            written["EXIF:SubSecTimeOriginal"] = digits
+            written["EXIF:SubSecTimeDigitized"] = digits
+            written["EXIF:SubSecTime"] = digits
+    return written
+
+
+def record_date_taken(raw_meta, date_taken):
+    """Make `raw_meta` say what a Date Taken write just put in the file -- the fields
+    the scan reads, as record_keyword_fields does for keywords. Returns it."""
+    for field, value in date_taken_fields(date_taken).items():
+        if field in METADATA_FIELDS:
+            raw_meta[field] = value
+    return raw_meta

@@ -96,7 +96,7 @@ class TagPupRefuses(ServerCase):
         # From another program. Refusing it would leave the photo unsaveable.
         session, et = fake_exiftool(["Legacy|Keyword"])
         with patch("exiftool_session.ExifToolSession", session), \
-                patch("metadata.sync_title_to_filename", side_effect=lambda p, t, e: p):
+                patch("tagpup.files.metadata.sync_title_to_filename", side_effect=lambda p, *rest: p):
             status, reply = self.call(TagPupHTTPRequestHandler, "handle_post_photo_save_metadata",
                                       {"path": self.photo, "title": "Harbour at dusk",
                                        "tags": ["Legacy|Keyword", "Places/Harbour"]})
@@ -158,7 +158,7 @@ class ANewTagIsWrittenInItsOneSpelling(ServerCase):
     def test_a_photo_save(self):
         session, et = fake_exiftool(["Places/Harbour"])
         with patch("exiftool_session.ExifToolSession", session), \
-                patch("metadata.sync_title_to_filename", side_effect=lambda p, t, e: p):
+                patch("tagpup.files.metadata.sync_title_to_filename", side_effect=lambda p, *rest: p):
             status, reply = self.call(TagPupHTTPRequestHandler, "handle_post_photo_save_metadata",
                                       {"path": self.photo, "title": "",
                                        "tags": ["Places/Harbour", "People / Rowan Thackeray"]})
@@ -169,7 +169,7 @@ class ANewTagIsWrittenInItsOneSpelling(ServerCase):
         # Rewriting what another program wrote is not this save's business.
         session, et = fake_exiftool(["Legacy / Keyword"])
         with patch("exiftool_session.ExifToolSession", session), \
-                patch("metadata.sync_title_to_filename", side_effect=lambda p, t, e: p):
+                patch("tagpup.files.metadata.sync_title_to_filename", side_effect=lambda p, *rest: p):
             status, reply = self.call(TagPupHTTPRequestHandler, "handle_post_photo_save_metadata",
                                       {"path": self.photo, "title": "",
                                        "tags": ["Legacy / Keyword"]})

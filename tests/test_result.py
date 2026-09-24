@@ -27,6 +27,12 @@ class AResult(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.message(), "locked; no such file")
 
+    def test_a_refusal_is_not_ok_and_says_why(self):
+        result = Result(attempted=1)
+        result.refuse('A tag cannot contain "|"')
+        self.assertFalse(result.ok)
+        self.assertEqual(result.message(), 'A tag cannot contain "|"')
+
     def test_results_do_not_share_their_lists(self):
         first, second = Result(), Result()
         first.skip("a.jpg", "why")

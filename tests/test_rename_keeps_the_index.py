@@ -227,7 +227,12 @@ class TestTheHandlersActuallyDoIt(unittest.TestCase):
                       "renaming no longer moves the photo's index rows")
 
     def test_saving_a_renamed_photo_moves_its_rows(self):
-        self.assertIn("move_photo_rows(", self.body_of("handle_post_photo_save_metadata"),
+        # Through the service, which moves them.
+        import inspect
+        from tagpup.services import tagging
+
+        self.assertIn("save_photo(", self.body_of("handle_post_photo_save_metadata"))
+        self.assertIn("photos.move_rows(", inspect.getsource(tagging.save_photo),
                       "a caption rename no longer moves the photo's index rows")
 
 

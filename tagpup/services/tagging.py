@@ -1,14 +1,70 @@
-"""Actions on photos' tags."""
+"""Actions on photos' tags and captions."""
 import logging
 
 from tagpup.core import fields, paths, vocabulary
 from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, keywords
-from tagpup.store import photos, taxonomy
+from tagpup.files import exiftool_session, keywords, metadata
+from tagpup.store import faces, photos, taxonomy
 
 logger = logging.getLogger(__name__)
+
+
+def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rename_format):
+    """Save one photo's caption, tags and Date Taken -- the photo panel -- and rename it
+    after its new caption if Smart Rename named it.
+
+    `tags` is the photo's whole tag list. Only the ones the file does not hold yet are
+    checked: one written by another program must not stop the photo being saved, least
+    of all a save that removes it. A new one that may not be set refuses the save and
+    nothing is written; the others go in in their one spelling, as the tag tree holds
+    them. A rename moves the photo's index row -- embedding, faces and all -- rather
+    than leaving them behind; then the row gets what the file holds now. A failure
+    recording it is logged, not raised: the file is written either way.
+
+    details: `new_path`, `renamed`, `tags` as written, `flat` and `hierarchical` as
+    written, and `index_warning` when the renamed photo's new name already had rows.
+    """
+    result = Result(attempted=1)
+    params = fields.caption_fields(title or "")
+    if date_taken:
+        params.update(fields.date_taken_fields(date_taken))
+    people = taxonomy.people_paths(library.path)
+    with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
+        held = set(keywords.tags_in_file(et, photo_path))
+        problem = vocabulary.problem_with_tags(t for t in tags if t not in held)
+        if problem:
+            result.refuse(problem)
+            return result
+        tags = [t if t in held else vocabulary.normalize(t) for t in tags]
+        flat, hierarchical = keywords.write_keywords(
+            et, photo_path, vocabulary.resolve_people(tags, people), extra_params=params)
+    result.changed = 1
+
+    new_path = paths.stored(metadata.sync_title_to_filename(photo_path, title, exiftool_path, rename_format))
+    renamed = not paths.same(new_path, photo_path)
+    result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
+                          hierarchical=hierarchical, index_warning=None)
+    try:
+        with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
+            raw_meta = metadata.raw_metadata(et, new_path)
+        recorded_tags = vocabulary.extract_tags(raw_meta)
+        # The faces are still filed under the old name until the row moves.
+        people_in_it = vocabulary.people_in_photo(
+            raw_meta, recorded_tags, faces.face_names(photo_path, db_path=library.path),
+            taxonomy.people_vocabulary(library.path))
+        skipped = photos.move_rows(library.path, {photo_path: new_path})[1] if renamed else []
+        if skipped:
+            result.details["index_warning"] = (
+                "Renamed, but the index already has a photo at %s; its rows were left as they were."
+                % new_path)
+        else:
+            photos.record_saved(library.path, new_path, recorded_tags, people_in_it,
+                                [title] if title else [], raw_meta)
+    except Exception as e:
+        logger.warning("Failed to update SQLite database metadata for %s: %s", new_path, e)
+    return result
 
 
 def change_tags(library, photo_paths, add, remove, exiftool_path):
