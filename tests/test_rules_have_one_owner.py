@@ -99,5 +99,33 @@ class OpeningAPhoto(unittest.TestCase):
                               and path != os.path.join("scripts", "prepare_test_environment.py")])
 
 
+class WhatClipIsAsked(unittest.TestCase):
+    """The words CLIP scores a photo against, and the sentence each is put in, are
+    tagpup.core.suggesting's: the server and the CLI each merged the tree's words into
+    config.ini's, one sorting them and one not, and the suggester wrote its prompts."""
+
+    def test_the_words(self):
+        from tagpup.core import suggesting
+        words = suggesting.zero_shot_words(
+            ["Beach", "sunset "], ["Trips/Coast", "People/Oda Castellane", "Activity/Beach", "Activity/ Rowing"],
+            {"people"})
+        self.assertEqual(["Beach", "sunset", "Rowing", "Coast"], words)
+
+    def test_the_prompts(self):
+        from tagpup.core import suggesting
+        self.assertEqual("a photo of a sunset", suggesting.clip_prompt("Sunset"))
+        self.assertEqual("a photo of a sunset in 1998", suggesting.clip_prompt("Sunset", 1998))
+        self.assertEqual("a photo of Oda Castellane in 1998",
+                         suggesting.clip_prompt("Oda Castellane", 1998, person=True))
+
+    def test_nothing_else_writes_them(self):
+        self.assertEqual([], sources_matching(r"[\"']a photo of",
+                                              os.path.join("tagpup", "core", "suggesting.py")))
+        for path in sources_matching(r"config\.candidate_tags\("):
+            for line in read(path).splitlines():
+                if re.search(r"config\.candidate_tags\(", line):
+                    self.assertIn("zero_shot_words(", line, path)
+
+
 if __name__ == "__main__":
     unittest.main()

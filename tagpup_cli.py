@@ -59,7 +59,7 @@ import db as tagpup_db
 from tagpup import config as tagpup_config
 from tagpup.store import faces as store_faces
 from tagpup.store import taxonomy as store_taxonomy
-from tagpup.core import suggesting, vocabulary
+from tagpup.core import suggesting
 from tagpup.files import images as image_files
 from tagpup.core.library import Library
 
@@ -405,20 +405,8 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
         taxonomy = TagTaxonomy(db_path)
         taxonomy.load()
 
-        # Load candidate tags from config
-        candidate_tags = tagpup_config.candidate_tags(config)
-
-        # Merge the taxonomy's words into candidates -- not its people, who are matched
-        # by their faces. This listed family, friends and pets, and offered everyone
-        # under People to CLIP by name (docs/findings.md, #66).
-        face_roots = taxonomy.people_roots()
-        for path in taxonomy.paths:
-            parts = vocabulary.segments(path)
-            if parts and parts[0].lower() in face_roots:
-                continue
-            leaf = parts[-1].strip()
-            if leaf and leaf.lower() not in [t.lower() for t in candidate_tags]:
-                candidate_tags.append(leaf)
+        # config.ini's words and the tree's, but no one's name (tagpup.core.suggesting).
+        candidate_tags = suggesting.zero_shot_words(tagpup_config.candidate_tags(config), taxonomy.paths, taxonomy.people_roots())
 
         embedder = ClipEmbedder(photo_index=photo_index, **embedder_settings)
         suggester = TagSuggester(photo_index, taxonomy, embedder=embedder, candidate_tags=candidate_tags)

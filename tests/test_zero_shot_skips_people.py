@@ -4,13 +4,11 @@ Suggest adds every taxonomy leaf to the words CLIP scores a photo against, and s
 people by a written-out list of roots: family, friends, pets. Everyone under People --
 and under any face root a library made for itself -- was offered to CLIP by name.
 """
-import os
-import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+from tagpup.core import suggesting
 
-from tagpup_server import zero_shot_candidates  # noqa: E402
+# The server and the CLI both ask tagpup.core.suggesting.zero_shot_words (#74).
 
 
 class FakeTaxonomy:
@@ -25,7 +23,8 @@ class FakeTaxonomy:
 
 class ZeroShotSkipsPeople(unittest.TestCase):
     def test_no_person_is_a_candidate(self):
-        candidates = zero_shot_candidates(FakeTaxonomy(), ["Beach"])
+        taxonomy = FakeTaxonomy()
+        candidates = suggesting.zero_shot_words(["Beach"], taxonomy.paths, taxonomy.people_roots())
         self.assertIn("Rowing", candidates)
         self.assertIn("Beach", candidates)
         for name in ("Rowan Thackeray", "Imogen Vale", "Biscuit"):

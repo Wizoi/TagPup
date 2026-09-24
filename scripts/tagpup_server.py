@@ -92,29 +92,6 @@ def indexed_tags_for_photo(db_path, photo_path):
     return []
 
 
-def zero_shot_candidates(taxonomy, configured):
-    """The words CLIP is asked about: config.ini's, plus every leaf that is not a person.
-
-    People are matched by their faces, not by asking CLIP whether a photo looks like
-    "a photo of Rowan Thackeray". The roots skipped were written out as family,
-    friends and pets, so everyone under People -- and under any face root a library
-    made for itself -- was offered to CLIP by name. The library's own face roots are
-    used now.
-    """
-    face_roots = taxonomy.people_roots()
-    candidates = list(configured)
-    seen = {c.lower() for c in candidates}
-    for path in sorted(taxonomy.paths):
-        parts = vocabulary.segments(path)
-        if not parts or parts[0].lower() in face_roots:
-            continue
-        leaf = parts[-1]
-        if leaf.lower() not in seen:
-            seen.add(leaf.lower())
-            candidates.append(leaf)
-    return candidates
-
-
 #: The files this app treats as photos.
 PHOTO_EXTENSIONS = images.PHOTO_EXTENSIONS   # what counts as a photo (tagpup.files.images)
 
@@ -978,7 +955,8 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 settings = tagpup_config.load()
                 taxonomy = TagTaxonomy(db_path)
                 taxonomy.load()
-                candidates = zero_shot_candidates(taxonomy, tagpup_config.candidate_tags(settings))
+                # config.ini's words and the tree's, but no one's name (tagpup.core.suggesting).
+                candidates = suggesting.zero_shot_words(tagpup_config.candidate_tags(settings), taxonomy.paths, taxonomy.people_roots())
                 embedder = cls.library_embedder(db_path, tagpup_config.embedder_settings(settings))
                 suggester = TagSuggester(embedder.photo_index, taxonomy, embedder=embedder,
                                          candidate_tags=candidates)

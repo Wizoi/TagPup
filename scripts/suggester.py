@@ -6,7 +6,7 @@ from taxonomy import TagTaxonomy
 from index import PhotoIndex
 
 import _root  # noqa: F401
-from tagpup.core import clustering, vocabulary
+from tagpup.core import clustering, suggesting, vocabulary
 from tagpup.store import faces as store_faces
 
 import threading
@@ -101,7 +101,7 @@ class TagSuggester:
         
         needed_tags = []
         for tag in self.candidate_tags:
-            prompt = f"a photo of a {tag.lower()}"
+            prompt = suggesting.clip_prompt(tag)
             cached_emb = None
             if self.index and hasattr(self.index, "get_tag_embedding"):
                 cached_emb = self.index.get_tag_embedding(tag, prompt, model_name, pretrained)
@@ -149,10 +149,7 @@ class TagSuggester:
                         is_person = True
                         break
             
-            if is_person:
-                prompt = f"a photo of {tag} in {year}"
-            else:
-                prompt = f"a photo of a {tag.lower()} in {year}"
+            prompt = suggesting.clip_prompt(tag, year, person=is_person)
                 
             cached_emb = None
             if self.index and hasattr(self.index, "get_tag_embedding"):
