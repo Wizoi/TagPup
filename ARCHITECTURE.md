@@ -223,9 +223,14 @@ On 2026-09-24, 210 SQL calls sat outside `tagpup.store`: 65 in `scripts/index.py
 Exit: the servers contain no SQL.
 
 ### Phase 4: Data model
-- Photo ids and `faces.photo_id`; every photo the apps have seen has a row.
-- The `face_crops`, `photo_people`, `embeddings` and `suggestions` tables; the tag tree in the database only.
-- Each as a migration with a dry run, a backup, and a doctor check before and after.
+Each step that changes a table is a migration in `tagpup.store.schema` that takes a backup, is tried first on copies of both libraries, and is checked by `tools/doctor.py` before and after. Every index entry whose file was gone was dropped on 2026-09-24 *(owner)*, so the doctor starts clean on both libraries. In the order the inventory set, each after what it needs:
+- [ ] The tag tree in the database only. `TagTaxonomy` takes the library, not a JSON file whose name decides which library (#61, #13); the JSON files become an export on request, after any path only they hold is brought into the table.
+- [ ] `face_crops`: the crops out of `faces`, keyed by face id. 1.1 GB of `photo_index`, so the rebuild of `faces` that follows moves 6 KB less per face. Every face delete takes its crop.
+- [ ] Photo ids. `photos` rebuilt with `id INTEGER PRIMARY KEY` and `path` unique; `faces.photo_id` in place of `faces.photo_path`, and every join by id (joins by path were case-sensitive where lookups were not). A photo the apps see gets a row the first time -- Suggest's faces and embeddings for photos never indexed included (`photos.ensure_row`). A rename is one update of `photos.path`.
+- [ ] `embeddings`: one vector per photo and model, keyed by `photo_id` and all five model settings, with the stamp of what it was computed from. Replaces `photos.embedding` and `embedding_cache` (#62, #65).
+- [ ] `photo_people`: each photo's people, written only by `tagpup.store.people.rebuild`, from its keywords, its faces and the tree, by the one rule in `tagpup.core.vocabulary`. Replaces `photos.people` and the seven patches of it (#63); tree edits that change who is a person rebuild what they change.
+- [ ] `suggestions`: keyed by `photo_id`, with the model and the stamp they were made from. Replaces the JSON cache files and their re-keying on rename; a deleted photo takes its suggestions (#64). Run status stays in memory until `jobs`.
+- [ ] Doctor rules for each: no crop without a face, no embedding or suggestion without a photo, people as the rule gives them.
 
 Exit: nothing in the database is keyed by path, and `doctor.py` is clean on both libraries.
 
