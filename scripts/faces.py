@@ -3,7 +3,6 @@ import os
 import threading
 import json
 import logging
-import io
 from typing import List, Dict, Any, Optional
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = 500000000
@@ -27,6 +26,7 @@ import _root  # noqa: F401
 from tagpup import config as tagpup_config
 from tagpup.core import clustering
 from tagpup.core.library import Library
+from tagpup.files import images
 
 logger = logging.getLogger("tagpup_cli.faces")
 
@@ -128,21 +128,9 @@ class FaceProcessor:
                     # Normalize tensor elements from [0, 255] to [-1, 1] range as expected by facenet
                     face_tensor = (face_tensor - 127.5) / 128.0
                     
-                    # Save a web-optimized face crop image (downscaled to max 256px if larger)
-                    face_crop_thumb = face_crop.copy()
-                    if max(face_crop_thumb.size) > 256:
-                        try:
-                            resample = Image.Resampling.LANCZOS
-                        except AttributeError:
-                            try:
-                                resample = Image.LANCZOS
-                            except AttributeError:
-                                resample = Image.ANTIALIAS
-                        face_crop_thumb.thumbnail((256, 256), resample)
-                    
-                    crop_buffer = io.BytesIO()
-                    face_crop_thumb.save(crop_buffer, format="JPEG", quality=90)
-                    crop_bytes = crop_buffer.getvalue()
+                    # The crop kept with the face, at the size and quality every crop
+                    # is kept at (tagpup.files.images).
+                    crop_bytes = images.crop_jpeg(face_crop)
                     
                     face_crops_info.append({
                         "box": [x1, y1, x2, y2],

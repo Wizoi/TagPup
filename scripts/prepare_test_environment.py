@@ -7,14 +7,13 @@ extracts real animal face crops, and indexes them in test_photo_index.db.
 
 import os
 import numpy as np
-from PIL import Image
-import io
 import shutil
 import sys
 
 import _root  # noqa: F401
 import db as tagpup_db
 from tagpup import config as tagpup_config
+from tagpup.files import images
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
@@ -29,14 +28,6 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
 
 DB_PATH = os.path.join(PROJECT_ROOT, "data", "test_photo_index.db")
 TAX_PATH = os.path.join(PROJECT_ROOT, "data", "test_photo_index_taxonomy.json")
-
-def crop_image_face(image_path, box):
-    img = Image.open(image_path)
-    cropped = img.crop(box)
-    cropped = cropped.resize((150, 150))
-    byte_arr = io.BytesIO()
-    cropped.save(byte_arr, format='JPEG')
-    return byte_arr.getvalue()
 
 def main():
     print("Preparing test environment for tutorial screenshots...")
@@ -105,11 +96,11 @@ def main():
 
     # Crop real face from puppy.png (head region, approx [350, 200, 750, 600])
     puppy_face_box = [350, 200, 750, 600]
-    puppy_crop = crop_image_face(os.path.join(training_dir, "puppy.png"), puppy_face_box)
+    puppy_crop = images.face_crop(os.path.join(training_dir, "puppy.png"), puppy_face_box)
 
     # Crop real face from puppy2.png (head region, approx [350, 200, 750, 600])
     puppy2_face_box = [350, 200, 750, 600]
-    puppy2_crop = crop_image_face(os.path.join(new_dir, "puppy2.png"), puppy2_face_box)
+    puppy2_crop = images.face_crop(os.path.join(new_dir, "puppy2.png"), puppy2_face_box)
 
     # Insert puppy image representing training set (already matched in database)
     store_photos.record_indexed(conn, puppy_path, {

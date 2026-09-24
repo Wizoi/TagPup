@@ -27,8 +27,10 @@ PHOTO_TYPES = {
 #: The extensions of PHOTO_TYPES, lower case with the dot.
 PHOTO_EXTENSIONS = frozenset(PHOTO_TYPES)
 
-#: The largest side of a face crop, as face detection cuts them.
+#: The largest side of a face crop, and the JPEG quality it is kept at. Face detection
+#: cut and encoded its own crops beside face_crop's (docs/findings.md, #74).
 CROP_SIZE = 256
+CROP_QUALITY = 90
 
 
 def shown_size(photo_path):
@@ -116,8 +118,15 @@ def face_crop(photo_path, box):
             crop = Image.new("RGB", (100, 100), color=(50, 50, 50))
         else:
             crop = img.crop((x1, y1, x2, y2))
-        if max(crop.size) > CROP_SIZE:
-            crop.thumbnail((CROP_SIZE, CROP_SIZE), Image.Resampling.LANCZOS)
-        out = io.BytesIO()
-        crop.save(out, format="JPEG", quality=90)
-        return out.getvalue()
+        return crop_jpeg(crop)
+
+
+def crop_jpeg(crop):
+    """A face already cut from its photo (a Pillow image), as the JPEG a face's crop is
+    kept as: no larger than CROP_SIZE on a side, at CROP_QUALITY."""
+    if max(crop.size) > CROP_SIZE:
+        crop = crop.copy()
+        crop.thumbnail((CROP_SIZE, CROP_SIZE), Image.Resampling.LANCZOS)
+    out = io.BytesIO()
+    crop.save(out, format="JPEG", quality=CROP_QUALITY)
+    return out.getvalue()

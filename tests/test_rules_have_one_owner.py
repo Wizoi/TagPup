@@ -45,5 +45,29 @@ class TheTinyBackgroundFace(unittest.TestCase):
                                               os.path.join("tagpup", "core", "clustering.py")))
 
 
+class TheFaceCrop(unittest.TestCase):
+    """A face's crop is kept at one size and one JPEG quality, whoever cuts it: face
+    detection cut its own, beside the one tagpup.files.images cuts for a face whose row
+    has none."""
+
+    def test_is_encoded_by_images(self):
+        import io
+
+        from PIL import Image
+
+        from tagpup.files import images
+        crop = images.crop_jpeg(Image.new("RGB", (600, 300), (120, 80, 40)))
+        with Image.open(io.BytesIO(crop)) as back:
+            self.assertEqual("JPEG", back.format)
+            self.assertEqual((images.CROP_SIZE, images.CROP_SIZE // 2), back.size)
+        small = images.crop_jpeg(Image.new("RGB", (40, 60)))
+        with Image.open(io.BytesIO(small)) as back:
+            self.assertEqual((40, 60), back.size)
+
+    def test_nothing_else_encodes_a_jpeg(self):
+        self.assertEqual([], sources_matching(r"format\s*=\s*['\"]JPEG['\"]",
+                                              os.path.join("tagpup", "files", "images.py")))
+
+
 if __name__ == "__main__":
     unittest.main()
