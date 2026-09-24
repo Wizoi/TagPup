@@ -32,7 +32,7 @@ The tool is built as a modular Python application with script wrappers. It relie
 ```
 
 - **`tagpup_cli.py` (CLI entry point)**: Unified Command Line Interface using `click` and `rich`.
-- **`scripts/metadata.py` (Metadata Extraction)**: Interfaces with `exiftool` to read standard metadata fields in batches of 500. Handles bare and namespaced tag keys.
+- **`tagpup/files/metadata.py` (Metadata Extraction)**: Interfaces with `exiftool` to read standard metadata fields in batches of 500. Handles bare and namespaced tag keys. What the fields mean -- tags, people, captions -- is `tagpup/core/vocabulary.py`; the library's people are read once per batch by `tagpup/store/taxonomy.py`. `scripts/metadata.py` joins the three for older callers.
 - **`scripts/embedder.py` (Visual Embeddings)**: Loads CLIP (`ViT-H-14` by default, customizable resolution up to $512 \times 512$) using PyTorch (supporting GPU/CUDA acceleration if available with FP16 half-precision, or falling back to CPU). Generates normalized embeddings and maintains a local cache to avoid re-embedding unchanged files.
 - **`scripts/index.py` (SQLite & FAISS Vector Index)**: Manages an SQLite database (`photo_index.db`) containing indexed photo records and parallel face coordinate/embedding entries, and builds an in-memory `faiss.IndexFlatIP` flat index at runtime for rapid cosine similarity queries.
 - **`scripts/faces.py` (Face Recognition & Identity Clustering)**: Detects face bounding boxes using **MTCNN** and generates 512-dimensional face vectors using **InceptionResnetV1** (supporting GPU/CUDA and FP16 acceleration). Performs density-based clustering (**DBSCAN**) to resolve and assign names to visual identities based on co-occurrence tagging patterns.

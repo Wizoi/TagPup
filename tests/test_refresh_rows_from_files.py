@@ -70,10 +70,11 @@ class RefreshRowsFromFiles(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def fake_batch_read(self, extractor, paths, db_path=None):
-        from metadata import MetadataExtractor
+        from metadata import MetadataExtractor, PeopleVocabulary
         self.assertFalse(extractor.mint_identities, "the refresh must never write to a photo")
         self.read.extend(paths)
-        return [MetadataExtractor._structure(extractor, p, dict(self.truth[p]), db_path)
+        people = PeopleVocabulary.load(db_path)
+        return [MetadataExtractor._structure(extractor, p, dict(self.truth[p]), people)
                 for p in paths]
 
     def run_script(self, *extra):

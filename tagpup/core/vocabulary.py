@@ -1,4 +1,5 @@
-"""The tag vocabulary: how a tag path is spelled and taken apart.
+"""The tag vocabulary: how a tag path is spelled and taken apart, and what a photo's
+metadata says -- its tags, the people it names, its captions.
 
 A tag is a path of segments -- Family/Immediate/Rowan Thackeray -- written with "/";
 "|" and "\\" are read as the same separator on the way in, as some tools write them. A
@@ -10,6 +11,10 @@ dropped empty ones, a few read "|" as a separator and most did not. Reading ever
 this one way changed the meaning of none in either library: on 2026-09-23 the only tag
 holding a "|" was a test tag on one photo, since removed. tests/test_vocabulary.py fails
 the build on a raw split of a tag anywhere else.
+
+Reading the metadata out of a file is tagpup.files.metadata's; what a library's tag
+tree says about people is read by tagpup.store.taxonomy and passed in. Everything here
+works on what they hand over, and touches neither.
 """
 
 import re
@@ -123,3 +128,134 @@ def _problem(value, what, levels):
     if levels and EMPTY_LEVEL.search(text):
         return '%s cannot have an empty level, as in "A//B" or "A/".' % what
     return None
+
+
+# What a photo's metadata says. `meta` is the record tagpup.files.metadata reads: every
+# field under its ExifTool name ("XMP:Subject") and again bare ("Subject").
+
+#: Keywords, flat and hierarchical.
+KEYWORD_FIELDS = ("XMP:Subject", "Subject", "IPTC:Keywords", "Keywords")
+HIERARCHY_FIELDS = ("XMP:HierarchicalSubject", "HierarchicalSubject")
+
+#: People named outright, rather than by a keyword under a people root.
+PERSON_FIELDS = ("XMP:PersonInImage", "PersonInImage", "XMP:RegionName", "RegionName")
+
+#: Captions and titles, most wanted first: the first is the one shown.
+CAPTION_FIELDS = ("IPTC:Caption-Abstract", "Caption-Abstract", "XMP:Description", "Description",
+                  "XMP:Title", "Title", "IPTC:ObjectName", "ObjectName")
+
+
+def _values(meta, fields):
+    """Every value these fields hold, trimmed, in field order; empty ones left out."""
+    found = []
+    for key in fields:
+        val = meta.get(key)
+        if val:
+            if isinstance(val, list):
+                found.extend(str(v).strip() for v in val if v)
+            else:
+                found.append(str(val).strip())
+    return found
+
+
+def extract_tags(meta):
+    """A photo's tags: every keyword once, in order.
+
+    A flat keyword that is only a level of a hierarchical one on the same photo
+    ("Family" beside "Family/Immediate/Cora Ingersoll") is left out: it is the path
+    written again in pieces, not a tag of its own.
+    """
+    tags = list(dict.fromkeys(t for t in _values(meta, KEYWORD_FIELDS + HIERARCHY_FIELDS) if t))
+    levels = {part for tag in tags if "/" in tag for part in segments(tag)}
+    return [tag for tag in tags if "/" in tag or tag not in levels]
+
+
+def extract_captions(meta):
+    """A photo's captions and titles -- each distinct text once, in order.
+
+    The reader records every field twice, prefixed and bare, and the same title is
+    usually written to several fields, so reading them all listed each caption two or
+    more times: 99.6% of indexed rows carried a duplicate. The first caption is the
+    one everything shows.
+    """
+    return list(dict.fromkeys(c for c in _values(meta, CAPTION_FIELDS) if c))
+
+
+class PeopleVocabulary:
+    """What a library's tag tree says about people.
+
+    `roots` are the lowercase face roots (People, Family, Pets, ...): a keyword under
+    one names a person by its leaf. `by_keyword` maps a keyword, spelled as a full tag
+    or as a bare leaf, to the person it names. tagpup.store.taxonomy reads one from a
+    library. extract_people used to read both from the database for every photo and
+    scan the whole tree per keyword -- 30s over 68,000 photos -- so anything resolving
+    many photos reads this once and passes it.
+    """
+
+    DEFAULT_ROOTS = frozenset({"family", "friends", "people"})
+
+    def __init__(self, roots, by_keyword):
+        self.roots = set(roots)
+        self.by_keyword = by_keyword
+
+    @classmethod
+    def defaults(cls):
+        """The usual face roots and nobody by name: a photo read without its library."""
+        return cls(cls.DEFAULT_ROOTS, {})
+
+    @classmethod
+    def from_rows(cls, root_names, face_rows):
+        """From a tag tree: the names of its face roots, and (tag, name) of every face node."""
+        roots = set(cls.DEFAULT_ROOTS)
+        roots.update(name.lower().strip() for name in root_names if name)
+        by_keyword = {}
+        for tag, name in face_rows:
+            # A face ROOT (People, Family, Pets, ...) is a category, not a person, so
+            # a photo tagged plainly "Family" must not gain a name.
+            if name and name.lower() in roots and "/" not in tag:
+                continue
+            # The first row to match a keyword by either spelling wins, as it did
+            # when this was a scan in row order.
+            if tag:
+                by_keyword.setdefault(tag.lower(), name)
+            if name:
+                by_keyword.setdefault(name.lower(), name)
+        return cls(roots, by_keyword)
+
+
+def extract_people(meta, tags, known=None):
+    """Whom a photo's metadata names: its person fields, and its keywords.
+
+    A keyword names a person when it sits under one of the face roots in `known` (a
+    PeopleVocabulary; without one, the usual roots), or when `known` has it as a face
+    node of its own -- "Cora Ingersoll" with no hierarchy, filed as a person.
+    """
+    known = known or PeopleVocabulary.defaults()
+    people = _values(meta, PERSON_FIELDS)
+    for tag in tags:
+        parts = segments(tag)
+        if len(parts) >= 2 and parts[0].lower() in known.roots:
+            people.append(parts[-1])
+    for tag in tags:
+        name = known.by_keyword.get(tag.replace("\\", "/").strip().lower())  # not a path: a keyword hierarchy
+        if name:
+            people.append(name)
+    return list(dict.fromkeys(p for p in people if p))
+
+
+def people_in_photo(meta, tags, face_names, known=None):
+    """Everyone in a photo: whom its metadata names, and whom its faces were named as.
+
+    What photos.people means. It has two sources and two kinds of writer: naming a
+    face in TagTuner adds the person without necessarily writing a keyword, while
+    every keyword write rebuilt the column from the keywords alone -- so tagging a
+    photo silently took off everyone identified only by their face. Every writer of
+    the column goes through here, so both sources always count.
+    """
+    people = extract_people(meta, tags, known)
+    seen = {p.lower() for p in people}
+    for name in face_names:
+        if name.lower() not in seen:
+            seen.add(name.lower())
+            people.append(name)
+    return people

@@ -85,6 +85,40 @@ class ComparingTags(unittest.TestCase):
         self.assertFalse(vocabulary.hidden_by("", hidden))
 
 
+class WhatAPhotosMetadataSays(unittest.TestCase):
+    """The rules alone: no file, no library, milliseconds."""
+
+    def test_a_flat_keyword_that_is_a_level_of_a_path_is_not_a_tag(self):
+        meta = {"XMP:Subject": ["Family", "Beach", "Family/Immediate/Cora Ingersoll"],
+                "Subject": ["Family", "Beach", "Family/Immediate/Cora Ingersoll"],
+                "XMP:HierarchicalSubject": "Family/Immediate/Cora Ingersoll"}
+        self.assertEqual(vocabulary.extract_tags(meta), ["Beach", "Family/Immediate/Cora Ingersoll"])
+
+    def test_a_caption_written_to_several_fields_is_one_caption(self):
+        meta = {"XMP:Description": "Harbour at dusk", "Description": "Harbour at dusk",
+                "XMP:Title": ["Harbour at dusk", "Boats"]}
+        self.assertEqual(vocabulary.extract_captions(meta), ["Harbour at dusk", "Boats"])
+
+    def test_without_a_library_the_usual_roots_name_people(self):
+        tags = ["People/Rowan Thackeray", "Pets/Biscuit", "Hazel Brookmire"]
+        self.assertEqual(vocabulary.extract_people({"XMP:PersonInImage": "Elias Marchetti-Oakes"}, tags),
+                         ["Elias Marchetti-Oakes", "Rowan Thackeray"])
+
+    def test_a_library_adds_its_own_roots_and_its_flat_people(self):
+        known = vocabulary.PeopleVocabulary.from_rows(
+            ["Pets", "Crew"],
+            [("Pets", "Pets"), ("Pets/Biscuit", "Biscuit"), ("Crew", "Crew"),
+             ("Hazel Brookmire", "Hazel Brookmire")])
+        tags = ["Pets/Biscuit", "Crew/Tamsin Oakes", "Hazel Brookmire", "Crew"]
+        self.assertEqual(vocabulary.extract_people({}, tags, known),
+                         ["Biscuit", "Tamsin Oakes", "Hazel Brookmire"])
+
+    def test_a_named_face_counts_once_whatever_its_case(self):
+        people = vocabulary.people_in_photo({}, ["People/Rowan Thackeray"],
+                                            ["rowan thackeray", "Hazel Brookmire"])
+        self.assertEqual(people, ["Rowan Thackeray", "Hazel Brookmire"])
+
+
 RULES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tag_rules.json")
 
 

@@ -145,7 +145,7 @@ Target: the full check in under a minute.
 | `scripts/db.py` | `tagpup/store/db.py` |
 | `scripts/exiftool_session.py` | `tagpup/files/exiftool_session.py` (not `exiftool.py`: it imports pyexiftool's `exiftool`, and a module of the same name reads as importing itself) |
 | `scripts/identity.py` | `tagpup/files/identity.py` |
-| `scripts/metadata.py` | `tagpup/files/metadata.py` (reading), `tagpup/core/vocabulary.py` (tags, people, captions) |
+| `scripts/metadata.py` | `tagpup/files/metadata.py` (reading), `tagpup/core/vocabulary.py` (tags, people, captions), `tagpup/store/taxonomy.py` and `tagpup/store/faces.py` (the library's people, face names) |
 | keyword writing in `tagpup_server.py` | `tagpup/files/keywords.py`, `tagpup/core/vocabulary.py` |
 | `scripts/index.py` (`PhotoIndex`) | `tagpup/store/` (`schema`, `photos`, `faces`), `tagpup/ml/vector_index.py` |
 | `scripts/taxonomy.py` | `tagpup/store/taxonomy.py`, `tagpup/core/vocabulary.py` |
@@ -185,6 +185,9 @@ Exit: the guard tests for config, database connections, ExifTool and layers pass
 - The rules, bottom-up. A service cannot live in `tagpup/` while what it calls is still in `scripts/`, and `metadata.py`, `index.py` and `taxonomy.py` each mix layers (files, store, rules). So the pure rules move first, then file reading into `tagpup.files`, then the tables into `tagpup.store` (phase 3 work the services pull forward):
   - [x] When a photo was taken: `tagpup.core.dates` (seven copies became one).
   - [x] The tag vocabulary: `tagpup.core.vocabulary` (55 hand-written splits became one reading).
+  - [x] Reading photo files: `tagpup.files.metadata`. `metadata.py` split by layer: what the fields mean (tags, people, captions) went to `tagpup.core.vocabulary`, and the library's people and face names to `tagpup.store.taxonomy` and `tagpup.store.faces`. `scripts/metadata.py` joins them for the old callers.
+  - [ ] Writing keyword and caption fields: `tagpup.files.keywords`.
+  - [ ] The tables: `tagpup.store` (taxonomy, photos, faces).
 - `tagpup.result.Result`, shaped by the first services that return it.
 - One service per user action. Start with the ones both servers implement (rename, rotate, delete, save metadata, bulk tags, time shift, indexing), then tag-tree edits, face identification and suggestions.
 - Tests move down to the service level.

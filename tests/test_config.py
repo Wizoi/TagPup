@@ -189,7 +189,7 @@ class TheRenameSyncReadsTheConfiguredFormat(WithAHome):
         session = mock.MagicMock()
         session.__enter__.return_value.get_tags.return_value = [
             {"XMP-xmpMM:PreservedFileName": "IMG_0007.jpg"}]
-        with mock.patch.object(metadata, "ExifToolSession", return_value=session):
+        with mock.patch("tagpup.files.metadata.ExifToolSession", return_value=session):
             renamed = metadata.sync_title_to_filename(photo, "Gulls", r"C:\Tools\exiftool.exe")
 
         self.assertEqual(os.path.basename(renamed), "007 ~ Harbour ~ Gulls.jpg")

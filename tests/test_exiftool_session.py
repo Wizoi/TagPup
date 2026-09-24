@@ -155,7 +155,8 @@ class TestTheBatchReadersUseIt(unittest.TestCase):
             self.assertNotIn("ExifToolHelper(", source, name)
             self.assertIn("ExifToolSession(", source, name)
 
-        with open(os.path.join(WORKSPACE_DIR, "scripts", "metadata.py"), encoding="utf-8") as f:
+        # The reader itself; scripts/metadata.py only hands it the library's people.
+        with open(os.path.join(WORKSPACE_DIR, "tagpup", "files", "metadata.py"), encoding="utf-8") as f:
             source = f.read()
         for method in ("batch_read", "_read_one_by_one"):
             body = source.split("def %s(" % method, 1)[1].split("\n    def ", 1)[0]

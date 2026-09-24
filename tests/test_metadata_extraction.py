@@ -445,9 +445,7 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
         return FakeHelper
 
     def test_the_good_files_keep_their_metadata(self):
-        import metadata
-
-        with mock.patch.object(metadata, "ExifToolSession", self._fake_helper()):
+        with mock.patch("tagpup.files.metadata.ExifToolSession", self._fake_helper()):
             results = self.extractor.batch_read(self.paths)
 
         self.assertEqual([r["path"] for r in results], self.paths)
@@ -459,9 +457,7 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
             )
 
     def test_the_bad_file_is_the_only_one_blanked(self):
-        import metadata
-
-        with mock.patch.object(metadata, "ExifToolSession", self._fake_helper()):
+        with mock.patch("tagpup.files.metadata.ExifToolSession", self._fake_helper()):
             results = self.extractor.batch_read(self.paths)
 
         bad = next(r for r in results if r["path"] == self.bad)
@@ -470,9 +466,7 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
         self.assertEqual(bad["captions"], [])
 
     def test_every_file_keeps_its_stats_so_it_is_not_re_indexed_forever(self):
-        import metadata
-
-        with mock.patch.object(metadata, "ExifToolSession", self._fake_helper()):
+        with mock.patch("tagpup.files.metadata.ExifToolSession", self._fake_helper()):
             results = self.extractor.batch_read(self.paths)
 
         for r in results:
@@ -499,24 +493,61 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
         # retried, which is what this test is about; tests/test_photo_identity.py
         # covers the minting.
         reader = metadata.MetadataExtractor(mint_identities=False)
-        with mock.patch.object(metadata, "ExifToolSession", fake):
+        with mock.patch("tagpup.files.metadata.ExifToolSession", fake):
             results = reader.batch_read(good_only)
 
         self.assertEqual(len(calls), 1, f"took {len(calls)} ExifTool calls for a clean batch")
         self.assertEqual([r["tags"] for r in results], [["Beach", "Sunset"]] * 2)
 
     def test_exiftool_failing_to_start_at_all_still_returns_a_row_per_file(self):
-        import metadata
-
         class DeadHelper:
             def __init__(self, executable=None):
                 raise OSError("exiftool not found")
 
-        with mock.patch.object(metadata, "ExifToolSession", DeadHelper):
+        with mock.patch("tagpup.files.metadata.ExifToolSession", DeadHelper):
             results = self.extractor.batch_read(self.paths)
 
         self.assertEqual([r["path"] for r in results], self.paths)
         self.assertTrue(all(r["tags"] == [] for r in results))
+
+
+class TestABatchReadsTheLibrarysPeopleOnce(unittest.TestCase):
+    """Each photo in a batch read the library's tag tree again, on a connection of its
+    own. The reader now takes what the tree says about people, read once for the batch."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="meta_people_once_")
+        self.addCleanup(shutil.rmtree, self.tmpdir, True)
+        self.db_path = os.path.join(self.tmpdir, "library.db")
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("CREATE TABLE tag_taxonomy (id INTEGER PRIMARY KEY, tag TEXT UNIQUE,"
+                     " parent_id INTEGER, name TEXT, has_face INTEGER DEFAULT 0)")
+        conn.execute("INSERT INTO tag_taxonomy (id, tag, parent_id, name, has_face)"
+                     " VALUES (1, 'Crew', NULL, 'Crew', 1)")
+        conn.commit()
+        conn.close()
+        self.paths = []
+        for i in range(3):
+            path = os.path.join(self.tmpdir, "photo_%d.jpg" % i)
+            with open(path, "wb") as fh:
+                fh.write(b"x")
+            self.paths.append(path)
+
+    def test_once_and_for_every_photo(self):
+        import metadata
+        from tagpup.store import taxonomy
+
+        session = mock.MagicMock()
+        session.return_value.__enter__.return_value.get_tags.side_effect = lambda files, tags=None: [
+            {"SourceFile": f, "XMP:Subject": ["Crew/Tamsin Oakes"]} for f in files]
+        with mock.patch("tagpup.files.metadata.ExifToolSession", session), \
+                mock.patch.object(taxonomy, "people_vocabulary",
+                                  wraps=taxonomy.people_vocabulary) as read_people:
+            results = metadata.MetadataExtractor().batch_read(self.paths, db_path=self.db_path)
+
+        self.assertEqual(read_people.call_count, 1)
+        # Crew is this library's own face root, so the tree was read, not assumed.
+        self.assertEqual([r["people"] for r in results], [["Tamsin Oakes"]] * 3)
 
 
 if __name__ == "__main__":
