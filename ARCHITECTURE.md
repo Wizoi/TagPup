@@ -246,13 +246,14 @@ Exit: no page file over about 1,000 lines, and the two pages share every common 
 | 2026-09-23 | `Library` lives in `core`: it only names files, and the web layer, which builds one per request, may not import `store`. `Result` moves to phase 2, so that its first real callers set its shape. |
 | 2026-09-23 | `Result` lives in `core`, not in a layer of its own: it is a plain value every layer passes along, so it needs no place in the import rules. |
 | 2026-09-24 | A service that reads returns what it read, not a `Result`, and raises `NotFound` (a route's 404) or `Refused` (400), which live beside `Result` in `tagpup.core.result`. |
+| 2026-09-24 | Opening a photo, showing it in Explorer and the folder dialog stay web routes, not services: they act on the desktop of the machine the server runs on, and write nothing. |
 
 ## Progress
 
 | Phase | Status |
 |---|---|
 | 1. Foundations | done, 2026-09-23 (the installed copy is opt-in) |
-| 2. Services | in progress |
+| 2. Services | done, 2026-09-24 |
 | 3. Store | not started |
 | 4. Data model | not started |
 | 5. One server | not started |
