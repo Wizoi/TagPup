@@ -1286,163 +1286,131 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             cursor = conn.cursor()
             faces = []
             
-            if name == "Unmatched":
-                cursor.execute("SELECT COUNT(*) FROM faces WHERE name IS NULL")
-                total_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM faces WHERE name = ?", (name,))
+            total_count = cursor.fetchone()[0]
 
-                cursor.execute("""
-                    SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.name, p.raw_metadata
-                    FROM faces f
-                    LEFT JOIN photos p ON p.path = f.photo_path
-                    WHERE f.name IS NULL AND f.excluded = 0
-                    LIMIT ? OFFSET ?
-                """, (limit, offset))
-                rows = cursor.fetchall()
-                for r in rows:
+            # Fetch all resolved faces with metadata for era-aware centroid calculation
+            cursor.execute("""
+                SELECT f.embedding, p.mtime, p.raw_metadata, f.photo_path
+                FROM faces f
+                LEFT JOIN photos p ON p.path = f.photo_path
+                WHERE f.name = ? AND f.embedding IS NOT NULL
+            """, (name,))
+            all_matched_rows = cursor.fetchall()
+
+            all_matched_faces = []
+            for emb_bytes, mtime, raw_meta_json, photo_path in all_matched_rows:
+                if emb_bytes and len(emb_bytes) > 0:
+                    year = get_year_from_mtime_or_meta(mtime, raw_meta_json, photo_path)
+                    # Ensure year is parsed to int or None
                     try:
-                        box = json.loads(r[2]) if r[2] else []
-                    except Exception:
-                        box = []
-                        
-                    year = get_year_from_mtime_or_meta(r[4], r[6], r[1])
-                    
-                    faces.append({
-                        "id": r[0],
-                        "photo_path": r[1],
-                        "filename": os.path.basename(r[1]),
-                        "box": box,
-                        "prob": r[3],
-                        "mtime": r[4] if r[4] is not None else 0.0,
-                        "year": year,
-                        "similarity": 1.0,
-                        "name": r[5]
-                    })
-            else:
-                cursor.execute("SELECT COUNT(*) FROM faces WHERE name = ?", (name,))
-                total_count = cursor.fetchone()[0]
-
-                # Fetch all resolved faces with metadata for era-aware centroid calculation
-                cursor.execute("""
-                    SELECT f.embedding, p.mtime, p.raw_metadata, f.photo_path
-                    FROM faces f
-                    LEFT JOIN photos p ON p.path = f.photo_path
-                    WHERE f.name = ? AND f.embedding IS NOT NULL
-                """, (name,))
-                all_matched_rows = cursor.fetchall()
-
-                all_matched_faces = []
-                for emb_bytes, mtime, raw_meta_json, photo_path in all_matched_rows:
-                    if emb_bytes and len(emb_bytes) > 0:
-                        year = get_year_from_mtime_or_meta(mtime, raw_meta_json, photo_path)
-                        # Ensure year is parsed to int or None
-                        try:
-                            year_int = int(year) if year is not None else None
-                        except (ValueError, TypeError):
-                            year_int = None
-                        emb = np.frombuffer(emb_bytes, dtype=np.float32)
-                        emb_norm = np.linalg.norm(emb)
-                        if emb_norm > 0:
-                            emb = emb / emb_norm
-                        all_matched_faces.append((emb, year_int))
-
-                matched_years = [y for _, y in all_matched_faces if y is not None]
-                y_min = min(matched_years) if matched_years else None
-
-                def compute_era_centroid(target_year):
-                    if not all_matched_faces:
-                        return None
-                    
-                    try:
-                        t_yr = int(target_year) if target_year is not None else None
+                        year_int = int(year) if year is not None else None
                     except (ValueError, TypeError):
-                        t_yr = None
+                        year_int = None
+                    emb = np.frombuffer(emb_bytes, dtype=np.float32)
+                    emb_norm = np.linalg.norm(emb)
+                    if emb_norm > 0:
+                        emb = emb / emb_norm
+                    all_matched_faces.append((emb, year_int))
+
+            matched_years = [y for _, y in all_matched_faces if y is not None]
+            y_min = min(matched_years) if matched_years else None
+
+            def compute_era_centroid(target_year):
+                if not all_matched_faces:
+                    return None
+                
+                try:
+                    t_yr = int(target_year) if target_year is not None else None
+                except (ValueError, TypeError):
+                    t_yr = None
+                
+                if y_min is not None and t_yr is not None:
+                    age = t_yr - y_min
+                else:
+                    age = 99
                     
-                    if y_min is not None and t_yr is not None:
-                        age = t_yr - y_min
-                    else:
-                        age = 99
-                        
-                    if age <= 4:
-                        w = 1
-                    elif age <= 12:
-                        w = 2
-                    elif age <= 16:
-                        w = 3
-                    elif age <= 20:
-                        w = 4
-                    else:
-                        w = 5
-                        
+                if age <= 4:
+                    w = 1
+                elif age <= 12:
+                    w = 2
+                elif age <= 16:
+                    w = 3
+                elif age <= 20:
+                    w = 4
+                else:
+                    w = 5
+                    
+                window_embeddings = []
+                if t_yr is not None:
+                    for emb, y in all_matched_faces:
+                        if y is not None and (t_yr - w) <= y <= (t_yr + w):
+                            window_embeddings.append(emb)
+                            
+                current_w = w
+                while len(window_embeddings) < 5 and current_w < 5:
+                    current_w += 1
                     window_embeddings = []
                     if t_yr is not None:
                         for emb, y in all_matched_faces:
-                            if y is not None and (t_yr - w) <= y <= (t_yr + w):
+                            if y is not None and (t_yr - current_w) <= y <= (t_yr + current_w):
                                 window_embeddings.append(emb)
                                 
-                    current_w = w
-                    while len(window_embeddings) < 5 and current_w < 5:
-                        current_w += 1
-                        window_embeddings = []
-                        if t_yr is not None:
-                            for emb, y in all_matched_faces:
-                                if y is not None and (t_yr - current_w) <= y <= (t_yr + current_w):
-                                    window_embeddings.append(emb)
-                                    
-                    if len(window_embeddings) < 5:
-                        window_embeddings = [emb for emb, _ in all_matched_faces]
-                        
-                    if not window_embeddings:
-                        return None
-                        
-                    centroid = compute_geometric_median(window_embeddings)
-                    norm = np.linalg.norm(centroid)
-                    if norm > 0:
-                        centroid /= norm
-                    return centroid
-
-                era_centroid_cache = {}
-                def get_era_centroid(target_year):
-                    if target_year not in era_centroid_cache:
-                        era_centroid_cache[target_year] = compute_era_centroid(target_year)
-                    return era_centroid_cache[target_year]
-
-                cursor.execute("""
-                    SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata
-                    FROM faces f
-                    LEFT JOIN photos p ON p.path = f.photo_path
-                    WHERE f.name = ?
-                    LIMIT ? OFFSET ?
-                """, (name, limit, offset))
-                rows = cursor.fetchall()
-                        
-                for r in rows:
-                    try:
-                        box = json.loads(r[2]) if r[2] else []
-                    except Exception:
-                        box = []
-                        
-                    year = get_year_from_mtime_or_meta(r[4], r[6], r[1])
+                if len(window_embeddings) < 5:
+                    window_embeddings = [emb for emb, _ in all_matched_faces]
                     
-                    similarity = 1.0
-                    if r[5] is not None and len(r[5]) > 0:
-                        centroid = get_era_centroid(year)
-                        if centroid is not None:
-                            emb = np.frombuffer(r[5], dtype=np.float32)
-                            emb_norm = np.linalg.norm(emb)
-                            if emb_norm > 0:
-                                emb = emb / emb_norm
-                            similarity = float(np.dot(emb, centroid))
+                if not window_embeddings:
+                    return None
                     
-                    faces.append({
-                        "id": r[0],
-                        "photo_path": r[1],
-                        "filename": os.path.basename(r[1]),
-                        "box": box,
-                        "prob": r[3],
-                        "mtime": r[4] if r[4] is not None else 0.0,
-                        "year": year,
-                        "similarity": similarity
-                    })
+                centroid = compute_geometric_median(window_embeddings)
+                norm = np.linalg.norm(centroid)
+                if norm > 0:
+                    centroid /= norm
+                return centroid
+
+            era_centroid_cache = {}
+            def get_era_centroid(target_year):
+                if target_year not in era_centroid_cache:
+                    era_centroid_cache[target_year] = compute_era_centroid(target_year)
+                return era_centroid_cache[target_year]
+
+            cursor.execute("""
+                SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata
+                FROM faces f
+                LEFT JOIN photos p ON p.path = f.photo_path
+                WHERE f.name = ?
+                LIMIT ? OFFSET ?
+            """, (name, limit, offset))
+            rows = cursor.fetchall()
+                    
+            for r in rows:
+                try:
+                    box = json.loads(r[2]) if r[2] else []
+                except Exception:
+                    box = []
+                    
+                year = get_year_from_mtime_or_meta(r[4], r[6], r[1])
+                
+                similarity = 1.0
+                if r[5] is not None and len(r[5]) > 0:
+                    centroid = get_era_centroid(year)
+                    if centroid is not None:
+                        emb = np.frombuffer(r[5], dtype=np.float32)
+                        emb_norm = np.linalg.norm(emb)
+                        if emb_norm > 0:
+                            emb = emb / emb_norm
+                        similarity = float(np.dot(emb, centroid))
+                
+                faces.append({
+                    "id": r[0],
+                    "photo_path": r[1],
+                    "filename": os.path.basename(r[1]),
+                    "box": box,
+                    "prob": r[3],
+                    "mtime": r[4] if r[4] is not None else 0.0,
+                    "year": year,
+                    "similarity": similarity
+                })
 
             has_more = False
             if limit >= 0:
