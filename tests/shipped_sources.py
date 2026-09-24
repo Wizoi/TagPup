@@ -6,10 +6,12 @@ unseen. One list means a rule covers every file, including each module as it mov
 into tagpup/.
 """
 import os
+import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-LAUNCHERS = ["tagpup_cli.py", "runner.py", "tagtuner.py", "tagpup_gui.py"]
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+from code_snapshot import LAUNCHERS  # noqa: E402  -- the list the installer copies
 
 
 def python_sources():

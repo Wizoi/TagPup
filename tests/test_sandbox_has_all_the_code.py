@@ -19,6 +19,7 @@ import unittest
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
+import code_snapshot  # noqa: E402
 import measure_identify_faces  # noqa: E402
 
 PROBE = """\
@@ -34,7 +35,7 @@ class SandboxHasAllTheCode(unittest.TestCase):
     def test_both_servers_import_from_the_sandbox_alone(self):
         sandbox = tempfile.mkdtemp(prefix="tagpup_sandbox_code_")
         self.addCleanup(measure_identify_faces.remove_sandbox, sandbox)
-        measure_identify_faces.copy_code(sandbox)
+        code_snapshot.copy_code(sandbox)
 
         result = subprocess.run(
             [sys.executable, "-I", "-c", PROBE % os.path.join(sandbox, "scripts")],

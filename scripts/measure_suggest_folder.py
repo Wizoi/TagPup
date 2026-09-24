@@ -36,10 +36,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from . import db as tagpup_db
-    from .measure_identify_faces import REPO_ROOT, copy_code, free_port, remove_sandbox
+    from .code_snapshot import REPO_ROOT, copy_code
+    from .measure_identify_faces import free_port, remove_sandbox
 except ImportError:  # imported as a top-level module
     import db as tagpup_db
-    from measure_identify_faces import REPO_ROOT, copy_code, free_port, remove_sandbox
+    from code_snapshot import REPO_ROOT, copy_code
+    from measure_identify_faces import free_port, remove_sandbox
 
 import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402

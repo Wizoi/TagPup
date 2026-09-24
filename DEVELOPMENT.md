@@ -28,6 +28,14 @@ TagPup or TagTuner, which destroys every piece of in-memory state — the folder
 nothing watching it. Check for a running server before editing, and run long indexes
 through the CLI where no reloader can reach them.
 
+**Run the apps from an installed copy** to stop that. `scripts/install_app.py` (a dry
+run; `--apply` to install) copies the code into `%LOCALAPPDATA%\TagPup\versions\<when>-<commit>`
+and writes `TagPup.cmd`, `TagTuner.cmd`, `TagPup Runner.cmd` and `TagPup CLI.cmd` beside
+it. They run that copy with `TAGPUP_HOME` set to the checkout, so `config.ini` and
+`data/` stay where they are. Saving a file in the repository changes nothing they are
+running. To update, install again; the two versions before stay, and `current.txt`
+names the one the launchers start.
+
 **Logs are in `data/logs/`**: `tagpup.log`, `tagtuner.log` and `runner.log`, one per
 program, rotating at 5 MB and keeping five old files. They hold everything the console
 shows, plus every request slower than a second (`slow: GET /api/... took 2.31s`) and

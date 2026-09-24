@@ -60,28 +60,16 @@ except ImportError:  # imported as a top-level module
 
 import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
+# The code a sandbox runs: scripts/code_snapshot.py, shared with the installer.
+from code_snapshot import copy_code  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-#: Copied into the sandbox. Everything the servers need to run, and nothing else.
-#: tests/test_sandbox_has_all_the_code.py fails if a folder the servers import is missing.
-SNAPSHOT = ("scripts", "tagpup", "gui", "gui_tagpup")
-
 
 def free_port():
     """A port nothing is on, so a run can never collide with a server you are using."""
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return probe.getsockname()[1]
-
-
-def copy_code(sandbox, code_root=REPO_ROOT):
-    """Snapshot the code into the sandbox, so editing the repo cannot change a run."""
-    for name in SNAPSHOT:
-        source = os.path.join(code_root, name)
-        if os.path.isdir(source):
-            shutil.copytree(source, os.path.join(sandbox, name),
-                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
 
 def build_sandbox(source_db, sandbox):

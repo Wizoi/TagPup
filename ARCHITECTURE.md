@@ -93,7 +93,7 @@ Every guard checks the same list of files, `tests/shipped_sources.py`: the launc
 
 - **One server, two apps.** One Flask app, served by Waitress, answers on both ports used today: 8090 for TagPup, 8080 for TagTuner. The library comes from the URL as it does now, and becomes a `Library` object for the request. The Host and Origin check is a `before_request` hook.
 - **Background jobs** (indexing, suggestions, clustering, refresh) run through one job runner per library, with status, cancel and persistence. GPU-heavy work runs in a worker process, as indexing does today through the CLI.
-- **The installed copy.** A launcher copies the code into a local app folder and runs it from there. `TAGPUP_HOME` names the folder that holds `config.ini`, `data/` and backups. Updating is a deliberate step. The auto-reloader is for development only.
+- **The installed copy.** `scripts/install_app.py` copies the code into a version folder under `%LOCALAPPDATA%\TagPup` and writes launchers that run it. `TAGPUP_HOME` names the folder that holds `config.ini` and `data/`, with each library's backups and locks beside it. Updating is a deliberate step, installing again, and the two versions before stay to go back to. The auto-reloader is for development only.
 - **Logs** go to `data/logs/`, one rotating file per program. Each holds everything the console shows, plus every request slower than a second with its time, and every failed request with its traceback.
 
 ## Data model
@@ -175,7 +175,7 @@ Each phase ships on its own with the full check green. Nothing changes behaviour
 - [x] `tagpup.config`: one loader, honouring `TAGPUP_HOME`, used by all 26 places that read `config.ini`.
 - [x] `tagpup.logs`: file logs, and slow-request logging for both servers.
 - [x] `tagpup.core.library.Library`: one name for a library and the files that belong to it, and backups beside the library.
-- [ ] The installed-copy launcher.
+- [x] The installed-copy launcher: `scripts/install_app.py`. Opt-in until the owner switches to it.
 
 Exit: the guard tests for config, database connections, ExifTool and layers pass; both servers log to files; the app can run from an installed copy.
 

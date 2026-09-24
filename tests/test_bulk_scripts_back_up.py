@@ -18,14 +18,20 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 import db as tagpup_db  # noqa: E402
 
 
+#: A script that opens a database, in any of the ways the codebase imports db.
+OPENS_A_DATABASE = re.compile(r"\bimport db\b|from tagpup\.store import db\b|\btagpup_db\b")
+
+
 def bulk_scripts():
+    """Scripts that write with --apply and open a database. (install_app.py writes with
+    --apply too, but files, not a database.)"""
     folder = os.path.join(WORKSPACE_DIR, "scripts")
     for name in sorted(os.listdir(folder)):
         if not name.endswith(".py"):
             continue
         with open(os.path.join(folder, name), encoding="utf-8") as handle:
             source = handle.read()
-        if '"--apply"' in source:
+        if '"--apply"' in source and OPENS_A_DATABASE.search(source):
             yield name, source
 
 
