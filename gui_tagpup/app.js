@@ -2133,7 +2133,7 @@ Click to add ${namesSomebody} to this photo.`;
             }
 
             const img = document.createElement('img');
-            img.src = `/api/photo-file?path=${encodeURIComponent(photo.path)}&size=300`;
+            img.src = photoFileUrl(photo, 300);
             img.loading = 'lazy';
             img.alt = photo.filename;
             imgWrapper.appendChild(img);
@@ -2802,7 +2802,7 @@ Click to add ${namesSomebody} to this photo.`;
         if (!photo) return;
 
         // Render values
-        mainImage.src = `/api/photo-file?path=${encodeURIComponent(photo.path)}&size=800`;
+        mainImage.src = photoFileUrl(photo, 800);
         detailPath.textContent = photo.path;
         let dateVal = "Unknown";
         const rawMeta = photo.raw_metadata || {};
@@ -3191,6 +3191,18 @@ Click to add ${namesSomebody} to this photo.`;
     }
 
     // PIL rotation trigger
+    /**
+     * A photo's image URL, versioned by its mtime.
+     *
+     * The server caches these for a day. A rotation changes the file but not the URL,
+     * so the grid went on showing the old turn -- and so did the photo itself, when
+     * returned to later. Carrying the mtime makes a changed file a new URL.
+     */
+    function photoFileUrl(photo, size) {
+        return `/api/photo-file?path=${encodeURIComponent(photo.path)}&size=${size}`
+            + `&v=${encodeURIComponent(photo.mtime || 0)}`;
+    }
+
     function rotatePhoto(direction) {
         const path = activePhotoPath;
         if (!path) return;
@@ -3206,8 +3218,14 @@ Click to add ${namesSomebody} to this photo.`;
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                // Reload image with cache buster
-                mainImage.src = `/api/photo-file?path=${encodeURIComponent(path)}&size=800&t=${Date.now()}`;
+                // The photo's new mtime is its images' new URL, here and in the grid.
+                const photo = folderPhotos.find(p => p.path === path) || { path };
+                photo.mtime = data.mtime || Date.now() / 1000;
+                mainImage.src = photoFileUrl(photo, 800);
+                const thumb = document.querySelector(
+                    `#thumbnails-grid [data-path="${CSS.escape(path)}"] img`);
+                if (thumb) thumb.src = photoFileUrl(photo, 300);
+                saveToLocalStorageCache();
                 statusDot.className = 'status-indicator-dot';
                 statusText.textContent = 'Ready';
             } else {

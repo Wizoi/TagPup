@@ -2538,7 +2538,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 photo_entry["mtime"] = stat.st_mtime
                 photo_entry["size"] = stat.st_size
 
-            self.send_json({"success": True})
+            # The new mtime, which versions the page's image URLs: thumbnails are
+            # cached for a day, so without a new URL the grid kept the old turn.
+            self.send_json({"success": True, "mtime": stat.st_mtime})
         except Exception as e:
             logger.error(f"Error rotating image {photo_path}: {e}")
             self.send_json_error(500, str(e))
