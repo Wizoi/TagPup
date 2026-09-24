@@ -14,10 +14,10 @@ from faces import resolution_trace_path  # noqa: E402
 
 class TraceFilePerLibrary(unittest.TestCase):
     def test_two_libraries_in_one_folder_have_two_traces(self):
-        one = resolution_trace_path(os.path.join("data", "photo_index.db"))
-        two = resolution_trace_path(os.path.join("data", "kr-track.db"))
+        one = resolution_trace_path(os.path.join("libraries", "photo_index.db"))
+        two = resolution_trace_path(os.path.join("libraries", "kr-track.db"))
         self.assertNotEqual(one, two)
-        self.assertEqual(os.path.join("data", "kr-track_face_resolution_trace.json"), two)
+        self.assertEqual(os.path.join("libraries", "kr-track_face_resolution_trace.json"), two)
 
 
 if __name__ == "__main__":

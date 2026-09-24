@@ -35,7 +35,7 @@ class MissesOnce(dict):
 class LibraryRegistryRace(unittest.TestCase):
     def check(self, module):
         registry = MissesOnce()
-        module.set_active_db_path("data/regatta.db")
+        module.set_active_db_path("libraries/regatta.db")
         try:
             # The other thread got there first and stored something.
             registry[module.get_active_db_path()] = {"folder": "state"}

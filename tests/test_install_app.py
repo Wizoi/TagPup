@@ -19,6 +19,8 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 import install_app  # noqa: E402
+sys.path.insert(0, WORKSPACE_DIR)
+from tagpup import config as tagpup_config  # noqa: E402
 from measure_identify_faces import free_port, remove_sandbox  # noqa: E402
 
 
@@ -50,7 +52,7 @@ class WhatAnInstallIs(InstallCase):
             self.assertTrue(os.path.exists(os.path.join(folder, part)), part)
         # The libraries and the settings stay in the home.
         self.assertFalse(os.path.exists(os.path.join(folder, "data")))
-        self.assertFalse(os.path.exists(os.path.join(folder, "config.ini")))
+        self.assertFalse(os.path.exists(tagpup_config.config_path(folder)))
         self.assertEqual(install_app.read_current(self.dest), name)
 
     def test_each_launcher_runs_the_current_version_against_the_home(self):

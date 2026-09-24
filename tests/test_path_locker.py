@@ -55,7 +55,7 @@ class PathLockerTestBase(unittest.TestCase):
 
 class TestOrdinaryLocking(PathLockerTestBase):
     def test_it_is_told_where_its_locks_are(self):
-        # A default of "data/locks" meant the working directory's, and two indexers
+        # A default of data/locks meant the working directory's, and two indexers
         # started in different folders locked in different places.
         with self.assertRaises(TypeError):
             PathLocker()

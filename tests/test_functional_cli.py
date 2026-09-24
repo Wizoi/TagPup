@@ -16,6 +16,8 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 from tagpup_cli import cli, get_config, get_exiftool_path
 from embedder import output_dim
 import exiftool
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import own_home  # noqa: E402
 
 def create_dummy_jpeg(path):
     """Create a minimal 100x100 pixel valid JPEG image."""
@@ -24,6 +26,8 @@ def create_dummy_jpeg(path):
 
 class TestFunctionalCLI(unittest.TestCase):
     def setUp(self):
+        # Settings, logs and whatever else goes beside a library, in a home of its own
+        own_home.for_test(self, "tagpup_cli_")
         # Create an isolated temporary workspace directory
         self.temp_dir = tempfile.TemporaryDirectory()
         self.workspace_path = self.temp_dir.name

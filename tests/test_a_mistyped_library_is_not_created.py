@@ -22,6 +22,8 @@ import tagpup_server  # noqa: E402
 import tuner_server  # noqa: E402
 from taxonomy import TagTaxonomy  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import own_home  # noqa: E402
 
 
 def fake(handler_cls, url):
@@ -53,14 +55,12 @@ def fake(handler_cls, url):
 class AMistypedLibraryIsNotCreated(unittest.TestCase):
     def setUp(self):
         self.name = "no_such_library_" + uuid.uuid4().hex[:8]
-        self.data_dir = os.path.join(WORKSPACE_DIR, "data")
-        self.created = os.path.join(self.data_dir, self.name + ".db")
+        self.home = own_home.for_test(self, "tagpup_mistyped_")
+        self.created = self.home.library(self.name + ".db")
 
     def tearDown(self):
         tagpup_server.set_active_db_path(None)
         tuner_server.set_active_db_path(None)
-        if os.path.exists(self.created):
-            os.remove(self.created)
 
     def check(self, handler_cls):
         handler = fake(handler_cls, "/%s/api/tags" % self.name)
@@ -81,15 +81,18 @@ class AMistypedLibraryIsNotCreated(unittest.TestCase):
         self.assertFalse(os.path.exists(self.created))
 
     def test_a_library_that_exists_is_routed_to(self):
-        # The startup library always exists by the time requests arrive.
-        startup = os.path.basename(tagpup_server.TagPupHTTPRequestHandler.db_path)
-        existing = os.path.join(self.data_dir, startup)
-        if not os.path.exists(existing):
-            self.skipTest("no startup library in data/")
-        handler = fake(tagpup_server.TagPupHTTPRequestHandler,
-                       "/%s/api/tags" % os.path.splitext(startup)[0])
-        self.assertTrue(handler.resolve_db_from_url())
-        self.assertEqual("/api/tags", handler.path)
+        # It relied on the checkout's data/ holding the startup library, and skipped
+        # when it did not. Here the startup library and another both exist in the home.
+        started_on = mock.patch.object(tagpup_server.TagPupHTTPRequestHandler, "db_path",
+                                       self.home.library("harbour.db"))
+        started_on.start()
+        self.addCleanup(started_on.stop)
+        for name in ("harbour", "regatta"):
+            open(self.home.library(name + ".db"), "wb").close()
+            handler = fake(tagpup_server.TagPupHTTPRequestHandler, "/%s/api/tags" % name)
+            self.assertTrue(handler.resolve_db_from_url(), name)
+            self.assertEqual("/api/tags", handler.path)
+            self.assertEqual(Library(handler.db_path), Library(self.home.library(name + ".db")))
 
 
 class TheStartupLibraryIsTheFileTheServerStartedOn(unittest.TestCase):

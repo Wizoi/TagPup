@@ -34,7 +34,7 @@ class WithAHome(unittest.TestCase):
         self.addCleanup(os.chdir, previous)
 
     def write_config(self, text):
-        with open(os.path.join(self.home, "config.ini"), "w", encoding="utf-8") as handle:
+        with open(config.config_path(self.home), "w", encoding="utf-8") as handle:
             handle.write(text)
 
 
@@ -154,11 +154,17 @@ class RememberingALibrary(WithAHome):
             self.assertNotIn(b"\r\n", handle.read())
 
     def test_it_writes_home_and_leaves_the_code_folder_alone(self):
-        checkout_config = os.path.join(WORKSPACE_DIR, "config.ini")
-        before = open(checkout_config, "rb").read() if os.path.exists(checkout_config) else None
-        config.remember_library("somewhere_else.db")
-        after = open(checkout_config, "rb").read() if os.path.exists(checkout_config) else None
-        self.assertEqual(before, after)
+        # A code folder of the test's own, with settings in it: the checkout's are the
+        # ones the app somebody is using reads, and are neither written nor read here.
+        code_folder = tempfile.mkdtemp(prefix="tagpup_code_folder_")
+        self.addCleanup(shutil.rmtree, code_folder, True)
+        config.write_file({"paths": {"default_db": "the_code_folders.db"}}, folder=code_folder)
+        with open(config.config_path(code_folder), "rb") as handle:
+            before = handle.read()
+        with mock.patch.object(config, "CODE_ROOT", code_folder):
+            config.remember_library("somewhere_else.db")
+        with open(config.config_path(code_folder), "rb") as handle:
+            self.assertEqual(before, handle.read())
         self.assertEqual(config.default_db(), "somewhere_else.db")
 
     def test_a_config_file_can_be_written_for_another_home(self):

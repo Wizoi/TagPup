@@ -6,6 +6,10 @@ import urllib.request
 import subprocess
 import unittest
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import own_home  # noqa: E402
+
+
 class TestServerStartup(unittest.TestCase):
     def test_startup(self):
         # Resolve path to tagpup_gui.py
@@ -14,6 +18,9 @@ class TestServerStartup(unittest.TestCase):
         
         # Run tagpup_gui.py with the child environment variable set directly
         # so it runs the server in the foreground, and we capture its output.
+        # In a home of its own: started plainly, it opened -- and made, when missing --
+        # the checkout's data/photo_index.db, and logged into its data/logs.
+        own_home.for_test(self, "tagpup_startup_")
         env = os.environ.copy()
         env["TAGPUP_RELOADED_CHILD"] = "1"
         env["TAGPUP_PORT"] = "8095"  # Use a separate test port to avoid conflicts
@@ -65,10 +72,8 @@ class TestServerStartup(unittest.TestCase):
         sys.path.insert(0, os.path.join(project_root, "scripts"))
         from index import PhotoIndex
         
-        test_db = os.path.join(project_root, "data", "test_tag_emb_cache.db")
-        if os.path.exists(test_db):
-            os.remove(test_db)
-            
+        test_db = own_home.for_test(self).library("test_tag_emb_cache.db")
+
         try:
             photo_index = PhotoIndex(db_path=test_db)
             self.assertTrue(photo_index.load())

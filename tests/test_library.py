@@ -16,29 +16,29 @@ from tagpup.store import db  # noqa: E402
 
 class NamesALibrary(unittest.TestCase):
     def test_its_parts(self):
-        library = Library(os.path.join("data", "photo_index.db"))
+        library = Library(os.path.join("libraries", "photo_index.db"))
         self.assertEqual(library.name, "photo_index")
-        self.assertEqual(library.folder, os.path.abspath("data"))
+        self.assertEqual(library.folder, os.path.abspath("libraries"))
         self.assertEqual(library.face_trace_file,
-                         os.path.join("data", "photo_index_face_resolution_trace.json"))
-        self.assertEqual(library.backups, os.path.join(os.path.abspath("data"), "backups"))
-        self.assertEqual(library.locks, os.path.join(os.path.abspath("data"), "locks"))
+                         os.path.join("libraries", "photo_index_face_resolution_trace.json"))
+        self.assertEqual(library.backups, os.path.join(os.path.abspath("libraries"), "backups"))
+        self.assertEqual(library.locks, os.path.join(os.path.abspath("libraries"), "locks"))
 
     def test_one_key_for_every_spelling_of_one_file(self):
-        relative = Library(os.path.join("data", "photo_index.db"))
-        absolute = Library(os.path.abspath(os.path.join("data", "photo_index.db")))
-        forward = Library(os.path.abspath("data") + "/photo_index.db")
+        relative = Library(os.path.join("libraries", "photo_index.db"))
+        absolute = Library(os.path.abspath(os.path.join("libraries", "photo_index.db")))
+        forward = Library(os.path.abspath("libraries") + "/photo_index.db")
         self.assertEqual(len({relative.key, absolute.key, forward.key}), 1)
         self.assertEqual(relative, forward)
         self.assertEqual(len({relative, absolute, forward}), 1)
 
     def test_the_key_is_what_the_servers_filed_state_under(self):
         # Unchanged, so nothing already filed under the old spelling is orphaned.
-        path = os.path.join("data", "photo_index.db")
+        path = os.path.join("libraries", "photo_index.db")
         self.assertEqual(Library(path).key, os.path.abspath(path).replace("\\", "/").lower())
 
     def test_two_libraries_are_two(self):
-        self.assertNotEqual(Library("data/family.db"), Library("data/photo_index.db"))
+        self.assertNotEqual(Library("libraries/family.db"), Library("libraries/photo_index.db"))
 
     def test_no_file_is_no_library(self):
         with self.assertRaises(ValueError):
