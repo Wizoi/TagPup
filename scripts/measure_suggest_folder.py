@@ -64,7 +64,6 @@ def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
     data_dir = os.path.join(sandbox, "data")
     config.set("paths", "data_dir", data_dir)
     config.set("paths", "default_db", "measured.db")
-    config.set("paths", "embedding_cache_dir", os.path.join(data_dir, "embedding_cache"))
     tagpup_config.write_file(config, folder=sandbox)
 
     taxonomy = Library(source_db).taxonomy_file

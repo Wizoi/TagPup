@@ -158,7 +158,6 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     config = get_config()
     exiftool_path = get_exiftool_path(config)
     embedder_settings = tagpup_config.embedder_settings(config)
-    cache_dir = embedder_settings["cache_dir"]
     model_name = embedder_settings["model_name"]
 
     test_mode = ctx.obj.get("test", False)
@@ -197,8 +196,6 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     taxonomy.load()
 
     embedder = ClipEmbedder(photo_index=photo_index, **embedder_settings)
-    if not test_mode:
-        photo_index.migrate_disk_cache_to_sqlite(cache_dir)
 
     console.print(f"[bold cyan]Scanning directory:[/bold cyan] {directory}")
     all_images = scan_for_images(directory)
@@ -420,7 +417,6 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
     """Phase 2: Suggest tags for untagged photos."""
     config = get_config()
     embedder_settings = tagpup_config.embedder_settings(config)
-    cache_dir = embedder_settings["cache_dir"]
     model_name = embedder_settings["model_name"]
 
     # Load Index & Taxonomy
@@ -458,8 +454,6 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
                 candidate_tags.append(leaf)
 
         embedder = ClipEmbedder(photo_index=photo_index, **embedder_settings)
-        if not test_mode:
-            photo_index.migrate_disk_cache_to_sqlite(cache_dir)
         suggester = TagSuggester(photo_index, taxonomy, embedder=embedder, candidate_tags=candidate_tags)
 
         # Scan untagged photos
@@ -604,7 +598,6 @@ def search(ctx, query: str, k: int):
     """Semantic text search across indexed library."""
     config = get_config()
     embedder_settings = tagpup_config.embedder_settings(config)
-    cache_dir = embedder_settings["cache_dir"]
     model_name = embedder_settings["model_name"]
 
     # Load Index

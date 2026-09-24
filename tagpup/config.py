@@ -31,7 +31,6 @@ CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULTS = {
     "paths": {
         "data_dir": "data",
-        "embedding_cache_dir": "data/embedding_cache",
         "default_db": "photo_index.db",
     },
     "model": {
@@ -158,7 +157,6 @@ def embedder_settings(settings=None):
     return {
         "model_name": settings.get("model", "name"),
         "pretrained": settings.get("model", "pretrained"),
-        "cache_dir": resolve(settings.get("paths", "embedding_cache_dir")),
         "preserve_full_frame": settings.getboolean("model", "preserve_full_frame"),
         "max_aspect_ratio": settings.getfloat("model", "max_aspect_ratio"),
         "force_image_size": int(size) if size else None,

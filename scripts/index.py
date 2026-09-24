@@ -15,7 +15,6 @@ from typing import List, Dict, Any, Tuple, Optional, Set
 import numpy as np
 
 from tagpup.ml.vector_index import VectorIndex
-from tagpup.store import embeddings as store_embeddings
 from tagpup.store import faces as store_faces
 from tagpup.store import generations, schema
 from tagpup.store import photos as store_photos
@@ -598,65 +597,6 @@ class PhotoIndex:
             logger.error(f"Error saving faces batch to SQLite: {e}")
             self.conn.rollback()
             raise e
-
-    def migrate_disk_cache_to_sqlite(self, cache_dir: str):
-        """Read existing cache .json files, insert them into embedding_cache table, and delete disk files."""
-        if self.conn is None or not os.path.exists(cache_dir):
-            return
-
-        try:
-            json_files = [f for f in os.listdir(cache_dir) if f.endswith(".json")]
-        except Exception as e:
-            logger.warning(f"Failed to scan cache directory '{cache_dir}': {e}")
-            return
-
-        if not json_files:
-            return
-
-        logger.info(f"Found {len(json_files)} cache files in '{cache_dir}'. Starting database migration...")
-
-        batch_size = 1000
-        for idx in range(0, len(json_files), batch_size):
-            batch = json_files[idx:idx + batch_size]
-            migrated_files = []
-
-            try:
-                tagpup_db.begin(self.conn)
-                for filename in batch:
-                    filepath = os.path.join(cache_dir, filename)
-                    try:
-                        with open(filepath, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                        path = data.get("path")
-                        embedding = data.get("embedding")
-                        if path and embedding:
-                            store_embeddings.put(self.conn, path, store_embeddings.Cached(
-                                data.get("mtime"), data.get("size"), data.get("model_name"),
-                                data.get("pretrained"), bool(data.get("preserve_full_frame")),
-                                data.get("max_aspect_ratio"), data.get("force_image_size"),
-                                np.array(embedding, dtype=np.float32).tobytes()))
-                            migrated_files.append(filepath)
-                    except Exception as e:
-                        # Log error and clean up corrupt file to avoid blocking future migrations
-                        logger.warning(f"Corrupt or invalid cache file {filename}: {e}. Removing file.")
-                        try:
-                            os.remove(filepath)
-                        except Exception:
-                            pass
-
-                self.conn.commit()
-
-                # Delete files from disk only after successful DB commit
-                for filepath in migrated_files:
-                    try:
-                        os.remove(filepath)
-                    except Exception as e:
-                        logger.warning(f"Failed to delete migrated cache file {filepath}: {e}")
-
-                logger.info(f"Successfully migrated and cleaned up {len(migrated_files)} cache files.")
-            except Exception as e:
-                logger.error(f"Failed to migrate batch of cache files: {e}")
-                self.conn.rollback()
 
     def get_tag_embedding(self, tag: str, prompt: str, model_name: str, pretrained: str) -> Optional[List[float]]:
         """Get precomputed tag embedding if it matches active model settings."""

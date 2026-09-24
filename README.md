@@ -145,7 +145,6 @@ Settings live in `config.ini`, next to the code, unless the `TAGPUP_HOME` enviro
 [paths]
 exiftool = %USERPROFILE%\AppData\Local\Programs\ExifTool\exiftool.exe
 data_dir = data
-embedding_cache_dir = data/embedding_cache
 ; The library opened at startup. Choosing one in the app changes this.
 default_db = photo_index.db
 

@@ -43,7 +43,7 @@ Or use the batch script:
 # Using Command Prompt
 setup.bat
 ```
-This automatically sets up a Python virtual environment (`.venv`), upgrades pip, installs PyTorch (with NVIDIA GPU/CUDA support), CLIP, FAISS, and ExifTool bindings, and creates the `data` and `data/embedding_cache` directories.
+This automatically sets up a Python virtual environment (`.venv`), upgrades pip, installs PyTorch (with NVIDIA GPU/CUDA support), CLIP, FAISS, and ExifTool bindings, and creates the `data` directory.
 
 ### Step 2: Configure ExifTool
 Ensure ExifTool is installed on your machine.

@@ -79,8 +79,7 @@ class OneEmbedderPerLibrary(unittest.TestCase):
         index.load()
         index.close()
         add_photo(self.db_path, "a.jpg")
-        self.kwargs = {"model_name": "ViT-B-32", "pretrained": "laion2b_s34b_b79k",
-                       "cache_dir": os.path.join(self.dir, "cache")}
+        self.kwargs = {"model_name": "ViT-B-32", "pretrained": "laion2b_s34b_b79k"}
         set_active_db_path(self.db_path)
 
     def tearDown(self):

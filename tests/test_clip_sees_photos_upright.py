@@ -35,7 +35,7 @@ class ClipSeesPhotosUpright(unittest.TestCase):
         img.save(photo, exif=exif.tobytes())
 
         seen = []
-        embedder = ClipEmbedder(cache_dir=os.path.join(tmp, "cache"))
+        embedder = ClipEmbedder()
         embedder.device = "cpu"
 
         def init_model():

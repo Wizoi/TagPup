@@ -18,15 +18,10 @@ Write-Host "Upgrading pip and installing dependencies..." -ForegroundColor Cyan
 
 # Create necessary directories
 $dataDir = "data"
-$cacheDir = "data/embedding_cache"
 
 if (-not (Test-Path $dataDir)) {
     New-Item -ItemType Directory -Path $dataDir | Out-Null
     Write-Host "Created directory: $dataDir" -ForegroundColor Green
-}
-if (-not (Test-Path $cacheDir)) {
-    New-Item -ItemType Directory -Path $cacheDir | Out-Null
-    Write-Host "Created directory: $cacheDir" -ForegroundColor Green
 }
 
 # The settings: config.ini is not in git, so a new checkout starts from the example.

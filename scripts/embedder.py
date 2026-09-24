@@ -1,7 +1,5 @@
 # embedder.py
 import os
-import json
-import hashlib
 import logging
 import threading
 from typing import List, Optional, Any
@@ -13,7 +11,6 @@ import numpy as np
 import open_clip
 
 import _root  # noqa: F401
-import paths
 from tagpup.store import embeddings as store_embeddings
 
 logger = logging.getLogger("tagpup_cli.embedder")
@@ -38,10 +35,9 @@ class ClipEmbedder:
     _shared_tokenizer = None
     _shared_model_lock = threading.Lock()
 
-    def __init__(self, model_name: str = "ViT-B-32", pretrained: str = "laion2b_s34b_b79k", cache_dir: str = "data/embedding_cache", preserve_full_frame: bool = False, max_aspect_ratio: float = 2.0, force_image_size: Optional[int] = None, photo_index: Optional[Any] = None):
+    def __init__(self, model_name: str = "ViT-B-32", pretrained: str = "laion2b_s34b_b79k", preserve_full_frame: bool = False, max_aspect_ratio: float = 2.0, force_image_size: Optional[int] = None, photo_index: Optional[Any] = None):
         self.model_name = model_name
         self.pretrained = pretrained
-        self.cache_dir = cache_dir
         self.preserve_full_frame = preserve_full_frame
         self.max_aspect_ratio = max_aspect_ratio
         self.force_image_size = force_image_size
@@ -54,8 +50,6 @@ class ClipEmbedder:
         self.tokenizer = None
         self.model_lock = ClipEmbedder._shared_model_lock
         
-        if not os.path.exists(self.cache_dir):
-            os.makedirs(self.cache_dir, exist_ok=True)
 
     def _init_model(self):
         """Lazily load the CLIP model."""
@@ -99,18 +93,14 @@ class ClipEmbedder:
                 logger.error(f"Failed to load CLIP model: {e}", exc_info=True)
                 raise e
 
-    def _get_cache_path(self, file_path: str) -> str:
-        """Get the cache file path: the MD5 of the photo's paths.key, so two spellings
-        of one photo share one cache file."""
-        path_hash = hashlib.md5(paths.key(file_path).encode('utf-8')).hexdigest()
-        return os.path.join(self.cache_dir, f"{path_hash}.json")
-
     def get_cached_embedding(self, file_path: str) -> Optional[List[float]]:
-        """Retrieve embedding from cache if file is unchanged."""
+        """The embedding cached in the library for this file, if the file and the model
+        settings are as they were. Without a library, nothing is cached: the JSON files
+        that stood in for one were imported into it, and retired with it on 2026-09-24."""
         if not os.path.exists(file_path):
             return None
             
-        # Try database cache first if photo_index is available
+        # In the library, when there is one.
         if self.photo_index is not None and self.photo_index.conn is not None:
             try:
                 stat = os.stat(file_path)
@@ -131,37 +121,12 @@ class ClipEmbedder:
                 logger.warning(f"Failed to read/validate database cache for {file_path}: {e}")
             return None
 
-        # Fallback to disk-based cache
-        cache_path = self._get_cache_path(file_path)
-        if not os.path.exists(cache_path):
-            return None
-            
-        try:
-            stat = os.stat(file_path)
-            with open(cache_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                
-            # Verify modification time, size, and model settings to ensure cache matches current settings
-            if (data.get("mtime") == stat.st_mtime and 
-                data.get("size") == stat.st_size and 
-                data.get("model_name") == self.model_name and 
-                data.get("pretrained") == self.pretrained and
-                data.get("preserve_full_frame", False) == self.preserve_full_frame and
-                data.get("max_aspect_ratio", 2.0) == self.max_aspect_ratio and
-                data.get("force_image_size") == self.force_image_size):
-                return data.get("embedding")
-        except Exception as e:
-            logger.warning(f"Failed to read/validate cache for {file_path}: {e}")
-            
-        return None
-
     def save_to_cache(self, file_path: str, embedding: List[float]):
         """Save embedding to cache with file stats."""
         try:
             stat = os.stat(file_path)
-            stored_path = paths.stored(file_path)
 
-            # Try database cache first if photo_index is available
+            # In the library, when there is one.
             if self.photo_index is not None and self.photo_index.conn is not None:
                 def store(conn):
                     store_embeddings.put(conn, file_path, store_embeddings.Cached(
@@ -181,21 +146,6 @@ class ClipEmbedder:
                     self.photo_index.conn.commit()
                 return
 
-            # Fallback to disk-based cache
-            cache_path = self._get_cache_path(file_path)
-            data = {
-                "path": stored_path,
-                "mtime": stat.st_mtime,
-                "size": stat.st_size,
-                "model_name": self.model_name,
-                "pretrained": self.pretrained,
-                "preserve_full_frame": self.preserve_full_frame,
-                "max_aspect_ratio": self.max_aspect_ratio,
-                "force_image_size": self.force_image_size,
-                "embedding": embedding
-            }
-            with open(cache_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f)
         except Exception as e:
             logger.warning(f"Failed to write cache for {file_path}: {e}")
 

@@ -96,7 +96,6 @@ class WhatTheSettingsSay(WithAHome):
         self.assertEqual(config.embedder_settings(), {
             "model_name": "ViT-H-14",
             "pretrained": "laion2b_s32b_b79k",
-            "cache_dir": os.path.join(self.home, "data/embedding_cache"),
             "preserve_full_frame": True,
             "max_aspect_ratio": 1.4,
             "force_image_size": 512,
