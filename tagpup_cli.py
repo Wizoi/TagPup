@@ -59,7 +59,7 @@ import db as tagpup_db
 from tagpup import config as tagpup_config
 from tagpup.store import faces as store_faces
 from tagpup.store import taxonomy as store_taxonomy
-from tagpup.core import vocabulary
+from tagpup.core import suggesting, vocabulary
 from tagpup.core.library import Library
 
 def get_config():
@@ -549,7 +549,8 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
 @cli.command()
 @click.argument("suggestions_file", type=click.Path(exists=True, dir_okay=False))
 @click.option("-Live", "live", is_flag=True, help="Write tags to files for real (modifies files).")
-@click.option("-MinScore", "min_score", default=0.50, type=float, help="Write tags at or above this score threshold.")
+@click.option("-MinScore", "min_score", default=suggesting.OFFER_A_TAG, type=float,
+              help="Write tags at or above this score (default: the value the app shows them from).")
 @click.option("--nobackup", is_flag=True, help="Avoid creating backup copies (_original files) during write operations.")
 @click.pass_context
 def write(ctx, suggestions_file: str, live: bool, min_score: float, nobackup: bool):

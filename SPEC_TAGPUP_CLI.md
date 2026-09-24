@@ -228,7 +228,7 @@ Writes suggested tags and descriptions back to photo file metadata using ExifToo
 - **Usage**: `run.bat [global-options] write <SUGGESTIONS_FILE>`
 - **Options**:
   - `-Live`: Write tags to files for real (actually modifies image files on disk).
-  - `-MinScore FLOAT`: Write tags at or above this score threshold (default: `0.50`).
+  - `-MinScore FLOAT`: Write tags at or above this score (default: `0.60`, `tagpup.core.suggesting.OFFER_A_TAG`, the value TagPup shows a tag from).
   - `--nobackup`: Avoid creating backup copies (`_original` files) during write operations.
 
 #### 4. `search`

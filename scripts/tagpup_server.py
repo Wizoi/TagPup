@@ -20,7 +20,7 @@ import numpy as np
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
-from tagpup.core import clustering, dates, fields, renaming, vocabulary
+from tagpup.core import clustering, dates, fields, renaming, suggesting, vocabulary
 from tagpup.core.library import Library
 from tagpup.files import keywords as file_keywords
 from tagpup.store.photos import move_rows as move_photo_rows  # noqa: F401  (saving, tests)
@@ -952,7 +952,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 suggested_tags, suggested_people = [], []
                 for item in sugg.get("suggested_tags", []):
                     score = item.get("score", 0.0)
-                    if score >= 0.6:
+                    if score >= suggesting.OFFER_A_TAG:
                         if item.get("has_face_match"):
                             suggested_people.append({"name": item["tag"], "score": score})
                         else:
@@ -1289,7 +1289,8 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         # Apply exactly what the panel offered.
         #
         # This used to read `raw_suggestions`, which is everything the suggester
-        # produced down to its own floor, while the panel shows only what scored 0.6 or
+        # produced down to its own floor, while the panel shows only what scored
+        # suggesting.OFFER_A_TAG or
         # better. The two lists were built in different places and drifted: a photo came
         # back from Apply All carrying two people the panel had never mentioned, and the
         # suggestions it *had* listed were still sitting there unapplied.

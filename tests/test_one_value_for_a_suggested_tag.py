@@ -1,0 +1,47 @@
+"""A suggested tag is shown, applied and written from one score:
+tagpup.core.suggesting.OFFER_A_TAG (docs/findings.md, #70).
+
+TagPup showed a tag from 0.6, while the CLI's `write`, the writer and the runner wrote
+from 0.5 -- tags the app never showed, right 45% of the time when measured.
+"""
+import inspect
+import os
+import re
+import sys
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+
+from tagpup.core import suggesting  # noqa: E402
+
+
+def source(name):
+    with open(os.path.join(ROOT, name), encoding="utf-8") as f:
+        return f.read()
+
+
+class OneValue(unittest.TestCase):
+    def test_the_cli_writes_from_it(self):
+        import tagpup_cli
+        option = next(p for p in tagpup_cli.write.params if p.name == "min_score")
+        self.assertEqual(suggesting.OFFER_A_TAG, option.default)
+
+    def test_the_writer_writes_from_it(self):
+        from writer import MetadataWriter
+        default = inspect.signature(MetadataWriter.write_tags_to_photos).parameters["min_score"].default
+        self.assertEqual(suggesting.OFFER_A_TAG, default)
+
+    def test_the_runner_starts_from_it(self):
+        self.assertIn('insert(0, "%.2f" % suggesting.OFFER_A_TAG)', source("runner.py"))
+
+    def test_no_score_is_compared_with_a_number_of_its_own(self):
+        # Where a tag's score decides, it is compared with the one value.
+        for name in ("scripts/tagpup_server.py", "scripts/writer.py", "tagpup_cli.py", "runner.py"):
+            found = re.findall(r"score[\w\"'\].)]*\s*>=\s*0\.\d", source(name))
+            self.assertEqual([], found, name)
+
+
+if __name__ == "__main__":
+    unittest.main()

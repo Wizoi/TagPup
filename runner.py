@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scr
 import paths
 from tagpup import config as tagpup_config
 from tagpup.core import library as libraries
+from tagpup.core import suggesting
 from tagpup.store import schema
 from tuner_server import TunerHTTPRequestHandler, ThreadedHTTPServer as TunerThreadedHTTPServer
 from tagpup_server import TagPupHTTPRequestHandler, ThreadedHTTPServer as TagPupThreadedHTTPServer
@@ -515,7 +516,7 @@ class RunnerApp:
 
         self.ent_min_score = tk.Entry(write_opt_frame, bg=self.BG_INPUT, fg="white", insertbackground="white", width=8, relief=tk.FLAT, bd=0, highlightthickness=1, highlightbackground="#555555", justify="center", font=self.FONT_MAIN)
         self.ent_min_score.pack(side="left", padx=(8, 15))
-        self.ent_min_score.insert(0, "0.50")
+        self.ent_min_score.insert(0, "%.2f" % suggesting.OFFER_A_TAG)
 
         self.var_nobackup = tk.BooleanVar(value=True)
         chk_nobackup = tk.Checkbutton(

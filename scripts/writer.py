@@ -6,7 +6,7 @@ from typing import List, Optional
 from exiftool_session import ExifToolSession
 
 import _root  # noqa: F401
-from tagpup.core import vocabulary
+from tagpup.core import suggesting, vocabulary
 from tagpup.files.keywords import caption_fields
 from tagpup.store import taxonomy as store_taxonomy
 
@@ -111,7 +111,7 @@ class MetadataWriter:
         self, 
         suggestions_file: str, 
         live: bool = False, 
-        min_score: float = 0.50,
+        min_score: float = suggesting.OFFER_A_TAG,
         nobackup: bool = False,
         db_path: Optional[str] = None
     ) -> bool:
