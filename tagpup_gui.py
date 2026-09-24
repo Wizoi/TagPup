@@ -3,7 +3,6 @@ import os
 import sys
 import logging
 import webbrowser
-import socket
 
 # Set up logging with colors for warnings and errors
 class ColorFormatter(logging.Formatter):
@@ -31,33 +30,9 @@ logger = logging.getLogger("tagpup_gui")
 # Add scripts directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
 from tagpup_server import create_library, start_server
+import localserver
 from tagpup import config as tagpup_config
 from tagpup import logs as tagpup_logs
-
-def find_available_port(start_port=8090):
-    port = start_port
-    print(f"[TRACE] find_available_port starting from {start_port}", flush=True)
-    while True:
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                try:
-                    s.connect(("127.0.0.1", port))
-                    port += 1
-                    continue
-                except (ConnectionRefusedError, OSError):
-                    pass
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                try:
-                    s.bind(("", port))
-                    print(f"[TRACE] find_available_port bound to {port}", flush=True)
-                    return port
-                except OSError:
-                    port += 1
-        except Exception as e:
-            print(f"[TRACE] find_available_port exception: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
-            raise e
 
 def cleanup_zombie_processes():
     """Finds and terminates any other running python processes that are executing tagpup_gui.py or tagpup_server.py."""
@@ -134,7 +109,7 @@ def main():
     if port_env:
         port = int(port_env)
     else:
-        port = find_available_port(8090)
+        port = localserver.find_available_port(localserver.TAGPUP_PORT)
         os.environ["TAGPUP_PORT"] = str(port)
     url = f"http://localhost:{port}/"
     

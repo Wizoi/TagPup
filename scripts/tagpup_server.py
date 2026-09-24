@@ -1603,7 +1603,7 @@ def warmup_embedder_thread(embedder):
     except Exception as e:
         logger.error(f"Error warming up Face models: {e}")
 
-def start_server(port=8090, db_path=None, gui_dir="gui_tagpup"):
+def start_server(port=localserver.TAGPUP_PORT, db_path=None, gui_dir="gui_tagpup"):
     db_path = db_path or tagpup_config.default_library()
     TagPupHTTPRequestHandler.db_path = db_path
     TagPupHTTPRequestHandler.gui_dir = gui_dir

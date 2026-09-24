@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
 
 # Import environment prep to seed test DB
 from prepare_test_environment import main as prepare_env
+import localserver
 
 def run_screenshot_flow():
     refresh = os.environ.get("REFRESH_TUTORIAL") == "1" or "--refresh" in sys.argv
@@ -47,7 +48,7 @@ def run_screenshot_flow():
         )
         
         print("Waiting for servers to initialize and detecting ports...")
-        gui_port = 8090
+        gui_port = localserver.TAGPUP_PORT
         tuner_port = 8081
         
         for _ in range(30):

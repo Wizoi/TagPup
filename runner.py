@@ -769,29 +769,12 @@ class RunnerApp:
         if self.tuner_server_instance:
             return
 
-        def find_available_port(start_port=8080):
-            import socket
-            port = start_port
-            while True:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    try:
-                        s.connect(("127.0.0.1", port))
-                        port += 1
-                        continue
-                    except (ConnectionRefusedError, OSError):
-                        pass
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    try:
-                        s.bind(("", port))
-                        return port
-                    except OSError:
-                        port += 1
-
         # Select correct database depending on global setting and config.ini
         default_db = libraries.for_mode(tagpup_config.default_db(), self.var_test_db.get())
         db_path = tagpup_config.library_path(default_db)
 
-        port = find_available_port(8080)
+        import localserver
+        port = localserver.find_available_port(localserver.TAGTUNER_PORT)
         self.tuner_server_port = port
         self.tuner_server_url = f"http://localhost:{port}/"
 
@@ -877,29 +860,12 @@ class RunnerApp:
         if self.tagpup_server_instance:
             return
 
-        def find_available_port(start_port=8090):
-            import socket
-            port = start_port
-            while True:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    try:
-                        s.connect(("127.0.0.1", port))
-                        port += 1
-                        continue
-                    except (ConnectionRefusedError, OSError):
-                        pass
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    try:
-                        s.bind(("", port))
-                        return port
-                    except OSError:
-                        port += 1
-
         # Select correct database depending on global setting and config.ini
         default_db = libraries.for_mode(tagpup_config.default_db(), self.var_test_db.get())
         db_path = tagpup_config.library_path(default_db)
 
-        port = find_available_port(8090)
+        import localserver
+        port = localserver.find_available_port(localserver.TAGPUP_PORT)
         self.tagpup_server_port = port
         self.tagpup_server_url = f"http://localhost:{port}/"
 

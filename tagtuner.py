@@ -30,30 +30,10 @@ logger = logging.getLogger("tagtuner")
 # Add scripts directory to path to load tuner_server
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
 from tuner_server import start_server
+import localserver
 from tagpup_server import create_library
 from tagpup import config as tagpup_config
 from tagpup import logs as tagpup_logs
-
-def find_available_port(start_port=8080):
-    import socket
-    port = start_port
-    while True:
-        # Check if we can connect to the port (something is listening)
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.connect(("127.0.0.1", port))
-                port += 1
-                continue
-            except (ConnectionRefusedError, OSError):
-                pass
-        
-        # Double check by trying to bind to it
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.bind(("", port))
-                return port
-            except OSError:
-                port += 1
 
 def cleanup_zombie_processes():
     """Finds and terminates any other running python processes that are executing tagtuner.py or tuner_server.py."""
@@ -131,7 +111,7 @@ def main():
     if port_env:
         port = int(port_env)
     else:
-        port = find_available_port(8080)
+        port = localserver.find_available_port(localserver.TAGTUNER_PORT)
         os.environ["TAGTUNER_PORT"] = str(port)
     url = f"http://localhost:{port}/"
     

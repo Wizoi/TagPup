@@ -343,5 +343,26 @@ class TheYearOfAPhotoWithNone(unittest.TestCase):
         self.assertEqual([], sources_matching(r"[\"']Unknown[\"']", os.path.join("tagpup", "core", "dates.py")))
 
 
+class TheAppsPorts(unittest.TestCase):
+    """The port each app starts from, and how a free one is found, are scripts/localserver's:
+    TagPup's and TagTuner's launchers, the runner (twice) and both servers' start_server
+    each wrote the port, and the four launchers each had a find_available_port."""
+
+    def test_localserver_finds_one(self):
+        import socket
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import localserver
+        self.assertEqual((8080, 8090), (localserver.TAGTUNER_PORT, localserver.TAGPUP_PORT))
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as taken:
+            taken.bind(("127.0.0.1", 0))
+            taken.listen(1)
+            busy = taken.getsockname()[1]
+            self.assertGreater(localserver.find_available_port(busy), busy)
+
+    def test_nobody_else_has_them(self):
+        owner = os.path.join("scripts", "localserver.py")
+        self.assertEqual([], sources_matching(r"def find_available_port|\b80[89]0\b", owner))
+
+
 if __name__ == "__main__":
     unittest.main()

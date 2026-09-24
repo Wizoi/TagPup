@@ -2345,7 +2345,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 #: worth two seconds on every click.
 ThreadedHTTPServer = localserver.ThreadedHTTPServer
 
-def start_server(port=8080, db_path=None, gui_dir="gui"):
+def start_server(port=localserver.TAGTUNER_PORT, db_path=None, gui_dir="gui"):
     db_path = db_path or tagpup_config.default_library()
     TunerHTTPRequestHandler.db_path = db_path
     TunerHTTPRequestHandler.gui_dir = gui_dir

@@ -38,6 +38,34 @@ from tagpup.services import photos as photo_actions
 logger = logging.getLogger(__name__)
 requests_log = logging.getLogger(REQUESTS)
 
+#: The port each app looks for a free one from: TagTuner's, and TagPup's. The launchers,
+#: the runner and both servers' start_server each wrote them (docs/findings.md, #74).
+TAGTUNER_PORT = 8080
+TAGPUP_PORT = 8090
+
+
+def find_available_port(start_port):
+    """The first port from `start_port` up that nothing answers on and this process can
+    bind. Each of the four launchers had a copy of this."""
+    port = start_port
+    while True:
+        # Something listening already: an app of ours, or anything else.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.connect(("127.0.0.1", port))
+                port += 1
+                continue
+            except OSError:
+                pass
+        # And one that can be had: binding it says so.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("", port))
+                return port
+            except OSError:
+                port += 1
+
+
 #: A request slower than this is logged with how long it took.
 SLOW_REQUEST_SECONDS = 1.0
 
