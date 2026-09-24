@@ -8,13 +8,16 @@ import json
 import os
 import sys
 import unittest
+from unittest import mock
 
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from service_fixture import TempLibrary  # noqa: E402
 
+from tagpup.core import paths  # noqa: E402
 from tagpup.core.result import Conflict, NotFound  # noqa: E402
+from tagpup.store import db  # noqa: E402
 from tagpup.services import faces  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 
@@ -201,6 +204,41 @@ class Automatching(FacesCase):
         self.face(photo, embedding=vector(3))
         result = faces.automatch_folder(self.lib.library, self.folder, self.named)
         self.assertEqual(result.details["remaining_counts"], {photo: 1})
+
+
+class TheWriteLockIsNotHeldThroughAScan(FacesCase):
+    """docs/findings.md, #45: folder automatch read every named face under the folder,
+    a scan of the whole table, while holding the write lock."""
+
+    def test_the_names_on_a_photo_are_found_by_an_index(self):
+        conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
+        try:
+            where, params = paths.sql_equals("photo_path", self.photo("a.jpg"))
+            plan = " ".join(row[-1] for row in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT name FROM faces WHERE " + where + " AND name IS NOT NULL", params))
+        finally:
+            conn.close()
+        self.assertIn("USING INDEX", plan)
+        self.assertNotIn("SCAN faces", plan)
+
+    def test_automatching_a_folder_reads_names_only_of_the_photos_it_may_change(self):
+        photo = self.photo("a.jpg")
+        self.face(photo, embedding=vector(1))
+        for other in range(3):
+            self.face(self.photo("other%d.jpg" % other), name="Kit Morrow")
+        asked = []
+        real = store_faces.names_in_photo
+
+        def names_in_photo(conn, path):
+            asked.append(path)
+            return real(conn, path)
+
+        with mock.patch.object(store_faces, "names_in_photo", side_effect=names_in_photo):
+            faces.automatch_folder(self.lib.library, self.folder,
+                                   lambda: ([1], ["Wren Halloway"], np.stack([vector(1)])))
+        self.assertEqual(asked, [photo])
+        self.assertEqual(self.face_row(self.lib.rows("SELECT id FROM faces WHERE photo_path = ?",
+                                                     (photo,))[0][0])[0], "Wren Halloway")
 
 
 class RemovingAFolder(FacesCase):

@@ -18,6 +18,14 @@ from tagpup.store import db
 logger = logging.getLogger(__name__)
 
 
+def names_in_photo(conn, photo_path):
+    """The names given to faces in one photo, on `conn`. By equality, which the index on
+    photo_path serves."""
+    where, params = paths.sql_equals("photo_path", photo_path)
+    return {name for (name,) in conn.execute(
+        "SELECT name FROM faces WHERE " + where + " AND name IS NOT NULL", params)}
+
+
 def generation(conn):
     """The faces table's generation counter (PhotoIndex keeps it moving with triggers),
     or 0 on a library that does not have it yet. It moves when a name changes, which

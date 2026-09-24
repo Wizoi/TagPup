@@ -341,13 +341,12 @@ def _automatch(library, where, params, named):
         return result
 
     def match(conn):
-        already = {}
-        for name, photo_path in conn.execute("SELECT name, photo_path FROM faces WHERE " + where
-                                             + " AND name IS NOT NULL", params):
-            already.setdefault(paths.key(photo_path), set()).add(name)
         count = 0
         for photo_path, faces_proposed in proposed.items():
-            taken = already.get(paths.key(photo_path), set())
+            # Only the photos a name is proposed for, each by an index. Reading every
+            # named face under the folder scanned the whole table inside the write lock,
+            # and every other face action waited (docs/findings.md, #45).
+            taken = faces.names_in_photo(conn, photo_path)
             proposed_names = [name for _fid, name in faces_proposed]
             gained = set()
             for face_id, name in faces_proposed:
