@@ -28,12 +28,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-try:
-    from . import db as tagpup_db
-    from . import paths as photo_paths
-except ImportError:  # imported as a top-level module
-    import db as tagpup_db
-    import paths as photo_paths   # not `paths`: the walks below use that name
+import _root  # noqa: E402,F401
+import db as tagpup_db  # noqa: E402
+import paths as photo_paths  # noqa: E402  -- not `paths`: the walks below use that name
+from tagpup.store import faces as store_faces  # noqa: E402
+from tagpup.store import photos as store_photos  # noqa: E402
 
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".heic", ".webp")
@@ -45,11 +44,7 @@ def stem_of(path):
 
 def dead_rows(conn):
     """Index rows whose file is not on disk, keyed by the folder they claim."""
-    rows = []
-    for (path,) in conn.execute("SELECT path FROM photos"):
-        if path and not os.path.exists(path):
-            rows.append(path)
-    return rows
+    return [path for path in store_photos.all_paths(conn) if path and not os.path.exists(path)]
 
 
 def identities(folder, exiftool_path=None):
@@ -172,19 +167,8 @@ def plan_for(db_path, exiftool_path=None):
         merge_unambiguous(by_identity, identities(folder, exiftool_path))
 
     # A dead row's own identity, where indexing recorded one.
-    row_identity = {}
-    try:
-        for path, doc_id in conn.execute(
-                "SELECT path, document_id FROM photos WHERE document_id IS NOT NULL"):
-            if path and doc_id:
-                row_identity[path] = str(doc_id).strip()
-    except Exception:
-        pass   # a database indexed before identities existed
-
-    live = set()
-    for (path,) in conn.execute("SELECT path FROM photos"):
-        if path and os.path.exists(path):
-            live.add(photo_paths.key(path))
+    row_identity = store_photos.identities(conn)
+    live = {photo_paths.key(path) for path in store_photos.all_paths(conn) if path and os.path.exists(path)}
 
     moves, unmatched = [], []
     claimed = set()
@@ -202,11 +186,7 @@ def plan_for(db_path, exiftool_path=None):
             unmatched.append(old)
             continue
         claimed.add(key)
-        faces = conn.execute(
-            "SELECT COUNT(*) FROM faces WHERE photo_path = ?", (old,)).fetchone()[0]
-        named = conn.execute(
-            "SELECT COUNT(*) FROM faces WHERE photo_path = ? AND name IS NOT NULL",
-            (old,)).fetchone()[0]
+        faces, named = store_faces.counts_on(conn, old)
         moves.append({"from": old, "to": new, "faces": faces, "named": named})
 
     conn.close()

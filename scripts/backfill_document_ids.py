@@ -26,21 +26,19 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-try:
-    from . import db as tagpup_db
-    from . import paths as photo_paths
-except ImportError:  # imported as a top-level module
-    import db as tagpup_db
-    import paths as photo_paths   # not `paths`: backfill() takes a list by that name
+import _root  # noqa: E402,F401
+import db as tagpup_db  # noqa: E402
+import paths as photo_paths  # noqa: E402  -- not `paths`: backfill() takes a list by that name
+from tagpup.store import photos as store_photos  # noqa: E402
 
 from identity import ensure_document_id, read_document_id
 
 
 def rows_without_identity(db_path):
     """Indexed photos with no identity recorded, and whether their file is there."""
-    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)  # not a path: the database file's URI
+    conn = tagpup_db.connect(tagpup_db.readonly_uri(db_path), uri=True)
     try:
-        conn.execute("SELECT document_id FROM photos LIMIT 1")
+        without = store_photos.without_identity(conn)
     except Exception:
         conn.close()
         # `from None`: the underlying "no such column" is noise in front of a message
@@ -49,13 +47,10 @@ def rows_without_identity(db_path):
             "%s has no document_id column yet; open it with TagPup once so the "
             "migration runs." % db_path) from None
 
-    missing, gone = [], []
-    for (path,) in conn.execute(
-            "SELECT path FROM photos WHERE document_id IS NULL OR document_id = ''"):
-        if not path:
-            continue
-        (missing if os.path.exists(path) else gone).append(path)
     conn.close()
+    missing, gone = [], []
+    for path in without:
+        (missing if os.path.exists(path) else gone).append(path)
     return missing, gone
 
 
@@ -67,22 +62,15 @@ def record(db_path, found, minted=()):
     the old ones, every scan afterwards distrusted it and read it again.
     """
     def store(conn):
-        cursor = conn.cursor()
         written = 0
         for path, doc_id in found.items():
-            where, params = photo_paths.sql_equals("path", path)
+            stat = None
             if path in minted:
                 try:
                     stat = os.stat(path)
                 except OSError:
                     stat = None
-                if stat is not None:
-                    cursor.execute("UPDATE photos SET document_id = ?, mtime = ?, size = ? WHERE " + where,
-                                   (doc_id, stat.st_mtime, stat.st_size) + params)
-                    written += cursor.rowcount
-                    continue
-            cursor.execute("UPDATE photos SET document_id = ? WHERE " + where, (doc_id,) + params)
-            written += cursor.rowcount
+            written += store_photos.record_identity(conn, path, doc_id, stat)
         return written
 
     return tagpup_db.write_with_connection(

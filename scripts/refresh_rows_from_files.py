@@ -39,6 +39,8 @@ from metadata import MetadataExtractor, extract_tags, photo_people  # noqa: E402
 
 import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
+from tagpup.store import faces as store_faces  # noqa: E402
+from tagpup.store import photos as store_photos  # noqa: E402
 
 
 #: UTF-8 bytes decoded as cp1252: "ü" -> "Ã¼", "é" -> "Ã©", "–" -> "â€“", nbsp -> "Â ".
@@ -113,13 +115,7 @@ def people_checker(conn):
     from metadata import PeopleVocabulary, extract_people
 
     vocabulary = PeopleVocabulary.load(conn=conn)
-    named = {}
-    try:
-        for photo_path, name in conn.execute(
-                "SELECT photo_path, name FROM faces WHERE name IS NOT NULL AND excluded = 0"):
-            named.setdefault(paths.key(photo_path), set()).add(name)
-    except Exception:
-        pass   # no faces table: keyword people only
+    named = store_faces.names_by_photo_key(conn)
 
     def missing(path, raw_json, tags_json, people_json):
         try:
@@ -140,16 +136,10 @@ def plan(conn, folder=None, seen=None):
     `seen`, if given, is filled with each stale row's (mtime, size) as found here --
     before any file is read. It is what the write checks the row still has.
     """
-    import paths
 
     stale, captions_only = {}, {}
-    query = "SELECT path, mtime, size, tags, captions, raw_metadata, people FROM photos"
-    params = ()
-    if folder:
-        clause, params = paths.sql_under("path", folder)
-        query += " WHERE " + clause
     missing_people = people_checker(conn)
-    for row in conn.execute(query, params):
+    for row in store_photos.rows_to_check(conn, folder):
         reasons = why_stale(row[:6])
         if reasons is not None and missing_people(row[0], row[5], row[3], row[6]):
             reasons.append("people incomplete")
@@ -185,9 +175,7 @@ def read_files(photo_paths, db_path, exiftool_path=None):
 
 
 def differences(conn, path, record):
-    tags, people, captions, raw_json, mtime, size, doc_id = conn.execute(
-        "SELECT tags, people, captions, raw_metadata, mtime, size, document_id"
-        " FROM photos WHERE path = ?", (path,)).fetchone()
+    tags, people, captions, raw_json, mtime, size, doc_id = store_photos.row_as_recorded(conn, path)
     changed = []
     if sorted(json.loads(tags or "[]")) != sorted(record["tags"]):
         changed.append("tags")
@@ -217,21 +205,10 @@ def record_all(db_path, records, to_write, captions_only, seen=None):
     def store(conn):
         from_files = 0
         for path in to_write:
-            r = records[path]
-            guard, guard_params = "", ()
-            if path in seen:
-                guard, guard_params = " AND mtime IS ? AND size IS ?", seen[path]
-            from_files += conn.execute(
-                "UPDATE photos SET tags = ?, people = ?, captions = ?, raw_metadata = ?,"
-                " mtime = ?, size = ?, document_id = COALESCE(document_id, ?) WHERE path = ?"
-                + guard,
-                (json.dumps(r["tags"]), json.dumps(r["people"]), json.dumps(r["captions"]),
-                 json.dumps(r["raw_metadata"]), r["mtime"], r["size"], r.get("document_id"),
-                 path) + tuple(guard_params)).rowcount
+            from_files += store_photos.record_refreshed(conn, path, records[path], seen.get(path))
         captions = 0
         for path, fixed in captions_only.items():
-            captions += conn.execute("UPDATE photos SET captions = ? WHERE path = ?",
-                                     (json.dumps(fixed), path)).rowcount
+            captions += store_photos.set_captions(conn, path, fixed)
         return from_files, captions
     return tagpup_db.write_with_connection(db_path, store, label="refresh rows from files")
 

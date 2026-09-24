@@ -6,11 +6,6 @@ extracts real animal face crops, and indexes them in test_photo_index.db.
 """
 
 import os
-try:
-    from . import db as tagpup_db
-except ImportError:  # imported as a top-level module
-    import db as tagpup_db
-import json
 import numpy as np
 from PIL import Image
 import io
@@ -18,6 +13,9 @@ import shutil
 import sys
 
 import _root  # noqa: F401
+import db as tagpup_db
+from tagpup.store import faces as store_faces
+from tagpup.store import photos as store_photos
 
 # Ensure project root is in search path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -78,7 +76,6 @@ def main():
 
     # 4. Connect to database to write mock records
     conn = tagpup_db.connect(DB_PATH)
-    c = conn.cursor()
 
     # Stored the way the indexer stores them. These rows used forward slashes, the
     # opposite of production, so the screenshots were taken of a database no real
@@ -108,34 +105,22 @@ def main():
     puppy2_crop = crop_image_face(os.path.join(new_dir, "puppy2.png"), puppy2_face_box)
 
     # Insert puppy image representing training set (already matched in database)
-    c.execute("""
-        INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        puppy_path, 1000000000.0, 728759, 
-        json.dumps(["Pets", "Pets/Puppy"]), 
-        json.dumps(["Puppy"]), 
-        json.dumps(["A cute brown puppy sitting on the grass."]), 
-        json.dumps({
+    store_photos.record_indexed(conn, puppy_path, {
+        "mtime": 1000000000.0, "size": 728759,
+        "tags": ["Pets", "Pets/Puppy"],
+        "people": ["Puppy"],
+        "captions": ["A cute brown puppy sitting on the grass."],
+        "raw_metadata": {
             "EXIF:Make": "Canon",
             "EXIF:Model": "Canon EOS R5",
             "EXIF:DateTimeOriginal": "2026:06:01 12:00:00"
-        }),
-        clip_emb.tobytes()
-    ))
+        },
+        "embedding": clip_emb.tobytes(),
+    })
 
     # Insert face for puppy representing already matched face
-    c.execute("""
-        INSERT INTO faces (photo_path, box, embedding, name, crop_image, prob)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        puppy_path,
-        json.dumps(puppy_face_box),
-        face_emb.tobytes(),
-        "Puppy", # Matched to Puppy!
-        puppy_crop,
-        0.98
-    ))
+    store_faces.insert(conn, puppy_path, puppy_face_box, face_emb.tobytes(),
+                       name="Puppy", crop=puppy_crop, prob=0.98)  # matched to Puppy
 
     # Insert puppy2 image representing new content (untagged, unmatched face)
     clip_emb_puppy2 = np.random.randn(1024).astype(np.float32)
@@ -143,34 +128,21 @@ def main():
     
     # We set puppy2's face embedding to be identical to puppy's face embedding
     # so face recognition matches them!
-    c.execute("""
-        INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        puppy2_path, 1000001000.0, 728759,
-        json.dumps([]),
-        json.dumps([]),
-        json.dumps([]),
-        json.dumps({
+    store_photos.record_indexed(conn, puppy2_path, {
+        "mtime": 1000001000.0, "size": 728759,
+        "tags": [], "people": [], "captions": [],
+        "raw_metadata": {
             "EXIF:Make": "Sony",
             "EXIF:Model": "Sony A7R IV",
             "EXIF:DateTimeOriginal": "2026:06:20 15:30:00"
-        }),
-        clip_emb_puppy2.tobytes()
-    ))
+        },
+        "embedding": clip_emb_puppy2.tobytes(),
+    })
 
     # Insert unmatched face for puppy2
-    c.execute("""
-        INSERT INTO faces (photo_path, box, embedding, name, crop_image, prob)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        puppy2_path,
-        json.dumps(puppy2_face_box),
-        face_emb.tobytes(), # 100% match face embedding
-        None, # Unmatched face!
-        puppy2_crop,
-        0.98
-    ))
+    # The same face embedding as the puppy's, unnamed: face recognition matches them.
+    store_faces.insert(conn, puppy2_path, puppy2_face_box, face_emb.tobytes(),
+                       crop=puppy2_crop, prob=0.98)
 
     conn.commit()
     conn.close()

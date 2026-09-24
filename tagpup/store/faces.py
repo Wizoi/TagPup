@@ -475,3 +475,53 @@ def named_embeddings_elsewhere(conn, photo_path):
 def photos_with_faces(conn):
     """The photo paths, as stored, that have any face row."""
     return {photo_path for (photo_path,) in conn.execute("SELECT DISTINCT photo_path FROM faces")}
+
+
+def names_by_photo_key(conn):
+    """{paths.key of a photo: names on its faces that are not excluded}."""
+    named = {}
+    for photo_path, name in conn.execute(
+            "SELECT photo_path, name FROM faces WHERE name IS NOT NULL AND excluded = 0"):
+        named.setdefault(paths.key(photo_path), set()).add(name)
+    return named
+
+
+def counts_on(conn, stored_path):
+    """(faces, named faces) recorded under exactly `stored_path`."""
+    return conn.execute("SELECT COUNT(*), COUNT(name) FROM faces WHERE photo_path = ?",
+                        (stored_path,)).fetchone()
+
+
+# ---- What dedupe_faces reads and writes -------------------------------------------------
+
+def decisions(conn):
+    """(id, photo_path, box JSON, name, name_source, excluded) of every face: what was
+    decided about each, without its embedding or crop."""
+    return conn.execute("SELECT id, photo_path, box, name, name_source, excluded FROM faces").fetchall()
+
+
+def delete(conn, face_ids):
+    """Delete faces by id. Returns rows deleted. The caller commits."""
+    return sum(conn.execute("DELETE FROM faces WHERE " + _in(chunk), chunk).rowcount
+               for chunk in _chunks(face_ids))
+
+
+# ---- What verify_workflow reads --------------------------------------------------------
+
+def latest_unnamed_ids(conn, limit):
+    """The ids of the most recently detected unnamed faces still in play."""
+    return [face_id for (face_id,) in conn.execute(
+        "SELECT id FROM faces WHERE name IS NULL AND excluded = 0 ORDER BY id DESC LIMIT ?", (limit,))]
+
+
+def is_excluded(conn, face_id):
+    """Whether a face is excluded; None when there is no such face."""
+    row = conn.execute("SELECT excluded FROM faces WHERE id = ?", (face_id,)).fetchone()
+    return None if row is None else bool(row[0])
+
+
+def busiest_photo(conn):
+    """The photo, as stored, with the most faces; None with no faces."""
+    row = conn.execute("SELECT photo_path FROM faces GROUP BY photo_path"
+                       " ORDER BY COUNT(*) DESC LIMIT 1").fetchone()
+    return row[0] if row else None

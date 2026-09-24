@@ -27,10 +27,6 @@ import argparse
 import json
 import os
 import shutil
-try:
-    from . import db as tagpup_db
-except ImportError:  # imported as a top-level module
-    import db as tagpup_db
 import subprocess
 import sys
 import threading
@@ -41,6 +37,11 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import _root  # noqa: E402,F401
+import db as tagpup_db  # noqa: E402
+from tagpup.store import checks  # noqa: E402
+from tagpup.store import faces as store_faces  # noqa: E402
 
 #: Chosen when the run starts. They were fixed (9401, 9402), so two runs at once --
 #: or a run beside a test suite -- could reach each other's servers.
@@ -214,28 +215,18 @@ def main():
     return report.summary()
 
 
-def db(work_db, query, args=()):
-    conn = tagpup_db.connect(f"file:{work_db}?mode=ro", uri=True)
+def read(work_db, question, *args):
+    """Ask the working copy `question`, a tagpup.store function, read-only."""
+    conn = tagpup_db.connect(tagpup_db.readonly_uri(work_db), uri=True)
     try:
-        row = conn.execute(query, args).fetchone()
-        return row[0] if row else None
-    finally:
-        conn.close()
-
-
-def db_all(work_db, query, args=()):
-    conn = tagpup_db.connect(f"file:{work_db}?mode=ro", uri=True)
-    try:
-        return [r[0] for r in conn.execute(query, args).fetchall()]
+        return question(conn, *args)
     finally:
         conn.close()
 
 
 def run_checks(report, work_db, args):
-    photos0 = db(work_db, "SELECT COUNT(*) FROM photos")
-    faces0 = db(work_db, "SELECT COUNT(*) FROM faces")
-    named0 = db(work_db, "SELECT COUNT(*) FROM faces WHERE name IS NOT NULL")
-    manual0 = db(work_db, "SELECT COUNT(*) FROM faces WHERE name_source = 'manual'")
+    before = read(work_db, checks.summary)
+    photos0, faces0, named0, manual0 = before["photos"], before["faces"], before["named"], before["manual"]
     print(f"baseline: photos={photos0} faces={faces0} named={named0} manual={manual0}\n")
 
     folder = args.folder
@@ -259,18 +250,16 @@ def run_checks(report, work_db, args):
                      isinstance(final, dict) and final.get("status") == "completed",
                      str(final.get("message", ""))[:60] if isinstance(final, dict) else str(final))
 
-        photos1 = db(work_db, "SELECT COUNT(*) FROM photos")
-        faces1 = db(work_db, "SELECT COUNT(*) FROM faces")
+        after = read(work_db, checks.summary)
+        photos1, faces1 = after["photos"], after["faces"]
         added = photos1 - photos0
         report.check("new photos indexed", added > 0, f"{photos0} -> {photos1}")
         report.check("faces detected in them", faces1 > faces0, f"{faces0} -> {faces1}")
         if added > 0:
             print(f"        throughput: {elapsed/added:.2f}s per photo ({added} in {elapsed:.0f}s)")
         report.check("untagged photos were indexed",
-                     db(work_db, "SELECT COUNT(*) FROM photos WHERE tags IS NULL OR tags = '[]'") > 0)
-        MANUAL_Q = "SELECT COUNT(*) FROM faces WHERE name_source = 'manual'"
-        NAMED_Q = "SELECT COUNT(*) FROM faces WHERE name IS NOT NULL"
-        manual1, named1 = db(work_db, MANUAL_Q), db(work_db, NAMED_Q)
+                     after["untagged"] > 0)
+        manual1, named1 = after["manual"], after["named"]
         report.check("indexing preserved every manual name", manual1 == manual0,
                      f"manual {manual0} -> {manual1}")
         report.check("indexing assigned no names by itself", named1 == named0,
@@ -292,10 +281,7 @@ def run_checks(report, work_db, args):
     # has the highest id. The check below is that an excluded face stops being offered;
     # a face nobody was being offered in the first place passes it without testing it.
     peer, face, offered_before = None, None, set()
-    for candidate in db_all(
-        work_db,
-        "SELECT id FROM faces WHERE name IS NULL AND excluded = 0 ORDER BY id DESC LIMIT 40",
-    ):
+    for candidate in read(work_db, store_faces.latest_unnamed_ids, 40):
         _, cand = call(TUNER_PORT, f"/api/face-matches-unmatched?id={candidate}")
         ids = {m["id"] for m in cand.get("matches", [])} if isinstance(cand, dict) else set()
         if ids:
@@ -325,11 +311,10 @@ def run_checks(report, work_db, args):
         )
         call(TUNER_PORT, "/api/faces/restore", {"face_ids": [face]})
         report.check("restore leaves no residue",
-                     db(work_db, "SELECT excluded FROM faces WHERE id = ?", (face,)) == 0)
+                     read(work_db, store_faces.is_excluded, face) is False)
 
     print("\nTagPup: the faces on a photo")
-    sample = db(work_db, "SELECT photo_path FROM faces GROUP BY photo_path"
-                         " ORDER BY COUNT(*) DESC LIMIT 1")
+    sample = read(work_db, store_faces.busiest_photo)
     if sample:
         _, faces = call(TAGPUP_PORT, f"/api/photo-faces?path={urllib.parse.quote(sample)}")
         report.check("photo-faces lists them", faces.get("total", 0) > 0,

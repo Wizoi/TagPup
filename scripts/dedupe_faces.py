@@ -24,12 +24,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-try:
-    from . import db as tagpup_db
-    from . import paths
-except ImportError:  # imported as a top-level module
-    import db as tagpup_db
-    import paths
+import _root  # noqa: E402,F401
+import db as tagpup_db  # noqa: E402
+import paths  # noqa: E402
+from tagpup.store import faces as store_faces  # noqa: E402
 
 
 def knows_something(row):
@@ -52,10 +50,11 @@ def knows_something(row):
 
 def plan_for(db_path):
     """Which face rows duplicate another, and which copy to keep."""
-    conn = tagpup_db.connect("file:%s?mode=ro" % db_path.replace("\\", "/"), uri=True)  # not a path: the database file's URI
-    rows = conn.execute(
-        "SELECT id, photo_path, box, name, name_source, excluded FROM faces").fetchall()
-    conn.close()
+    conn = tagpup_db.connect(tagpup_db.readonly_uri(db_path), uri=True)
+    try:
+        rows = store_faces.decisions(conn)
+    finally:
+        conn.close()
 
     # By paths.key: the same box on the same file is one face however each copy
     # spelled the photo's path.
@@ -93,14 +92,7 @@ def apply_plan(db_path, redundant):
     ids = [row[0] for row in redundant]
 
     def remove(conn):
-        cursor = conn.cursor()
-        removed = 0
-        for start in range(0, len(ids), 500):
-            chunk = ids[start:start + 500]
-            cursor.execute(
-                "DELETE FROM faces WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk)
-            removed += cursor.rowcount
-        return removed
+        return store_faces.delete(conn, ids)
 
     return tagpup_db.write_with_connection(
         db_path, remove, label="remove %d duplicate face row(s)" % len(ids))

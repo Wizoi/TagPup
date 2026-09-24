@@ -520,3 +520,83 @@ def set_captions(conn, photo_path, captions):
     where, params = paths.sql_equals("path", photo_path)
     return conn.execute("UPDATE photos SET captions = ? WHERE " + where,
                         (json.dumps(captions),) + params).rowcount
+
+
+# ---- What refresh_rows_from_files reads and writes --------------------------------------
+
+def rows_to_check(conn, folder=None):
+    """(path, mtime, size, tags JSON, captions JSON, raw_metadata JSON, people JSON) of
+    every photo, or of those under `folder`: what is compared with the files."""
+    query = "SELECT path, mtime, size, tags, captions, raw_metadata, people FROM photos"
+    params = ()
+    if folder:
+        where, params = paths.sql_under("path", folder)
+        query += " WHERE " + where
+    return conn.execute(query, params).fetchall()
+
+
+def row_as_recorded(conn, stored_path):
+    """(tags, people, captions, raw_metadata, mtime, size, document_id) of the row stored
+    under exactly `stored_path`, or None."""
+    return conn.execute("SELECT tags, people, captions, raw_metadata, mtime, size, document_id"
+                        " FROM photos WHERE path = ?", (stored_path,)).fetchone()
+
+
+def record_refreshed(conn, stored_path, record, seen=None):
+    """Record what was read from a photo's file: tags, people, captions, raw_metadata,
+    mtime, size, and its document_id where the row has none. With `seen` (mtime, size),
+    only while the row still has them: a row the app saved since describes something
+    newer. Returns rows changed. The caller commits."""
+    guard, guard_params = "", ()
+    if seen is not None:
+        guard, guard_params = " AND mtime IS ? AND size IS ?", tuple(seen)
+    return conn.execute(
+        "UPDATE photos SET tags = ?, people = ?, captions = ?, raw_metadata = ?, mtime = ?, size = ?,"
+        " document_id = COALESCE(document_id, ?) WHERE path = ?" + guard,
+        (json.dumps(record["tags"]), json.dumps(record["people"]), json.dumps(record["captions"]),
+         json.dumps(record["raw_metadata"]), record["mtime"], record["size"], record.get("document_id"),
+         stored_path) + guard_params).rowcount
+
+
+# ---- What relink_renamed_photos reads ---------------------------------------------------
+
+def all_paths(conn):
+    """Every photo's path, as stored."""
+    return [path for (path,) in conn.execute("SELECT path FROM photos")]
+
+
+def identities(conn):
+    """{path as stored: document_id} for every photo whose identity is recorded."""
+    return {path: str(doc_id).strip() for path, doc_id in conn.execute(
+        "SELECT path, document_id FROM photos WHERE document_id IS NOT NULL") if path and doc_id}
+
+
+def tags_by_path(conn):
+    """(path as stored, tags) of each photo; a row whose tags cannot be read is left out."""
+    found = []
+    for path, tags_json in conn.execute("SELECT path, tags FROM photos"):
+        try:
+            found.append((path, json.loads(tags_json or "[]")))
+        except (TypeError, ValueError):
+            continue
+    return found
+
+
+# ---- What backfill_document_ids reads and writes ----------------------------------------
+
+def without_identity(conn):
+    """The paths, as stored, of photos with no document_id recorded. Raises on a library
+    from before the column."""
+    return [path for (path,) in conn.execute(
+        "SELECT path FROM photos WHERE document_id IS NULL OR document_id = ''") if path]
+
+
+def record_identity(conn, photo_path, document_id, stat=None):
+    """Record a photo's document_id; with `stat`, the mtime and size the file has now it
+    was written to. Returns rows changed. The caller commits."""
+    where, params = paths.sql_equals("path", photo_path)
+    if stat is not None:
+        return conn.execute("UPDATE photos SET document_id = ?, mtime = ?, size = ? WHERE " + where,
+                            (document_id, stat.st_mtime, stat.st_size) + params).rowcount
+    return conn.execute("UPDATE photos SET document_id = ? WHERE " + where,
+                        (document_id,) + params).rowcount

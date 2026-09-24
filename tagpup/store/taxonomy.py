@@ -319,6 +319,19 @@ def hidden_tags(conn):
     return {tag for (tag,) in conn.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")}
 
 
+def tags(conn):
+    """Every node's tag; none without a tree."""
+    if not tree_exists(conn):
+        return []
+    return [tag for (tag,) in conn.execute("SELECT tag FROM tag_taxonomy") if tag]
+
+
+def remove_node(conn, tag):
+    """Take one node out of the tree, and nothing under it. Returns nodes removed. The
+    caller commits."""
+    return conn.execute("DELETE FROM tag_taxonomy WHERE tag = ?", (tag,)).rowcount
+
+
 def face_flags(conn):
     """(tag, has_face) of every node; none without a tree."""
     if not tree_exists(conn):

@@ -18,19 +18,17 @@ leaf names are its correct content.
 Run with --apply to write. Without it, nothing is changed and the plan is printed.
 """
 import argparse
-import json
 import os
-try:
-    from . import db as tagpup_db
-except ImportError:  # imported as a top-level module
-    import db as tagpup_db
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
+import db as tagpup_db  # noqa: E402
 from tagpup.core import vocabulary  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.store import photos as store_photos  # noqa: E402
+from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 
 
 def leaf_of(tag):
@@ -39,30 +37,18 @@ def leaf_of(tag):
 
 def plan_for(db_path):
     """Which bare tags duplicate a pathed one, and which photos carry them."""
-    conn = tagpup_db.connect(db_path, timeout=60.0)
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'"
-    )
-    if not cursor.fetchone():
+    conn = tagpup_db.connect(tagpup_db.readonly_uri(db_path), uri=True)
+    if not store_taxonomy.tree_exists(conn):
         conn.close()
         raise SystemExit("no tag_taxonomy table in %s" % db_path)
 
-    cursor.execute("SELECT tag FROM tag_taxonomy")
-    tags = [r[0] for r in cursor.fetchall() if r[0]]
+    tags = store_taxonomy.tags(conn)
 
     # People only. A first pass over this library would also have rewritten
     # "Cross Country" to "Activity/Cross Country" and "Kentridge" to
     # "School/Kentridge" -- defensible tidying, but not what was asked for, and not
     # something a merge named after person tags should be doing quietly.
-    people_roots = {"people", "family", "friends"}
-    cursor.execute(
-        "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'"
-    )
-    for row in cursor.fetchall():
-        if row[0]:
-            people_roots.add(row[0].strip().lower())
+    people_roots = store_taxonomy.people_roots(conn)
 
     def under_people(tag):
         return vocabulary.key(vocabulary.root_of(tag)) in people_roots
@@ -80,12 +66,7 @@ def plan_for(db_path):
     }
 
     affected = []
-    cursor.execute("SELECT path, tags FROM photos")
-    for photo_path, tags_json in cursor.fetchall():
-        try:
-            photo_tags = json.loads(tags_json or "[]")
-        except Exception:
-            continue
+    for photo_path, photo_tags in store_photos.tags_by_path(conn):
         # Reported for information only; these rows are not changed.
         if any(t in duplicates for t in photo_tags):
             affected.append(photo_path)
@@ -97,9 +78,7 @@ def plan_for(db_path):
 def apply_plan(db_path, duplicates, affected):
     """Delete the duplicate nodes. Returns how many rows were deleted, not planned."""
     def delete(conn):
-        cursor = conn.cursor()
-        return sum(cursor.execute("DELETE FROM tag_taxonomy WHERE tag = ?", (bare,)).rowcount
-                   for bare in duplicates)
+        return sum(store_taxonomy.remove_node(conn, bare) for bare in duplicates)
 
     removed = tagpup_db.write_with_connection(db_path, delete, label="merge duplicate person tags")
 
