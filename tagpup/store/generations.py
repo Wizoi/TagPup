@@ -54,6 +54,13 @@ class Cache:
             self._entries[key] = (stamp, built)
         return built
 
+    def last(self, key, default=None):
+        """The value last built for `key`, whatever has moved since: for a library that
+        cannot be read just now, where what was read stands."""
+        with self._lock:
+            entry = self._entries.get(key)
+        return entry[1] if entry is not None else default
+
     def forget(self, key=None):
         """Drop one library's value, or every value."""
         with self._lock:
