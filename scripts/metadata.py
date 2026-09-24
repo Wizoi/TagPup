@@ -118,5 +118,8 @@ def build_photo_ui_record(path: str, meta: Dict[str, Any], mtime: float = 0.0, s
         "mtime": mtime,
         "size": size,
         "year": year_str,
+        # When it was taken, as the library records it (tagpup.core.dates.date_taken,
+        # photos.taken): the page reads this, not fields of its own (#67).
+        "taken": dates.date_taken(raw_meta),
         "raw_metadata": raw_meta
     }

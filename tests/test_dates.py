@@ -6,12 +6,14 @@ edited, not the date the photo was taken.
 """
 import ast
 import os
+import re
 import sys
 import unittest
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from tagpup.core import dates  # noqa: E402
 from shipped_sources import ROOT, python_sources  # noqa: E402
@@ -92,6 +94,24 @@ class OneReadingOfTheDate(unittest.TestCase):
             with open(os.path.join(ROOT, relative), encoding="utf-8") as handle:
                 problems += ["%s:%d" % (relative, line) for line in date_rule_lists(handle.read())]
         self.assertEqual(problems, [], "read the date through tagpup.core.dates: " + ", ".join(problems))
+
+    def test_the_pages_read_no_date_field_of_their_own(self):
+        # The TagPup page kept a list that took the date a file was modified for the
+        # date it was taken (#67); the pages read `taken` as the server gives it.
+        found = []
+        for page in (os.path.join("gui_tagpup", "app.js"), os.path.join("gui", "app.js")):
+            with open(os.path.join(ROOT, page), encoding="utf-8") as handle:
+                found += ["%s: %s" % (page, name) for name in
+                          sorted(set(re.findall(r"\b\w*(?:DateTimeOriginal|CreateDate|ModifyDate)\b", handle.read())))]
+        self.assertEqual([], found)
+
+    def test_the_page_is_given_when_each_photo_was_taken(self):
+        from metadata import build_photo_ui_record
+        record = build_photo_ui_record("D:/2019/a.jpg", {"raw_metadata": {
+            "EXIF:ModifyDate": "2024:01:01 00:00:00", "XMP:CreateDate": "2019:05:04 10:00:00"}})
+        self.assertEqual("2019:05:04 10:00:00", record["taken"])
+        self.assertIsNone(build_photo_ui_record("D:/a.jpg", {"raw_metadata": {
+            "EXIF:ModifyDate": "2024:01:01 00:00:00"}})["taken"])
 
     def test_the_guard_recognises_what_it_forbids(self):
         self.assertTrue(list(date_rule_lists(

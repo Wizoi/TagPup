@@ -280,14 +280,12 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const tagsDatalist = document.getElementById('tags-datalist');
     const peopleDatalist = document.getElementById('people-datalist');
-    const DATE_KEYS = [
-        "EXIF:DateTimeOriginal", "DateTimeOriginal",
-        "XMP:DateTimeOriginal",
-        "EXIF:CreateDate", "CreateDate",
-        "XMP:CreateDate",
-        "EXIF:ModifyDate", "OnlyDate",
-        "XMP:ModifyDate"
-    ];
+    /** When a photo was taken, as the server says (`taken`, from tagpup.core.dates):
+     *  "YYYY:MM:DD HH:MM:SS", or null. The page read fields of its own, and took the
+     *  date the file was last modified for the date it was taken (#67). */
+    function takenOf(photo) {
+        return (photo && photo.taken) || null;
+    }
 
     // App State
     let scannedFolder = '';
@@ -2327,17 +2325,8 @@ Click to add ${namesSomebody} to this photo.`;
             const dateSpan = document.createElement('span');
             dateSpan.className = 'thumbnail-date';
             let dateVal = "Unknown";
-            const rawMeta = photo.raw_metadata || {};
-            for (let k of DATE_KEYS) {
-                if (rawMeta[k]) {
-                    const localD = parseExifDateToLocalDate(rawMeta[k]);
-                    if (localD) {
-                        const stats = getFolderDateStats();
-                        dateVal = formatFriendlyDateSingle(localD, stats);
-                    }
-                    break;
-                }
-            }
+            const thumbDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));
+            if (thumbDate) dateVal = formatFriendlyDateSingle(thumbDate, getFolderDateStats());
             dateSpan.textContent = dateVal;
             textInfo.appendChild(dateSpan);
             infoRow.appendChild(textInfo);
@@ -2442,17 +2431,7 @@ Click to add ${namesSomebody} to this photo.`;
             // Calculate Date Taken Range
             const dateObjs = [];
             selectedPhotos.forEach(photo => {
-                let photoDate = null;
-                const rawMeta = photo.raw_metadata || {};
-                for (let k of DATE_KEYS) {
-                    if (rawMeta[k]) {
-                        const parsed = parseExifDateToLocalDate(rawMeta[k]);
-                        if (parsed) {
-                            photoDate = parsed;
-                            break;
-                        }
-                    }
-                }
+                const photoDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));
                 if (photoDate) {
                     dateObjs.push(photoDate);
                 }
@@ -2878,17 +2857,8 @@ Click to add ${namesSomebody} to this photo.`;
         mainImage.src = photoFileUrl(photo, 800);
         detailPath.textContent = photo.path;
         let dateVal = "Unknown";
-        const rawMeta = photo.raw_metadata || {};
-        for (let k of DATE_KEYS) {
-            if (rawMeta[k]) {
-                const localD = parseExifDateToLocalDate(rawMeta[k]);
-                if (localD) {
-                    const stats = getFolderDateStats();
-                    dateVal = formatFriendlyDateSingle(localD, stats);
-                }
-                break;
-            }
-        }
+        const shownDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));
+        if (shownDate) dateVal = formatFriendlyDateSingle(shownDate, getFolderDateStats());
         detailDateTaken.textContent = dateVal;
         // The same photo shown again -- a refresh -- keeps a title being typed.
         const typing = titleShown.path === path && inputPhotoTitle.value !== titleShown.title;
@@ -4112,16 +4082,8 @@ Click to add ${namesSomebody} to this photo.`;
     function getFolderDateStats() {
         const dates = [];
         folderPhotos.forEach(photo => {
-            const raw = photo.raw_metadata || {};
-            for (let k of DATE_KEYS) {
-                if (raw[k]) {
-                    const localD = parseExifDateToLocalDate(raw[k]);
-                    if (localD) {
-                        dates.push(localD);
-                        break;
-                    }
-                }
-            }
+            const localD = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));
+            if (localD) dates.push(localD);
         });
 
         if (dates.length === 0) {
@@ -4270,16 +4232,7 @@ Click to add ${namesSomebody} to this photo.`;
             const photo = folderPhotos.find(p => p.path === activePhotoPath);
             if (!photo) return;
             
-            let rawDate = null;
-            const rawMeta = photo.raw_metadata || {};
-            for (let k of DATE_KEYS) {
-                if (rawMeta[k]) {
-                    rawDate = rawMeta[k];
-                    break;
-                }
-            }
-            
-            const isoDate = exifDateToIso(rawDate) || getCurrentDateTimeIso();
+            const isoDate = exifDateToIso(takenOf(photo)) || getCurrentDateTimeIso();
             inputDateTaken.value = isoDate;
             dateTakenModal.classList.add('active');
         });
@@ -4320,11 +4273,8 @@ Click to add ${namesSomebody} to this photo.`;
                 }
                 const formattedDate = newDateVal.replace("T", " ").replace(/-/g, ":");
 
-                // Update in-memory record
-                photo.raw_metadata = photo.raw_metadata || {};
-                photo.raw_metadata["EXIF:DateTimeOriginal"] = formattedDate;
-                photo.raw_metadata["XMP:DateTimeOriginal"] = formattedDate;
-                photo.raw_metadata["EXIF:CreateDate"] = formattedDate;
+                // What the server now records as when it was taken.
+                photo.taken = formattedDate;
 
                 // Format and display in UI -- if this photo is still the one shown.
                 if (activePhotoPath === photo.path) {
