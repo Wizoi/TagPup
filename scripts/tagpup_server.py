@@ -3037,7 +3037,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 new_base = sanitize_filename(new_base)
                 ext = os.path.splitext(old_path)[1]
                 new_name = new_base + ext
-                new_path = os.path.join(folder_path, new_name)
+                # In the photo's own folder. A scan includes subfolders, and this
+                # joined every new name to the top one, moving photos out of theirs.
+                new_path = os.path.join(os.path.dirname(old_path), new_name)
 
                 selected_renames[old_path] = new_path
 
@@ -3059,28 +3061,66 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                     os.rename(target_path, safe_path)
                     occupant_moves[target_path] = safe_path
 
-            # Two-pass rename sequence to avoid self-overwrite conflicts in the selection range
-            temp_renames = {}
+            # Two passes through temporary names, so a run shuffling numbered names
+            # among themselves never lands on a name not yet vacated.
             import time
-            for old_path, target_path in selected_renames.items():
-                if old_path != target_path:
-                    dir_name = os.path.dirname(old_path)
-                    ext = os.path.splitext(old_path)[1]
-                    temp_path = os.path.join(dir_name, f"tmp_rename_{hash(old_path)}_{time.time()}{ext}")
-                    os.rename(old_path, temp_path)
-                    temp_renames[temp_path] = target_path
-                else:
-                    temp_renames[old_path] = target_path
 
-            updated_paths_map = {}
-            for temp_path, target_path in temp_renames.items():
-                if temp_path != target_path:
-                    os.rename(temp_path, target_path)
-                    orig_old_path = next(k for k, v in selected_renames.items() if v == target_path)
-                    updated_paths_map[orig_old_path] = target_path
-                else:
-                    updated_paths_map[target_path] = target_path
-                    
+            def temporary_name(path):
+                return os.path.join(os.path.dirname(path), "tmp_rename_%s_%s%s" % (
+                    hash(path), time.time(), os.path.splitext(path)[1]))
+
+            temp_of = {}             # old path -> where it waits
+            updated_paths_map = {}   # old path -> new path, once it is there
+            try:
+                for old_path, target_path in selected_renames.items():
+                    if old_path != target_path:
+                        temp_path = temporary_name(old_path)
+                        os.rename(old_path, temp_path)
+                        temp_of[old_path] = temp_path
+                    else:
+                        updated_paths_map[old_path] = target_path
+                for old_path, temp_path in list(temp_of.items()):
+                    os.rename(temp_path, selected_renames[old_path])
+                    del temp_of[old_path]
+                    updated_paths_map[old_path] = selected_renames[old_path]
+            except OSError as rename_err:
+                # Put every photo back under its old name. A failure part way used to
+                # leave them called tmp_rename_<hash>_<time>, with nothing to undo it.
+                # Back through temporary names again: a photo already renamed may hold
+                # the old name of one still waiting.
+                stranded = []
+                for old_path, new_path in list(updated_paths_map.items()):
+                    if old_path == new_path:
+                        continue
+                    try:
+                        temp_path = temporary_name(old_path)
+                        os.rename(new_path, temp_path)
+                        temp_of[old_path] = temp_path
+                    except OSError as back_err:
+                        stranded.append(new_path)
+                        logger.error("Smart Rename could not undo %s: %s", new_path, back_err)
+                for old_path, temp_path in temp_of.items():
+                    try:
+                        os.rename(temp_path, old_path)
+                    except OSError as back_err:
+                        stranded.append(temp_path)
+                        logger.error("Smart Rename could not put %s back as %s: %s",
+                                     temp_path, old_path, back_err)
+                for original, moved_aside in occupant_moves.items():
+                    try:
+                        os.rename(moved_aside, original)
+                    except OSError as back_err:
+                        stranded.append(moved_aside)
+                        logger.error("Smart Rename could not put %s back as %s: %s",
+                                     moved_aside, original, back_err)
+                logger.error("Smart Rename failed and was undone: %s", rename_err)
+                message = "Could not rename: %s. Every photo was put back under its old name." % rename_err
+                if stranded:
+                    message = ("Could not rename: %s. These could not be put back: %s"
+                               % (rename_err, ", ".join(stranded)))
+                self.send_json_error(500, message)
+                return
+
             # Tell the index where the photos went.
             #
             # Renaming on disk without this leaves a row naming a file that no longer
