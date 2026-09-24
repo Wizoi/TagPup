@@ -765,7 +765,7 @@ class TestIndexerNoiseFiltering(unittest.TestCase):
     """
 
     def summarize(self, line):
-        from tagpup_server import summarize_indexer_line
+        from tagpup.services.indexing import summarize_indexer_line
         return summarize_indexer_line(line)
 
     def test_the_bare_huggingface_warning_is_dropped(self):
@@ -834,7 +834,7 @@ class TestIndexerProgressText(unittest.TestCase):
     """
 
     def summarize(self, line):
-        from tagpup_server import summarize_indexer_line
+        from tagpup.services.indexing import summarize_indexer_line
 
         return summarize_indexer_line(line)
 

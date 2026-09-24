@@ -1,8 +1,10 @@
 """Adding a folder with face matching says so when face matching failed.
 
-Both apps index a folder through the CLI and then, when asked, run cluster-faces. Each
-had its own copy of those steps, and neither read cluster-faces' exit code: a crash
-while resolving identities was reported as "identities resolved".
+Adding a folder indexes it through the CLI and then, when asked, runs cluster-faces.
+Both apps had their own copy of those steps, and neither read cluster-faces' exit code:
+a crash while resolving identities was reported as "identities resolved". There is one
+copy now, tagpup.services.indexing.index_folder, and the folder's status in the queue
+says what it said.
 """
 import os
 import sys
@@ -12,12 +14,10 @@ from unittest.mock import MagicMock, patch
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-import paths  # noqa: E402
-from tagpup_server import TagPupHTTPRequestHandler, set_active_db_path  # noqa: E402
-from tuner_server import TunerHTTPRequestHandler  # noqa: E402
-from tuner_server import set_active_db_path as set_tuner_db_path  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.jobs.indexing import IndexQueue  # noqa: E402
+from tagpup.services import indexing  # noqa: E402
 
 
 def finished(returncode):
@@ -30,31 +30,23 @@ def finished(returncode):
 class IndexReportsFailedClustering(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.folder = self.tmp.name
-        self.db = os.path.join(self.tmp.name, "lib.db")
+        self.library = Library(os.path.join(self.tmp.name, "lib.db"))
 
-    def tearDown(self):
-        set_active_db_path(None)
-        set_tuner_db_path(None)
-        self.tmp.cleanup()
+    def index(self, folder, cluster, report):
+        return indexing.index_folder(self.library, folder, WORKSPACE_DIR, cluster=cluster,
+                                     report=report)
 
-    def run_thread(self, handler, set_db):
+    def test_the_folder_says_face_matching_failed(self):
+        queue = IndexQueue()
         # Index succeeds, clustering exits with an error.
-        with patch("subprocess.Popen", side_effect=[finished(0), finished(1)]) as popen:
-            handler.run_folder_index_thread(self.folder, self.db, True)
-        set_db(self.db)
-        status = handler.index_status.get(paths.key(self.folder))
-        handler.index_status.pop(paths.key(self.folder), None)
+        with patch("subprocess.Popen", side_effect=[finished(0), finished(1)]) as popen, \
+                patch.object(IndexQueue, "_ensure_runner"):
+            queue.start([self.folder], self.index, cluster=True)
+            queue.run_pending()
         self.assertEqual(["index", "cluster-faces"], [c.args[0][2] for c in popen.call_args_list])
-        return status
-
-    def test_tagpup_says_face_matching_failed(self):
-        status = self.run_thread(TagPupHTTPRequestHandler, set_active_db_path)
-        self.assertEqual("failed", status["status"], status)
-        self.assertIn("face identities failed", status["message"])
-
-    def test_tagtuner_says_face_matching_failed(self):
-        status = self.run_thread(TunerHTTPRequestHandler, set_tuner_db_path)
+        status = queue.status(self.folder)
         self.assertEqual("failed", status["status"], status)
         self.assertIn("face identities failed", status["message"])
 

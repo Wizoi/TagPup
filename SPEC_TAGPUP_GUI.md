@@ -197,7 +197,7 @@ to be sitting on `<body>`.
 
 ### `GET` Endpoints
 - `/api/databases`: Returns `{"databases": list, "selected": string}` — the selectable database names (without the `.db` suffix) and the current default from `config.ini`. Test databases and internal ones (validation, startup, embedding-cache) are excluded.
-- `/api/folder/index-status?path=<folder_path>`: Returns the status of the background folder indexing thread as `{"status": string, "percent": int, "message": string}`. Status values are `running`, `completed`, or `failed`; a folder that has never been indexed in this session reports `completed`.
+- `/api/folder/index-status?path=<folder_path>`: Returns how far indexing a folder has got, as `{"status": string, "percent": int, "message": string, "folder": string}`. Status values are `queued`, `running`, `completed`, `failed` or `cancelled`. A folder not asked about in this session reports `completed`, with the message `Ready` and no `folder`. The queue belongs to this server's process (`tagpup.jobs.indexing`), so an index started in TagTuner does not show here until one process serves both apps (docs/findings.md, #34).
 - `/api/browse-folder`: Invokes native folder dialog and returns selected path.
 - `/api/autocomplete-folder?path=<path_prefix>`: Returns autocomplete folder path suggestions based on Windows folder hierarchies.
 - `/api/folder/scan?path=<path>`: Scans folder and returns JSON array of photos.
@@ -216,7 +216,7 @@ to be sitting on `<body>`.
 - `/api/databases/select`: Expects JSON body `{"db_name": string}`. Persists the chosen database as `default_db` in `config.ini`, changing which database every subsequent launch opens by default.
 - `/api/databases/create`: Expects JSON body `{"db_name": string}`. Creates a new empty database file, seeded with the default taxonomy categories.
 - `/api/folder/suggest-start`: Expects JSON body `{"folder_path": string}`. Starts the background tagging suggest thread for a folder.
-- `/api/folder/index-start`: Expects JSON body `{"folder_path": string}`. Starts a background thread that runs `tagpup_cli.py index` over the folder and then `cluster-faces`, streaming progress to `/api/folder/index-status`. Only photos that already carry a tag, person, or caption are added to the index.
+- `/api/folder/index-start`: Expects JSON body `{"folder_path": string, "cluster": bool (optional, default false)}`. Queues the folder behind any others being added to this library. The queue is TagTuner's (`tagpup.jobs.indexing`) and indexes one folder at a time. Each folder is indexed by `tagpup_cli.py index`, then by `cluster-faces` only if `cluster` is true, and its progress shows at `/api/folder/index-status`. Returns `{"success": true, "status": "running", "queued": [], "already_queued": [], "invalid": [], "pending": int}`, or `400` when the path is not a folder. The page no longer calls this route; TagTuner adds folders. Only photos that already carry a tag, person, or caption are added to the index.
 - `/api/photo/delete`: Expects JSON body `{"path": string}`. Sends the photo to the Windows Recycle Bin and removes it from the index.
 - `/api/photo/rotate`: Expects JSON body `{"path": string, "direction": string}`. Rotates the photo 90 degrees on disk. `direction` must be `"left"` or `"right"`; any other value is rejected with `400`.
 - `/api/photo/open-explorer`: Expects JSON body `{"path": string}`. Opens the photo's directory in Windows File Explorer and selects it.

@@ -13,7 +13,6 @@ import urllib.parse
 import logging
 import re
 import threading
-import subprocess
 from http.server import BaseHTTPRequestHandler
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = 500000000
@@ -29,6 +28,8 @@ from tagpup.store.photos import move_rows as move_photo_rows  # noqa: F401  (sav
 from tagpup.store.photos import record_tags as record_tags_in_index  # noqa: F401  (writers, tests)
 from tagpup.store import taxonomy as store_taxonomy
 from tagpup.core.result import NotFound
+from tagpup.jobs import indexing as indexing_jobs
+from tagpup.services import indexing
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.services import tagging as tagging_actions
@@ -47,118 +48,6 @@ logger = logging.getLogger("tagpup.server")
 # faces, deleted photos kept theirs, and the folder scan never found its cached
 # metadata. The tests seeded their rows through that same function, so they agreed with
 # it and not with the data.
-
-_INDEXER_TQDM = re.compile(r"^(.*?):\s*(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
-
-#: Longest message worth putting on a progress bar. Past this it is ellipsised in
-#: the page anyway, so a truncated sentence is all anyone can read.
-_INDEXER_MAX_MESSAGE = 90
-
-#: The shapes library chatter arrives in. These are forms, not particular messages:
-#: blacklisting the text of one warning only waits for the next library to add one.
-_INDEXER_NOISE = (
-    # "2026-09-19 21:31:50,515 [INFO] root - Instantiating..."
-    re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+\s+\["),
-    # "WARNING:huggingface_hub.utils._http:Warning: You are sending..."
-    re.compile(r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL):[\w.]+:"),
-    # "Warning: You are sending unauthenticated requests to the HF Hub."
-    # Printed bare, with no prefix at all, which is how it reached the progress bar.
-    re.compile(r"^(User|Future|Deprecation|Runtime|Import|Resource)?Warning:", re.I),
-    # warnings.warn's source line, and the echoed statement under it.
-    re.compile(r"^.*:\d+:\s*\w*Warning:"),
-    re.compile(r"^\s*warnings\.warn\("),
-    # A bare traceback frame, which without its exception says nothing useful here.
-    # The line is stripped before matching, so its indentation is already gone.
-    re.compile(r"^File \".*\", line \d+"),
-)
-
-
-def summarize_indexer_line(line):
-    """Turn one line of indexer output into progress text, or None to ignore it.
-
-    The indexer's stdout carries three kinds of line: console output written for a
-    person, tqdm progress bars, and library chatter. Only the first two say anything
-    about progress, and the third is the bulk of it -- model loading alone logs
-    dozens of lines nobody watching a progress bar wants.
-    """
-    if not line:
-        return None
-    # tqdm redraws with carriage returns; only the newest frame matters.
-    clean = line.split("\r")[-1].strip()
-    if not clean:
-        return None
-    if any(pattern.match(clean) for pattern in _INDEXER_NOISE):
-        return None
-
-    match = _INDEXER_TQDM.match(clean)
-    if match:
-        label, percent, done, total = match.groups()
-        return f"{label.strip()}: {percent}% ({done}/{total})"
-
-    if len(clean) > _INDEXER_MAX_MESSAGE:
-        return clean[:_INDEXER_MAX_MESSAGE - 1].rstrip() + "\u2026"
-    return clean
-
-
-def index_folder_with_cli(folder_path, db_path, run_clustering, status, while_clustering=None):
-    """Index a folder through the CLI, then optionally resolve faces, filling `status`.
-
-    Both apps ran this as their own copy, and both reported "identities resolved" when
-    cluster-faces had failed: its exit code was never read. The CLI is started from
-    the repository, as TagTuner's copy did -- TagPup's relied on the server's working
-    directory to find tagpup_cli.py. Returns True when every step succeeded.
-
-    `while_clustering`, if given, is a context held while cluster-faces runs: TagTuner
-    refuses assignments during it, as it does during Recluster, since clustering
-    rewrites the names an assignment would be setting.
-    """
-    import sys
-    from contextlib import nullcontext
-
-    env = os.environ.copy()
-    env["TAGPUP_DB_PATH"] = db_path
-    workspace = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-    def run(args, scale):
-        proc = subprocess.Popen(
-            [sys.executable, "tagpup_cli.py"] + args,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, env=env, bufsize=1, cwd=workspace,
-        )
-        with proc.stdout:
-            for line in iter(proc.stdout.readline, ""):
-                clean = summarize_indexer_line(line)
-                if clean:
-                    status["message"] = clean
-                    match = re.search(r"(\d+)%", clean) if scale else None
-                    if match:
-                        status["percent"] = int(float(match.group(1)) * scale)
-        proc.wait()
-        return proc.returncode
-
-    # The indexer stores the paths it walks as given, so it is handed the stored form.
-    code = run(["index", paths.stored(folder_path)], 0.9)
-    if code != 0:
-        status.update(status="failed", percent=0,
-                      message="Indexing failed with exit code %s." % code)
-        return False
-
-    if run_clustering:
-        # Only on explicit request: this re-derives every face name in the database,
-        # not just the folder that was indexed.
-        status.update(message="Resolving and matching face identities...", percent=95)
-        with (while_clustering() if while_clustering else nullcontext()):
-            code = run(["cluster-faces"], None)
-        if code != 0:
-            status.update(status="failed", percent=100,
-                          message="Folder indexed, but resolving face identities failed "
-                                  "(exit code %s). Run Recluster to try again." % code)
-            return False
-
-    status.update(status="completed", percent=100, message=(
-        "Folder indexed and face identities resolved." if run_clustering
-        else "Folder indexed. Faces detected; run Recluster to assign identities."))
-    return True
 
 
 #: Who a bare name means, per library, read and cached by the store; the rule that
@@ -455,14 +344,10 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
     _db_folder_cache_registry = {}
     _db_suggest_status_registry = {}
     _db_suggest_threads_registry = {}
-    _db_index_status_registry = {}
-    _db_index_threads_registry = {}
 
     folder_cache = DatabaseIsolatedDict(_db_folder_cache_registry)
     suggest_status = DatabaseIsolatedDict(_db_suggest_status_registry)
     suggest_threads = DatabaseIsolatedDict(_db_suggest_threads_registry)
-    index_status = DatabaseIsolatedDict(_db_index_status_registry)
-    index_threads = DatabaseIsolatedDict(_db_index_threads_registry)
 
     def log_message(self, format, *args):
         pass # suppress request logs
@@ -715,74 +600,45 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         if not path_list:
             self.send_json_error(400, "Missing path parameter")
             return
-        folder_path = urllib.parse.unquote(path_list[0])
-        folder_path_norm = paths.key(folder_path)
-        
-        status = self.index_status.get(folder_path_norm, {"status": "completed", "percent": 100, "message": "Ready"})
-        self.send_json(status)
+        self.send_json(self.index_queue().status(urllib.parse.unquote(path_list[0])))
 
     def handle_post_folder_index_start(self):
+        """Queue a folder to be added to this library (tagpup.jobs.indexing). The page no
+        longer asks: adding folders is TagTuner's (docs/findings.md, #34)."""
         try:
             data = self.read_json_body()
         except Exception:
             self.send_json_error(400, "Invalid JSON payload")
             return
-            
-        folder_path = data.get("folder_path")
-        if not folder_path or not os.path.isdir(folder_path):
-            self.send_json_error(400, "Invalid folder path")
+        # Clustering re-derives every face name in the library, not only this folder's,
+        # and can discard manual corrections, so it is opt-in.
+        result = self.index_queue().start([data.get("folder_path")], self.folder_indexer(),
+                                          cluster=bool(data.get("cluster", False)))
+        if result.refused:
+            self.send_json_error(400, result.message())
             return
-            
-        folder_path_norm = paths.key(folder_path)
-        
-        current_status = self.index_status.get(folder_path_norm)
-        if current_status and current_status.get("status") == "running":
-            self.send_json({"success": True, "status": "running"})
-            return
-            
-        self.index_status[folder_path_norm] = {
-            "status": "running",
-            "percent": 0,
-            "message": "Starting indexing..."
-        }
-        
-        # Re-clustering rewrites every face name in the database from scratch and can
-        # discard manual corrections, so it is opt-in rather than a silent side effect
-        # of adding a folder. The UI does not request it.
-        run_clustering = bool(data.get("cluster", False))
+        self.send_json({"success": True, "status": "running", **result.details})
 
-        t = threading.Thread(
-            target=self.run_folder_index_thread,
-            args=(folder_path, self.db_path, run_clustering),
-            name="FolderIndexThread",
-            daemon=True
-        )
-        self.index_threads[folder_path_norm] = t
-        t.start()
-        
-        self.send_json({"success": True, "status": "running"})
+    def index_queue(self):
+        """The folders waiting to be added to this request's library."""
+        return indexing_jobs.queue_for(Library(self.db_path))
 
-    @classmethod
-    def run_folder_index_thread(cls, folder_path, db_path, run_clustering=False):
-        # Restore the active database in this worker thread. The thread-local set during the
-        # request does not carry over, and the class-level fallback points at the startup
-        # database, which would resolve the isolated registries to the wrong database.
-        set_active_db_path(db_path)
-        folder_path_norm = paths.key(folder_path)
-        status_dict = cls.index_status.get(folder_path_norm)
-        if status_dict is None:
-            status_dict = {"status": "running", "percent": 0, "message": "Starting indexing..."}
-            cls.index_status[folder_path_norm] = status_dict
-        try:
-            index_folder_with_cli(folder_path, db_path, run_clustering, status_dict)
-            # Rows were written even when clustering failed afterwards.
-            if folder_path_norm in cls.folder_cache:
-                del cls.folder_cache[folder_path_norm]
-        except Exception as e:
-            logger.exception(f"Error running folder index thread for {folder_path}: {e}")
-            status_dict["status"] = "failed"
-            status_dict["message"] = f"Error: {e}"
-            status_dict["percent"] = 0
+    def folder_indexer(self):
+        """How this server adds a folder to this request's library: through the CLI
+        (tagpup.services.indexing.index_folder). Then the folder's cached scan is
+        dropped, since rows were written even when clustering failed afterwards."""
+        db_path = self.db_path
+
+        def index(folder, cluster, report):
+            try:
+                return indexing.index_folder(Library(db_path), folder, tagpup_config.CODE_ROOT,
+                                             cluster=cluster, report=report)
+            finally:
+                # The queue's own thread: no request has said which library it is in.
+                set_active_db_path(db_path)
+                TagPupHTTPRequestHandler.folder_cache.pop(paths.key(folder), None)
+
+        return index
 
     def handle_get_browse_folder(self):
         try:

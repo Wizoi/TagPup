@@ -241,31 +241,33 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
         )
 
     def test_index_worker_survives_missing_status_entry(self):
-        """The worker must not die if its status entry is absent when it starts."""
+        """The worker must not die if a folder's status is gone when it gets to it.
+
+        The folder is queued through the route under the non-default library, and so
+        must land in that library's queue."""
+        from tagpup.core.library import Library
+        from tagpup.jobs import indexing as indexing_jobs
+
         folder = self.tmpdir
+        queue = indexing_jobs.queue_for(Library(self.OTHER_DB))
         with patch("subprocess.Popen") as mock_popen:
             mock_proc = MagicMock()
             mock_proc.returncode = 0
             mock_proc.stdout.readline.side_effect = ["done\n", ""]
             mock_popen.return_value = mock_proc
 
-            set_active_db_path(self.OTHER_DB)
-            TagPupHTTPRequestHandler.index_status.pop(paths.key(folder), None)
-            set_active_db_path(None)
+            with patch.object(indexing_jobs.IndexQueue, "_ensure_runner"):
+                _post(self.TEST_PORT, f"/{self.OTHER_DB_URL_NAME}/api/folder/index-start",
+                      {"folder_path": folder})
+            self.assertEqual([job["folder"] for job in queue.pending()], [paths.stored(folder)])
+            queue._statuses.clear()
 
-            t = threading.Thread(
-                target=TagPupHTTPRequestHandler.run_folder_index_thread,
-                args=(folder, self.OTHER_DB),
-                daemon=True,
-            )
+            t = threading.Thread(target=queue.run_pending, daemon=True)
             t.start()
             t.join(timeout=20)
             self.assertFalse(t.is_alive(), "worker thread hung")
 
-        set_active_db_path(self.OTHER_DB)
-        status = TagPupHTTPRequestHandler.index_status.get(paths.key(folder))
-        self.assertIsNotNone(status, "worker died without recording any status")
-        self.assertEqual(status.get("status"), "completed")
+        self.assertEqual(queue.status(folder).get("status"), "completed")
 
 
 class TestSuggestionsCachePerDatabase(unittest.TestCase):

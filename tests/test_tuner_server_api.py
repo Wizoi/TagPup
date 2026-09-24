@@ -34,6 +34,9 @@ from tuner_server import (
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
 
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+
 FACE_DIM = 512
 
 
@@ -104,17 +107,28 @@ class TunerAPITestBase(unittest.TestCase):
     def clear_index_status(self):
         """Forget any indexing job or queue an earlier test left behind.
 
-        index_status and index_queue live on the handler class, so a test that plants
-        a "running" job or queues folders leaves them there for every test after it.
-        The next test then sees a busy server it never asked for.
+        The queue lives as long as the process, so a test that plants a "running" job
+        or queues folders leaves them there for every test after it. The next test then
+        sees a busy server it never asked for.
         """
-        set_active_db_path(self.TEST_DB)
-        try:
-            TunerHTTPRequestHandler.index_status.clear()
-            TunerHTTPRequestHandler.index_queue["pending"] = []
-            TunerHTTPRequestHandler.index_queue["runner"] = None
-        finally:
-            set_active_db_path(None)
+        indexing_jobs.forget(Library(self.TEST_DB))
+
+    def index_queue(self):
+        return indexing_jobs.queue_for(Library(self.TEST_DB))
+
+    def plant_status(self, folder, **status):
+        """Say a folder has got somewhere -- running, say -- without indexing it."""
+        import paths
+        self.index_queue()._statuses[paths.key(folder)] = dict(status, folder=folder)
+
+    def wait_until_idle(self, timeout=20.0):
+        """Until nothing is being indexed or waiting. A test that stands in for the CLI
+        waits inside its patch, or the worker could reach the real one after it."""
+        deadline = time.time() + timeout
+        while self.index_queue().active()["busy"]:
+            if time.time() > deadline:
+                self.fail("the index queue was still busy after %ss" % timeout)
+            time.sleep(0.05)
 
     def wait_for_clustering_to_finish(self, timeout=30.0):
         set_active_db_path(self.TEST_DB)
@@ -799,18 +813,13 @@ class TestFolderQueue(TunerAPITestBase):
         return folders
 
     def queue_state(self):
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
-        set_active_db_path(self.TEST_DB)
-        try:
-            return list(TunerHTTPRequestHandler.index_queue.get("pending", []))
-        finally:
-            set_active_db_path(None)
+        return self.index_queue().pending()
 
     def post_start(self, folders, block_runner=True):
-        """Queue folders, with the worker stubbed out so the queue stays observable."""
+        """Queue folders, with the worker held back so the queue stays observable."""
         from unittest.mock import patch
         if block_runner:
-            with patch("tuner_server.TunerHTTPRequestHandler._ensure_queue_runner"):
+            with patch("tagpup.jobs.indexing.IndexQueue._ensure_runner"):
                 return self.post("/api/folder/index-start", {"folder_paths": folders})
         return self.post("/api/folder/index-start", {"folder_paths": folders})
 
@@ -829,9 +838,8 @@ class TestFolderQueue(TunerAPITestBase):
     def test_a_single_folder_path_is_still_accepted(self):
         """The old one-folder shape must keep working."""
         from unittest.mock import patch
-        import tempfile
-        folder = tempfile.mkdtemp(prefix="tuner_single_")
-        with patch("tuner_server.TunerHTTPRequestHandler._ensure_queue_runner"):
+        folder = self.make_folders(1)[0]
+        with patch("tagpup.jobs.indexing.IndexQueue._ensure_runner"):
             status, body = self.post("/api/folder/index-start", {"folder_path": folder})
         self.assertEqual(status, 200, body)
         self.assertEqual([j["folder"] for j in self.queue_state()], [folder])
@@ -851,14 +859,8 @@ class TestFolderQueue(TunerAPITestBase):
         self.assertEqual(len(self.queue_state()), 1)
 
     def test_a_folder_being_indexed_now_is_not_queued_behind_itself(self):
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
-        import paths
         folders = self.make_folders(1)
-        set_active_db_path(self.TEST_DB)
-        TunerHTTPRequestHandler.index_status[paths.key(folders[0])] = {
-            "status": "running", "percent": 10, "message": "working",
-        }
-        set_active_db_path(None)
+        self.plant_status(folders[0], status="running", percent=10, message="working")
 
         status, body = self.post_start(folders)
         self.assertEqual(status, 200, body)
@@ -935,15 +937,9 @@ class TestQueueCancel(TestFolderQueue):
 
     def test_cancelling_does_not_touch_the_folder_being_indexed(self):
         """That one owns a subprocess partway through writing rows."""
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
-        import paths
         running = self.make_folders(1)[0]
         queued = self.make_folders(1)
-        set_active_db_path(self.TEST_DB)
-        TunerHTTPRequestHandler.index_status[paths.key(running)] = {
-            "status": "running", "percent": 30, "message": "working",
-        }
-        set_active_db_path(None)
+        self.plant_status(running, status="running", percent=30, message="working")
         self.post_start(queued)
 
         self.post("/api/folder/index-cancel", {"all": True})
@@ -957,74 +953,25 @@ class TestQueueCancel(TestFolderQueue):
 
 
 class TestQueueRunner(TestFolderQueue):
-    """The worker drains the queue, and one bad folder does not sink the rest."""
+    """The folders a request queues are indexed by this server's indexer, in turn. How
+    the worker drains a queue is tests/test_jobs_indexing.py's."""
 
-    def test_every_queued_folder_is_indexed_in_order(self):
+    def test_every_queued_folder_is_indexed_in_order_by_this_servers_indexer(self):
         from unittest.mock import patch
-        from tuner_server import TunerHTTPRequestHandler
+        from tagpup.core.result import Result
         folders = self.make_folders(3)
-        self.post_start(folders)
-
-        seen = []
-        with patch.object(TunerHTTPRequestHandler, "run_folder_index_thread",
-                          side_effect=lambda f, db, c=False: seen.append(f)):
-            TunerHTTPRequestHandler.run_index_queue(self.TEST_DB)
-        self.assertEqual(seen, folders)
-        self.assertEqual(self.queue_state(), [])
-
-    def test_a_folder_that_throws_does_not_stop_the_queue(self):
-        from unittest.mock import patch
-        from tuner_server import TunerHTTPRequestHandler
-        folders = self.make_folders(3)
-        self.post_start(folders)
-
         seen = []
 
-        def flaky(folder, db, cluster=False):
+        def index(folder, cluster, report):
             seen.append(folder)
-            if folder == folders[1]:
-                raise RuntimeError("that folder is unreadable")
+            return Result(changed=1)
 
-        with patch.object(TunerHTTPRequestHandler, "run_folder_index_thread",
-                          side_effect=flaky):
-            TunerHTTPRequestHandler.run_index_queue(self.TEST_DB)
-
-        self.assertEqual(seen, folders, "the queue stopped at the failing folder")
-
-    def test_the_failure_is_recorded_against_the_folder_that_failed(self):
-        from unittest.mock import patch
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
-        import paths
-        folders = self.make_folders(2)
-        self.post_start(folders)
-
-        def flaky(folder, db, cluster=False):
-            if folder == folders[0]:
-                raise RuntimeError("unreadable")
-
-        with patch.object(TunerHTTPRequestHandler, "run_folder_index_thread",
-                          side_effect=flaky):
-            TunerHTTPRequestHandler.run_index_queue(self.TEST_DB)
-
-        set_active_db_path(self.TEST_DB)
-        try:
-            failed = TunerHTTPRequestHandler.index_status.get(paths.key(folders[0]))
-        finally:
-            set_active_db_path(None)
-        self.assertEqual(failed["status"], "failed")
-        self.assertIn("unreadable", failed["message"])
-
-    def test_the_runner_clears_itself_when_the_queue_empties(self):
-        from unittest.mock import patch
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
-        self.post_start(self.make_folders(1))
-        with patch.object(TunerHTTPRequestHandler, "run_folder_index_thread"):
-            TunerHTTPRequestHandler.run_index_queue(self.TEST_DB)
-        set_active_db_path(self.TEST_DB)
-        try:
-            self.assertIsNone(TunerHTTPRequestHandler.index_queue.get("runner"))
-        finally:
-            set_active_db_path(None)
+        with patch.object(TunerHTTPRequestHandler, "folder_indexer", return_value=index):
+            self.post_start(folders, block_runner=False)
+            self.wait_until_idle()
+        self.assertEqual(seen, folders)
+        self.assertEqual([self.index_queue().status(f)["status"] for f in folders],
+                         ["completed"] * 3)
 
 
 class TestSubfolderListing(TunerAPITestBase):
@@ -1273,17 +1220,15 @@ class TestSingleIndexJob(TunerAPITestBase):
         self.assertFalse(body["busy"])
         self.assertEqual(body["active"], [])
 
-    def test_a_running_job_is_reported(self):
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
-        import paths
-        import tempfile
+    def folder(self, prefix):
+        folder = tempfile.mkdtemp(prefix=prefix)
+        self.addCleanup(shutil.rmtree, folder, True)
+        return folder
 
-        folder = tempfile.mkdtemp(prefix="tuner_active_")
-        set_active_db_path(self.TEST_DB)
-        TunerHTTPRequestHandler.index_status[paths.key(folder)] = {
-            "status": "running", "percent": 42, "message": "Generating embeddings: 42% (21/50)",
-        }
-        set_active_db_path(None)
+    def test_a_running_job_is_reported(self):
+        folder = self.folder("tuner_active_")
+        self.plant_status(folder, status="running", percent=42,
+                          message="Generating embeddings: 42% (21/50)")
 
         body = self.get("/api/folder/index-active")
         self.assertTrue(body["busy"], "a running job was not reported")
@@ -1299,20 +1244,12 @@ class TestSingleIndexJob(TunerAPITestBase):
         The folder is queued instead, and still nothing runs in parallel.
         """
         from unittest.mock import patch
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
-        import paths
-        import tempfile
 
-        busy_folder = tempfile.mkdtemp(prefix="tuner_busy_")
-        other_folder = tempfile.mkdtemp(prefix="tuner_other_")
-        set_active_db_path(self.TEST_DB)
-        TunerHTTPRequestHandler.index_status[paths.key(busy_folder)] = {
-            "status": "running", "percent": 10, "message": "working",
-            "folder": busy_folder,
-        }
-        set_active_db_path(None)
+        busy_folder = self.folder("tuner_busy_")
+        other_folder = self.folder("tuner_other_")
+        self.plant_status(busy_folder, status="running", percent=10, message="working")
 
-        with patch("tuner_server.TunerHTTPRequestHandler._ensure_queue_runner"):
+        with patch("tagpup.jobs.indexing.IndexQueue._ensure_runner"):
             status, body = self.post(
                 "/api/folder/index-start", {"folder_path": other_folder}
             )
@@ -1327,41 +1264,28 @@ class TestSingleIndexJob(TunerAPITestBase):
 
     def test_restarting_the_same_folder_is_still_accepted(self):
         """Asking again for the folder already running is harmless, not an error."""
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
-        import paths
-        import tempfile
-
-        folder = tempfile.mkdtemp(prefix="tuner_same_")
-        set_active_db_path(self.TEST_DB)
-        TunerHTTPRequestHandler.index_status[paths.key(folder)] = {
-            "status": "running", "percent": 10, "message": "working",
-        }
-        set_active_db_path(None)
+        folder = self.folder("tuner_same_")
+        self.plant_status(folder, status="running", percent=10, message="working")
 
         status, body = self.post("/api/folder/index-start", {"folder_path": folder})
         self.assertEqual(status, 200, body)
         self.assertEqual(body.get("status"), "running")
 
     def test_a_finished_job_does_not_block_the_next_one(self):
-        from tuner_server import TunerHTTPRequestHandler, set_active_db_path
-        import paths
         from unittest.mock import patch, MagicMock
-        import tempfile
 
-        done_folder = tempfile.mkdtemp(prefix="tuner_done_")
-        next_folder = tempfile.mkdtemp(prefix="tuner_next_")
-        set_active_db_path(self.TEST_DB)
-        TunerHTTPRequestHandler.index_status[paths.key(done_folder)] = {
-            "status": "completed", "percent": 100, "message": "done",
-        }
-        set_active_db_path(None)
+        done_folder = self.folder("tuner_done_")
+        next_folder = self.folder("tuner_next_")
+        self.plant_status(done_folder, status="completed", percent=100, message="done")
 
         proc = MagicMock()
         proc.returncode = 0
         proc.stdout.readline.side_effect = ["done\n", ""]
         with patch("subprocess.Popen", return_value=proc):
             status, body = self.post("/api/folder/index-start", {"folder_path": next_folder})
+            self.wait_until_idle()
         self.assertEqual(status, 200, body)
+        self.assertEqual(self.index_queue().status(next_folder)["status"], "completed")
 
 
 def forward_slashes(path):
@@ -1471,31 +1395,31 @@ class TestFolderSpellingsReachingTheIndexer(TestFolderQueue):
 
     def test_the_indexer_is_handed_the_stored_spelling_of_a_typed_folder(self):
         from unittest.mock import patch, MagicMock
-        from tuner_server import TunerHTTPRequestHandler
         folder = self.make_folders(1)[0]
         proc = MagicMock()
         proc.returncode = 0
         proc.stdout.readline.side_effect = ["done\n", ""]
         with patch("subprocess.Popen", return_value=proc) as popen:
-            TunerHTTPRequestHandler.run_folder_index_thread(
-                forward_slashes(folder), self.TEST_DB)
+            self.post_start([forward_slashes(folder)], block_runner=False)
+            self.wait_until_idle()
         self.assertEqual(popen.call_args_list[0].args[0][3], folder)
 
     def test_queued_and_running_jobs_name_the_folder_the_same_way(self):
         from unittest.mock import patch
-        from tuner_server import TunerHTTPRequestHandler
+        from tagpup.core.result import Result
         folders = self.make_folders(2)
-        status, body = self.post_start([forward_slashes(f) for f in folders])
+        seen = []
+
+        def look(folder, cluster, report):
+            seen.append(self.get("/api/folder/index-active"))
+            return Result(changed=1)
+
+        with patch.object(TunerHTTPRequestHandler, "folder_indexer", return_value=look):
+            status, body = self.post_start([forward_slashes(f) for f in folders])
         self.assertEqual(status, 200, body)
         self.assertEqual(body["queued"], folders)
 
-        seen = []
-
-        def look(folder, db, cluster=False):
-            seen.append(self.get("/api/folder/index-active"))
-
-        with patch.object(TunerHTTPRequestHandler, "run_folder_index_thread", side_effect=look):
-            TunerHTTPRequestHandler.run_index_queue(self.TEST_DB)
+        self.index_queue().run_pending()
 
         first = seen[0]
         self.assertEqual([a["folder"] for a in first["active"]], [folders[0]])

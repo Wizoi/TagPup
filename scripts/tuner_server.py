@@ -1,5 +1,6 @@
 # tuner_server.py
 import collections
+from contextlib import contextmanager
 import os
 import time
 import threading
@@ -28,6 +29,8 @@ from tagpup.core import dates, vocabulary
 from tagpup.core.library import Library
 from tagpup.core import library as libraries
 from tagpup.core.result import NotFound
+from tagpup.jobs import indexing as indexing_jobs
+from tagpup.services import indexing
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.services import tagging as tagging_actions
@@ -274,6 +277,19 @@ class TunerHTTPRequestHandlerMeta(type):
             cls._clustering_in_progress.discard(db_key)
 
 
+@contextmanager
+def clustering(db_path):
+    """Refuse assignments in a library while this is held: clustering rewrites the names
+    they would be setting. The library is named, not taken from the request, so it holds
+    on a thread no request set up."""
+    key = Library(db_path).key
+    TunerHTTPRequestHandlerMeta._clustering_in_progress.add(key)
+    try:
+        yield
+    finally:
+        TunerHTTPRequestHandlerMeta._clustering_in_progress.discard(key)
+
+
 class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                               metaclass=TunerHTTPRequestHandlerMeta):
     db_path = "data/photo_index.db"
@@ -288,9 +304,6 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
     _db_suggest_threads_registry = {}
     _db_identify_cache_registry = {}
     _db_identify_progress_registry = {}
-    _db_index_status_registry = {}
-    _db_index_threads_registry = {}
-    _db_index_queue_registry = {}
 
     folder_cache = DatabaseIsolatedDict(_db_folder_cache_registry)
     # Cache for the Identify Faces views. Clustering a person's unmatched candidates is
@@ -303,19 +316,6 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
     # read by a status request on another thread, which is what the threaded server is
     # for. Keyed by person, because two people's grids can be built at once.
     identify_progress = DatabaseIsolatedDict(_db_identify_progress_registry)
-    index_status = DatabaseIsolatedDict(_db_index_status_registry)
-    index_threads = DatabaseIsolatedDict(_db_index_threads_registry)
-    # Folders waiting their turn, under the key "pending", and the single worker
-    # draining them under "runner". Indexing is GPU-bound, so folders are worked
-    # through one at a time rather than in parallel -- but asking for ten of them
-    # should not mean standing over the machine to start each one.
-    index_queue = DatabaseIsolatedDict(_db_index_queue_registry)
-    # Every read-modify-write of "pending" and "runner" happens under this. Start,
-    # cancel and the runner each rewrote the list without one, so a job popped by the
-    # runner could be written back by a start and indexed twice; and a runner that had
-    # found the list empty still looked alive to a start in the moment before it
-    # cleared itself, leaving that start's job queued with nothing to run it.
-    _index_queue_lock = threading.RLock()
     suggest_threads = DatabaseIsolatedDict(_db_suggest_threads_registry)
 
     # The suggestions cache file belongs to TagPup, which runs the suggestions and is
@@ -2360,37 +2360,13 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             return None
 
     def handle_get_folder_index_active(self):
-        """Whatever is indexing right now, and whatever is waiting behind it.
+        """What is being indexed now, and what waits behind it (tagpup.jobs.indexing).
 
-        The per-folder status endpoint can only answer about a folder you already know
-        about. A page that has just loaded knows nothing, so without this it cannot tell
-        that a job is in flight and shows an idle, enabled button over a busy server.
-        With a queue there is a second thing it cannot otherwise know: how much is left.
+        The per-folder status can only answer about a folder the page knows of. A page
+        that has just loaded knows none, so without this it would show an idle button
+        over a busy server.
         """
-        active = []
-        for folder_key, status in list(TunerHTTPRequestHandler.index_status.items()):
-            if isinstance(status, dict) and status.get("status") == "running":
-                # The status is filed under the folder's key, which is for comparing;
-                # the folder itself, as a queued job shows it, travels in the status.
-                folder = status.get("folder") or folder_key
-                active.append({
-                    "folder": folder,
-                    "name": os.path.basename(folder),
-                    "percent": status.get("percent", 0),
-                    "message": status.get("message", ""),
-                })
-
-        pending = [
-            {"folder": job["folder"],
-             "name": os.path.basename(job["folder"])}
-            for job in TunerHTTPRequestHandler.index_queue.get("pending", [])
-        ]
-        self.send_json({
-            "active": active,
-            "queued": pending,
-            "busy": bool(active) or bool(pending),
-            "remaining": len(active) + len(pending),
-        })
+        self.send_json(self.index_queue().active())
 
     def handle_get_folder_subfolders(self, query):
         """The immediate subfolders of a folder, so a parent can be expanded.
@@ -2492,24 +2468,15 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         if not path_list:
             self.send_json_error(400, "Missing path parameter")
             return
-        folder_norm = paths.key(urllib.parse.unquote(path_list[0]))
-        status = TunerHTTPRequestHandler.index_status.get(
-            folder_norm, {"status": "completed", "percent": 100, "message": "Ready"}
-        )
-        self.send_json(status)
+        self.send_json(self.index_queue().status(urllib.parse.unquote(path_list[0])))
 
     def handle_post_folder_index_start(self):
-        """Queue one or more folders to be indexed into this database.
+        """Queue one or more folders to be added to this library (tagpup.jobs.indexing).
 
-        TagTuner is where identity work happens, so it needs to be able to bring new
-        material in rather than requiring a trip through TagPup first. Clustering is
-        opt-in for the same reason it is there: it rewrites every name in the database,
-        not just the folder being added.
-
-        Accepts `folder_path` (one) or `folder_paths` (several). Several are queued,
-        not run together: indexing is GPU-bound, so two at once do not go twice as fast
-        so much as make each other crawl. Asking for a season's worth of folders should
-        still be one action rather than a wait beside the machine between each.
+        TagTuner is where identity work happens, so it brings new photos in itself rather
+        than needing a trip through TagPup first. Accepts `folder_path` (one) or
+        `folder_paths` (several). Clustering is opt-in: it re-derives every name in the
+        library, not only the folders being added.
         """
         try:
             data = self.read_json_body()
@@ -2524,72 +2491,16 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             self.send_json_error(400, "folder_paths must be a list")
             return
 
-        run_clustering = bool(data.get("cluster", False))
-
-        valid, invalid = [], []
-        seen = set()
-        for raw in requested:
-            if not raw or not isinstance(raw, str):
-                invalid.append(str(raw))
-                continue
-            if not os.path.isdir(raw):
-                invalid.append(raw)
-                continue
-            norm = paths.key(raw)
-            if norm in seen:
-                continue
-            seen.add(norm)
-            # The job carries the stored spelling: it is what the indexer is handed,
-            # and what the page is shown for queued and running jobs alike.
-            valid.append((paths.stored(raw), norm))
-
-        if not valid:
-            self.send_json_error(
-                400,
-                "No valid folder path" + (": %s" % ", ".join(invalid[:3]) if invalid else ""),
-            )
+        result = self.index_queue().start(requested, self.folder_indexer(),
+                                          cluster=bool(data.get("cluster", False)))
+        if result.refused:
+            self.send_json_error(400, result.message())
             return
-
-        with TunerHTTPRequestHandler._index_queue_lock:
-            queue = list(TunerHTTPRequestHandler.index_queue.get("pending", []))
-            queued_norms = {paths.key(job["folder"]) for job in queue}
-
-            accepted, already = [], []
-            for raw, norm in valid:
-                status = TunerHTTPRequestHandler.index_status.get(norm)
-                if status and status.get("status") == "running":
-                    already.append(raw)
-                    continue
-                if norm in queued_norms:
-                    already.append(raw)
-                    continue
-                queue.append({"folder": raw, "cluster": run_clustering})
-                queued_norms.add(norm)
-                TunerHTTPRequestHandler.index_status[norm] = {
-                    "status": "queued", "percent": 0, "message": "Waiting to be indexed...",
-                    "folder": raw,
-                }
-                accepted.append(raw)
-
-            TunerHTTPRequestHandler.index_queue["pending"] = queue
-            self._ensure_queue_runner()
-
-        self.send_json({
-            "success": True,
-            "status": "running",
-            "queued": accepted,
-            "already_queued": already,
-            "invalid": invalid,
-            "pending": len(queue),
-        })
+        self.send_json({"success": True, "status": "running", **result.details})
 
     def handle_post_folder_index_cancel(self):
-        """Drop folders that have not started yet.
-
-        The folder already being indexed is left alone: it owns a subprocess partway
-        through writing rows, and killing that is a different and riskier operation
-        than forgetting something that has not begun.
-        """
+        """Drop folders that have not started (tagpup.jobs.indexing.IndexQueue.cancel).
+        The folder being indexed is left alone."""
         try:
             data = self.read_json_body()
         except Exception:
@@ -2603,128 +2514,26 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         if not cancel_all and not wanted:
             self.send_json_error(400, "Nothing to cancel")
             return
+        result = self.index_queue().cancel(wanted or [], everything=cancel_all)
+        self.send_json({"success": True, **result.details})
 
-        targets = {paths.key(p) for p in (wanted or []) if p}
-        with TunerHTTPRequestHandler._index_queue_lock:
-            queue = list(TunerHTTPRequestHandler.index_queue.get("pending", []))
-            kept, dropped = [], []
-            for job in queue:
-                norm = paths.key(job["folder"])
-                if cancel_all or norm in targets:
-                    dropped.append(job["folder"])
-                    # Said, not forgotten: with the entry gone, asking about the folder
-                    # answered "completed".
-                    TunerHTTPRequestHandler.index_status[norm] = {
-                        "status": "cancelled", "percent": 0, "message": "Cancelled.",
-                        "folder": job["folder"],
-                    }
-                else:
-                    kept.append(job)
+    def index_queue(self):
+        """The folders waiting to be added to this request's library."""
+        return indexing_jobs.queue_for(Library(self.db_path))
 
-            TunerHTTPRequestHandler.index_queue["pending"] = kept
-        self.send_json({"success": True, "cancelled": dropped, "pending": len(kept)})
+    def folder_indexer(self):
+        """How this server adds a folder to this request's library: through the CLI
+        (tagpup.services.indexing.index_folder), refusing assignments while
+        cluster-faces runs, since it rewrites the names they would be setting. The queue
+        once ran it unguarded."""
+        db_path = self.db_path
 
-    def _ensure_queue_runner(self):
-        """Start the worker that drains the queue, unless one is already draining it."""
-        with TunerHTTPRequestHandler._index_queue_lock:
-            runner = TunerHTTPRequestHandler.index_queue.get("runner")
-            if runner is not None and runner.is_alive():
-                return
-            t = threading.Thread(
-                target=TunerHTTPRequestHandler.run_index_queue,
-                args=(self.db_path,),
-                name="TunerIndexQueueRunner",
-                daemon=True,
-            )
-            TunerHTTPRequestHandler.index_queue["runner"] = t
-            t.start()
+        def index(folder, cluster, report):
+            return indexing.index_folder(Library(db_path), folder, tagpup_config.CODE_ROOT,
+                                         cluster=cluster, report=report,
+                                         while_clustering=lambda: clustering(db_path))
 
-    @classmethod
-    def run_index_queue(cls, db_path):
-        """Work through the queued folders, one at a time, until it is empty.
-
-        Each folder is indexed by the same code path a single folder always used, so a
-        failure is recorded against that folder and the rest of the queue still runs --
-        one unreadable folder should not cost the other nine.
-        """
-        # A worker thread does not inherit the request's thread-local, and the
-        # class-level fallback points at the startup database.
-        set_active_db_path(db_path)
-        try:
-            while True:
-                with cls._index_queue_lock:
-                    queue = list(cls.index_queue.get("pending", []))
-                    if not queue:
-                        # Stop and say so in one step, so a start arriving now finds
-                        # no runner and starts one.
-                        if cls.index_queue.get("runner") is threading.current_thread():
-                            cls.index_queue["runner"] = None
-                        return
-                    job = queue.pop(0)
-                    cls.index_queue["pending"] = queue
-
-                folder_norm = paths.key(job["folder"])
-                cls.index_status[folder_norm] = {
-                    "status": "running", "percent": 0,
-                    "message": "Starting indexing...",
-                    "folder": paths.stored(job["folder"]),
-                }
-                try:
-                    cls.run_folder_index_thread(
-                        job["folder"], db_path, job.get("cluster", False)
-                    )
-                except Exception as e:
-                    logger.exception("Queued index of %s failed: %s" % (job["folder"], e))
-                    cls.index_status[folder_norm] = {
-                        "status": "failed", "percent": 0, "message": "Error: %s" % e,
-                        "folder": paths.stored(job["folder"]),
-                    }
-        finally:
-            # Only this runner's own entry: a newer one may have been started already.
-            with cls._index_queue_lock:
-                if cls.index_queue.get("runner") is threading.current_thread():
-                    cls.index_queue["runner"] = None
-
-    @classmethod
-    def run_folder_index_thread(cls, folder_path, db_path, run_clustering=False):
-        # Re-bind the active database: a worker thread does not inherit the request's
-        # thread-local, and the class-level fallback points at the startup database.
-        set_active_db_path(db_path)
-        # The indexer writes rows in the spelling it is handed, so it is handed the
-        # stored one: a folder typed with forward slashes otherwise produced rows with
-        # both separators in one path, which no lookup matched.
-        folder_path = paths.stored(folder_path)
-        folder_norm = paths.key(folder_path)
-        status = cls.index_status.get(folder_norm)
-        if status is None:
-            status = {"status": "running", "percent": 0, "message": "Starting indexing...",
-                      "folder": folder_path}
-            cls.index_status[folder_norm] = status
-        try:
-            # The same steps TagPup runs, which read both exit codes. The identify
-            # queue is cached against a fingerprint of the faces table, which the new
-            # rows change, so it recomputes on its own.
-            from contextlib import contextmanager
-
-            from tagpup_server import index_folder_with_cli
-
-            # Assignments are refused while clustering runs, as during Recluster: it
-            # rewrites the names they would set. This queue ran it unguarded.
-            @contextmanager
-            def holding_clustering():
-                cls.clustering_in_progress = True
-                try:
-                    yield
-                finally:
-                    cls.clustering_in_progress = False
-
-            index_folder_with_cli(folder_path, db_path, run_clustering, status,
-                                  while_clustering=holding_clustering)
-        except Exception as e:
-            logger.exception("Error indexing folder %s: %s" % (folder_path, e))
-            status["status"] = "failed"
-            status["message"] = "Error: %s" % e
-            status["percent"] = 0
+        return index
 
     def handle_post_folder_remove(self):
         """Remove a folder's photos and faces from this database.
