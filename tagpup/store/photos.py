@@ -462,3 +462,46 @@ def remove_under(conn, folder):
     photos_removed = conn.execute("DELETE FROM photos WHERE " + photos_where, photos_params).rowcount
     return dict(photos_removed=photos_removed, faces_removed=faces_removed,
                 manual_lost=manual, excluded_lost=excluded)
+
+
+# ---- What TagTuner's screens read -----------------------------------------------------
+
+def details(conn, photo_path):
+    """(people JSON, tags JSON, captions JSON, mtime, raw_metadata JSON) of one photo, or
+    None."""
+    where, params = paths.sql_equals("path", photo_path)
+    return conn.execute("SELECT people, tags, captions, mtime, raw_metadata FROM photos WHERE " + where,
+                        params).fetchone()
+
+
+def tag_lists(conn):
+    """Each photo's tags, as a list; a row whose tags cannot be read is left out."""
+    lists = []
+    for (tags_json,) in conn.execute("SELECT tags FROM photos"):
+        try:
+            lists.append(json.loads(tags_json or "[]"))
+        except (TypeError, ValueError):
+            continue
+    return lists
+
+
+def with_tag(conn, tag):
+    """(path, tags, mtime) of each photo carrying exactly `tag`."""
+    found = []
+    for path, tags_json, mtime in conn.execute("SELECT path, tags, mtime FROM photos"):
+        try:
+            tags = json.loads(tags_json or "[]")
+        except (TypeError, ValueError):
+            continue
+        if tag in tags:
+            found.append((path, tags, mtime))
+    return found
+
+
+def folder_counts(conn):
+    """{paths.key of a folder: photos the library holds directly in it}."""
+    counts = {}
+    for (photo_path,) in conn.execute("SELECT path FROM photos"):
+        folder = paths.key(os.path.dirname(photo_path))
+        counts[folder] = counts.get(folder, 0) + 1
+    return counts

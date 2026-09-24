@@ -346,3 +346,108 @@ def counts_by_name(conn):
     """[(name, faces)] for everyone named, most faces first."""
     return conn.execute("SELECT name, COUNT(*) AS count FROM faces WHERE name IS NOT NULL"
                         " GROUP BY name ORDER BY count DESC").fetchall()
+
+
+def identify_candidates(conn):
+    """(id, photo_path, the photo's people JSON, embedding length) of every nameless face
+    still in play: the Identify Faces queue.
+
+    LENGTH(embedding) rather than the embedding: the queue groups faces by the people
+    their photo names and counts them, and only needs to know a face HAS one -- a face
+    without cannot take part in identifying. Selecting the column read 380 MB of BLOB
+    to answer a question about integers.
+    """
+    return conn.execute(
+        "SELECT f.id, f.photo_path, p.people, LENGTH(f.embedding) FROM faces f"
+        " LEFT JOIN photos p ON p.path = f.photo_path"
+        " WHERE f.name IS NULL AND f.excluded = 0").fetchall()
+
+
+def unnamed_for_matching(conn):
+    """(id, photo_path, box JSON, prob, mtime, embedding, raw_metadata JSON, people JSON)
+    of every nameless face still in play, for a person's Identify grid."""
+    return conn.execute(
+        "SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata, p.people"
+        " FROM faces f LEFT JOIN photos p ON p.path = f.photo_path"
+        " WHERE f.name IS NULL AND f.excluded = 0").fetchall()
+
+
+def unnamed_except(conn, face_id):
+    """(id, photo_path, box JSON, embedding) of every nameless face in play but one."""
+    return conn.execute("SELECT id, photo_path, box, embedding FROM faces"
+                        " WHERE name IS NULL AND excluded = 0 AND id != ?", (face_id,)).fetchall()
+
+
+def names_by_photo(conn):
+    """{photo_path as stored: names on its faces}, for every photo with a named face."""
+    named = {}
+    for photo_path, name in conn.execute("SELECT photo_path, name FROM faces WHERE name IS NOT NULL"):
+        named.setdefault(photo_path, set()).add(name)
+    return named
+
+
+def count_excluded(conn):
+    """How many faces are excluded. idx_faces_identify answers it without the rows."""
+    return conn.execute("SELECT COUNT(*) FROM faces WHERE excluded = 1").fetchone()[0]
+
+
+def for_named_matrix(conn):
+    """(id, name, embedding) of every named face that has an embedding and is not
+    excluded: what a face is compared against to say who it resembles."""
+    return conn.execute("SELECT id, name, embedding FROM faces"
+                        " WHERE name IS NOT NULL AND embedding IS NOT NULL AND excluded = 0").fetchall()
+
+
+def embedding_row(conn, face_id):
+    """(embedding,) of one face, or None when there is no such face."""
+    return conn.execute("SELECT embedding FROM faces WHERE id = ?", (face_id,)).fetchone()
+
+
+def in_photo_with_names(conn, photo_path):
+    """(id, box JSON, name, embedding) of each face in one photo."""
+    where, params = paths.sql_equals("photo_path", photo_path)
+    return conn.execute("SELECT id, box, name, embedding FROM faces WHERE " + where, params).fetchall()
+
+
+def photos_with_unnamed(conn):
+    """(photo_path, unnamed faces, named faces, mtime, raw_metadata JSON) of every photo
+    with a face still unnamed, newest first."""
+    return conn.execute(
+        "SELECT f.photo_path,"
+        " SUM(CASE WHEN f.name IS NULL THEN 1 ELSE 0 END) AS unmatched,"
+        " SUM(CASE WHEN f.name IS NOT NULL THEN 1 ELSE 0 END) AS matched,"
+        " p.mtime, p.raw_metadata"
+        " FROM faces f LEFT JOIN photos p ON p.path = f.photo_path"
+        " GROUP BY f.photo_path HAVING unmatched > 0 ORDER BY p.mtime DESC").fetchall()
+
+
+def count_named(conn, person_name):
+    """How many faces carry the name."""
+    return conn.execute("SELECT COUNT(*) FROM faces WHERE name = ?", (person_name,)).fetchone()[0]
+
+
+def person_embeddings(conn, person_name):
+    """(embedding, mtime, raw_metadata JSON, photo_path) of each of a person's faces that
+    has an embedding: what their era-aware centroids are made from."""
+    return conn.execute(
+        "SELECT f.embedding, p.mtime, p.raw_metadata, f.photo_path FROM faces f"
+        " LEFT JOIN photos p ON p.path = f.photo_path"
+        " WHERE f.name = ? AND f.embedding IS NOT NULL", (person_name,)).fetchall()
+
+
+def person_page(conn, person_name, limit, offset):
+    """(id, photo_path, box JSON, prob, mtime, embedding, raw_metadata JSON) of a page of a
+    person's faces. A negative limit is no limit."""
+    return conn.execute(
+        "SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata"
+        " FROM faces f LEFT JOIN photos p ON p.path = f.photo_path"
+        " WHERE f.name = ? LIMIT ? OFFSET ?", (person_name, limit, offset)).fetchall()
+
+
+def excluded_for_review(conn):
+    """(id, photo_path, box JSON, prob, mtime, raw_metadata JSON, excluded_reason) of every
+    excluded face, the latest excluded first."""
+    return conn.execute(
+        "SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, p.raw_metadata, f.excluded_reason"
+        " FROM faces f LEFT JOIN photos p ON p.path = f.photo_path"
+        " WHERE f.excluded = 1 ORDER BY f.id DESC").fetchall()

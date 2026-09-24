@@ -319,6 +319,21 @@ def hidden_tags(conn):
     return {tag for (tag,) in conn.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")}
 
 
+def face_flags(conn):
+    """(tag, has_face) of every node; none without a tree."""
+    if not tree_exists(conn):
+        return []
+    return conn.execute("SELECT tag, has_face FROM tag_taxonomy").fetchall()
+
+
+def embedded_tags(conn):
+    """The words that have a CLIP embedding cached, under any prompt or model."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table'"
+                        " AND name = 'tag_embeddings'").fetchone():
+        return set()
+    return {tag for (tag,) in conn.execute("SELECT DISTINCT tag FROM tag_embeddings") if tag}
+
+
 def filed_people(conn):
     """{name: [tag]}: where the tree files each person, one read for all of them."""
     if not tree_exists(conn):

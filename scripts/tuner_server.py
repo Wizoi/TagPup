@@ -31,6 +31,7 @@ from tagpup.core.result import Conflict, NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services import faces as faces_service
 from tagpup.store import faces as store_faces
+from tagpup.store import photos as store_photos
 from tagpup.store import schema
 from tagpup.store import taxonomy as store_taxonomy
 from tagpup.services import indexing
@@ -62,22 +63,6 @@ def compute_geometric_median(X, eps=1e-5, max_iter=20):
 
 _metadata_year_cache = {}
 _path_year_cache = {}
-
-#: Every nameless face still in play, for the Identify Faces queue.
-#:
-#: `LENGTH(f.embedding)` rather than `f.embedding`: the queue groups faces by the tags
-#: their photo carries and counts them. It never compares a vector to anything -- it
-#: only needs to know a face HAS one, because a face without an embedding cannot take
-#: part in identifying and must not be counted as waiting. Selecting the column itself
-#: read 380 MB of BLOB and built 189,000 numpy arrays to answer a question about
-#: integers. Clustering is the per-person view's job, and it selects the embeddings
-#: there, where they are actually used.
-IDENTIFY_CANDIDATES_SQL = """
-    SELECT f.id, f.photo_path, p.people, LENGTH(f.embedding)
-    FROM faces f
-    LEFT JOIN photos p ON p.path = f.photo_path
-    WHERE f.name IS NULL AND f.excluded = 0
-"""
 
 #: How many unclustered faces a person's grid shows at once.
 #:
@@ -509,24 +494,9 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         conn = None
         try:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
             
             if mode == "folder-match" or mode == "unmatched":
-                cursor.execute("""
-                    SELECT 
-                        f.photo_path, 
-                        SUM(CASE WHEN f.name IS NULL THEN 1 ELSE 0 END) as unmatched,
-                        SUM(CASE WHEN f.name IS NOT NULL THEN 1 ELSE 0 END) as matched,
-                        p.mtime, 
-                        p.raw_metadata
-                    FROM faces f
-                    LEFT JOIN photos p ON p.path = f.photo_path
-                    GROUP BY f.photo_path
-                    HAVING unmatched > 0
-                    ORDER BY p.mtime DESC
-                """)
-                rows = cursor.fetchall()
+                rows = store_faces.photos_with_unnamed(conn)
                 photos = []
                 for row in rows:
                     p_path = row[0]
@@ -571,13 +541,9 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         conn = None
         try:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
 
             # 1. Fetch metadata from photos table
-            path_sql, path_args = paths.sql_equals("path", photo_path)
-            cursor.execute("SELECT people, tags, captions, mtime, raw_metadata FROM photos WHERE " + path_sql, path_args)
-            photo_row = cursor.fetchone()
+            photo_row = store_photos.details(conn, photo_path)
 
             people = []
             tags = []
@@ -606,9 +572,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             year = get_year_from_mtime_or_meta(mtime, raw_meta_json, photo_path)
 
             # 2. Fetch face detections from faces table
-            path_sql, path_args = paths.sql_equals("photo_path", photo_path)
-            cursor.execute("SELECT id, box, name, embedding FROM faces WHERE " + path_sql, path_args)
-            face_rows = cursor.fetchall()
+            face_rows = store_faces.in_photo_with_names(conn, photo_path)
 
             # Every named face, from the matrix shared with /api/face-matches. This
             # read all of them from SQLite on every click of a face card -- 35,826 rows,
@@ -704,22 +668,10 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
     # These endpoints answer the two questions that were unanswerable: what is in the
     # vocabulary, and which photos does a given tag actually touch.
 
-    def _tag_taxonomy_rows(self, cursor):
-        """Every taxonomy entry, and which roots this library files people under."""
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-        if not cursor.fetchone():
-            return [], {"people", "family", "friends", "pets"}
-
-        roots = {"people", "family", "friends", "pets"}
-        cursor.execute(
-            "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'")
-        for row in cursor.fetchall():
-            if row[0]:
-                roots.add(row[0].strip().lower())
-
-        cursor.execute("SELECT tag, has_face FROM tag_taxonomy")
-        return cursor.fetchall(), roots
+    def _tag_taxonomy_rows(self, conn):
+        """Every taxonomy entry, and which roots this library files people under: the
+        tree's, the usual ones, and Pets."""
+        return store_taxonomy.face_flags(conn), store_taxonomy.people_roots(conn) | {"pets"}
 
     def handle_get_tags_list(self, query):
         """Every tag this library knows, with what it touches.
@@ -736,9 +688,8 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         conn = None
         try:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            cursor = conn.cursor()
 
-            taxonomy_rows, people_roots = self._tag_taxonomy_rows(cursor)
+            taxonomy_rows, people_roots = self._tag_taxonomy_rows(conn)
             in_taxonomy = {}
             for tag, has_face in taxonomy_rows:
                 if tag:
@@ -765,20 +716,10 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             def is_stray_person(tag):
                 return "/" not in tag and tag.strip().lower() in person_leaves
 
-            embedded = set()
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='tag_embeddings'")
-            if cursor.fetchone():
-                cursor.execute("SELECT DISTINCT tag FROM tag_embeddings")
-                embedded = {row[0] for row in cursor.fetchall() if row[0]}
+            embedded = store_taxonomy.embedded_tags(conn)
 
             counts = {}
-            cursor.execute("SELECT tags FROM photos")
-            for (tags_json,) in cursor.fetchall():
-                try:
-                    tags = json.loads(tags_json or "[]")
-                except Exception:
-                    continue
+            for tags in store_photos.tag_lists(conn):
                 for tag in tags:
                     if tag:
                         counts[tag] = counts.get(tag, 0) + 1
@@ -840,17 +781,8 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         conn = None
         try:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            cursor = conn.cursor()
-            cursor.execute("SELECT path, tags, mtime FROM photos")
-
             photos = []
-            for path, tags_json, mtime in cursor.fetchall():
-                try:
-                    tags = json.loads(tags_json or "[]")
-                except Exception:
-                    continue
-                if tag not in tags:
-                    continue
+            for path, tags, mtime in store_photos.with_tag(conn, tag):
                 photos.append({
                     "path": path,
                     "filename": os.path.basename(path),
@@ -930,12 +862,9 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         conn = None
         try:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
             
             # Fetch target embedding
-            cursor.execute("SELECT embedding, name FROM faces WHERE id = ?", (face_id,))
-            row = cursor.fetchone()
+            row = store_faces.embedding_row(conn, face_id)
             if not row:
                 self.send_error(404, "Face not found")
                 return
@@ -1005,12 +934,9 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         conn = None
         try:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
             
             # Fetch target embedding
-            cursor.execute("SELECT embedding FROM faces WHERE id = ?", (face_id,))
-            row = cursor.fetchone()
+            row = store_faces.embedding_row(conn, face_id)
             if not row:
                 self.send_error(404, "Face not found")
                 return
@@ -1019,8 +945,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             target_emb = np.frombuffer(target_emb_bytes, dtype=np.float32)
             
             # Fetch all other unmatched faces
-            cursor.execute("SELECT id, photo_path, box, embedding FROM faces WHERE name IS NULL AND excluded = 0 AND id != ?", (face_id,))
-            faces_rows = cursor.fetchall()
+            faces_rows = store_faces.unnamed_except(conn, face_id)
             
             if not faces_rows:
                 self.send_json({"matches": []})
@@ -1259,21 +1184,12 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         conn = None
         try:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
             faces = []
             
-            cursor.execute("SELECT COUNT(*) FROM faces WHERE name = ?", (name,))
-            total_count = cursor.fetchone()[0]
+            total_count = store_faces.count_named(conn, name)
 
             # Fetch all resolved faces with metadata for era-aware centroid calculation
-            cursor.execute("""
-                SELECT f.embedding, p.mtime, p.raw_metadata, f.photo_path
-                FROM faces f
-                LEFT JOIN photos p ON p.path = f.photo_path
-                WHERE f.name = ? AND f.embedding IS NOT NULL
-            """, (name,))
-            all_matched_rows = cursor.fetchall()
+            all_matched_rows = store_faces.person_embeddings(conn, name)
 
             all_matched_faces = []
             for emb_bytes, mtime, raw_meta_json, photo_path in all_matched_rows:
@@ -1351,14 +1267,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     era_centroid_cache[target_year] = compute_era_centroid(target_year)
                 return era_centroid_cache[target_year]
 
-            cursor.execute("""
-                SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata
-                FROM faces f
-                LEFT JOIN photos p ON p.path = f.photo_path
-                WHERE f.name = ?
-                LIMIT ? OFFSET ?
-            """, (name, limit, offset))
-            rows = cursor.fetchall()
+            rows = store_faces.person_page(conn, name, limit, offset)
                     
             for r in rows:
                 try:
@@ -1550,16 +1459,14 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 
         Lets the picker show what is already in rather than offering it as if new.
         """
-        counts = {}
         try:
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            for (photo_path,) in conn.execute("SELECT path FROM photos"):
-                folder_key = paths.key(os.path.dirname(photo_path))
-                counts[folder_key] = counts.get(folder_key, 0) + 1
-            conn.close()
+            conn = tagpup_db.connect(tagpup_db.readonly_uri(self.db_path), uri=True)
+            try:
+                return store_photos.folder_counts(conn)
+            finally:
+                conn.close()
         except Exception:
             return {}
-        return counts
 
     def handle_get_folder_index_status(self, query):
         path_list = query.get("path")
@@ -1690,15 +1597,8 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         conn = None
         try:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, p.raw_metadata,"
-                " f.excluded_reason FROM faces f"
-                " LEFT JOIN photos p ON p.path = f.photo_path"
-                " WHERE f.excluded = 1 ORDER BY f.id DESC"
-            )
             faces = []
-            for r in cursor.fetchall():
+            for r in store_faces.excluded_for_review(conn):
                 try:
                     box = json.loads(r[2]) if r[2] else []
                 except Exception:
@@ -1986,13 +1886,8 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         if cached is not None:
             return cached
 
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT id, name, embedding FROM faces "
-            "WHERE name IS NOT NULL AND embedding IS NOT NULL AND excluded = 0"
-        )
         ids, names, vecs = [], [], []
-        for face_id, person, blob in cur.fetchall():
+        for face_id, person, blob in store_faces.for_named_matrix(conn):
             try:
                 vec = np.frombuffer(blob, dtype=np.float32)
             except Exception:
@@ -2016,8 +1911,6 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         conn = None
         try:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
 
             fingerprint = self.faces_fingerprint(conn)
             cached = self.identify_cache_get("queue", fingerprint)
@@ -2026,17 +1919,10 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 return
 
             # 1. Fetch all unmatched faces with the tags their photos carry
-            cursor.execute(IDENTIFY_CANDIDATES_SQL)
-            unmatched_rows = cursor.fetchall()
+            unmatched_rows = store_faces.identify_candidates(conn)
 
             # 2. Fetch matched faces by photo to find already matched names
-            cursor.execute("SELECT photo_path, name FROM faces WHERE name IS NOT NULL")
-            matched_rows = cursor.fetchall()
-            matched_by_photo = {}
-            for p_path, name in matched_rows:
-                if p_path not in matched_by_photo:
-                    matched_by_photo[p_path] = set()
-                matched_by_photo[p_path].add(name)
+            matched_by_photo = store_faces.names_by_photo(conn)
 
             # Group candidate faces by unmatched tag
             tag_candidates = {}
@@ -2151,8 +2037,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 
             # Excluded faces take no part in identifying, but the bucket has to be
             # reachable from somewhere or an exclusion could never be reviewed or undone.
-            cursor.execute("SELECT COUNT(*) FROM faces WHERE excluded = 1")
-            excluded_count = cursor.fetchone()[0]
+            excluded_count = store_faces.count_excluded(conn)
             if excluded_count:
                 people_counts.append({
                     "name": "Excluded", "count": excluded_count, "unit": "face"})
@@ -2179,8 +2064,6 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         conn = None
         try:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
 
             fingerprint = self.faces_fingerprint(conn)
             cache_key = f"matches:{name}"
@@ -2194,26 +2077,14 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             self.build_progress(name, "reading", 0.0, "Reading the faces still unnamed")
 
             # 1. Fetch all unmatched faces in database
-            cursor.execute("""
-                SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata, p.people
-                FROM faces f
-                LEFT JOIN photos p ON p.path = f.photo_path
-                WHERE f.name IS NULL AND f.excluded = 0
-            """)
-            unmatched_rows = cursor.fetchall()
+            unmatched_rows = store_faces.unnamed_for_matching(conn)
             
             if not unmatched_rows:
                 self.send_json({"faces": [], "total_count": 0, "has_more": False})
                 return
 
             # 2. Fetch matched faces by photo to find already matched names
-            cursor.execute("SELECT photo_path, name FROM faces WHERE name IS NOT NULL")
-            matched_rows = cursor.fetchall()
-            matched_by_photo = {}
-            for p_path, m_name in matched_rows:
-                if p_path not in matched_by_photo:
-                    matched_by_photo[p_path] = set()
-                matched_by_photo[p_path].add(m_name)
+            matched_by_photo = store_faces.names_by_photo(conn)
 
             # How many unmatched candidates each tag has library-wide, so "Ungrouped" can
             # recognise the tags that cannot form a group. Mirrors the queue listing.
