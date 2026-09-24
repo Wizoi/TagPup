@@ -13,7 +13,8 @@ Four things went wrong here, each quietly:
 - Consensus looked only at the photos of this run, so resuming a folder with two
   photos left judged "what does this folder agree on" from those two.
 
-Names here are fictional.
+The runs are tagpup.jobs.suggestions'; what they run is TagPup's suggestion_work, with
+the model replaced by a script. Names here are fictional.
 """
 import glob
 import json
@@ -39,18 +40,20 @@ from tagpup_server import TagPupHTTPRequestHandler as Handler  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shipped_sources import python_sources  # noqa: E402
 
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+
 
 class _LibraryFixture(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="sugg_pipeline_")
         self.db = os.path.join(self.dir, "library.db")
-        self.cache = Handler._suggestions_cache_path(self.db)
-        tagpup_server.set_active_db_path(self.db)
-        Handler.suggest_status.clear()
+        self.cache = suggestion_jobs.cache_file(self.db)
+        self.runs = suggestion_jobs.runs_for(Library(self.db))
 
     def tearDown(self):
+        suggestion_jobs.forget(Library(self.db))
         tagpup_server.set_active_db_path(self.db)
-        Handler.suggest_status.clear()
         Handler.folder_cache.clear()
         Handler.shared_embedder = None
         tagpup_server.set_active_db_path(None)
@@ -68,13 +71,13 @@ class _LibraryFixture(unittest.TestCase):
 class TheCacheFileIsNeverLeftHalfWritten(_LibraryFixture):
     def test_a_save_that_dies_mid_write_leaves_the_previous_file(self):
         folder, _ = self._folder("2025-11 Classic", 0)
-        Handler.suggest_status[folder] = {
+        self.runs.statuses[folder] = {
             "status": "completed", "completed": 1, "total": 1,
             "suggestions": {"a.jpg": {"tags": [{"tag": "Activity/Swim Meet", "score": 0.9}]}},
         }
-        Handler.save_suggestions_cache(self.db)
+        self.runs.save()
 
-        Handler.suggest_status[folder]["suggestions"]["b.jpg"] = {"tags": []}
+        self.runs.statuses[folder]["suggestions"]["b.jpg"] = {"tags": []}
         real_dump = json.dump
 
         def dies_halfway(obj, fp, *args, **kwargs):
@@ -82,7 +85,7 @@ class TheCacheFileIsNeverLeftHalfWritten(_LibraryFixture):
             raise OSError("the machine went to sleep")
 
         with mock.patch.object(json, "dump", dies_halfway):
-            Handler.save_suggestions_cache(self.db)
+            self.runs.save()
         self.assertIs(json.dump, real_dump)
 
         with open(self.cache, encoding="utf-8") as f:
@@ -93,19 +96,18 @@ class TheCacheFileIsNeverLeftHalfWritten(_LibraryFixture):
 
     def test_concurrent_saves_never_leave_an_unparseable_file(self):
         folder, _ = self._folder("2025-10 Invitational", 0)
-        Handler.suggest_status[folder] = {
+        self.runs.statuses[folder] = {
             "status": "running", "completed": 0, "total": 400, "suggestions": {}}
-        Handler.save_suggestions_cache(self.db)
+        self.runs.save()
         stop = threading.Event()
         unparseable = []
 
         def writer(n):
-            tagpup_server.set_active_db_path(self.db)
             for i in range(60):
-                with Handler.model_lock:
-                    Handler.suggest_status[folder]["suggestions"][f"w{n}_{i}.jpg"] = {
+                with self.runs.lock:
+                    self.runs.statuses[folder]["suggestions"][f"w{n}_{i}.jpg"] = {
                         "tags": [{"tag": f"Activity/Heat {i}", "score": 0.7}] * 20}
-                Handler.save_suggestions_cache(self.db)
+                self.runs.save()
 
         def reader():
             while not stop.is_set():
@@ -140,11 +142,10 @@ class TheCacheFileIsNeverLeftHalfWritten(_LibraryFixture):
 
     def test_saves_during_a_run_are_throttled(self):
         folder, _ = self._folder("2025-09 Relays", 0)
-        Handler.suggest_status[folder] = {"status": "running", "suggestions": {}}
-        wrote = [Handler.save_suggestions_cache(self.db, min_interval=60) for _ in range(50)]
+        self.runs.statuses[folder] = {"status": "running", "suggestions": {}}
+        wrote = [self.runs.save(min_interval=60) for _ in range(50)]
         self.assertEqual(wrote.count(True), 1, "every photo rewrote the whole file")
-        self.assertTrue(Handler.save_suggestions_cache(self.db),
-                        "an unthrottled save must always write")
+        self.assertTrue(self.runs.save(), "an unthrottled save must always write")
 
 
 class _FakeIndex:
@@ -186,7 +187,7 @@ def _fake_modules(suggester_cls):
 
 
 class _RunFixture(_LibraryFixture):
-    """Runs the real suggestions thread with the model replaced by a script."""
+    """Runs a folder through the real run and TagPup's work, the model a script."""
 
     def setUp(self):
         super().setUp()
@@ -215,23 +216,24 @@ class _RunFixture(_LibraryFixture):
                 folder_key = paths.key(os.path.dirname(suggestions[0]["path"]))
                 test.consensus_calls.append({
                     "paths": sorted(s["path"] for s in suggestions),
-                    "status_then": Handler.suggest_status[folder_key]["status"],
+                    "status_then": test.runs.statuses[folder_key]["status"],
                 })
                 return RealSuggester.apply_folder_consensus(self, suggestions)
 
         self.modules = _fake_modules(ScriptedSuggester)
+        tagpup_server.set_active_db_path(self.db)
         Handler.shared_embedder = _FakeEmbedder()
 
     def run_folder(self, folder, photos):
+        tagpup_server.set_active_db_path(self.db)
         Handler.folder_cache[folder] = photos
-        Handler.suggest_status[folder] = {
+        self.runs.statuses[folder] = {
             "status": "preparing", "completed": 0, "total": 0,
-            "suggestions": (Handler.suggest_status.get(folder) or {}).get("suggestions", {}),
+            "suggestions": (self.runs.statuses.get(folder) or {}).get("suggestions", {}),
         }
         with mock.patch.dict(sys.modules, self.modules):
-            Handler.run_folder_suggestions_thread(folder, self.db)
-        tagpup_server.set_active_db_path(self.db)
-        return Handler.suggest_status[folder]
+            self.runs.run(folder, Handler.suggestion_work(folder, self.db))
+        return self.runs.statuses[folder]
 
 
 class AFailedPhotoIsTriedAgain(_RunFixture):
@@ -295,13 +297,13 @@ class OneFileOneOwner(unittest.TestCase):
         for module in python_sources():
             with open(os.path.join(WORKSPACE_DIR, module), encoding="utf-8") as f:
                 if "gui_suggestions_cache" in f.read():
-                    owners.append(os.path.basename(module))
-        self.assertEqual(owners, ["tagpup_server.py"],
+                    owners.append(module.replace(os.sep, "/"))
+        self.assertEqual(owners, ["tagpup/jobs/suggestions.py"],
                          "a second copy of the cache naming can drift or write over it")
 
     def test_the_main_library_keeps_its_existing_file(self):
         self.assertEqual(
-            os.path.basename(Handler._suggestions_cache_path(os.path.join("data", "photo_index.db"))),
+            os.path.basename(suggestion_jobs.cache_file(os.path.join("data", "photo_index.db"))),
             "gui_suggestions_cache.json")
 
 

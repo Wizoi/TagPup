@@ -1,6 +1,6 @@
 """Regression tests for database context propagation into background worker threads.
 
-The per-database registries (index_status, suggest_status, folder_cache) resolve through
+The per-database registries (the folder cache among them) resolve through
 a thread-local set during request handling. Worker threads spawned by a request do not
 inherit that thread-local, and the class-level fallback points at the *startup* database.
 Any worker that reads or writes an isolated registry must therefore re-bind the active
@@ -29,12 +29,12 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from tagpup_server import (
     start_server as start_tagpup_server,
-    TagPupHTTPRequestHandler,
     set_active_db_path,
 )
 import paths
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
+from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 
 
 def _post(port, path, body):
@@ -278,16 +278,16 @@ class TestSuggestionsCachePerDatabase(unittest.TestCase):
     """
 
     def test_default_database_keeps_unsuffixed_filename(self):
-        path = TagPupHTTPRequestHandler._suggestions_cache_path(os.path.join("data", "photo_index.db"))
+        path = suggestion_jobs.cache_file(os.path.join("data", "photo_index.db"))
         self.assertEqual(os.path.basename(path), "gui_suggestions_cache.json")
 
     def test_secondary_database_gets_its_own_file(self):
-        path = TagPupHTTPRequestHandler._suggestions_cache_path(os.path.join("data", "kr-track.db"))
+        path = suggestion_jobs.cache_file(os.path.join("data", "kr-track.db"))
         self.assertEqual(os.path.basename(path), "gui_suggestions_cache_kr-track.json")
 
     def test_distinct_databases_never_share_a_cache_file(self):
-        a = TagPupHTTPRequestHandler._suggestions_cache_path(os.path.join("data", "photo_index.db"))
-        b = TagPupHTTPRequestHandler._suggestions_cache_path(os.path.join("data", "kr-track.db"))
+        a = suggestion_jobs.cache_file(os.path.join("data", "photo_index.db"))
+        b = suggestion_jobs.cache_file(os.path.join("data", "kr-track.db"))
         self.assertNotEqual(a, b)
 
     # TagTuner's copy of this naming, which a test here kept in step, is gone: it had

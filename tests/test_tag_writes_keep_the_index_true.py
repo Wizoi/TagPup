@@ -33,6 +33,7 @@ from index import PhotoIndex
 from metadata import extract_tags
 from tagpup_server import TagPupHTTPRequestHandler
 from tagpup.core.library import Library
+from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import tagging
 
 KEYWORDS = ["Beach", "Cross Country", "People/Rowan Thackeray"]
@@ -108,7 +109,7 @@ class IndexCase(unittest.TestCase):
             # TagPup's rescan that nothing called.
             tagpup_server.set_active_db_path(self.db_path)
             TagPupHTTPRequestHandler.folder_cache.clear()
-            TagPupHTTPRequestHandler.suggest_status.clear()
+            suggestion_jobs.forget(Library(self.db_path))
             tagpup_server.set_active_db_path(None)
             tagpup_server.invalidate_people_cache()
         self.addCleanup(forget_state)

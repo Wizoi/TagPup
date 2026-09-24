@@ -11,7 +11,9 @@ import unittest
 
 from tests.handler_harness import Library
 
-from tagpup_server import TagPupHTTPRequestHandler, paths, set_active_db_path
+from tagpup_server import paths, set_active_db_path
+
+from tagpup.jobs import suggestions as suggestion_jobs
 
 SAVED_FOLDER = r"D:\Library\2019\Harbour"
 NEW_FOLDER = r"D:\Library\2020\Meadow"
@@ -27,9 +29,9 @@ class TestASecondLibrary(unittest.TestCase):
         self.startup = Library(self, "photo_index")
         self.other = Library(self, "second-library")
         # The server was started on the first library and has read its file.
-        TagPupHTTPRequestHandler.load_suggestions_cache(self.startup.db_path)
+        self.startup.suggestion_runs().ensure_loaded()
 
-        self.cache_file = TagPupHTTPRequestHandler._suggestions_cache_path(self.other.db_path)
+        self.cache_file = suggestion_jobs.cache_file(self.other.db_path)
         with open(self.cache_file, "w", encoding="utf-8") as handle:
             json.dump({SAVED_FOLDER: saved_run(os.path.join(SAVED_FOLDER, "boat.jpg"))}, handle)
 
@@ -48,24 +50,24 @@ class TestASecondLibrary(unittest.TestCase):
     def test_a_save_there_keeps_the_folders_saved_before(self):
         # A run in this session, on another folder, saves as it goes.
         set_active_db_path(self.other.db_path)
-        TagPupHTTPRequestHandler.suggest_status[paths.key(NEW_FOLDER)] = saved_run(
+        self.other.suggestion_runs().statuses[paths.key(NEW_FOLDER)] = saved_run(
             os.path.join(NEW_FOLDER, "field.jpg"))
-        self.assertTrue(TagPupHTTPRequestHandler.save_suggestions_cache(self.other.db_path))
+        self.assertTrue(self.other.suggestion_runs().save())
 
         self.assertEqual(self.saved_folders(), {paths.key(SAVED_FOLDER), paths.key(NEW_FOLDER)})
         set_active_db_path(self.other.db_path)
-        self.assertIn(paths.key(SAVED_FOLDER), TagPupHTTPRequestHandler.suggest_status)
+        self.assertIn(paths.key(SAVED_FOLDER), self.other.suggestion_runs().statuses)
 
     def test_a_run_in_progress_is_not_replaced_by_the_saved_copy(self):
         # The rule the startup load already kept: a folder something is working on
         # is never overwritten by what was saved about it.
         set_active_db_path(self.other.db_path)
         live = {"status": "running", "completed": 0, "total": 5, "suggestions": {}}
-        TagPupHTTPRequestHandler.suggest_status[paths.key(SAVED_FOLDER)] = live
-        TagPupHTTPRequestHandler.save_suggestions_cache(self.other.db_path)
+        self.other.suggestion_runs().statuses[paths.key(SAVED_FOLDER)] = live
+        self.other.suggestion_runs().save()
 
         set_active_db_path(self.other.db_path)
-        self.assertIs(TagPupHTTPRequestHandler.suggest_status[paths.key(SAVED_FOLDER)], live)
+        self.assertIs(self.other.suggestion_runs().statuses[paths.key(SAVED_FOLDER)], live)
 
     def test_the_startup_library_does_not_see_the_other_librarys_folders(self):
         handler = self.startup.handler(None)

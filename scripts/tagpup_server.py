@@ -28,6 +28,7 @@ from tagpup.store.photos import record_tags as record_tags_in_index  # noqa: F40
 from tagpup.store import taxonomy as store_taxonomy
 from tagpup.core.result import NotFound
 from tagpup.jobs import indexing as indexing_jobs
+from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import indexing
 from tagpup.services import people as people_service
 from tagpup.services import tags as tags_service
@@ -336,18 +337,11 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                                metaclass=TagPupHTTPRequestHandlerMeta):
     db_path = "data/photo_index.db"
     gui_dir = "gui_tagpup"
-    
-    # Static Class-level caches
-    model_lock = threading.Lock()
-    
+
     # Database-specific registries
     _db_folder_cache_registry = {}
-    _db_suggest_status_registry = {}
-    _db_suggest_threads_registry = {}
 
     folder_cache = DatabaseIsolatedDict(_db_folder_cache_registry)
-    suggest_status = DatabaseIsolatedDict(_db_suggest_status_registry)
-    suggest_threads = DatabaseIsolatedDict(_db_suggest_threads_registry)
 
     def log_message(self, format, *args):
         pass # suppress request logs
@@ -930,156 +924,87 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         if not folder_path_list:
             self.send_json_error(400, "Missing 'path' parameter")
             return
-        folder_path = paths.key(urllib.parse.unquote(folder_path_list[0]))
-        self.ensure_suggestions_loaded(self.db_path)
-        # A copy taken under the lock the workers write under. Serialising the live
-        # dict while four workers added to it failed the poll with "dictionary
-        # changed size during iteration".
-        with TagPupHTTPRequestHandler.model_lock:
-            status_info = make_json_serializable(
-                TagPupHTTPRequestHandler.suggest_status.get(folder_path, {"status": "idle"}))
-        self.send_json(status_info)
+        self.send_json(self.suggestion_runs().status(urllib.parse.unquote(folder_path_list[0])))
 
     def handle_post_folder_suggest_start(self):
+        """Suggest tags for a folder's photos (tagpup.jobs.suggestions)."""
         try:
             data = self.read_json_body()
         except Exception:
             self.send_json_error(400, "Invalid JSON payload")
             return
-            
         folder_path = data.get("folder_path")
         if not folder_path or not os.path.isdir(folder_path):
             self.send_json_error(400, "Invalid folder path")
             return
-            
         folder_path = paths.stored(folder_path)
-        folder_path_norm = paths.key(folder_path)
+        status = self.suggestion_runs().start(
+            folder_path, TagPupHTTPRequestHandler.suggestion_work(folder_path, self.db_path))
+        self.send_json({"success": True, "status": status})
 
-        self.ensure_suggestions_loaded(self.db_path)
-        status_info = TagPupHTTPRequestHandler.suggest_status.get(folder_path_norm)
-        if status_info and status_info["status"] in ("preparing", "running"):
-            self.send_json({"success": True, "status": status_info["status"]})
-            return
-            
-        existing_suggestions = {}
-        if status_info:
-            existing_suggestions = status_info.get("suggestions", {})
-
-        TagPupHTTPRequestHandler.suggest_status[folder_path_norm] = {
-            "status": "preparing",
-            # A photo whose suggestion failed is tried again, so it is not done yet.
-            "completed": sum(1 for s in existing_suggestions.values()
-                             if isinstance(s, dict) and "error" not in s),
-            "total": 0,
-            "suggestions": existing_suggestions
-        }
-        
-        t = threading.Thread(
-            target=TagPupHTTPRequestHandler.run_folder_suggestions_thread,
-            args=(folder_path, self.db_path),
-            name="FolderSuggestionsThread",
-            daemon=True
-        )
-        TagPupHTTPRequestHandler.suggest_threads[folder_path_norm] = t
-        t.start()
-        
-        self.send_json({"success": True, "status": "running"})
-
-    #: Serialises writes of the suggestions cache file. Its own lock, not model_lock,
-    #: so a slow disk never holds up the pool threads recording suggestions.
-    _suggestions_file_lock = threading.Lock()
-    #: When each cache file was last written, for the throttled saves during a run.
-    _suggestions_last_saved = {}
-
-    @staticmethod
-    def _suggestions_cache_path(db_path):
-        """The one suggestions cache file of a library, and the only place it is named.
-
-        One file per database, next to it. The main library keeps the unsuffixed name
-        it has always had, so the file already on disk goes on loading.
-        """
-        db_basename = os.path.splitext(os.path.basename(db_path))[0]
-        if db_basename == "photo_index":
-            return os.path.join(os.path.dirname(db_path), "gui_suggestions_cache.json")
-        return os.path.join(os.path.dirname(db_path), f"gui_suggestions_cache_{db_basename}.json")
-
-    @staticmethod
-    def _rekey_saved_suggestions(data):
-        """Saved suggestions, keyed the way this code looks them up.
-
-        Files written before paths.py hold folder keys in the old lower-case,
-        forward-slash form, which paths.key() does not produce; loading them as they
-        were would keep every saved run where nothing ever asks for it. A folder saved
-        under two spellings becomes one entry, its suggestions merged. The photos
-        inside are keyed by the path the page was sent, which is paths.stored().
-        """
-        rekeyed = {}
-        for folder, status in data.items():
-            if not isinstance(status, dict):
-                continue
-            suggestions = status.get("suggestions")
-            if isinstance(suggestions, dict):
-                status["suggestions"] = {paths.stored(p): s for p, s in suggestions.items()}
-            folder_key = paths.key(folder)
-            existing = rekeyed.get(folder_key)
-            if existing is None:
-                rekeyed[folder_key] = status
-            else:
-                merged = existing.setdefault("suggestions", {})
-                for p, s in (status.get("suggestions") or {}).items():
-                    merged.setdefault(p, s)
-        return rekeyed
-
-    #: Libraries whose saved suggestions have been read into memory, by registry key.
-    _suggestions_loaded = set()
-    _suggestions_load_lock = threading.Lock()
+    def suggestion_runs(self):
+        """The suggestion runs of this request's library."""
+        return suggestion_jobs.runs_for(Library(self.db_path))
 
     @classmethod
-    def ensure_suggestions_loaded(cls, db_path):
-        """Read a library's saved suggestions the first time anything uses them.
+    def suggestion_work(cls, folder_path, db_path):
+        """What a suggestion run over a folder runs (tagpup.jobs.suggestions): the photos
+        this server has scanned there, and this library's suggester and CLIP model."""
+        folder_key = paths.key(folder_path)
 
-        They used to be read once, at startup, for the startup library only. Any
-        other library's saved runs were never offered again, and the first save for
-        it -- which writes everything in memory -- replaced its file with just this
-        session's folders. Every reader of the suggestions and every save calls this,
-        so no save can happen before the load.
-        """
-        set_active_db_path(db_path)
-        registry_key = get_active_db_path()
-        if registry_key in cls._suggestions_loaded:
-            return
-        with cls._suggestions_load_lock:
-            if registry_key not in cls._suggestions_loaded:
-                cls.load_suggestions_cache(db_path)
+        class Model:
+            def __init__(self, suggester, embedder):
+                self.suggester, self.embedder = suggester, embedder
 
-    @classmethod
-    def load_suggestions_cache(cls, db_path):
-        set_active_db_path(db_path)
-        # Marked first: a file that fails to load is not tried again on every save.
-        cls._suggestions_loaded.add(get_active_db_path())
-        cache_path = cls._suggestions_cache_path(db_path)
-        if os.path.exists(cache_path):
-            try:
-                import json
-                with open(cache_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                # Clean up any active/running statuses to "idle"
-                for folder, status in data.items():
-                    if status.get("status") in ("running", "preparing"):
-                        status["status"] = "idle"
-                data = cls._rekey_saved_suggestions(data)
-                # Only folders nothing has touched yet. This runs in the background
-                # at startup, so a folder chosen straight away can already have a run
-                # in progress; overwriting it with the saved copy -- rewritten to
-                # "idle" above -- told the page the run had stopped, and it stopped
-                # asking while the server went on and finished.
-                with cls.model_lock:
-                    for folder, status in data.items():
-                        if folder not in cls.suggest_status:
-                            cls.suggest_status[folder] = status
-                logger.info(f"Loaded suggestions cache from {cache_path} with {len(data)} folders.")
-            except Exception as e:
-                logger.error(f"Error loading suggestions cache: {e}")
+            def suggest(self, photo, meta):
+                return self.suggester.suggest_for_photo(
+                    photo, self.embedder.embed_image(photo), k=15, min_sim=0.35, target_metadata=meta)
+
+            def offered(self, sugg):
+                """What the panel shows for one suggestion: tags, people, title."""
+                suggested_tags, suggested_people = [], []
+                for item in sugg.get("suggested_tags", []):
+                    score = item.get("score", 0.0)
+                    if score >= 0.6:
+                        if item.get("has_face_match"):
+                            suggested_people.append({"name": item["tag"], "score": score})
+                        else:
+                            suggested_tags.append({"tag": item["tag"], "score": score})
+                from writer import derive_caption_from_tags
+                return suggested_tags, suggested_people, derive_caption_from_tags(
+                    [t["tag"] for t in suggested_tags] + [p["name"] for p in suggested_people])
+
+            def consensus(self, suggestions):
+                return self.suggester.apply_folder_consensus(suggestions)
+
+        class Work:
+            def photos(self):
+                # The folder cache is this library's, and this is the run's own thread.
+                set_active_db_path(db_path)
+                found = cls.folder_cache.get(folder_key, {})
+                if not found:
+                    logger.info("Folder cache empty for %s; scanning it.", folder_path)
+                    cls.rescan_folder_to_cache_classmethod(folder_path)
+                    found = cls.folder_cache.get(folder_key, {})
+                return found
+
+            def begin(self):
+                set_active_db_path(db_path)
+                from taxonomy import TagTaxonomy
+                from suggester import TagSuggester
+
+                settings = tagpup_config.load()
+                taxonomy = TagTaxonomy(file_path=Library(db_path).taxonomy_file)
+                taxonomy.load()
+                candidates = zero_shot_candidates(taxonomy, tagpup_config.candidate_tags(settings))
+                embedder = cls.library_embedder(db_path, tagpup_config.embedder_settings(settings))
+                suggester = TagSuggester(embedder.photo_index, taxonomy, embedder=embedder,
+                                         candidate_tags=candidates)
+                # Candidate text embeddings, before the parallel photos need them.
+                suggester._precompute_candidates()
+                return Model(suggester, embedder)
+
+        return Work()
 
     _library_embedder_lock = threading.Lock()
 
@@ -1109,103 +1034,6 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         return embedder
 
     @classmethod
-    def move_saved_suggestions(cls, db_path, renames):
-        """File each renamed photo's saved suggestions under its new name, and save.
-
-        `renames` maps old path to new, in any spelling. Returns how many moved. The
-        page looks suggestions up by path, so a renamed photo showed none, the next
-        Suggest ran it again from scratch, and the old entry stayed for ever.
-        """
-        by_key = {paths.key(old): paths.stored(new) for old, new in renames.items()}
-        moved = 0
-        with cls.model_lock:
-            for status in cls.suggest_status.values():
-                saved = status.get("suggestions") if isinstance(status, dict) else None
-                if not saved:
-                    continue
-                # Taken out first, then put back, so names shuffled among themselves
-                # never overwrite one another.
-                leaving = {path: saved.pop(path) for path in list(saved)
-                           if paths.key(path) in by_key}
-                for old_path, entry in leaving.items():
-                    new_path = by_key[paths.key(old_path)]
-                    raw = entry.get("raw_suggestions") if isinstance(entry, dict) else None
-                    if isinstance(raw, dict) and "path" in raw:
-                        raw["path"] = new_path
-                    saved[new_path] = entry
-                    moved += 1
-        if moved:
-            cls.save_suggestions_cache(db_path)
-        return moved
-
-    @classmethod
-    def save_suggestions_cache(cls, db_path, min_interval=0.0):
-        """Write this library's saved suggestions. True if the file was written.
-
-        The file is replaced, never rewritten in place. It used to be truncated and
-        rewritten by four pool threads at once, after every photo: two saves
-        overlapping, or the process stopping mid-write, left a file that did not
-        parse, and a file that does not parse restores nothing for any folder.
-
-        The snapshot is taken inside the file lock, so a save that started later can
-        never be overwritten by one that started earlier.
-
-        `min_interval` is for saves during a run: skip the write if this file was
-        written less than that many seconds ago. The run's final save passes nothing,
-        so what it finished with is always what is on disk.
-        """
-        import json
-        import tempfile
-        import time
-        # What is written is everything in memory, so the saved folders must be in
-        # memory first or this would replace them with only this session's.
-        cls.ensure_suggestions_loaded(db_path)
-        cache_path = cls._suggestions_cache_path(db_path)
-
-        def too_soon():
-            last = cls._suggestions_last_saved.get(cache_path)
-            return bool(min_interval) and last is not None and time.monotonic() - last < min_interval
-
-        if too_soon():
-            return False
-        with cls._suggestions_file_lock:
-            if too_soon():
-                return False
-            tmp_path = None
-            try:
-                with cls.model_lock:
-                    serializable_data = make_json_serializable(cls.suggest_status)
-                directory = os.path.dirname(cache_path) or "."
-                os.makedirs(directory, exist_ok=True)
-                fd, tmp_path = tempfile.mkstemp(
-                    prefix=os.path.basename(cache_path) + ".", suffix=".tmp", dir=directory)
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump(serializable_data, f, indent=2)
-                    f.flush()
-                    os.fsync(f.fileno())
-                for attempt in range(40):
-                    try:
-                        os.replace(tmp_path, cache_path)
-                        break
-                    except PermissionError:
-                        # Windows refuses while something has the file open to read.
-                        if attempt == 39:
-                            raise
-                        time.sleep(0.05)
-                tmp_path = None
-                cls._suggestions_last_saved[cache_path] = time.monotonic()
-                return True
-            except Exception as e:
-                logger.error(f"Error saving suggestions cache {cache_path}: {e}")
-                return False
-            finally:
-                if tmp_path is not None:
-                    try:
-                        os.remove(tmp_path)
-                    except OSError as e:
-                        logger.warning(f"Could not remove {tmp_path}: {e}")
-
-    @classmethod
     def rescan_folder_to_cache_classmethod(cls, folder_path):
         valid_exts = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
         image_files = []
@@ -1233,203 +1061,6 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             folder_map[paths.key(path)] = build_photo_ui_record(path, meta, meta.get("mtime", 0.0), meta.get("size", 0))
             
         cls.folder_cache[paths.key(folder_path)] = folder_map
-
-    @classmethod
-    def run_folder_suggestions_thread(cls, folder_path, db_path):
-        # Restore the active database in this worker thread (see run_folder_index_thread).
-        set_active_db_path(db_path)
-        folder_path = paths.stored(folder_path)
-        folder_path_norm = paths.key(folder_path)
-        try:
-            import concurrent.futures
-            photos_dict = cls.folder_cache.get(folder_path_norm, {})
-            logger.info(f"run_folder_suggestions_thread started for {folder_path}. Found {len(photos_dict)} cached photos.")
-            if not photos_dict:
-                logger.info(f"Folder cache empty for {folder_path}. Performing on-the-fly scan to populate cache...")
-                cls.rescan_folder_to_cache_classmethod(folder_path)
-                photos_dict = cls.folder_cache.get(folder_path_norm, {})
-                logger.info(f"On-the-fly scan completed. Found {len(photos_dict)} photos.")
-                
-            if not photos_dict:
-                logger.warning(f"No photos found in {folder_path} after scan. Returning early.")
-                entry = cls.suggest_status.get(folder_path_norm) or {
-                    "completed": 0, "total": 0, "suggestions": {}
-                }
-                entry["status"] = "error"
-                entry["message"] = "No images found in this folder."
-                cls.suggest_status[folder_path_norm] = entry
-                return
-                
-            photo_paths = list(photos_dict.keys())
-            if folder_path_norm not in cls.suggest_status:
-                cls.suggest_status[folder_path_norm] = {
-                    "status": "preparing", "completed": 0, "total": 0, "suggestions": {}
-                }
-            existing_suggs = cls.suggest_status[folder_path_norm].get("suggestions", {})
-
-            def already_suggested(p):
-                # A photo whose suggestion failed has an entry too, marked "error";
-                # counting it as done meant it was never tried again.
-                entry = existing_suggs.get(paths.stored(photos_dict[p]["path"]))
-                return isinstance(entry, dict) and "error" not in entry
-
-            unprocessed_paths = [p for p in photo_paths if not already_suggested(p)]
-            
-            cls.suggest_status[folder_path_norm]["total"] = len(photo_paths)
-            cls.suggest_status[folder_path_norm]["completed"] = len(photo_paths) - len(unprocessed_paths)
-            cls.suggest_status[folder_path_norm]["status"] = "preparing"
-            
-            cls.save_suggestions_cache(db_path)
-            
-            settings = tagpup_config.load()
-            candidate_tags = tagpup_config.candidate_tags(settings)
-
-            from taxonomy import TagTaxonomy
-            from suggester import TagSuggester
-
-            tax_path = Library(db_path).taxonomy_file
-            taxonomy = TagTaxonomy(file_path=tax_path)
-            taxonomy.load()
-            
-            candidate_tags = zero_shot_candidates(taxonomy, candidate_tags)
-
-            embedder = cls.library_embedder(db_path, tagpup_config.embedder_settings(settings))
-            photo_index = embedder.photo_index
-
-            suggester = TagSuggester(photo_index, taxonomy, embedder=embedder, candidate_tags=candidate_tags)
-            # Precompute candidate text embeddings sequentially so they are cached before the parallel loop
-            suggester._precompute_candidates()
-            
-            # Transition to running state as we begin processing the images
-            with cls.model_lock:
-                cls.suggest_status[folder_path_norm]["status"] = "running"
-            cls.save_suggestions_cache(db_path)
-            
-            suggestions_list = []
-
-            def offered(sugg):
-                """What the panel shows for one suggestion: tags, people, title."""
-                suggested_tags = []
-                suggested_people = []
-                for item in sugg.get("suggested_tags", []):
-                    score = item.get("score", 0.0)
-                    if score >= 0.6:
-                        if item.get("has_face_match"):
-                            suggested_people.append({"name": item["tag"], "score": score})
-                        else:
-                            suggested_tags.append({"tag": item["tag"], "score": score})
-                all_sugg_tags = [t["tag"] for t in suggested_tags] + [p["name"] for p in suggested_people]
-                from writer import derive_caption_from_tags
-                return suggested_tags, suggested_people, derive_caption_from_tags(all_sugg_tags)
-
-            #: Saving after every photo rewrote every folder every photo; during the
-            #: run the file is brought up to date at most this often.
-            save_interval = 2.0
-
-            def process_single_photo(path):
-                # Pool threads are separate threads again, so re-bind the active database.
-                set_active_db_path(db_path)
-                if folder_path_norm not in cls.suggest_status:
-                    return None
-                try:
-                    meta = photos_dict[path]
-                    orig_path = paths.stored(meta["path"])
-                    emb = embedder.embed_image(orig_path)
-                    sugg = suggester.suggest_for_photo(orig_path, emb, k=15, min_sim=0.35, target_metadata=meta)
-                    suggested_tags, suggested_people, suggested_title = offered(sugg)
-
-                    with cls.model_lock:
-                        cls.suggest_status[folder_path_norm]["suggestions"][orig_path] = {
-                            "tags": suggested_tags,
-                            "people": suggested_people,
-                            "title": suggested_title,
-                            # Kept as the suggester produced it, so consensus can be
-                            # taken again over the whole folder when more photos
-                            # arrive. Entries saved before this flag hold scores
-                            # consensus already adjusted, and are left out of it.
-                            "raw_suggestions": sugg,
-                            "raw_before_consensus": True,
-                        }
-                        cls.suggest_status[folder_path_norm]["completed"] += 1
-                    cls.save_suggestions_cache(db_path, min_interval=save_interval)
-                    return sugg
-                except Exception as e:
-                    logger.error(f"Error suggesting for {path}: {e}")
-                    meta = photos_dict.get(path, {})
-                    orig_path = paths.stored(meta.get("path", path))
-                    with cls.model_lock:
-                        # Marked as a failure, not stored as an empty suggestion: the
-                        # next run retries it instead of skipping it for good.
-                        cls.suggest_status[folder_path_norm]["suggestions"][orig_path] = {
-                            "tags": [],
-                            "people": [],
-                            "title": None,
-                            "raw_suggestions": {"suggested_tags": []},
-                            "error": str(e) or type(e).__name__,
-                        }
-                        cls.suggest_status[folder_path_norm]["completed"] += 1
-                    cls.save_suggestions_cache(db_path, min_interval=save_interval)
-                    return None
-
-            max_workers = min(4, os.cpu_count() or 1)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(process_single_photo, p) for p in unprocessed_paths]
-                for fut in concurrent.futures.as_completed(futures):
-                    res = fut.result()
-                    if res is not None:
-                        suggestions_list.append(res)
-
-            # Folder consensus, before the run says "completed": the page stops polling
-            # on "completed" and keeps what it fetched then, which used to be the
-            # scores consensus was about to change.
-            #
-            # Taken over every photo of the folder that has a suggestion of its own,
-            # not only this run's, or resuming a folder with two photos left judged
-            # what the folder agrees on from those two. It runs on copies of the
-            # suggester's own output, so the stored suggestions are never adjusted
-            # twice, nor mutated in place while a status request is reading them.
-            if suggestions_list and folder_path_norm in cls.suggest_status:
-                try:
-                    import copy
-                    in_folder = {paths.stored(meta["path"]) for meta in photos_dict.values()}
-                    with cls.model_lock:
-                        saved = cls.suggest_status[folder_path_norm]["suggestions"]
-                        consensus_input = [
-                            copy.deepcopy(entry["raw_suggestions"])
-                            for photo, entry in saved.items()
-                            if photo in in_folder
-                            and isinstance(entry, dict)
-                            and "error" not in entry
-                            and entry.get("raw_before_consensus")
-                            and isinstance(entry.get("raw_suggestions"), dict)
-                            and entry["raw_suggestions"].get("path")
-                        ]
-                    if len(consensus_input) > 1:
-                        adjusted = {}
-                        for sugg in suggester.apply_folder_consensus(consensus_input):
-                            adjusted[paths.stored(sugg["path"])] = offered(sugg)
-                        with cls.model_lock:
-                            for path, (tags, people, title) in adjusted.items():
-                                entry = saved.get(path)
-                                if entry is not None:
-                                    saved[path] = {**entry, "tags": tags, "people": people, "title": title}
-                except Exception as e:
-                    logger.error(f"Error folder consensus: {e}")
-
-            with cls.model_lock:
-                cls.suggest_status[folder_path_norm]["status"] = "completed"
-            cls.save_suggestions_cache(db_path)
-        except Exception as e:
-            logger.exception(f"Error running suggestions thread for {folder_path}: {e}")
-            # Always surface the failure, even if the status entry is missing, so the UI
-            # stops polling instead of spinning on "preparing" forever.
-            entry = cls.suggest_status.get(folder_path_norm) or {
-                "completed": 0, "total": 0, "suggestions": {}
-            }
-            entry["status"] = "error"
-            entry["message"] = str(e)
-            cls.suggest_status[folder_path_norm] = entry
-            cls.save_suggestions_cache(db_path)
 
     def handle_post_photo_open_explorer(self):
         try:
@@ -1656,14 +1287,11 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             self.send_json_error(400, "Invalid folder path")
             return
             
-        folder_path = paths.key(folder_path)
-        self.ensure_suggestions_loaded(self.db_path)
-        status_info = TagPupHTTPRequestHandler.suggest_status.get(folder_path)
-        if not status_info or "suggestions" not in status_info:
+        suggestions_map = self.suggestion_runs().suggestions(folder_path)
+        if suggestions_map is None:
             self.send_json_error(400, "No suggestions found for this folder")
             return
             
-        suggestions_map = status_info["suggestions"]
         photo_paths = data.get("photo_paths")
         if photo_paths:
             wanted = {paths.key(p) for p in photo_paths}
@@ -1878,7 +1506,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             moves = {**result.details["moved_aside"], **result.details["renamed"]}
             if moves:
                 try:
-                    TagPupHTTPRequestHandler.move_saved_suggestions(self.db_path, moves)
+                    self.suggestion_runs().move_photos(moves)
                 except Exception as e:
                     logger.error("Renamed %d photo(s) but could not move their saved "
                                  "suggestions: %s", len(result.details["renamed"]), e)
@@ -2075,7 +1703,7 @@ def start_server(port=8090, db_path="data/photo_index.db", gui_dir="gui_tagpup")
             TagPupHTTPRequestHandler.shared_embedder = shared_embedder
             # The startup library's saved suggestions, ahead of the first request;
             # any other library's are read the first time it is used.
-            TagPupHTTPRequestHandler.ensure_suggestions_loaded(db_path)
+            suggestion_jobs.runs_for(Library(db_path)).ensure_loaded()
             
             warmup_thread = threading.Thread(
                 target=warmup_embedder_thread,

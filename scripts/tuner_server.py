@@ -312,8 +312,8 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
     identify_progress = DatabaseIsolatedDict(_db_identify_progress_registry)
 
     # The suggestions cache file belongs to TagPup, which runs the suggestions and is
-    # the only process that reads or writes it (TagPupHTTPRequestHandler.
-    # _suggestions_cache_path). TagTuner used to carry its own copy of the naming and
+    # the only process that reads or writes it (tagpup.jobs.suggestions.cache_file).
+    # TagTuner used to carry its own copy of the naming and
     # its own load and save; nothing called either, and a second writer of the same
     # file from a stale in-memory copy would have overwritten TagPup's.
 

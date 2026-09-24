@@ -127,13 +127,25 @@ class TestWorkersBindTheirDatabase(unittest.TestCase):
                             f"receives db_path but never calls set_active_db_path()"
                         )
 
-        self.assertGreater(checked, 0, "guard found no db-aware workers -- has the pattern moved?")
         self.assertEqual(
             offenders,
             [],
             "background workers would resolve the wrong database:\n  "
             + "\n  ".join(offenders),
         )
+
+    def test_work_handed_to_a_job_binds_the_database(self):
+        """The runs moved to tagpup.jobs, whose threads no request set up; what TagPup
+        hands a suggestion run touches its per-database folder cache and embedder, so
+        each part that runs on the job's thread binds the library itself."""
+        with open(SERVER_MODULES[0], encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        work = _function_defs(tree)["suggestion_work"][0]
+        parts = {node.name: node for node in ast.walk(work)
+                 if isinstance(node, ast.FunctionDef) and node.name in ("photos", "begin")}
+        self.assertEqual(sorted(parts), ["begin", "photos"], "has the pattern moved?")
+        self.assertEqual([name for name, fn in sorted(parts.items())
+                          if not _calls_set_active_db_path(fn)], [])
 
     def test_guard_detects_a_missing_binding(self):
         """The guard must actually fail on offending code, not pass vacuously."""
@@ -164,19 +176,13 @@ class TestWorkersBindTheirDatabase(unittest.TestCase):
 
 
 class TestSuggestionsCacheIsScopedPerDatabase(unittest.TestCase):
-    """TagPup owns the cache file (tests/test_suggestions_pipeline.py checks it is
-    the only owner); it must still be one file per database."""
+    """tagpup.jobs.suggestions owns the cache file (tests/test_suggestions_pipeline.py
+    checks it is the only owner); it must still be one file per database."""
 
     def test_the_server_scopes_the_cache_per_database(self):
-        module_path = SERVER_MODULES[0]
-        with open(module_path, encoding="utf-8") as f:
-            src = f.read()
-        self.assertIn(
-            "gui_suggestions_cache_",
-            src,
-            f"{os.path.basename(module_path)} writes an unscoped suggestions cache, "
-            "which lets one database overwrite another's suggestions",
-        )
+        from tagpup.jobs.suggestions import cache_file
+        files = {cache_file(os.path.join("data", name)) for name in ("photo_index.db", "kr-track.db", "a.db")}
+        self.assertEqual(len(files), 3, "one database's suggestions file is another's")
 
 
 class CrossDatabaseReadIsolationMixin:

@@ -32,6 +32,8 @@ import paths
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 
 
 class TagPupAPITestBase(unittest.TestCase):
@@ -366,7 +368,7 @@ class TestFolderAutoApply(TagPupAPITestBase):
     def _seed_suggestions(self, photo_path, tags_with_scores):
         """Inject a completed suggestion run into the active database's registry."""
         set_active_db_path(self.TEST_DB)
-        TagPupHTTPRequestHandler.suggest_status[paths.key(self.tmpdir)] = {
+        suggestion_jobs.runs_for(Library(self.TEST_DB)).statuses[paths.key(self.tmpdir)] = {
             "status": "completed",
             "completed": 1,
             "total": 1,

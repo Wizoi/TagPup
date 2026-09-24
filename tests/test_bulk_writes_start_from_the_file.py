@@ -70,7 +70,7 @@ class TestTheFileIsTheStartingPoint(unittest.TestCase):
 
     def test_apply_all_keeps_the_keywords_already_in_the_file(self):
         folder_key = tagpup_server.paths.key(self.lib.photos)
-        TagPupHTTPRequestHandler.suggest_status[folder_key] = {
+        self.lib.suggestion_runs().statuses[folder_key] = {
             "status": "completed",
             "suggestions": {os.path.abspath(self.photo): {
                 "tags": [{"tag": "Sunset", "score": 0.9}], "people": []}},
@@ -122,7 +122,7 @@ class TestASubfolderPhotoIsFoundInTheCache(unittest.TestCase):
 
     def test_apply_all_updates_its_record(self):
         folder_key = tagpup_server.paths.key(self.lib.photos)
-        TagPupHTTPRequestHandler.suggest_status[folder_key] = {
+        self.lib.suggestion_runs().statuses[folder_key] = {
             "status": "completed",
             "suggestions": {os.path.abspath(self.photo): {
                 "tags": [{"tag": "Sunset", "score": 0.9}], "people": []}},

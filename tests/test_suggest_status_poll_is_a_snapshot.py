@@ -2,17 +2,18 @@
 
 The poll handed the live status dict to the JSON encoder while four worker threads
 added suggestions to it, which fails with "dictionary changed size during iteration"
-and turns a poll into an error. It now copies under the lock the workers write under.
+and turns a poll into an error. It now copies under the lock the workers write under
+(tagpup.jobs.suggestions.SuggestionRuns.status).
 """
 import os
 import sys
+import tempfile
 import unittest
 
-WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import paths  # noqa: E402
-from tagpup_server import TagPupHTTPRequestHandler, set_active_db_path  # noqa: E402
+from tagpup.core import paths  # noqa: E402
+from tagpup.jobs.suggestions import SuggestionRuns  # noqa: E402
 
 FOLDER = r"D:\Pictures\Regatta"
 
@@ -30,33 +31,26 @@ class RecordingLock:
 
 class SuggestStatusPollIsASnapshot(unittest.TestCase):
     def test_the_reply_is_a_copy_taken_under_the_lock(self):
-        lock = RecordingLock()
-        live = {"status": "running", "suggestions": {"a.jpg": {"tags": []}}}
-        sent = {}
+        with tempfile.TemporaryDirectory() as folder:
+            runs = SuggestionRuns(os.path.join(folder, "regatta.db"))
+            lock = runs.lock = RecordingLock()
+            live = {"status": "running", "suggestions": {"a.jpg": {"tags": []}}}
+            runs.statuses[paths.key(FOLDER)] = live
+            copied = []
+            real_get = dict.get
 
-        handler = TagPupHTTPRequestHandler.__new__(TagPupHTTPRequestHandler)
-        handler.db_path = os.path.join("data", "regatta.db")
-        handler.ensure_suggestions_loaded = lambda db_path: None
+            class Watched(dict):
+                def get(self, key, default=None):
+                    copied.append(lock.held)
+                    return real_get(self, key, default)
 
-        def send_json(data):
-            sent["data"] = data
-            sent["locked_when_copied"] = lock.held
+            runs.statuses = Watched(runs.statuses)
+            reply = runs.status(FOLDER)
 
-        handler.send_json = send_json
-        set_active_db_path(handler.db_path)
-        saved_lock = TagPupHTTPRequestHandler.model_lock
-        TagPupHTTPRequestHandler.model_lock = lock
-        TagPupHTTPRequestHandler.suggest_status[paths.key(FOLDER)] = live
-        try:
-            handler.handle_get_folder_suggest_status({"path": [FOLDER]})
-        finally:
-            TagPupHTTPRequestHandler.suggest_status.pop(paths.key(FOLDER), None)
-            TagPupHTTPRequestHandler.model_lock = saved_lock
-            set_active_db_path(None)
-
-        self.assertEqual(live, sent["data"])
-        self.assertIsNot(live, sent["data"], "the live dict went to the encoder")
-        self.assertIsNot(live["suggestions"], sent["data"]["suggestions"])
+        self.assertEqual([True], copied, "the run was read outside the lock")
+        self.assertEqual(live, reply)
+        self.assertIsNot(live, reply, "the live dict went to the encoder")
+        self.assertIsNot(live["suggestions"], reply["suggestions"])
 
 
 if __name__ == "__main__":

@@ -28,6 +28,9 @@ import tagpup_server
 from index import PhotoIndex
 from tagpup_server import TagPupHTTPRequestHandler, set_active_db_path
 
+from tagpup.core.library import Library
+from tagpup.jobs import suggestions as suggestion_jobs
+
 WINDOWS = os.name == "nt"
 
 
@@ -57,7 +60,7 @@ class HandlerCase(unittest.TestCase):
         def forget_state():
             set_active_db_path(self.db_path)
             TagPupHTTPRequestHandler.folder_cache.clear()
-            TagPupHTTPRequestHandler.suggest_status.clear()
+            suggestion_jobs.forget(Library(self.db_path))
             set_active_db_path(None)
             tagpup_server.invalidate_people_cache()
         self.addCleanup(forget_state)
@@ -339,14 +342,14 @@ class TestSavedSuggestionsSurviveTheNewKeys(HandlerCase):
         photo = os.path.abspath(os.path.join(self.folder, "IMG_0001.jpg"))
         # How the old code keyed a folder: lower case, forward slashes.
         old_key = forward(os.path.abspath(self.folder).lower())
-        cache_file = TagPupHTTPRequestHandler._suggestions_cache_path(self.db_path)
+        cache_file = suggestion_jobs.cache_file(self.db_path)
         with open(cache_file, "w", encoding="utf-8") as f:
             json.dump({old_key: {"status": "completed", "completed": 1, "total": 1,
                                  "suggestions": {forward(photo): {"tags": [], "people": []}}}}, f)
 
-        TagPupHTTPRequestHandler.load_suggestions_cache(self.db_path)
+        suggestion_jobs.runs_for(Library(self.db_path)).ensure_loaded()
         set_active_db_path(self.db_path)
-        entry = TagPupHTTPRequestHandler.suggest_status.get(key_of(self.folder))
+        entry = suggestion_jobs.runs_for(Library(self.db_path)).statuses.get(key_of(self.folder))
         self.assertIsNotNone(entry, "saved suggestions were loaded under a key nothing asks for")
         self.assertEqual(list(entry["suggestions"]), [photo])
 

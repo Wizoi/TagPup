@@ -19,6 +19,9 @@ import tagpup_server  # noqa: E402
 from index import PhotoIndex  # noqa: E402
 from tagpup_server import TagPupHTTPRequestHandler, set_active_db_path, get_active_db_path  # noqa: E402
 
+from tagpup.core.library import Library as PathLibrary  # noqa: E402
+from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+
 
 class Library:
     """A scratch library: a folder of photos and a database, removed afterwards.
@@ -42,13 +45,14 @@ class Library:
         set_active_db_path(None)
         testcase.addCleanup(self.close)
 
+    def suggestion_runs(self):
+        """This library's suggestion runs (tagpup.jobs.suggestions)."""
+        return suggestion_jobs.runs_for(PathLibrary(self.db_path))
+
     def close(self):
         tagpup_server.invalidate_people_cache()
-        for registry in (TagPupHTTPRequestHandler._db_folder_cache_registry,
-                         TagPupHTTPRequestHandler._db_suggest_status_registry,
-                         TagPupHTTPRequestHandler._db_suggest_threads_registry):
-            registry.pop(self.registry_key, None)
-        getattr(TagPupHTTPRequestHandler, "_suggestions_loaded", set()).discard(self.registry_key)
+        TagPupHTTPRequestHandler._db_folder_cache_registry.pop(self.registry_key, None)
+        suggestion_jobs.forget(PathLibrary(self.db_path))
         set_active_db_path(None)
         # Windows can hold a file a moment after ExifTool has let go of it.
         for _attempt in range(20):

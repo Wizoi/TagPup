@@ -15,7 +15,10 @@ from test_tagpup_server_finds_native_rows import (  # noqa: E402
     HandlerCase, fake_exiftool, fake_extractor, forward, key_of)
 
 import db as tagpup_db  # noqa: E402
-from tagpup_server import TagPupHTTPRequestHandler, set_active_db_path  # noqa: E402
+from tagpup_server import set_active_db_path  # noqa: E402
+
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 
 
 class RenameMovesSuggestionsAndEmbeddings(HandlerCase):
@@ -31,7 +34,7 @@ class RenameMovesSuggestionsAndEmbeddings(HandlerCase):
             conn.commit()
             conn.close()
         set_active_db_path(self.db_path)
-        TagPupHTTPRequestHandler.suggest_status[key_of(self.folder)] = {
+        suggestion_jobs.runs_for(Library(self.db_path)).statuses[key_of(self.folder)] = {
             "status": "completed", "total": 2, "completed": 2,
             "suggestions": {
                 os.path.abspath(p): {"tags": ["Activity/Rowing"], "people": [], "title": "",
@@ -51,7 +54,7 @@ class RenameMovesSuggestionsAndEmbeddings(HandlerCase):
     def test_the_saved_suggestions_follow_the_photos(self):
         renamed = self.rename()["updated_paths"]
         set_active_db_path(self.db_path)
-        saved = TagPupHTTPRequestHandler.suggest_status[key_of(self.folder)]["suggestions"]
+        saved = suggestion_jobs.runs_for(Library(self.db_path)).statuses[key_of(self.folder)]["suggestions"]
         self.assertEqual(sorted(os.path.abspath(p) for p in renamed.values()), sorted(saved),
                          "suggestions are still filed under the old names")
         for path, entry in saved.items():
