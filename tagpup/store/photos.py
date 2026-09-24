@@ -234,3 +234,32 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None):
         # The file is already written and correct; a stale index row is recoverable.
         logger.warning("Could not update the index for %s: %s", photo_path, e)
         return False
+
+
+def read_tags(db_path, photo_paths):
+    """(path, tags, raw_metadata) for each photo in `photo_paths` the index has a row for,
+    in the order given, the path in its stored spelling.
+
+    Read before a write, on a connection closed again at once, so nothing holds a
+    transaction while the rows are rewritten one at a time through the write lock. A
+    row whose columns do not parse is left out, as nothing can be written from it.
+    """
+    found = []
+    conn = db.connect(db_path, timeout=30.0)
+    try:
+        for path in photo_paths:
+            path = paths.stored(path)
+            where, where_params = paths.sql_equals("path", path)
+            row = conn.execute("SELECT tags, raw_metadata FROM photos WHERE " + where,
+                               where_params).fetchone()
+            if not row:
+                continue
+            try:
+                tags = json.loads(row[0]) if row[0] else []
+                raw_meta = json.loads(row[1]) if row[1] else {}
+            except Exception:
+                continue
+            found.append((path, tags, raw_meta))
+    finally:
+        conn.close()
+    return found

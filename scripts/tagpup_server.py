@@ -30,6 +30,7 @@ from tagpup.store.photos import move_rows as move_photo_rows  # noqa: F401  (sav
 from tagpup.store.photos import record_tags as record_tags_in_index  # noqa: F401  (writers, tests)
 from tagpup.store import taxonomy as store_taxonomy
 from tagpup.services import photos as photo_actions
+from tagpup.services import tagging as tagging_actions
 from tagpup.store.photos import record_file_stat as record_file_stat_in_index  # noqa: F401  (writer.py)
 from tagpup.files.keywords import (  # noqa: F401  (imported from here by other scripts)
     TAG_SOURCE_FIELDS, caption_fields, expand_tag_fields, keyword_fields,
@@ -2742,11 +2743,13 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     # The writes resolve names against the tree, which now has the target.
                     invalidate_people_cache(self.db_path)
 
-                    rewritten = update_photo_metadata_tags(
-                        self.db_path, executable, affected_photos, tag_path, target_tag)
+                    rewritten = tagging_actions.replace_tag(
+                        Library(self.db_path), affected_photos, tag_path, target_tag,
+                        executable).changed
                 else:
-                    rewritten = update_photo_metadata_tags(
-                        self.db_path, executable, affected_photos, tag_path, None)
+                    rewritten = tagging_actions.replace_tag(
+                        Library(self.db_path), affected_photos, tag_path, None,
+                        executable).changed
 
             # A photo that could not be rewritten still carries the tag, so the tag
             # still describes it and stays in the tree. It used to be deleted anyway,
@@ -2884,8 +2887,9 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             rewritten = 0
             if affected_photos:
                 executable = self.get_exiftool_path()
-                rewritten = update_photo_metadata_tags(
-                    self.db_path, executable, affected_photos, old_tag_path, new_tag_path)
+                rewritten = tagging_actions.replace_tag(
+                    Library(self.db_path), affected_photos, old_tag_path, new_tag_path,
+                    executable).changed
 
             # Resolved faces store the bare leaf name, so renaming a person in the tag
             # tree has to follow through to the faces table. Without this the taxonomy,
@@ -2960,7 +2964,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         except Exception as e:
             self.send_json_error(500, str(e))
 
-from typing import List, Optional
+
 def get_tag_usage_counts(db_path):
     counts = {}
     if not os.path.exists(db_path):
@@ -3018,78 +3022,6 @@ def insert_tag_path_to_db(cursor, path: str, has_face_root: bool = False) -> int
             parent_id = cursor.lastrowid
             
     return parent_id
-
-def update_photo_metadata_tags(db_path: str, exiftool_path: str, photo_paths: List[str], tag_to_remove: str, tag_to_add: Optional[str] = None):
-    """Rename or remove a tag on every photo in `photo_paths`, in the file and the index.
-
-    Returns how many index rows were rewritten. Each row goes through
-    record_tags_in_index, the same as a bulk edit: this used to write its own rows,
-    recording two of the keyword fields and not the file's new mtime, so a renamed
-    tag's photos were re-read on every scan and a stale IPTC:Keywords was re-derived
-    straight back into the tags.
-    """
-    import json
-    from exiftool_session import ExifToolSession
-    from metadata import extract_tags
-    from taxonomy import TagTaxonomy
-
-    # Read first, write after: this connection holds no transaction while the rows are
-    # rewritten, one at a time, through the write lock.
-    rows = []
-    conn = tagpup_db.connect(db_path, timeout=30.0)
-    try:
-        cursor = conn.cursor()
-        for path in photo_paths:
-            path = paths.stored(path)
-            where, where_params = paths.sql_equals("path", path)
-            cursor.execute("SELECT tags, raw_metadata FROM photos WHERE " + where, where_params)
-            row = cursor.fetchone()
-            if row:
-                rows.append((path, row))
-    finally:
-        conn.close()
-
-    recorded = 0
-    with ExifToolSession(executable=exiftool_path) as et:
-        for path, row in rows:
-            try:
-                current_tags = json.loads(row[0]) if row[0] else []
-                raw_meta = json.loads(row[1]) if row[1] else {}
-            except Exception:
-                continue
-
-            new_tags = []
-            changed = False
-            for tag in current_tags:
-                normalized = TagTaxonomy.normalize_tag(tag)
-                if normalized == tag_to_remove or normalized.startswith(tag_to_remove + "/"):
-                    changed = True
-                    if tag_to_add:
-                        suffix = normalized[len(tag_to_remove):]
-                        new_tag = tag_to_add + suffix
-                        new_tags.append(new_tag)
-                else:
-                    new_tags.append(tag)
-                    
-            if not changed:
-                continue
-                
-            try:
-                new_flat_tags, new_hierarchical_tags = write_keyword_fields(
-                    et, path, new_tags, db_path=db_path)
-
-                # The tags column holds the view extract_tags derives from the
-                # file's fields, as it did before; derived here from exactly the
-                # fields just written.
-                updated_tags = extract_tags(record_keyword_fields(
-                    raw_meta, new_flat_tags, new_hierarchical_tags))
-                if record_tags_in_index(db_path, path, updated_tags,
-                                        new_flat_tags, new_hierarchical_tags):
-                    recorded += 1
-            except Exception as err:
-                logger.error(f"Failed to update metadata on disk/db for {path}: {err}")
-
-    return recorded
 
 #: Listens on IPv4 and IPv6 alike -- see scripts/localserver.py for why that is
 #: worth two seconds on every click.

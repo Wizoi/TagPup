@@ -261,6 +261,25 @@ def people_in_photo(meta, tags, face_names, known=None):
     return people
 
 
+def retag(tags, old, new=None):
+    """`tags` with the tag `old` -- and every tag under it -- renamed to `new`, or taken
+    off without one. Returns (the tags, whether any changed).
+
+    "People/Rowan" renamed to "Family/Rowan" takes "People/Rowan/Swim Team" with it, to
+    "Family/Rowan/Swim Team"; "People/Rowanne" is another tag and is left alone.
+    """
+    result, changed = [], False
+    for tag in tags:
+        spelled = normalize(tag)
+        if spelled == old or spelled.startswith(old + SEPARATOR):
+            changed = True
+            if new:
+                result.append(new + spelled[len(old):])
+        else:
+            result.append(tag)
+    return result, changed
+
+
 def resolve_people(tags, people_paths):
     """Give every person in `tags` the path they are filed under.
 

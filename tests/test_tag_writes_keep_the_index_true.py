@@ -34,6 +34,8 @@ from index import PhotoIndex
 from metadata import extract_tags
 from tagpup_server import TagPupHTTPRequestHandler
 from tuner_server import TunerHTTPRequestHandler
+from tagpup.core.library import Library
+from tagpup.services import tagging
 
 KEYWORDS = ["Beach", "Cross Country", "People/Rowan Thackeray"]
 HIERARCHICAL = ["People/Rowan Thackeray"]
@@ -184,8 +186,8 @@ class TestARemovedTagStaysRemoved(IndexCase):
             self.assertNotIn("Cross Country", self.row(stored)["tags"])
 
             # Renaming "Beach" re-derives this photo's tags from its raw_metadata.
-            recorded = tagpup_server.update_photo_metadata_tags(
-                self.db_path, "exiftool", [stored], "Beach", "Places/Beach")
+            recorded = tagging.replace_tag(
+                Library(self.db_path), [stored], "Beach", "Places/Beach", "exiftool").changed
 
         tags = self.row(stored)["tags"]
         self.assertIn("Places/Beach", tags)
@@ -222,8 +224,8 @@ class TestTheRowKeepsTheFilesNewStat(IndexCase):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
         with patch("exiftool_session.ExifToolSession", helper):
-            tagpup_server.update_photo_metadata_tags(
-                self.db_path, "exiftool", [stored], "Beach", "Places/Beach")
+            tagging.replace_tag(
+                Library(self.db_path), [stored], "Beach", "Places/Beach", "exiftool")
         self.assertRowMatchesTheFile(stored)
 
 

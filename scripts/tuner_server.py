@@ -29,6 +29,7 @@ import _root  # noqa: F401
 from tagpup import config as tagpup_config
 from tagpup.core import dates, vocabulary
 from tagpup.core.library import Library
+from tagpup.services import tagging as tagging_actions
 
 logger = logging.getLogger("tagtuner.server")
 
@@ -1233,11 +1234,9 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 
             rewritten = 0
             if affected:
-                from tagpup_server import update_photo_metadata_tags
-
-                rewritten = update_photo_metadata_tags(
-                    self.db_path, self.get_exiftool_path(), affected,
-                    source, target or None)
+                rewritten = tagging_actions.replace_tag(
+                    Library(self.db_path), affected, source, target or None,
+                    self.get_exiftool_path()).changed
             plan["photos_rewritten"] = rewritten
 
             # A photo that could not be rewritten still carries the old tag, so it is
@@ -3326,7 +3325,6 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             write_error = None
             if renamed_paths:
                 try:
-                    from tagpup_server import update_photo_metadata_tags
 
                     executable = self.get_exiftool_path()
                     for node_id, old_tag, new_tag, merged in renamed_paths:
@@ -3343,9 +3341,9 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                                 continue
                         rewritten = 0
                         if affected:
-                            rewritten = update_photo_metadata_tags(
-                                self.db_path, executable, affected, old_tag, new_tag
-                            )
+                            rewritten = tagging_actions.replace_tag(
+                                Library(self.db_path), affected, old_tag, new_tag, executable
+                            ).changed
                         affected_total += len(affected)
                         rewritten_total += rewritten
                         if merged and rewritten == len(affected):

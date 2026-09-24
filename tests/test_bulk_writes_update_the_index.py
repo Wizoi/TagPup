@@ -166,27 +166,34 @@ class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
     """The guard. Both bulk handlers wrote files without recording the result, and
     nothing in the app showed the difference, so a third one would be just as quiet."""
 
+    #: A keyword write: the server's (which resolves people first) or the files layer's.
+    WRITES = ("write_keyword_fields(", "write_keywords(")
+
+    #: The rule is that the index hears about it, not that any one helper is used:
+    #: saving a single photo writes its own row as part of a larger update, and
+    #: rewriting that to funnel through the helper would be churn for its own sake.
+    RECORDS = ("record_tags_in_index", "record_tags(", "UPDATE photos", "INSERT OR REPLACE INTO photos")
+
+    def write_sites(self):
+        """(where, the source from there on) of every keyword write in the server and
+        the services."""
+        services = os.path.join(WORKSPACE_DIR, "tagpup", "services")
+        sources = [os.path.join("scripts", "tagpup_server.py")] + [
+            os.path.join("tagpup", "services", name) for name in sorted(os.listdir(services))
+            if name.endswith(".py")]
+        for relative in sources:
+            with open(os.path.join(WORKSPACE_DIR, relative), encoding="utf-8") as f:
+                lines = f.read().split("\n")
+            for i, line in enumerate(lines):
+                if not any(call in line for call in self.WRITES):
+                    continue
+                if line.lstrip().startswith(("def ", "#", "return file_keywords.")):
+                    continue   # a definition, or the server's wrapper handing on
+                yield "%s:%d" % (relative, i + 1), "\n".join(lines[i:i + 40])
+
     def test_each_bulk_write_records_what_it_wrote(self):
-        source = os.path.join(WORKSPACE_DIR, "scripts", "tagpup_server.py")
-        with open(source, encoding="utf-8") as f:
-            lines = f.read().split("\n")
-
-        # The rule is that the index hears about it, not that any one helper is used:
-        # saving a single photo and remapping a renamed tag both write their own rows
-        # as part of larger updates, and rewriting those to funnel through the helper
-        # would be churn for its own sake.
-        records = ("record_tags_in_index", "UPDATE photos", "INSERT OR REPLACE INTO photos")
-
-        offenders = []
-        for i, line in enumerate(lines):
-            if "write_keyword_fields(" not in line:
-                continue
-            if line.lstrip().startswith(("def ", "#")):
-                continue
-            window = "\n".join(lines[i:i + 40])
-            if not any(marker in window for marker in records):
-                offenders.append("tagpup_server.py:%d" % (i + 1))
-
+        offenders = [where for where, window in self.write_sites()
+                     if not any(marker in window for marker in self.RECORDS)]
         self.assertEqual(
             offenders, [],
             "these write a photo's keywords without telling the index, so the row "
@@ -194,11 +201,8 @@ class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
         )
 
     def test_the_guard_is_looking_at_something(self):
-        source = os.path.join(WORKSPACE_DIR, "scripts", "tagpup_server.py")
-        with open(source, encoding="utf-8") as f:
-            text = f.read()
         self.assertGreaterEqual(
-            text.count("write_keyword_fields("), 5,
+            len(list(self.write_sites())), 4,
             "the write sites moved; the guard above is checking nothing"
         )
 
