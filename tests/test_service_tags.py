@@ -5,6 +5,7 @@ files in test_service_replace_tag.py and, through the routes, test_taxonomy_life
 It is stood in for here: what is checked is what each edit does to the tree, the faces
 and the people lists, and what it asks to have rewritten.
 """
+import contextlib
 import json
 import os
 import sys
@@ -27,8 +28,12 @@ class TreeCase(unittest.TestCase):
 
         def replace_tag(library, photo_paths, old, new, exiftool_path):
             self.rewrites.append((sorted(photo_paths), old, new))
-            return Result(attempted=len(photo_paths),
-                          changed=len([p for p in photo_paths if p not in self.unwritable]))
+            result = Result(attempted=len(photo_paths),
+                            changed=len([p for p in photo_paths if p not in self.unwritable]))
+            for path in photo_paths:
+                if path in self.unwritable:
+                    result.fail(path, "the file is open elsewhere")
+            return result
 
         patcher = mock.patch("tagpup.services.tagging.replace_tag", side_effect=replace_tag)
         patcher.start()
@@ -273,6 +278,50 @@ class RenamingAPerson(TreeCase):
         for old, new in (("", "X"), ("Rowan Thackeray", tags.UNMATCHED), ("Rowan Thackeray", "A/B")):
             self.assertTrue(self.rename(old, new).refused, (old, new))
         self.assertEqual(self.rename("Rowan Thackeray", "Rowan Thackeray").changed, 0)
+
+
+class AnIndexBehindItsFiles(unittest.TestCase):
+    """docs/findings.md, #44. The photos to change come from the index; the rewrite
+    reads each file and skips one whose file no longer carries the tag. That photo was
+    counted as one that could not be rewritten. Here the rewrite is the real one, and
+    only the files are stood in for."""
+
+    def setUp(self):
+        self.lib = TempLibrary(self)
+        self.carries = self.lib.photo("a.jpg")
+        self.stale = self.lib.photo("b.jpg")
+        for path in (self.carries, self.stale):
+            self.lib.add_row(path, tags=["Activity/Rowing"])
+        tags.create(self.lib.library, "Activity/Rowing")
+        self.node = taxonomy.find(self.lib.library.path, "Activity/Rowing")["id"]
+        # b's file lost the tag to another program; its row still says it has it.
+        files = {self.carries: ["Activity/Rowing"], self.stale: []}
+
+        @contextlib.contextmanager
+        def session(**_options):
+            yield object()
+
+        for patcher in (mock.patch("tagpup.files.exiftool_session.ExifToolSession", session),
+                        mock.patch("tagpup.files.keywords.tags_in_file", lambda et, p: files[p]),
+                        mock.patch("tagpup.files.keywords.write_keywords",
+                                   lambda et, p, t: files.__setitem__(p, list(t)) or (t, t))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_a_delete_takes_the_tag_out_of_the_tree(self):
+        result = tags.delete(self.lib.library, self.node, "remove", None, "exiftool")
+        self.assertTrue(result.ok, result.message())
+        self.assertIsNone(taxonomy.find(self.lib.library.path, "Activity/Rowing"))
+        self.assertEqual(self.lib.rows("SELECT tags FROM photos WHERE path = ?", (self.stale,)), [("[]",)])
+
+    def test_a_merge_is_applied(self):
+        result = tags.merge(self.lib.library, "Activity/Rowing", "Activity/Sculling", "exiftool", apply=True)
+        self.assertTrue(result.details["applied"], result.message())
+        self.assertNotIn("error", result.details)
+
+    def test_a_rename_warns_of_nothing(self):
+        result = tags.rename(self.lib.library, self.node, "Sculling", "exiftool")
+        self.assertTrue(result.ok, result.message())
 
 
 class TheTreeView(TreeCase):

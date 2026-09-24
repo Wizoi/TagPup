@@ -294,18 +294,18 @@ def _retag(library, old, new, carrying, exiftool_path, result, always_move=False
     `always_move` (a rename: the branch goes to its new place anyway). Fails the Result
     for photos not rewritten. Returns whether the tree was changed.
     """
-    rewritten = 0
+    rewritten = unwritten = 0
     if carrying:
         if new:
             db.write_with_connection(library.path, lambda conn: taxonomy.add_path(conn, new),
                                      label="tag tree: add %s" % new)
             # The writes resolve names against the tree, which now has the target.
             taxonomy.forget_people_paths(library.path)
-        rewritten = tagging.replace_tag(library, carrying, old, new, exiftool_path).changed
+        rewritten, unwritten = _rewrite(library, carrying, old, new, exiftool_path)
     _count(result, len(carrying), rewritten, add_up)
-    if rewritten < len(carrying):
+    if unwritten:
         result.fail(old, "%d of %d photo(s) could not be rewritten, so '%s' was kept; they "
-                         "still carry it." % (len(carrying) - rewritten, len(carrying), old))
+                         "still carry it." % (unwritten, len(carrying), old))
         return False
     moving = new and (carrying or always_move)
     db.write_with_connection(
@@ -328,12 +328,25 @@ def _rename_in_place(library, old, new, exiftool_path, result, add_up=False):
     # old path written straight back.
     taxonomy.forget_people_paths(library.path)
     carrying = list(photos.carrying(library.path, old))
-    rewritten = tagging.replace_tag(library, carrying, old, new, exiftool_path).changed if carrying else 0
+    rewritten, unwritten = _rewrite(library, carrying, old, new, exiftool_path) if carrying else (0, 0)
     result.changed = 1
     _count(result, len(carrying), rewritten, add_up)
-    if rewritten < len(carrying):
+    if unwritten:
         result.fail(old, "%d of %d photo(s) could not be rewritten and still carry '%s'."
-                    % (len(carrying) - rewritten, len(carrying), old))
+                    % (unwritten, len(carrying), old))
+
+
+def _rewrite(library, carrying, old, new, exiftool_path):
+    """(rewritten, not rewritten) of the photos in `carrying` (tagging.replace_tag).
+
+    The photos come from the index, and the rewrite reads each file first: a photo whose
+    file no longer carries the tag is skipped, and its row made to say so. That photo is
+    done, not one that could not be rewritten -- counted as one, a delete kept a tag no
+    photo carried (docs/findings.md, #44). What is neither rewritten nor skipped -- an
+    error, or a photo whose row could not be read -- may still carry it.
+    """
+    outcome = tagging.replace_tag(library, carrying, old, new, exiftool_path)
+    return outcome.changed, len(carrying) - outcome.changed - len(outcome.skipped)
 
 
 def _rename_person_records(library, old, new):
