@@ -312,6 +312,8 @@ def main():
         print("\nNothing to repair.")
         return
 
+    print("\nbacked up to %s" % tagpup_db.backup(args.db, "repair-person-tags"))
+
     written, missing, unchanged, failed = apply_changes(
         args.db, changes, paths, roots, args.exiftool)
     print("\nrewrote %d photo(s); %d no longer on disk; %d already correct in the file"

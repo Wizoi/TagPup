@@ -186,3 +186,33 @@ def writing(target, label="database write"):
     """
     with lock_for(target):
         yield
+
+
+def backup(db_path, reason, into=None):
+    """Copy a database before a bulk write, and return where the copy went.
+
+    Through SQLite's backup API, from a read-only connection, so the copy is
+    consistent even while an app has the database open. Into backups/ at the top of
+    the repository unless `into` says otherwise, named for the database, the reason
+    and the time: photo_index.before-dedupe-faces-20260923_151200.db.
+
+    Every script that writes in bulk calls this before it writes; three had their
+    own copy of it and six had none. tests/test_bulk_scripts_back_up.py holds them
+    to it.
+    """
+    import os
+
+    into = into or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "backups")
+    os.makedirs(into, exist_ok=True)
+    target = os.path.join(into, "%s.before-%s-%s.db" % (
+        os.path.splitext(os.path.basename(db_path))[0], reason,
+        time.strftime("%Y%m%d_%H%M%S")))
+    source = connect(readonly_uri(db_path), uri=True)
+    destination = connect(target)
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+    return target

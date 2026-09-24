@@ -128,6 +128,8 @@ def main():
         print("\nNothing to remove.")
         return
 
+    print("\nbacked up to %s" % tagpup_db.backup(args.db, "dedupe-faces"))
+
     removed = apply_plan(args.db, redundant)
     print("\nremoved %d row(s)." % removed)
 

@@ -30,7 +30,6 @@ import json
 import os
 import re
 import sys
-import time
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -38,7 +37,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db as tagpup_db  # noqa: E402
 from metadata import MetadataExtractor, extract_tags, photo_people  # noqa: E402
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: UTF-8 bytes decoded as cp1252: "ü" -> "Ã¼", "é" -> "Ã©", "–" -> "â€“", nbsp -> "Â ".
 MOJIBAKE = re.compile("Ã[\u0080-ÿ]|Â[\u0080-ÿ ]|â€")
@@ -156,20 +154,6 @@ def differences(conn, path, record):
     return changed, json.loads(captions or "[]")
 
 
-def backup(db_path):
-    os.makedirs(os.path.join(REPO_ROOT, "backups"), exist_ok=True)
-    target = os.path.join(REPO_ROOT, "backups", "%s.before-refresh-%s.db" % (
-        os.path.splitext(os.path.basename(db_path))[0], time.strftime("%Y%m%d_%H%M%S")))
-    source = tagpup_db.connect(tagpup_db.readonly_uri(db_path), uri=True)
-    destination = tagpup_db.connect(target)
-    try:
-        source.backup(destination)
-    finally:
-        destination.close()
-        source.close()
-    return target
-
-
 def record_all(db_path, records, to_write, captions_only):
     """Write both kinds of fix in one transaction. Returns (from files, captions only)."""
     def store(conn):
@@ -243,7 +227,7 @@ def main(argv=None):
     if not to_write and not captions_only:
         print("\nNothing to write.")
         return 0
-    print("\nbacked up to %s" % backup(args.db))
+    print("\nbacked up to %s" % tagpup_db.backup(args.db, "refresh"))
     from_files, captions = record_all(args.db, records, to_write, captions_only)
     print("rows changed from their files: %d" % from_files)
     print("rows with repeated captions removed: %d" % captions)

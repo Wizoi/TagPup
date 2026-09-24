@@ -99,7 +99,7 @@ class CanonicalizePaths(unittest.TestCase):
 
     def apply(self):
         from unittest import mock
-        with mock.patch.object(canonicalize_paths, "backup", return_value="(skipped in test)"):
+        with mock.patch.object(canonicalize_paths.tagpup_db, "backup", return_value="(skipped in test)"):
             return self.run_script("--apply")
 
     def test_mixed_separators_are_rewritten_with_their_faces(self):

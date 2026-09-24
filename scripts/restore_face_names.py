@@ -27,14 +27,12 @@ import argparse
 import json
 import os
 import sys
-import time
 from collections import Counter, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import db as tagpup_db  # noqa: E402
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def plan(conn, backup_faces):
@@ -94,20 +92,6 @@ def apply(db_path, restore):
     return tagpup_db.write_with_connection(db_path, store, label="restore face names")
 
 
-def backup(db_path):
-    os.makedirs(os.path.join(REPO_ROOT, "backups"), exist_ok=True)
-    target = os.path.join(REPO_ROOT, "backups", "%s.before-restore-names-%s.db" % (
-        os.path.splitext(os.path.basename(db_path))[0], time.strftime("%Y%m%d_%H%M%S")))
-    source = tagpup_db.connect(tagpup_db.readonly_uri(db_path), uri=True)
-    destination = tagpup_db.connect(target)
-    try:
-        source.backup(destination)
-    finally:
-        destination.close()
-        source.close()
-    return target
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -142,7 +126,7 @@ def main(argv=None):
     if not restore:
         print("\nNothing to restore.")
         return 0
-    print("\nbacked up to %s" % backup(db_path))
+    print("\nbacked up to %s" % tagpup_db.backup(db_path, "restore-names"))
     named, people_rows = apply(db_path, restore)
     print("faces given back their name: %d" % named)
     print("photos whose people list was re-derived: %d" % people_rows)

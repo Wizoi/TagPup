@@ -141,6 +141,8 @@ def main():
         print("\nNothing to merge.")
         return
 
+    print("\nbacked up to %s" % tagpup_db.backup(args.db, "merge-person-tags"))
+
     apply_plan(args.db, duplicates, affected)
     print("\nRemoved %d duplicate taxonomy node(s)." % len(duplicates))
 

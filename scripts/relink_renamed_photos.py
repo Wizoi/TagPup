@@ -260,6 +260,8 @@ def main():
         print("\nNothing to re-point.")
         return
 
+    print("\nbacked up to %s" % tagpup_db.backup(args.db, "relink"))
+
     photos, faces = apply_moves(args.db, moves)
     print("\nre-pointed %d of %d planned row(s), and %d face(s)." % (photos, len(moves), faces))
 

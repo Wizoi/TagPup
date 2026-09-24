@@ -57,6 +57,7 @@ from suggester import TagSuggester
 from writer import MetadataWriter
 from faces import FaceProcessor
 import paths
+import db as tagpup_db
 
 # Default ExifTool path (uses local user profile dynamically to avoid hardcoded PII)
 if platform.system() == "Windows":
@@ -201,6 +202,9 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     # Handle reset flag
     if reset:
         console.print("[bold red]Resetting index (deleting existing index and taxonomy files)...[/bold red]")
+        # The database holds every face named by hand, and this deletes it.
+        if os.path.exists(db_path):
+            console.print(f"  Backed up to {tagpup_db.backup(db_path, 'index-reset')}")
         for p in [db_path, tax_path]:
             if os.path.exists(p):
                 try:

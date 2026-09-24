@@ -61,7 +61,7 @@ class RestoreFaceNames(unittest.TestCase):
 
     def run_script(self, *extra):
         # Through the command line, as a person runs it.
-        with mock.patch.object(restore_face_names, "backup", return_value="(skipped)", create=True), \
+        with mock.patch.object(restore_face_names.tagpup_db, "backup", return_value="(skipped)"), \
                 mock.patch.object(sys, "argv", ["restore_face_names.py", self.backup_file, *extra]), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             restore_face_names.main()

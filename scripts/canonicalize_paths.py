@@ -28,7 +28,6 @@ hold these rows in memory.
 import argparse
 import os
 import sys
-import time
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -36,7 +35,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db as tagpup_db  # noqa: E402
 import paths  # noqa: E402
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def file_matches(path, mtime, size):
@@ -225,20 +223,6 @@ def apply(conn, photo_renames, merges, cache_renames, cache_merges, orphan_faces
     return changed, violations
 
 
-def backup(db_path):
-    os.makedirs(os.path.join(REPO_ROOT, "backups"), exist_ok=True)
-    target = os.path.join(REPO_ROOT, "backups", "%s.before-canonicalize-%s.db" % (
-        os.path.splitext(os.path.basename(db_path))[0], time.strftime("%Y%m%d_%H%M%S")))
-    source = tagpup_db.connect(db_path)
-    destination = tagpup_db.connect(target)
-    try:
-        source.backup(destination)
-    finally:
-        destination.close()
-        source.close()
-    return target
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -281,7 +265,7 @@ def main(argv=None):
             print("\nDry run. Nothing was changed. Re-run with --apply to write.")
             return 0
 
-        print("\nbacked up to %s" % backup(args.db))
+        print("\nbacked up to %s" % tagpup_db.backup(args.db, "canonicalize"))
         changed, violations = apply(conn, photo_renames, merges, cache_renames,
                                     cache_merges, orphan_faces)
         print("\nrows changed:")

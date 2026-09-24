@@ -161,6 +161,8 @@ def main():
         print("\nNothing to do.")
         return
 
+    print("\nbacked up to %s" % tagpup_db.backup(args.db, "backfill-ids"))
+
     started = time.time()
 
     def progress(done, total, read_count, minted_count, failures):

@@ -117,6 +117,8 @@ def main():
         print("\nNothing to fold.")
         return
 
+    print("\nbacked up to %s" % tagpup_db.backup(args.db, "tidy-exclusions"))
+
     changed = apply_plan(args.db, folding)
     print("\nrewrote %d face(s)." % changed)
     print("\nafterwards:")

@@ -80,7 +80,7 @@ class RefreshRowsFromFiles(unittest.TestCase):
         self.read = []
         with mock.patch("metadata.MetadataExtractor.batch_read", autospec=True,
                         side_effect=self.fake_batch_read), \
-                mock.patch.object(refresh, "backup", return_value="(skipped in test)"), \
+                mock.patch.object(refresh.tagpup_db, "backup", return_value="(skipped in test)"), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             refresh.main(["--db", self.db, *extra])
         return out.getvalue()
