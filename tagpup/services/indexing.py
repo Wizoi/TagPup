@@ -13,7 +13,13 @@ from contextlib import nullcontext
 from tagpup.core import paths
 from tagpup.core.result import Result
 
-_INDEXER_TQDM = re.compile(r"^(.*?):\s*(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
+#: Where faces are clustered when adding a folder did not: the runner's button, whose
+#: label this is (tests/test_indexing_names_a_real_control.py holds the two together).
+#: The messages named a Recluster button no page has (docs/findings.md, #22).
+CLUSTERING_BUTTON = "Run Identity Resolution Clustering"
+CLUSTER_ELSEWHERE = "%s in TagPup Runner" % CLUSTERING_BUTTON
+
+_INDEXER_TQDM =re.compile(r"^(.*?):\s*(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
 
 #: Longest message worth putting on a progress bar. Past this it is ellipsised in
 #: the page anyway, so a truncated sentence is all anyone can read.
@@ -116,12 +122,12 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
             code = run(["cluster-faces"], None)
         if code != 0:
             result.fail(folder, "Folder indexed, but resolving face identities failed "
-                                "(exit code %s). Run Recluster to try again." % code)
+                                "(exit code %s). To try again, use %s." % (code, CLUSTER_ELSEWHERE))
             result.details["percent"] = 100
             return result
 
     result.changed = 1
     result.details.update(percent=100, message=(
         "Folder indexed and face identities resolved." if cluster
-        else "Folder indexed. Faces detected; run Recluster to assign identities."))
+        else "Folder indexed. Faces detected; to name them, use %s." % CLUSTER_ELSEWHERE))
     return result
