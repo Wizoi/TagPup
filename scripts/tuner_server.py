@@ -32,6 +32,7 @@ from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services import faces as faces_service
 from tagpup.store import faces as store_faces
 from tagpup.store import schema
+from tagpup.store import taxonomy as store_taxonomy
 from tagpup.services import indexing
 from tagpup.services import people as people_service
 from tagpup.services import tags as tags_service
@@ -1202,43 +1203,19 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             return
         conn = None
         try:
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-            
-            # Fetch hidden tags
-            hidden_tags = set()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-            if cursor.fetchone():
-                cursor.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")
-                for row in cursor.fetchall():
-                    hidden_tags.add(row[0])
-            
-            def is_tag_hidden(tag):
-                return vocabulary.hidden_by(tag, hidden_tags)
+            conn = tagpup_db.connect(tagpup_db.readonly_uri(self.db_path), uri=True)
+            hidden_tags = store_taxonomy.hidden_tags(conn)
+            # Where the tree files everyone, in one read: it was a query per person
+            # (docs/findings.md, #50).
+            filed = store_taxonomy.filed_people(conn)
 
-            # Fetch people with matched counts
-            cursor.execute("""
-                SELECT name, COUNT(*) as count
-                FROM faces
-                WHERE name IS NOT NULL
-                GROUP BY name
-                ORDER BY count DESC
-            """)
-            rows = cursor.fetchall()
-            
+            # A person is left out when every node the tree files them under is hidden.
             filtered_rows = []
-            for r in rows:
-                p = r[0]
-                cursor.execute("SELECT tag FROM tag_taxonomy WHERE name = ? AND has_face = 1", (p,))
-                tag_paths = [row[0] for row in cursor.fetchall()]
-                if tag_paths:
-                    hidden = all(is_tag_hidden(path) for path in tag_paths)
-                else:
-                    hidden = False
-                if not hidden:
+            for r in store_faces.counts_by_name(conn):
+                tag_paths = filed.get(r[0], [])
+                if not (tag_paths and all(vocabulary.hidden_by(path, hidden_tags) for path in tag_paths)):
                     filtered_rows.append(r)
-                    
+
             people_counts = [{"name": r[0], "count": r[1]} for r in filtered_rows]
 
             # This list is deliberately people only. An "Unmatched" pseudo-person used to

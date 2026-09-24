@@ -338,3 +338,11 @@ def unnamed_counts(conn, folder):
     where, params = paths.sql_under("photo_path", folder)
     return dict(conn.execute("SELECT photo_path, COUNT(*) FROM faces WHERE " + where
                              + " AND name IS NULL GROUP BY photo_path", params).fetchall())
+
+
+# ---- What TagTuner's screens read -----------------------------------------------------
+
+def counts_by_name(conn):
+    """[(name, faces)] for everyone named, most faces first."""
+    return conn.execute("SELECT name, COUNT(*) AS count FROM faces WHERE name IS NOT NULL"
+                        " GROUP BY name ORDER BY count DESC").fetchall()

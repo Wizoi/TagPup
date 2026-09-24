@@ -305,6 +305,30 @@ def tag_embeddings(db_path, tag):
         conn.close()
 
 
+def tree_exists(conn):
+    """Does the library open on `conn` have its tag tree's table?"""
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table'"
+                        " AND name = 'tag_taxonomy'").fetchone() is not None
+
+
+def hidden_tags(conn):
+    """The nodes hidden from autocomplete; a node under one is hidden too
+    (vocabulary.hidden_by)."""
+    if not tree_exists(conn):
+        return set()
+    return {tag for (tag,) in conn.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")}
+
+
+def filed_people(conn):
+    """{name: [tag]}: where the tree files each person, one read for all of them."""
+    if not tree_exists(conn):
+        return {}
+    filed = {}
+    for tag, name in conn.execute("SELECT tag, name FROM tag_taxonomy WHERE has_face = 1"):
+        filed.setdefault(name, []).append(tag)
+    return filed
+
+
 def tag_embedding(conn, tag, prompt, model_name, pretrained):
     """The CLIP embedding cached for `tag` under this prompt and model, as float32 bytes,
     or None."""
