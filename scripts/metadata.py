@@ -107,7 +107,7 @@ def build_photo_ui_record(path: str, meta: Dict[str, Any], mtime: float = 0.0, s
     title = captions[0] if captions else ""
 
     year = parse_year_from_metadata(meta)
-    year_str = str(year) if year is not None else "Unknown"
+    year_str = dates.shown_year(None if year is None else str(year))
 
     return {
         "path": path,

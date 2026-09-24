@@ -20,8 +20,18 @@ DATE_TAKEN_FIELDS = (
 #: is as often a counter (IMG_0001) as a date.
 EARLIEST, LATEST = 1800, 2100
 
+#: What a photo whose year is not known is shown and grouped under. TagTuner's server,
+#: the folder scan's records (scripts/metadata.py) and TagTuner's page each spelled it;
+#: the page keeps a copy that tests/test_rules_have_one_owner.py holds to this (#74).
+UNKNOWN_YEAR = "Unknown"
+
 _YEAR_AT_START = re.compile(r"^(\d{4})")
 _FOUR_DIGITS = re.compile(r"\d{4}")
+
+
+def shown_year(year):
+    """A photo's year as the pages show it: `year` as it is, or UNKNOWN_YEAR for none."""
+    return year if year else UNKNOWN_YEAR
 
 
 def _value(raw_metadata, field):

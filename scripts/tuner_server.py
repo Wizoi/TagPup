@@ -24,7 +24,7 @@ from sklearn.neighbors import sort_graph_by_row_values
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
 from tagpup.core import clustering as face_rules  # this file has a clustering() of its own
-from tagpup.core import vocabulary
+from tagpup.core import dates, vocabulary
 from tagpup.files import images
 from tagpup.core.library import Library
 from tagpup.core.result import Conflict, NotFound
@@ -121,12 +121,10 @@ def cluster_candidates(embeddings, on_progress=None):
     return DBSCAN(eps=CLUSTER_EPS, min_samples=2, metric="precomputed").fit_predict(graph)
 
 
-def shown_year(year):
-    """A photo's year as the Identify views show it: `photos.year`, or "Unknown".
-
-    Read from the library's column (tagpup.store.photos.date_photos). This parsed each
-    photo's raw metadata for it, with two caches to make that bearable (#67)."""
-    return year if year else "Unknown"
+# A photo's year as the Identify views show it: `photos.year`, or dates.UNKNOWN_YEAR.
+# Read from the library's column (tagpup.store.photos.date_photos). This parsed each
+# photo's raw metadata for it, with two caches to make that bearable (#67).
+shown_year = dates.shown_year
 
 
 _thread_local = threading.local()

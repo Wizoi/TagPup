@@ -229,6 +229,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const BUCKET = Object.freeze({UNKNOWN: 'Unknown Faces', UNGROUPED: 'Ungrouped', EXCLUDED: 'Excluded'});
     const isBucket = name => Object.values(BUCKET).includes(name);
 
+    //: What a face or photo whose year is not known is grouped under, as the server
+    //: sends it (tagpup.core.dates.UNKNOWN_YEAR; tests/test_rules_have_one_owner.py
+    //: holds this copy to it).
+    const UNKNOWN_YEAR = 'Unknown';
+
     // Face Matching Mode State
     let allPeopleWithCounts = [];
     let activePersonName = null;
@@ -1451,7 +1456,7 @@ ${summary}${note}`)) {
         // Group photos by year, then by folder path
         const yearGroups = {};
         allPhotos.forEach(photo => {
-            const year = photo.year || 'Unknown';
+            const year = photo.year || UNKNOWN_YEAR;
             const folder = photo.folder || 'Root';
             
             if (!yearGroups[year]) {
@@ -1479,8 +1484,8 @@ ${summary}${note}`)) {
 
         // Sort years descending
         const sortedYears = Object.values(yearGroups).sort((a, b) => {
-            if (a.name === 'Unknown') return 1;
-            if (b.name === 'Unknown') return -1;
+            if (a.name === UNKNOWN_YEAR) return 1;
+            if (b.name === UNKNOWN_YEAR) return -1;
             return b.name - a.name;
         });
 
@@ -1856,7 +1861,7 @@ ${summary}${note}`)) {
         detailPath.textContent = details.path;
         detailFilename.textContent = details.filename;
         if (detailYear) {
-            detailYear.textContent = details.year || 'Unknown';
+            detailYear.textContent = details.year || UNKNOWN_YEAR;
         }
         detailTitle.textContent = details.caption || 'No description available';
 
@@ -3523,7 +3528,7 @@ This photo also names ${face.other_names.join(', ')}. `
                     const y = parseInt(f.year);
                     if (y && y > maxYear) maxYear = y;
                 });
-                const yearStr = maxYear > 0 ? maxYear.toString() : 'Unknown';
+                const yearStr = maxYear > 0 ? maxYear.toString() : UNKNOWN_YEAR;
                 if (!yearClusters[yearStr]) {
                     yearClusters[yearStr] = [];
                 }
@@ -3532,8 +3537,8 @@ This photo also names ${face.other_names.join(', ')}. `
 
             // 3. Sort years descending
             const sortedYears = Object.keys(yearClusters).sort((a, b) => {
-                if (a === 'Unknown') return 1;
-                if (b === 'Unknown') return -1;
+                if (a === UNKNOWN_YEAR) return 1;
+                if (b === UNKNOWN_YEAR) return -1;
                 return parseInt(b) - parseInt(a);
             });
 
@@ -3585,7 +3590,7 @@ This photo also names ${face.other_names.join(', ')}. `
             // Group by year
             const groups = {};
             targetFaces.forEach(face => {
-                const year = face.year || 'Unknown';
+                const year = face.year || UNKNOWN_YEAR;
                 if (!groups[year]) {
                     groups[year] = [];
                 }
@@ -3594,8 +3599,8 @@ This photo also names ${face.other_names.join(', ')}. `
 
             // Sort years descending
             const sortedGroupNames = Object.keys(groups).sort((a, b) => {
-                if (a === 'Unknown') return 1;
-                if (b === 'Unknown') return -1;
+                if (a === UNKNOWN_YEAR) return 1;
+                if (b === UNKNOWN_YEAR) return -1;
                 return b - a;
             });
 

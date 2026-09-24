@@ -319,5 +319,29 @@ class TheRootsANewLibraryIsGiven(unittest.TestCase):
         self.assertEqual([], sources_matching(spelled, os.path.join("tagpup", "core", "vocabulary.py")))
 
 
+class TheYearOfAPhotoWithNone(unittest.TestCase):
+    """A photo whose year is not known is shown under tagpup.core.dates.UNKNOWN_YEAR: the
+    TagTuner server, the folder scan's records and TagTuner's page each spelled it, the
+    page nine times. The page keeps one copy, held here to the server's."""
+
+    def test_dates_says_it(self):
+        from tagpup.core import dates
+        self.assertEqual(2019, dates.shown_year(2019))
+        self.assertEqual("2019", dates.shown_year("2019"))
+        self.assertEqual(dates.UNKNOWN_YEAR, dates.shown_year(None))
+        self.assertEqual(dates.UNKNOWN_YEAR, dates.shown_year(0))
+
+    def test_the_page_shows_it_as_the_server_does(self):
+        from tagpup.core import dates
+        page = read(os.path.join("gui", "app.js"))
+        self.assertIn("const UNKNOWN_YEAR = '%s';" % dates.UNKNOWN_YEAR, page)
+        lines = [n for n, line in enumerate(page.splitlines(), 1)
+                 if re.search(r"'%s'" % dates.UNKNOWN_YEAR, line) and "const UNKNOWN_YEAR" not in line]
+        self.assertEqual([], lines)
+
+    def test_nobody_else_spells_it(self):
+        self.assertEqual([], sources_matching(r"[\"']Unknown[\"']", os.path.join("tagpup", "core", "dates.py")))
+
+
 if __name__ == "__main__":
     unittest.main()
