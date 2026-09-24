@@ -13,9 +13,13 @@ import threading
 import time
 from typing import List, Dict, Any, Tuple, Optional, Set
 import numpy as np
-import faiss
 
+from tagpup.ml.vector_index import VectorIndex
+from tagpup.store import embeddings as store_embeddings
+from tagpup.store import faces as store_faces
 from tagpup.store import generations, schema
+from tagpup.store import photos as store_photos
+from tagpup.store import taxonomy as store_taxonomy
 
 logger = logging.getLogger("tagpup_cli.index")
 
@@ -158,10 +162,18 @@ retry_when_busy = tagpup_db.retry_when_busy
 
 
 class PhotoIndex:
+    """A library's photos in memory, with the nearest-neighbour index over their CLIP
+    embeddings, and the reads and writes indexing and clustering make.
+
+    The SQL is tagpup.store's (photos, faces, embeddings, taxonomy) and the vector index
+    tagpup.ml.vector_index's; this class joins them, and keeps the names its callers
+    have always used.
+    """
+
     def __init__(self, db_path: str = "data/photo_index.db"):
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
-        self.index: Optional[faiss.Index] = None
+        self.index: Optional[VectorIndex] = None
         self.metadata: List[Dict[str, Any]] = []
         self.indexed_metadata: List[Dict[str, Any]] = []
         self.dim = 512  # Default
@@ -179,29 +191,23 @@ class PhotoIndex:
             db_dir = os.path.dirname(self.db_path)
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
-                
-            # Set a 30-second timeout to handle concurrent lock waiting gracefully
+            schema.ensure(self.db_path)
             # Reloads (after remove_paths, build_or_update) reuse the connection. Each
             # used to open a new one and drop the old one unclosed, and on Windows an
-            # unclosed handle keeps the database file locked.
-            schema.ensure(self.db_path)
+            # unclosed handle keeps the database file locked. Foreign keys on: deleting
+            # a photo's row takes its faces with it.
             if self.conn is None:
-                self.conn = tagpup_db.connect(self.db_path, timeout=30.0, check_same_thread=False)
-            configure_connection(self.conn)
-            self.conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = self.conn.cursor()
+                self.conn = tagpup_db.connect(self.db_path, timeout=30.0, check_same_thread=False,
+                                              foreign_keys=True)
 
             # Taken before the rows: a write landing in between costs one reload
             # later, never a missed one. See reload_if_changed.
             self._signature = self._photos_signature()
-            cursor.execute("SELECT path, mtime, size, tags, people, captions, raw_metadata, embedding FROM photos")
-            rows = cursor.fetchall()
-            
             self.metadata = []
             self.indexed_metadata = []
             embeddings = []
-            
-            for path, mtime, size, tags_json, people_json, captions_json, raw_meta_json, emb_bytes in rows:
+            for path, mtime, size, tags_json, people_json, captions_json, raw_meta_json, emb_bytes in (
+                    store_photos.index_rows(self.conn)):
                 try:
                     tags = json.loads(tags_json)
                     people = json.loads(people_json)
@@ -209,7 +215,6 @@ class PhotoIndex:
                     raw_meta = json.loads(raw_meta_json)
                 except Exception:
                     tags, people, captions, raw_meta = [], [], [], {}
-                    
                 has_emb = (emb_bytes is not None and len(emb_bytes) > 0)
                 meta_item = {
                     "path": path,
@@ -222,44 +227,16 @@ class PhotoIndex:
                     "has_embedding": has_emb
                 }
                 self.metadata.append(meta_item)
-                
                 if has_emb:
-                    emb = np.frombuffer(emb_bytes, dtype=np.float32)
-                    embeddings.append(emb)
+                    embeddings.append(np.frombuffer(emb_bytes, dtype=np.float32))
                     self.indexed_metadata.append(meta_item)
-                
+
             if embeddings:
                 self.dim = len(embeddings[0])
-                embedding_matrix = np.array(embeddings, dtype=np.float32)
-                
-                # L2 normalize vectors to guarantee accurate cosine similarity via FlatIP
-                norms = np.linalg.norm(embedding_matrix, axis=1, keepdims=True)
-                norms[norms == 0] = 1.0
-                embedding_matrix = embedding_matrix / norms
-                
-                has_gpu = False
-                if hasattr(faiss, "get_num_gpus"):
-                    try:
-                        has_gpu = (faiss.get_num_gpus() > 0)
-                    except Exception:
-                        pass
- 
-                if has_gpu:
-                    try:
-                        res = faiss.StandardGpuResources()
-                        self.index = faiss.index_cpu_to_gpu(res, 0, faiss.IndexFlatIP(self.dim))
-                        logger.info("Initialized GPU-accelerated FAISS index.")
-                    except Exception as gpu_err:
-                        logger.warning(f"Failed to initialize GPU FAISS index: {gpu_err}. Falling back to CPU index.")
-                        self.index = faiss.IndexFlatIP(self.dim)
-                else:
-                    self.index = faiss.IndexFlatIP(self.dim)
- 
-                self.index.add(embedding_matrix)
+                self.index = VectorIndex(embeddings, self.indexed_metadata)
                 logger.info(f"Loaded {len(self.metadata)} index entries from SQLite.")
             else:
                 self.index = None
-                
             return True
         except Exception as e:
             logger.error(f"Error loading SQLite database: {e}", exc_info=True)
@@ -270,10 +247,9 @@ class PhotoIndex:
 
     def _with_face_names(self, meta):
         """meta's people plus the names already given to this photo's faces."""
-        from metadata import face_names
         people = list(meta.get("people", []))
         seen = {p.lower() for p in people}
-        for name in face_names(meta["path"], conn=self.conn):
+        for name in store_faces.face_names(meta["path"], conn=self.conn):
             if name.lower() not in seen:
                 seen.add(name.lower())
                 people.append(name)
@@ -284,60 +260,38 @@ class PhotoIndex:
         if not embeddings or self.conn is None:
             return
 
+        from identity import read_document_id
+        from metadata import extract_people
         try:
-            cursor = self.conn.cursor()
             for meta, emb in zip(metas, embeddings):
-                emb_bytes = np.array(emb, dtype=np.float32).tobytes()
-                # Record the photo's identity beside its path. Where the file has
-                # one it is already in raw_metadata; where it does not, the extractor
-                # has minted one into the file by now.
-                from identity import read_document_id
-                document_id = (meta.get("document_id")
-                               or read_document_id(meta.get("raw_metadata", {})))
-                # Update a photo already indexed in place, under the spelling its row
-                # already has. faces.photo_path references photos.path ON DELETE
-                # CASCADE, so anything that deletes the row -- INSERT OR REPLACE is a
-                # delete and an insert -- takes every face with it: names given by
-                # hand, "nobody" decisions and exclusions. Re-indexing a changed photo
-                # did exactly that. The existing spelling is kept because the faces
-                # point at it, and a row under a second spelling would be a duplicate.
                 # Who the keywords name depends on this library's taxonomy, which
                 # the reader only consults when a caller remembers to pass it. The
                 # CLI and both folder indexers did not, and the row lost everyone
                 # outside the default roots. Resolve here, against this connection.
-                from metadata import extract_people
                 resolved = extract_people(meta.get("raw_metadata", {}), meta.get("tags", []),
                                           conn=self.conn)
                 known = {p.lower() for p in meta.get("people", [])}
                 meta = dict(meta, people=list(meta.get("people", []))
                             + [p for p in resolved if p.lower() not in known])
-                clause, params = paths.sql_equals("path", meta["path"])
-                existing = cursor.execute(
-                    "SELECT path FROM photos WHERE " + clause + " LIMIT 1", params).fetchone()
-                cursor.execute("""
-                    INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding, document_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(path) DO UPDATE SET
-                        mtime = excluded.mtime, size = excluded.size, tags = excluded.tags,
-                        people = excluded.people, captions = excluded.captions,
-                        raw_metadata = excluded.raw_metadata, embedding = excluded.embedding,
-                        document_id = COALESCE(excluded.document_id, photos.document_id)
-                """, (
-                    existing[0] if existing else paths.stored(meta["path"]),
-                    meta.get("mtime", 0.0),
-                    meta.get("size", 0),
-                    json.dumps(meta.get("tags", [])),
-                    # Keyword people and the photo's named faces: a re-index
-                    # rebuilt this from keywords alone and dropped everyone
-                    # identified only by their face. See metadata.photo_people.
-                    json.dumps(self._with_face_names(meta)),
-                    json.dumps(meta.get("captions", [])),
-                    json.dumps(meta.get("raw_metadata", {})),
-                    emb_bytes,
-                    document_id
-                ))
+                store_photos.record_indexed(self.conn, meta["path"], {
+                    "mtime": meta.get("mtime", 0.0),
+                    "size": meta.get("size", 0),
+                    "tags": meta.get("tags", []),
+                    # Keyword people and the photo's named faces: a re-index rebuilt
+                    # this from keywords alone and dropped everyone identified only by
+                    # their face. See metadata.photo_people.
+                    "people": self._with_face_names(meta),
+                    "captions": meta.get("captions", []),
+                    "raw_metadata": meta.get("raw_metadata", {}),
+                    "embedding": np.array(emb, dtype=np.float32).tobytes(),
+                    # The photo's identity beside its path. Where the file has one it is
+                    # already in raw_metadata; where it does not, the extractor has
+                    # minted one into the file by now.
+                    "document_id": (meta.get("document_id")
+                                    or read_document_id(meta.get("raw_metadata", {}))),
+                })
             self.conn.commit()
-            
+
             if reload:
                 # Reload to rebuild the in-memory FAISS index to reflect the updates
                 self.load()
@@ -352,41 +306,17 @@ class PhotoIndex:
 
     def search(self, query_vector: List[float], k: int = 15) -> List[Tuple[float, Dict[str, Any]]]:
         """Search the in-memory FAISS index for the k most similar vectors."""
-        if self.index is None or self.index.ntotal == 0:
+        if self.index is None:
             return []
-
-        query_np = np.array([query_vector], dtype=np.float32)
-        norm = np.linalg.norm(query_np)
-        if norm > 0:
-            query_np = query_np / norm
-
-        k = min(k, self.index.ntotal)
-        if k == 0:
-            return []
-
-        scores, indices = self.index.search(query_np, k)
-        
-        results = []
-        for sim, idx in zip(scores[0], indices[0]):
-            if idx == -1 or idx >= len(self.indexed_metadata):
-                continue
-            results.append((float(sim), self.indexed_metadata[idx]))
-            
-        return results
+        return self.index.search(query_vector, k)
 
     def remove_paths(self, paths_to_remove: Set[str]):
         """Remove specific paths from the SQLite database and reload."""
         if self.conn is None or not paths_to_remove:
             return
-
         try:
-            cursor = self.conn.cursor()
-            # SQLite deletes in chunks or individual queries
-            for path in paths_to_remove:
-                clause, params = paths.sql_equals("path", path)
-                cursor.execute("DELETE FROM photos WHERE " + clause, params)
+            store_photos.remove(self.conn, paths_to_remove)
             self.conn.commit()
-            # Rebuild in-memory index
             self.load()
         except Exception as e:
             logger.error(f"Error deleting paths from SQLite: {e}")
@@ -398,10 +328,8 @@ class PhotoIndex:
         if self.conn is None:
             return
         try:
-            cursor = self.conn.cursor()
-            cursor.execute("UPDATE photos SET embedding = NULL")
+            store_photos.clear_embeddings(self.conn)
             self.conn.commit()
-            # Clear in-memory FAISS index
             self.index = None
             # Reload metadata (has_embedding will be updated to False)
             self.load()
@@ -445,9 +373,7 @@ class PhotoIndex:
         if self.conn is None:
             return
         try:
-            cursor = self.conn.cursor()
-            clause, params = paths.sql_equals("photo_path", photo_path)
-            cursor.execute("DELETE FROM faces WHERE " + clause, params)
+            store_faces.remove_for_photo(self.conn, photo_path)
             self.conn.commit()
         except Exception as e:
             logger.error(f"Error removing faces for {photo_path}: {e}")
@@ -463,23 +389,19 @@ class PhotoIndex:
         if self.conn is None:
             return
         try:
-            cursor = self.conn.cursor()
-            # First clean up old face records for this photo
-            clause, params = paths.sql_equals("photo_path", photo_path)
-            cursor.execute("DELETE FROM faces WHERE " + clause, params)
-            
+            store_faces.remove_for_photo(self.conn, photo_path)
             for face in faces:
-                box_json = json.dumps(face["box"])
-                emb_bytes = np.array(face["embedding"], dtype=np.float32).tobytes()
-                crop_bytes = face.get("crop_image")
-                cursor.execute("""
-                    INSERT INTO faces (photo_path, box, embedding, name, crop_image, prob)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (paths.stored(photo_path), box_json, emb_bytes, face.get("name"), crop_bytes, face.get("prob")))
+                self._insert_face(self.conn, photo_path, face, name=face.get("name"))
             self.conn.commit()
         except Exception as e:
             logger.error(f"Error saving faces for {photo_path}: {e}")
             self.conn.rollback()
+
+    @staticmethod
+    def _insert_face(conn, photo_path, face, name=None):
+        store_faces.insert(conn, photo_path, face.get("box", []),
+                           np.array(face["embedding"], dtype=np.float32).tobytes(),
+                           name=name, crop=face.get("crop_image"), prob=face.get("prob"))
 
     def write_on_own_connection(self, operation, label="database write"):
         """Run a write on a connection of its own.
@@ -507,17 +429,29 @@ class PhotoIndex:
         detected faces as a side effect of doing something else (the tag suggester) and
         want to keep the work without disturbing anything already recorded.
 
-        Uses its own short-lived connection: callers run inside worker pools, and sharing
-        one sqlite connection across threads is how "objects created in a thread" errors
-        and lock contention start.
+        On a connection of its own: callers run inside worker pools, and sharing one
+        sqlite connection across threads is how "objects created in a thread" errors
+        and lock contention start. Raised on inside the write, not swallowed: its retry
+        waits out a locked database, and returning 0 before the retry saw the error
+        lost a photo's faces for good.
         """
         if not faces:
             return 0
+
+        def insert(conn):
+            if store_faces.count_for_photo(conn, photo_path) > 0:
+                return 0  # already recorded; leave it alone
+            inserted = 0
+            for face in faces:
+                if face.get("embedding") is None:
+                    continue
+                self._insert_face(conn, photo_path, face)
+                inserted += 1
+            return inserted
+
         try:
-            return self.write(
-                lambda: self._insert_faces_if_absent(photo_path, faces),
-                label="recording faces for %s" % os.path.basename(photo_path),
-            )
+            return self.write_on_own_connection(
+                insert, label="recording faces for %s" % os.path.basename(photo_path))
         except Exception as e:
             # Only once the retries are spent. Losing the faces for a photo is not a
             # warning-shaped event: they are gone until it is indexed again.
@@ -526,51 +460,6 @@ class PhotoIndex:
                 "recover them.", photo_path, e
             )
             return 0
-
-    def _insert_faces_if_absent(self, photo_path: str, faces: List[Dict[str, Any]]) -> int:
-        """One attempt at the insert above. Separated so it can simply be retried."""
-        conn = None
-        try:
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            configure_connection(conn)
-            cursor = conn.cursor()
-            clause, params = paths.sql_equals("photo_path", photo_path)
-            cursor.execute("SELECT COUNT(*) FROM faces WHERE " + clause, params)
-            if cursor.fetchone()[0] > 0:
-                return 0  # already recorded; leave it alone
-
-            inserted = 0
-            for face in faces:
-                emb = face.get("embedding")
-                if emb is None:
-                    continue
-                cursor.execute(
-                    "INSERT INTO faces (photo_path, box, embedding, name, crop_image, prob)"
-                    " VALUES (?, ?, ?, NULL, ?, ?)",
-                    (
-                        paths.stored(photo_path),
-                        json.dumps(face.get("box", [])),
-                        np.array(emb, dtype=np.float32).tobytes(),
-                        face.get("crop_image"),
-                        face.get("prob"),
-                    ),
-                )
-                inserted += 1
-            conn.commit()
-            return inserted
-        except Exception:
-            # Raised on, not swallowed: this runs inside self.write, whose retry
-            # waits out a locked database. Catching here returned 0 before the retry
-            # ever saw the error, so a moment's lock lost a photo's faces for good.
-            if conn:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-            raise
-        finally:
-            if conn:
-                conn.close()
 
     def get_manual_face_names(self) -> Dict[int, Optional[str]]:
         """face_id -> name for every face a person decided by hand.
@@ -581,9 +470,7 @@ class PhotoIndex:
         if self.conn is None:
             return {}
         try:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT id, name FROM faces WHERE name_source = 'manual'")
-            return {row[0]: row[1] for row in cursor.fetchall()}
+            return store_faces.manual_names(self.conn)
         except Exception as e:
             logger.warning(f"Could not read manual face names: {e}")
             return {}
@@ -593,9 +480,7 @@ class PhotoIndex:
         if self.conn is None:
             return set()
         try:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT id FROM faces WHERE excluded = 1")
-            return {row[0] for row in cursor.fetchall()}
+            return store_faces.excluded_ids(self.conn)
         except Exception as e:
             logger.warning(f"Could not read excluded faces: {e}")
             return set()
@@ -605,23 +490,14 @@ class PhotoIndex:
         if self.conn is None:
             return []
         try:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT id, photo_path, box, embedding, name, prob FROM faces")
-            rows = cursor.fetchall()
-            
-            faces = []
-            for face_id, photo_path, box_json, emb_bytes, name, prob in rows:
-                box = json.loads(box_json)
-                embedding = np.frombuffer(emb_bytes, dtype=np.float32)
-                faces.append({
-                    "id": face_id,
-                    "photo_path": photo_path,
-                    "box": box,
-                    "embedding": embedding,
-                    "name": name,
-                    "prob": prob
-                })
-            return faces
+            return [{
+                "id": face_id,
+                "photo_path": photo_path,
+                "box": json.loads(box_json),
+                "embedding": np.frombuffer(emb_bytes, dtype=np.float32),
+                "name": name,
+                "prob": prob,
+            } for face_id, photo_path, box_json, emb_bytes, name, prob in store_faces.for_clustering(self.conn)]
         except Exception as e:
             logger.error(f"Error retrieving faces: {e}")
             return []
@@ -636,9 +512,7 @@ class PhotoIndex:
         """
         conn = tagpup_db.connect(self.db_path, timeout=30.0)
         try:
-            rows = conn.execute(
-                "SELECT name, embedding FROM faces WHERE excluded = 0 AND name IS NOT NULL"
-            ).fetchall()
+            rows = store_faces.named_embeddings(conn)
         finally:
             conn.close()
         by_name: Dict[str, List[np.ndarray]] = {}
@@ -658,8 +532,7 @@ class PhotoIndex:
         if self.conn is None or not face_updates:
             return
         try:
-            cursor = self.conn.cursor()
-            cursor.executemany("UPDATE faces SET name = ? WHERE id = ?", face_updates)
+            store_faces.set_names(self.conn, {face_id: name for name, face_id in face_updates})
             self.conn.commit()
         except Exception as e:
             logger.error(f"Error updating face names: {e}")
@@ -676,35 +549,21 @@ class PhotoIndex:
         """
         if self.conn is None:
             return 0
+        from metadata import extract_people
         try:
-            cursor = self.conn.cursor()
-            # 1. Clear the automatic names only.
-            cleared = cursor.execute(
-                "UPDATE faces SET name = NULL"
-                " WHERE name IS NOT NULL AND COALESCE(name_source, '') <> 'manual'").rowcount
-
-            # 2. Reset photos.people to original tags extracted from raw_metadata
-            cursor.execute("SELECT path, raw_metadata, tags FROM photos")
-            rows = cursor.fetchall()
-            
-            from metadata import extract_people
-            
-            updates = []
-            for path, raw_meta_json, tags_json in rows:
+            cleared = store_faces.clear_automatic_names(self.conn)
+            # Each photo's people again: its keyword people, and the faces still named,
+            # which after the clear are the manual ones.
+            people_by_path = {}
+            for path, raw_meta_json, tags_json in store_photos.keyword_sources(self.conn):
                 try:
                     raw_meta = json.loads(raw_meta_json) if raw_meta_json else {}
                     tags = json.loads(tags_json) if tags_json else []
                 except Exception:
-                    raw_meta = {}
-                    tags = []
+                    raw_meta, tags = {}, []
                 orig_people = extract_people(raw_meta, tags, db_path=self.db_path, conn=self.conn)
-                # Plus the faces still named, which after the clear are the manual ones.
-                people = self._with_face_names({"path": path, "people": orig_people})
-                updates.append((json.dumps(people), path))
-
-            if updates:
-                cursor.executemany("UPDATE photos SET people = ? WHERE path = ?", updates)
-
+                people_by_path[path] = self._with_face_names({"path": path, "people": orig_people})
+            store_photos.set_people(self.conn, people_by_path)
             self.conn.commit()
             return cleared
         except Exception as e:
@@ -712,7 +571,6 @@ class PhotoIndex:
             if self.conn:
                 self.conn.rollback()
             raise e
-
 
     def save_faces_batch(self, batch_faces: Dict[str, List[Dict[str, Any]]], overwrite: bool = False):
         """Save detected faces for a batch of photos in a single transaction.
@@ -728,23 +586,13 @@ class PhotoIndex:
         if self.conn is None or not batch_faces:
             return
         try:
-            cursor = self.conn.cursor()
-            cursor.execute("BEGIN TRANSACTION")
+            tagpup_db.begin(self.conn)
             for photo_path, faces in batch_faces.items():
-                clause, params = paths.sql_equals("photo_path", photo_path)
-                if not overwrite:
-                    cursor.execute("SELECT COUNT(*) FROM faces WHERE " + clause, params)
-                    if cursor.fetchone()[0] > 0:
-                        continue
-                cursor.execute("DELETE FROM faces WHERE " + clause, params)
+                if not overwrite and store_faces.count_for_photo(self.conn, photo_path) > 0:
+                    continue
+                store_faces.remove_for_photo(self.conn, photo_path)
                 for face in faces:
-                    box_json = json.dumps(face["box"])
-                    emb_bytes = np.array(face["embedding"], dtype=np.float32).tobytes()
-                    crop_bytes = face.get("crop_image")
-                    cursor.execute("""
-                        INSERT INTO faces (photo_path, box, embedding, name, crop_image, prob)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (paths.stored(photo_path), box_json, emb_bytes, face.get("name"), crop_bytes, face.get("prob")))
+                    self._insert_face(self.conn, photo_path, face, name=face.get("name"))
             self.conn.commit()
         except Exception as e:
             logger.error(f"Error saving faces batch to SQLite: {e}")
@@ -766,44 +614,27 @@ class PhotoIndex:
             return
 
         logger.info(f"Found {len(json_files)} cache files in '{cache_dir}'. Starting database migration...")
-        
+
         batch_size = 1000
-        cursor = self.conn.cursor()
-        
         for idx in range(0, len(json_files), batch_size):
             batch = json_files[idx:idx + batch_size]
             migrated_files = []
-            
+
             try:
-                cursor.execute("BEGIN TRANSACTION")
+                tagpup_db.begin(self.conn)
                 for filename in batch:
                     filepath = os.path.join(cache_dir, filename)
                     try:
                         with open(filepath, "r", encoding="utf-8") as f:
                             data = json.load(f)
-                            
-                        # Extract and validate fields
                         path = data.get("path")
-                        mtime = data.get("mtime")
-                        size = data.get("size")
-                        model_name = data.get("model_name")
-                        pretrained = data.get("pretrained")
-                        preserve_full_frame = 1 if data.get("preserve_full_frame") else 0
-                        max_aspect_ratio = data.get("max_aspect_ratio")
-                        force_image_size = data.get("force_image_size")
                         embedding = data.get("embedding")
-                        
                         if path and embedding:
-                            emb_bytes = np.array(embedding, dtype=np.float32).tobytes()
-                            cursor.execute("""
-                                INSERT OR REPLACE INTO embedding_cache (
-                                    path, mtime, size, model_name, pretrained, 
-                                    preserve_full_frame, max_aspect_ratio, force_image_size, embedding
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (
-                                path, mtime, size, model_name, pretrained,
-                                preserve_full_frame, max_aspect_ratio, force_image_size, emb_bytes
-                            ))
+                            store_embeddings.put(self.conn, path, store_embeddings.Cached(
+                                data.get("mtime"), data.get("size"), data.get("model_name"),
+                                data.get("pretrained"), bool(data.get("preserve_full_frame")),
+                                data.get("max_aspect_ratio"), data.get("force_image_size"),
+                                np.array(embedding, dtype=np.float32).tobytes()))
                             migrated_files.append(filepath)
                     except Exception as e:
                         # Log error and clean up corrupt file to avoid blocking future migrations
@@ -812,16 +643,16 @@ class PhotoIndex:
                             os.remove(filepath)
                         except Exception:
                             pass
-                
+
                 self.conn.commit()
-                
+
                 # Delete files from disk only after successful DB commit
                 for filepath in migrated_files:
                     try:
                         os.remove(filepath)
                     except Exception as e:
                         logger.warning(f"Failed to delete migrated cache file {filepath}: {e}")
-                        
+
                 logger.info(f"Successfully migrated and cleaned up {len(migrated_files)} cache files.")
             except Exception as e:
                 logger.error(f"Failed to migrate batch of cache files: {e}")
@@ -832,14 +663,9 @@ class PhotoIndex:
         if not self.conn:
             return None
         try:
-            cursor = self.conn.cursor()
-            cursor.execute(
-                "SELECT embedding FROM tag_embeddings WHERE tag = ? AND prompt = ? AND model_name = ? AND pretrained = ?",
-                (tag, prompt, model_name, pretrained)
-            )
-            row = cursor.fetchone()
-            if row:
-                return np.frombuffer(row[0], dtype=np.float32).tolist()
+            emb_bytes = store_taxonomy.tag_embedding(self.conn, tag, prompt, model_name, pretrained)
+            if emb_bytes:
+                return np.frombuffer(emb_bytes, dtype=np.float32).tolist()
         except Exception as e:
             logger.debug(f"Failed to load tag embedding for '{tag}': {e}")
         return None
@@ -848,15 +674,10 @@ class PhotoIndex:
         """Save precomputed tag embedding."""
         if not self.conn:
             return
+
         def store(conn):
-            emb_bytes = np.array(embedding, dtype=np.float32).tobytes()
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO tag_embeddings (tag, prompt, model_name, pretrained, embedding)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (tag, prompt, model_name, pretrained, emb_bytes)
-            )
+            store_taxonomy.keep_tag_embedding(conn, tag, prompt, model_name, pretrained,
+                                              np.array(embedding, dtype=np.float32).tobytes())
 
         try:
             self.write_on_own_connection(store, label="tag embedding for '%s'" % tag)
@@ -864,6 +685,3 @@ class PhotoIndex:
             # Losing a tag embedding costs the next suggestion run the time to
             # recompute it. Not data loss, so this stays a warning.
             logger.warning(f"Failed to save tag embedding for '{tag}': {e}")
-
-
-

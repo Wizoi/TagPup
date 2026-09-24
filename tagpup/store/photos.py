@@ -1,10 +1,9 @@
 """The photos table.
 
-For now, recording what a write did to a file -- its tags, or only its new mtime and
-size -- or what was read back from it, moving renamed photos' rows, and forgetting a
-deleted photo. The rest of the table's queries,
-in scripts/index.py and the servers, move here with the store step of phase 2
-(ARCHITECTURE.md).
+Recording what a write did to a file -- its tags, or only its new mtime and size -- or
+what was read back from it, moving renamed photos' rows, forgetting a deleted photo,
+and what PhotoIndex reads and records when it indexes. The servers' queries move here
+in phase 3 (ARCHITECTURE.md).
 """
 import json
 import logging
@@ -370,3 +369,74 @@ def record_saved(db_path, photo_path, tags, people, captions, raw_meta):
 
     return db.write_with_connection(
         db_path, update_row, label="index row for %s" % os.path.basename(photo_path))
+
+
+# ---- What PhotoIndex reads and writes ---------------------------------------------------
+
+#: A photo row as the index holds it. `embedding` is float32 bytes, or None.
+INDEX_COLUMNS = ("path", "mtime", "size", "tags", "people", "captions", "raw_metadata", "embedding")
+
+
+def index_rows(conn):
+    """Every photo row, INDEX_COLUMNS each: the whole library, as PhotoIndex loads it."""
+    return conn.execute("SELECT " + ", ".join(INDEX_COLUMNS) + " FROM photos").fetchall()
+
+
+def stored_spelling(conn, photo_path):
+    """The path a photo's row is stored under, or None if it has no row."""
+    clause, params = paths.sql_equals("path", photo_path)
+    row = conn.execute("SELECT path FROM photos WHERE " + clause + " LIMIT 1", params).fetchone()
+    return row[0] if row else None
+
+
+def record_indexed(conn, photo_path, row):
+    """Record what indexing read of a photo: `row` has mtime, size, tags, people,
+    captions, raw_metadata (as values), embedding (bytes) and document_id. The caller
+    commits.
+
+    A photo indexed before is updated in place, under the spelling its row already has.
+    faces.photo_path references photos.path ON DELETE CASCADE, so anything that deletes
+    the row -- INSERT OR REPLACE is a delete and an insert -- takes every face with it:
+    names given by hand, "nobody" decisions and exclusions. Re-indexing a changed photo
+    did exactly that. A document_id already recorded is kept when the file has none.
+    """
+    conn.execute(
+        "INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding, document_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        " ON CONFLICT(path) DO UPDATE SET"
+        " mtime = excluded.mtime, size = excluded.size, tags = excluded.tags,"
+        " people = excluded.people, captions = excluded.captions,"
+        " raw_metadata = excluded.raw_metadata, embedding = excluded.embedding,"
+        " document_id = COALESCE(excluded.document_id, photos.document_id)",
+        (stored_spelling(conn, photo_path) or paths.stored(photo_path),
+         row.get("mtime", 0.0), row.get("size", 0), json.dumps(row.get("tags", [])),
+         json.dumps(row.get("people", [])), json.dumps(row.get("captions", [])),
+         json.dumps(row.get("raw_metadata", {})), row.get("embedding"), row.get("document_id")))
+
+
+def remove(conn, photo_paths):
+    """Delete the rows of `photo_paths`; their faces go with them on a connection that
+    enforces foreign keys (db.connect(..., foreign_keys=True)). Returns rows deleted.
+    The caller commits."""
+    removed = 0
+    for photo_path in photo_paths:
+        clause, params = paths.sql_equals("path", photo_path)
+        removed += conn.execute("DELETE FROM photos WHERE " + clause, params).rowcount
+    return removed
+
+
+def clear_embeddings(conn):
+    """Forget every photo's CLIP embedding. Returns rows changed. The caller commits."""
+    return conn.execute("UPDATE photos SET embedding = NULL WHERE embedding IS NOT NULL").rowcount
+
+
+def keyword_sources(conn):
+    """(path, raw_metadata JSON, tags JSON) of every photo: what its keyword people are
+    derived from."""
+    return conn.execute("SELECT path, raw_metadata, tags FROM photos").fetchall()
+
+
+def set_people(conn, people_by_path):
+    """Replace the people of each photo in {stored path: [names]}. The caller commits."""
+    conn.executemany("UPDATE photos SET people = ? WHERE path = ?",
+                     [(json.dumps(people), path) for path, people in people_by_path.items()])

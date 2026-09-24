@@ -103,14 +103,25 @@ def configure(conn, readonly=False):
     return conn
 
 
-def connect(target, *args, **kwargs):
+def connect(target, *args, foreign_keys=False, **kwargs):
     """Open a connection, configured. Same signature as `sqlite3.connect`.
 
     `timeout` defaults to the busy timeout above rather than sqlite3's 5 seconds.
+    `foreign_keys` turns on SQLite's enforcement for this connection, which PhotoIndex
+    relies on: deleting a photo row takes its faces with it (ON DELETE CASCADE).
     """
     kwargs.setdefault("timeout", BUSY_TIMEOUT_MS / 1000.0)
     conn = sqlite3.connect(target, *args, **kwargs)
-    return configure(conn, readonly=_is_readonly(target, kwargs))
+    configure(conn, readonly=_is_readonly(target, kwargs))
+    if foreign_keys:
+        conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def begin(conn, immediate=False):
+    """Open a transaction on `conn` now, for a batch the caller commits or rolls back as
+    one. IMMEDIATE takes the write lock at once rather than at the first write."""
+    conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
 
 
 def retry_when_busy(operation, attempts=4, first_delay=0.25, label="database write"):

@@ -4,10 +4,10 @@ import logging
 from typing import List, Dict, Any, Optional
 from taxonomy import TagTaxonomy
 from index import PhotoIndex
-import paths
 
 import _root  # noqa: F401
 from tagpup.core import vocabulary
+from tagpup.store import faces as store_faces
 
 import threading
 logger = logging.getLogger("tagpup_cli.suggester")
@@ -298,14 +298,7 @@ class TagSuggester:
             if self.index and self.index.conn:
                 try:
                     import json
-                    cursor = self.index.conn.cursor()
-                    # This looked for a forward-slash spelling the faces are never
-                    # stored under, so every run detected the same faces again.
-                    clause, params = paths.sql_equals("photo_path", photo_path)
-                    cursor.execute(
-                        "SELECT box, embedding, prob, excluded, name, name_source"
-                        " FROM faces WHERE " + clause, params)
-                    for row in cursor.fetchall():
+                    for row in store_faces.in_photo(self.index.conn, photo_path):
                         box_json, emb_bytes, prob, excluded, name, name_source = row
                         has_face_rows = True
                         # A face someone excluded, or decided is nobody, is not to be

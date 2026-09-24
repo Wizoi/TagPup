@@ -12,10 +12,9 @@ import torch
 import numpy as np
 import open_clip
 
-try:
-    from . import paths
-except ImportError:  # imported as a top-level module
-    import paths
+import _root  # noqa: F401
+import paths
+from tagpup.store import embeddings as store_embeddings
 
 logger = logging.getLogger("tagpup_cli.embedder")
 
@@ -115,12 +114,7 @@ class ClipEmbedder:
         if self.photo_index is not None and self.photo_index.conn is not None:
             try:
                 stat = os.stat(file_path)
-                clause, params = paths.sql_equals("path", file_path)
-                cursor = self.photo_index.conn.cursor()
-                cursor.execute("""
-                    SELECT mtime, size, model_name, pretrained, preserve_full_frame, max_aspect_ratio, force_image_size, embedding
-                    FROM embedding_cache WHERE """ + clause, params)
-                row = cursor.fetchone()
+                row = store_embeddings.cached(self.photo_index.conn, file_path)
                 if row:
                     mtime, size, model_name, pretrained, preserve_full_frame, max_aspect_ratio, force_image_size, emb_bytes = row
                     preserve_full_frame_bool = bool(preserve_full_frame)
@@ -170,23 +164,10 @@ class ClipEmbedder:
             # Try database cache first if photo_index is available
             if self.photo_index is not None and self.photo_index.conn is not None:
                 def store(conn):
-                    emb_bytes = np.array(embedding, dtype=np.float32).tobytes()
-                    conn.execute("""
-                        INSERT OR REPLACE INTO embedding_cache (
-                            path, mtime, size, model_name, pretrained,
-                            preserve_full_frame, max_aspect_ratio, force_image_size, embedding
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        stored_path,
-                        stat.st_mtime,
-                        stat.st_size,
-                        self.model_name,
-                        self.pretrained,
-                        1 if self.preserve_full_frame else 0,
-                        self.max_aspect_ratio,
-                        self.force_image_size,
-                        emb_bytes
-                    ))
+                    store_embeddings.put(conn, file_path, store_embeddings.Cached(
+                        stat.st_mtime, stat.st_size, self.model_name, self.pretrained,
+                        self.preserve_full_frame, self.max_aspect_ratio, self.force_image_size,
+                        np.array(embedding, dtype=np.float32).tobytes()))
 
                 # On a connection of its own. Every worker in the suggestion pool
                 # writes its embedding here, and they were all going through the

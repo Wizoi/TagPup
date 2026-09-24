@@ -1,9 +1,9 @@
 """The faces table.
 
 The names a photo's faces were given, turning their boxes when a photo is turned, a
-face's crop, and a write to the table that the Identify Faces grids can account for. The
-rest of the table's queries, in scripts/index.py and the servers, move here with the
-store step of phase 2 (ARCHITECTURE.md).
+face's crop, a write to the table that the Identify Faces grids can account for, and
+what indexing and clustering read and record. The servers' queries move here in
+phase 3 (ARCHITECTURE.md).
 """
 import contextlib
 import json
@@ -163,3 +163,74 @@ def cache_crop(db_path, face_id, jpeg):
                             (jpeg, face_id)).rowcount
 
     return db.write_with_connection(db_path, store, label="crop of face %s" % face_id)
+
+
+# ---- What PhotoIndex and clustering read and write ---------------------------------------
+
+def count_for_photo(conn, photo_path):
+    """How many face rows a photo has."""
+    where, params = paths.sql_equals("photo_path", photo_path)
+    return conn.execute("SELECT COUNT(*) FROM faces WHERE " + where, params).fetchone()[0]
+
+
+def remove_for_photo(conn, photo_path):
+    """Delete a photo's face rows, names and decisions with them. Returns rows deleted.
+    The caller commits."""
+    where, params = paths.sql_equals("photo_path", photo_path)
+    return conn.execute("DELETE FROM faces WHERE " + where, params).rowcount
+
+
+def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
+    """Record one detected face: `box` as a list, `embedding` as float32 bytes. The caller
+    commits."""
+    conn.execute(
+        "INSERT INTO faces (photo_path, box, embedding, name, crop_image, prob) VALUES (?, ?, ?, ?, ?, ?)",
+        (paths.stored(photo_path), json.dumps(box), embedding, name, crop, prob))
+
+
+def manual_names(conn):
+    """face id -> name for every face a person decided by hand. A name of None is a
+    deliberate "this is nobody", as binding as a name."""
+    return dict(conn.execute("SELECT id, name FROM faces WHERE name_source = 'manual'").fetchall())
+
+
+def excluded_ids(conn):
+    """The faces kept out of identity work."""
+    return {face_id for (face_id,) in conn.execute("SELECT id FROM faces WHERE excluded = 1")}
+
+
+def for_clustering(conn):
+    """(id, photo_path, box JSON, embedding bytes, name, prob) of every face. The crop is
+    left behind: 6 KB a face, and clustering never looks at it."""
+    return conn.execute("SELECT id, photo_path, box, embedding, name, prob FROM faces").fetchall()
+
+
+def named_embeddings(conn):
+    """(name, embedding bytes) of every named face that is not excluded, which
+    idx_faces_identify answers without touching the rest of the table."""
+    return conn.execute(
+        "SELECT name, embedding FROM faces WHERE excluded = 0 AND name IS NOT NULL").fetchall()
+
+
+def in_photo(conn, photo_path):
+    """(box JSON, embedding bytes, prob, excluded, name, name_source) of each face in one
+    photo, for suggesting who is in it."""
+    where, params = paths.sql_equals("photo_path", photo_path)
+    return conn.execute(
+        "SELECT box, embedding, prob, excluded, name, name_source FROM faces WHERE " + where,
+        params).fetchall()
+
+
+def set_names(conn, names_by_id):
+    """Give each face in {id: name} its name, leaving who decided it alone. The caller
+    commits."""
+    conn.executemany("UPDATE faces SET name = ? WHERE id = ?",
+                     [(name, face_id) for face_id, name in names_by_id.items()])
+
+
+def clear_automatic_names(conn):
+    """Clear the names clustering gave, leaving the ones given by hand. Returns how many
+    were cleared. The caller commits."""
+    return conn.execute(
+        "UPDATE faces SET name = NULL"
+        " WHERE name IS NOT NULL AND COALESCE(name_source, '') <> 'manual'").rowcount

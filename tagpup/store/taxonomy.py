@@ -305,6 +305,23 @@ def tag_embeddings(db_path, tag):
         conn.close()
 
 
+def tag_embedding(conn, tag, prompt, model_name, pretrained):
+    """The CLIP embedding cached for `tag` under this prompt and model, as float32 bytes,
+    or None."""
+    row = conn.execute(
+        "SELECT embedding FROM tag_embeddings WHERE tag = ? AND prompt = ? AND model_name = ?"
+        " AND pretrained = ?", (tag, prompt, model_name, pretrained)).fetchone()
+    return row[0] if row else None
+
+
+def keep_tag_embedding(conn, tag, prompt, model_name, pretrained, embedding):
+    """Cache `embedding` (float32 bytes) for `tag` under this prompt and model. The caller
+    commits."""
+    conn.execute(
+        "INSERT OR REPLACE INTO tag_embeddings (tag, prompt, model_name, pretrained, embedding)"
+        " VALUES (?, ?, ?, ?, ?)", (tag, prompt, model_name, pretrained, embedding))
+
+
 def forget_tag_embeddings(conn, tag):
     """Drop the CLIP embeddings cached for the word `tag`. The caller commits. Returns
     the rows dropped."""
