@@ -93,10 +93,14 @@ def record_reads(db_path, records, label="photos read back", before=None):
                 _stamp(conn, entry["path"], entry.get("mtime", 0.0), entry.get("size", 0),
                        before=before[entry["path"]])
             where, where_params = paths.sql_equals("path", entry["path"])
-            changed += conn.execute(
+            written = conn.execute(
                 "UPDATE photos SET raw_metadata = ?, mtime = ?, size = ? WHERE " + where,
                 (json.dumps(entry["raw_metadata"]), entry.get("mtime", 0.0),
                  entry.get("size", 0)) + where_params).rowcount
+            if written:
+                # A file's person fields are one source of its people (#89).
+                people.rebuild_photos(conn, [entry["path"]])
+            changed += written
         return changed
 
     return db.write_with_connection(db_path, store, label=label)

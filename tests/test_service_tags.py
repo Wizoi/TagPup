@@ -301,6 +301,19 @@ class RenamingAPerson(TreeCase):
         self.assertEqual(self.lib.rows("SELECT DISTINCT name FROM faces"), [("Rowan Vale",)])
         self.assertEqual(self.people(photo), ["Ada Pembrook", "Rowan Vale"])
 
+    def test_a_photo_naming_them_by_a_bare_keyword_keeps_them(self):
+        # Only the photos carrying the path were rewritten; once the tree moved, a bare
+        # "Rowan Thackeray" named nobody, and the photo lost the person (#87).
+        photo = self.photo("a.jpg", ["Rowan Thackeray"])
+        self.assertEqual(self.people(photo), ["Rowan Thackeray"])
+        result = self.rename("Rowan Thackeray", "Rowan Vale")
+        self.assertTrue(result.ok, result.message())
+        self.assertEqual(self.people(photo), ["Rowan Vale"])
+        # The bare name for the bare name: the keyword writer files it where the person
+        # is filed (vocabulary.resolve_people).
+        self.assertIn(([photo], "Rowan Thackeray", "Rowan Vale"), self.rewrites)
+        self.assertEqual(result.details["photos_affected"], 1)
+
     def test_into_a_name_filed_already_the_two_become_one(self):
         self.node("People/Rowan Vale")
         photo = self.photo("a.jpg", ["People/Rowan Thackeray"])

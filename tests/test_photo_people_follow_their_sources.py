@@ -98,6 +98,28 @@ class PhotoPeople(unittest.TestCase):
         self.write(lambda conn: taxonomy.set_branch_flags(conn, "Pets", has_face=0))
         self.assertEqual([], self.read(lambda conn: people_of(conn, litter)))
 
+    def test_a_keyword_that_is_only_a_separator_does_not_stop_a_tree_edit(self):
+        # It has no first segment, and reading one failed the edit (#88).
+        self.lib.add_row(self.lib.photo("odd.jpg"), tags=["/"])
+        self.write(lambda conn: taxonomy.add_path(conn, "Pets"))
+        self.write(lambda conn: taxonomy.set_branch_flags(conn, "Pets", has_face=1))
+
+    def test_restoring_a_face_both_named_and_excluded_lists_them_again(self):
+        # Such faces have happened (the doctor watches for them); restored, the face
+        # counts again (#89).
+        face_id = self.face()
+        self.write(lambda conn: conn.execute("UPDATE faces SET name = ?, excluded = 1 WHERE id = ?", (ODA, face_id)))
+        self.write(lambda conn: faces.restore(conn, [face_id]))
+        self.assertEqual([WREN, ODA], self.listed())
+
+    def test_what_a_time_shift_read_back_is_a_source_of_them_too(self):
+        # A file's person fields name people as its keywords do (#89).
+        stat = os.stat(self.photo)
+        photos.record_reads(self.lib.library.path, [{
+            "path": self.photo, "raw_metadata": {"XMP:PersonInImage": [ODA]},
+            "mtime": stat.st_mtime, "size": stat.st_size}])
+        self.assertIn(ODA, self.listed())
+
     def test_they_go_with_the_photo(self):
         self.write(lambda conn: conn.execute("DELETE FROM photos"))
         self.assertEqual([(0,)], self.lib.rows("SELECT COUNT(*) FROM photo_people"))

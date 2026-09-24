@@ -136,7 +136,8 @@ def follow_tree(conn, before):
         for tag in tags:
             # Spelled as extract_people looks a keyword up.
             spelled = str(tag).replace("\\", "/").strip().lower()  # not a path: a keyword hierarchy
-            if spelled in keys or (roots and vocabulary.segments(tag)[0].lower() in roots):
+            parts = vocabulary.segments(tag)   # none for a keyword that is only a separator (#88)
+            if spelled in keys or (roots and parts and parts[0].lower() in roots):
                 affected.append(photo_id)
                 break
     return rebuild(conn, affected, after) if affected else 0

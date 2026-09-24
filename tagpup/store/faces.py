@@ -366,9 +366,11 @@ def restore(conn, face_ids):
     """Bring excluded faces back, unnamed and unclaimed. Only faces that are excluded:
     clearing name_source on another would unpin a manual name. Returns rows restored.
     The caller commits."""
-    return sum(conn.execute(
+    changed = sum(conn.execute(
         "UPDATE faces SET excluded = 0, excluded_reason = NULL, name_source = NULL"
         " WHERE " + _in(chunk) + " AND excluded = 1", chunk).rowcount for chunk in _chunks(face_ids))
+    # A face both named and excluded counts again once restored (#89).
+    return _rebuilt(conn, _photos_of(conn, face_ids), changed)
 
 
 def named_elsewhere_in_photo(conn, photo_path, person_name, face_id):

@@ -286,6 +286,16 @@ def rename_person(library, old_name, new_name, exiftool_path):
                        exiftool_path, result, add_up=True)
             else:
                 _rename_in_place(library, old_tag, new_tag, exiftool_path, result, add_up=True)
+        # A photo naming them by the bare name carries no tag of the tree's, and was not
+        # rewritten above; with the tree moved, the bare name named nobody (#87). The
+        # bare new name is written, which the keyword writer files where they are filed.
+        bare = list(photos.carrying(library.path, old_name))
+        if bare:
+            rewritten, unwritten = _rewrite(library, bare, old_name, new_name, exiftool_path)
+            _count(result, len(bare), rewritten, add_up=True)
+            if unwritten:
+                result.fail(old_name, "%d of %d photo(s) naming '%s' could not be rewritten."
+                            % (unwritten, len(bare), old_name))
     except Exception as e:
         # The faces already have the new name; what is left is said, not thrown.
         logger.error("Person rename: failed to update the tree or the photo files: %s", e)
