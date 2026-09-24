@@ -112,10 +112,49 @@ def crops_without_a_face(conn):
         " WHERE f.id IS NULL ORDER BY c.face_id")])
 
 
+def _table(conn, name):
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone()
+
+
+def _without_a_photo(conn, table, label):
+    """The photo ids `table` holds rows for that have no photo: what its trigger, which
+    takes them with their photo, makes none. Waits for the migration that makes it."""
+    if not _table(conn, table):
+        return _check(label, [])
+    return _check(label, [photo_id for (photo_id,) in conn.execute(
+        "SELECT DISTINCT t.photo_id FROM %s t LEFT JOIN photos p ON p.id = t.photo_id"
+        " WHERE p.id IS NULL ORDER BY t.photo_id" % table)])
+
+
+def vectors_without_a_photo(conn):
+    """CLIP vectors whose photo is gone (migration 5; #65)."""
+    return _without_a_photo(conn, "embeddings", "vectors whose photo is gone")
+
+
+def people_without_a_photo(conn):
+    """People listed for a photo that is gone (migration 6)."""
+    return _without_a_photo(conn, "photo_people", "people listed for a photo that is gone")
+
+
+def suggestions_without_a_photo(conn):
+    """Suggestions kept for a photo that is gone (migration 7; #64)."""
+    return _without_a_photo(conn, "suggestions", "suggestions for a photo that is gone")
+
+
 def one_file_two_rows(conn):
     """Photos with more than one row, their paths differing only as paths.key ignores."""
     seen = collections.Counter(paths.key(p) for (p,) in conn.execute("SELECT path FROM photos"))
     return _check("photos with two rows", sorted(k for k, n in seen.items() if n > 1))
+
+
+def without_a_vector(conn, model):
+    """How many photos have no CLIP vector under `model` (tagpup.store.embeddings), the one
+    search reads. Reported, not broken: the next index of their folders computes them."""
+    if not _table(conn, "embeddings"):
+        return 0
+    return conn.execute("SELECT COUNT(*) FROM photos p WHERE NOT EXISTS"
+                        " (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?)",
+                        (model,)).fetchone()[0]
 
 
 def missing_files(conn):
@@ -131,7 +170,8 @@ def missing_files(conn):
 
 #: The rules a library keeps, in the order a report lists them.
 RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excluded,
-         people_out_of_date, orphan_nodes, crops_without_a_face, one_file_two_rows)
+         people_out_of_date, orphan_nodes, crops_without_a_face, vectors_without_a_photo,
+         people_without_a_photo, suggestions_without_a_photo, one_file_two_rows)
 
 
 def run(conn):

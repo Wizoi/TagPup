@@ -4,8 +4,9 @@
     .venv/Scripts/python.exe tools/doctor.py --db data/photo_index.db --show 5
 
 Prints what the library holds, then each rule (tagpup.store.checks) with how many rows
-break it, then the rows whose file is not on disk, by folder. Counts only, unless
---show asks for examples: they are paths and tags, and paths name people.
+break it, then how many photos have no CLIP vector for the model the config names, then
+the rows whose file is not on disk, by folder. Counts only, unless --show asks for
+examples: they are paths and tags, and paths name people.
 
 Exits 1 when a rule is broken, else 0. Missing files do not count against it: a folder
 on an unplugged drive looks the same as a deleted one, and removing either is the
@@ -18,7 +19,8 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from tagpup.store import checks, db  # noqa: E402
+from tagpup import config  # noqa: E402
+from tagpup.store import checks, db, embeddings  # noqa: E402
 
 
 def report(db_path, show=0, out=print):
@@ -30,6 +32,7 @@ def report(db_path, show=0, out=print):
         held = checks.summary(conn)
         results = checks.run(conn)
         missing = checks.missing_files(conn)
+        unembedded = checks.without_a_vector(conn, embeddings.model_key(**config.embedder_settings()))
     finally:
         conn.close()
 
@@ -44,6 +47,8 @@ def report(db_path, show=0, out=print):
             for example in check.examples[:show]:
                 out("    %s" % example)
     out("")
+    out("photos without a vector for the configured model: %d (the next index of their folders "
+        "computes them)" % unembedded)
     rows = sum(count for _folder, count, _there in missing)
     gone = [(folder, count) for folder, count, there in missing if not there]
     out("rows whose file is not on disk: %d, in %d folder(s); %d folder(s) are gone entirely"
