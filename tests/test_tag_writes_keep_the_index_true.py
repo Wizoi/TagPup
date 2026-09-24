@@ -227,12 +227,14 @@ class TestTheRowKeepsTheFilesNewStat(IndexCase):
         self.assertRowMatchesTheFile(stored)
 
 
-class TestTagTunerTellsTheIndex(IndexCase):
+class TestBulkWritersTellTheIndex(IndexCase):
+    # These ran against TagTuner's copies of the two routes, which its page never
+    # called and which are gone; the same checks now hold TagPup's to them.
     def test_bulk_tags(self):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
         with patch("exiftool_session.ExifToolSession", helper):
-            self.call(TunerHTTPRequestHandler, tuner_server, "handle_post_photos_bulk_tags",
+            self.call(TagPupHTTPRequestHandler, tagpup_server, "handle_post_photos_bulk_tags",
                       {"paths": [stored], "add_tags": ["Relay"], "remove_tags": ["Cross Country"]})
 
         row = self.row(stored)
@@ -247,7 +249,7 @@ class TestTagTunerTellsTheIndex(IndexCase):
         helper, _ = exiftool_that_writes()
         with patch("exiftool_session.ExifToolSession", helper), \
                 patch("metadata.sync_title_to_filename", side_effect=lambda p, t, e: p):
-            self.call(TunerHTTPRequestHandler, tuner_server, "handle_post_photo_save_metadata",
+            self.call(TagPupHTTPRequestHandler, tagpup_server, "handle_post_photo_save_metadata",
                       {"path": stored, "title": "", "tags": ["Beach"]})
 
         row = self.row(stored)

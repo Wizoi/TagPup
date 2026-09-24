@@ -102,7 +102,7 @@ def start_reloader_thread(env_var_name: str = "TAGPUP_RELOADED"):
             if pending_reload:
                 busy = False
                 for thread in threading.enumerate():
-                    if thread.name in ("FolderSuggestionsThread", "ReclusterThread") and thread.is_alive():
+                    if thread.name == "FolderSuggestionsThread" and thread.is_alive():
                         busy = True
                         break
                 if busy:

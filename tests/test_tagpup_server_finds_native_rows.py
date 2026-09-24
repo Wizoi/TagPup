@@ -163,6 +163,38 @@ class TestDeletingAPhotoForgetsIt(HandlerCase):
         self.assertEqual(self.count("SELECT COUNT(*) FROM embedding_cache"), 0)
 
 
+class TestSavingTagsAndACaption(HandlerCase):
+    """Moved from TagTuner's copy of the route, which its page never called.
+
+    The update there named a `title` column the photos table does not have, so it
+    failed after the file had already been written.
+    """
+
+    def test_they_reach_the_photo_row(self):
+        photo = self.make_file("IMG_0100.jpg")
+        self.seed(photo, tags=())
+        # TagPup records what the file holds after the write, so the stand-in reads
+        # back what a real write would have left there.
+        written = {"XMP:Subject": ["Places/Harbour"], "XMP:HierarchicalSubject": ["Places/Harbour"],
+                   "XMP:Description": "Harbour at dusk"}
+        with patch("exiftool_session.ExifToolSession", fake_exiftool([written])), \
+                patch("metadata.sync_title_to_filename", side_effect=lambda p, t, e: p):
+            result = self.call("handle_post_photo_save_metadata",
+                               {"path": photo, "title": "Harbour at dusk",
+                                "tags": ["Places/Harbour"]})
+
+        conn = tagpup_db.connect(self.db_path)
+        try:
+            tags, captions = conn.execute("SELECT tags, captions FROM photos").fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(json.loads(tags), ["Places/Harbour"])
+        self.assertEqual(json.loads(captions), ["Harbour at dusk"])
+        # TagTuner's copy also answered how many rows it updated; TagPup's does not say
+        # yet. Saving becomes a service returning a Result in phase 2, which will.
+        self.assertTrue(result["success"])
+
+
 class TestSavingACaptionThatRenamesThePhoto(HandlerCase):
     def test_the_row_moves_and_its_faces_come_with_it(self):
         photo = self.make_file("Parade - 1.jpg")

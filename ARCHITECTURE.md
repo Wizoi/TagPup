@@ -180,7 +180,7 @@ Each phase ships on its own with the full check green. Nothing changes behaviour
 Exit: the guard tests for config, database connections, ExifTool and layers pass; both servers log to files; the app can run from an installed copy.
 
 ### Phase 2: Services
-- Delete TagTuner's eight unused routes: its copies of rename, time shift, delete, open in Explorer, rotate, save metadata and bulk tags (the TagPup page calls its own server's), and `/api/faces/recluster`, which no page calls.
+- [x] Delete TagTuner's eight unused routes: its copies of rename, time shift, delete, open in Explorer, rotate, save metadata and bulk tags (the TagPup page calls its own server's), and `/api/faces/recluster`, which no page calls.
 - `tagpup.result.Result`, shaped by the first services that return it.
 - One service per user action. Start with the ones both servers implement (rename, rotate, delete, save metadata, bulk tags, time shift, indexing), then tag-tree edits, face identification and suggestions.
 - Tests move down to the service level.
@@ -229,7 +229,7 @@ Exit: no page file over about 1,000 lines, and the two pages share every common 
 | Phase | Status |
 |---|---|
 | 1. Foundations | done, 2026-09-23 (the installed copy is opt-in) |
-| 2. Services | not started |
+| 2. Services | in progress |
 | 3. Store | not started |
 | 4. Data model | not started |
 | 5. One server | not started |

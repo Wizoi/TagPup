@@ -76,14 +76,18 @@ class TimeShiftTellsTheIndex(unittest.TestCase):
             self.assertEqual((stat.st_mtime, stat.st_size), (mtime, size), path)
 
 
-class BothAppsShiftTheSameWay(unittest.TestCase):
-    def test_tagtuner_uses_the_shared_shift(self):
-        for handler in (tagpup_server.TagPupHTTPRequestHandler, tuner_server.TunerHTTPRequestHandler):
-            source = inspect.getsource(handler.handle_post_folder_time_shift)
-            self.assertIn("shift_photo_times(", source, handler.__name__)
-            self.assertNotIn("DateTimeOriginal", source,
-                             "%s shifts files itself instead of through shift_photo_times"
-                             % handler.__name__)
+class TheHandlerUsesTheSharedShift(unittest.TestCase):
+    # TagTuner had a copy of this route too; its page never called it, and it is gone.
+    def test_it_shifts_through_shift_photo_times(self):
+        handler = tagpup_server.TagPupHTTPRequestHandler
+        source = inspect.getsource(handler.handle_post_folder_time_shift)
+        self.assertIn("shift_photo_times(", source)
+        self.assertNotIn("DateTimeOriginal", source,
+                         "the handler shifts files itself instead of through shift_photo_times")
+
+    def test_tagtuner_has_no_copy(self):
+        self.assertFalse(hasattr(tuner_server.TunerHTTPRequestHandler,
+                                 "handle_post_folder_time_shift"))
 
 
 if __name__ == "__main__":

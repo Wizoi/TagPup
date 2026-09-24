@@ -42,8 +42,9 @@ unreadable folder should not cost the other nine. **Add folders** stays enabled 
 indexing, because folders now queue rather than collide.
 
 Indexing runs in the background with a progress bar, and **does not re-cluster**: that
-would re-derive every name in the database, discarding corrections made here. Run
-Recluster deliberately when it is wanted.
+would re-derive every name in the database, discarding corrections made here. Cluster
+deliberately when it is wanted: the runner's **Run Identity Resolution Clustering**, or
+`tagpup_cli.py cluster-faces`.
 
 Removing a folder deletes index rows only — the photo files are untouched — but the face
 rows go with the photos, so any assigned names and exclusions on them are discarded. The
@@ -356,7 +357,6 @@ matching can still read its name.
 ### `POST` Endpoints
 - `/api/databases/select`: Expects JSON body `{"db_name": string}`. Persists the chosen database as `default_db` in `config.ini`.
 - `/api/databases/create`: Expects JSON body `{"db_name": string}`. Creates a new empty database file, seeded with the default taxonomy categories.
-- `/api/photo/delete`: Expects JSON body `{"path": string}`. Sends the photo to the Windows Recycle Bin and removes it from the index.
 - `/api/face/match`: Expects JSON body `{"face_id": int, "person_name": string}`. An excluded face is refused with `409`: it must be restored before it can be named.
 - `/api/face/unmatch`: Expects JSON body `{"face_id": int}`.
 - `/api/faces/match-bulk`: Expects JSON body `{"face_ids": list, "person_name": string}`. Matches face IDs in bulk. Implements duplicate-tagging protection. Excluded faces are skipped, never named. Returns `{"success", "matched", "matched_ids", "skipped_excluded"}` — `matched` is the rows actually changed, and the page offers Undo for `matched_ids` only.
@@ -368,16 +368,13 @@ matching can still read its name.
 - `/api/faces/restore`: Expects JSON body `{"face_ids": list}`. Reverses an exclusion, returning the faces unnamed and unclaimed so they can be identified again. Only faces that are excluded are touched; returns `restored` as the rows actually changed.
 - `/api/tags/merge`: Expects JSON body `{"from": string, "into": string, "apply": bool, "retire": bool}`. Renames a tag or merges it into another across the photo files, `photos.tags`, `tag_taxonomy` and `tag_embeddings`. **Defaults to a dry run** — without `apply` nothing is written and the plan comes back, reporting how many photos are affected, how many already carry the target, and how many embedding and taxonomy rows would go. `retire` drops the tag without a target. Dropping the cached embedding is not optional bookkeeping: a tag cleaned out of every file still gets suggested while its embedding survives. TagPup's in-memory `suggest_status` lives in another process and is not refreshed by this.
 - `/api/person/rename`: Expects JSON body `{"old_name": string, "new_name": string}`. Renames a person in the database and updates photo tags.
-- `/api/faces/recluster`: Expects JSON body `{}`. Runs face clustering algorithm dynamically.
 - `/api/photo/unmatch-all`: Expects JSON body `{"photo_path": string}`.
 - `/api/photo/automatch`: Expects JSON body `{"photo_path": string}`. For each unmatched face in the photo, finds the closest resolved face in the DB. If similarity > 0.8, assigns the name and appends it to the photo's `people` array.
 - `/api/folder/automatch`: Expects JSON body `{"folder_path": string}`. Automatches unmatched faces across all photos in the folder recursively.
-- `/api/photo/rotate`: Expects JSON body `{"path": string, "direction": string}`. Rotates the photo 90 degrees on disk. `direction` must be `"left"` or `"right"`.
-- `/api/photo/open-explorer`: Expects JSON body `{"path": string}`. Opens the photo's directory in Windows File Explorer and selects it.
-- `/api/photo/save-metadata`: Saves caption, people, and tags metadata directly to the image file via ExifTool and syncs the DB.
-- `/api/photos/bulk-tags`: Adds or removes tags in bulk across a selection of photo paths.
-- `/api/folder/time-shift`: Shifts timestamps recursively by camera model.
-- `/api/folder/rename-photos`: Expects JSON body `{"photo_paths": list, "grouping": string}`. Sequentially renames selected photos based on the custom pattern and grouping template.
+
+Photo actions -- rotate, delete, open in Explorer, save metadata, bulk tags, time shift and
+Smart Rename -- are TagPup's (`SPEC_TAGPUP_GUI.md`). TagTuner kept copies of their routes
+that its page never called; they were removed in phase 2.
 
 ## Database Schema (SQLite)
 

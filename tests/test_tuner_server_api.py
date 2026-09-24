@@ -761,20 +761,9 @@ class TestIdentifyFacesQueue(TunerAPITestBase):
         self.assertNotEqual(before, after, "the queue served a stale answer after a match")
 
 
-class TestRecluster(TunerAPITestBase):
-    def test_recluster_starts_in_the_background(self):
-        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
-        self.add_face(photo, unit_vector(98), name=None)
-
-        status, body = self.post("/api/faces/recluster", {})
-        self.assertEqual(status, 200, body)
-        self.assertTrue(body.get("success"), body)
-        # Do not leave the clustering lock held for whatever test runs next.
-        self.assertTrue(
-            self.wait_for_clustering_to_finish(),
-            "background clustering never released the lock",
-        )
-
+class TestClusteringLock(TunerAPITestBase):
+    # Clustering runs from the index queue (and the runner and CLI); the Recluster
+    # route that also started it was never called by a page, and is gone.
     def test_writes_are_rejected_while_clustering_runs(self):
         photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
         face_id = self.add_face(photo, unit_vector(99), name="Jane Doe")
@@ -1475,68 +1464,6 @@ class TestFolderRemovalBySpelling(TunerAPITestBase):
         self.post("/api/folder/remove", {"folder_path": folder})
         self.assertEqual(self.count("SELECT COUNT(*) FROM photos"), 1)
         self.assertEqual(self.count("SELECT COUNT(*) FROM faces"), 1)
-
-
-class TestSaveMetadataKeepsTheIndex(TunerAPITestBase):
-    """Saving a photo's tags and caption writes them to its row -- and follows a rename.
-
-    The update named a `title` column the photos table does not have, so it failed
-    after the file had already been written; and a rename rewrote the photo row with
-    the path as given while its faces stayed behind at the old name.
-    """
-
-    def save(self, photo, renamed_to=None, title="Harbour at dusk", tags=("Places/Harbour",)):
-        from unittest.mock import patch, MagicMock
-
-        def sync_title_to_filename(path, title, executable):
-            # What the real one does when the title calls for a new filename.
-            if renamed_to:
-                os.rename(path, renamed_to)
-                return renamed_to
-            return path
-
-        with patch("exiftool_session.ExifToolSession", MagicMock()), \
-                patch("metadata.sync_title_to_filename", side_effect=sync_title_to_filename):
-            return self.post("/api/photo/save-metadata",
-                             {"path": photo, "title": title, "tags": list(tags)})
-
-    def row(self, path):
-        conn = sqlite3.connect(self.TEST_DB)
-        try:
-            return conn.execute(
-                "SELECT tags, captions FROM photos WHERE path = ?", (path,)).fetchone()
-        finally:
-            conn.close()
-
-    def faces_at(self, path):
-        conn = sqlite3.connect(self.TEST_DB)
-        try:
-            return [r[0] for r in conn.execute(
-                "SELECT name FROM faces WHERE photo_path = ?", (path,))]
-        finally:
-            conn.close()
-
-    def test_tags_and_caption_reach_the_photo_row(self):
-        photo = self.add_photo(self.make_photo_file("IMG_0100.jpg"))
-        status, body = self.save(photo)
-        self.assertEqual(status, 200, body)
-        tags, captions = self.row(photo)
-        self.assertEqual(json.loads(tags), ["Places/Harbour"])
-        self.assertEqual(json.loads(captions), ["Harbour at dusk"])
-        self.assertEqual(body["index_updated"], 1)
-
-    def test_a_rename_moves_the_photo_row_and_its_faces(self):
-        photo = self.add_photo(self.make_photo_file("IMG_0101.jpg"))
-        self.add_face(photo, unit_vector(920), name="Rowan Thackeray")
-        renamed = os.path.join(self.tmpdir, "Harbour at dusk.jpg")
-
-        status, body = self.save(photo, renamed_to=renamed)
-        self.assertEqual(status, 200, body)
-        self.assertIsNone(self.row(photo), "the old photo row was left behind")
-        self.assertIsNotNone(self.row(renamed), "no photo row at the new name")
-        self.assertEqual(self.faces_at(renamed), ["Rowan Thackeray"])
-        self.assertEqual(self.faces_at(photo), [])
-        self.assertEqual(body["new_path"], renamed)
 
 
 class TestFolderSpellingsReachingTheIndexer(TestFolderQueue):
