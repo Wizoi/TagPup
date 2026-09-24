@@ -75,7 +75,7 @@ def plan_for(db_path):
             disputed.append((photo_path, sorted(names)))
             continue
         if names and any(r[5] for r in copies):
-            # So is a name beside "not a person". Keeping either throws the other
+            # So is a name beside an exclusion. Keeping either throws the other
             # away, and the exclusion used to be the one that went.
             disputed.append((photo_path, sorted(names) + ["(excluded)"]))
             continue

@@ -225,5 +225,37 @@ class WhereALibraryIs(unittest.TestCase):
         self.assertIs(inspect.Parameter.empty, inspect.signature(PhotoIndex).parameters["db_path"].default)
 
 
+class WhyAFaceIsExcluded(unittest.TestCase):
+    """The reasons a face may be excluded, and the one it is given when none is, are
+    tagpup.services.faces's. TagTuner's page keeps a copy to offer them from, held here
+    to the service's; the server and the page each spelled the default again."""
+
+    def page(self):
+        return read(os.path.join("gui", "app.js"))
+
+    def test_the_page_offers_the_services_reasons(self):
+        from tagpup.services import faces
+        page = self.page()
+        offered = re.search(r"const EXCLUDE_REASONS = \[([^\]]*)\];", page)
+        ignored = re.search(r"const EXCLUDE_IGNORED_CLUSTER = '([^']*)';", page)
+        self.assertIsNotNone(offered, "the page's copy of the reasons moved")
+        self.assertIsNotNone(ignored, "the page's reason for an ignored cluster moved")
+        copy = re.findall(r"'([^']*)'", offered.group(1))
+        self.assertEqual(faces.EXCLUSION_REASONS, tuple(copy + [ignored.group(1)]))
+        self.assertEqual(faces.DEFAULT_REASON, copy[0])
+        self.assertEqual(faces.IGNORED_CLUSTER, ignored.group(1))
+
+    def test_nobody_else_spells_them(self):
+        from tagpup.services import faces
+        # The server's own choices: a caller may still send "stranger" as its reason.
+        chosen = r"[\"'](%s|%s)[\"']" % (re.escape(faces.DEFAULT_REASON), re.escape(faces.IGNORED_CLUSTER))
+        self.assertEqual([], sources_matching(chosen, os.path.join("tagpup", "services", "faces.py")))
+        spelled = r"[\"'](%s)[\"']" % "|".join(re.escape(r) for r in faces.EXCLUSION_REASONS)
+        lines = [n for n, line in enumerate(self.page().splitlines(), 1)
+                 if re.search(spelled, line) and "const EXCLUDE_" not in line
+                 and not line.strip().startswith(("//", "*", "/*"))]   # history in a comment
+        self.assertEqual([], lines)
+
+
 if __name__ == "__main__":
     unittest.main()

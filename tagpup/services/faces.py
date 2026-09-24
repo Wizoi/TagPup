@@ -22,10 +22,18 @@ from tagpup.store import db, faces, photos
 
 logger = logging.getLogger(__name__)
 
+#: Why a face is excluded when no reason is given.
+DEFAULT_REASON = "not a person"
+
+#: Why the faces of a cluster TagTuner's page was told to ignore are excluded.
+IGNORED_CLUSTER = "ignored cluster"
+
 #: Why a face may be excluded: the four TagTuner's page offers (EXCLUDE_REASONS in
-#: gui/app.js), and the one it sets itself when a cluster is ignored. The reason used to
-#: be free text, and collected "fuzzy" beside "bad crop" (docs/findings.md, #53).
-EXCLUSION_REASONS = ("not a person", "stranger", "bad crop", "duplicate", "ignored cluster")
+#: gui/app.js, the first its default), and the one it sets itself when a cluster is
+#: ignored. The page keeps a copy, which tests/test_rules_have_one_owner.py holds to
+#: this. The reason used to be free text, and collected "fuzzy" beside "bad crop"
+#: (docs/findings.md, #53, #74).
+EXCLUSION_REASONS = (DEFAULT_REASON, "stranger", "bad crop", "duplicate", IGNORED_CLUSTER)
 
 
 def name_face(library, face_id, person_name):
@@ -172,7 +180,7 @@ def unname_photo(library, photo_path):
     return result
 
 
-def exclude(library, face_ids, reason="not a person"):
+def exclude(library, face_ids, reason=None):
     """Take faces out of identity work: a crowd's passers-by, a crop that is no face.
     Ignoring a face or a cluster.
 
@@ -182,11 +190,11 @@ def exclude(library, face_ids, reason="not a person"):
     cannot quietly put one back.
 
     `changed`: the rows excluded, not the ids sent. details: `face_ids`, `fingerprints`.
-    Refused for a reason not in EXCLUSION_REASONS; none is "not a person".
+    Refused for a reason not in EXCLUSION_REASONS; none is DEFAULT_REASON.
     """
     _library_there(library)
     result = Result(attempted=len(face_ids))
-    reason = (reason or "").strip().lower() or "not a person"
+    reason = (reason or "").strip().lower() or DEFAULT_REASON
     if reason not in EXCLUSION_REASONS:
         result.refuse("'%s' is not a reason to exclude a face: use one of %s."
                       % (reason, ", ".join(EXCLUSION_REASONS)))

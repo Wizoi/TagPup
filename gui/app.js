@@ -3374,7 +3374,7 @@ ${summary}${note}`)) {
                     askBeforeIgnoring(shown.length, sectionPhotoCount(section), () => {
                         const ids = sectionFaceIds(section);
                         if (!ids.length) return;
-                        Promise.resolve(postExcludeBulk(ids, 'ignored cluster')).then(ok => {
+                        Promise.resolve(postExcludeBulk(ids, EXCLUDE_IGNORED_CLUSTER)).then(ok => {
                             if (ok) offerAssignUndo(ids, null, 'ignore');
                         });
                     });
@@ -3800,7 +3800,12 @@ This photo also names ${face.other_names.join(', ')}. `
     // something that is not a face. Left in the database they cluster, vote, and drag
     // a person's centroid around. Excluding keeps the row and the crop but takes the
     // face out of identity work entirely; it is reversible from the Excluded bucket.
+    //
+    // The reasons, as tagpup.services.faces.EXCLUSION_REASONS gives them
+    // (tests/test_rules_have_one_owner.py holds this copy to it): the four offered, the
+    // first of them the default, and the one given when a cluster is ignored.
     const EXCLUDE_REASONS = ['not a person', 'stranger', 'bad crop', 'duplicate'];
+    const EXCLUDE_IGNORED_CLUSTER = 'ignored cluster';
 
     /**
      * Ask why, with buttons rather than a text box.
@@ -3877,7 +3882,7 @@ This photo also names ${face.other_names.join(', ')}. `
         return fetch('/api/faces/exclude', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ face_ids: faceIds, reason: (reason || '').trim() || 'not a person' })
+            body: JSON.stringify({ face_ids: faceIds, reason: (reason || '').trim() || EXCLUDE_REASONS[0] })
         })
         .then(res => {
             if (!res.ok) throw new Error('Exclude failed');

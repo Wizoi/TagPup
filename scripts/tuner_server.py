@@ -1450,7 +1450,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         if face_ids is None:
             self.send_error(400, "Missing or invalid face_ids")
             return
-        reason = data.get("reason") or "not a person"
+        reason = data.get("reason")   # none: the service's default
         result = self._faces_write(lambda library: faces_service.exclude(library, face_ids, reason))
         if result:
             # The rows changed, not the ids sent: an id that is not in the table was never
@@ -1492,7 +1492,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     "prob": r[3],
                     "mtime": r[4] if r[4] is not None else 0.0,
                     "year": shown_year(r[5]),
-                    "reason": r[6] or "not a person",
+                    "reason": r[6] or faces_service.DEFAULT_REASON,
                     "similarity": 0.0,
                 })
             self.send_json({"faces": faces, "total_count": len(faces)})
