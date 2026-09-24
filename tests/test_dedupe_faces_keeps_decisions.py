@@ -1,0 +1,80 @@
+"""dedupe_faces keeps the copy a person decided about, and never drops an exclusion.
+
+Two copies of one face -- same photo, same box -- are merged by keeping the copy that
+"knows something". A name counted for more than anything else, so a name clustering
+gave outranked a person's own decision: an excluded passer-by, or a face marked
+nobody, lost to its unexcluded, auto-named twin, and the decision went with the row.
+"""
+import os
+import shutil
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+
+import db as tagpup_db  # noqa: E402
+import dedupe_faces  # noqa: E402
+from index import PhotoIndex  # noqa: E402
+
+PHOTO = r"D:\Pictures\Regatta\start.jpg"
+
+
+class DedupeKeepsDecisions(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="dedupe_")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.db = os.path.join(self.dir, "lib.db")
+        index = PhotoIndex(self.db)
+        index.load()
+        index.close()
+        self.execute("INSERT INTO photos (path) VALUES (?)", (PHOTO,))
+
+    def execute(self, sql, params=()):
+        conn = tagpup_db.connect(self.db)
+        try:
+            cursor = conn.execute(sql, params)
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def face(self, name=None, source=None, excluded=0):
+        return self.execute(
+            "INSERT INTO faces (photo_path, box, name, name_source, excluded) VALUES (?, '[1, 2, 3, 4]', ?, ?, ?)",
+            (PHOTO, name, source, excluded))
+
+    def plan(self):
+        redundant, disputed = dedupe_faces.plan_for(self.db)
+        return {row[0] for row in redundant}, disputed
+
+    def test_an_exclusion_is_not_dropped_for_an_auto_named_copy(self):
+        self.face(name="Rowan Thackeray")
+        excluded = self.face(source="manual", excluded=1)
+        redundant, disputed = self.plan()
+        self.assertNotIn(excluded, redundant, "the exclusion was the copy thrown away")
+
+    def test_a_named_copy_beside_an_excluded_one_is_left_for_a_person(self):
+        self.face(name="Rowan Thackeray")
+        self.face(source="manual", excluded=1)
+        redundant, disputed = self.plan()
+        self.assertEqual(set(), redundant)
+        self.assertEqual(1, len(disputed))
+
+    def test_a_face_marked_nobody_outranks_a_name_clustering_gave(self):
+        auto = self.face(name="Rowan Thackeray")
+        nobody = self.face(source="manual")
+        redundant, _ = self.plan()
+        self.assertEqual({auto}, redundant)
+        self.assertNotIn(nobody, redundant)
+
+    def test_a_bare_redetection_still_goes(self):
+        named = self.face(name="Rowan Thackeray", source="manual")
+        bare = self.face()
+        redundant, _ = self.plan()
+        self.assertEqual({bare}, redundant)
+        self.assertNotIn(named, redundant)
+
+
+if __name__ == "__main__":
+    unittest.main()

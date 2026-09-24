@@ -33,14 +33,19 @@ except ImportError:  # imported as a top-level module
 
 
 def knows_something(row):
-    """How much curation a face row carries. Higher wins."""
+    """How much curation a face row carries. Higher wins.
+
+    A decision a person made outranks everything: it is the one thing clustering
+    cannot make again. A name used to count for most, so a name clustering gave beat
+    a face somebody had marked nobody, and the decision was the row thrown away.
+    """
     _id, _path, _box, name, name_source, excluded = row
     score = 0
-    if name:
+    if name_source == "manual":
         score += 4
     if excluded:
         score += 2
-    if name_source == "manual":
+    if name:
         score += 1
     return score
 
@@ -68,6 +73,11 @@ def plan_for(db_path):
         if len(names) > 1:
             # Two names for one face is a disagreement, not a duplicate.
             disputed.append((photo_path, sorted(names)))
+            continue
+        if names and any(r[5] for r in copies):
+            # So is a name beside "not a person". Keeping either throws the other
+            # away, and the exclusion used to be the one that went.
+            disputed.append((photo_path, sorted(names) + ["(excluded)"]))
             continue
 
         # Best-curated first; oldest id breaks a tie, since it is the one every other
