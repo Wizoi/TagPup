@@ -19,7 +19,6 @@ from unittest import mock
 from tests.handler_harness import Library
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
-import metadata
 import tagpup_server
 from exiftool_session import ExifToolSession
 from metadata import ROTATED_ORIENTATION, rotate_image_file
@@ -253,7 +252,7 @@ class TestTheRotateRoute(unittest.TestCase):
                              (face_before.size, face_before.tobytes()), direction)
 
     def test_a_failed_rotation_is_reported(self):
-        with mock.patch.object(metadata, "rotate_image_file",
+        with mock.patch("tagpup.files.metadata.rotate_image_file",
                                side_effect=RuntimeError("the file now says 1")):
             status, reply = self.rotate("left")
         self.assertEqual(status, 500)

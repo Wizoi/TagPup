@@ -130,7 +130,7 @@ Each change ships as a migration with a dry run and a backup, and `tools/doctor.
 | core | Plain unit tests, milliseconds each. |
 | store | A temporary library. |
 | files, ml | Temporary files; few tests, slower. |
-| services | One shared fixture, a temporary library with a photos folder, used by every service test. |
+| services | One shared fixture, a temporary library with a photos folder, used by every service test (`tests/service_fixture.py`). |
 | web | Flask's test client: no sockets, no ports, no sleeps. |
 | pages | Modules directly; a few flows in jsdom. |
 | performance | Baselines for the clicks that matter, recorded and re-run on demand in a sandbox (`tools/`). |
@@ -187,9 +187,10 @@ Exit: the guard tests for config, database connections, ExifTool and layers pass
   - [x] The tag vocabulary: `tagpup.core.vocabulary` (55 hand-written splits became one reading).
   - [x] Reading photo files: `tagpup.files.metadata`. `metadata.py` split by layer: what the fields mean (tags, people, captions) went to `tagpup.core.vocabulary`, and the library's people and face names to `tagpup.store.taxonomy` and `tagpup.store.faces`. `scripts/metadata.py` joins them for the old callers.
   - [x] Writing keyword and caption fields: `tagpup.files.keywords`. Which person a bare name means is still resolved in `tagpup_server.py` before the write, until saving becomes a service.
-  - [ ] The tables: `tagpup.store` (taxonomy, photos, faces).
-- `tagpup.result.Result`, shaped by the first services that return it.
+  - [ ] The tables, as the services need them: `tagpup.store` (taxonomy, photos, faces). Begun with what rotating a photo needs.
+- [x] `Result`: `tagpup.core.result.Result`, shaped by the first service. It is in core rather than a layer of its own: a plain value that every layer passes along.
 - One service per user action. Start with the ones both servers implement (rename, rotate, delete, save metadata, bulk tags, time shift, indexing), then tag-tree edits, face identification and suggestions.
+  - [x] Rotate: `tagpup.services.photos.rotate`.
 - Tests move down to the service level.
 
 Exit: no action is implemented in two places, and migrated handlers only parse the request, call a service and reply.
@@ -230,6 +231,7 @@ Exit: no page file over about 1,000 lines, and the two pages share every common 
 | 2026-09-23 | Face detection on sideways photos is tabled for a future discussion. |
 | 2026-09-23 | PNG rotation is left as it is. |
 | 2026-09-23 | `Library` lives in `core`: it only names files, and the web layer, which builds one per request, may not import `store`. `Result` moves to phase 2, so that its first real callers set its shape. |
+| 2026-09-23 | `Result` lives in `core`, not in a layer of its own: it is a plain value every layer passes along, so it needs no place in the import rules. |
 
 ## Progress
 
