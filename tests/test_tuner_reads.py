@@ -111,6 +111,26 @@ class PersonFaces(TunerReads):
         self.assertFalse(answer["has_more"])
 
 
+class TheIdentifyQueue(TunerReads):
+    def groups(self):
+        return {group["name"] for group in self.get("handle_get_unmatched_faces_people").answer()}
+
+    def test_follows_the_people_saved_on_its_photos(self):
+        # The queue groups nameless faces by the people their photo's row lists. A tag
+        # saved in TagPup changes that and no face, and the queue kept its old groups
+        # until some face changed (docs/findings.md, #58).
+        first = self.photo("a.jpg", people=["Wren Halloway"])
+        second = self.photo("b.jpg", people=["Wren Halloway"])
+        self.face(first)
+        self.face(second)
+        self.assertIn("Wren Halloway", self.groups())
+        self.conn.execute("UPDATE photos SET people = ?", (json.dumps(["Ansel Ditmore"]),))
+        self.conn.commit()
+        groups = self.groups()
+        self.assertIn("Ansel Ditmore", groups)
+        self.assertNotIn("Wren Halloway", groups)
+
+
 class PeopleWithCounts(TunerReads):
     def test_reads_the_tree_once_whoever_is_named(self):
         # Each person's nodes were looked up with a query of their own (#50).

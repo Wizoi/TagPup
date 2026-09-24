@@ -31,6 +31,7 @@ from tagpup.core.result import Conflict, NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services import faces as faces_service
 from tagpup.store import faces as store_faces
+from tagpup.store import generations
 from tagpup.store import photos as store_photos
 from tagpup.store import schema
 from tagpup.store import taxonomy as store_taxonomy
@@ -1912,7 +1913,12 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         try:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
 
-            fingerprint = self.faces_fingerprint(conn)
+            # The faces, and the photos' rows: the queue groups nameless faces by the
+            # people their photo lists, which a tag saved in TagPup changes without
+            # touching a face (docs/findings.md, #58). Only the queue follows the photos;
+            # a person's grid takes up to a minute to build, and would be rebuilt after
+            # every photo written.
+            fingerprint = (self.faces_fingerprint(conn), generations.value(conn, "photos"))
             cached = self.identify_cache_get("queue", fingerprint)
             if cached is not None:
                 self.send_json(cached)
