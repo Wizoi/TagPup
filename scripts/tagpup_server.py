@@ -815,6 +815,81 @@ def set_active_db_path(db_path):
     else:
         _thread_local.active_db_path = os.path.abspath(db_path).replace("\\", "/").lower()  # not a path: the database file, as a registry key
 
+
+def resolve_library_from_url(handler, set_active):
+    """Point `handler` at the library its URL names. False means it has been answered.
+
+    The first part of the path names the library -- /kr-track/api/tags -- and is
+    stripped from handler.path. With none, the request goes to the library the server
+    started on, and a bare page request is redirected to its URL. Both apps had their
+    own copy of this, word for word.
+
+    A named library must exist. Requests used to go ahead against data/<name>.db
+    either way, and the first handler to open it created it, so a typo in the address
+    bar made an empty library that then sat in the list. Create makes libraries.
+    `set_active` is the app's own set_active_db_path: each has its own thread-local.
+    """
+    parsed_url = urllib.parse.urlparse(handler.path)
+    path = parsed_url.path
+
+    config = configparser.ConfigParser(interpolation=None)
+    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
+    if os.path.exists(config_path):
+        config.read(config_path, encoding='utf-8')
+    data_dir = config.get("paths", "data_dir", fallback="data")
+
+    # Determine if we are in test mode based on startup database
+    startup_db = os.path.basename(handler.__class__.db_path)
+    test_mode = startup_db.startswith("test_")
+
+    db_match = re.match(r"^/([^/]+)(/.*)?$", path)
+    if db_match:
+        potential_db = db_match.group(1)
+        subpath = db_match.group(2) or "/"
+
+        RESERVED_PATHS = {"api", "gui", "gui_tagpup", "index.html", "style.css", "app.js", "favicon.ico", ""}
+        if potential_db not in RESERVED_PATHS and not potential_db.endswith((".css", ".js", ".html", ".png", ".jpg", ".jpeg", ".ico")):
+            db_name = potential_db + ".db"
+
+            if test_mode:
+                if not db_name.startswith("test_"):
+                    db_name = "test_" + db_name
+            else:
+                if db_name.startswith("test_"):
+                    db_name = db_name[5:]
+
+            resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")  # not a path: a database file
+            if not os.path.exists(resolved_db_path) and db_name != startup_db:
+                handler.send_error(404, "There is no library called %s" % potential_db)
+                return False
+            set_active(resolved_db_path)
+            handler.db_path = resolved_db_path
+
+            # Rewrite path
+            if parsed_url.query:
+                handler.path = subpath + "?" + parsed_url.query
+            else:
+                handler.path = subpath
+            return True
+
+    # If path does not contain database subfolder, default to startup database
+    db_name = startup_db
+
+    if path in ["/", "/index.html", "/style.css", "/app.js"]:
+        clean_url_name = os.path.splitext(db_name)[0]
+        if clean_url_name.startswith("test_"):
+            clean_url_name = clean_url_name[5:]
+        new_path = f"/{clean_url_name}{handler.path}"
+        handler.send_response(302)
+        handler.send_header("Location", new_path)
+        handler.end_headers()
+        return False
+
+    resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")  # not a path: a database file
+    set_active(resolved_db_path)
+    handler.db_path = resolved_db_path
+    return True
+
 def get_active_db_path():
     active_db = getattr(_thread_local, "active_db_path", None)
     if active_db:
@@ -939,63 +1014,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         return localserver.is_local_request(self)
 
     def resolve_db_from_url(self) -> bool:
-        parsed_url = urllib.parse.urlparse(self.path)
-        path = parsed_url.path
-        
-        config = configparser.ConfigParser(interpolation=None)
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-        if os.path.exists(config_path):
-            config.read(config_path, encoding='utf-8')
-        data_dir = config.get("paths", "data_dir", fallback="data")
-        
-        # Determine if we are in test mode based on startup database
-        startup_db = os.path.basename(self.__class__.db_path)
-        test_mode = startup_db.startswith("test_")
-        
-        db_match = re.match(r"^/([^/]+)(/.*)?$", path)
-        if db_match:
-            potential_db = db_match.group(1)
-            subpath = db_match.group(2) or "/"
-            
-            RESERVED_PATHS = {"api", "gui", "gui_tagpup", "index.html", "style.css", "app.js", "favicon.ico", ""}
-            if potential_db not in RESERVED_PATHS and not potential_db.endswith((".css", ".js", ".html", ".png", ".jpg", ".jpeg", ".ico")):
-                db_name = potential_db + ".db"
-                
-                if test_mode:
-                    if not db_name.startswith("test_"):
-                        db_name = "test_" + db_name
-                else:
-                    if db_name.startswith("test_"):
-                        db_name = db_name[5:]
-                        
-                resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")  # not a path: a database file
-                set_active_db_path(resolved_db_path)
-                self.db_path = resolved_db_path
-                
-                # Rewrite path
-                if parsed_url.query:
-                    self.path = subpath + "?" + parsed_url.query
-                else:
-                    self.path = subpath
-                return True
-            
-        # If path does not contain database subfolder, default to startup database (self.__class__.db_path)
-        db_name = startup_db
-        
-        if path in ["/", "/index.html", "/style.css", "/app.js"]:
-            clean_url_name = os.path.splitext(db_name)[0]
-            if clean_url_name.startswith("test_"):
-                clean_url_name = clean_url_name[5:]
-            new_path = f"/{clean_url_name}{self.path}"
-            self.send_response(302)
-            self.send_header("Location", new_path)
-            self.end_headers()
-            return False
-            
-        resolved_db_path = os.path.join(data_dir, db_name).replace("\\", "/")  # not a path: a database file
-        set_active_db_path(resolved_db_path)
-        self.db_path = resolved_db_path
-        return True
+        # See resolve_library_from_url.
+        return resolve_library_from_url(self, set_active_db_path)
 
     def do_GET(self):
         if not self.resolve_db_from_url():

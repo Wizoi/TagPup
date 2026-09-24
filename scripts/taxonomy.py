@@ -190,9 +190,11 @@ class TagTaxonomy:
     def people_roots(self) -> Set[str]:
         """Lowercased roots this library files people under."""
         roots = {r.lower() for r in self.DEFAULT_PEOPLE_ROOTS}
-        if getattr(self, "db_path", None):
+        # Only a library that exists: opening one that does not creates it, and asking
+        # who the people are made an empty library out of any name it was given.
+        if getattr(self, "db_path", None) and os.path.exists(self.db_path):
             try:
-                conn = tagpup_db.connect(self.db_path, timeout=30.0)
+                conn = tagpup_db.connect(tagpup_db.readonly_uri(self.db_path), uri=True)
                 cur = conn.cursor()
                 cur.execute(
                     "SELECT name FROM sqlite_master "
