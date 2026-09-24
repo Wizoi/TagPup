@@ -69,12 +69,8 @@ class TestTheFileIsTheStartingPoint(unittest.TestCase):
         self.assertEqual(tags_in(self.photo), ["Holiday/Summer"])
 
     def test_apply_all_keeps_the_keywords_already_in_the_file(self):
-        folder_key = tagpup_server.paths.key(self.lib.photos)
-        self.lib.suggestion_runs().statuses[folder_key] = {
-            "status": "completed",
-            "suggestions": {os.path.abspath(self.photo): {
-                "tags": [{"tag": "Sunset", "score": 0.9}], "people": []}},
-        }
+        self.lib.save_suggestions({os.path.abspath(self.photo): {
+            "tags": [{"tag": "Sunset", "score": 0.9}], "people": []}})
         status, reply = self.handler.call("handle_post_folder_auto_apply", {
             "folder_path": self.lib.photos})
         self.assertEqual(status, 200, reply)
@@ -121,12 +117,8 @@ class TestASubfolderPhotoIsFoundInTheCache(unittest.TestCase):
         self.assertIn("Sunset", self.cached()["tags"])
 
     def test_apply_all_updates_its_record(self):
-        folder_key = tagpup_server.paths.key(self.lib.photos)
-        self.lib.suggestion_runs().statuses[folder_key] = {
-            "status": "completed",
-            "suggestions": {os.path.abspath(self.photo): {
-                "tags": [{"tag": "Sunset", "score": 0.9}], "people": []}},
-        }
+        self.lib.save_suggestions({os.path.abspath(self.photo): {
+            "tags": [{"tag": "Sunset", "score": 0.9}], "people": []}})
         status, reply = self.handler.call("handle_post_folder_auto_apply", {
             "folder_path": self.lib.photos})
         self.assertEqual(status, 200, reply)

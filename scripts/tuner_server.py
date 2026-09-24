@@ -300,11 +300,8 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
     # for. Keyed by person, because two people's grids can be built at once.
     identify_progress = DatabaseIsolatedDict(_db_identify_progress_registry)
 
-    # The suggestions cache file belongs to TagPup, which runs the suggestions and is
-    # the only process that reads or writes it (tagpup.jobs.suggestions.cache_file).
-    # TagTuner used to carry its own copy of the naming and
-    # its own load and save; nothing called either, and a second writer of the same
-    # file from a stale in-memory copy would have overwritten TagPup's.
+    # Saved suggestions are TagPup's, in the library (tagpup.store.suggestions);
+    # TagTuner reads and writes none.
 
     def resolve_db_from_url(self) -> bool:
         # See resolve_library_from_url.

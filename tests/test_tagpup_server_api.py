@@ -28,12 +28,11 @@ from tagpup_server import (
     TagPupHTTPRequestHandler,
     set_active_db_path,
 )
-import paths
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
-from tagpup.core.library import Library  # noqa: E402
-from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+from tagpup.store import db as tagpup_store_db  # noqa: E402
+from tagpup.store import suggestions as saved_suggestions  # noqa: E402
 
 
 class TagPupAPITestBase(unittest.TestCase):
@@ -365,26 +364,22 @@ class TestBulkTags(TagPupAPITestBase):
 
 class TestFolderAutoApply(TagPupAPITestBase):
     def _seed_suggestions(self, photo_path, tags_with_scores):
-        """Inject a completed suggestion run into the active database's registry."""
-        set_active_db_path(self.TEST_DB)
-        suggestion_jobs.runs_for(Library(self.TEST_DB)).statuses[paths.key(self.tmpdir)] = {
-            "status": "completed",
-            "completed": 1,
-            "total": 1,
-            "suggestions": {
-                photo_path: {
-                    "tags": [{"tag": t, "score": s} for t, s in tags_with_scores],
-                    "people": [],
-                    "title": None,
-                    "raw_suggestions": {
-                        "suggested_tags": [
-                            {"tag": t, "score": s} for t, s in tags_with_scores
-                        ]
-                    },
-                }
-            },
-        }
-        set_active_db_path(None)
+        """Keep a finished suggestion for the photo in the library, as a run would."""
+        conn = tagpup_store_db.connect(self.TEST_DB)
+        try:
+            saved_suggestions.put(conn, photo_path, {
+                "tags": [{"tag": t, "score": s} for t, s in tags_with_scores],
+                "people": [],
+                "title": None,
+                "raw_suggestions": {
+                    "suggested_tags": [
+                        {"tag": t, "score": s} for t, s in tags_with_scores
+                    ]
+                },
+            })
+            conn.commit()
+        finally:
+            conn.close()
 
     @requires_exiftool
     def test_applies_suggestions_above_threshold(self):

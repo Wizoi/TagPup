@@ -933,6 +933,11 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 # Read once for the run: the caption files people under them (#66).
                 self.face_roots = face_roots
 
+            @property
+            def model_key(self):
+                """The model its suggestions are made with (tagpup.store.embeddings)."""
+                return self.embedder.model_key
+
             def suggest(self, photo, meta):
                 return self.suggester.suggest_for_photo(
                     photo, self.embedder.embed_image(photo), k=15, min_sim=0.35, target_metadata=meta)
@@ -1480,14 +1485,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 self.send_json_error(500, result.message())
                 return
 
-            # The files moved whatever the index did, so their suggestions follow.
-            moves = {**result.details["moved_aside"], **result.details["renamed"]}
-            if moves:
-                try:
-                    self.suggestion_runs().move_photos(moves)
-                except Exception as e:
-                    logger.error("Renamed %d photo(s) but could not move their saved "
-                                 "suggestions: %s", len(result.details["renamed"]), e)
+            # Their saved suggestions are kept by the photo's id, and went with the rows.
 
             # Clear old and scan new cache entries
             if paths.key(folder_path) in TagPupHTTPRequestHandler.folder_cache:
@@ -1679,9 +1677,6 @@ def start_server(port=8090, db_path="data/photo_index.db", gui_dir="gui_tagpup")
             shared_embedder = ClipEmbedder(photo_index=photo_index,
                                            **tagpup_config.embedder_settings())
             TagPupHTTPRequestHandler.shared_embedder = shared_embedder
-            # The startup library's saved suggestions, ahead of the first request;
-            # any other library's are read the first time it is used.
-            suggestion_jobs.runs_for(Library(db_path)).ensure_loaded()
             
             warmup_thread = threading.Thread(
                 target=warmup_embedder_thread,

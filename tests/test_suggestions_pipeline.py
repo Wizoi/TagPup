@@ -1,4 +1,4 @@
-"""The folder-suggestions pipeline: its cache file, its failures and its finish line.
+"""The folder-suggestions pipeline: its failures and its finish line.
 
 Four things went wrong here, each quietly:
 
@@ -6,6 +6,8 @@ Four things went wrong here, each quietly:
   once, after every photo. Two saves overlapping, or the process stopping mid-write,
   left a file that did not parse, and a file that does not parse restores nothing:
   every saved suggestion for every folder of the library was gone on the next start.
+  Suggestions are rows of the library now (migration 7), written through its write
+  lock, and the file is only read, once, by that migration.
 - A photo whose suggestion raised was stored as an empty suggestion. The next run
   skips photos that already have one, so it was never tried again.
 - The run said "completed" before folder consensus rewrote its suggestions. The page
@@ -16,14 +18,10 @@ Four things went wrong here, each quietly:
 The runs are tagpup.jobs.suggestions'; what they run is TagPup's suggestion_work, with
 the model replaced by a script. Names here are fictional.
 """
-import glob
-import json
 import os
 import shutil
 import sys
 import tempfile
-import threading
-import time
 import types
 import unittest
 from unittest import mock
@@ -42,13 +40,14 @@ from shipped_sources import python_sources  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+from tagpup.store import db, schema  # noqa: E402
 
 
 class _LibraryFixture(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="sugg_pipeline_")
         self.db = os.path.join(self.dir, "library.db")
-        self.cache = suggestion_jobs.cache_file(self.db)
+        schema.ensure(self.db)
         self.runs = suggestion_jobs.runs_for(Library(self.db))
 
     def tearDown(self):
@@ -66,86 +65,6 @@ class _LibraryFixture(unittest.TestCase):
             f"{folder}/img_{i:03d}.jpg": {"path": f"{folder}/img_{i:03d}.jpg"}
             for i in range(count)
         }
-
-
-class TheCacheFileIsNeverLeftHalfWritten(_LibraryFixture):
-    def test_a_save_that_dies_mid_write_leaves_the_previous_file(self):
-        folder, _ = self._folder("2025-11 Classic", 0)
-        self.runs.statuses[folder] = {
-            "status": "completed", "completed": 1, "total": 1,
-            "suggestions": {"a.jpg": {"tags": [{"tag": "Activity/Swim Meet", "score": 0.9}]}},
-        }
-        self.runs.save()
-
-        self.runs.statuses[folder]["suggestions"]["b.jpg"] = {"tags": []}
-        real_dump = json.dump
-
-        def dies_halfway(obj, fp, *args, **kwargs):
-            fp.write('{"half": ')
-            raise OSError("the machine went to sleep")
-
-        with mock.patch.object(json, "dump", dies_halfway):
-            self.runs.save()
-        self.assertIs(json.dump, real_dump)
-
-        with open(self.cache, encoding="utf-8") as f:
-            saved = json.load(f)
-        self.assertIn("a.jpg", saved[folder]["suggestions"])
-        leftovers = [p for p in glob.glob(os.path.join(self.dir, "*")) if p != self.cache]
-        self.assertEqual(leftovers, [], "a failed save left its temporary file behind")
-
-    def test_concurrent_saves_never_leave_an_unparseable_file(self):
-        folder, _ = self._folder("2025-10 Invitational", 0)
-        self.runs.statuses[folder] = {
-            "status": "running", "completed": 0, "total": 400, "suggestions": {}}
-        self.runs.save()
-        stop = threading.Event()
-        unparseable = []
-
-        def writer(n):
-            for i in range(60):
-                with self.runs.lock:
-                    self.runs.statuses[folder]["suggestions"][f"w{n}_{i}.jpg"] = {
-                        "tags": [{"tag": f"Activity/Heat {i}", "score": 0.7}] * 20}
-                self.runs.save()
-
-        def reader():
-            while not stop.is_set():
-                try:
-                    with open(self.cache, encoding="utf-8") as f:
-                        text = f.read()
-                except (PermissionError, FileNotFoundError):
-                    continue  # mid-rename on Windows; not a torn file
-                try:
-                    json.loads(text)
-                except ValueError:
-                    unparseable.append(len(text))
-                # A reader that never lets go keeps Windows refusing the rename; the
-                # real one reads once at startup.
-                time.sleep(0.002)
-
-        r = threading.Thread(target=reader)
-        r.start()
-        writers = [threading.Thread(target=writer, args=(n,)) for n in range(4)]
-        for t in writers:
-            t.start()
-        for t in writers:
-            t.join()
-        stop.set()
-        r.join()
-
-        self.assertEqual(unparseable, [], f"{len(unparseable)} reads found a torn file")
-        with open(self.cache, encoding="utf-8") as f:
-            final = json.load(f)
-        self.assertEqual(len(final[folder]["suggestions"]), 240,
-                         "the last save did not hold everything saved before it")
-
-    def test_saves_during_a_run_are_throttled(self):
-        folder, _ = self._folder("2025-09 Relays", 0)
-        self.runs.statuses[folder] = {"status": "running", "suggestions": {}}
-        wrote = [self.runs.save(min_interval=60) for _ in range(50)]
-        self.assertEqual(wrote.count(True), 1, "every photo rewrote the whole file")
-        self.assertTrue(self.runs.save(), "an unthrottled save must always write")
 
 
 class _FakeIndex:
@@ -227,13 +146,10 @@ class _RunFixture(_LibraryFixture):
     def run_folder(self, folder, photos):
         tagpup_server.set_active_db_path(self.db)
         Handler.folder_cache[folder] = photos
-        self.runs.statuses[folder] = {
-            "status": "preparing", "completed": 0, "total": 0,
-            "suggestions": (self.runs.statuses.get(folder) or {}).get("suggestions", {}),
-        }
+        self.runs.statuses[folder] = {"status": "preparing", "completed": 0, "total": 0}
         with mock.patch.dict(sys.modules, self.modules):
             self.runs.run(folder, Handler.suggestion_work(folder, self.db))
-        return self.runs.statuses[folder]
+        return self.runs.status(folder)
 
 
 class AFailedPhotoIsTriedAgain(_RunFixture):
@@ -247,9 +163,9 @@ class AFailedPhotoIsTriedAgain(_RunFixture):
         self.assertIn("error", entry, "the failure was stored as an empty suggestion")
         self.assertEqual(entry["tags"], [])
 
-        with open(self.cache, encoding="utf-8") as f:
-            saved = json.load(f)
-        self.assertIn("error", saved[folder]["suggestions"][paths.stored(broken)])
+        # Kept in the library: what a process started afresh finds.
+        saved = suggestion_jobs.SuggestionRuns(self.db).suggestions(folder)
+        self.assertIn("error", saved[paths.stored(broken)])
 
         self.fail_paths = set()
         self.asked.clear()
@@ -298,13 +214,18 @@ class OneFileOneOwner(unittest.TestCase):
             with open(os.path.join(WORKSPACE_DIR, module), encoding="utf-8") as f:
                 if "gui_suggestions_cache" in f.read():
                     owners.append(module.replace(os.sep, "/"))
-        self.assertEqual(owners, ["tagpup/jobs/suggestions.py"],
+        # Migration 7 reads it once, into the library; nothing else names it.
+        self.assertEqual(owners, ["tagpup/store/schema.py"],
                          "a second copy of the cache naming can drift or write over it")
 
     def test_the_main_library_keeps_its_existing_file(self):
-        self.assertEqual(
-            os.path.basename(suggestion_jobs.cache_file(os.path.join("data", "photo_index.db"))),
-            "gui_suggestions_cache.json")
+        folder = tempfile.mkdtemp(prefix="sugg_file_")
+        self.addCleanup(shutil.rmtree, folder, True)
+        conn = db.connect(os.path.join(folder, "photo_index.db"))
+        try:
+            self.assertEqual(os.path.basename(schema._suggestions_file(conn)), "gui_suggestions_cache.json")
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":

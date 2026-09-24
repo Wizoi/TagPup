@@ -49,6 +49,19 @@ class Library:
         """This library's suggestion runs (tagpup.jobs.suggestions)."""
         return suggestion_jobs.runs_for(PathLibrary(self.db_path))
 
+    def save_suggestions(self, found):
+        """Keep {photo: entry} as what Suggest offered each photo, in this library
+        (tagpup.store.suggestions) -- where the page's Apply All reads it."""
+        from tagpup.store import suggestions as saved
+
+        conn = tagpup_db.connect(self.db_path)
+        try:
+            for photo, entry in found.items():
+                saved.put(conn, photo, entry)
+            conn.commit()
+        finally:
+            conn.close()
+
     def close(self):
         tagpup_server.invalidate_people_cache()
         TagPupHTTPRequestHandler._db_folder_cache_registry.pop(self.registry_key, None)

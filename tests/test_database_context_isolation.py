@@ -35,7 +35,8 @@ import paths
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
 from face_rows import add_face, add_people  # noqa: E402
-from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+from tagpup.store import db as tagpup_store_db  # noqa: E402
+from tagpup.store import schema  # noqa: E402
 
 
 def _post(port, path, body):
@@ -270,27 +271,34 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
 
 
 class TestSuggestionsCachePerDatabase(unittest.TestCase):
-    """The suggestions cache file must be scoped per database.
+    """The suggestions cache file was scoped per database, and migration 7 must read
+    each library's own (tagpup.store.schema; the suggestions are rows of the library now).
 
-    The worker serializes whichever registry is active, so a shared filename lets a
-    secondary database overwrite the primary library's cache wholesale.
+    The worker serialized whichever registry was active, so a shared filename let a
+    secondary database overwrite the primary library's cache wholesale; a migration
+    reading another library's file would take in that library's suggestions.
     """
 
+    def file_of(self, name):
+        folder = tempfile.mkdtemp(prefix="sugg_file_")
+        self.addCleanup(shutil.rmtree, folder, True)
+        conn = tagpup_store_db.connect(os.path.join(folder, name))
+        try:
+            return os.path.basename(schema._suggestions_file(conn))
+        finally:
+            conn.close()
+
     def test_default_database_keeps_unsuffixed_filename(self):
-        path = suggestion_jobs.cache_file(os.path.join("data", "photo_index.db"))
-        self.assertEqual(os.path.basename(path), "gui_suggestions_cache.json")
+        self.assertEqual(self.file_of("photo_index.db"), "gui_suggestions_cache.json")
 
     def test_secondary_database_gets_its_own_file(self):
-        path = suggestion_jobs.cache_file(os.path.join("data", "kr-track.db"))
-        self.assertEqual(os.path.basename(path), "gui_suggestions_cache_kr-track.json")
+        self.assertEqual(self.file_of("kr-track.db"), "gui_suggestions_cache_kr-track.json")
 
     def test_distinct_databases_never_share_a_cache_file(self):
-        a = suggestion_jobs.cache_file(os.path.join("data", "photo_index.db"))
-        b = suggestion_jobs.cache_file(os.path.join("data", "kr-track.db"))
-        self.assertNotEqual(a, b)
+        self.assertNotEqual(self.file_of("photo_index.db"), self.file_of("kr-track.db"))
 
     # TagTuner's copy of this naming, which a test here kept in step, is gone: it had
-    # no callers, and tagpup_server is now the only place the file is named
+    # no callers, and the migration is now the only place the file is named
     # (tests/test_suggestions_pipeline.py, OneFileOneOwner).
 
 

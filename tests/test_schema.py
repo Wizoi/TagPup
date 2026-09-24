@@ -97,7 +97,7 @@ class ANewLibrary(SchemaTestCase):
         conn = self.connect()
         self.assertEqual([m.name for m in schema.MIGRATIONS], applied)
         self.assertEqual(schema.LATEST, schema.version(conn))
-        self.assertEqual({"photos", "faces", "face_crops", "embeddings", "photo_people", "tag_taxonomy",
+        self.assertEqual({"photos", "faces", "face_crops", "embeddings", "photo_people", "suggestions", "tag_taxonomy",
                           "tag_embeddings", "generations", "schema_version"}, tables(conn))
 
     def test_has_the_document_id_index(self):
@@ -380,6 +380,31 @@ class ALibraryWithAListOfPeoplePerPhoto(SchemaTestCase):
 
     def test_the_list_goes(self):
         self.assertNotIn("people", columns(self.connect(), "photos"))
+
+
+class ALibraryWithItsSuggestionsInAFile(SchemaTestCase):
+    """Before migration 7 what Suggest offered was kept in a JSON file beside the
+    library, keyed by path (#64)."""
+
+    def setUp(self):
+        super().setUp()
+        make_unmigrated_library(self.db_path)
+        entry = {"tags": [{"tag": "Activity/Rowing", "score": 0.8}], "people": [], "title": "Rowing",
+                 "raw_suggestions": {"path": "D:/a.jpg", "suggested_tags": []}, "raw_before_consensus": True}
+        saved = {"D:/": {"status": "completed", "completed": 2, "total": 2,
+                         "suggestions": {"D:/a.jpg": entry, "D:/gone.jpg": dict(entry, title="Gone")}}}
+        self.file = os.path.join(self.dir, "gui_suggestions_cache_library.json")
+        with open(self.file, "w", encoding="utf-8") as f:
+            json.dump(saved, f)
+        schema.ensure(self.db_path)
+
+    def test_the_photos_the_library_has_keep_theirs(self):
+        self.assertEqual([("D:/a.jpg", "Rowing", 1)], self.connect().execute(
+            "SELECT p.path, s.title, s.before_consensus FROM suggestions s JOIN photos p ON p.id = s.photo_id"
+        ).fetchall())
+
+    def test_the_file_is_left_where_it_was(self):
+        self.assertTrue(os.path.exists(self.file))
 
 
 class ThePhotoIdMigration(SchemaTestCase):

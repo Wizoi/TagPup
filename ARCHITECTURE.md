@@ -230,7 +230,7 @@ Each step that changes a table is a migration in `tagpup.store.schema` that take
 - [x] Photo ids. `photos` rebuilt with `id INTEGER PRIMARY KEY` and `path` unique; `faces.photo_id` in place of `faces.photo_path`, and every join by id (joins by path were case-sensitive where lookups were not). A photo the apps see gets a row the first time -- Suggest's faces and embeddings for photos never indexed included (`photos.ensure_row`). A rename is one update of `photos.path`.
 - [x] `embeddings`: one vector per photo and model, keyed by `photo_id` and all five model settings, with the stamp of what it was computed from. Replaces `photos.embedding` and `embedding_cache` (#62, #65).
 - [x] `photo_people`: each photo's people, written only by `tagpup.store.people.rebuild`, from its keywords, its faces and the tree, by the one rule in `tagpup.core.vocabulary`. Replaces `photos.people` and the seven patches of it (#63); tree edits that change who is a person rebuild what they change.
-- [ ] `suggestions`: keyed by `photo_id`, with the model and the stamp they were made from. Replaces the JSON cache files and their re-keying on rename; a deleted photo takes its suggestions (#64). Run status stays in memory until `jobs`.
+- [x] `suggestions`: keyed by `photo_id`, with the model and the stamp they were made from. Replaces the JSON cache files and their re-keying on rename; a deleted photo takes its suggestions (#64). Run status stays in memory until `jobs`.
 - [ ] Doctor rules for each: no crop without a face, no embedding or suggestion without a photo, people as the rule gives them.
 
 Exit: nothing in the database is keyed by path, and `doctor.py` is clean on both libraries.

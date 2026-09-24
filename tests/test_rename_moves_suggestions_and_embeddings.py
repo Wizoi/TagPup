@@ -5,8 +5,9 @@ name: the suggestions saved for it, which the page looks up by path, and its cac
 CLIP embedding. The renamed photos showed no suggestions, the next Suggest ran them
 again from scratch, and the old entries stayed in the cache for ever.
 
-The vectors now point at the photo's row by id (migration 5), so a rename has nothing
-of theirs to move; these check they are still the photo's under its new name.
+The vectors (migration 5) and the saved suggestions (migration 7) now point at the
+photo's row by id, so a rename has nothing of theirs to move; these check they are
+still the photo's under its new name.
 """
 import os
 import sys
@@ -16,13 +17,14 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import VECTORS_WITH_PATHS  # noqa: E402
 from test_tagpup_server_finds_native_rows import (  # noqa: E402
-    HandlerCase, fake_exiftool, fake_extractor, forward, key_of)
+    HandlerCase, fake_exiftool, fake_extractor, forward)
 
 import db as tagpup_db  # noqa: E402
 from tagpup_server import set_active_db_path  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+from tagpup.store import suggestions as saved_suggestions  # noqa: E402
 
 
 class RenameMovesSuggestionsAndEmbeddings(HandlerCase):
@@ -31,14 +33,17 @@ class RenameMovesSuggestionsAndEmbeddings(HandlerCase):
         self.files = [self.make_file(n) for n in ("a.jpg", "b.jpg")]
         for path in self.files:
             self.seed(path)  # with a vector, stamped with the file as it is on disk
-        set_active_db_path(self.db_path)
-        suggestion_jobs.runs_for(Library(self.db_path)).statuses[key_of(self.folder)] = {
-            "status": "completed", "total": 2, "completed": 2,
-            "suggestions": {
-                os.path.abspath(p): {"tags": ["Activity/Rowing"], "people": [], "title": "",
-                                     "raw_suggestions": {"path": os.path.abspath(p)}}
-                for p in self.files},
-        }
+        # Saved in the library, by the photo's row (tagpup.store.suggestions).
+        conn = tagpup_db.connect(self.db_path)
+        try:
+            for p in self.files:
+                saved_suggestions.put(conn, os.path.abspath(p), {
+                    "tags": ["Activity/Rowing"], "people": [], "title": "",
+                    "raw_suggestions": {"path": os.path.abspath(p)}, "raw_before_consensus": True})
+            conn.commit()
+        finally:
+            conn.close()
+        self.addCleanup(suggestion_jobs.forget, Library(self.db_path))
 
     def rename(self):
         with patch("exiftool_session.ExifToolSession", fake_exiftool([{}])), \
@@ -52,7 +57,7 @@ class RenameMovesSuggestionsAndEmbeddings(HandlerCase):
     def test_the_saved_suggestions_follow_the_photos(self):
         renamed = self.rename()["updated_paths"]
         set_active_db_path(self.db_path)
-        saved = suggestion_jobs.runs_for(Library(self.db_path)).statuses[key_of(self.folder)]["suggestions"]
+        saved = suggestion_jobs.runs_for(Library(self.db_path)).suggestions(forward(self.folder)) or {}
         self.assertEqual(sorted(os.path.abspath(p) for p in renamed.values()), sorted(saved),
                          "suggestions are still filed under the old names")
         for path, entry in saved.items():

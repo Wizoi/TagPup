@@ -34,7 +34,7 @@ class SuggestStatusPollIsASnapshot(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             runs = SuggestionRuns(os.path.join(folder, "regatta.db"))
             lock = runs.lock = RecordingLock()
-            live = {"status": "running", "suggestions": {"a.jpg": {"tags": []}}}
+            live = {"status": "running", "completed": 1, "total": 3}
             runs.statuses[paths.key(FOLDER)] = live
             copied = []
             real_get = dict.get
@@ -48,9 +48,11 @@ class SuggestStatusPollIsASnapshot(unittest.TestCase):
             reply = runs.status(FOLDER)
 
         self.assertEqual([True], copied, "the run was read outside the lock")
-        self.assertEqual(live, reply)
+        # No library here, so nothing saved: the run, and no suggestions.
+        self.assertEqual(dict(live, suggestions={}), reply)
         self.assertIsNot(live, reply, "the live dict went to the encoder")
-        self.assertIsNot(live["suggestions"], reply["suggestions"])
+        reply["completed"] = 99
+        self.assertEqual({"status": "running", "completed": 1, "total": 3}, live)
 
 
 if __name__ == "__main__":

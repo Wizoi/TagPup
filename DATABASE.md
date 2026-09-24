@@ -51,7 +51,7 @@ Any new connection should go through `configure_connection()`.
 
 ## Database Schema
 
-The database consists of six primary tables: `photos`, `faces`, `embeddings`, `photo_people`, `tag_taxonomy`, and `tag_embeddings`.
+The database consists of seven primary tables: `photos`, `faces`, `embeddings`, `photo_people`, `suggestions`, `tag_taxonomy`, and `tag_embeddings`.
 
 ### 1. `photos` Table
 Stores high-level image metadata, tags (keywords) and captions. Its people are in `photo_people`, its CLIP vectors in `embeddings`.
@@ -150,7 +150,22 @@ Each photo's people, in order (`tagpup/store/people.py`). Written only by `peopl
 
 A row's insert or delete moves the `photos` generation, as a change to the old list did.
 
-### 9. `schema_version` Table
+### 9. `suggestions` Table
+What Suggest offered each photo (`tagpup/store/suggestions.py`), read by TagPup's Suggest panel and Apply All through `tagpup.jobs.suggestions`. Kept by the photo's id: a trigger, `suggestions_go_with_their_photo`, deletes a photo's row with it, and a rename moves nothing. Replaced, in migration 7, a JSON file beside each library keyed by path, which deleting a photo, removing a folder or relinking left behind, and which a photo renamed outside TagPup's save lost (finding #64); the migration took in the entries of photos the library has, or whose files are still there, and left the file where it was. A run's own progress stays in the server's memory.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `photo_id` | INTEGER | PRIMARY KEY, FOREIGN KEY | The photo, `photos(id)`. A photo Suggest saw that was never indexed gets a row holding only its path (`photos.ensure_row`). |
+| `tags` | TEXT | | JSON list of `{tag, score}` offered, after the folder's consensus. |
+| `people` | TEXT | | JSON list of `{name, score}` offered. |
+| `title` | TEXT | | The caption offered. |
+| `raw` | TEXT | | JSON of the suggester's own output, from which consensus is taken again as a folder grows. |
+| `before_consensus` | INTEGER | NOT NULL DEFAULT 0 | `1` while `raw` is as the suggester made it; entries saved before that was recorded are left out of consensus. |
+| `error` | TEXT | | Why suggesting failed; the next run tries the photo again. |
+| `model` | TEXT | | `embeddings.model_key` of the model the suggestion came from. |
+| `created` | TEXT | | Local time it was made, `YYYY-MM-DD HH:MM:SS`. |
+
+### 10. `schema_version` Table
 The migrations applied to this library, one row each, in order (`tagpup.store.schema`). `schema.ensure()` applies the ones missing wherever a library is opened: by PhotoIndex, TagTuner's start-up, the desktop runner, the tag tree, and each request that names a library. Migration 1 makes the tables of 2026-09; each one after is a step forward. A library older than those tables -- missing a column such as `faces.excluded` -- is refused (`schema.TooOld`), not converted: every library in use was already that shape, and the conversions retired on 2026-09-24.
 
 | Column | Type | Constraints | Description |
@@ -214,6 +229,18 @@ erDiagram
         TEXT source
     }
 
+    suggestions {
+        INTEGER photo_id PK
+        TEXT tags
+        TEXT people
+        TEXT title
+        TEXT raw
+        INTEGER before_consensus
+        TEXT error
+        TEXT model
+        TEXT created
+    }
+
     tag_embeddings {
         TEXT tag PK
         TEXT prompt PK
@@ -241,6 +268,7 @@ erDiagram
     photos ||--o{ faces : "contains"
     photos ||--o{ embeddings : "embedded as"
     photos ||--o{ photo_people : "shows"
+    photos ||--o| suggestions : "offered"
     faces ||--o| face_crops : "cropped as"
     tag_taxonomy ||--o{ tag_taxonomy : "parent of"
 ```

@@ -177,12 +177,24 @@ class TestWorkersBindTheirDatabase(unittest.TestCase):
 
 
 class TestSuggestionsCacheIsScopedPerDatabase(unittest.TestCase):
-    """tagpup.jobs.suggestions owns the cache file (tests/test_suggestions_pipeline.py
-    checks it is the only owner); it must still be one file per database."""
+    """Migration 7 is the only reader of the old cache file (tests/test_suggestions_pipeline.py
+    checks it is the only owner); it must still read one file per database."""
 
-    def test_the_server_scopes_the_cache_per_database(self):
-        from tagpup.jobs.suggestions import cache_file
-        files = {cache_file(os.path.join("data", name)) for name in ("photo_index.db", "kr-track.db", "a.db")}
+    def test_the_migration_scopes_the_cache_per_database(self):
+        import shutil
+        import tempfile
+
+        from tagpup.store import db, schema
+
+        folder = tempfile.mkdtemp(prefix="sugg_file_")
+        self.addCleanup(shutil.rmtree, folder, True)
+        files = set()
+        for name in ("photo_index.db", "kr-track.db", "a.db"):
+            conn = db.connect(os.path.join(folder, name))
+            try:
+                files.add(schema._suggestions_file(conn))
+            finally:
+                conn.close()
         self.assertEqual(len(files), 3, "one database's suggestions file is another's")
 
 

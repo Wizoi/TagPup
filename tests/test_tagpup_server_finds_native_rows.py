@@ -30,6 +30,7 @@ from tagpup_server import TagPupHTTPRequestHandler, set_active_db_path
 
 from tagpup.core.library import Library
 from tagpup.jobs import suggestions as suggestion_jobs
+from tagpup.store import suggestions as saved_suggestions
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import VECTORS_WITH_PATHS, add_face, add_vector  # noqa: E402
@@ -339,20 +340,26 @@ class TestTimeShiftKeepsTheRealPaths(HandlerCase):
 
 
 class TestSavedSuggestionsSurviveTheNewKeys(HandlerCase):
-    def test_a_folder_saved_under_the_old_key_is_found(self):
+    def test_a_folder_asked_for_in_another_spelling_is_found(self):
         photo = os.path.abspath(os.path.join(self.folder, "IMG_0001.jpg"))
-        # How the old code keyed a folder: lower case, forward slashes.
-        old_key = forward(os.path.abspath(self.folder).lower())
-        cache_file = suggestion_jobs.cache_file(self.db_path)
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump({old_key: {"status": "completed", "completed": 1, "total": 1,
-                                 "suggestions": {forward(photo): {"tags": [], "people": []}}}}, f)
+        conn = tagpup_db.connect(self.db_path)
+        try:
+            saved_suggestions.put(conn, photo, {"tags": [], "people": [], "title": None})
+            conn.commit()
+        finally:
+            conn.close()
 
-        suggestion_jobs.runs_for(Library(self.db_path)).ensure_loaded()
-        set_active_db_path(self.db_path)
-        entry = suggestion_jobs.runs_for(Library(self.db_path)).statuses.get(key_of(self.folder))
-        self.assertIsNotNone(entry, "saved suggestions were loaded under a key nothing asks for")
-        self.assertEqual(list(entry["suggestions"]), [photo])
+        runs = suggestion_jobs.runs_for(Library(self.db_path))
+        self.addCleanup(suggestion_jobs.forget, Library(self.db_path))
+        # The spelling the browser sends, and on Windows the one the old code keyed a
+        # folder by: lower case, forward slashes.
+        spellings = [forward(self.folder)]
+        if WINDOWS:
+            spellings.append(forward(os.path.abspath(self.folder).lower()))
+        for spelling in spellings:
+            entry = runs.status(spelling)
+            self.assertEqual(entry["status"], "completed", spelling)
+            self.assertEqual(list(entry["suggestions"]), [photo], spelling)
 
 
 if __name__ == "__main__":

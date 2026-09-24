@@ -384,6 +384,64 @@ def _photo_people(conn):
     conn.execute("ALTER TABLE photos DROP COLUMN people")
 
 
+def _suggestions_file(conn):
+    """The JSON file beside the library on `conn` that held its saved suggestions until
+    migration 7, named as tagpup.jobs.suggestions named it; None for a library in memory."""
+    main = next((row[2] for row in conn.execute("PRAGMA database_list") if row[1] == "main"), "")
+    if not main:
+        return None
+    name = os.path.splitext(os.path.basename(main))[0]
+    base = "gui_suggestions_cache.json" if name == "photo_index" else "gui_suggestions_cache_%s.json" % name
+    return os.path.join(os.path.dirname(main), base)
+
+
+def _suggestions(conn):
+    """What Suggest offered each photo, in `suggestions`, by the photo's id
+    (tagpup.store.suggestions; docs/findings.md, #64), in place of a JSON file beside the
+    library that nothing kept in step with the photos.
+
+    The file's entries are taken in for the photos the library has a row for, and for
+    files still on disk, which get a row as a photo Suggest saw does (photos.ensure_row).
+    An entry for a file that is gone is left out: 307 of photo_index's 310 on 2026-09-24.
+    The file is left where it is; nothing reads it after this.
+    """
+    import json
+    conn.execute("CREATE TABLE suggestions ("
+                 " photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,"
+                 " tags TEXT, people TEXT, title TEXT, raw TEXT, before_consensus INTEGER NOT NULL DEFAULT 0,"
+                 " error TEXT, model TEXT, created TEXT)")
+    conn.execute("CREATE TRIGGER suggestions_go_with_their_photo AFTER DELETE ON photos"
+                 " BEGIN DELETE FROM suggestions WHERE photo_id = OLD.id; END")
+    path = _suggestions_file(conn)
+    if not path or not os.path.exists(path):
+        return
+    try:
+        with open(path, encoding="utf-8") as f:
+            saved = json.load(f)
+    except (OSError, ValueError) as e:
+        logger.warning("Saved suggestions in %s could not be read, and were not taken in: %s", path, e)
+        return
+    from tagpup.store import suggestions   # the store imports this module
+    ids = {paths.key(p): i for i, p in conn.execute("SELECT id, path FROM photos")}
+    taken = left = 0
+    for status in saved.values() if isinstance(saved, dict) else ():
+        entries = status.get("suggestions") if isinstance(status, dict) else None
+        for photo, found in (entries or {}).items():
+            if not isinstance(found, dict):
+                continue
+            photo_id = ids.get(paths.key(photo))
+            if photo_id is not None:
+                suggestions.put_for(conn, photo_id, found)
+            elif os.path.exists(photo):
+                suggestions.put(conn, photo, found)
+            else:
+                left += 1
+                continue
+            taken += 1
+    logger.info("Took in %d saved suggestion(s) from %s; left out %d for files that are gone.",
+                taken, os.path.basename(path), left)
+
+
 MIGRATIONS = (
     Migration(1, "the tables as of 2026-09", _tables, changes_data=False),
     Migration(2, "one generations table", _generations, changes_data=False),
@@ -391,6 +449,7 @@ MIGRATIONS = (
     Migration(4, "photos by id", _photo_ids, changes_data=True),
     Migration(5, "one embeddings table", _embeddings, changes_data=True),
     Migration(6, "each photo's people in photo_people", _photo_people, changes_data=True),
+    Migration(7, "suggestions by photo", _suggestions, changes_data=True),
 )
 
 LATEST = MIGRATIONS[-1].version
