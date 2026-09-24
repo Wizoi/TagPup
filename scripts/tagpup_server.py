@@ -1011,7 +1011,8 @@ class TagPupHTTPRequestHandlerMeta(type):
         db_key = get_active_db_path()
         cls._shared_embedders[db_key] = val
 
-class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPRequestHandlerMeta):
+class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
+                               metaclass=TagPupHTTPRequestHandlerMeta):
     db_path = "data/photo_index.db"
     gui_dir = "gui_tagpup"
     

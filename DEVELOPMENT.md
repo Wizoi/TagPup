@@ -28,6 +28,12 @@ TagPup or TagTuner, which destroys every piece of in-memory state — the folder
 nothing watching it. Check for a running server before editing, and run long indexes
 through the CLI where no reloader can reach them.
 
+**Logs are in `data/logs/`**: `tagpup.log`, `tagtuner.log` and `runner.log`, one per
+program, rotating at 5 MB and keeping five old files. They hold everything the console
+shows, plus every request slower than a second (`slow: GET /api/... took 2.31s`) and
+every request that failed, with its traceback. Look there before reproducing a report.
+The CLI still logs to the console only; redirect it when it matters.
+
 ## Tests
 
 | suite | command | count |

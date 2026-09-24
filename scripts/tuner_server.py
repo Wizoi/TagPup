@@ -402,7 +402,8 @@ class TunerHTTPRequestHandlerMeta(type):
             cls._clustering_in_progress.discard(db_key)
 
 
-class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequestHandlerMeta):
+class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
+                              metaclass=TunerHTTPRequestHandlerMeta):
     db_path = "data/photo_index.db"
     gui_dir = "gui"
     

@@ -65,12 +65,13 @@ Imports only go down:
 |---|---|---|---|
 | core | `tagpup.core` | Pure rules: path identity, the tag vocabulary (leaf, root, person), people derivation, suggestion scoring, clustering decisions | nothing but `core` |
 | config | `tagpup.config` | `TAGPUP_HOME`, `config.ini` and what it says: where the libraries are, which ExifTool, model settings, the library to open next. Read by entry points, which pass the values down | nothing |
+| logs | `tagpup.logs` | Each program's log file in `data/logs/`. Set up by entry points | `config` |
 | store | `tagpup.store` | The library database: connections and locks, schema and migrations, generations, one repository per table, caches keyed by generation, backups | `core` |
 | files | `tagpup.files` | The photo files: ExifTool sessions, reading metadata, writing keyword, caption and orientation fields, identities, opening images (upright or as stored), crops and thumbnails | `core` |
 | ml | `tagpup.ml` | Models: CLIP embeddings, face detection and embeddings, the vector index | `core`, `files` |
 | services | `tagpup.services` | One function per user action. The only code that writes. Returns a `Result` | all of the above |
 | jobs | `tagpup.jobs` | Background work: queue, status, cancel, persistence, worker processes for GPU work | `core`, `services` |
-| entry points | `tagpup.web`, `tagpup.cli`, `scripts/`, `tools/` | HTTP, the command line, maintenance and development tools | `config`, `services`, `jobs` (and `core` for formatting) |
+| entry points | `tagpup.web`, `tagpup.cli`, `scripts/`, `tools/` | HTTP, the command line, maintenance and development tools | `config`, `logs`, `services`, `jobs` (and `core` for formatting) |
 
 Guard tests, each of which fails the build. The ones marked *exists* are in place; the rest arrive with their phase.
 
@@ -93,7 +94,7 @@ Every guard checks the same list of files, `tests/shipped_sources.py`: the launc
 - **One server, two apps.** One Flask app, served by Waitress, answers on both ports used today: 8090 for TagPup, 8080 for TagTuner. The library comes from the URL as it does now, and becomes a `Library` object for the request. The Host and Origin check is a `before_request` hook.
 - **Background jobs** (indexing, suggestions, clustering, refresh) run through one job runner per library, with status, cancel and persistence. GPU-heavy work runs in a worker process, as indexing does today through the CLI.
 - **The installed copy.** A launcher copies the code into a local app folder and runs it from there. `TAGPUP_HOME` names the folder that holds `config.ini`, `data/` and backups. Updating is a deliberate step. The auto-reloader is for development only.
-- **Logs** go to `data/logs/`, one rotating file per app: errors, plus every request that takes more than a second, with its time.
+- **Logs** go to `data/logs/`, one rotating file per program. Each holds everything the console shows, plus every request slower than a second with its time, and every failed request with its traceback.
 
 ## Data model
 
@@ -172,7 +173,7 @@ Each phase ships on its own with the full check green. Nothing changes behaviour
 - [x] `.gitattributes` for line endings.
 - [x] The `tagpup/` package, with the foundation modules moved into it: paths, db, the ExifTool session, identity. One list of shipped files for every guard, and the layer guard.
 - [x] `tagpup.config`: one loader, honouring `TAGPUP_HOME`, used by all 26 places that read `config.ini`.
-- [ ] `tagpup.logs`: file logs, and slow-request logging for both servers.
+- [x] `tagpup.logs`: file logs, and slow-request logging for both servers.
 - [ ] `tagpup.result.Result` and `tagpup.store.library.Library`, with backups kept beside the library.
 - [ ] The installed-copy launcher.
 

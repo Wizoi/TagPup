@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scr
 from tuner_server import start_server
 from tagpup_server import create_library
 from tagpup import config as tagpup_config
+from tagpup import logs as tagpup_logs
 
 def find_available_port(start_port=8080):
     import socket
@@ -109,7 +110,11 @@ def cleanup_zombie_processes():
 def main():
     if not os.environ.get("TAGTUNER_RELOADED_CHILD"):
         cleanup_zombie_processes()
-        
+    else:
+        # The serving process writes the log. The reloader's supervisor only restarts
+        # it, and two processes rotating one file fail on Windows.
+        logger.info("Logging to %s", tagpup_logs.to_file("tagtuner"))
+
     logger.info("Initializing TagTuner...")
     # Resolve DB path
     db_name = tagpup_config.default_db()

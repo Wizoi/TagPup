@@ -1243,6 +1243,8 @@ class RunnerApp:
         self.execute_command(cmd, auto_confirm_yes=True)
 
 if __name__ == "__main__":
+    from tagpup import logs as tagpup_logs
+    logging.getLogger("runner").info("Logging to %s", tagpup_logs.to_file("runner"))
     root = tk.Tk()
     app = RunnerApp(root)
     root.mainloop()

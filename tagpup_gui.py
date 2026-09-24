@@ -32,6 +32,7 @@ logger = logging.getLogger("tagpup_gui")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
 from tagpup_server import create_library, start_server
 from tagpup import config as tagpup_config
+from tagpup import logs as tagpup_logs
 
 def find_available_port(start_port=8090):
     port = start_port
@@ -113,7 +114,11 @@ def cleanup_zombie_processes():
 def main():
     if not os.environ.get("TAGPUP_RELOADED_CHILD"):
         cleanup_zombie_processes()
-        
+    else:
+        # The serving process writes the log. The reloader's supervisor only restarts
+        # it, and two processes rotating one file fail on Windows.
+        logger.info("Logging to %s", tagpup_logs.to_file("tagpup"))
+
     logger.info("Initializing TagPup GUI...")
     db_name = tagpup_config.default_db()
     if len(sys.argv) > 1 and sys.argv[1].endswith(".db"):

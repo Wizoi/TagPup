@@ -27,13 +27,14 @@ from shipped_sources import LAUNCHERS, ROOT, python_sources  # noqa: E402
 MAY_IMPORT = {
     "core": set(),
     "config": set(),
+    "logs": {"config"},
     "store": {"core"},
     "files": {"core"},
     "ml": {"core", "files"},
     "services": {"core", "store", "files", "ml"},
     "jobs": {"core", "services"},
-    "web": {"core", "config", "services", "jobs"},
-    "cli": {"core", "config", "services", "jobs"},
+    "web": {"core", "config", "logs", "services", "jobs"},
+    "cli": {"core", "config", "logs", "services", "jobs"},
 }
 
 #: A line importing the package itself, not a module whose name starts with "tagpup".
