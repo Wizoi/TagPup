@@ -932,9 +932,9 @@ class DatabaseIsolatedDict(dict):
 
     def _get_current_dict(self):
         active_db = get_active_db_path()
-        if active_db not in self._registry:
-            self._registry[active_db] = {}
-        return self._registry[active_db]
+        # setdefault, not check-then-set: two threads creating the same library's
+        # entry at once each made one, and one thread's entries were lost.
+        return self._registry.setdefault(active_db, {})
 
     def __getitem__(self, key):
         return self._get_current_dict()[key]
