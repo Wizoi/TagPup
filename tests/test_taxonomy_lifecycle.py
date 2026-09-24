@@ -97,6 +97,9 @@ class TaxonomyTestBase(unittest.TestCase):
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute("DELETE FROM tag_taxonomy")
         conn.execute("DELETE FROM photos")
+        # A rename reaches every face of the person, so one left by an earlier test,
+        # or an earlier run whose database could not be removed, is renamed too.
+        conn.execute("DELETE FROM faces")
         conn.commit()
         conn.close()
 
