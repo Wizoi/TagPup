@@ -169,6 +169,9 @@ def _fake_modules(suggester_cls):
         def load(self):
             pass
 
+        def people_roots(self):
+            return {"people", "family", "friends"}
+
     taxonomy.TagTaxonomy = TagTaxonomy
     suggester = types.ModuleType("suggester")
     suggester.TagSuggester = suggester_cls

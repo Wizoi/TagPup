@@ -469,6 +469,29 @@ def record_file_stat_in_index(db_path, photo_path):
         db_path, store, label="file stat for %s" % os.path.basename(photo_path))
 
 
+def zero_shot_candidates(taxonomy, configured):
+    """The words CLIP is asked about: config.ini's, plus every leaf that is not a person.
+
+    People are matched by their faces, not by asking CLIP whether a photo looks like
+    "a photo of Rowan Thackeray". The roots skipped were written out as family,
+    friends and pets, so everyone under People -- and under any face root a library
+    made for itself -- was offered to CLIP by name. The library's own face roots are
+    used now.
+    """
+    face_roots = taxonomy.people_roots() | {"pets"}
+    candidates = list(configured)
+    seen = {c.lower() for c in candidates}
+    for path in sorted(taxonomy.paths):
+        parts = [p.strip() for p in path.split("/") if p.strip()]
+        if not parts or parts[0].lower() in face_roots:
+            continue
+        leaf = parts[-1]
+        if leaf.lower() not in seen:
+            seen.add(leaf.lower())
+            candidates.append(leaf)
+    return candidates
+
+
 def shift_photo_times(db_path, exiftool_path, photo_paths, shift_minutes):
     """Move Date Taken in each photo by `shift_minutes`, and tell the index.
 
@@ -2263,15 +2286,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             taxonomy = TagTaxonomy(file_path=tax_path)
             taxonomy.load()
             
-            # Merge non-people taxonomy tags into candidates
-            for path in taxonomy.paths:
-                parts = path.split("/")
-                if parts and parts[0].lower() in ["family", "friends", "pets"]:
-                    continue
-                leaf = parts[-1].strip()
-                if leaf and leaf.lower() not in [t.lower() for t in candidate_tags]:
-                    candidate_tags.append(leaf)
-            
+            candidate_tags = zero_shot_candidates(taxonomy, candidate_tags)
+
             preserve_full_frame = config.getboolean("model", "preserve_full_frame", fallback=False)
             max_aspect_ratio = config.getfloat("model", "max_aspect_ratio", fallback=2.0)
             force_image_size = config.get("model", "force_image_size", fallback=None)
