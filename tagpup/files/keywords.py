@@ -53,8 +53,18 @@ def tags_in_file(et, photo_path):
     nothing: the cache is empty after a restart while the page still shows the folder,
     and a photo the index has no row for then kept only the tags being added. The
     file is the truth; it is read in the ExifTool session the writer already has open.
-    Raises if the file cannot be read, rather than treat it as having no tags.
+    Raises if the file cannot be read, rather than treat it as having no tags. A missing
+    file makes ExifTool fail; one it cannot parse comes back with no fields at all and a
+    type that is not an image (a file of text read as TXT), and read as a photo with no
+    tags, so replacing a tag rewrote its index row to none (docs/findings.md, #46).
     """
-    found = et.get_tags([photo_path], tags=list(TAG_SOURCE_FIELDS))
+    found = et.get_tags([photo_path], tags=list(TAG_SOURCE_FIELDS) + [MIME_TYPE])
     meta = found[0] if found else {}
+    kind = meta.pop(MIME_TYPE, None)
+    if kind is not None and not str(kind).startswith("image/"):
+        raise ValueError("Not a photo ExifTool can read (%s): %s" % (kind, photo_path))
     return vocabulary.extract_tags({k: clean_metadata_value(v) for k, v in meta.items()})
+
+
+#: What ExifTool says a file is. A photo's starts with "image/".
+MIME_TYPE = "File:MIMEType"
