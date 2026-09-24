@@ -122,21 +122,28 @@ Stores cached visual embeddings of tag prompts to accelerate zero-shot tag conse
 | `pretrained` | TEXT | PRIMARY KEY | Pretrained weights identifier of the model. |
 | `embedding` | BLOB | | Binary representation of float array for the prompt embedding. |
 
-### 6. `faces_generation` Table
-One row, a counter that moves whenever a face's identity changes. Identify Faces caches its queue and match lists against a fingerprint of `faces`, and counts cannot see a person renamed or a face moved from one person to another. Triggers on `faces` (`faces_generation_insert`, `_delete`, `_update`) bump it on every insert, delete, and update of `name`, `name_source`, `excluded`, `embedding` or `photo_path`, whoever makes the change. Caching a crop does not. Created by `index.ensure_faces_generation()`, which both `PhotoIndex.load()` and TagTuner's startup call.
+### 6. `generations` Table
+Counters that move whenever a table changes, whoever changes it: TagPup, TagTuner, the CLI or a script. A cache stores the generations it was built at and is current while they have not moved (`tagpup.store.generations`). Triggers made by `tagpup.store.schema` bump them:
+
+- `photos`: every insert, delete and update of a photo row (`generation_photos_insert`, `_delete`, `_update`). The Suggest index reloads when it moves.
+- `faces`: every insert and delete, and every update of `name`, `name_source`, `excluded`, `embedding` or `photo_path`. Caching a crop does not move it. Identify Faces keys its queue and match lists on it.
+- `taxonomy`: every insert and delete in `tag_taxonomy`, and every update of `tag`, `name`, `parent_id` or `has_face`. TagPup keys who the tree says each person is on it, and so sees TagTuner's edits.
+
+Replaces `faces_generation` and `taxonomy_generation`, one table each, whose counts it carried over (migration 2).
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
-| `id` | INTEGER | PRIMARY KEY | Always `1`. |
-| `generation` | INTEGER | NOT NULL | Bumped by the triggers; only ever compared for change. |
+| `name` | TEXT | PRIMARY KEY | `photos`, `faces` or `taxonomy`. |
+| `value` | INTEGER | NOT NULL | Bumped by the triggers; only ever compared for change. |
 
-### 7. `taxonomy_generation` Table
-One row, a counter that moves whenever the tag tree changes. TagPup caches who the tree says each person is and resolves every keyword it writes through that cache; TagTuner edits the tree from another process, so TagPup compares this counter on each lookup and rereads the tree when it has moved. Triggers on `tag_taxonomy` (`taxonomy_generation_insert`, `_delete`, `_update`) bump it on every insert, delete, and update of `tag`, `name`, `parent_id` or `has_face`. Created by `index.ensure_taxonomy_generation()`, which both `PhotoIndex.load()` and TagTuner's startup call.
+### 7. `schema_version` Table
+The migrations applied to this library, one row each, in order (`tagpup.store.schema`). `schema.ensure()` applies the ones missing wherever a library is opened: by PhotoIndex, TagTuner's start-up, the desktop runner, the tag tree, and each request that names a library. Migration 1 brings a library of any age to the tables of 2026-09; each one after is a step forward.
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
-| `id` | INTEGER | PRIMARY KEY | Always `1`. |
-| `generation` | INTEGER | NOT NULL | Bumped by the triggers; only ever compared for change. |
+| `version` | INTEGER | PRIMARY KEY | The migration's number. |
+| `name` | TEXT | NOT NULL | What it did. |
+| `applied_at` | TEXT | NOT NULL | Local time it was applied, `YYYY-MM-DD HH:MM:SS`. |
 
 ---
 
@@ -199,14 +206,15 @@ erDiagram
         BLOB embedding
     }
 
-    faces_generation {
-        INTEGER id PK
-        INTEGER generation
+    generations {
+        TEXT name PK
+        INTEGER value
     }
 
-    taxonomy_generation {
-        INTEGER id PK
-        INTEGER generation
+    schema_version {
+        INTEGER version PK
+        TEXT name
+        TEXT applied_at
     }
 
     photos ||--o{ faces : "contains"

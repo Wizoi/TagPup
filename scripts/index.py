@@ -3,12 +3,9 @@ import os
 import json
 import socket
 import sqlite3
-try:
-    from . import db as tagpup_db
-    from . import paths
-except ImportError:  # imported as a top-level module
-    import db as tagpup_db
-    import paths
+import _root  # noqa: F401
+import db as tagpup_db
+import paths
 import logging
 import hashlib
 import subprocess
@@ -17,6 +14,8 @@ import time
 from typing import List, Dict, Any, Tuple, Optional, Set
 import numpy as np
 import faiss
+
+from tagpup.store import schema
 
 logger = logging.getLogger("tagpup_cli.index")
 
@@ -158,70 +157,6 @@ configure_connection = tagpup_db.configure
 retry_when_busy = tagpup_db.retry_when_busy
 
 
-def ensure_faces_generation(conn):
-    """A counter that moves whenever a face's identity changes, by whoever changes it.
-
-    Identify Faces caches its queue against a fingerprint of the faces table. Counts
-    cannot see a person renamed or a face moved from one person to another, so the
-    triggers below count those, and every writer -- TagTuner, TagPup, the CLI, a
-    script -- bumps it without knowing it exists. A crop being cached is not a change
-    of identity and leaves it alone.
-    """
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS faces_generation (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            generation INTEGER NOT NULL
-        )
-    """)
-    conn.execute("INSERT OR IGNORE INTO faces_generation (id, generation) VALUES (1, 0)")
-    bump = "BEGIN UPDATE faces_generation SET generation = generation + 1 WHERE id = 1; END"
-    conn.execute("CREATE TRIGGER IF NOT EXISTS faces_generation_insert"
-                 " AFTER INSERT ON faces " + bump)
-    conn.execute("CREATE TRIGGER IF NOT EXISTS faces_generation_delete"
-                 " AFTER DELETE ON faces " + bump)
-    conn.execute("CREATE TRIGGER IF NOT EXISTS faces_generation_update"
-                 " AFTER UPDATE OF name, name_source, excluded, embedding, photo_path"
-                 " ON faces " + bump)
-    conn.commit()
-
-
-def faces_generation(conn):
-    """The counter above, or 0 on a database that does not have it yet."""
-    try:
-        row = conn.execute("SELECT generation FROM faces_generation WHERE id = 1").fetchone()
-    except sqlite3.OperationalError:
-        return 0
-    return row[0] if row else 0
-
-
-def ensure_taxonomy_generation(conn):
-    """A counter that moves whenever the tag tree changes, by whoever changes it.
-
-    TagPup caches who the tree says each person is, and resolves every keyword it
-    writes through that. TagTuner is another process: a person it renamed or merged
-    stayed under the old path in TagPup's cache until TagPup restarted, and TagPup
-    wrote the old path back into photos. The cache is now kept against this.
-    """
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table'"
-                        " AND name = 'tag_taxonomy'").fetchone():
-        return  # nothing to watch yet; PhotoIndex.load creates both
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS taxonomy_generation (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            generation INTEGER NOT NULL
-        )
-    """)
-    conn.execute("INSERT OR IGNORE INTO taxonomy_generation (id, generation) VALUES (1, 0)")
-    bump = "BEGIN UPDATE taxonomy_generation SET generation = generation + 1 WHERE id = 1; END"
-    conn.execute("CREATE TRIGGER IF NOT EXISTS taxonomy_generation_insert"
-                 " AFTER INSERT ON tag_taxonomy " + bump)
-    conn.execute("CREATE TRIGGER IF NOT EXISTS taxonomy_generation_delete"
-                 " AFTER DELETE ON tag_taxonomy " + bump)
-    conn.execute("CREATE TRIGGER IF NOT EXISTS taxonomy_generation_update"
-                 " AFTER UPDATE OF tag, name, parent_id, has_face ON tag_taxonomy " + bump)
-    conn.commit()
-
-
 class PhotoIndex:
     def __init__(self, db_path: str = "data/photo_index.db"):
         self.db_path = db_path
@@ -233,84 +168,6 @@ class PhotoIndex:
         # One load at a time. TagPup loads its startup library in a background thread,
         # and a Suggest clicked meanwhile checks for changes on the same index.
         self._load_lock = threading.RLock()
-
-    def _create_table(self):
-        """Create the schema table if it does not exist."""
-        if self.conn is None:
-            return
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS photos (
-                path TEXT PRIMARY KEY,
-                mtime REAL,
-                size INTEGER,
-                tags TEXT,
-                people TEXT,
-                captions TEXT,
-                raw_metadata TEXT,
-                embedding BLOB,
-                document_id TEXT
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS faces (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                photo_path TEXT,
-                box TEXT,
-                embedding BLOB,
-                name TEXT,
-                crop_image BLOB,
-                prob REAL,
-                name_source TEXT,
-                excluded INTEGER DEFAULT 0,
-                excluded_reason TEXT,
-                FOREIGN KEY(photo_path) REFERENCES photos(path) ON DELETE CASCADE
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS embedding_cache (
-                path TEXT PRIMARY KEY,
-                mtime REAL,
-                size INTEGER,
-                model_name TEXT,
-                pretrained TEXT,
-                preserve_full_frame INTEGER,
-                max_aspect_ratio REAL,
-                force_image_size INTEGER,
-                embedding BLOB
-            )
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_faces_photo_path ON faces(photo_path)
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_faces_name ON faces(name)
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS tag_taxonomy (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                tag TEXT UNIQUE,
-                parent_id INTEGER,
-                name TEXT,
-                has_face INTEGER DEFAULT 0,
-                hidden_from_autocomplete INTEGER DEFAULT 0,
-                FOREIGN KEY(parent_id) REFERENCES tag_taxonomy(id) ON DELETE CASCADE
-            )
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_tag_taxonomy_tag ON tag_taxonomy(tag)
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS tag_embeddings (
-                tag TEXT,
-                prompt TEXT,
-                model_name TEXT,
-                pretrained TEXT,
-                embedding BLOB,
-                PRIMARY KEY (tag, prompt, model_name, pretrained)
-            )
-        """)
-        self.conn.commit()
 
     def load(self) -> bool:
         """Connect to SQLite database and build in-memory FAISS index."""
@@ -327,118 +184,12 @@ class PhotoIndex:
             # Reloads (after remove_paths, build_or_update) reuse the connection. Each
             # used to open a new one and drop the old one unclosed, and on Windows an
             # unclosed handle keeps the database file locked.
+            schema.ensure(self.db_path)
             if self.conn is None:
                 self.conn = tagpup_db.connect(self.db_path, timeout=30.0, check_same_thread=False)
             configure_connection(self.conn)
             self.conn.execute("PRAGMA foreign_keys = ON;")
-            self._create_table()
-            
-            # Dynamic migration: add crop_image and prob columns to faces table if they don't exist
             cursor = self.conn.cursor()
-            cursor.execute("PRAGMA table_info(faces)")
-            columns = [info[1] for info in cursor.fetchall()]
-            if "crop_image" not in columns:
-                logger.info("Migrating faces table: Adding crop_image column...")
-                cursor.execute("ALTER TABLE faces ADD COLUMN crop_image BLOB")
-                self.conn.commit()
-            if "prob" not in columns:
-                logger.info("Migrating faces table: Adding prob column...")
-                cursor.execute("ALTER TABLE faces ADD COLUMN prob REAL")
-                self.conn.commit()
-            if "excluded" not in columns:
-                # Faces deliberately kept out of identity work: passers-by, crowd noise,
-                # bad crops. An earlier attempt used the magic name 'Non Person', which
-                # this same load() still migrates away, because a name cannot survive
-                # re-clustering. A column can.
-                logger.info("Migrating faces table: Adding excluded columns...")
-                cursor.execute("ALTER TABLE faces ADD COLUMN excluded INTEGER DEFAULT 0")
-                cursor.execute("ALTER TABLE faces ADD COLUMN excluded_reason TEXT")
-                self.conn.commit()
-            # A photo's identity, independent of where it sits on disk.
-            #
-            # Renaming or moving a file leaves its row describing something that no
-            # longer exists, and the row is the valuable half: it holds the embedding
-            # and the faces, names included. DocumentID is the XMP standard's
-            # per-document identifier and most photos already carry one, so this is
-            # mostly a matter of recording what is already there.
-            cursor.execute("PRAGMA table_info(photos)")
-            photo_columns = [info[1] for info in cursor.fetchall()]
-            if "document_id" not in photo_columns:
-                logger.info("Migrating photos table: Adding document_id column...")
-                cursor.execute("ALTER TABLE photos ADD COLUMN document_id TEXT")
-                cursor.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_photos_document_id "
-                    "ON photos(document_id)")
-                self.conn.commit()
-
-            if "name_source" not in columns:
-                # Records who decided a face's name. 'manual' means a person chose it in
-                # TagTuner; those decisions survive re-clustering, which otherwise
-                # re-derives every name from scratch and discards corrections.
-                logger.info("Migrating faces table: Adding name_source column...")
-                cursor.execute("ALTER TABLE faces ADD COLUMN name_source TEXT")
-                self.conn.commit()
-            
-            # Identify Faces filters on `excluded` and `name` together, on every load:
-            # who is still nameless, how many are excluded, which named faces to
-            # compare against. Leading with `excluded` lets a count of the excluded
-            # bucket be answered from the index alone, without touching rows that
-            # carry a 2 KB embedding and a 6 KB JPEG crop apiece -- 0.37s of scanning
-            # on a 225,000-face library, for a number that is usually near zero.
-            #
-            # Created here rather than in _create_table() because the columns it spans
-            # are added by the migrations just above: a database old enough to be
-            # missing `excluded` would fail on an index that names it.
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_faces_identify ON faces(excluded, name)")
-            self.conn.commit()
-            ensure_faces_generation(self.conn)
-            ensure_taxonomy_generation(self.conn)
-
-            # Paths compare the way the filesystem does (paths.sql_equals): without
-            # case on Windows. An equality under a collation can only use an index
-            # declared with that collation, so without these every such lookup would
-            # scan -- which is what the LOWER(path) and `LIKE ?` comparisons they
-            # replace were doing, 225,000 faces at a time.
-            if paths.COLLATE != "BINARY":
-                for index_name, table, column in (
-                    ("idx_photos_path_nocase", "photos", "path"),
-                    ("idx_faces_photo_path_nocase", "faces", "photo_path"),
-                    ("idx_embedding_cache_path_nocase", "embedding_cache", "path"),
-                ):
-                    cursor.execute("CREATE INDEX IF NOT EXISTS %s ON %s(%s COLLATE %s)"
-                                   % (index_name, table, column, paths.COLLATE))
-                self.conn.commit()
-
-            # Migrate tag_taxonomy: is_people -> has_face
-            cursor.execute("PRAGMA table_info(tag_taxonomy)")
-            tax_columns = [info[1] for info in cursor.fetchall()]
-            if tax_columns:
-                if "has_face" not in tax_columns:
-                    logger.info("Migrating tag_taxonomy table: Adding has_face column...")
-                    cursor.execute("ALTER TABLE tag_taxonomy ADD COLUMN has_face INTEGER DEFAULT 0")
-                    if "is_people" in tax_columns:
-                        cursor.execute("UPDATE tag_taxonomy SET has_face = is_people")
-                    elif "is_face" in tax_columns:
-                        cursor.execute("UPDATE tag_taxonomy SET has_face = is_face")
-                    self.conn.commit()
-            
-            # Migrate the old 'Non Person' marker onto the excluded column.
-            #
-            # Storing it as a name never worked -- re-clustering rewrites names, so the
-            # marker could not survive -- and the previous migration simply cleared it to
-            # NULL, which threw the information away: those faces went straight back into
-            # the matching pool as ordinary unidentified faces. They meant exactly what
-            # excluded now means, so carry the intent across rather than dropping it.
-            cursor.execute("SELECT COUNT(*) FROM faces WHERE name = 'Non Person'")
-            if cursor.fetchone()[0] > 0:
-                logger.info("Migrating faces table: converting 'Non Person' to excluded...")
-                cursor.execute(
-                    "UPDATE faces SET name = NULL, excluded = 1,"
-                    " excluded_reason = 'migrated from Non Person'"
-                    " WHERE name = 'Non Person'"
-                )
-                self.conn.commit()
 
             # Taken before the rows: a write landing in between costs one reload
             # later, never a missed one. See reload_if_changed.

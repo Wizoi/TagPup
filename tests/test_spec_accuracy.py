@@ -139,53 +139,54 @@ class TestSpecMatchesImplementation(unittest.TestCase):
 
 
 class TestSpecDatabaseSchemaMatchesCode(unittest.TestCase):
-    """The schema tables in DATABASE.md must match what the index actually creates."""
+    """The schema tables in DATABASE.md must match what a new library actually has.
+
+    Read from a library made by tagpup.store.schema, not from the text of a module: the
+    schema was made in four places, and a regular expression over one of them saw only
+    its idea of it (docs/findings.md, #48).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        import tempfile
+
+        from tagpup.store import db, schema
+
+        folder = tempfile.mkdtemp(prefix="spec_schema_")
+        try:
+            db_path = os.path.join(folder, "library.db")
+            schema.ensure(db_path)
+            conn = db.connect(db_path)
+            try:
+                tables = [name for (name,) in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    " AND name NOT LIKE 'sqlite_%'")]
+                cls.columns = {table: {row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)}
+                               for table in tables}
+            finally:
+                conn.close()
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+        with open(os.path.join(WORKSPACE_DIR, "DATABASE.md"), encoding="utf-8") as f:
+            cls.database_md = f.read()
 
     def test_documented_tables_are_the_tables_created(self):
-        index_src = open(
-            os.path.join(WORKSPACE_DIR, "scripts", "index.py"), encoding="utf-8"
-        ).read()
-        created = set(
-            re.findall(r"CREATE TABLE IF NOT EXISTS\s+(\w+)", index_src, re.IGNORECASE)
-        )
-
-        database_md = open(
-            os.path.join(WORKSPACE_DIR, "DATABASE.md"), encoding="utf-8"
-        ).read()
-        documented = set(re.findall(r"^### \d+\.\s+`(\w+)` Table", database_md, re.M))
-
-        self.assertTrue(created, "no CREATE TABLE statements found in index.py")
+        documented = set(re.findall(r"^### \d+\.\s+`(\w+)` Table", self.database_md, re.M))
+        self.assertTrue(self.columns, "a new library has no tables")
         self.assertEqual(
-            created,
+            set(self.columns),
             documented,
             f"DATABASE.md tables {sorted(documented)} do not match "
-            f"the schema created in index.py {sorted(created)}",
+            f"the tables of a new library {sorted(self.columns)}",
         )
 
     def test_documented_columns_match_each_created_table(self):
-        index_src = open(
-            os.path.join(WORKSPACE_DIR, "scripts", "index.py"), encoding="utf-8"
-        ).read()
-        database_md = open(
-            os.path.join(WORKSPACE_DIR, "DATABASE.md"), encoding="utf-8"
-        ).read()
-
         problems = []
-        for table, body in re.findall(
-            r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\((.*?)\n\s*\)",
-            index_src,
-            re.IGNORECASE | re.DOTALL,
-        ):
-            columns = set()
-            for raw in body.split("\n"):
-                line = raw.strip().rstrip(",")
-                if not line or line.upper().startswith(("FOREIGN KEY", "PRIMARY KEY", "UNIQUE")):
-                    continue
-                columns.add(line.split()[0])
-
+        for table, columns in sorted(self.columns.items()):
             section = re.search(
                 rf"### \d+\.\s+`{table}` Table(.*?)(?=\n### |\n---)",
-                database_md,
+                self.database_md,
                 re.DOTALL,
             )
             if not section:

@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scr
 import paths
 from tagpup import config as tagpup_config
 from tagpup.core import library as libraries
-from tagpup.store import db as tagpup_db
+from tagpup.store import schema
 from tuner_server import TunerHTTPRequestHandler, ThreadedHTTPServer as TunerThreadedHTTPServer
 from tagpup_server import TagPupHTTPRequestHandler, ThreadedHTTPServer as TagPupThreadedHTTPServer
 
@@ -809,64 +809,13 @@ class RunnerApp:
         # Apply schema check/migrations
         self.log_text(f"Starting TagTuner web server on port {port} using DB: {db_path}...\n", tag="info")
         
-        # Schema migration check
-        conn = None
+        # The library's tables, made or brought up to date (tagpup.store.schema).
         try:
-            # Ensure data dir exists
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
-            conn = tagpup_db.connect(db_path)
-            cursor = conn.cursor()
-            # If the database is completely empty/new, load the PhotoIndex schema
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [row[0] for row in cursor.fetchall()]
-            if not tables:
-                self.log_text("Initializing new database schema tables...\n", tag="info")
-                # Initialize empty structure
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS photos (
-                        path TEXT PRIMARY KEY,
-                        mtime REAL,
-                        size INTEGER,
-                        tags TEXT,
-                        people TEXT,
-                        captions TEXT,
-                        raw_metadata TEXT,
-                        embedding BLOB
-                    )
-                """)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS faces (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        photo_path TEXT,
-                        box TEXT,
-                        embedding BLOB,
-                        name TEXT,
-                        crop_image BLOB,
-                        prob REAL,
-                        FOREIGN KEY(photo_path) REFERENCES photos(path) ON DELETE CASCADE
-                    )
-                """)
-                conn.commit()
-
-            cursor.execute("PRAGMA table_info(faces)")
-            columns = [info[1] for info in cursor.fetchall()]
-            if "crop_image" not in columns:
-                self.log_text("Migrating faces table: Adding crop_image column...\n", tag="info")
-                cursor.execute("ALTER TABLE faces ADD COLUMN crop_image BLOB")
-                conn.commit()
-            if "prob" not in columns:
-                self.log_text("Migrating faces table: Adding prob column...\n", tag="info")
-                cursor.execute("ALTER TABLE faces ADD COLUMN prob REAL")
-                conn.commit()
-            
-            # Ensure faces(name) index exists
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_faces_name ON faces(name)")
-            conn.commit()
+            for name in schema.ensure(db_path):
+                self.log_text("Database updated: %s\n" % name, tag="info")
         except Exception as e:
             self.log_text(f"Error checking/migrating schema: {e}\n", tag="error")
-        finally:
-            if conn:
-                conn.close()
 
         try:
             # Dynamically reload tuner_server to pick up any edits to tuner_server.py

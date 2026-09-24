@@ -6,13 +6,12 @@ TagTaxonomy was scripts/taxonomy.py, which is now a name for this module.
 import json
 import logging
 import os
-import sqlite3
 import threading
 from typing import Dict, List, Optional, Set
 
 from tagpup.core import paths, vocabulary
 from tagpup.core.vocabulary import PeopleVocabulary
-from tagpup.store import db
+from tagpup.store import db, generations, schema
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +20,9 @@ PEOPLE_ROOTS = ("People", "Family", "Friends")
 
 
 def generation(conn):
-    """The tag tree's generation counter (PhotoIndex keeps it moving with triggers), or
-    0 on a library that does not have it yet."""
-    try:
-        row = conn.execute("SELECT generation FROM taxonomy_generation WHERE id = 1").fetchone()
-    except sqlite3.OperationalError:
-        return 0
-    return row[0] if row else 0
+    """The tag tree's generation (tagpup.store.generations), or 0 on a library that
+    does not count it yet."""
+    return generations.value(conn, "taxonomy")
 
 
 def sql_branch(path, column="tag"):
@@ -375,19 +370,9 @@ def seed(db_path):
     its photos carry, everyone its faces name (under People), and the paths in its JSON
     file. A tree with nodes in it is left alone."""
     try:
+        schema.ensure(db_path)
         conn = db.connect(db_path, timeout=30.0)
         try:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS tag_taxonomy (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tag TEXT UNIQUE,
-                    parent_id INTEGER,
-                    name TEXT,
-                    has_face INTEGER DEFAULT 0,
-                    hidden_from_autocomplete INTEGER DEFAULT 0,
-                    FOREIGN KEY(parent_id) REFERENCES tag_taxonomy(id) ON DELETE CASCADE
-                )
-            """)
             if conn.execute("SELECT COUNT(*) FROM tag_taxonomy").fetchone()[0] > 0:
                 return
             for root in ("People", "Activity", "Pets", "School", "Trips"):
@@ -500,21 +485,8 @@ class TagTaxonomy:
         if not os.path.exists(self.db_path):
             return
         try:
+            schema.ensure(self.db_path)
             conn = db.connect(self.db_path, timeout=10.0)
-            cursor = conn.cursor()
-            
-            # Make sure table exists
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS tag_taxonomy (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tag TEXT UNIQUE,
-                    parent_id INTEGER,
-                    name TEXT,
-                    has_face INTEGER DEFAULT 0,
-                    hidden_from_autocomplete INTEGER DEFAULT 0,
-                    FOREIGN KEY(parent_id) REFERENCES tag_taxonomy(id) ON DELETE CASCADE
-                )
-            """)
             
             # Insert the paths added since this was loaded, and their ancestors. Not
             # the whole set: a long-running indexer holds what it loaded, and a tag

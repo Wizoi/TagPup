@@ -25,6 +25,7 @@ from tagpup.core.library import Library
 from tagpup.files import keywords as file_keywords
 from tagpup.store.photos import move_rows as move_photo_rows  # noqa: F401  (saving, tests)
 from tagpup.store.photos import record_tags as record_tags_in_index  # noqa: F401  (writers, tests)
+from tagpup.store import schema
 from tagpup.store import taxonomy as store_taxonomy
 from tagpup.core.result import NotFound
 from tagpup.jobs import indexing as indexing_jobs
@@ -232,6 +233,9 @@ def resolve_library_from_url(handler, set_active):
                 return False
             set_active(resolved_db_path)
             handler.db_path = resolved_db_path
+            # A library first reached by its URL was never opened through PhotoIndex,
+            # and without its generations every cache on it goes stale.
+            schema.ensure(resolved_db_path)
 
             # Rewrite path
             if parsed_url.query:

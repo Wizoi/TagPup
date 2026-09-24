@@ -31,6 +31,7 @@ from tagpup.core.result import Conflict, NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services import faces as faces_service
 from tagpup.store import faces as store_faces
+from tagpup.store import schema
 from tagpup.services import indexing
 from tagpup.services import people as people_service
 from tagpup.services import tags as tags_service
@@ -2649,48 +2650,11 @@ def start_server(port=8080, db_path="data/photo_index.db", gui_dir="gui"):
     TunerHTTPRequestHandler.db_path = db_path
     TunerHTTPRequestHandler.gui_dir = gui_dir
 
-    # Automatically check and apply schema migration on startup
-    conn = None
+    # The library's tables, made or brought up to date (tagpup.store.schema).
     try:
-        conn = tagpup_db.connect(db_path, timeout=30.0)
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(faces)")
-        columns = [info[1] for info in cursor.fetchall()]
-        if "crop_image" not in columns:
-            logger.info("Migrating faces table: Adding crop_image column...")
-            cursor.execute("ALTER TABLE faces ADD COLUMN crop_image BLOB")
-            conn.commit()
-        if "prob" not in columns:
-            logger.info("Migrating faces table: Adding prob column...")
-            cursor.execute("ALTER TABLE faces ADD COLUMN prob REAL")
-            conn.commit()
-        
-        # Ensure faces(name) index exists
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_faces_name ON faces(name)")
-        conn.commit()
-
-        # And the one Identify Faces filters on. PhotoIndex.load() creates it too, but
-        # opening TagTuner does not necessarily go through PhotoIndex, and this screen
-        # is unusable without it on a large library: every count of the excluded bucket
-        # scans the whole faces table, crops and embeddings included.
-        if "excluded" in columns:
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_faces_identify ON faces(excluded, name)")
-            conn.commit()
-            # So its cache sees renames and reassignments, for the same reason.
-            from index import ensure_faces_generation, ensure_taxonomy_generation
-            ensure_faces_generation(conn)
-            # And so TagPup, another process, sees the tree edits made here.
-            ensure_taxonomy_generation(conn)
-
-        # ('Non Person' is migrated onto the excluded column by PhotoIndex.load,
-        #  which every entry point calls; it is not duplicated here.)
-        conn.commit()
+        schema.ensure(db_path)
     except Exception as e:
         logger.error(f"Error checking/migrating database schema: {e}")
-    finally:
-        if conn:
-            conn.close()
 
     server_address = ("", port)
     server = None

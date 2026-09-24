@@ -92,10 +92,15 @@ class TestFacesTableIsIndexedForIdentifying(unittest.TestCase):
         pi.load()
         pi.close()
 
+        # A library from before the index, and so before migrations were recorded:
+        # one that has had migration 1 is not looked at again (tagpup.store.schema).
         conn = sqlite3.connect(self.db)
         conn.execute("DROP INDEX IF EXISTS idx_faces_identify")
+        conn.execute("DROP TABLE schema_version")
         conn.commit()
         conn.close()
+        from tagpup.store import schema
+        schema._current.clear()
         self.assertNotIn("idx_faces_identify", self.indexes_on_faces(self.db))
 
         pi = PhotoIndex(db_path=self.db)

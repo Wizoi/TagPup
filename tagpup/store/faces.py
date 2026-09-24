@@ -9,11 +9,10 @@ import contextlib
 import json
 import logging
 import os
-import sqlite3
 import types
 
 from tagpup.core import paths
-from tagpup.store import db
+from tagpup.store import db, generations
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +26,10 @@ def names_in_photo(conn, photo_path):
 
 
 def generation(conn):
-    """The faces table's generation counter (PhotoIndex keeps it moving with triggers),
-    or 0 on a library that does not have it yet. It moves when a name changes, which
-    none of the table's counts need to."""
-    try:
-        row = conn.execute("SELECT generation FROM faces_generation WHERE id = 1").fetchone()
-    except sqlite3.OperationalError:
-        return 0
-    return row[0] if row else 0
+    """The faces table's generation (tagpup.store.generations), or 0 on a library that
+    does not count it yet. It moves when a name changes, which none of the table's
+    counts need to."""
+    return generations.value(conn, "faces")
 
 
 def fingerprint(conn):
