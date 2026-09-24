@@ -38,7 +38,9 @@ class PathLocker:
     #: batch of 100 photos, so a live holder should never come close.
     MAX_LOCK_AGE_SECONDS = 6 * 60 * 60
 
-    def __init__(self, lock_dir: str = "data/locks", max_age: float = None):
+    def __init__(self, lock_dir: str, max_age: float = None):
+        # No default: "data/locks" meant the working directory's, and two indexers in
+        # different folders then took their locks in different places.
         self.lock_dir = lock_dir
         os.makedirs(self.lock_dir, exist_ok=True)
         self.locked_paths = set()

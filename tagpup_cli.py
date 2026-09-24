@@ -291,9 +291,10 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
         photo_index.close()
         return
 
-    # Initialize PathLocker for multi-process locking
+    # Per-photo write locks, shared with every other indexer of the libraries in this
+    # folder, wherever each was started from.
     from index import PathLocker
-    locker = PathLocker()
+    locker = PathLocker(lock_dir=Library(db_path).locks)
     face_processor = FaceProcessor() if not skip_faces else None
     
     try:

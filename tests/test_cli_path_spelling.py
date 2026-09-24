@@ -137,6 +137,32 @@ class TestIndexRecognisesAnotherSpelling(CliDatabaseCase):
         embed_image.assert_not_called()
 
 
+class TestIndexLocksBesideTheLibrary(CliDatabaseCase):
+    """The index command took its per-photo write locks in data/locks under the working
+    directory. A server's indexer runs in the code's folder, so one started by hand from
+    anywhere else locked somewhere else, and the two could write the same photo at once.
+    """
+
+    @patch("embedder.ClipEmbedder._init_model")
+    @patch("embedder.ClipEmbedder.embed_image")
+    @patch("tagpup_cli.MetadataExtractor.batch_read")
+    def test_the_locks_are_beside_the_library(self, batch_read, embed_image, _init_model):
+        photo = os.path.join(self.tmp.name, "Harbour", "gulls.jpg")
+        make_jpeg(photo)
+        embed_image.return_value = [0.1] * expected_dim()
+        batch_read.side_effect = lambda files, *a, **k: [
+            {"path": f, "tags": [], "people": [], "captions": [], "raw_metadata": {},
+             "mtime": os.stat(f).st_mtime, "size": os.stat(f).st_size} for f in files]
+
+        # run_cli works in a folder of its own, so the working directory is not the
+        # library's folder.
+        result = self.run_cli(["index", "--skip-faces", os.path.dirname(photo)])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp.name, "locks")),
+                        "the locks were not taken beside the library")
+
+
 class TestFolderFilterIsAFolderNotAPrefix(CliDatabaseCase):
     def setUp(self):
         super().setUp()

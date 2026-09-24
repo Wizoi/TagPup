@@ -22,6 +22,7 @@ class NamesALibrary(unittest.TestCase):
         self.assertEqual(library.face_trace_file,
                          os.path.join("data", "photo_index_face_resolution_trace.json"))
         self.assertEqual(library.backups, os.path.join(os.path.abspath("data"), "backups"))
+        self.assertEqual(library.locks, os.path.join(os.path.abspath("data"), "locks"))
 
     def test_one_key_for_every_spelling_of_one_file(self):
         relative = Library(os.path.join("data", "photo_index.db"))

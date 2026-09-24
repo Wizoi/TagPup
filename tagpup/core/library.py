@@ -65,5 +65,15 @@ class Library:
         """Where copies go before a bulk write: beside the library, never in the code."""
         return os.path.join(self.folder, "backups")
 
+    @property
+    def locks(self):
+        """Where indexers of the libraries in this folder take their per-photo write locks.
+
+        It was data/locks under the working directory. The indexer a server starts runs
+        in the code's folder, so one started by hand from anywhere else locked in another
+        folder, and the two could write the same photo at once.
+        """
+        return os.path.join(self.folder, "locks")
+
     def _beside(self, suffix):
         return os.path.splitext(self.path)[0] + suffix
