@@ -131,10 +131,18 @@ def file_name_for(name):
     return name
 
 
+#: The first part of a URL the servers route themselves. A library is reached at
+#: /<its name>/, so one called any of these could be created and never opened: its URL
+#: reaches the route (docs/findings.md, #73). Whatever the case, as file names are.
+ROUTES = frozenset({"api", "gui", "gui_tagpup"})
+
+
 def problem_with_new_name(file_name):
     """Why a library cannot be created under this file name, or None if it can."""
     if not re.match(r"^[a-zA-Z0-9_\-]+\.db$", file_name):
         return "Invalid characters in database name"
     if file_name in NOT_LIBRARIES:
         return "Cannot create database with reserved test name"
+    if picker_name(file_name).lower() in ROUTES:
+        return "'%s' is the name of one of the app's own pages; choose another" % picker_name(file_name)
     return None

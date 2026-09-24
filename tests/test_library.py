@@ -105,6 +105,12 @@ class ThePicker(unittest.TestCase):
         self.assertIsNotNone(library.problem_with_new_name("kr track.db"))
         self.assertIsNotNone(library.problem_with_new_name("tag_emb_cache.db"))
 
+    def test_a_name_the_urls_route_is_refused(self):
+        # Created, it could never be opened: /api/ reaches the API (#73).
+        for taken in ("api.db", "gui.db", "gui_tagpup.db", "API.db"):
+            self.assertIsNotNone(library.problem_with_new_name(taken), taken)
+        self.assertIsNone(library.problem_with_new_name("apiary.db"))
+
 
 if __name__ == "__main__":
     unittest.main()

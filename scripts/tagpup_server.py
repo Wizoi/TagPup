@@ -21,6 +21,7 @@ import numpy as np
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
 from tagpup.core import clustering, dates, fields, renaming, suggesting, vocabulary
+from tagpup.core import library as libraries
 from tagpup.core.library import Library
 from tagpup.files import images
 from tagpup.files import keywords as file_keywords
@@ -214,7 +215,9 @@ def resolve_library_from_url(handler, set_active):
         potential_db = db_match.group(1)
         subpath = db_match.group(2) or "/"
 
-        RESERVED_PATHS = {"api", "gui", "gui_tagpup", "index.html", "style.css", "app.js", "favicon.ico", ""}
+        # The routes a library may not be named for (tagpup.core.library.ROUTES), and the
+        # page's own files.
+        RESERVED_PATHS = set(libraries.ROUTES) | {"index.html", "style.css", "app.js", "favicon.ico", ""}
         if potential_db not in RESERVED_PATHS and not potential_db.endswith((".css", ".js", ".html", ".png", ".jpg", ".jpeg", ".ico")):
             db_name = potential_db + ".db"
 
