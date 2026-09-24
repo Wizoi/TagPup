@@ -15,10 +15,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from exiftool.exceptions import ExifToolExecuteError  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from tagpup import config  # noqa: E402
 from tagpup.files import exiftool_session, keywords  # noqa: E402
 
-EXIFTOOL = config.exiftool_path()
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import own_home  # noqa: E402
+
+#: Where the machine has ExifTool; the checkout's settings are not read.
+EXIFTOOL = own_home.installed_exiftool()
 requires_exiftool = unittest.skipUnless(EXIFTOOL and os.path.exists(EXIFTOOL), "ExifTool not installed")
 
 

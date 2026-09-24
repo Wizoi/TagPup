@@ -20,24 +20,13 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import own_home  # noqa: E402
 from exiftool_session import ExifToolSession  # noqa: E402
 
 
-def _exiftool_path():
-    import configparser
-
-    config = configparser.ConfigParser(interpolation=None)
-    config_path = os.path.join(WORKSPACE_DIR, "config.ini")
-    default = os.path.join(
-        os.environ.get("USERPROFILE", ""), r"AppData\Local\Programs\ExifTool\exiftool.exe"
-    )
-    if os.path.exists(config_path):
-        config.read(config_path, encoding="utf-8")
-        default = os.path.expandvars(config.get("paths", "exiftool", fallback=default))
-    return default if os.path.exists(default) else None
-
-
-EXIFTOOL = _exiftool_path()
+#: Where the machine has ExifTool; the checkout's settings are not read.
+EXIFTOOL = own_home.installed_exiftool()
 
 NAME = "Zoë Marchetti"            # in cp1252, but not ASCII
 OUTSIDE_CP1252 = "Ωmega Relay"      # Greek capital omega: not in cp1252 at all

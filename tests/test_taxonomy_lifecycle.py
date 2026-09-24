@@ -31,24 +31,12 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 from tagpup_server import start_server as start_tagpup_server, set_active_db_path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
+import own_home  # noqa: E402
 from face_rows import add_face, add_people, people_of  # noqa: E402
 
 
-def _exiftool_path():
-    import configparser
-
-    config = configparser.ConfigParser(interpolation=None)
-    config_path = os.path.join(WORKSPACE_DIR, "config.ini")
-    default = os.path.join(
-        os.environ.get("USERPROFILE", ""), r"AppData\Local\Programs\ExifTool\exiftool.exe"
-    )
-    if os.path.exists(config_path):
-        config.read(config_path, encoding="utf-8")
-        default = os.path.expandvars(config.get("paths", "exiftool", fallback=default))
-    return default if os.path.exists(default) else None
-
-
-EXIFTOOL = _exiftool_path()
+#: Where the machine has ExifTool; the checkout's settings are not read.
+EXIFTOOL = own_home.installed_exiftool()
 requires_exiftool = unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
 
 
@@ -56,13 +44,15 @@ class TaxonomyTestBase(unittest.TestCase):
     """Boots one TagPup server against a scratch database, reset between tests."""
 
     TEST_PORT = free_port()
-    TEST_DB = os.path.join(WORKSPACE_DIR, "data", "test_taxonomy_lifecycle.db")
+    DB_NAME = "test_taxonomy_lifecycle.db"   # in a home of the class's own
 
     @classmethod
     def setUpClass(cls):
         # Its own port: subclasses inherit the attribute, and a port
         # already held by the last class's server is refused.
         cls.TEST_PORT = free_port()
+        cls.home = own_home.for_class(cls)
+        cls.TEST_DB = cls.home.library(cls.DB_NAME)
         from index import PhotoIndex
 
         pi = PhotoIndex(db_path=cls.TEST_DB)
@@ -84,12 +74,6 @@ class TaxonomyTestBase(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         set_active_db_path(None)
-        for path in (cls.TEST_DB, cls.TEST_DB.replace(".db", "_taxonomy.json")):
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                except Exception:
-                    pass
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="tagpup_tax_")
