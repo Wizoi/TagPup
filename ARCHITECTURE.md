@@ -193,6 +193,7 @@ Exit: the guard tests for config, database connections, ExifTool and layers pass
   - [x] Rotate: `tagpup.services.photos.rotate`.
   - [x] Delete: `tagpup.services.photos.delete`.
   - [x] Time shift: `tagpup.services.photos.shift_date_taken`.
+  - [x] Smart Rename: `tagpup.services.photos.smart_rename`. The route still orders the photos, by the Date Taken in its folder cache.
 - Tests move down to the service level.
 
 Exit: no action is implemented in two places, and migrated handlers only parse the request, call a service and reply.

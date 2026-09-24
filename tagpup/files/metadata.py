@@ -9,7 +9,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from tagpup.core import vocabulary
+from tagpup.core import renaming, vocabulary
+from tagpup.core.renaming import sanitize_filename  # noqa: F401  (imported from here by older code)
 from tagpup.files.exiftool_session import ExifToolSession
 from tagpup.files.identity import ensure_document_id, read_document_id
 
@@ -300,16 +301,6 @@ def rotate_image_file(photo_path: str, direction: str, exiftool_path: Optional[s
     return new
 
 
-def sanitize_filename(name: str) -> str:
-    """Removes or replaces invalid filesystem characters to make the filename safe."""
-    invalid_chars = '<>:"/\\|?*'
-    for c in invalid_chars:
-        name = name.replace(c, '_')
-    # Filter printable characters and strip
-    name = "".join(ch for ch in name if ch.isprintable())
-    return name.strip()
-
-
 def sync_title_to_filename(photo_path: str, new_title: str, exiftool_path: str,
                            rename_format: str) -> str:
     """If the photo has an XMP-xmpMM:PreservedFileName tag set, automatically syncs
@@ -337,17 +328,7 @@ def sync_title_to_filename(photo_path: str, new_title: str, exiftool_path: str,
             grouping = parts[0]
             index_str = parts[1]
 
-            # Format new name
-            new_title_clean = str(new_title).strip()
-            new_base = rename_format.replace("{grouping}", grouping).replace("{index}", index_str)
-            if new_title_clean:
-                new_base = new_base.replace("{caption}", new_title_clean)
-            else:
-                new_base = new_base.replace(" - {caption}", "").replace("- {caption}", "").replace("{caption}", "")
-
-            # Sanitize
-            new_base = sanitize_filename(new_base)
-            new_name = new_base + ext
+            new_name = renaming.file_base(rename_format, grouping, index_str, new_title) + ext
 
             new_path = os.path.join(os.path.dirname(photo_path), new_name)
 

@@ -218,7 +218,12 @@ class TestTheHandlersActuallyDoIt(unittest.TestCase):
         return text[start:end]
 
     def test_the_rename_handler_moves_photo_and_face_rows(self):
-        self.assertIn("move_photo_rows(", self.body_of("handle_post_folder_rename_photos"),
+        # Through the service, which moves them.
+        import inspect
+        from tagpup.services import photos
+
+        self.assertIn("smart_rename(", self.body_of("handle_post_folder_rename_photos"))
+        self.assertIn("photos.move_rows(", inspect.getsource(photos.smart_rename),
                       "renaming no longer moves the photo's index rows")
 
     def test_saving_a_renamed_photo_moves_its_rows(self):

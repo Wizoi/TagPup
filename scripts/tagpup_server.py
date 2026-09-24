@@ -26,6 +26,7 @@ from tagpup import config as tagpup_config
 from tagpup.core import dates, renaming, vocabulary
 from tagpup.core.library import Library
 from tagpup.files import keywords as file_keywords
+from tagpup.store.photos import move_rows as move_photo_rows  # noqa: F401  (saving, tests)
 from tagpup.services import photos as photo_actions
 from tagpup.store.photos import record_file_stat as record_file_stat_in_index  # noqa: F401  (writer.py)
 from tagpup.files.keywords import (  # noqa: F401  (imported from here by other scripts)
@@ -378,95 +379,6 @@ def zero_shot_candidates(taxonomy, configured):
             candidates.append(leaf)
     return candidates
 
-
-def move_photo_rows(db_path, renames):
-    """Move index rows from each old path to its new one, and its faces with them.
-
-    `renames` maps old path to new path, in any spelling. Returns (moved, skipped):
-    how many photo rows actually changed, and the (old, new) pairs left where they
-    were because the new path already had rows. Re-pointing rows at a path that
-    already has them is how 233 duplicate faces were made, so a destination is
-    checked first and an occupied one is reported rather than merged into.
-
-    A destination is free when nothing is there, when it is the same file (a rename
-    that only changes case), or when whatever is there is itself moving away in this
-    same call -- a rename that shuffles numbered files among themselves, or the
-    occupant of a name that was moved aside to make room. The rows are moved in one
-    transaction, by rowid, through a placeholder, so a shuffle never collides with
-    itself on the way.
-    """
-    def rows_at(cursor, table, column, id_column, path):
-        where, params = paths.sql_equals(column, path)
-        return [r[0] for r in cursor.execute(
-            "SELECT %s FROM %s WHERE %s" % (id_column, table, where), params)]
-
-    def move(conn):
-        cursor = conn.cursor()
-        plan = dict(renames)
-        skipped = []
-        # Settle what moves first: skipping one rename can make another's
-        # destination occupied, so repeat until nothing changes.
-        changed = True
-        while changed:
-            changed = False
-            leaving = {paths.key(old) for old in plan}
-            arriving = set()
-            for old_path, new_path in list(plan.items()):
-                new_key = paths.key(new_path)
-                clash = new_key in arriving
-                if not clash and not paths.same(old_path, new_path) and new_key not in leaving:
-                    clash = bool(rows_at(cursor, "photos", "path", "rowid", new_path)
-                                 or rows_at(cursor, "faces", "photo_path", "id", new_path))
-                if clash:
-                    skipped.append((old_path, new_path))
-                    del plan[old_path]
-                    changed = True
-                    break
-                arriving.add(new_key)
-
-        has_cache = bool(cursor.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'embedding_cache'").fetchone())
-        staged = []
-        for n, (old_path, new_path) in enumerate(plan.items()):
-            photo_ids = rows_at(cursor, "photos", "path", "rowid", old_path)
-            face_ids = rows_at(cursor, "faces", "photo_path", "id", old_path)
-            # The cached CLIP embedding too: a rename keeps the file's mtime and size,
-            # which is what the cache is checked against, so it is still good. Left
-            # behind, the renamed photo was embedded again from scratch.
-            cache_ids = (rows_at(cursor, "embedding_cache", "path", "rowid", old_path)
-                         if has_cache else [])
-            # "<" cannot appear in a Windows file name, and this never outlives
-            # the transaction.
-            placeholder = "<moving %d>" % n
-            cursor.executemany("UPDATE photos SET path = ? WHERE rowid = ?",
-                               [(placeholder, rowid) for rowid in photo_ids])
-            if cache_ids:
-                cursor.executemany("UPDATE embedding_cache SET path = ? WHERE rowid = ?",
-                                   [(placeholder, rowid) for rowid in cache_ids])
-            staged.append((paths.stored(new_path), photo_ids, face_ids, cache_ids))
-
-        moved = 0
-        for new_stored, photo_ids, face_ids, cache_ids in staged:
-            for rowid in photo_ids:
-                cursor.execute("UPDATE photos SET path = ? WHERE rowid = ?", (new_stored, rowid))
-                moved += cursor.rowcount
-            cursor.executemany("UPDATE faces SET photo_path = ? WHERE id = ?",
-                               [(new_stored, face_id) for face_id in face_ids])
-            if cache_ids:
-                # Whatever was cached under the new name described another file; it
-                # is only derived data, keyed by path, and would block the move.
-                where, params = paths.sql_equals("path", new_stored)
-                cursor.execute("DELETE FROM embedding_cache WHERE " + where, params)
-                cursor.executemany("UPDATE embedding_cache SET path = ? WHERE rowid = ?",
-                                   [(new_stored, rowid) for rowid in cache_ids])
-        return moved, skipped
-
-    moved, skipped = tagpup_db.write_with_connection(
-        db_path, move, label="index rows for %d renamed photo(s)" % len(renames))
-    for old_path, new_path in skipped:
-        logger.warning("Renamed %s to %s, but the index already has rows for the new "
-                       "name; left both as they were.", old_path, new_path)
-    return moved, skipped
 
 #: The files this app treats as photos.
 PHOTO_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"})
@@ -2579,182 +2491,21 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     return "9999"
                     
             sorted_paths = sorted(photo_paths, key=get_date_taken_sort_key)
-            
-            # Calculate target path for each selected file
-            N = len(sorted_paths)
-            index_len = len(str(N))
-            
-            from exiftool_session import ExifToolSession
-            from metadata import sanitize_filename
-            executable = self.get_exiftool_path()
-            
-            selected_renames = {}
-            
-            for idx, old_path in enumerate(sorted_paths, start=1):
-                if not os.path.exists(old_path):
-                    continue
-                    
-                with ExifToolSession(executable=executable) as et:
-                    meta = et.get_tags([old_path], tags=[
-                        "XMP-xmpMM:PreservedFileName", "XMP:PreservedFileName",
-                        "XMP:Title", "Title", "XMP:Description", "Description",
-                        "IPTC:Caption-Abstract", "Caption-Abstract"
-                    ])
-                    meta_dict = meta[0] if meta else {}
-                    
-                preserved = None
-                for k, v in meta_dict.items():
-                    base = k.split(":")[-1] if ":" in k else k
-                    if base == "PreservedFileName":
-                        preserved = str(v).strip()
-                        break
-                        
-                if not preserved:
-                    orig_name = os.path.basename(old_path)
-                    with ExifToolSession(executable=executable) as et:
-                        et.set_tags([old_path], tags={"XMP-xmpMM:PreservedFileName": orig_name}, params=["-overwrite_original"])
-                        
-                title = ""
-                for k, v in meta_dict.items():
-                    base = k.split(":")[-1] if ":" in k else k
-                    if base in ["Description", "Caption-Abstract", "Title"]:
-                        if v:
-                            if isinstance(v, list) and v:
-                                title = str(v[0]).strip()
-                            else:
-                                title = str(v).strip()
-                            if title:
-                                break
-                title = title.strip()
-                
-                index_str = str(idx).zfill(index_len)
-                new_base = format_pattern.replace("{grouping}", grouping).replace("{index}", index_str)
-                if title:
-                    new_base = new_base.replace("{caption}", title)
-                else:
-                    new_base = new_base.replace(" - {caption}", "").replace("- {caption}", "").replace("{caption}", "")
-                    
-                new_base = sanitize_filename(new_base)
-                ext = os.path.splitext(old_path)[1]
-                new_name = new_base + ext
-                # In the photo's own folder. A scan includes subfolders, and this
-                # joined every new name to the top one, moving photos out of theirs.
-                new_path = os.path.join(os.path.dirname(old_path), new_name)
-
-                selected_renames[old_path] = new_path
-
-            # Identify and resolve external conflicts on disk. The occupant is moved
-            # aside, and its index row has to go with it -- otherwise the photo
-            # renamed into its place finds the name taken in the index.
-            selected_keys = {paths.key(p) for p in selected_renames}
-            target_keys = {paths.key(p) for p in selected_renames.values()}
-            occupant_moves = {}
-            for old_path, target_path in selected_renames.items():
-                if os.path.exists(target_path) and paths.key(target_path) not in selected_keys:
-                    dir_name = os.path.dirname(target_path)
-                    base, ext = os.path.splitext(os.path.basename(target_path))
-                    counter = 1
-                    safe_path = os.path.join(dir_name, f"{base}_conflict_{counter}{ext}")
-                    while os.path.exists(safe_path) or paths.key(safe_path) in target_keys:
-                        counter += 1
-                        safe_path = os.path.join(dir_name, f"{base}_conflict_{counter}{ext}")
-                    os.rename(target_path, safe_path)
-                    occupant_moves[target_path] = safe_path
-
-            # Two passes through temporary names, so a run shuffling numbered names
-            # among themselves never lands on a name not yet vacated.
-            import time
-
-            def temporary_name(path):
-                return os.path.join(os.path.dirname(path), "tmp_rename_%s_%s%s" % (
-                    hash(path), time.time(), os.path.splitext(path)[1]))
-
-            temp_of = {}             # old path -> where it waits
-            updated_paths_map = {}   # old path -> new path, once it is there
-            try:
-                for old_path, target_path in selected_renames.items():
-                    if old_path != target_path:
-                        temp_path = temporary_name(old_path)
-                        os.rename(old_path, temp_path)
-                        temp_of[old_path] = temp_path
-                    else:
-                        updated_paths_map[old_path] = target_path
-                for old_path, temp_path in list(temp_of.items()):
-                    os.rename(temp_path, selected_renames[old_path])
-                    del temp_of[old_path]
-                    updated_paths_map[old_path] = selected_renames[old_path]
-            except OSError as rename_err:
-                # Put every photo back under its old name. A failure part way used to
-                # leave them called tmp_rename_<hash>_<time>, with nothing to undo it.
-                # Back through temporary names again: a photo already renamed may hold
-                # the old name of one still waiting.
-                stranded = []
-                for old_path, new_path in list(updated_paths_map.items()):
-                    if old_path == new_path:
-                        continue
-                    try:
-                        temp_path = temporary_name(old_path)
-                        os.rename(new_path, temp_path)
-                        temp_of[old_path] = temp_path
-                    except OSError as back_err:
-                        stranded.append(new_path)
-                        logger.error("Smart Rename could not undo %s: %s", new_path, back_err)
-                for old_path, temp_path in temp_of.items():
-                    try:
-                        os.rename(temp_path, old_path)
-                    except OSError as back_err:
-                        stranded.append(temp_path)
-                        logger.error("Smart Rename could not put %s back as %s: %s",
-                                     temp_path, old_path, back_err)
-                for original, moved_aside in occupant_moves.items():
-                    try:
-                        os.rename(moved_aside, original)
-                    except OSError as back_err:
-                        stranded.append(moved_aside)
-                        logger.error("Smart Rename could not put %s back as %s: %s",
-                                     moved_aside, original, back_err)
-                logger.error("Smart Rename failed and was undone: %s", rename_err)
-                message = "Could not rename: %s. Every photo was put back under its old name." % rename_err
-                if stranded:
-                    message = ("Could not rename: %s. These could not be put back: %s"
-                               % (rename_err, ", ".join(stranded)))
-                self.send_json_error(500, message)
+            result = photo_actions.smart_rename(
+                Library(self.db_path), sorted_paths, grouping, format_pattern,
+                self.get_exiftool_path())
+            if not result.ok:
+                self.send_json_error(500, result.message())
                 return
 
-            # Tell the index where the photos went.
-            #
-            # Renaming on disk without this leaves a row naming a file that no longer
-            # exists, while the photo itself looks unindexed. The row is the valuable
-            # half: it carries the photo's embedding and its faces, names included. In
-            # this library one such rename stranded 78 rows holding 234 faces, 88 of
-            # them named by hand -- work that only survived because the renamer records
-            # where each file came from and the rows could be matched back.
-            #
-            # Saving a single photo has always done this. This is the bulk path, and
-            # it did not, which is the same shape as the bulk tag writes fixed earlier:
-            # the screen was right and the database was not.
-            renamed = {old: new for old, new in updated_paths_map.items() if old != new}
-            index_rows_moved, index_skipped = 0, []
-            if renamed or occupant_moves:
+            # The files moved whatever the index did, so their suggestions follow.
+            moves = {**result.details["moved_aside"], **result.details["renamed"]}
+            if moves:
                 try:
-                    # One call, so the occupants moved aside free their names for the
-                    # photos renamed into them within the same transaction.
-                    index_rows_moved, index_skipped = move_photo_rows(
-                        self.db_path, {**occupant_moves, **renamed})
-                    logger.info("Renamed %d photo(s); moved %d index row(s).",
-                                len(renamed), index_rows_moved)
-                except Exception as e:
-                    # The files are renamed either way; a stranded row is recoverable
-                    # with scripts/relink_renamed_photos.py.
-                    logger.error("Renamed %d photo(s) but could not move their index "
-                                 "rows: %s", len(renamed), e)
-                # The files moved whatever the index did, so their suggestions follow.
-                try:
-                    TagPupHTTPRequestHandler.move_saved_suggestions(
-                        self.db_path, {**occupant_moves, **renamed})
+                    TagPupHTTPRequestHandler.move_saved_suggestions(self.db_path, moves)
                 except Exception as e:
                     logger.error("Renamed %d photo(s) but could not move their saved "
-                                 "suggestions: %s", len(renamed), e)
+                                 "suggestions: %s", len(result.details["renamed"]), e)
 
             # Clear old and scan new cache entries
             if paths.key(folder_path) in TagPupHTTPRequestHandler.folder_cache:
@@ -2768,10 +2519,10 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             
             self.send_json({
                 "success": True,
-                "updated_paths": updated_paths_map,
+                "updated_paths": result.details["updated_paths"],
                 "updated_photos": updated_list,
-                "index_rows_moved": index_rows_moved,
-                "index_skipped": [new for _, new in index_skipped],
+                "index_rows_moved": result.details["index_rows_moved"],
+                "index_skipped": [new for _, new in result.details["index_skipped"]],
             })
             
         except Exception as e:

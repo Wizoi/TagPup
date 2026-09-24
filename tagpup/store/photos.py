@@ -1,8 +1,9 @@
 """The photos table.
 
-For now, recording what a write did to a file, or what was read back from it, and
-forgetting a deleted photo. The rest of the table's queries, in scripts/index.py and
-the servers, move here with the store step of phase 2 (ARCHITECTURE.md).
+For now, recording what a write did to a file, or what was read back from it, moving
+renamed photos' rows, and forgetting a deleted photo. The rest of the table's queries,
+in scripts/index.py and the servers, move here with the store step of phase 2
+(ARCHITECTURE.md).
 """
 import json
 import logging
@@ -76,3 +77,93 @@ def record_reads(db_path, records, label="photos read back"):
         return changed
 
     return db.write_with_connection(db_path, store, label=label)
+
+
+def move_rows(db_path, renames):
+    """Move index rows from each old path to its new one, and its faces with them.
+
+    `renames` maps old path to new path, in any spelling. Returns (moved, skipped):
+    how many photo rows actually changed, and the (old, new) pairs left where they
+    were because the new path already had rows. Re-pointing rows at a path that
+    already has them is how 233 duplicate faces were made, so a destination is
+    checked first and an occupied one is reported rather than merged into.
+
+    A destination is free when nothing is there, when it is the same file (a rename
+    that only changes case), or when whatever is there is itself moving away in this
+    same call -- a rename that shuffles numbered files among themselves, or the
+    occupant of a name that was moved aside to make room. The rows are moved in one
+    transaction, by rowid, through a placeholder, so a shuffle never collides with
+    itself on the way.
+    """
+    def rows_at(cursor, table, column, id_column, path):
+        where, params = paths.sql_equals(column, path)
+        return [r[0] for r in cursor.execute(
+            "SELECT %s FROM %s WHERE %s" % (id_column, table, where), params)]
+
+    def move(conn):
+        cursor = conn.cursor()
+        plan = dict(renames)
+        skipped = []
+        # Settle what moves first: skipping one rename can make another's
+        # destination occupied, so repeat until nothing changes.
+        changed = True
+        while changed:
+            changed = False
+            leaving = {paths.key(old) for old in plan}
+            arriving = set()
+            for old_path, new_path in list(plan.items()):
+                new_key = paths.key(new_path)
+                clash = new_key in arriving
+                if not clash and not paths.same(old_path, new_path) and new_key not in leaving:
+                    clash = bool(rows_at(cursor, "photos", "path", "rowid", new_path)
+                                 or rows_at(cursor, "faces", "photo_path", "id", new_path))
+                if clash:
+                    skipped.append((old_path, new_path))
+                    del plan[old_path]
+                    changed = True
+                    break
+                arriving.add(new_key)
+
+        has_cache = bool(cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'embedding_cache'").fetchone())
+        staged = []
+        for n, (old_path, new_path) in enumerate(plan.items()):
+            photo_ids = rows_at(cursor, "photos", "path", "rowid", old_path)
+            face_ids = rows_at(cursor, "faces", "photo_path", "id", old_path)
+            # The cached CLIP embedding too: a rename keeps the file's mtime and size,
+            # which is what the cache is checked against, so it is still good. Left
+            # behind, the renamed photo was embedded again from scratch.
+            cache_ids = (rows_at(cursor, "embedding_cache", "path", "rowid", old_path)
+                         if has_cache else [])
+            # "<" cannot appear in a Windows file name, and this never outlives
+            # the transaction.
+            placeholder = "<moving %d>" % n
+            cursor.executemany("UPDATE photos SET path = ? WHERE rowid = ?",
+                               [(placeholder, rowid) for rowid in photo_ids])
+            if cache_ids:
+                cursor.executemany("UPDATE embedding_cache SET path = ? WHERE rowid = ?",
+                                   [(placeholder, rowid) for rowid in cache_ids])
+            staged.append((paths.stored(new_path), photo_ids, face_ids, cache_ids))
+
+        moved = 0
+        for new_stored, photo_ids, face_ids, cache_ids in staged:
+            for rowid in photo_ids:
+                cursor.execute("UPDATE photos SET path = ? WHERE rowid = ?", (new_stored, rowid))
+                moved += cursor.rowcount
+            cursor.executemany("UPDATE faces SET photo_path = ? WHERE id = ?",
+                               [(new_stored, face_id) for face_id in face_ids])
+            if cache_ids:
+                # Whatever was cached under the new name described another file; it
+                # is only derived data, keyed by path, and would block the move.
+                where, params = paths.sql_equals("path", new_stored)
+                cursor.execute("DELETE FROM embedding_cache WHERE " + where, params)
+                cursor.executemany("UPDATE embedding_cache SET path = ? WHERE rowid = ?",
+                                   [(new_stored, rowid) for rowid in cache_ids])
+        return moved, skipped
+
+    moved, skipped = db.write_with_connection(
+        db_path, move, label="index rows for %d renamed photo(s)" % len(renames))
+    for old_path, new_path in skipped:
+        logger.warning("Renamed %s to %s, but the index already has rows for the new "
+                       "name; left both as they were.", old_path, new_path)
+    return moved, skipped

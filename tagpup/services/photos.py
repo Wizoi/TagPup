@@ -1,9 +1,64 @@
 """Actions on photo files."""
+import logging
 import os
 
+from tagpup.core import renaming
 from tagpup.core.result import Result
-from tagpup.files import images, metadata, recycle_bin, times
+from tagpup.files import images, metadata, names, recycle_bin, times
 from tagpup.store import faces, photos, taxonomy
+
+logger = logging.getLogger(__name__)
+
+
+def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
+    """Number photos in the order given and name each for it: "<grouping> - <index> -
+    <caption>" in `rename_format`, the caption being the one on the photo. Smart Rename.
+
+    Each photo stays in its own folder. A file already holding one of the new names is
+    moved aside to "<name>_conflict_<n>". The files are renamed all together or not at
+    all (tagpup.files.names.rename_all), and then the index is told where they went --
+    their rows carry their embeddings and faces, names included, and one rename that
+    did not tell it stranded 78 rows holding 234 faces. A photo no longer on disk keeps
+    its number, unused.
+
+    details: `updated_paths`, old -> new for every photo, those already so named
+    included; `renamed`, those whose name changed; `moved_aside`, the files moved out
+    of the way; `index_rows_moved`; `index_skipped`, the (old, new) pairs whose new name
+    already had rows in the index, left as they were.
+    """
+    result = Result(attempted=len(photo_paths))
+    width = len(str(len(photo_paths)))
+    captions = names.read_for_renaming(exiftool_path, [p for p in photo_paths if os.path.exists(p)])
+    renames = {}
+    for index, old_path in enumerate(photo_paths, start=1):
+        if old_path not in captions:
+            continue
+        base = renaming.file_base(rename_format, grouping, str(index).zfill(width), captions[old_path])
+        renames[old_path] = os.path.join(os.path.dirname(old_path), base + os.path.splitext(old_path)[1])
+
+    try:
+        done, moved_aside = names.rename_all(renames)
+    except names.RenameFailed as failure:
+        result.fail("smart rename", failure.message())
+        return result
+
+    renamed = {old: new for old, new in done.items() if old != new}
+    result.changed = len(renamed)
+    result.details.update(updated_paths=done, renamed=renamed, moved_aside=moved_aside,
+                          index_rows_moved=0, index_skipped=[])
+    if renamed or moved_aside:
+        try:
+            # One call, so the files moved aside free their names for the photos
+            # renamed into them within the same transaction.
+            moved, skipped = photos.move_rows(library.path, {**moved_aside, **renamed})
+            result.details.update(index_rows_moved=moved, index_skipped=skipped)
+            logger.info("Renamed %d photo(s); moved %d index row(s).", len(renamed), moved)
+        except Exception as e:
+            # The files are renamed either way; a stranded row is recoverable with
+            # scripts/relink_renamed_photos.py.
+            logger.error("Renamed %d photo(s) but could not move their index rows: %s",
+                         len(renamed), e)
+    return result
 
 
 def shift_date_taken(library, photo_paths, minutes, exiftool_path):
