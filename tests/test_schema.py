@@ -97,6 +97,18 @@ class ANewLibrary(SchemaTestCase):
         self.assertIn("faces", tables(self.connect()))
 
 
+class ALibraryRestoredInPlace(SchemaTestCase):
+    def test_is_migrated_again(self):
+        # Copying a backup over the file keeps its id and creation time on Windows, and
+        # a library restored from before the migration stayed unmigrated (#56).
+        schema.ensure(self.db_path)
+        old = os.path.join(self.dir, "backup.db")
+        make_old_library(old)
+        shutil.copyfile(old, self.db_path)
+        schema.ensure(self.db_path)
+        self.assertEqual(schema.LATEST, schema.version(self.connect()))
+
+
 class AnOldLibrary(SchemaTestCase):
     def setUp(self):
         super().setUp()

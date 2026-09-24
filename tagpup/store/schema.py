@@ -215,8 +215,11 @@ def pending(db_path):
     return [m for m in MIGRATIONS if m.version > current]
 
 
-#: Libraries this process has found current, by file identity: a file deleted and made
-#: again at the same path is a different file, and is looked at again.
+#: Libraries this process has found current, by what the file is and when it last
+#: changed. A file deleted and made again at the same path is a different file; one a
+#: backup was copied over keeps its id and creation time on Windows, but not its
+#: modified time (docs/findings.md, #56). Either is looked at again, as is a library
+#: whose file a checkpoint has written to since: one query, now and then.
 _current = {}
 _current_guard = threading.Lock()
 
@@ -226,7 +229,7 @@ def _identity(db_path):
         stat = os.stat(db_path)
     except OSError:
         return None
-    return (stat.st_ino, stat.st_ctime_ns)
+    return (stat.st_ino, stat.st_ctime_ns, stat.st_mtime_ns, stat.st_size)
 
 
 def ensure(db_path):
