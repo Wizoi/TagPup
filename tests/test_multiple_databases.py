@@ -1,13 +1,15 @@
 import os
+import shutil
 import sys
 import json
 import sqlite3
+import tempfile
 import urllib.request
 import urllib.error
 import threading
 import time
 import unittest
-import configparser
+from unittest import mock
 from unittest.mock import patch, MagicMock
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -15,27 +17,42 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from tuner_server import start_server, TunerHTTPRequestHandler
+from tagpup import config as tagpup_config  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
 
+CHECKOUT_CONFIG = os.path.join(WORKSPACE_DIR, "config.ini")
+
+
+def file_bytes(path):
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
 class TestMultipleDatabases(unittest.TestCase):
+    """Selecting and creating libraries, in a TAGPUP_HOME of the test's own.
+
+    These wrote the checkout's config.ini -- the one the app somebody is using reads --
+    and put it back afterwards, so a run stopped in between left that app pointing at a
+    test library. They also made their libraries in the checkout's data folder.
+    """
     TEST_PORT = free_port()
-    TEST_DB_PATH = os.path.join(WORKSPACE_DIR, "data", "test_multiple_db_startup.db")
     server_thread = None
-    original_default_db = None
 
     @classmethod
     def setUpClass(cls):
         # Its own port: subclasses inherit the attribute, and a port
         # already held by the last class's server is refused.
         cls.TEST_PORT = free_port()
-        # Save original default_db from config.ini if exists
-        config_path = os.path.join(WORKSPACE_DIR, "config.ini")
-        cls.config = configparser.ConfigParser(interpolation=None)
-        if os.path.exists(config_path):
-            cls.config.read(config_path, encoding='utf-8')
-            if cls.config.has_section("paths") and cls.config.has_option("paths", "default_db"):
-                cls.original_default_db = cls.config.get("paths", "default_db")
+        cls.home = tempfile.mkdtemp(prefix="tagpup_multiple_db_")
+        cls.data_dir = os.path.join(cls.home, "data")
+        os.makedirs(cls.data_dir)
+        cls.environ = mock.patch.dict(os.environ, {"TAGPUP_HOME": cls.home})
+        cls.environ.start()
+        cls.TEST_DB_PATH = os.path.join(cls.data_dir, "test_multiple_db_startup.db")
+        cls.checkout_config = file_bytes(CHECKOUT_CONFIG)
 
         # Ensure startup db file is created before server starts to avoid migration warning
         from index import PhotoIndex
@@ -54,15 +71,13 @@ class TestMultipleDatabases(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        # Restore original default_db
-        config_path = os.path.join(WORKSPACE_DIR, "config.ini")
-        if cls.original_default_db is not None and os.path.exists(config_path):
-            cls.config.read(config_path, encoding='utf-8')
-            if not cls.config.has_section("paths"):
-                cls.config.add_section("paths")
-            cls.config.set("paths", "default_db", cls.original_default_db)
-            with open(config_path, "w", encoding="utf-8") as f:
-                cls.config.write(f)
+        cls.environ.stop()
+        # The server thread runs until the process ends and may still hold a library
+        # open, so say so rather than fail if the folder cannot go yet.
+        shutil.rmtree(cls.home, ignore_errors=True)
+        if os.path.exists(cls.home):
+            print("\nnote: could not delete %s yet (held open by the test server)" % cls.home,
+                  file=sys.stderr)
 
     def setUp(self):
         # Ensure startup db file is clean
@@ -80,7 +95,7 @@ class TestMultipleDatabases(unittest.TestCase):
         
         # Ensure test database files we create in tests are also cleaned up
         for name in ["test_created_db_1.db", "test_created_db_2.db"]:
-            p = os.path.join(WORKSPACE_DIR, "data", name)
+            p = os.path.join(self.data_dir, name)
             if os.path.exists(p):
                 try:
                     os.remove(p)
@@ -125,7 +140,7 @@ class TestMultipleDatabases(unittest.TestCase):
         self.assertEqual(create_res["db_name"], "created_db_1")
 
         # Verify it was created on disk in data folder with test_ prefix because the server runs in test mode
-        expected_fs_path = os.path.join(WORKSPACE_DIR, "data", "test_created_db_1.db")
+        expected_fs_path = os.path.join(self.data_dir, "test_created_db_1.db")
         self.assertTrue(os.path.exists(expected_fs_path), f"File {expected_fs_path} should be created on disk")
         
         # Verify schema exists by connecting to it
@@ -161,6 +176,12 @@ class TestMultipleDatabases(unittest.TestCase):
         data = json.loads(response.read().decode('utf-8'))
         self.assertEqual(data["selected"], "multiple_db_startup")
 
+        # Remembered in this test's home, and only there.
+        self.assertEqual(tagpup_config.read_file().get("paths", "default_db"),
+                         "multiple_db_startup.db")
+        self.assertEqual(file_bytes(CHECKOUT_CONFIG), self.checkout_config,
+                         "selecting a library changed the checkout's config.ini")
+
     def test_prefix_routing_and_isolation(self):
         # Create two database files
         for name in ["created_db_1", "created_db_2"]:
@@ -173,8 +194,8 @@ class TestMultipleDatabases(unittest.TestCase):
             urllib.request.urlopen(req)
 
         # Insert different dummy people records in each database directly via SQLite
-        db1_path = os.path.join(WORKSPACE_DIR, "data", "test_created_db_1.db")
-        db2_path = os.path.join(WORKSPACE_DIR, "data", "test_created_db_2.db")
+        db1_path = os.path.join(self.data_dir, "test_created_db_1.db")
+        db2_path = os.path.join(self.data_dir, "test_created_db_2.db")
 
         conn1 = sqlite3.connect(db1_path)
         conn1.execute("INSERT INTO photos (path, mtime, size, people) VALUES (?, ?, ?, ?)",

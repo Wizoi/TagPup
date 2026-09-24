@@ -12,6 +12,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 # Add scripts directory to path to locate server handlers
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
 import paths
+from tagpup import config as tagpup_config
 from tagpup.store import db as tagpup_db
 from tuner_server import TunerHTTPRequestHandler, ThreadedHTTPServer as TunerThreadedHTTPServer
 from tagpup_server import TagPupHTTPRequestHandler, ThreadedHTTPServer as TagPupThreadedHTTPServer
@@ -640,36 +641,20 @@ class RunnerApp:
         self.refresh_database_list()
 
     def sync_test_mode_db(self):
-        import configparser
-        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
-        config = configparser.ConfigParser(interpolation=None)
-        if os.path.exists(config_path):
-            config.read(config_path, encoding='utf-8')
-        default_db = config.get("paths", "default_db", fallback="photo_index.db")
+        default_db = tagpup_config.default_db()
         if self.var_test_db.get():
             if not default_db.startswith("test_"):
                 default_db = "test_" + default_db
         else:
             if default_db.startswith("test_"):
                 default_db = default_db[5:]
-        if not config.has_section("paths"):
-            config.add_section("paths")
-        config.set("paths", "default_db", default_db)
-        with open(config_path, "w", encoding="utf-8") as f:
-            config.write(f)
+        tagpup_config.remember_library(default_db)
 
     def refresh_database_list(self):
-        import configparser
-        config = configparser.ConfigParser(interpolation=None)
-        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
-        if os.path.exists(config_path):
-            config.read(config_path, encoding='utf-8')
-        data_dir = config.get("paths", "data_dir", fallback="data")
-        default_db = config.get("paths", "default_db", fallback="photo_index.db")
-        
-        if not os.path.isabs(data_dir):
-            data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), data_dir)
-            
+        settings = tagpup_config.load()
+        data_dir = tagpup_config.data_dir(settings)
+        default_db = tagpup_config.default_db(settings)
+
         test_mode = self.var_test_db.get()
         
         EXCLUDED_DBS = {
@@ -726,19 +711,7 @@ class RunnerApp:
         test_mode = self.var_test_db.get()
         db_name = (("test_" if test_mode else "") + selected_name + ".db")
         
-        # Save to config.ini
-        import configparser
-        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
-        config = configparser.ConfigParser(interpolation=None)
-        if os.path.exists(config_path):
-            config.read(config_path, encoding='utf-8')
-            
-        if not config.has_section("paths"):
-            config.add_section("paths")
-        config.set("paths", "default_db", db_name)
-        with open(config_path, "w", encoding="utf-8") as f:
-            config.write(f)
-            
+        tagpup_config.remember_library(db_name)
         self.log_text(f"Switched working database to: {db_name}\n", tag="info")
 
     def browse_directory(self, entry_widget):
@@ -855,19 +828,14 @@ class RunnerApp:
                         port += 1
 
         # Select correct database depending on global setting and config.ini
-        import configparser
-        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
-        config = configparser.ConfigParser(interpolation=None)
-        if os.path.exists(config_path):
-            config.read(config_path, encoding='utf-8')
-        default_db = config.get("paths", "default_db", fallback="photo_index.db")
+        default_db = tagpup_config.default_db()
         if self.var_test_db.get():
             if not default_db.startswith("test_"):
                 default_db = "test_" + default_db
         else:
             if default_db.startswith("test_"):
                 default_db = default_db[5:]
-        db_path = os.path.join("data", default_db)
+        db_path = tagpup_config.library_path(default_db)
 
         port = find_available_port(8080)
         self.tuner_server_port = port
@@ -1025,19 +993,14 @@ class RunnerApp:
                         port += 1
 
         # Select correct database depending on global setting and config.ini
-        import configparser
-        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
-        config = configparser.ConfigParser(interpolation=None)
-        if os.path.exists(config_path):
-            config.read(config_path, encoding='utf-8')
-        default_db = config.get("paths", "default_db", fallback="photo_index.db")
+        default_db = tagpup_config.default_db()
         if self.var_test_db.get():
             if not default_db.startswith("test_"):
                 default_db = "test_" + default_db
         else:
             if default_db.startswith("test_"):
                 default_db = default_db[5:]
-        db_path = os.path.join("data", default_db)
+        db_path = tagpup_config.library_path(default_db)
 
         port = find_available_port(8090)
         self.tagpup_server_port = port

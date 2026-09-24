@@ -41,29 +41,28 @@ except ImportError:  # imported as a top-level module
     import db as tagpup_db
     from measure_identify_faces import REPO_ROOT, copy_code, free_port, remove_sandbox
 
+import _root  # noqa: E402,F401
+from tagpup import config as tagpup_config  # noqa: E402
+
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp")
 
 
 def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
     """Code, config, library and taxonomy, plus `copies` fresh copies of the photos."""
-    import configparser
-
     os.makedirs(os.path.join(sandbox, "data"), exist_ok=True)
     copy_code(sandbox, code_root)
 
     # The real config, for its model and candidate settings -- suggestions made with a
     # different model would be measuring something else -- with every path pointed
     # into the sandbox.
-    config = configparser.ConfigParser(interpolation=None)
-    config.read(os.path.join(REPO_ROOT, "config.ini"), encoding="utf-8")
+    config = tagpup_config.read_file()
     if not config.has_section("paths"):
         config.add_section("paths")
     data_dir = os.path.join(sandbox, "data")
     config.set("paths", "data_dir", data_dir)
     config.set("paths", "default_db", "measured.db")
     config.set("paths", "embedding_cache_dir", os.path.join(data_dir, "embedding_cache"))
-    with open(os.path.join(sandbox, "config.ini"), "w", encoding="utf-8") as handle:
-        config.write(handle)
+    tagpup_config.write_file(config, folder=sandbox)
 
     taxonomy = os.path.splitext(source_db)[0] + "_taxonomy.json"
     if os.path.exists(taxonomy):
@@ -107,7 +106,9 @@ def start_server(sandbox, db_path, port):
             "start_server(port=%d, db_path=%r, gui_dir=%r)\n"
             % (log_path, os.path.join(sandbox, "scripts"), port, db_path,
                os.path.join(sandbox, "gui_tagpup")))
+    # Its home is the sandbox, whatever TAGPUP_HOME this was run with.
     process = subprocess.Popen([sys.executable, launcher], cwd=sandbox,
+                               env=dict(os.environ, TAGPUP_HOME=sandbox),
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return process, log_path
 

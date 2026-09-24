@@ -14,6 +14,7 @@ in neither fails.
 """
 import ast
 import os
+import re
 import sys
 import unittest
 
@@ -21,17 +22,22 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shipped_sources import LAUNCHERS, ROOT, python_sources  # noqa: E402
 
 #: What each layer may import from tagpup besides itself. Core is pure rules, so every
-#: layer may import it. ARCHITECTURE.md, "Layers".
+#: layer may import it. Config is read where a program starts -- the entry points --
+#: and what it says is passed down. ARCHITECTURE.md, "Layers".
 MAY_IMPORT = {
     "core": set(),
+    "config": set(),
     "store": {"core"},
     "files": {"core"},
     "ml": {"core", "files"},
     "services": {"core", "store", "files", "ml"},
     "jobs": {"core", "services"},
-    "web": {"core", "services", "jobs"},
-    "cli": {"core", "services", "jobs"},
+    "web": {"core", "config", "services", "jobs"},
+    "cli": {"core", "config", "services", "jobs"},
 }
+
+#: A line importing the package itself, not a module whose name starts with "tagpup".
+IMPORTS_THE_PACKAGE = re.compile(r"\s*(?:import|from)\s+tagpup(?:\.|\s|$)")
 
 #: Modules that live outside the package and are importable only through sys.path.
 OLD_MODULES = {os.path.splitext(name)[0] for name in LAUNCHERS} | {
@@ -125,6 +131,36 @@ class ImportsGoDown(unittest.TestCase):
     def test_the_package_is_checked(self):
         """A guard that finds no files passes forever."""
         self.assertIn(os.path.join("tagpup", "store", "db.py"), package_sources())
+
+    def test_scripts_reach_the_package_through_root(self):
+        """A module in scripts/ imports _root before tagpup, or works only by luck.
+
+        scripts/ is on sys.path but the repository root may not be: a script run
+        directly has only its own folder. Whether `import tagpup` worked would depend
+        on some earlier import having put the root there.
+        """
+        problems = []
+        for relative in python_sources():
+            if not relative.startswith("scripts" + os.sep) or relative.endswith("_root.py"):
+                continue
+            with open(os.path.join(ROOT, relative), encoding="utf-8") as handle:
+                lines = handle.read().splitlines()
+            rooted = False
+            for number, line in enumerate(lines, 1):
+                if re.match(r"\s*import _root\b", line):
+                    rooted = True
+                elif IMPORTS_THE_PACKAGE.match(line) and not rooted:
+                    problems.append("%s:%d" % (relative, number))
+                    break
+        self.assertEqual(problems, [], "import _root before tagpup in: " + ", ".join(problems))
+
+    def test_the_root_check_recognises_the_package(self):
+        for line, expected in {"from tagpup import config": True,
+                               "    import tagpup.store.db": True,
+                               "from tagpup.core import paths": True,
+                               "import tagpup_server": False,
+                               "from tagpup_server import start_server": False}.items():
+            self.assertEqual(bool(IMPORTS_THE_PACKAGE.match(line)), expected, line)
 
     def test_the_guard_recognises_what_it_forbids(self):
         store = os.path.join("tagpup", "store", "db.py")

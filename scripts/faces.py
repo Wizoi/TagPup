@@ -9,7 +9,6 @@ from PIL import Image
 Image.MAX_IMAGE_PIXELS = 500000000
 import numpy as np
 import torch
-import configparser
 
 # Import facenet-pytorch elements
 import warnings
@@ -22,6 +21,9 @@ try:
     from . import paths
 except ImportError:  # imported as a top-level module
     import paths
+
+import _root  # noqa: F401
+from tagpup import config as tagpup_config
 
 logger = logging.getLogger("tagpup_cli.faces")
 
@@ -41,25 +43,11 @@ class FaceProcessor:
         self.mtcnn: Optional[MTCNN] = None
         self.resnet: Optional[InceptionResnetV1] = None
         self._init_lock = threading.Lock()
-        
-        # Load config.ini parameters if present
-        config = configparser.ConfigParser(interpolation=None)
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-        
-        self.min_face_size = 20
-        self.confidence_threshold = 0.85
-        self.mtcnn_thresholds = [0.6, 0.7, 0.7]
-        
-        if os.path.exists(config_path):
-            config.read(config_path, encoding='utf-8')
-            if config.has_section("faces"):
-                self.min_face_size = config.getint("faces", "min_face_size", fallback=20)
-                self.confidence_threshold = config.getfloat("faces", "confidence_threshold", fallback=0.85)
-                thresholds_str = config.get("faces", "mtcnn_thresholds", fallback="0.6,0.7,0.7")
-                try:
-                    self.mtcnn_thresholds = [float(x.strip()) for x in thresholds_str.split(",")]
-                except Exception:
-                    self.mtcnn_thresholds = [0.6, 0.7, 0.7]
+
+        settings = tagpup_config.face_settings()
+        self.min_face_size = settings["min_face_size"]
+        self.confidence_threshold = settings["confidence_threshold"]
+        self.mtcnn_thresholds = settings["mtcnn_thresholds"]
 
     def _init_models(self):
         """Lazily initialize MTCNN detector and InceptionResnetV1 face embedder.

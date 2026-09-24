@@ -3,8 +3,6 @@ import os
 import sys
 import json
 import logging
-import configparser
-import platform
 from typing import List
 import click
 from rich.console import Console
@@ -58,50 +56,15 @@ from writer import MetadataWriter
 from faces import FaceProcessor
 import paths
 import db as tagpup_db
-
-# Default ExifTool path (uses local user profile dynamically to avoid hardcoded PII)
-if platform.system() == "Windows":
-    DEFAULT_EXIFTOOL_PATH = os.path.join(
-        os.environ.get("USERPROFILE", "C:\\Users\\Username"),
-        r"AppData\Local\Programs\ExifTool\exiftool.exe"
-    )
-else:
-    import shutil
-    DEFAULT_EXIFTOOL_PATH = shutil.which("exiftool") or "/usr/bin/exiftool"
+from tagpup import config as tagpup_config
 
 def get_config():
-    """Load configuration parameters from config.ini."""
-    config = configparser.ConfigParser(interpolation=None)
-    config_path = os.path.join(os.path.dirname(__file__), "config.ini")
-    
-    if os.path.exists(config_path):
-        config.read(config_path, encoding='utf-8')
-    else:
-        # Provide defaults if config doesn't exist
-        config.add_section("paths")
-        config.set("paths", "exiftool", DEFAULT_EXIFTOOL_PATH)
-        config.set("paths", "data_dir", "data")
-        config.set("paths", "embedding_cache_dir", "data/embedding_cache")
-        config.add_section("model")
-        config.set("model", "name", "ViT-B-32")
-        config.set("model", "pretrained", "laion2b_s34b_b79k")
-        
-    return config
+    """The settings, config.ini over the defaults (tagpup.config)."""
+    return tagpup_config.load()
 
 def get_exiftool_path(config) -> str:
-    """Determine the ExifTool path, checking config, PATH, then default."""
-    path = config.get("paths", "exiftool", fallback=DEFAULT_EXIFTOOL_PATH)
-    path = os.path.expandvars(path)
-    if os.path.exists(path):
-        return path
-        
-    # Check if ExifTool is in the system PATH
-    import shutil
-    shutil_path = shutil.which("exiftool")
-    if shutil_path:
-        return shutil_path
-        
-    return path
+    """The configured ExifTool if it exists, else one on PATH (tagpup.config)."""
+    return tagpup_config.exiftool_path(config)
 
 def get_db_paths(config, test_mode=False, cli_db=None):
     if cli_db:
@@ -113,7 +76,7 @@ def get_db_paths(config, test_mode=False, cli_db=None):
             db_path = db_name
             tax_path = os.path.splitext(db_path)[0] + "_taxonomy.json"
         else:
-            data_dir = config.get("paths", "data_dir", fallback="data")
+            data_dir = tagpup_config.data_dir(config)
             db_path = os.path.join(data_dir, db_name)
             tax_path = os.path.join(data_dir, os.path.splitext(db_name)[0] + "_taxonomy.json")
         return db_path, tax_path
@@ -124,9 +87,9 @@ def get_db_paths(config, test_mode=False, cli_db=None):
         tax_path = env_tax or (os.path.splitext(env_db)[0] + "_taxonomy.json")
         return env_db, tax_path
 
-    data_dir = config.get("paths", "data_dir", fallback="data")
-    default_db = config.get("paths", "default_db", fallback="photo_index.db")
-    
+    data_dir = tagpup_config.data_dir(config)
+    default_db = tagpup_config.default_db(config)
+
     if test_mode:
         if default_db.startswith("test_"):
             db_name = default_db
@@ -191,9 +154,9 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     """Phase 1: Scan and index a tagged photo library."""
     config = get_config()
     exiftool_path = get_exiftool_path(config)
-    cache_dir = config.get("paths", "embedding_cache_dir", fallback="data/embedding_cache")
-    model_name = config.get("model", "name", fallback="ViT-B-32")
-    pretrained = config.get("model", "pretrained", fallback="laion2b_s34b_b79k")
+    embedder_settings = tagpup_config.embedder_settings(config)
+    cache_dir = embedder_settings["cache_dir"]
+    model_name = embedder_settings["model_name"]
 
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
@@ -230,11 +193,7 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     taxonomy = TagTaxonomy(file_path=tax_path)
     taxonomy.load()
 
-    preserve_full_frame = config.getboolean("model", "preserve_full_frame", fallback=False)
-    max_aspect_ratio = config.getfloat("model", "max_aspect_ratio", fallback=2.0)
-    force_image_size = config.get("model", "force_image_size", fallback=None)
-    force_image_size = int(force_image_size) if force_image_size else None
-    embedder = ClipEmbedder(model_name=model_name, pretrained=pretrained, cache_dir=cache_dir, preserve_full_frame=preserve_full_frame, max_aspect_ratio=max_aspect_ratio, force_image_size=force_image_size, photo_index=photo_index)
+    embedder = ClipEmbedder(photo_index=photo_index, **embedder_settings)
     if not test_mode:
         photo_index.migrate_disk_cache_to_sqlite(cache_dir)
 
@@ -456,9 +415,9 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
 def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
     """Phase 2: Suggest tags for untagged photos."""
     config = get_config()
-    cache_dir = config.get("paths", "embedding_cache_dir", fallback="data/embedding_cache")
-    model_name = config.get("model", "name", fallback="ViT-B-32")
-    pretrained = config.get("model", "pretrained", fallback="laion2b_s34b_b79k")
+    embedder_settings = tagpup_config.embedder_settings(config)
+    cache_dir = embedder_settings["cache_dir"]
+    model_name = embedder_settings["model_name"]
 
     # Load Index & Taxonomy
     test_mode = ctx.obj.get("test", False)
@@ -483,8 +442,7 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
         taxonomy.load()
 
         # Load candidate tags from config
-        candidate_str = config.get("candidates", "tags", fallback="")
-        candidate_tags = [t.strip() for t in candidate_str.split(",") if t.strip()]
+        candidate_tags = tagpup_config.candidate_tags(config)
 
         # Merge non-people taxonomy tags into candidates
         for path in taxonomy.paths:
@@ -495,11 +453,7 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
             if leaf and leaf.lower() not in [t.lower() for t in candidate_tags]:
                 candidate_tags.append(leaf)
 
-        preserve_full_frame = config.getboolean("model", "preserve_full_frame", fallback=False)
-        max_aspect_ratio = config.getfloat("model", "max_aspect_ratio", fallback=2.0)
-        force_image_size = config.get("model", "force_image_size", fallback=None)
-        force_image_size = int(force_image_size) if force_image_size else None
-        embedder = ClipEmbedder(model_name=model_name, pretrained=pretrained, cache_dir=cache_dir, preserve_full_frame=preserve_full_frame, max_aspect_ratio=max_aspect_ratio, force_image_size=force_image_size, photo_index=photo_index)
+        embedder = ClipEmbedder(photo_index=photo_index, **embedder_settings)
         if not test_mode:
             photo_index.migrate_disk_cache_to_sqlite(cache_dir)
         suggester = TagSuggester(photo_index, taxonomy, embedder=embedder, candidate_tags=candidate_tags)
@@ -645,9 +599,9 @@ def write(ctx, suggestions_file: str, live: bool, min_score: float, nobackup: bo
 def search(ctx, query: str, k: int):
     """Semantic text search across indexed library."""
     config = get_config()
-    cache_dir = config.get("paths", "embedding_cache_dir", fallback="data/embedding_cache")
-    model_name = config.get("model", "name", fallback="ViT-B-32")
-    pretrained = config.get("model", "pretrained", fallback="laion2b_s34b_b79k")
+    embedder_settings = tagpup_config.embedder_settings(config)
+    cache_dir = embedder_settings["cache_dir"]
+    model_name = embedder_settings["model_name"]
 
     # Load Index
     test_mode = ctx.obj.get("test", False)
@@ -666,11 +620,7 @@ def search(ctx, query: str, k: int):
             return
 
         # Embed text query
-        preserve_full_frame = config.getboolean("model", "preserve_full_frame", fallback=False)
-        max_aspect_ratio = config.getfloat("model", "max_aspect_ratio", fallback=2.0)
-        force_image_size = config.get("model", "force_image_size", fallback=None)
-        force_image_size = int(force_image_size) if force_image_size else None
-        embedder = ClipEmbedder(model_name=model_name, pretrained=pretrained, cache_dir=cache_dir, preserve_full_frame=preserve_full_frame, max_aspect_ratio=max_aspect_ratio, force_image_size=force_image_size, photo_index=photo_index)
+        embedder = ClipEmbedder(photo_index=photo_index, **embedder_settings)
         console.print(f"Embedding query: '[bold yellow]{query}[/bold yellow]'")
         query_vector = embedder.embed_text(query)
 

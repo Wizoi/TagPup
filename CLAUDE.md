@@ -51,6 +51,12 @@ in-memory comparison; `sql_equals()` / `sql_under()` for SQL. A helper that turn
 months while reporting success. In the pages, `pathKey` / `samePath`.
 `tests/test_paths_single_owner.py` and `tests/frontend/path-helpers.test.mjs` enforce it.
 
+**Never read `config.ini` yourself.** `tagpup/config.py` owns where it is (`TAGPUP_HOME`,
+else the code folder), how it is decoded, what a relative path in it is relative to,
+and which ExifTool to run. 26 places read it, and they disagreed on all four. A test
+that selects or creates a library runs with a `TAGPUP_HOME` of its own, or it rewrites
+the config of the app somebody is using. `tests/test_config_single_owner.py` enforces it.
+
 **SQL on this library is not SQL on a test fixture.** 225,000 faces, most carrying a
 6 KB crop, and every one of these has shipped:
 - `LIKE` is not equality. It ignores case and reads `_` and `%` as wildcards, so

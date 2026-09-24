@@ -64,12 +64,13 @@ Imports only go down:
 | Layer | Package | Owns | May import |
 |---|---|---|---|
 | core | `tagpup.core` | Pure rules: path identity, the tag vocabulary (leaf, root, person), people derivation, suggestion scoring, clustering decisions | nothing but `core` |
+| config | `tagpup.config` | `TAGPUP_HOME`, `config.ini` and what it says: where the libraries are, which ExifTool, model settings, the library to open next. Read by entry points, which pass the values down | nothing |
 | store | `tagpup.store` | The library database: connections and locks, schema and migrations, generations, one repository per table, caches keyed by generation, backups | `core` |
 | files | `tagpup.files` | The photo files: ExifTool sessions, reading metadata, writing keyword, caption and orientation fields, identities, opening images (upright or as stored), crops and thumbnails | `core` |
 | ml | `tagpup.ml` | Models: CLIP embeddings, face detection and embeddings, the vector index | `core`, `files` |
 | services | `tagpup.services` | One function per user action. The only code that writes. Returns a `Result` | all of the above |
 | jobs | `tagpup.jobs` | Background work: queue, status, cancel, persistence, worker processes for GPU work | `core`, `services` |
-| entry points | `tagpup.web`, `tagpup.cli`, `scripts/`, `tools/` | HTTP, the command line, maintenance and development tools | `services`, `jobs` (and `core` for formatting) |
+| entry points | `tagpup.web`, `tagpup.cli`, `scripts/`, `tools/` | HTTP, the command line, maintenance and development tools | `config`, `services`, `jobs` (and `core` for formatting) |
 
 Guard tests, each of which fails the build. The ones marked *exists* are in place; the rest arrive with their phase.
 
@@ -78,8 +79,8 @@ Guard tests, each of which fails the build. The ones marked *exists* are in plac
 - pyexiftool's classes constructed only in `tagpup.files.exiftool_session`. *Exists:* `tests/test_exiftool_single_owner.py`.
 - Photo paths spelled and compared only by `tagpup.core.paths`. *Exists:* `tests/test_paths_single_owner.py`.
 - SQL only inside `tagpup.store`.
+- `config.ini` read, and path settings resolved, only by `tagpup.config`. *Exists:* `tests/test_config_single_owner.py`.
 - ExifTool and `Image.open` only inside `tagpup.files`.
-- `config.ini` read only by `tagpup.config`.
 - Entry points import services and jobs, never store, files or ml directly.
 - Every POST route returns a `Result`.
 - Derived tables written only by their rebuild functions.
@@ -170,7 +171,7 @@ Each phase ships on its own with the full check green. Nothing changes behaviour
 - [x] This document, and a findings tracker in `docs/findings.md`.
 - [x] `.gitattributes` for line endings.
 - [x] The `tagpup/` package, with the foundation modules moved into it: paths, db, the ExifTool session, identity. One list of shipped files for every guard, and the layer guard.
-- [ ] `tagpup.config`: one loader, honouring `TAGPUP_HOME`, used by all 26 places that read `config.ini`.
+- [x] `tagpup.config`: one loader, honouring `TAGPUP_HOME`, used by all 26 places that read `config.ini`.
 - [ ] `tagpup.logs`: file logs, and slow-request logging for both servers.
 - [ ] `tagpup.result.Result` and `tagpup.store.library.Library`, with backups kept beside the library.
 - [ ] The installed-copy launcher.

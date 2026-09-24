@@ -16,11 +16,13 @@ import logging
 import re
 import threading
 import subprocess
-import configparser
 from http.server import BaseHTTPRequestHandler
 from PIL import Image, ImageOps
 Image.MAX_IMAGE_PIXELS = 500000000
 import numpy as np
+
+import _root  # noqa: F401
+from tagpup import config as tagpup_config
 
 logger = logging.getLogger("tagpup.server")
 
@@ -861,11 +863,7 @@ def resolve_library_from_url(handler, set_active):
     parsed_url = urllib.parse.urlparse(handler.path)
     path = parsed_url.path
 
-    config = configparser.ConfigParser(interpolation=None)
-    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-    if os.path.exists(config_path):
-        config.read(config_path, encoding='utf-8')
-    data_dir = config.get("paths", "data_dir", fallback="data")
+    data_dir = tagpup_config.data_dir()
 
     # Determine if we are in test mode based on startup database
     startup_db = os.path.basename(handler.__class__.db_path)
@@ -1181,18 +1179,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         self.wfile.write(content)
 
     def get_exiftool_path(self):
-        import configparser
-        config = configparser.ConfigParser(interpolation=None)
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-        default_path = os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\Username"), r"AppData\Local\Programs\ExifTool\exiftool.exe")
-        if os.path.exists(config_path):
-            try:
-                config.read(config_path, encoding='utf-8')
-                path = config.get("paths", "exiftool", fallback=default_path)
-                return os.path.expandvars(path)
-            except Exception:
-                pass
-        return default_path
+        return tagpup_config.exiftool_path()
 
     def read_json_body(self):
         content_length = int(self.headers.get("Content-Length", 0))
@@ -1200,16 +1187,10 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         return json.loads(post_data.decode("utf-8"))
 
     def handle_get_databases(self):
-        config = configparser.ConfigParser(interpolation=None)
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-        if os.path.exists(config_path):
-            config.read(config_path, encoding='utf-8')
-        data_dir = config.get("paths", "data_dir", fallback="data")
-        default_db = config.get("paths", "default_db", fallback="photo_index.db")
-        
-        if not os.path.isabs(data_dir):
-            data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), data_dir)
-            
+        settings = tagpup_config.load()
+        data_dir = tagpup_config.data_dir(settings)
+        default_db = tagpup_config.default_db(settings)
+
         startup_db = os.path.basename(self.__class__.db_path)
         test_mode = startup_db.startswith("test_")
         
@@ -1271,20 +1252,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             db_name = db_name[5:]
             
         try:
-            config = configparser.ConfigParser(interpolation=None)
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-            if os.path.exists(config_path):
-                config.read(config_path, encoding='utf-8')
-            else:
-                config.add_section("paths")
-                
-            if not config.has_section("paths"):
-                config.add_section("paths")
-                
-            config.set("paths", "default_db", db_name)
-            with open(config_path, "w", encoding="utf-8") as f:
-                config.write(f)
-                
+            tagpup_config.remember_library(db_name)
             self.send_json({"success": True})
         except Exception as e:
             self.send_json_error(500, f"Error saving default database: {e}")
@@ -1329,14 +1297,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         if test_mode:
             fs_db_name = "test_" + db_name
             
-        config = configparser.ConfigParser(interpolation=None)
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-        if os.path.exists(config_path):
-            config.read(config_path, encoding='utf-8')
-            
-        data_dir = config.get("paths", "data_dir", fallback="data")
-        db_path = os.path.join(data_dir, fs_db_name).replace("\\", "/")  # not a path: a database file
-        
+        db_path = tagpup_config.library_path(fs_db_name).replace("\\", "/")  # not a path: a database file
+
         try:
             if not os.path.exists(db_path):
                 os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -1345,13 +1307,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
                 photo_index = PhotoIndex(db_path=db_path)
                 photo_index.load()
                 seed_taxonomy_from_db(db_path)
-                
-            if not config.has_section("paths"):
-                config.add_section("paths")
-            config.set("paths", "default_db", db_name)
-            with open(config_path, "w", encoding="utf-8") as f:
-                config.write(f)
-                
+
+            tagpup_config.remember_library(db_name)
             self.send_json({"success": True, "db_name": os.path.splitext(db_name)[0]})
         except Exception as e:
             self.send_json_error(500, f"Error creating database: {e}")
@@ -2203,20 +2160,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             cls.folder_cache[paths.key(folder_path)] = {}
             return
             
-        import configparser
-        config = configparser.ConfigParser(interpolation=None)
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-        exiftool_path = os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\Username"), r"AppData\Local\Programs\ExifTool\exiftool.exe")
-        if os.path.exists(config_path):
-            try:
-                config.read(config_path, encoding='utf-8')
-                path = config.get("paths", "exiftool", fallback=exiftool_path)
-                exiftool_path = os.path.expandvars(path)
-            except Exception:
-                pass
-
         from metadata import MetadataExtractor, build_photo_ui_record
-        extractor = MetadataExtractor(exiftool_path=exiftool_path)
+        extractor = MetadataExtractor(exiftool_path=tagpup_config.exiftool_path())
         batch_size = 500
         results = []
         for i in range(0, len(image_files), batch_size):
@@ -2238,7 +2183,6 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
         folder_path = paths.stored(folder_path)
         folder_path_norm = paths.key(folder_path)
         try:
-            import configparser
             import concurrent.futures
             photos_dict = cls.folder_cache.get(folder_path_norm, {})
             logger.info(f"run_folder_suggestions_thread started for {folder_path}. Found {len(photos_dict)} cached photos.")
@@ -2279,17 +2223,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             
             cls.save_suggestions_cache(db_path)
             
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-            config = configparser.ConfigParser(interpolation=None)
-            if os.path.exists(config_path):
-                config.read(config_path, encoding='utf-8')
-                
-            cache_dir = config.get("paths", "embedding_cache_dir", fallback="data/embedding_cache")
-            model_name = config.get("model", "name", fallback="ViT-B-32")
-            pretrained = config.get("model", "pretrained", fallback="laion2b_s34b_b79k")
-            candidate_str = config.get("candidates", "tags", fallback="")
-            candidate_tags = [t.strip() for t in candidate_str.split(",") if t.strip()]
-            
+            settings = tagpup_config.load()
+            candidate_tags = tagpup_config.candidate_tags(settings)
+
             from taxonomy import TagTaxonomy
             from suggester import TagSuggester
 
@@ -2299,19 +2235,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             
             candidate_tags = zero_shot_candidates(taxonomy, candidate_tags)
 
-            preserve_full_frame = config.getboolean("model", "preserve_full_frame", fallback=False)
-            max_aspect_ratio = config.getfloat("model", "max_aspect_ratio", fallback=2.0)
-            force_image_size = config.get("model", "force_image_size", fallback=None)
-            force_image_size = int(force_image_size) if force_image_size else None
-            
-            embedder = cls.library_embedder(db_path, {
-                "model_name": model_name,
-                "pretrained": pretrained,
-                "cache_dir": cache_dir,
-                "preserve_full_frame": preserve_full_frame,
-                "max_aspect_ratio": max_aspect_ratio,
-                "force_image_size": force_image_size,
-            })
+            embedder = cls.library_embedder(db_path, tagpup_config.embedder_settings(settings))
             photo_index = embedder.photo_index
 
             suggester = TagSuggester(photo_index, taxonomy, embedder=embedder, candidate_tags=candidate_tags)
@@ -2990,21 +2914,8 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             return
             
         try:
-            import configparser
-            config = configparser.ConfigParser(interpolation=None)
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-            if os.path.exists(config_path):
-                config.read(config_path, encoding='utf-8')
-            
-            if not config.has_section("renaming"):
-                config.add_section("renaming")
-            if not config.has_option("renaming", "format"):
-                config.set("renaming", "format", "{grouping} - {index} - {caption}")
-                with open(config_path, "w", encoding='utf-8') as f:
-                    config.write(f)
-                    
-            format_pattern = config.get("renaming", "format")
-            
+            format_pattern = tagpup_config.rename_format()
+
             # Sort the selected photo paths chronologically by Date Taken
             cache = TagPupHTTPRequestHandler.folder_cache.get(paths.key(folder_path), {})
             cache = {paths.key(k): v for k, v in cache.items()}
@@ -4013,21 +3924,7 @@ def start_server(port=8090, db_path="data/photo_index.db", gui_dir="gui_tagpup")
         try:
             from index import PhotoIndex
             from embedder import ClipEmbedder
-            import configparser
-            
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-            config = configparser.ConfigParser(interpolation=None)
-            if os.path.exists(config_path):
-                config.read(config_path, encoding='utf-8')
-                
-            cache_dir = config.get("paths", "embedding_cache_dir", fallback="data/embedding_cache")
-            model_name = config.get("model", "name", fallback="ViT-B-32")
-            pretrained = config.get("model", "pretrained", fallback="laion2b_s34b_b79k")
-            preserve_full_frame = config.getboolean("model", "preserve_full_frame", fallback=False)
-            max_aspect_ratio = config.getfloat("model", "max_aspect_ratio", fallback=2.0)
-            force_image_size = config.get("model", "force_image_size", fallback=None)
-            force_image_size = int(force_image_size) if force_image_size else None
-            
+
             photo_index = PhotoIndex(db_path=db_path)
             # Load index asynchronously in the background so the HTTP server can bind instantly
             threading.Thread(
@@ -4036,15 +3933,8 @@ def start_server(port=8090, db_path="data/photo_index.db", gui_dir="gui_tagpup")
                 daemon=True
             ).start()
             
-            shared_embedder = ClipEmbedder(
-                model_name=model_name,
-                pretrained=pretrained,
-                cache_dir=cache_dir,
-                preserve_full_frame=preserve_full_frame,
-                max_aspect_ratio=max_aspect_ratio,
-                force_image_size=force_image_size,
-                photo_index=photo_index
-            )
+            shared_embedder = ClipEmbedder(photo_index=photo_index,
+                                           **tagpup_config.embedder_settings())
             TagPupHTTPRequestHandler.shared_embedder = shared_embedder
             # The startup library's saved suggestions, ahead of the first request;
             # any other library's are read the first time it is used.

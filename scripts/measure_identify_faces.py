@@ -11,8 +11,9 @@ to a TagPup or TagTuner you have open:
   written to the database itself.)
 * the copy goes in a temporary directory, **not** in `data/`, so it never appears in
   the database picker of the app you are using;
-* the code is snapshotted too, with its own `config.ini` pointing at the sandbox, so
-  the server under test resolves databases inside the sandbox and cannot reach yours;
+* the code is snapshotted too, and the server runs with the sandbox as its home
+  (TAGPUP_HOME) and its own `config.ini` there, so it resolves databases inside the
+  sandbox and cannot reach yours;
 * the server runs as a separate process on a high port, so editing files in the repo
   does not restart it and it does not restart anything of yours.
 
@@ -57,6 +58,9 @@ try:
 except ImportError:  # imported as a top-level module
     import db as tagpup_db
 
+import _root  # noqa: E402,F401
+from tagpup import config as tagpup_config  # noqa: E402
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: Copied into the sandbox. Everything the servers need to run, and nothing else.
@@ -91,10 +95,9 @@ def build_sandbox(source_db, sandbox):
     copy_code(sandbox)
 
     # Its own config, so database names in URLs resolve inside the sandbox. The server
-    # reads this relative to the code, which is why the code is snapshotted at all.
-    with open(os.path.join(sandbox, "config.ini"), "w", encoding="utf-8") as handle:
-        handle.write("[paths]\ndata_dir = %s\ndefault_db = measured.db\n"
-                     % os.path.join(sandbox, "data"))
+    # runs with the sandbox as its TAGPUP_HOME (start_sandbox_server).
+    tagpup_config.write_file({"paths": {"data_dir": os.path.join(sandbox, "data"),
+                                        "default_db": "measured.db"}}, folder=sandbox)
 
     target = os.path.join(sandbox, "data", "measured.db")
     started = time.time()
@@ -126,6 +129,8 @@ def start_sandbox_server(sandbox, db_path, port):
     process = subprocess.Popen(
         [sys.executable, launcher],
         cwd=sandbox,
+        # Its home is the sandbox, whatever TAGPUP_HOME this was run with.
+        env=dict(os.environ, TAGPUP_HOME=sandbox),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

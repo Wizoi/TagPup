@@ -37,6 +37,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db as tagpup_db  # noqa: E402
 from metadata import MetadataExtractor, extract_tags, photo_people  # noqa: E402
 
+import _root  # noqa: E402,F401
+from tagpup import config as tagpup_config  # noqa: E402
+
 
 #: UTF-8 bytes decoded as cp1252: "ü" -> "Ã¼", "é" -> "Ã©", "–" -> "â€“", nbsp -> "Â ".
 MOJIBAKE = re.compile("Ã[\u0080-ÿ]|Â[\u0080-ÿ ]|â€")
@@ -161,17 +164,6 @@ def plan(conn, folder=None, seen=None):
     return stale, captions_only
 
 
-def configured_exiftool():
-    """The ExifTool config.ini names, as the apps use it; None to look on PATH."""
-    import configparser
-
-    config = configparser.ConfigParser(interpolation=None)
-    config.read(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                             "config.ini"), encoding="utf-8")
-    configured = config.get("paths", "exiftool", fallback="").strip()
-    return os.path.expandvars(configured) if configured else None
-
-
 def read_files(photo_paths, db_path, exiftool_path=None):
     # The ExifTool the apps use. Without it this looked on PATH, and where ExifTool is
     # not there every file read as unreadable and nothing was refreshed.
@@ -268,7 +260,8 @@ def main(argv=None):
 
         if stale:
             print("\nreading %d file(s) (read-only)..." % len(stale))
-            records = read_files(sorted(stale), args.db, args.exiftool or configured_exiftool())
+            records = read_files(sorted(stale), args.db,
+                                 args.exiftool or tagpup_config.exiftool_path())
         for path in sorted(stale):
             record = records.get(path)
             if record is None or not record.get("raw_metadata"):

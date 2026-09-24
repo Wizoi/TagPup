@@ -139,32 +139,40 @@ For guides, tutorials, specifications, and schemas:
 
 ## ⚙️ Configuration (`config.ini`)
 
-The project configurations are managed via [config.ini](config.ini):
+Settings live in [config.ini](config.ini), next to the code, unless the `TAGPUP_HOME` environment variable names another folder. Relative paths in it, such as `data_dir`, are relative to that folder, wherever the program is started from. A setting the file leaves out takes its default from `tagpup/config.py`.
 
 ```ini
 [paths]
 exiftool = %USERPROFILE%\AppData\Local\Programs\ExifTool\exiftool.exe
 data_dir = data
 embedding_cache_dir = data/embedding_cache
+; The library opened at startup. Choosing one in the app changes this.
+default_db = photo_index.db
 
 [model]
-name = ViT-H-14                      # CLIP Model architecture
-pretrained = laion2b_s32b_b79k       # Pretrained weights
-preserve_full_frame = true           # Whether to preserve original aspect ratio
-max_aspect_ratio = 1.4               # Maximum aspect ratio for padding
-force_image_size = 512               # Input resolution size
+; CLIP architecture and its pretrained weights
+name = ViT-H-14
+pretrained = laion2b_s32b_b79k
+; Keep the photo's aspect ratio, padding up to this ratio, at this input size
+preserve_full_frame = true
+max_aspect_ratio = 1.4
+force_image_size = 512
 
 [candidates]
 tags = Landscape, Portrait, Nature, Urban, Sunset, Sunrise, Night, Ocean, Mountain, Forest, Animal, Cat, Dog, Food, Indoor, Outdoor, Vehicle, Flower, Architecture, Party, Wedding, Beach, Sports, Concert
 
 [faces]
-min_face_size = 20                   # Minimum width/height in pixels for face detection
-confidence_threshold = 0.85          # Minimum probability score for face detection
-mtcnn_thresholds = 0.6, 0.7, 0.7     # Detection thresholds for MTCNN stages
+; Smallest face in pixels, the detection confidence to keep a face, and MTCNN's per-stage thresholds
+min_face_size = 20
+confidence_threshold = 0.85
+mtcnn_thresholds = 0.6, 0.7, 0.7
 
 [renaming]
-format = {grouping} - {index} - {caption}  # Custom template pattern for sequential renaming
+; The pattern Smart Rename names photos with
+format = {grouping} - {index} - {caption}
 ```
+
+Put comments on a line of their own. A `#` or `;` after a value is read as part of the value.
 
 ---
 

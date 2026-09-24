@@ -32,8 +32,8 @@ through the CLI where no reloader can reach them.
 
 | suite | command | count |
 | --- | --- | --- |
-| Python | `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py"` | ~612 |
-| Frontend | `node --test tests/frontend/*.test.mjs` | ~283 |
+| Python | `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py"` | ~1,000 |
+| Frontend | `node --test tests/frontend/*.test.mjs` | ~500 |
 | Lint | `.venv/Scripts/python.exe -m ruff check .` | runs inside the Python suite |
 
 Use the glob for the frontend suite. `node --test tests/frontend/` treats `harness.mjs`
@@ -76,6 +76,21 @@ Some tests exist to stop a whole class of mistake rather than to cover a feature
 - `tests/frontend/tag-vocabulary.test.mjs` fails on a raw `.split('/')` in
   `gui_tagpup/app.js` outside the helper block, and on a closure-level `let` declared
   after the startup call but read above it. See the next section for why both exist.
+- The single-owner guards (`test_db_access`, `test_exiftool_single_owner`,
+  `test_paths_single_owner`, `test_config_single_owner`) all check one list of files,
+  `tests/shipped_sources.py`: the launchers, `scripts/` and `tagpup/`. When each kept
+  its own list, the database guard skipped `runner.py`, which opened its own connection.
+- `tests/test_layers.py` fails package code whose imports go up a layer
+  ([ARCHITECTURE.md](ARCHITECTURE.md)), or that imports an old `scripts/` module by
+  name. It also fails a `scripts/` module that imports `tagpup` without importing
+  `_root` first.
+- `tests/test_sandbox_has_all_the_code.py` builds the measurement tools' sandbox and
+  imports both servers inside it, in an interpreter that cannot see the repository.
+  Moving code into `tagpup/` once broke that sandbox without any test noticing.
+
+A test that selects, creates or lists libraries sets `TAGPUP_HOME` to a folder of its
+own (`tests/test_multiple_databases.py` shows how). Without it, the servers write the
+checkout's `config.ini` and create libraries in the checkout's `data/`.
 
 ## Traps
 

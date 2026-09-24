@@ -2,7 +2,6 @@
 import os
 import sys
 import logging
-import configparser
 import webbrowser
 import socket
 
@@ -32,17 +31,7 @@ logger = logging.getLogger("tagpup_gui")
 # Add scripts directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
 from tagpup_server import start_server
-
-def get_config():
-    """Load configuration parameters from config.ini."""
-    config = configparser.ConfigParser(interpolation=None)
-    config_path = os.path.join(os.path.dirname(__file__), "config.ini")
-    if os.path.exists(config_path):
-        config.read(config_path, encoding='utf-8')
-    else:
-        config.add_section("paths")
-        config.set("paths", "data_dir", "data")
-    return config
+from tagpup import config as tagpup_config
 
 def find_available_port(start_port=8090):
     port = start_port
@@ -126,14 +115,10 @@ def main():
         cleanup_zombie_processes()
         
     logger.info("Initializing TagPup GUI...")
-    config = get_config()
-    
-    data_dir = config.get("paths", "data_dir", fallback="data")
-    default_db = config.get("paths", "default_db", fallback="photo_index.db")
-    db_name = default_db
+    db_name = tagpup_config.default_db()
     if len(sys.argv) > 1 and sys.argv[1].endswith(".db"):
         db_name = sys.argv[1]
-    db_path = os.path.join(data_dir, db_name)
+    db_path = tagpup_config.library_path(db_name)
     
     if not os.path.exists(db_path):
         logger.info(f"Database not found at {db_path}. Initializing empty database with default categories...")

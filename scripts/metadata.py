@@ -15,6 +15,9 @@ from exiftool_session import ExifToolSession
 
 from identity import ensure_document_id, read_document_id
 
+import _root  # noqa: F401
+from tagpup import config as tagpup_config
+
 logger = logging.getLogger("tagpup_cli.metadata")
 
 # Define target fields mapped to keys we want to return
@@ -635,16 +638,10 @@ def sync_title_to_filename(photo_path: str, new_title: str, exiftool_path: str) 
             grouping = parts[0]
             index_str = parts[1]
             
-            # Read format from config.ini
-            import configparser
-            config = configparser.ConfigParser()
-            config_path = "config.ini"
-            format_pattern = "{grouping} - {index} - {caption}"
-            if os.path.exists(config_path):
-                config.read(config_path)
-                if config.has_section("renaming") and config.has_option("renaming", "format"):
-                    format_pattern = config.get("renaming", "format")
-            
+            # The configured format. This read config.ini from whatever folder the
+            # program was started in, as cp1252, and fell back to the default elsewhere.
+            format_pattern = tagpup_config.rename_format()
+
             # Format new name
             new_title_clean = str(new_title).strip()
             new_base = format_pattern.replace("{grouping}", grouping).replace("{index}", index_str)

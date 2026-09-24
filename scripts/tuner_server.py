@@ -25,6 +25,9 @@ from scipy import sparse
 from sklearn.cluster import DBSCAN
 from sklearn.neighbors import sort_graph_by_row_values
 
+import _root  # noqa: F401
+from tagpup import config as tagpup_config
+
 logger = logging.getLogger("tagtuner.server")
 
 def photo_rows_exist(cursor, path):
@@ -310,7 +313,6 @@ def get_year_from_mtime_or_meta(mtime, raw_meta_json, path=None):
     return year_str
 
 
-import configparser
 _thread_local = threading.local()
 
 def set_active_db_path(db_path):
@@ -464,17 +466,10 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
     def handle_get_databases(self):
         # List all .db files in the data directory
-        config = configparser.ConfigParser(interpolation=None)
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-        if os.path.exists(config_path):
-            config.read(config_path, encoding='utf-8')
-        data_dir = config.get("paths", "data_dir", fallback="data")
-        default_db = config.get("paths", "default_db", fallback="photo_index.db")
-        
-        # Ensure data_dir is absolute
-        if not os.path.isabs(data_dir):
-            data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), data_dir)
-            
+        settings = tagpup_config.load()
+        data_dir = tagpup_config.data_dir(settings)
+        default_db = tagpup_config.default_db(settings)
+
         startup_db = os.path.basename(self.__class__.db_path)
         test_mode = startup_db.startswith("test_")
         
@@ -536,20 +531,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             db_name = db_name[5:]
             
         try:
-            config = configparser.ConfigParser(interpolation=None)
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-            if os.path.exists(config_path):
-                config.read(config_path, encoding='utf-8')
-            else:
-                config.add_section("paths")
-                
-            if not config.has_section("paths"):
-                config.add_section("paths")
-                
-            config.set("paths", "default_db", db_name)
-            with open(config_path, "w", encoding="utf-8") as f:
-                config.write(f)
-                
+            tagpup_config.remember_library(db_name)
             self.send_json({"success": True})
         except Exception as e:
             self.send_json_error(500, f"Error saving default database: {e}")
@@ -594,14 +576,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         if test_mode:
             fs_db_name = "test_" + db_name
             
-        config = configparser.ConfigParser(interpolation=None)
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-        if os.path.exists(config_path):
-            config.read(config_path, encoding='utf-8')
-            
-        data_dir = config.get("paths", "data_dir", fallback="data")
-        db_path = os.path.join(data_dir, fs_db_name).replace("\\", "/")  # not a path: a database file, spelled as the other db paths here are
-        
+        db_path = tagpup_config.library_path(fs_db_name).replace("\\", "/")  # not a path: a database file, spelled as the other db paths here are
+
         try:
             if not os.path.exists(db_path):
                 os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -610,13 +586,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
                 photo_index = PhotoIndex(db_path=db_path)
                 photo_index.load()
                 seed_taxonomy_from_db(db_path)
-                
-            if not config.has_section("paths"):
-                config.add_section("paths")
-            config.set("paths", "default_db", db_name)
-            with open(config_path, "w", encoding="utf-8") as f:
-                config.write(f)
-                
+
+            tagpup_config.remember_library(db_name)
             self.send_json({"success": True, "db_name": os.path.splitext(db_name)[0]})
         except Exception as e:
             self.send_json_error(500, f"Error creating database: {e}")
@@ -4514,18 +4485,7 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
         self.wfile.write(content)
 
     def get_exiftool_path(self):
-        import configparser
-        config = configparser.ConfigParser(interpolation=None)
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-        default_path = os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\Username"), r"AppData\Local\Programs\ExifTool\exiftool.exe")
-        if os.path.exists(config_path):
-            try:
-                config.read(config_path, encoding='utf-8')
-                path = config.get("paths", "exiftool", fallback=default_path)
-                return os.path.expandvars(path)
-            except Exception:
-                pass
-        return default_path
+        return tagpup_config.exiftool_path()
 
     def handle_get_browse_folder(self):
         try:
@@ -5077,21 +5037,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
             return
             
         try:
-            import configparser
-            config = configparser.ConfigParser(interpolation=None)
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.ini")
-            if os.path.exists(config_path):
-                config.read(config_path, encoding='utf-8')
-            
-            if not config.has_section("renaming"):
-                config.add_section("renaming")
-            if not config.has_option("renaming", "format"):
-                config.set("renaming", "format", "{grouping} - {index} - {caption}")
-                with open(config_path, "w", encoding='utf-8') as f:
-                    config.write(f)
-                    
-            format_pattern = config.get("renaming", "format")
-            
+            format_pattern = tagpup_config.rename_format()
+
             # Sort the selected photo paths chronologically by Date Taken
             cache = TunerHTTPRequestHandler.folder_cache.get(paths.key(folder_path), {})
 
