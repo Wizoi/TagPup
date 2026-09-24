@@ -462,6 +462,18 @@ class TestUnmatch(TunerAPITestBase):
         self.assertEqual(status, 404)
 
 
+class TestMatchBulkListsThePerson(TunerAPITestBase):
+    def test_naming_unnamed_faces_lists_the_person_on_their_photo(self):
+        """docs/findings.md, #42: the photo's people were written only when the
+        assignment also displaced another name."""
+        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Bob"])
+        face = self.add_face(photo, unit_vector(80))
+
+        status, body = self.post("/api/faces/match-bulk", {"face_ids": [face], "person_name": "Jane"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.photo_people(photo), ["Bob", "Jane"])
+
+
 class TestUnmatchBulk(TunerAPITestBase):
     def test_clears_every_listed_face(self):
         photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane", "Bob"])

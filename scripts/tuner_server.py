@@ -2138,12 +2138,14 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                         except Exception:
                             people = []
 
-                    # Append the new person name if missing
-                    if person_name and person_name not in people:
-                        people.append(person_name)
+                    # Append the new person name if missing. To a copy: appended to the
+                    # list it is compared with, it was written only when an old name
+                    # went too (docs/findings.md, #42).
+                    updated_people = list(people)
+                    if person_name and person_name not in updated_people:
+                        updated_people.append(person_name)
 
                     # Remove old names if they are no longer matched to any other faces in the photo
-                    updated_people = list(people)
                     for old_name in old_names:
                         path_sql, path_args = paths.sql_equals("photo_path", photo_path)
                         cursor.execute("SELECT count(*) FROM faces WHERE " + path_sql + " AND name = ?", path_args + (old_name,))
