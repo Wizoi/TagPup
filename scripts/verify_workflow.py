@@ -318,7 +318,7 @@ def run_checks(report, work_db, args):
         suggested = [f for f in faces.get("faces", []) if f.get("suggestion")]
         if suggested:
             sims = [f["similarity"] for f in suggested]
-            report.check("every suggestion clears the offer floor", min(sims) >= clustering.OFFER_A_NAME,
+            report.check("every suggestion clears the offer floor", all(clustering.is_offered(s) for s in sims),
                          f"{len(suggested)} suggested, min={min(sims):.3f}")
         else:
             report.check("suggestions behave", True, "none confident enough, which is valid")

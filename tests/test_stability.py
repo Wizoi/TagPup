@@ -435,26 +435,19 @@ class TestStability(unittest.TestCase):
     def test_year_fallback_chain(self):
         import sys
         sys.path.append("scripts")
-        from tuner_server import get_year_from_mtime_or_meta
+        from tuner_server import shown_year
         from metadata import parse_year_from_metadata
-        
-        # 1. Test tuner_server's get_year_from_mtime_or_meta
-        # Metadata has year
-        raw_meta = json.dumps({"EXIF:DateTimeOriginal": "2005:06:26 12:34:56"})
-        year = get_year_from_mtime_or_meta(123456789.0, raw_meta, "D:/Training/Pictures/2008/2008-06-26/2008-06-Family.jpg")
-        self.assertEqual(year, 2005)
-        
-        # Metadata is empty/None, filename has year
-        year = get_year_from_mtime_or_meta(123456789.0, None, "D:/Training/Pictures/2008/family_2004.jpg")
-        self.assertEqual(year, 2004)
-        
-        # Metadata is empty/None, filename has no year, containing folder has year
-        year = get_year_from_mtime_or_meta(123456789.0, None, "D:/Training/Pictures/2008/EarthDay/photo.jpg")
-        self.assertEqual(year, 2008)
-        
-        # None of them have year
-        year = get_year_from_mtime_or_meta(123456789.0, None, "D:/Training/Pictures/NoYear/photo.jpg")
-        self.assertEqual(year, "Unknown")
+        from tagpup.core import dates
+
+        # 1. The year the library records (photos.year, tagpup.core.dates.photo_year),
+        # and TagTuner's "Unknown" for none.
+        raw_meta = {"EXIF:DateTimeOriginal": "2005:06:26 12:34:56"}
+        self.assertEqual(dates.photo_year(raw_meta, "D:/Training/Pictures/2008/2008-06-26/2008-06-Family.jpg"), 2005)
+        self.assertEqual(dates.photo_year({}, "D:/Training/Pictures/2008/family_2004.jpg"), 2004)
+        self.assertEqual(dates.photo_year({}, "D:/Training/Pictures/2008/EarthDay/photo.jpg"), 2008)
+        self.assertIsNone(dates.photo_year({}, "D:/Training/Pictures/NoYear/photo.jpg"))
+        self.assertEqual(shown_year(None), "Unknown")
+        self.assertEqual(shown_year(2008), 2008)
         
         # 2. Test metadata's parse_year_from_metadata
         meta_1 = {"raw_metadata": {"EXIF:DateTimeOriginal": "2005:06:26 12:34:56"}, "path": "D:/2008/photo.jpg"}

@@ -54,15 +54,16 @@ class CountingIndex:
 
     def __init__(self):
         self.all_faces_reads = 0
-        self.centroid_reads = 0
+        self.known_reads = 0
 
     def get_all_faces(self):
         self.all_faces_reads += 1
         return [{"name": "Rowan Thackeray", "embedding": unit([1, 0, 0])}]
 
-    def get_person_centroids(self):
-        self.centroid_reads += 1
-        return {"Rowan Thackeray": unit([1, 0, 0])}
+    def known_faces(self):
+        from tagpup.core import clustering
+        self.known_reads += 1
+        return clustering.KnownFaces.of([("Rowan Thackeray", unit([1, 0, 0]), None, r"D:\Pictures\Before\a.jpg")])
 
     def search(self, embedding, k=15):
         return []
@@ -90,13 +91,13 @@ class ReadsPeopleOncePerRun(unittest.TestCase):
         results = [run.suggest_for_photo(r"D:\Pictures\Run\%02d.jpg" % n, [1.0, 0.0, 0.0])
                    for n in range(3)]
         self.assertEqual(index.all_faces_reads, 0)
-        self.assertEqual(index.centroid_reads, 1)
+        self.assertEqual(index.known_reads, 1)
         # And the matching still works: each photo's face is Rowan.
         for result in results:
             self.assertIn("People/Rowan Thackeray", [t["tag"] for t in result["suggested_tags"]])
 
 
-class PersonCentroids(unittest.TestCase):
+class KnownFacesFromTheLibrary(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="centroids_")
         self.db = os.path.join(self.dir, "lib.db")
@@ -122,12 +123,13 @@ class PersonCentroids(unittest.TestCase):
         self.index.close()
         shutil.rmtree(self.dir, ignore_errors=True)
 
-    def test_named_faces_only_excluded_left_out_unit_length(self):
-        centroids = self.index.get_person_centroids()
-        self.assertEqual(sorted(centroids), ["Imogen Vale", "Rowan Thackeray"])
-        np.testing.assert_allclose(centroids["Rowan Thackeray"], unit([0.9, 0.3, 0]), atol=1e-6)
-        for vector in centroids.values():
-            self.assertAlmostEqual(float(np.linalg.norm(vector)), 1.0, places=5)
+    def test_named_faces_only_excluded_left_out(self):
+        known = self.index.known_faces()
+        self.assertEqual(sorted(known.names()), ["Imogen Vale", "Rowan Thackeray"])
+        # Rowan's closest face to each of their two named ones is itself; the excluded
+        # face is not among them.
+        self.assertAlmostEqual(1.0, known.likeness("Rowan Thackeray", unit([0.8, 0.6, 0])), places=5)
+        self.assertAlmostEqual(0.0, known.likeness("Rowan Thackeray", unit([0, 0, 1])), places=5)
 
 
 class FaceModelsLoadOnce(unittest.TestCase):

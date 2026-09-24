@@ -482,71 +482,14 @@ class FaceProcessor:
                         resolved_by_name[name] = []
                     p_path = face["photo_path"]
                     yr = photo_years.get(p_path)
-                    resolved_by_name[name].append((face["embedding"], yr))
+                    resolved_by_name[name].append((face["embedding"], yr, p_path))
                     
-            # Calculate minimum year (baseline) for each person
-            y_min_by_name = {}
-            for name, items in resolved_by_name.items():
-                years = [y for _, y in items if y is not None]
-                if years:
-                    y_min_by_name[name] = min(years)
+            # Who each name is, by the faces it is on so far (tagpup.core.clustering, #71).
+            known = clustering.KnownFaces.of((name, e, y, p) for name, items in resolved_by_name.items()
+                                             for e, y, p in items)
 
-            era_centroid_cache = {}
-            def get_era_centroid(name, target_year):
-                cache_key = (name, target_year)
-                if cache_key in era_centroid_cache:
-                    return era_centroid_cache[cache_key]
-                    
-                items = resolved_by_name.get(name, [])
-                if not items:
-                    return None
-                    
-                y_min = y_min_by_name.get(name)
-                
-                if y_min is not None and target_year is not None:
-                    age = target_year - y_min
-                else:
-                    age = 99
-                    
-                if age <= 4:
-                    w = 1
-                elif age <= 12:
-                    w = 2
-                elif age <= 16:
-                    w = 3
-                elif age <= 20:
-                    w = 4
-                else:
-                    w = 5
-                    
-                window_embeddings = []
-                if target_year is not None:
-                    for emb, yr in items:
-                        if yr is not None and (target_year - w) <= yr <= (target_year + w):
-                            window_embeddings.append(emb)
-                            
-                current_w = w
-                while len(window_embeddings) < 5 and current_w < 5:
-                    current_w += 1
-                    window_embeddings = []
-                    if target_year is not None:
-                        for emb, yr in items:
-                            if yr is not None and (target_year - current_w) <= yr <= (target_year + current_w):
-                                window_embeddings.append(emb)
-                                
-                if len(window_embeddings) < 5:
-                    window_embeddings = [emb for emb, _ in items]
-                    
-                if not window_embeddings:
-                    centroid = None
-                else:
-                    centroid = np.mean(window_embeddings, axis=0)
-                    norm = np.linalg.norm(centroid)
-                    if norm > 0:
-                        centroid /= norm
-                        
-                era_centroid_cache[cache_key] = centroid
-                return centroid
+            def closest_to(name, embedding, photo_path):
+                return known.likeness(name, embedding, photo_years.get(photo_path), photo_path)
 
             new_resolved_names = {}
             
@@ -558,16 +501,22 @@ class FaceProcessor:
                 # Map of face_id -> resolved_name in this photo
                 face_resolved = {f["id"]: current_resolved_names.get(f["id"]) for f in photo_faces}
                 
-                # Validate existing assignments against era-aware centroids (clear if similarity < 0.80)
+                # A name clustering gave is kept while the face still reaches the value
+                # it was named at, against the person's closest face (tagpup.core.clustering).
                 for f in photo_faces:
                     name = face_resolved.get(f["id"])
                     if name and name in resolved_by_name:
-                        target_yr = photo_years.get(f["photo_path"])
-                        centroid = get_era_centroid(name, target_yr)
-                        if centroid is not None:
-                            dist = np.linalg.norm(np.array(f["embedding"]) - centroid)
-                            if dist >= 0.63246:  # Cosine similarity < 0.80
-                                face_resolved[f["id"]] = None
+                        similarity = closest_to(name, f["embedding"], f["photo_path"])
+                        if similarity is not None and not clustering.names_unasked(similarity):
+                            face_resolved[f["id"]] = None
+
+                # A decision made by hand holds through every step below: its face keeps
+                # its name -- or its "nobody" -- and the name counts as taken in the photo.
+                # It was put back only at the end, after a tie between the hand-named face
+                # and another could give the other the same name.
+                decided = {f["id"] for f in photo_faces if f["id"] in manual_names}
+                for fid in decided:
+                    face_resolved[fid] = manual_names[fid]
                 
                 # Calculate face areas and find maximum area
                 face_areas = []
@@ -602,12 +551,17 @@ class FaceProcessor:
                         # Find all valid faces in this photo that resolved to this name
                         conf_faces = [f for f in valid_photo_faces if face_resolved.get(f["id"]) == conf_name]
                         
-                        # If a photo is trying to match 2 people to the same name for two different faces, do not match either.
+                        # If a photo is trying to match 2 people to the same name for two
+                        # different faces, match neither -- unless one was named by hand,
+                        # which keeps it.
+                        held = any(f["id"] in decided for f in conf_faces)
                         for f in conf_faces:
-                            face_resolved[f["id"]] = None
+                            if not (held and f["id"] in decided):
+                                face_resolved[f["id"]] = None
 
                 # Now try to match unassigned valid faces to unused tags in this photo's metadata
-                unassigned_faces = [f for f in valid_photo_faces if face_resolved.get(f["id"]) is None]
+                unassigned_faces = [f for f in valid_photo_faces if face_resolved.get(f["id"]) is None
+                                    and f["id"] not in decided]
                 assigned_names = {name for name in face_resolved.values() if name}
                 unused_tags = photo_tags - assigned_names
                 
@@ -625,29 +579,24 @@ class FaceProcessor:
                             f_emb = np.array(f["embedding"])
                             row_costs = []
                             for tag in known_unused:
-                                target_yr = photo_years.get(f["photo_path"])
-                                centroid = get_era_centroid(tag, target_yr)
-                                if centroid is not None:
-                                    dist = np.linalg.norm(f_emb - centroid)
-                                else:
-                                    dist = 2.0
-                                row_costs.append(dist)
+                                similarity = closest_to(tag, f_emb, f["photo_path"])
+                                row_costs.append(2.0 if similarity is None else -similarity)
                             cost_matrix.append(row_costs)
                         
                         cost_matrix = np.array(cost_matrix)
                         row_ind, col_ind = linear_sum_assignment(cost_matrix)
                         
                         # Assign matches as close as naming a face with no one looking
-                        # allows (tagpup.core.clustering), as a distance.
+                        # allows (tagpup.core.clustering).
                         for r, c in zip(row_ind, col_ind):
-                            dist = cost_matrix[r, c]
-                            if dist < clustering.distance(clustering.NAME_WITHOUT_ASKING):
+                            if clustering.names_unasked(-cost_matrix[r, c]):
                                 f = unassigned_faces[r]
                                 tag = known_unused[c]
                                 face_resolved[f["id"]] = tag
                                 
                     # Refresh lists for unknown matching
-                    unassigned_faces = [f for f in valid_photo_faces if face_resolved.get(f["id"]) is None]
+                    unassigned_faces = [f for f in valid_photo_faces if face_resolved.get(f["id"]) is None
+                                    and f["id"] not in decided]
                     assigned_names = {name for name in face_resolved.values() if name}
                     unused_tags = photo_tags - assigned_names
                     unknown_unused = [t for t in unused_tags if t not in resolved_by_name]
@@ -720,71 +669,10 @@ class FaceProcessor:
                     final_resolved_by_name[name] = []
                 p_path = face["photo_path"]
                 yr = photo_years.get(p_path)
-                final_resolved_by_name[name].append((face["embedding"], yr))
+                final_resolved_by_name[name].append((face["embedding"], yr, p_path))
 
-        # Calculate final y_min for each name
-        final_y_min_by_name = {}
-        for name, items in final_resolved_by_name.items():
-            years = [y for _, y in items if y is not None]
-            if years:
-                final_y_min_by_name[name] = min(years)
-
-        final_era_centroid_cache = {}
-        def get_final_era_centroid(name, target_year):
-            cache_key = (name, target_year)
-            if cache_key in final_era_centroid_cache:
-                return final_era_centroid_cache[cache_key]
-                
-            items = final_resolved_by_name.get(name, [])
-            if not items:
-                return None
-                
-            y_min = final_y_min_by_name.get(name)
-            
-            if y_min is not None and target_year is not None:
-                age = target_year - y_min
-            else:
-                age = 99
-                
-            if age <= 4:
-                w = 1
-            elif age <= 12:
-                w = 2
-            elif age <= 16:
-                w = 3
-            elif age <= 20:
-                w = 4
-            else:
-                w = 5
-                
-            window_embeddings = []
-            if target_year is not None:
-                for emb, yr in items:
-                    if yr is not None and (target_year - w) <= yr <= (target_year + w):
-                        window_embeddings.append(emb)
-                        
-            current_w = w
-            while len(window_embeddings) < 5 and current_w < 5:
-                current_w += 1
-                window_embeddings = []
-                if target_year is not None:
-                    for emb, yr in items:
-                        if yr is not None and (target_year - current_w) <= yr <= (target_year + current_w):
-                            window_embeddings.append(emb)
-                            
-            if len(window_embeddings) < 5:
-                window_embeddings = [emb for emb, _ in items]
-                
-            if not window_embeddings:
-                centroid = None
-            else:
-                centroid = np.mean(window_embeddings, axis=0)
-                norm = np.linalg.norm(centroid)
-                if norm > 0:
-                    centroid /= norm
-                    
-            final_era_centroid_cache[cache_key] = centroid
-            return centroid
+        final_known = clustering.KnownFaces.of((name, e, y, p) for name, items in final_resolved_by_name.items()
+                                               for e, y, p in items)
 
         face_updates = []
         resolved_stats = {}
@@ -807,19 +695,9 @@ class FaceProcessor:
 
                 # If unresolved, check similarity to all known resolved people, skipping
                 # anyone already matched to another face in this same photo.
-                best_sim = -1.0
-                best_name = None
-                f_emb = np.array(face["embedding"])
-                target_yr = photo_years.get(face["photo_path"])
-                for name in final_resolved_by_name.keys():
-                    if name in names_taken_here:
-                        continue
-                    mean_emb = get_final_era_centroid(name, target_yr)
-                    if mean_emb is not None:
-                        sim = np.dot(f_emb, mean_emb)
-                        if sim > best_sim:
-                            best_sim = sim
-                            best_name = name
+                best_name, best_sim = final_known.most_like(
+                    face["embedding"], photo_years.get(p_path), p_path, skip=names_taken_here)
+                best_sim = -1.0 if best_sim is None else best_sim
 
                 # Check parent photo metadata for people tags
                 meta = meta_by_path.get(p_path)
@@ -830,7 +708,7 @@ class FaceProcessor:
                     # Since we have confirmation via tags, we name without asking at the
                     # value for that (tagpup.core.clustering), to prevent false
                     # assignments in multi-face photos
-                    if best_name in photo_tags and best_sim >= clustering.NAME_WITHOUT_ASKING:
+                    if best_name in photo_tags and clustering.names_unasked(best_sim):
                         final_name = best_name
                         names_taken_here.add(final_name)
                         traces[face["id"]] = {

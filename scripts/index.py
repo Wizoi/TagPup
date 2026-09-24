@@ -15,6 +15,7 @@ from typing import List, Dict, Any, Tuple, Optional, Set
 import numpy as np
 
 from tagpup import config as tagpup_config
+from tagpup.core import clustering
 from tagpup.ml.vector_index import VectorIndex
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import faces as store_faces
@@ -211,7 +212,7 @@ class PhotoIndex:
             self.metadata = []
             self.indexed_metadata = []
             embeddings = []
-            for path, mtime, size, tags_json, people_json, captions_json, raw_meta_json, emb_bytes in (
+            for path, mtime, size, tags_json, people_json, captions_json, raw_meta_json, year, emb_bytes in (
                     store_photos.index_rows(self.conn, self.model)):
                 try:
                     tags = json.loads(tags_json)
@@ -229,6 +230,8 @@ class PhotoIndex:
                     "people": people,
                     "captions": captions,
                     "raw_metadata": raw_meta,
+                    # When it was taken, as the library records it (photos.year).
+                    "year": year,
                     "has_embedding": has_emb
                 }
                 self.metadata.append(meta_item)
@@ -486,30 +489,23 @@ class PhotoIndex:
             logger.error(f"Error retrieving faces: {e}")
             return []
 
-    def get_person_centroids(self) -> Dict[str, np.ndarray]:
-        """Each named person's mean face embedding, scaled to unit length.
+    def known_faces(self):
+        """Every named face that is not excluded, as tagpup.core.clustering.KnownFaces:
+        what a face is compared with to say who it is. It was each person's mean face,
+        with no years (docs/findings.md, #71).
 
-        Reads only the named, non-excluded faces, which idx_faces_identify answers
-        without touching the rest of the table. get_all_faces reads every face and its
-        crop image -- 225,000 rows and ten seconds on a cold cache -- and the suggester
-        called it twice for every photo to use the few that carry a name.
+        Reads only the named faces, and of each photo only its Date Taken fields.
+        get_all_faces reads every face and its crop -- 225,000 rows and ten seconds on a
+        cold cache -- and the suggester called it twice for every photo.
         """
         conn = tagpup_db.connect(self.db_path, timeout=30.0)
         try:
-            rows = store_faces.named_embeddings(conn)
+            rows = store_faces.named_for_known(conn)
         finally:
             conn.close()
-        by_name: Dict[str, List[np.ndarray]] = {}
-        for name, emb_bytes in rows:
-            if name and emb_bytes:
-                by_name.setdefault(name, []).append(np.frombuffer(emb_bytes, dtype=np.float32))
-        centroids = {}
-        for name, embs in by_name.items():
-            mean = np.mean(embs, axis=0)
-            norm = np.linalg.norm(mean)
-            if norm > 0:
-                centroids[name] = mean / norm
-        return centroids
+        return clustering.KnownFaces.of(
+            (name, np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path)
+            for name, emb_bytes, photo_path, year in rows)
 
     def save_face_names(self, face_updates: List[Tuple[Optional[str], int]]):
         """Batch update the resolved names of faces by their record ID."""

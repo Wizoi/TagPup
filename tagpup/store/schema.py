@@ -448,6 +448,19 @@ def _suggestions(conn):
                 taken, os.path.basename(path), left)
 
 
+def _dates(conn):
+    """When each photo was taken, in `photos.taken` (its Date Taken, as recorded) and
+    `photos.year` (the year of it, else one in its name): tagpup.core.dates, derived from
+    the photo's metadata and path by tagpup.store.photos.date_photos at every write of
+    either. Every reader parsed the raw metadata for it, in seven places in TagTuner
+    alone, and the suggester read it back out of the JSON (docs/findings.md, #67).
+    """
+    conn.execute("ALTER TABLE photos ADD COLUMN taken TEXT")
+    conn.execute("ALTER TABLE photos ADD COLUMN year INTEGER")
+    from tagpup.store import photos   # the store imports this module
+    photos.date_photos(conn)
+
+
 MIGRATIONS = (
     Migration(1, "the tables as of 2026-09", _tables, changes_data=False),
     Migration(2, "one generations table", _generations, changes_data=False),
@@ -456,6 +469,7 @@ MIGRATIONS = (
     Migration(5, "one embeddings table", _embeddings, changes_data=True),
     Migration(6, "each photo's people in photo_people", _photo_people, changes_data=True),
     Migration(7, "suggestions by photo", _suggestions, changes_data=True),
+    Migration(8, "when each photo was taken", _dates, changes_data=False),
 )
 
 LATEST = MIGRATIONS[-1].version

@@ -420,6 +420,25 @@ class APhotoSavedUnderTwoFolders(SchemaTestCase):
         self.assertEqual([("Rowing", None)], self.connect().execute("SELECT title, error FROM suggestions").fetchall())
 
 
+class ALibraryWhoseDatesAreInTheMetadata(SchemaTestCase):
+    """Before migration 8 when a photo was taken was only in its raw metadata, parsed by
+    every reader (#67)."""
+
+    def setUp(self):
+        super().setUp()
+        make_unmigrated_library(self.db_path)
+        conn = self.connect()
+        conn.execute("UPDATE photos SET raw_metadata = ? WHERE path = 'D:/a.jpg'",
+                     (json.dumps({"EXIF:DateTimeOriginal": "2019:05:04 10:00:00"}),))
+        conn.execute("INSERT INTO photos (path, tags, people, raw_metadata) VALUES ('D:/2016 Regatta/b.jpg', '[]', '[]', '{}')")
+        conn.commit()
+        schema.ensure(self.db_path)
+
+    def test_each_photo_says_when_it_was_taken(self):
+        self.assertEqual([("D:/a.jpg", "2019:05:04 10:00:00", 2019), ("D:/2016 Regatta/b.jpg", None, 2016)],
+                         self.connect().execute("SELECT path, taken, year FROM photos ORDER BY id").fetchall())
+
+
 class ThePhotoIdMigration(SchemaTestCase):
     def test_refuses_a_connection_with_foreign_keys_on(self):
         # Dropping the tables to rebuild them would delete every face and crop first (#83).

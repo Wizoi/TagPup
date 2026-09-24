@@ -9,11 +9,42 @@ import json
 import logging
 import os
 
-from tagpup.core import fields, paths, vocabulary
+from tagpup.core import dates, fields, paths, vocabulary
 from tagpup.store import db, embeddings, faces, people
 from tagpup.store.people import PEOPLE_JSON
 
 logger = logging.getLogger(__name__)
+
+
+def date_photos(conn, photo_ids=None):
+    """Record when each photo in `photo_ids` -- every photo, without -- was taken, from its
+    raw metadata and its path (tagpup.core.dates): `taken`, its Date Taken as recorded,
+    and `year`, the year of it, else one in its name. Every write of a photo's metadata
+    or path calls this; readers read the columns. The caller commits."""
+    query = "SELECT id, path, raw_metadata FROM photos"
+    params = ()
+    if photo_ids is not None:
+        photo_ids = list(photo_ids)
+        if not photo_ids:
+            return
+        query += " WHERE id IN (%s)" % ",".join("?" * len(photo_ids))
+        params = tuple(photo_ids)
+    dated = []
+    for photo_id, path, raw_json in conn.execute(query, params).fetchall():
+        try:
+            raw = json.loads(raw_json) if raw_json else {}
+        except (TypeError, ValueError):
+            raw = {}
+        dated.append((dates.date_taken(raw), dates.photo_year(raw, path), photo_id))
+    conn.executemany("UPDATE photos SET taken = ?, year = ? WHERE id = ?", dated)
+
+
+def _dated_paths(conn, photo_paths):
+    ids = []
+    for photo_path in photo_paths:
+        where, params = paths.sql_equals("path", photo_path)
+        ids += [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)]
+    date_photos(conn, ids)
 
 
 def _stamp(conn, photo_path, mtime, size, looks_different=False, before=None):
@@ -98,8 +129,10 @@ def record_reads(db_path, records, label="photos read back", before=None):
                 (json.dumps(entry["raw_metadata"]), entry.get("mtime", 0.0),
                  entry.get("size", 0)) + where_params).rowcount
             if written:
-                # A file's person fields are one source of its people (#89).
+                # A file's person fields are one source of its people (#89), and a time
+                # shift changes when it was taken.
                 people.rebuild_photos(conn, [entry["path"]])
+                _dated_paths(conn, [entry["path"]])
             changed += written
         return changed
 
@@ -167,6 +200,7 @@ def move_rows(db_path, renames):
             for photo_id in photo_ids:
                 cursor.execute("UPDATE photos SET path = ? WHERE id = ?", (new_stored, photo_id))
                 moved += cursor.rowcount
+            date_photos(conn, photo_ids)   # a year may be in the new name
         return moved, skipped
 
     moved, skipped = db.write_with_connection(
@@ -227,6 +261,7 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None, before=
             embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
         changed = cursor.rowcount > 0
         people.rebuild(conn, [photo_id])
+        date_photos(conn, [photo_id])
         return changed
 
     try:
@@ -335,6 +370,7 @@ def record_saved(db_path, photo_path, tags, captions, raw_meta, before=None):
             (json.dumps(tags), json.dumps(captions), json.dumps(raw_meta)) + where_params).rowcount
         if photo_id is not None:
             people.rebuild(conn, [photo_id])
+            date_photos(conn, [photo_id])
         return changed
 
     return db.write_with_connection(
@@ -345,14 +381,14 @@ def record_saved(db_path, photo_path, tags, captions, raw_meta, before=None):
 
 #: A photo row as the index holds it, and its vector under one model: float32 bytes,
 #: or None.
-INDEX_COLUMNS = ("path", "mtime", "size", "tags", "people", "captions", "raw_metadata", "vector")
+INDEX_COLUMNS = ("path", "mtime", "size", "tags", "people", "captions", "raw_metadata", "year", "vector")
 
 
 def index_rows(conn, model):
     """Every photo row, INDEX_COLUMNS each, with its vector under `model`: the whole
     library, as PhotoIndex loads it."""
     return conn.execute(
-        "SELECT p.path, p.mtime, p.size, p.tags, " + PEOPLE_JSON + ", p.captions, p.raw_metadata, e.vector"
+        "SELECT p.path, p.mtime, p.size, p.tags, " + PEOPLE_JSON + ", p.captions, p.raw_metadata, p.year, e.vector"
         " FROM photos p LEFT JOIN embeddings e ON e.photo_id = p.id AND e.model = ?", (model,)).fetchall()
 
 
@@ -369,8 +405,10 @@ def ensure_row(conn, photo_path):
     row = conn.execute("SELECT id FROM photos WHERE " + clause + " LIMIT 1", params).fetchone()
     if row:
         return row[0]
-    return conn.execute("INSERT INTO photos (path, tags, captions, raw_metadata)"
-                        " VALUES (?, '[]', '[]', '{}')", (paths.stored(photo_path),)).lastrowid
+    photo_id = conn.execute("INSERT INTO photos (path, tags, captions, raw_metadata)"
+                            " VALUES (?, '[]', '[]', '{}')", (paths.stored(photo_path),)).lastrowid
+    date_photos(conn, [photo_id])
+    return photo_id
 
 
 def stored_spelling(conn, photo_path):
@@ -404,6 +442,7 @@ def record_indexed(conn, photo_path, row, model=None, known=None):
          json.dumps(row.get("captions", [])), json.dumps(row.get("raw_metadata", {})),
          row.get("document_id")))
     people.rebuild_photos(conn, [stored], known)
+    _dated_paths(conn, [stored])
     if row.get("embedding") is not None:
         if model is None:
             # Dropped without a word, it left a library without the vector (#85).
@@ -452,10 +491,9 @@ def remove_under(conn, folder):
 # ---- What TagTuner's screens read -----------------------------------------------------
 
 def details(conn, photo_path):
-    """(people JSON, tags JSON, captions JSON, mtime, raw_metadata JSON) of one photo, or
-    None."""
+    """(people JSON, tags JSON, captions JSON, mtime, year) of one photo, or None."""
     where, params = paths.sql_equals("path", photo_path)
-    return conn.execute("SELECT " + PEOPLE_JSON + ", p.tags, p.captions, p.mtime, p.raw_metadata"
+    return conn.execute("SELECT " + PEOPLE_JSON + ", p.tags, p.captions, p.mtime, p.year"
                         " FROM photos p WHERE " + where, params).fetchone()
 
 
@@ -541,8 +579,9 @@ def record_refreshed(conn, stored_path, record, seen=None):
         (json.dumps(record["tags"]), json.dumps(record["captions"]), json.dumps(record["raw_metadata"]),
          record["mtime"], record["size"], record.get("document_id"), stored_path) + guard_params).rowcount
     if changed:
-        people.rebuild(conn, [photo_id for (photo_id,) in conn.execute(
-            "SELECT id FROM photos WHERE path = ?", (stored_path,))])
+        refreshed = [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE path = ?", (stored_path,))]
+        people.rebuild(conn, refreshed)
+        date_photos(conn, refreshed)
     return changed
 
 

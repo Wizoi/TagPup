@@ -2766,8 +2766,9 @@ ${summary}${note}`)) {
                 tabLowConf.classList.toggle('hidden', unclustered.length === 0);
             }
         } else {
-            const standards = filteredFaces.filter(f => f.similarity === undefined || f.similarity >= 0.85);
-            const outliers = filteredFaces.filter(f => f.similarity !== undefined && f.similarity < 0.85);
+            // The server decides which names look wrong (tagpup.core.clustering.looks_wrong).
+            const standards = filteredFaces.filter(f => !f.possibly_wrong);
+            const outliers = filteredFaces.filter(f => f.possibly_wrong);
             
             tabMatches.textContent = `Matches (${standards.length})`;
             tabOutliers.textContent = `Outliers (${outliers.length})`;
@@ -3072,7 +3073,7 @@ ${summary}${note}`)) {
                     unclustered.push(face);
                 }
             } else {
-                if (face.similarity !== undefined && face.similarity < 0.85) {
+                if (face.possibly_wrong) {
                     outliers.push(face);
                 } else {
                     standards.push(face);

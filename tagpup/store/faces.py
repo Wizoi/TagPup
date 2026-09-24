@@ -264,6 +264,13 @@ def named_embeddings(conn):
         "SELECT name, embedding FROM faces WHERE excluded = 0 AND name IS NOT NULL").fetchall()
 
 
+def named_for_known(conn):
+    """(name, embedding bytes, photo path, the year it was taken or None) of every named
+    face that is not excluded: what tagpup.core.clustering.KnownFaces is made of."""
+    return conn.execute("SELECT f.name, f.embedding, p.path, p.year FROM faces f" + PHOTO
+                        + " WHERE f.excluded = 0 AND f.name IS NOT NULL AND f.embedding IS NOT NULL").fetchall()
+
+
 def in_photo(conn, photo_path):
     """(box JSON, embedding bytes, prob, excluded, name, name_source) of each face in one
     photo, for suggesting who is in it."""
@@ -425,10 +432,10 @@ def identify_candidates(conn):
 
 
 def unnamed_for_matching(conn):
-    """(id, photo_path, box JSON, prob, mtime, embedding, raw_metadata JSON, people JSON)
-    of every nameless face still in play, for a person's Identify grid."""
+    """(id, photo_path, box JSON, prob, mtime, embedding, year, people JSON) of every
+    nameless face still in play, for a person's Identify grid."""
     return conn.execute(
-        "SELECT f.id, p.path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata, " + PEOPLE_JSON + ""
+        "SELECT f.id, p.path, f.box, f.prob, p.mtime, f.embedding, p.year, " + PEOPLE_JSON + ""
         " FROM faces f" + PHOTO + " WHERE f.name IS NULL AND f.excluded = 0").fetchall()
 
 
@@ -471,13 +478,13 @@ def in_photo_with_names(conn, photo_path):
 
 
 def photos_with_unnamed(conn):
-    """(photo_path, unnamed faces, named faces, mtime, raw_metadata JSON) of every photo
+    """(photo_path, unnamed faces, named faces, mtime, year) of every photo
     with a face still unnamed, newest first."""
     return conn.execute(
         "SELECT p.path,"
         " SUM(CASE WHEN f.name IS NULL THEN 1 ELSE 0 END) AS unmatched,"
         " SUM(CASE WHEN f.name IS NOT NULL THEN 1 ELSE 0 END) AS matched,"
-        " p.mtime, p.raw_metadata"
+        " p.mtime, p.year"
         " FROM faces f" + PHOTO
         + " GROUP BY f.photo_id HAVING unmatched > 0 ORDER BY p.mtime DESC").fetchall()
 
@@ -488,27 +495,27 @@ def count_named(conn, person_name):
 
 
 def person_embeddings(conn, person_name):
-    """(embedding, mtime, raw_metadata JSON, photo_path) of each of a person's faces that
+    """(embedding, mtime, year, photo_path) of each of a person's faces that
     has an embedding: what their era-aware centroids are made from."""
     return conn.execute(
-        "SELECT f.embedding, p.mtime, p.raw_metadata, p.path FROM faces f" + PHOTO
+        "SELECT f.embedding, p.mtime, p.year, p.path FROM faces f" + PHOTO
         + " WHERE f.name = ? AND f.embedding IS NOT NULL", (person_name,)).fetchall()
 
 
 def person_page(conn, person_name, limit, offset):
-    """(id, photo_path, box JSON, prob, mtime, embedding, raw_metadata JSON) of a page of a
+    """(id, photo_path, box JSON, prob, mtime, embedding, year) of a page of a
     person's faces. A negative limit is no limit."""
     return conn.execute(
-        "SELECT f.id, p.path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata"
+        "SELECT f.id, p.path, f.box, f.prob, p.mtime, f.embedding, p.year"
         " FROM faces f" + PHOTO + " WHERE f.name = ? LIMIT ? OFFSET ?",
         (person_name, limit, offset)).fetchall()
 
 
 def excluded_for_review(conn):
-    """(id, photo_path, box JSON, prob, mtime, raw_metadata JSON, excluded_reason) of every
+    """(id, photo_path, box JSON, prob, mtime, year, excluded_reason) of every
     excluded face, the latest excluded first."""
     return conn.execute(
-        "SELECT f.id, p.path, f.box, f.prob, p.mtime, p.raw_metadata, f.excluded_reason"
+        "SELECT f.id, p.path, f.box, f.prob, p.mtime, p.year, f.excluded_reason"
         " FROM faces f" + PHOTO + " WHERE f.excluded = 1 ORDER BY f.id DESC").fetchall()
 
 

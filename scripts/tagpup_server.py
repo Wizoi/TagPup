@@ -690,12 +690,10 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 except Exception:
                     box = []
 
-                # Below this the nearest name is not a suggestion, it is just the
-                # least-bad of a bad set, and it invites a wrong click. The floor is
-                # the one every screen offers a name from (tagpup.core.clustering): it
-                # was 0.5 here, which two strangers in three reach.
-                SUGGESTION_FLOOR = clustering.OFFER_A_NAME
-
+                # Below the value every screen offers a name from, the nearest name is not
+                # a suggestion, just the least-bad of a bad set, and it invites a wrong
+                # click (tagpup.core.clustering.is_offered): it was 0.5 here, which two
+                # strangers in three reach.
                 suggestion, similarity = None, None
                 if known_matrix is not None and emb and not excluded:
                     vec = np.frombuffer(emb, dtype=np.float32)
@@ -704,7 +702,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                         sims = known_matrix @ (vec / norm)
                         best = int(np.argmax(sims))
                         best_sim = float(sims[best])
-                        if best_sim >= SUGGESTION_FLOOR:
+                        if clustering.is_offered(best_sim):
                             suggestion = known_names[best]
                             similarity = round(best_sim, 4)
 

@@ -26,7 +26,7 @@ from sklearn.neighbors import sort_graph_by_row_values
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
 from tagpup.core import clustering as face_rules  # this file has a clustering() of its own
-from tagpup.core import dates, vocabulary
+from tagpup.core import vocabulary
 from tagpup.core.library import Library
 from tagpup.core.result import Conflict, NotFound
 from tagpup.jobs import indexing as indexing_jobs
@@ -44,27 +44,6 @@ from tagpup.services import photos as photo_actions
 logger = logging.getLogger("tagtuner.server")
 
 
-def compute_geometric_median(X, eps=1e-5, max_iter=20):
-    if len(X) == 0:
-        return None
-    if len(X) <= 2:
-        return np.mean(X, axis=0)
-    y = np.mean(X, axis=0)
-    for _ in range(max_iter):
-        distances = np.linalg.norm(X - y, axis=1)
-        zero_mask = distances < 1e-10
-        if np.any(zero_mask):
-            distances = np.where(zero_mask, 1e-10, distances)
-        weights = 1.0 / distances
-        weights_sum = np.sum(weights)
-        next_y = np.sum(X * weights[:, np.newaxis], axis=0) / weights_sum
-        if np.linalg.norm(next_y - y) < eps:
-            break
-        y = next_y
-    return y
-
-_metadata_year_cache = {}
-_path_year_cache = {}
 
 #: How many unclustered faces a person's grid shows at once.
 #:
@@ -143,39 +122,12 @@ def cluster_candidates(embeddings, on_progress=None):
     return DBSCAN(eps=CLUSTER_EPS, min_samples=2, metric="precomputed").fit_predict(graph)
 
 
-def get_year_from_mtime_or_meta(mtime, raw_meta_json, path=None):
-    """The year to file a photo under, or "Unknown": tagpup.core.dates, cached.
+def shown_year(year):
+    """A photo's year as the Identify views show it: `photos.year`, or "Unknown".
 
-    Cached by path and by metadata text, since the Identify views ask for thousands at
-    once. This read ModifyDate as well -- when the file was last edited, not when the
-    photo was taken; it now reads the same Date Taken as everything else.
-    """
-    path_key = paths.key(path)
-    if path_key and path_key in _path_year_cache:
-        return _path_year_cache[path_key]
-
-    parsed_year = None
-    if raw_meta_json:
-        if raw_meta_json in _metadata_year_cache:
-            parsed_year = _metadata_year_cache[raw_meta_json]
-        else:
-            try:
-                if isinstance(raw_meta_json, str):
-                    raw_meta = json.loads(raw_meta_json)
-                else:
-                    raw_meta = raw_meta_json
-                parsed_year = dates.year_taken(raw_meta)
-                _metadata_year_cache[raw_meta_json] = parsed_year
-            except Exception:
-                pass
-
-    if not parsed_year and path:
-        parsed_year = dates.year_in_name(paths.stored(path))
-
-    year_str = parsed_year if parsed_year else "Unknown"
-    if path_key:
-        _path_year_cache[path_key] = year_str
-    return year_str
+    Read from the library's column (tagpup.store.photos.date_photos). This parsed each
+    photo's raw metadata for it, with two caches to make that bearable (#67)."""
+    return year if year else "Unknown"
 
 
 _thread_local = threading.local()
@@ -502,9 +454,9 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     unmatched_count = row[1]
                     matched_count = row[2]
                     mtime = row[3] if row[3] is not None else 0.0
-                    raw_meta_json = row[4]
+                    year_taken = row[4]
                     
-                    year = get_year_from_mtime_or_meta(mtime, raw_meta_json, p_path)
+                    year = shown_year(year_taken)
                     
                     photos.append({
                         "path": p_path,
@@ -548,7 +500,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             tags = []
             caption = None
             mtime = 0.0
-            raw_meta_json = None
+            year_taken = None
 
             if photo_row:
                 try:
@@ -566,9 +518,9 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     caption = None
                 
                 mtime = photo_row[3] if photo_row[3] is not None else 0.0
-                raw_meta_json = photo_row[4]
+                year_taken = photo_row[4]
 
-            year = get_year_from_mtime_or_meta(mtime, raw_meta_json, photo_path)
+            year = shown_year(year_taken)
 
             # 2. Fetch face detections from faces table
             face_rows = store_faces.in_photo_with_names(conn, photo_path)
@@ -976,7 +928,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             for idx in sorted_indices:
                 sim = float(similarities[idx])
                 # Gathered for New Person without a look at each (tagpup.core.clustering).
-                if sim >= face_rules.NAME_WITHOUT_ASKING:
+                if face_rules.names_unasked(sim):
                     matches.append({
                         "id": face_ids[idx],
                         "photo_path": photo_paths[idx],
@@ -1191,83 +1143,18 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             # Fetch all resolved faces with metadata for era-aware centroid calculation
             all_matched_rows = store_faces.person_embeddings(conn, name)
 
-            all_matched_faces = []
-            for emb_bytes, mtime, raw_meta_json, photo_path in all_matched_rows:
+            # Each face against the person's closest other face of the years around it,
+            # never one of its own photo (tagpup.core.clustering, #71).
+            known = face_rules.KnownFaces()
+            for emb_bytes, _mtime, year, photo_path in all_matched_rows:
                 if emb_bytes and len(emb_bytes) > 0:
-                    year = get_year_from_mtime_or_meta(mtime, raw_meta_json, photo_path)
-                    # Ensure year is parsed to int or None
-                    try:
-                        year_int = int(year) if year is not None else None
-                    except (ValueError, TypeError):
-                        year_int = None
-                    emb = np.frombuffer(emb_bytes, dtype=np.float32)
-                    emb_norm = np.linalg.norm(emb)
-                    if emb_norm > 0:
-                        emb = emb / emb_norm
-                    all_matched_faces.append((emb, year_int))
-
-            matched_years = [y for _, y in all_matched_faces if y is not None]
-            y_min = min(matched_years) if matched_years else None
-
-            def compute_era_centroid(target_year):
-                if not all_matched_faces:
-                    return None
-                
-                try:
-                    t_yr = int(target_year) if target_year is not None else None
-                except (ValueError, TypeError):
-                    t_yr = None
-                
-                if y_min is not None and t_yr is not None:
-                    age = t_yr - y_min
-                else:
-                    age = 99
-                    
-                if age <= 4:
-                    w = 1
-                elif age <= 12:
-                    w = 2
-                elif age <= 16:
-                    w = 3
-                elif age <= 20:
-                    w = 4
-                else:
-                    w = 5
-                    
-                window_embeddings = []
-                if t_yr is not None:
-                    for emb, y in all_matched_faces:
-                        if y is not None and (t_yr - w) <= y <= (t_yr + w):
-                            window_embeddings.append(emb)
-                            
-                current_w = w
-                while len(window_embeddings) < 5 and current_w < 5:
-                    current_w += 1
-                    window_embeddings = []
-                    if t_yr is not None:
-                        for emb, y in all_matched_faces:
-                            if y is not None and (t_yr - current_w) <= y <= (t_yr + current_w):
-                                window_embeddings.append(emb)
-                                
-                if len(window_embeddings) < 5:
-                    window_embeddings = [emb for emb, _ in all_matched_faces]
-                    
-                if not window_embeddings:
-                    return None
-                    
-                centroid = compute_geometric_median(window_embeddings)
-                norm = np.linalg.norm(centroid)
-                if norm > 0:
-                    centroid /= norm
-                return centroid
-
-            era_centroid_cache = {}
-            def get_era_centroid(target_year):
-                if target_year not in era_centroid_cache:
-                    era_centroid_cache[target_year] = compute_era_centroid(target_year)
-                return era_centroid_cache[target_year]
+                    known.add(name, np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path)
 
             rows = store_faces.person_page(conn, name, limit, offset)
+            # The page's faces against the person's, in one pass (KnownFaces.likeness_many).
+            likenesses = known.likeness_many(name, [
+                (np.frombuffer(r[5], dtype=np.float32), r[6], r[1]) for r in rows if r[5] is not None and len(r[5]) > 0])
+            likenesses = iter(likenesses)
                     
             for r in rows:
                 try:
@@ -1275,17 +1162,9 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 except Exception:
                     box = []
                     
-                year = get_year_from_mtime_or_meta(r[4], r[6], r[1])
+                year = shown_year(r[6])
                 
-                similarity = 1.0
-                if r[5] is not None and len(r[5]) > 0:
-                    centroid = get_era_centroid(year)
-                    if centroid is not None:
-                        emb = np.frombuffer(r[5], dtype=np.float32)
-                        emb_norm = np.linalg.norm(emb)
-                        if emb_norm > 0:
-                            emb = emb / emb_norm
-                        similarity = float(np.dot(emb, centroid))
+                similarity = next(likenesses) if r[5] is not None and len(r[5]) > 0 else None
                 
                 faces.append({
                     "id": r[0],
@@ -1295,7 +1174,10 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     "prob": r[3],
                     "mtime": r[4] if r[4] is not None else 0.0,
                     "year": year,
-                    "similarity": similarity
+                    # Shown as it is; whether the name looks wrong is decided here, not
+                    # on the page (tagpup.core.clustering.looks_wrong).
+                    "similarity": 1.0 if similarity is None else similarity,
+                    "possibly_wrong": face_rules.looks_wrong(similarity),
                 })
 
             has_more = False
@@ -1610,7 +1492,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     "box": box,
                     "prob": r[3],
                     "mtime": r[4] if r[4] is not None else 0.0,
-                    "year": get_year_from_mtime_or_meta(r[4], r[5], r[1]),
+                    "year": shown_year(r[5]),
                     "reason": r[6] or "not a person",
                     "similarity": 0.0,
                 })
@@ -2143,11 +2025,10 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 return
 
             #: Below this a suggestion is more distraction than help: the floor every
-            #: screen offers a name from (tagpup.core.clustering). A weaker guess is
+            #: screen offers a name from (tagpup.core.clustering.is_offered). A weaker guess is
             #: still a shortlist of one, and confirming or rejecting it costs a glance
             #: -- which beats reading a nameless grid. The number is always shown, and a
             #: guess under SUGGEST_CONFIDENT is labelled as the weaker thing it is.
-            SUGGEST_FLOOR = face_rules.OFFER_A_NAME
             SUGGEST_CONFIDENT = 0.85
             self.build_progress(
                 name, "reading", 0.7, "Reading the faces already named")
@@ -2202,7 +2083,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                             continue
                         score = float(scores[offset])
                         results[i] = (
-                            known_names[int(best[offset])] if score >= SUGGEST_FLOOR else None,
+                            known_names[int(best[offset])] if face_rules.is_offered(score) else None,
                             score,
                         )
                 return results
@@ -2298,7 +2179,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     except Exception:
                         box = []
                         
-                    year = get_year_from_mtime_or_meta(r[4], r[6], r[1])
+                    year = shown_year(r[6])
                     faces.append({
                         "id": r[0],
                         "photo_path": r[1],
@@ -2373,7 +2254,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     "box": box,
                     "prob": r[3],
                     "mtime": r[4] if r[4] is not None else 0.0,
-                    "year": get_year_from_mtime_or_meta(r[4], r[6], r[1]),
+                    "year": shown_year(r[6]),
                     "similarity": 0.0,
                     "cluster_id": -1,
                     "cluster_name": "Unclustered",

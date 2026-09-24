@@ -66,6 +66,8 @@ Stores high-level image metadata, tags (keywords) and captions. Its people are i
 | `captions` | TEXT | | JSON-serialized array of caption/description strings. |
 | `raw_metadata` | TEXT | | JSON-serialized key-value dictionary of raw EXIF/IPTC properties. |
 | `document_id` | TEXT | INDEXED | The photo's identity, independent of its path: `XMP-xmpMM:DocumentID`. Read from the file where present — most photos already carry one, written by Lightroom or Camera Raw — and minted as `xmp.did:<uuid>` where absent. A path is a bad name for a photo: rename it and the row describes something that no longer exists, while the photo looks unindexed. `scripts/relink_renamed_photos.py` matches on this first. NULL on rows indexed before this column existed; they fill in as those photos are re-indexed. |
+| `taken` | TEXT | | When the photo was taken: its first Date Taken field, as ExifTool gives it (`2026:06:27 12:00:00`), or NULL (`tagpup.core.dates.date_taken`). Derived from `raw_metadata` by `tagpup.store.photos.date_photos` at every write of the photo's metadata or path; added in migration 8. |
+| `year` | INTEGER | | The year it was taken: of `taken`, else a year in its file or folder names, or NULL (`tagpup.core.dates.photo_year`). Kept with `taken`; what the Identify views file faces under and what a face is compared across (`tagpup.core.clustering.KnownFaces`). |
 
 ### 2. `faces` Table
 Stores details of faces detected within photos, including face crop coordinates, resolved name identities and confidence scores. Their crops are in `face_crops`.
@@ -191,6 +193,8 @@ erDiagram
         TEXT captions
         TEXT raw_metadata
         TEXT document_id
+        TEXT taken
+        INTEGER year
     }
     
     faces {

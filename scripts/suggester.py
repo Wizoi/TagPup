@@ -6,7 +6,7 @@ from taxonomy import TagTaxonomy
 from index import PhotoIndex
 
 import _root  # noqa: F401
-from tagpup.core import vocabulary
+from tagpup.core import clustering, vocabulary
 from tagpup.store import faces as store_faces
 
 import threading
@@ -69,7 +69,7 @@ class TagSuggester:
         self._people_lock = threading.Lock()
 
     def _known_people(self):
-        """(lower-cased names of everyone known, each named person's face centroid).
+        """(lower-cased names of everyone known, their named faces as KnownFaces).
 
         Loaded once per suggester -- one folder run -- rather than per photo. Both
         halves used to come from reading the whole faces table, twice a photo.
@@ -82,13 +82,13 @@ class TagSuggester:
                     parts = vocabulary.segments(path)
                     if len(parts) >= 2 and parts[0].lower() in face_roots:
                         names.add(parts[-1].lower())
-                centroids = {}
+                known = clustering.KnownFaces()
                 try:
-                    centroids = self.index.get_person_centroids()
+                    known = self.index.known_faces()
                 except Exception as db_err:
                     logger.warning(f"Failed to load known faces from database: {db_err}")
-                names.update(name.lower() for name in centroids)
-                self._people = (names, centroids)
+                names.update(name.lower() for name in known.names())
+                self._people = (names, known)
             return self._people
 
     def _precompute_candidates(self):
@@ -192,7 +192,7 @@ class TagSuggester:
         import numpy as np
         from metadata import parse_year_from_metadata
         
-        known_people, person_centroids = self._known_people()
+        known_people, known_faces = self._known_people()
 
         # 1. Search index for neighbors
         neighbors = self.index.search(embedding, k=k)
@@ -364,28 +364,16 @@ class TagSuggester:
                     valid_detected_faces.append(f)
                 
                 if valid_detected_faces:
-                    if person_centroids:
-                        mean_embeddings = person_centroids
+                    if known_faces.names():
                         for face in valid_detected_faces:
-                            face_emb = np.array(face["embedding"], dtype=np.float32)
-                            
-                            # Find the closest person
-                            best_dist = float('inf')
-                            best_name = None
-                            
-                            for name, mean_emb in mean_embeddings.items():
-                                dist = np.linalg.norm(face_emb - mean_emb)
-                                if dist < best_dist:
-                                    best_dist = dist
-                                    best_name = name
-                            
-                            # Score matches with a high-confidence threshold of 0.90
-                            if best_name and best_dist < 0.90:
-                                # Calculate a confidence score between 0.50 and 1.0
-                                if best_dist < 0.60:
-                                    score = 1.0
-                                else:
-                                    score = max(0.50, round(1.0 - (best_dist - 0.60) / (0.90 - 0.60) * 0.50, 2))
+                            # The person the face is most like, by their closest face of the
+                            # years around the photo, never one of its own; offered from the
+                            # value every screen offers a name from, scored by that likeness
+                            # (tagpup.core.clustering). It was a mean face with no years, a
+                            # distance cut of 0.90, and a score made up between 0.5 and 1.
+                            best_name, likeness = known_faces.most_like(face["embedding"], target_year, photo_path)
+                            if best_name and clustering.is_offered(likeness):
+                                score = round(likeness, 2)
                                 
                                 # Resolve leaf name to full taxonomy path if possible.
                                 # This looked under a hardcoded "family"/"friends"/

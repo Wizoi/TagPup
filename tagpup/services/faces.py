@@ -22,10 +22,6 @@ from tagpup.store import db, faces, photos
 
 logger = logging.getLogger(__name__)
 
-#: How like a named face an unnamed one must be for automatch to give it that name: the
-#: value for naming a face with no one looking (tagpup.core.clustering).
-AUTOMATCH_SIMILARITY = clustering.NAME_WITHOUT_ASKING
-
 #: Why a face may be excluded: the four TagTuner's page offers (EXCLUDE_REASONS in
 #: gui/app.js), and the one it sets itself when a cluster is ignored. The reason used to
 #: be free text, and collected "fuzzy" beside "bad crop" (docs/findings.md, #53).
@@ -260,7 +256,7 @@ def remove_folder(library, folder):
 
 def _automatch(library, named, photo_path=None, folder=None):
     """Automatch the unnamed faces in a photo, or under a folder. A face is given the name of the named
-    face it most resembles, at AUTOMATCH_SIMILARITY or above, unless that name is already
+    face it most resembles, when it may be named unasked (clustering.names_unasked), unless that name is already
     in its photo or proposed for two faces there.
 
     The faces are compared before the write lock is taken -- building the named matrix
@@ -283,7 +279,8 @@ def _automatch(library, named, photo_path=None, folder=None):
     for face_id, blob, face_photo in unnamed:
         similarities = np.dot(matrix, np.frombuffer(blob, dtype=np.float32))
         best = int(np.argmax(similarities))
-        if similarities[best] >= AUTOMATCH_SIMILARITY:
+        # As alike as naming a face with no one looking allows (tagpup.core.clustering).
+        if clustering.names_unasked(float(similarities[best])):
             proposed.setdefault(face_photo, []).append((face_id, names[best]))
     if not proposed:
         return result

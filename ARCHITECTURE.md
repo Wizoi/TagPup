@@ -241,7 +241,7 @@ The sweep of 2026-09-24 found rules, lists and thresholds written in more than o
 - [ ] The thresholds (#75): each decision one value, named and explained where it lives, measured on the owner's data first. Done: offering a face a name (0.70) and naming one unasked (0.80), in `tagpup.core.clustering`. Left: flagging a name as possibly wrong and clustering's unnaming (both against an average face, which measured worse than the best single face), clustering's radius, the page's bands, and the tag values -- shown at 0.6, written at 0.5 by the CLI (#70) -- measured by running the suggester on photos already tagged.
 - [ ] Date Taken read by the pages as the server reads it (#67).
 - [ ] Names reserved for TagTuner's buckets refused as people's names, and the buckets named by the server (#68).
-- [ ] One era centroid for a person, used by clustering, the person grid and the suggester (#71).
+- [x] One way to compare a face with a person, used by clustering, the person grid and the suggester (#71): `tagpup.core.clustering.KnownFaces`, the closest face of the years around the photo, as measured.
 - [ ] What counts as a photo, once, in `tagpup.files.images` (#72).
 - [ ] Library names the URLs reserve refused (#73).
 - [ ] The agreeing copies (#74), each to one owner.
