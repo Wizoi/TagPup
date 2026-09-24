@@ -36,10 +36,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from . import db as tagpup_db
-    from .measure_identify_faces import REPO_ROOT, SNAPSHOT, free_port, remove_sandbox
+    from .measure_identify_faces import REPO_ROOT, copy_code, free_port, remove_sandbox
 except ImportError:  # imported as a top-level module
     import db as tagpup_db
-    from measure_identify_faces import REPO_ROOT, SNAPSHOT, free_port, remove_sandbox
+    from measure_identify_faces import REPO_ROOT, copy_code, free_port, remove_sandbox
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp")
 
@@ -49,11 +49,7 @@ def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
     import configparser
 
     os.makedirs(os.path.join(sandbox, "data"), exist_ok=True)
-    for name in SNAPSHOT:
-        source = os.path.join(code_root, name)
-        if os.path.isdir(source):
-            shutil.copytree(source, os.path.join(sandbox, name),
-                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    copy_code(sandbox, code_root)
 
     # The real config, for its model and candidate settings -- suggestions made with a
     # different model would be measuring something else -- with every path pointed

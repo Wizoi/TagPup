@@ -60,7 +60,8 @@ except ImportError:  # imported as a top-level module
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: Copied into the sandbox. Everything the servers need to run, and nothing else.
-SNAPSHOT = ("scripts", "gui", "gui_tagpup")
+#: tests/test_sandbox_has_all_the_code.py fails if a folder the servers import is missing.
+SNAPSHOT = ("scripts", "tagpup", "gui", "gui_tagpup")
 
 
 def free_port():
@@ -68,6 +69,15 @@ def free_port():
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return probe.getsockname()[1]
+
+
+def copy_code(sandbox, code_root=REPO_ROOT):
+    """Snapshot the code into the sandbox, so editing the repo cannot change a run."""
+    for name in SNAPSHOT:
+        source = os.path.join(code_root, name)
+        if os.path.isdir(source):
+            shutil.copytree(source, os.path.join(sandbox, name),
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
 
 def build_sandbox(source_db, sandbox):
@@ -78,11 +88,7 @@ def build_sandbox(source_db, sandbox):
     that is missing whatever is still in the WAL.
     """
     os.makedirs(os.path.join(sandbox, "data"), exist_ok=True)
-    for name in SNAPSHOT:
-        source = os.path.join(REPO_ROOT, name)
-        if os.path.isdir(source):
-            shutil.copytree(source, os.path.join(sandbox, name),
-                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    copy_code(sandbox)
 
     # Its own config, so database names in URLs resolve inside the sandbox. The server
     # reads this relative to the code, which is why the code is snapshotted at all.
