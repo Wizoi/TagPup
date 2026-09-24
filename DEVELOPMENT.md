@@ -189,11 +189,10 @@ in `backups/` at the top of the repository.
 | --- | --- |
 | `scripts/verify_workflow.py` | End-to-end pass over both apps against a throwaway copy of a database. |
 | `scripts/merge_duplicate_person_tags.py` | Removes a bare person tag where a `People/<name>` already names them. |
-| `scripts/repair_bare_person_tags.py` | Rewrites a photo's keywords so a person carries their full path, not a bare leaf. |
 | `scripts/backfill_document_ids.py` | Gives already-indexed photos the identity new ones get. Resumable. |
 | `scripts/relink_renamed_photos.py` | Re-points index rows at photos renamed under them, by identity then `PreservedFileName`. |
-| `scripts/tidy_exclusion_reasons.py` | Folds free-text exclusion reasons into the four the app offers. |
-| `scripts/restore_face_names.py` | Restores face names from a JSON snapshot. |
+
+Retired on 2026-09-24 with nothing left to do on either library, and in git's history: `canonicalize_paths.py`, `repair_bare_person_tags.py`, `tidy_exclusion_reasons.py`, `restore_face_names.py` and `cache_all_crops.py` (docs/findings.md, #54).
 
 ## Things that were true and are worth not re-learning
 

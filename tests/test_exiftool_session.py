@@ -149,7 +149,7 @@ class TestTheBatchReadersUseIt(unittest.TestCase):
     """The places that hand ExifTool a hundred files at a time."""
 
     def test_no_batch_reader_builds_a_bare_helper(self):
-        for name in ("repair_bare_person_tags.py", "backfill_document_ids.py"):
+        for name in ("backfill_document_ids.py",):
             with open(os.path.join(WORKSPACE_DIR, "scripts", name), encoding="utf-8") as f:
                 source = f.read()
             self.assertNotIn("ExifToolHelper(", source, name)

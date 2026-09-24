@@ -37,7 +37,7 @@ def bulk_scripts():
 
 class EveryBulkScriptBacksUp(unittest.TestCase):
     def test_there_are_bulk_scripts_to_check(self):
-        self.assertGreaterEqual(len(list(bulk_scripts())), 8)
+        self.assertGreaterEqual(len(list(bulk_scripts())), 5)
 
     def test_each_one_backs_up_through_db(self):
         missing = [name for name, source in bulk_scripts()
