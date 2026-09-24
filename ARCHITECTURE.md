@@ -215,7 +215,7 @@ On 2026-09-24, 210 SQL calls sat outside `tagpup.store`: 65 in `scripts/index.py
 - [x] `PhotoIndex` split: its SQL into `tagpup.store` (`photos`, `faces`, `embeddings`, `taxonomy`), the vector index into `tagpup.ml.vector_index`. `scripts/index.py` keeps the class as a composition of the two, with no SQL; the embedder and the suggester read through the store too. Checked against the old class on a copy of `photo_index`: the same rows, faces and neighbours, loaded in the same time.
 - [x] The services' SQL: `tagpup.services.faces` calls store functions. Unmatching many faces reads them in one query, not one per face.
 - [x] TagTuner's reads: the Identify queue and grids, the person grid, counts, the excluded list, the tag list and the people list (#49, #50), as store functions. Every read route answered byte for byte as before on copies of both libraries.
-- [ ] TagPup's reads, the runner, the CLI, the embedder, the suggester and the writer.
+- [x] TagPup's reads, the runner, the CLI, the embedder, the suggester and the writer.
 - [ ] The maintenance scripts: each calls store functions, or retires once a dry run shows it has nothing left to do on either library.
 - [ ] Guard: no SQL outside `tagpup.store`.
 - [ ] `tools/doctor.py`: the library's invariants, read-only, with counts. The schema is current; every face points at a photo; no named face is excluded; face names are among their photo's people (#42); the tree has no orphans; rows whose file is gone, by folder.

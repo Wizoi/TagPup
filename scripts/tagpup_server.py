@@ -25,6 +25,8 @@ from tagpup.core.library import Library
 from tagpup.files import keywords as file_keywords
 from tagpup.store.photos import move_rows as move_photo_rows  # noqa: F401  (saving, tests)
 from tagpup.store.photos import record_tags as record_tags_in_index  # noqa: F401  (writers, tests)
+from tagpup.store import faces as store_faces
+from tagpup.store import photos as store_photos
 from tagpup.store import schema
 from tagpup.store import taxonomy as store_taxonomy
 from tagpup.core.result import NotFound
@@ -82,14 +84,9 @@ def indexed_tags_for_photo(db_path, photo_path):
     because nothing was cached would erase tags the photo already carries.
     """
     try:
-        conn = tagpup_db.connect(db_path, timeout=10.0)
-        try:
-            where, where_params = paths.sql_equals("path", photo_path)
-            row = conn.execute("SELECT tags FROM photos WHERE " + where, where_params).fetchone()
-        finally:
-            conn.close()
-        if row and row[0]:
-            return json.loads(row[0])
+        found = store_photos.read_tags(db_path, [photo_path])
+        if found:
+            return found[0][1]
     except Exception as e:
         logger.warning(f"Could not read indexed tags for {photo_path}: {e}")
     return []
@@ -663,26 +660,14 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         conn = None
         try:
             conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            cursor = conn.cursor()
-            on_photo, on_photo_params = paths.sql_equals("photo_path", photo_path)
-            cursor.execute(
-                "SELECT id, box, name, prob, embedding, excluded, excluded_reason"
-                " FROM faces WHERE " + on_photo + " ORDER BY id",
-                on_photo_params,
-            )
-            rows = cursor.fetchall()
+            rows = store_faces.in_photo_for_panel(conn, photo_path)
             if not rows:
                 self.send_json({"faces": [], "total": 0})
                 return
 
             # Resolved faces elsewhere in the library, for suggesting a name.
-            cursor.execute(
-                "SELECT name, embedding FROM faces"
-                " WHERE name IS NOT NULL AND excluded = 0 AND NOT (" + on_photo + ")",
-                on_photo_params,
-            )
             known_names, known_vectors = [], []
-            for name, emb in cursor.fetchall():
+            for name, emb in store_faces.named_embeddings_elsewhere(conn, photo_path):
                 if not emb:
                     continue
                 vec = np.frombuffer(emb, dtype=np.float32)
@@ -773,17 +758,13 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
     def handle_get_tags(self):
         try:
             db_tags = set()
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            cursor = conn.cursor()
-            cursor.execute("SELECT tags FROM photos WHERE tags IS NOT NULL")
-            for row in cursor.fetchall():
-                try:
-                    tags_list = json.loads(row[0])
-                    for t in tags_list:
-                        db_tags.add(t)
-                except Exception:
-                    pass
-            conn.close()
+            conn = tagpup_db.connect(tagpup_db.readonly_uri(self.db_path), uri=True)
+            try:
+                for tags_list in store_photos.tag_lists(conn):
+                    db_tags.update(tags_list)
+                hidden_tags = store_taxonomy.hidden_tags(conn)
+            finally:
+                conn.close()
 
             # Also load from taxonomy file
             from taxonomy import TagTaxonomy
@@ -794,16 +775,6 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 db_tags.add(p)
 
             # Filter out hidden tags
-            hidden_tags = set()
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-            if cursor.fetchone():
-                cursor.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")
-                for row in cursor.fetchall():
-                    hidden_tags.add(row[0])
-            conn.close()
-
             def is_tag_hidden(tag):
                 return vocabulary.hidden_by(tag, hidden_tags)
 
@@ -859,13 +830,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         db_records = {}
         try:
             conn = tagpup_db.connect(self.db_path, timeout=10.0)
-            cursor = conn.cursor()
-            under, under_params = paths.sql_under("path", folder_path)
-            cursor.execute(
-                "SELECT path, mtime, size, tags, people, captions, raw_metadata FROM photos WHERE " + under,
-                under_params,
-            )
-            for row in cursor.fetchall():
+            for row in store_photos.rows_under(conn, folder_path):
                 p, mt, sz, t_json, pe_json, c_json, raw_json = row
                 db_records[paths.key(p)] = {
                     "path": paths.stored(p),

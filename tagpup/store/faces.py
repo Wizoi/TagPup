@@ -451,3 +451,27 @@ def excluded_for_review(conn):
         "SELECT f.id, f.photo_path, f.box, f.prob, p.mtime, p.raw_metadata, f.excluded_reason"
         " FROM faces f LEFT JOIN photos p ON p.path = f.photo_path"
         " WHERE f.excluded = 1 ORDER BY f.id DESC").fetchall()
+
+
+# ---- What TagPup's photo panel and the CLI read -----------------------------------------
+
+def in_photo_for_panel(conn, photo_path):
+    """(id, box JSON, name, prob, embedding, excluded, excluded_reason) of each face in one
+    photo, in detection order."""
+    where, params = paths.sql_equals("photo_path", photo_path)
+    return conn.execute("SELECT id, box, name, prob, embedding, excluded, excluded_reason"
+                        " FROM faces WHERE " + where + " ORDER BY id", params).fetchall()
+
+
+def named_embeddings_elsewhere(conn, photo_path):
+    """(name, embedding) of every named, unexcluded face in any photo but this one: who a
+    face in it might be."""
+    where, params = paths.sql_equals("photo_path", photo_path)
+    return conn.execute("SELECT name, embedding FROM faces"
+                        " WHERE name IS NOT NULL AND excluded = 0 AND NOT (" + where + ")",
+                        params).fetchall()
+
+
+def photos_with_faces(conn):
+    """The photo paths, as stored, that have any face row."""
+    return {photo_path for (photo_path,) in conn.execute("SELECT DISTINCT photo_path FROM faces")}

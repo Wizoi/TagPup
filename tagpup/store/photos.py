@@ -505,3 +505,18 @@ def folder_counts(conn):
         folder = paths.key(os.path.dirname(photo_path))
         counts[folder] = counts.get(folder, 0) + 1
     return counts
+
+
+def rows_under(conn, folder):
+    """(path, mtime, size, tags JSON, people JSON, captions JSON, raw_metadata JSON) of
+    each photo under a folder, at any depth."""
+    where, params = paths.sql_under("path", folder)
+    return conn.execute("SELECT path, mtime, size, tags, people, captions, raw_metadata FROM photos"
+                        " WHERE " + where, params).fetchall()
+
+
+def set_captions(conn, photo_path, captions):
+    """Record a photo's captions. Returns rows changed. The caller commits."""
+    where, params = paths.sql_equals("path", photo_path)
+    return conn.execute("UPDATE photos SET captions = ? WHERE " + where,
+                        (json.dumps(captions),) + params).rowcount

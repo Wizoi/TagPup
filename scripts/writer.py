@@ -90,18 +90,12 @@ def derive_caption_from_tags(tags: List[str]) -> Optional[str]:
 
 def record_caption_in_index(db_path, photo_path, caption):
     """The caption just written, in the photo's index row."""
-    import json
-
     import db as tagpup_db
-    import paths
+    from tagpup.store import photos as store_photos
 
-    where, params = paths.sql_equals("path", photo_path)
-
-    def store(conn):
-        return conn.execute("UPDATE photos SET captions = ? WHERE " + where,
-                            (json.dumps([caption]),) + params).rowcount
-
-    return tagpup_db.write_with_connection(db_path, store, label="caption for %s" % photo_path)
+    return tagpup_db.write_with_connection(
+        db_path, lambda conn: store_photos.set_captions(conn, photo_path, [caption]),
+        label="caption for %s" % photo_path)
 
 
 class MetadataWriter:

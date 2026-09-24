@@ -57,6 +57,7 @@ from faces import FaceProcessor
 import paths
 import db as tagpup_db
 from tagpup import config as tagpup_config
+from tagpup.store import faces as store_faces
 from tagpup.core import vocabulary
 from tagpup.core.library import Library
 
@@ -887,9 +888,7 @@ def index_faces(ctx, directory: str, force: bool):
             to_process = target_images
         else:
             # Query paths that already have face records in the faces table
-            cursor = photo_index.conn.cursor()
-            cursor.execute("SELECT DISTINCT photo_path FROM faces")
-            already_processed = {paths.key(row[0]) for row in cursor.fetchall()}
+            already_processed = {paths.key(p) for p in store_faces.photos_with_faces(photo_index.conn)}
             to_process = [img for img in target_images if paths.key(img) not in already_processed]
 
         if not to_process:
