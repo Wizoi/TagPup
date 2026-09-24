@@ -218,7 +218,7 @@ On 2026-09-24, 210 SQL calls sat outside `tagpup.store`: 65 in `scripts/index.py
 - [x] TagPup's reads, the runner, the CLI, the embedder, the suggester and the writer.
 - [x] The maintenance scripts: each calls store functions, or retires once a dry run shows it has nothing left to do on either library. Five retired *(owner, 2026-09-24)*: `canonicalize_paths`, `repair_bare_person_tags`, `tidy_exclusion_reasons`, `restore_face_names`, `cache_all_crops`.
 - [x] Guard: no SQL outside `tagpup.store` (`tests/test_sql_single_owner.py`). It finds all 43 statements in TagTuner's server as it was.
-- [ ] `tools/doctor.py`: the library's invariants, read-only, with counts. The schema is current; every face points at a photo; no named face is excluded; face names are among their photo's people (#42); the tree has no orphans; rows whose file is gone, by folder.
+- [x] `tools/doctor.py`: the library's invariants, read-only, with counts (`tagpup.store.checks`). The schema is current; every face points at a photo; no named face is excluded; face names are among their photo's people (#42); the tree has no orphans; rows whose file is gone, by folder.
 
 Exit: the servers contain no SQL.
 

@@ -15,11 +15,13 @@ from code_snapshot import LAUNCHERS  # noqa: E402  -- the list the installer cop
 
 
 def python_sources():
-    """Repo-relative paths: the launchers, scripts/*.py, and every module in tagpup/."""
+    """Repo-relative paths: the launchers, scripts/*.py, tools/*.py, and every module in
+    tagpup/. tools/ is not installed, but it opens the owner's libraries all the same."""
     found = [name for name in LAUNCHERS if os.path.exists(os.path.join(ROOT, name))]
-    scripts = os.path.join(ROOT, "scripts")
-    found += [os.path.join("scripts", name) for name in sorted(os.listdir(scripts))
-              if name.endswith(".py")]
+    for folder in ("scripts", "tools"):
+        if os.path.isdir(os.path.join(ROOT, folder)):
+            found += [os.path.join(folder, name) for name in sorted(os.listdir(os.path.join(ROOT, folder)))
+                      if name.endswith(".py")]
     for folder, dirs, names in os.walk(os.path.join(ROOT, "tagpup")):
         dirs[:] = sorted(d for d in dirs if d != "__pycache__")
         found += [os.path.relpath(os.path.join(folder, name), ROOT)
