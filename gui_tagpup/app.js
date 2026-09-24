@@ -1193,13 +1193,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function isPersonTag(tag) {
         if (!tag) return false;
-        const tagLower = tag.toLowerCase().trim();
-        if (tagLower === 'family' || tagLower === 'friends' || tagLower === 'people' || tagLower === 'pets') {
-            return true;
-        }
-        if (tag.startsWith('Family/') || tag.startsWith('Friends/') || tag.startsWith('People/') || tag.startsWith('Pets/')) {
-            return true;
-        }
+        // Which roots hold people is the tree's has_face flag, below; a list of root
+        // names here said Pets and Friends were people whatever the tree said
+        // (docs/findings.md, #66).
         const leaf = leafOf(tag);
         if (knownPeople.includes(leaf)) {
             return true;

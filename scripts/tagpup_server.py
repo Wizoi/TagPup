@@ -101,7 +101,7 @@ def zero_shot_candidates(taxonomy, configured):
     made for itself -- was offered to CLIP by name. The library's own face roots are
     used now.
     """
-    face_roots = taxonomy.people_roots() | {"pets"}
+    face_roots = taxonomy.people_roots()
     candidates = list(configured)
     seen = {c.lower() for c in candidates}
     for path in sorted(taxonomy.paths):
@@ -927,8 +927,10 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         folder_key = paths.key(folder_path)
 
         class Model:
-            def __init__(self, suggester, embedder):
+            def __init__(self, suggester, embedder, face_roots):
                 self.suggester, self.embedder = suggester, embedder
+                # Read once for the run: the caption files people under them (#66).
+                self.face_roots = face_roots
 
             def suggest(self, photo, meta):
                 return self.suggester.suggest_for_photo(
@@ -946,7 +948,8 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                             suggested_tags.append({"tag": item["tag"], "score": score})
                 from writer import derive_caption_from_tags
                 return suggested_tags, suggested_people, derive_caption_from_tags(
-                    [t["tag"] for t in suggested_tags] + [p["name"] for p in suggested_people])
+                    [t["tag"] for t in suggested_tags] + [p["name"] for p in suggested_people],
+                    self.face_roots)
 
             def consensus(self, suggestions):
                 return self.suggester.apply_folder_consensus(suggestions)
@@ -976,7 +979,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                                          candidate_tags=candidates)
                 # Candidate text embeddings, before the parallel photos need them.
                 suggester._precompute_candidates()
-                return Model(suggester, embedder)
+                return Model(suggester, embedder, taxonomy.people_roots())
 
         return Work()
 

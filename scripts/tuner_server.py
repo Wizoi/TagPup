@@ -671,8 +671,8 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 
     def _tag_taxonomy_rows(self, conn):
         """Every taxonomy entry, and which roots this library files people under: the
-        tree's, the usual ones, and Pets."""
-        return store_taxonomy.face_flags(conn), store_taxonomy.people_roots(conn) | {"pets"}
+        ones its tree flags."""
+        return store_taxonomy.face_flags(conn), store_taxonomy.people_roots(conn)
 
     def handle_get_tags_list(self, query):
         """Every tag this library knows, with what it touches.

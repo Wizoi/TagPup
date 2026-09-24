@@ -90,15 +90,11 @@ def hidden_by(tag, hidden):
     return any(path in hidden for path in lineage(tag))
 
 
-#: The roots made holding faces when the tree makes them. A node made below a root
-#: takes its parent's flag instead. Five writers of the tree each spelled this set out
-#: for themselves (docs/findings.md, #39).
-FACE_ROOTS = frozenset({"people", "family", "friends", "pets"})
-
-
-def root_holds_faces(name):
-    """Is a new root of this name made holding faces?"""
-    return key(name) in FACE_ROOTS
+#: The face root a new library is given (tagpup.store.taxonomy.seed), and all that a
+#: photo read without its library can assume. A library says which of its roots hold
+#: faces in its tree, by has_face; no list of names here overrides it. There were five,
+#: and they disagreed with the tree and with each other (docs/findings.md, #66).
+NEW_LIBRARY_FACE_ROOT = "People"
 
 
 def problem_with_tag(tag):
@@ -203,7 +199,8 @@ class PeopleVocabulary:
     many photos reads this once and passes it.
     """
 
-    DEFAULT_ROOTS = frozenset({"family", "friends", "people"})
+    #: What a photo read without its library assumes (NEW_LIBRARY_FACE_ROOT).
+    DEFAULT_ROOTS = frozenset({NEW_LIBRARY_FACE_ROOT.lower()})
 
     def __init__(self, roots, by_keyword):
         self.roots = set(roots)
@@ -211,14 +208,14 @@ class PeopleVocabulary:
 
     @classmethod
     def defaults(cls):
-        """The usual face roots and nobody by name: a photo read without its library."""
+        """A new library's face root and nobody by name: a photo read without its library."""
         return cls(cls.DEFAULT_ROOTS, {})
 
     @classmethod
     def from_rows(cls, root_names, face_rows):
-        """From a tag tree: the names of its face roots, and (tag, name) of every face node."""
-        roots = set(cls.DEFAULT_ROOTS)
-        roots.update(name.lower().strip() for name in root_names if name)
+        """From a tag tree: the names of its face roots, and (tag, name) of every face node.
+        The tree's roots only: a root it does not flag holds no faces."""
+        roots = {name.lower().strip() for name in root_names if name}
         by_keyword = {}
         for tag, name in face_rows:
             # A face ROOT (People, Family, Pets, ...) is a category, not a person, so

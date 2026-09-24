@@ -32,7 +32,13 @@ from metadata import (
     build_photo_ui_record,
     sanitize_filename,
 )
-from writer import derive_caption_from_tags
+from writer import derive_caption_from_tags as _derive_caption  # noqa: E402
+
+
+def derive_caption_from_tags(tags):
+    """The caption for `tags` in a library whose tree flags Family and Friends as holding
+    faces (docs/findings.md, #66)."""
+    return _derive_caption(tags, {"family", "friends"})
 
 
 class TestCleanMetadataValue(unittest.TestCase):
@@ -115,7 +121,9 @@ class TestExtractCaptions(unittest.TestCase):
 
 
 class TestExtractPeopleWithoutADatabase(unittest.TestCase):
-    """Default face roots are family/friends/people when no taxonomy is available."""
+    """Without a library the one face root is People, the root a new library is given.
+    Family and Friends were assumed as well, whatever a library's tree said
+    (docs/findings.md, #66)."""
 
     def test_reads_person_in_image(self):
         people = extract_people({"XMP:PersonInImage": ["Jane Doe"]}, [], db_path="")
@@ -125,19 +133,24 @@ class TestExtractPeopleWithoutADatabase(unittest.TestCase):
         people = extract_people({"XMP:RegionName": ["Jane Doe"]}, [], db_path="")
         self.assertEqual(people, ["Jane Doe"])
 
-    def test_takes_the_leaf_of_a_hierarchical_family_tag(self):
-        people = extract_people({}, ["Family/Immediate/Jane Doe"], db_path="")
+    def test_takes_the_leaf_of_a_hierarchical_people_tag(self):
+        people = extract_people({}, ["People/Immediate/Jane Doe"], db_path="")
         self.assertEqual(people, ["Jane Doe"])
 
+    def test_family_and_friends_are_not_face_roots_without_a_library(self):
+        # docs/findings.md, #66: only a library's tree says Family or Friends hold faces.
+        self.assertEqual(extract_people({}, ["Family/Immediate/Jane Doe"], db_path=""), [])
+        self.assertEqual(extract_people({}, ["Friends/Bob Roe"], db_path=""), [])
+
     def test_handles_backslash_and_pipe_separators(self):
-        self.assertEqual(extract_people({}, [r"Family\Jane Doe"], db_path=""), ["Jane Doe"])
-        self.assertEqual(extract_people({}, ["Friends|Bob Roe"], db_path=""), ["Bob Roe"])
+        self.assertEqual(extract_people({}, [r"People\Jane Doe"], db_path=""), ["Jane Doe"])
+        self.assertEqual(extract_people({}, ["People|Bob Roe"], db_path=""), ["Bob Roe"])
 
     def test_ignores_non_people_hierarchies(self):
         self.assertEqual(extract_people({}, ["Trips/Texas"], db_path=""), [])
 
     def test_ignores_a_bare_root_with_no_leaf(self):
-        self.assertEqual(extract_people({}, ["Family"], db_path=""), [])
+        self.assertEqual(extract_people({}, ["People"], db_path=""), [])
 
     def test_no_database_means_no_taxonomy_resolution(self):
         """Without a database there must be no implicit fallback to another library.
@@ -150,7 +163,7 @@ class TestExtractPeopleWithoutADatabase(unittest.TestCase):
 
     def test_deduplicates_names_from_different_sources(self):
         people = extract_people(
-            {"XMP:PersonInImage": ["Jane Doe"]}, ["Family/Jane Doe"], db_path=""
+            {"XMP:PersonInImage": ["Jane Doe"]}, ["People/Jane Doe"], db_path=""
         )
         self.assertEqual(people, ["Jane Doe"])
 
@@ -192,10 +205,12 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
         conn.commit()
         conn.close()
 
-    def test_default_roots_are_always_present(self):
-        roots = get_people_roots(db_path=self.db_path)
-        for expected in ("family", "friends", "people"):
-            self.assertIn(expected, roots)
+    def test_only_the_roots_the_tree_flags_are_face_roots(self):
+        # docs/findings.md, #66: family, friends and people were added to whatever the
+        # tree said. A root holds faces when the tree flags it, whatever its name.
+        self.add_tag("People", "People", has_face=1)
+        self.add_tag("Family", "Family", has_face=0)
+        self.assertEqual({"people"}, get_people_roots(db_path=self.db_path))
 
     def test_a_custom_root_marked_as_a_face_category_is_honoured(self):
         self.add_tag("Crew", "Crew", has_face=1)

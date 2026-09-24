@@ -91,8 +91,10 @@ def main():
     face_emb = np.random.randn(512).astype(np.float32)
     face_emb /= np.linalg.norm(face_emb)
 
-    # Insert Pets/Puppy into tag_taxonomy: below Pets, it holds faces
+    # Insert Pets/Puppy into tag_taxonomy: Pets flagged as holding faces, so the puppy
+    # below it does too. A new library flags only People.
     from tagpup.store import taxonomy as store_taxonomy
+    store_taxonomy.set_branch_flags(conn, "Pets", has_face=1)
     store_taxonomy.add_path(conn, "Pets/Puppy")
     print("Taxonomy seeded: Added 'Pets/Puppy' (has_face = 1).")
 

@@ -84,6 +84,9 @@ def set_flags(library, node_id, has_face=None, hidden=None):
     """
     node = _node(library, node_id)
     result = Result(attempted=1)
+    if has_face == 0 and _last_face_root(library, node["tag"]):
+        result.refuse(_LAST_FACE_ROOT % node["tag"])
+        return result
     result.changed = db.write_with_connection(
         library.path, lambda conn: taxonomy.set_branch_flags(conn, node["tag"], has_face, hidden),
         label="tag tree: flags of %s" % node["tag"])
@@ -114,6 +117,9 @@ def delete(library, node_id, action, target, exiftool_path):
     node = _node(library, node_id)
     old = node["tag"]
     result = Result(attempted=1)
+    if _last_face_root(library, old):
+        result.refuse(_LAST_FACE_ROOT % old)
+        return result
     carrying = photos.carrying(library.path, old)
     new = None
     if action == "move" and carrying:
@@ -197,6 +203,10 @@ def merge(library, source, target, exiftool_path, retire=False, apply=False):
     problem = target and vocabulary.problem_with_tag(target)
     if problem:
         result.refuse(problem)
+        return result
+    if _last_face_root(library, source) and (
+            retire or vocabulary.root_of(target) not in taxonomy.face_roots(library.path)):
+        result.refuse(_LAST_FACE_ROOT % source)
         return result
     # In its one spelling, as the tag tree holds it: "School / Kentridge" was written into
     # the files with its spaces.
@@ -371,6 +381,17 @@ def _count(result, affected, rewritten, add_up):
 def _under(tag, other):
     """Is `tag` the tag `other`, or under it?"""
     return vocabulary.retag([tag], other)[1]
+
+
+#: Why the last face root stays (docs/findings.md, #66).
+_LAST_FACE_ROOT = ("'%s' is the only root that holds faces: without it, nobody in the library "
+                   "is a person. Mark another root as holding faces first.")
+
+
+def _last_face_root(library, tag):
+    """Is `tag` the library's only root that holds faces? Taking it away, or its flag,
+    would leave every person a word, so the owner chose that it stays (2026-09-24)."""
+    return taxonomy.face_roots(library.path) == [tag]
 
 
 def _node(library, node_id):

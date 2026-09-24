@@ -8,11 +8,16 @@ from exiftool_session import ExifToolSession
 import _root  # noqa: F401
 from tagpup.core import vocabulary
 from tagpup.files.keywords import caption_fields
+from tagpup.store import taxonomy as store_taxonomy
 
 logger = logging.getLogger("tagpup_cli.writer")
 
-def derive_caption_from_tags(tags: List[str]) -> Optional[str]:
-    """Derive a clean, readable caption based directly on the hierarchical/flat tags."""
+def derive_caption_from_tags(tags: List[str], face_roots) -> Optional[str]:
+    """Derive a clean, readable caption based directly on the hierarchical/flat tags.
+
+    `face_roots` are the library's roots that hold people, lowercased, as its tree flags
+    them (taxonomy.people_roots): this listed family and friends, and put everyone under
+    People among the others (docs/findings.md, #66)."""
     if not tags:
         return None
         
@@ -29,7 +34,7 @@ def derive_caption_from_tags(tags: List[str]) -> Optional[str]:
         leaf = vocabulary.leaf_of(tag)
         root = vocabulary.root_of(tag).lower()
         
-        if root in ["family", "friends"]:
+        if root in face_roots:
             people.append(leaf)
         elif root == "activity":
             activities.append(leaf)
@@ -149,7 +154,8 @@ class MetadataWriter:
             filtered_tags = [t["tag"] for t in suggested_tags if t.get("score", 0.0) >= min_score]
             
             # Derive caption dynamically from the filtered tags
-            derived_caption = derive_caption_from_tags(filtered_tags)
+            derived_caption = derive_caption_from_tags(
+                filtered_tags, store_taxonomy.people_vocabulary(db_path).roots)
             
             if filtered_tags or derived_caption:
                 write_tasks.append((path, filtered_tags, derived_caption))

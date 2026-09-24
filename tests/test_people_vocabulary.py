@@ -43,7 +43,7 @@ class PeopleVocabularyCase(unittest.TestCase):
         ["people/imogen vale"],           # case
         ["Pets", "People"],               # roots alone name nobody
         ["Activity/Rowing", "Rowing"],    # not a face tag
-        ["Family/Immediate/Tamsin Oakes"],  # a default root, not in this taxonomy
+        ["Family/Immediate/Tamsin Oakes"],  # a root this taxonomy does not have
     ]
 
     def test_a_vocabulary_resolves_as_a_database_read_does(self):
@@ -59,9 +59,11 @@ class PeopleVocabularyCase(unittest.TestCase):
         self.assertEqual(["Imogen Vale"], extract_people({}, ["Imogen Vale"], vocabulary=vocabulary))
         self.assertEqual([], extract_people({}, ["Pets", "People"], vocabulary=vocabulary))
 
-    def test_without_a_library_only_the_default_roots_count(self):
+    def test_without_a_library_only_a_new_librarys_people_root_counts(self):
+        # docs/findings.md, #66: Family and Friends counted too, whatever a tree said.
         self.assertEqual([], extract_people({}, ["Pets/Biscuit", "Imogen Vale"]))
-        self.assertEqual(["Tamsin Oakes"], extract_people({}, ["Family/Immediate/Tamsin Oakes"]))
+        self.assertEqual([], extract_people({}, ["Family/Immediate/Tamsin Oakes"]))
+        self.assertEqual(["Tamsin Oakes"], extract_people({}, ["People/Immediate/Tamsin Oakes"]))
 
 
 if __name__ == "__main__":

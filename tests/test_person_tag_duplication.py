@@ -12,6 +12,7 @@ created. It ran on every index, so a cleanup done once was undone by the next ru
 taxonomy had been taken from 51 of these to zero before, and they came back.
 """
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -22,14 +23,28 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from taxonomy import TagTaxonomy
 
+from tagpup.store import db, schema  # noqa: E402
+from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
+
 
 class TaxonomyTestBase(unittest.TestCase):
-    def taxonomy(self, paths=()):
-        # A library that does not exist: the tree is held in memory only.
-        fd, path = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
-        os.remove(path)
+    def taxonomy(self, paths=(), face_roots=()):
+        """A tree holding `paths`. Without `face_roots`, of a library that does not
+        exist: held in memory only, with a new library's People as its face root. With
+        them, of a library whose tree flags those roots as holding faces -- the only
+        thing that says a root does (docs/findings.md, #66)."""
+        folder = tempfile.mkdtemp(prefix="tagpup_people_")
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = os.path.join(folder, "library.db")
+        if face_roots:
+            schema.ensure(path)
+
+            def flag(conn):
+                for root in face_roots:
+                    store_taxonomy.add_path(conn, root, root_has_face=1)
+            db.write_with_connection(path, flag)
         tax = TagTaxonomy(path)
+        tax.load()
         for p in paths:
             tax.add_tag(p)
         return tax
@@ -48,14 +63,14 @@ class TestPeopleEnterUnderAPeopleRoot(TaxonomyTestBase):
 
     def test_a_person_already_in_the_taxonomy_is_left_where_they_are(self):
         # The point is to avoid a second home, not to move the first one.
-        tax = self.taxonomy(["Family/Cora Ingersoll"])
+        tax = self.taxonomy(["Family/Cora Ingersoll"], face_roots=["Family"])
         tax.add_people(["Cora Ingersoll"])
         self.assertIn("Family/Cora Ingersoll", tax.paths)
         self.assertNotIn("People/Cora Ingersoll", tax.paths)
         self.assertNotIn("Cora Ingersoll", tax.paths)
 
     def test_a_library_using_family_does_not_grow_a_people_beside_it(self):
-        tax = self.taxonomy(["Family/Someone Else"])
+        tax = self.taxonomy(["Family/Someone Else"], face_roots=["Family"])
         tax.add_people(["Josephine Sandoval"])
         self.assertIn("Family/Josephine Sandoval", tax.paths)
         self.assertNotIn("People/Josephine Sandoval", tax.paths)
@@ -142,7 +157,7 @@ class TestNewPeopleKeepTheLibrarysDepth(TaxonomyTestBase):
         tax = self.taxonomy([
             "Family/Immediate/Cora Ingersoll",
             "Family/Immediate/Delphine Ingersoll",
-        ])
+        ], face_roots=["Family"])
         tax.add_people(["Marisol Ingersoll"])
         self.assertIn("Family/Immediate/Marisol Ingersoll", tax.paths)
         self.assertNotIn("Family/Marisol Ingersoll", tax.paths)
@@ -152,7 +167,7 @@ class TestNewPeopleKeepTheLibrarysDepth(TaxonomyTestBase):
             "Family/Immediate/Cora Ingersoll",
             "Family/Immediate/Delphine Ingersoll",
             "Family/Extended/Someone Else",
-        ])
+        ], face_roots=["Family"])
         tax.add_people(["Marisol Ingersoll"])
         self.assertIn("Family/Immediate/Marisol Ingersoll", tax.paths)
 

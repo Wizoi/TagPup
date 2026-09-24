@@ -77,9 +77,10 @@ class TagSuggester:
         with self._people_lock:
             if self._people is None:
                 names = set()
+                face_roots = self.taxonomy.people_roots()   # the tree's (docs/findings.md, #66)
                 for path in self.taxonomy.paths:
                     parts = vocabulary.segments(path)
-                    if len(parts) >= 2 and parts[0].lower() in ["family", "friends"]:
+                    if len(parts) >= 2 and parts[0].lower() in face_roots:
                         names.add(parts[-1].lower())
                 centroids = {}
                 try:
@@ -136,11 +137,14 @@ class TagSuggester:
         
         year_embeddings = {}
         needed_tags = []
+        # The roots the library flags as holding faces. This listed family, friends and
+        # pets, and so prompted for everyone under People as a thing (#66).
+        face_roots = self.taxonomy.people_roots()
         for tag in self.candidate_tags:
             is_person = False
             for path in self.taxonomy.paths:
                 parts = vocabulary.segments(path)
-                if len(parts) >= 2 and parts[0].lower() in ["family", "friends", "pets"]:
+                if len(parts) >= 2 and parts[0].lower() in face_roots:
                     if parts[-1].lower() == tag.lower() or path.lower() == tag.lower():
                         is_person = True
                         break
@@ -224,18 +228,20 @@ class TagSuggester:
             # Only use non-people tags for propagation
             raw_tags = list(meta.get("tags", []))
             
-            # Expand tags according to the taxonomy, excluding family and friends branches and known people
+            # Expand tags according to the taxonomy, leaving out the branches that hold people
+            # (the tree's face roots, #66) and known people
+            face_roots = self.taxonomy.people_roots()
             expanded_tags = set()
             for tag in raw_tags:
                 tag_parts = vocabulary.segments(tag)
-                if tag_parts and tag_parts[0].lower() in ["family", "friends"]:
+                if tag_parts and tag_parts[0].lower() in face_roots:
                     continue
                 if tag_parts and tag_parts[-1].lower() in known_people:
                     continue
                 expanded = self.taxonomy.expand_tag(tag)
                 for t in expanded:
                     t_parts = vocabulary.segments(t)
-                    if t_parts and t_parts[0].lower() in ["family", "friends"]:
+                    if t_parts and t_parts[0].lower() in face_roots:
                         continue
                     if t_parts and t_parts[-1].lower() in known_people:
                         continue

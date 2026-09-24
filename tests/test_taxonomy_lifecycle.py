@@ -125,6 +125,8 @@ class TaxonomyTestBase(unittest.TestCase):
             return json.loads(r.read().decode("utf-8"))
 
     def create_tag(self, name, parent_id=None, has_face=0):
+        """Create a tag through the route. `has_face` flags a new root as holding faces:
+        nothing else does, whatever its name (docs/findings.md, #66)."""
         status, body = self.post(
             "/api/taxonomy/create",
             {"name": name, "parent_id": parent_id, "has_face": has_face},
@@ -270,16 +272,20 @@ class TestTaxonomyCreate(TaxonomyTestBase):
         for expected in ("People", "People/Smith", "People/Smith/Jane"):
             self.assertIn(expected, rows, f"missing ancestor {expected}")
 
-    def test_face_roots_are_flagged_automatically(self):
+    def test_a_root_holds_faces_only_when_created_so(self):
+        """docs/findings.md, #66: a root named People, Family, Friends or Pets was made
+        holding faces for its name. Only the tree says which roots do."""
         for root in ("People", "Family", "Friends", "Pets"):
             self.create_tag(root)
+        self.create_tag("Crew", has_face=1)
         rows = self.taxonomy_rows()
         for root in ("People", "Family", "Friends", "Pets"):
-            self.assertEqual(rows[root]["has_face"], 1, f"{root} should be face-matching")
+            self.assertEqual(rows[root]["has_face"], 0, f"{root} was flagged for its name")
+        self.assertEqual(rows["Crew"]["has_face"], 1, "Crew was asked to hold faces")
 
     def test_children_inherit_has_face_from_face_root(self):
         """Subnodes of a face root must carry has_face=1 or clustering skips them."""
-        parent_id, _ = self.create_tag("People")
+        parent_id, _ = self.create_tag("People", has_face=1)
         self.create_tag("Jane Doe", parent_id=parent_id)
         rows = self.taxonomy_rows()
         self.assertEqual(rows["People/Jane Doe"]["has_face"], 1)
@@ -545,7 +551,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
 
     def test_renaming_a_person_also_renames_their_resolved_faces(self):
         """Faces store the bare leaf name, so the rename must reach them too."""
-        people_id, _ = self.create_tag("People")
+        people_id, _ = self.create_tag("People", has_face=1)
         person_id, _ = self.create_tag("Jane Doe", parent_id=people_id)
         photo = self.make_photo("a.jpg", ["People/Jane Doe"])
 
@@ -578,7 +584,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
     def test_renaming_a_person_renames_their_faces_whatever_the_case(self):
         """docs/findings.md, #38: TagTuner's rename of a person caught a face named in
         another case and this one did not, so the two renames of one person disagreed."""
-        people_id, _ = self.create_tag("People")
+        people_id, _ = self.create_tag("People", has_face=1)
         person_id, _ = self.create_tag("Jane Doe", parent_id=people_id)
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute("INSERT INTO faces (photo_path, box, embedding, name)"
@@ -628,7 +634,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
 
 class TestTaxonomyTree(TaxonomyTestBase):
     def test_tree_reports_hierarchy_and_flags(self):
-        root_id, _ = self.create_tag("People")
+        root_id, _ = self.create_tag("People", has_face=1)
         self.create_tag("Jane Doe", parent_id=root_id)
         self.post("/api/taxonomy/update", {"id": root_id, "hidden_from_autocomplete": 1})
 
@@ -671,7 +677,9 @@ class TestTaxonomyTree(TaxonomyTestBase):
         """docs/findings.md, #40: reading the tree set every node under a root named
         Pets back to holding faces, so the switch the page shows on a root undid
         nothing below it."""
-        root_id, _ = self.create_tag("Pets")
+        # Another face root: the last one may not be switched off (#66).
+        self.create_tag("People", has_face=1)
+        root_id, _ = self.create_tag("Pets", has_face=1)
         self.create_tag("Biscuit", parent_id=root_id)
         self.post("/api/taxonomy/update", {"id": root_id, "has_face": 0})
 

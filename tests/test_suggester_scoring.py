@@ -11,6 +11,7 @@ model is ever loaded. The constants asserted (5-year half-life, +0.20 path boost
 SPEC_TAGPUP_CLI.md section 5.
 """
 import os
+import shutil
 import sys
 import math
 import tempfile
@@ -23,6 +24,9 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 import suggester as suggester_module
 from suggester import TagSuggester, extract_path_hints
 from taxonomy import TagTaxonomy
+
+from tagpup.store import db, schema  # noqa: E402
+from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 
 DECAY_LAMBDA = 0.1386  # ln(2)/5, a five-year half-life
 
@@ -90,8 +94,23 @@ class SuggesterTestBase(unittest.TestCase):
     def _restore_processor(self):
         suggester_module._global_face_processor = self._saved_processor
 
-    def make_suggester(self, neighbors=(), taxonomy_paths=(), candidates=None, embedder=None):
-        taxonomy = TagTaxonomy(os.path.join(tempfile.gettempdir(), "tagpup_no_such_library.db"))
+    def make_suggester(self, neighbors=(), taxonomy_paths=(), candidates=None, embedder=None,
+                       face_roots=()):
+        """`face_roots`: the roots the library's tree flags as holding faces, the only
+        thing that says a root does (docs/findings.md, #66). Without them the library
+        does not exist, and People is its one face root."""
+        library = os.path.join(tempfile.gettempdir(), "tagpup_no_such_library.db")
+        if face_roots:
+            folder = tempfile.mkdtemp(prefix="tagpup_suggest_")
+            self.addCleanup(shutil.rmtree, folder, True)
+            library = os.path.join(folder, "library.db")
+            schema.ensure(library)
+
+            def flag(conn):
+                for root in face_roots:
+                    store_taxonomy.add_path(conn, root, root_has_face=1)
+            db.write_with_connection(library, flag)
+        taxonomy = TagTaxonomy(library)
         taxonomy.paths = set(taxonomy_paths)
         index = StubIndex(neighbors=list(neighbors))
         return TagSuggester(index, taxonomy, embedder=embedder, candidate_tags=candidates or [])
@@ -285,14 +304,15 @@ class TestTaxonomyAncestorExpansion(SuggesterTestBase):
 class TestPeopleAreDeferredToFaceMatching(SuggesterTestBase):
     def test_family_tags_are_not_propagated_from_neighbours(self):
         neighbors = [(0.9, photo_meta("n1.jpg", ["Family/Immediate/Jane Doe"]))]
-        s = self.make_suggester(neighbors, taxonomy_paths=["Family/Immediate/Jane Doe"])
+        s = self.make_suggester(neighbors, taxonomy_paths=["Family/Immediate/Jane Doe"],
+                                face_roots=["Family"])
         result = s.suggest_for_photo("/nowhere/target.jpg", [1.0, 0.0, 0.0])
         tags = {item["tag"] for item in result["suggested_tags"]}
         self.assertNotIn("Family/Immediate/Jane Doe", tags)
 
     def test_friends_tags_are_not_propagated_from_neighbours(self):
         neighbors = [(0.9, photo_meta("n1.jpg", ["Friends/Bob Roe"]))]
-        s = self.make_suggester(neighbors, taxonomy_paths=["Friends/Bob Roe"])
+        s = self.make_suggester(neighbors, taxonomy_paths=["Friends/Bob Roe"], face_roots=["Friends"])
         result = s.suggest_for_photo("/nowhere/target.jpg", [1.0, 0.0, 0.0])
         self.assertEqual(result["suggested_tags"], [])
 
@@ -300,7 +320,8 @@ class TestPeopleAreDeferredToFaceMatching(SuggesterTestBase):
         neighbors = [
             (0.9, photo_meta("n1.jpg", ["Family/Immediate/Jane Doe", "Holidays/Christmas"]))
         ]
-        s = self.make_suggester(neighbors, taxonomy_paths=["Family/Immediate/Jane Doe"])
+        s = self.make_suggester(neighbors, taxonomy_paths=["Family/Immediate/Jane Doe"],
+                                face_roots=["Family"])
         result = s.suggest_for_photo("/nowhere/target.jpg", [1.0, 0.0, 0.0])
         self.assertIn("Holidays/Christmas", self.scores(result))
 
@@ -312,6 +333,7 @@ class TestEraAwarePrompting(SuggesterTestBase):
             taxonomy_paths=["Family/Immediate/Jane Doe"],
             candidates=["Jane Doe", "Sunset"],
             embedder=embedder,
+            face_roots=["Family"],
         )
         s._get_candidate_embeddings_for_year(1998)
 
@@ -554,7 +576,8 @@ class TestUntaggedNeighboursDoNotDiluteScores(SuggesterTestBase):
             (0.9, photo_meta("n1.jpg", ["Holidays/Christmas"])),
             (0.9, photo_meta("n2.jpg", ["Family/Immediate/Jane Doe"])),
         ]
-        s = self.make_suggester(neighbors, taxonomy_paths=["Family/Immediate/Jane Doe"])
+        s = self.make_suggester(neighbors, taxonomy_paths=["Family/Immediate/Jane Doe"],
+                                face_roots=["Family"])
         scores = self.scores(s.suggest_for_photo("/t.jpg", [1.0, 0.0, 0.0]))
         self.assertAlmostEqual(
             scores["Holidays/Christmas"], 1.0, places=2,

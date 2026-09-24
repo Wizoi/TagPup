@@ -17,10 +17,19 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_face_clustering_rules import FaceClusteringTestBase, identity_vector, near  # noqa: E402
 
+from tagpup.store import db, taxonomy  # noqa: E402
+
 GUESS = "Rowan Thackeray"
 
 
 class ClusteringDoesNotTrustItsOwnGuesses(FaceClusteringTestBase):
+    def setUp(self):
+        super().setUp()
+        # People holds faces because the library's tree says so, as a real library's
+        # does: no root holds faces for its name (docs/findings.md, #66).
+        db.write_with_connection(
+            self.db_path, lambda conn: taxonomy.add_path(conn, "People", root_has_face=1))
+
     def add_guessed_face(self, photo_path, embedding, name):
         """A face clustering named, as it leaves it: a name, no manual source."""
         conn = sqlite3.connect(self.db_path)

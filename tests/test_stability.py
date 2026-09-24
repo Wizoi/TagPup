@@ -792,7 +792,11 @@ class TestStability(unittest.TestCase):
         # Clear tables
         cursor.execute("DELETE FROM faces")
         cursor.execute("DELETE FROM photos")
-        
+        # The library flags People as holding faces, as a real library's tree does:
+        # no root holds faces for its name (docs/findings.md, #66).
+        from tagpup.store import taxonomy as store_taxonomy
+        store_taxonomy.add_path(photo_index.conn, "People", root_has_face=1)
+
         # We will create two eras:
         # Era 1 (2010): 6 photos/faces of Wren as a child (embedding: [1.0, 0.0, 0.0, ...])
         # Era 2 (2026): 6 photos/faces of Wren as a teen (embedding: [0.0, 1.0, 0.0, ...])

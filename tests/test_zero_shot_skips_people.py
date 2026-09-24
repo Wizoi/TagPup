@@ -18,7 +18,9 @@ class FakeTaxonomy:
              "Activity", "Activity/Rowing", "Pets/Biscuit"}
 
     def people_roots(self):
-        return {"people", "family", "friends", "crew"}
+        # The roots this library's tree flags as holding faces, Pets among them: the
+        # servers added pets themselves, and now only the tree says (docs/findings.md, #66).
+        return {"people", "crew", "pets"}
 
 
 class ZeroShotSkipsPeople(unittest.TestCase):

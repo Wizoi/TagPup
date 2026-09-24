@@ -40,7 +40,8 @@ class TreeCase(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def node(self, path, has_face=0):
-        """Add `path` to the tree, and return the id of `path`'s node."""
+        """Add `path` to the tree, and return the id of `path`'s node. `has_face` flags
+        a new root as holding faces: nothing else does (docs/findings.md, #66)."""
         tags.create(self.lib.library, path, has_face=has_face)
         return self.id_of(path)
 
@@ -154,7 +155,7 @@ class Renaming(TreeCase):
         self.assertEqual(self.rewrites, [([photo], "Crew/Divers", "Crew/Swimmers")])
 
     def test_a_person_is_renamed_on_their_faces_and_in_each_photos_people(self):
-        person = self.node("People/Rowan Thackeray")
+        person = self.node("People/Rowan Thackeray", has_face=1)
         photo = self.photo("a.jpg", ["People/Rowan Thackeray"],
                            people=["Rowan Thackeray", "Ada Pembrook", "Rowan Thackeray-Vale"])
         self.lib.add_face(photo, [0, 0, 10, 10], name="Rowan Thackeray")
@@ -244,8 +245,9 @@ class Merging(TreeCase):
 class RenamingAPerson(TreeCase):
     def setUp(self):
         super().setUp()
-        self.node("People/Rowan Thackeray")
-        self.node("Family/Rowan Thackeray")
+        # Both roots flagged as holding faces, as a library filing people there does.
+        self.node("People/Rowan Thackeray", has_face=1)
+        self.node("Family/Rowan Thackeray", has_face=1)
 
     def rename(self, old, new):
         return tags.rename_person(self.lib.library, old, new, "exiftool")

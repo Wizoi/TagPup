@@ -14,8 +14,6 @@ from tagpup.store import db, generations, schema
 
 logger = logging.getLogger(__name__)
 
-#: The roots a library files people under whatever its tree says (TagTaxonomy's).
-PEOPLE_ROOTS = ("People", "Family", "Friends")
 
 
 def generation(conn):
@@ -38,8 +36,9 @@ def add_path(conn, path, root_has_face=0):
     """Put a tag in the tree on `conn`, with each of its levels that is missing, and
     return the id of its node: None for a tag with no levels. The caller commits.
 
-    A new root holds faces if `root_has_face` says so or its name does
-    (vocabulary.root_holds_faces); a node made below another takes its parent's flag.
+    A new root holds faces if `root_has_face` says so, whatever its name: the tree is
+    the only thing that says which roots do (docs/findings.md, #66). A node made below
+    another takes its parent's flag.
     A level already in the tree is left as it is. This is the one writer of new nodes:
     there were five, each with its own copy of the rule (docs/findings.md, #39).
     """
@@ -50,7 +49,7 @@ def add_path(conn, path, root_has_face=0):
             parent_id, parent_has_face = row[0], row[1] or 0
             continue
         if parent_id is None:
-            has_face = 1 if root_has_face or vocabulary.root_holds_faces(part) else 0
+            has_face = 1 if root_has_face else 0
         else:
             has_face = 1 if parent_has_face else 0
         parent_id = conn.execute(
@@ -61,13 +60,13 @@ def add_path(conn, path, root_has_face=0):
 
 
 def people_roots(conn):
-    """Lowercased roots the library open on `conn` files people under."""
-    roots = {r.lower() for r in PEOPLE_ROOTS}
-    if conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'").fetchone():
-        for (name,) in conn.execute("SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'"):
-            if name:
-                roots.add(name.strip().lower())
-    return roots
+    """Lowercased roots the library open on `conn` files people under: the roots its tree
+    flags as holding faces. A library whose tree is empty, or missing, has a new
+    library's: the indexer resolves people before it first saves a tree."""
+    if not tree_has_nodes(conn):
+        return {vocabulary.NEW_LIBRARY_FACE_ROOT.lower()}
+    return {name.strip().lower() for (name,) in conn.execute(
+        "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'") if name}
 
 
 def _read_people_paths(conn):
@@ -142,10 +141,9 @@ def people_vocabulary(db_path=None, conn=None):
 
 
 def read_people_vocabulary(conn):
-    """The PeopleVocabulary of the library open on `conn`."""
-    has_tree = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'").fetchone()
-    if not has_tree:
+    """The PeopleVocabulary of the library open on `conn`: a new library's while its tree
+    is empty (people_roots)."""
+    if not tree_has_nodes(conn):
         return PeopleVocabulary.defaults()
     roots = [name for (name,) in conn.execute(
         "SELECT name FROM tag_taxonomy WHERE (parent_id IS NULL OR tag NOT LIKE '%/%') AND has_face = 1")]
@@ -289,6 +287,23 @@ def tree_exists(conn):
                         " AND name = 'tag_taxonomy'").fetchone() is not None
 
 
+def face_roots(db_path):
+    """The roots of the library's tree that hold faces, as spelled, in order."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not tree_exists(conn):
+            return []
+        return [tag for (tag,) in conn.execute(
+            "SELECT tag FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%' ORDER BY tag")]
+    finally:
+        conn.close()
+
+
+def tree_has_nodes(conn):
+    """Does the library open on `conn` have a tree with anything in it?"""
+    return tree_exists(conn) and conn.execute("SELECT 1 FROM tag_taxonomy LIMIT 1").fetchone() is not None
+
+
 def hidden_tags(conn):
     """The nodes hidden from autocomplete; a node under one is hidden too
     (vocabulary.hidden_by)."""
@@ -410,7 +425,10 @@ def seed(db_path):
         try:
             if conn.execute("SELECT COUNT(*) FROM tag_taxonomy").fetchone()[0] > 0:
                 return
-            for root in ("People", "Activity", "Pets", "School", "Trips"):
+            # One face root; the others are words. A library flags any other root that
+            # holds faces itself (docs/findings.md, #66).
+            add_path(conn, vocabulary.NEW_LIBRARY_FACE_ROOT, root_has_face=1)
+            for root in ("Activity", "Pets", "School", "Trips"):
                 add_path(conn, root)
 
             tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -427,7 +445,7 @@ def seed(db_path):
             if "faces" in tables:
                 for (name,) in conn.execute("SELECT DISTINCT name FROM faces WHERE name IS NOT NULL").fetchall():
                     if name.strip():
-                        add_path(conn, "People/" + name)
+                        add_path(conn, vocabulary.NEW_LIBRARY_FACE_ROOT + "/" + name)
 
             conn.commit()
             logger.info("Successfully seeded tag taxonomy database table.")
@@ -480,7 +498,7 @@ class TagTaxonomy:
         if not os.path.exists(self.db_path):
             return
         try:
-            schema.ensure(self.db_path)
+            seed(self.db_path)
             conn = db.connect(self.db_path, timeout=10.0)
             
             # Insert the paths added since this was loaded, and their ancestors. Not
@@ -525,9 +543,6 @@ class TagTaxonomy:
         for tag in tags:
             self.add_tag(tag)
 
-    #: Roots that hold people. A library may use any of them, or its own.
-    DEFAULT_PEOPLE_ROOTS = PEOPLE_ROOTS
-
     def people_roots(self) -> Set[str]:
         """Lowercased roots this library files people under (the module's people_roots)."""
         # Only a library that exists: opening one that does not creates it, and asking
@@ -541,7 +556,7 @@ class TagTaxonomy:
                     conn.close()
             except Exception:
                 pass
-        return {r.lower() for r in PEOPLE_ROOTS}
+        return {vocabulary.NEW_LIBRARY_FACE_ROOT.lower()}
 
     def find_person_path(self, name: str) -> Optional[str]:
         """An existing people path whose last segment is this name."""
@@ -579,16 +594,15 @@ class TagTaxonomy:
         return found
 
     def people_root(self) -> str:
-        """The root this library files people under.
-
-        Whichever of the usual people roots already exists, so a library using
-        "Family" does not suddenly grow a "People" beside it. Falls back to People.
-        """
-        existing = {vocabulary.key(vocabulary.root_of(p)) for p in self.paths}
-        for root in self.DEFAULT_PEOPLE_ROOTS:
-            if root.lower() in existing:
-                return root
-        return self.DEFAULT_PEOPLE_ROOTS[0]
+        """The root this library files people under: People when the library flags it,
+        else the first root it flags, else People -- the root a new library is given."""
+        roots = self.people_roots()
+        spelled = {vocabulary.key(vocabulary.root_of(p)): vocabulary.root_of(p) for p in self.paths}
+        default = vocabulary.NEW_LIBRARY_FACE_ROOT
+        if default.lower() in roots:
+            return spelled.get(default.lower(), default)
+        flagged = sorted(spelled[r] for r in roots if r in spelled)
+        return flagged[0] if flagged else default
 
     def people_parent(self) -> str:
         """Where a newly seen person belongs, at the depth this library already uses.

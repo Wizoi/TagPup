@@ -44,9 +44,15 @@ class AddingAPath(unittest.TestCase):
         self.add(" Trips | Boston MA / Harbor ")
         self.assertEqual(sorted(self.nodes()), ["Trips", "Trips/Boston MA", "Trips/Boston MA/Harbor"])
 
-    def test_a_root_named_as_faces_are_filed_holds_faces_and_so_does_all_below_it(self):
+    def test_a_root_is_not_made_holding_faces_for_its_name(self):
+        # docs/findings.md, #66: a new root named People, Family, Friends or Pets was
+        # flagged for its name. Only the tree says which roots hold faces.
         for root in ("People", "family", "Friends", "Pets"):
             self.add(root + "/Someone/Anyone")
+        self.assertFalse(any(has_face for _, _, has_face in self.nodes().values()))
+
+    def test_all_below_a_root_asked_to_hold_faces_holds_them(self):
+        self.add("People/Someone/Anyone", root_has_face=1)
         self.assertTrue(all(has_face for _, _, has_face in self.nodes().values()))
 
     def test_a_new_root_holds_faces_when_asked(self):

@@ -35,6 +35,10 @@ class FakeTaxonomy:
     def find_by_leaf(self, leaf):
         return None
 
+    def people_roots(self):
+        # The roots the library's tree flags as holding faces (docs/findings.md, #66).
+        return {"people"}
+
 
 class CountingFaceProcessor:
     def __init__(self):
