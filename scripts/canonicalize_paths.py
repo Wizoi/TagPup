@@ -266,8 +266,11 @@ def main(argv=None):
             return 0
 
         print("\nbacked up to %s" % tagpup_db.backup(args.db, "canonicalize"))
-        changed, violations = apply(conn, photo_renames, merges, cache_renames,
-                                    cache_merges, orphan_faces)
+        # Under the library's write lock, as every other write is: this one rewrites
+        # paths across three tables, and ran beside the app's writes unguarded.
+        with tagpup_db.writing(args.db, label="canonicalize paths"):
+            changed, violations = apply(conn, photo_renames, merges, cache_renames,
+                                        cache_merges, orphan_faces)
         print("\nrows changed:")
         for label, count in sorted(changed.items()):
             print("  %-40s %d" % (label, count))
