@@ -9,6 +9,7 @@ suggested for again.
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from service_fixture import TempLibrary  # noqa: E402
@@ -90,6 +91,81 @@ class Suggestions(unittest.TestCase):
             f.write(b"photo")
         SuggestionRuns(self.lib.library.path).run(self.lib.photos, Work([self.a, self.b, other]))
         self.assertIn(other, self.saved()["suggestions"])
+
+
+class CountingModel(Model):
+    def __init__(self):
+        self.asked = []
+
+    def suggest(self, photo, meta):
+        self.asked.append(photo)
+        return super().suggest(photo, meta)
+
+
+class CountingWork(Work):
+    def __init__(self, photo_paths, model):
+        super().__init__(photo_paths)
+        self.model = model
+
+    def begin(self):
+        return self.model
+
+
+class TheRunsTheirSelves(unittest.TestCase):
+    def setUp(self):
+        self.lib = TempLibrary(self)
+        self.a = self.lib.photo("a.jpg")
+        self.b = self.lib.photo("b.jpg")
+        self.runs = SuggestionRuns(self.lib.library.path)
+        self.runs.run(self.lib.photos, Work([self.a, self.b]))
+
+    @unittest.skipIf(os.path.normcase("A") == "A", "paths differ by case only where the filesystem ignores it")
+    def test_a_folder_spelled_another_way_is_not_suggested_for_again(self):
+        # The rows matched the scan's spelling exactly: a folder typed in another case
+        # was suggested for again, and the page found none of its suggestions (#92).
+        spelled = [p.upper() for p in (self.a, self.b)]
+        model = CountingModel()
+        runs = SuggestionRuns(self.lib.library.path)
+        runs.run(self.lib.photos.upper(), CountingWork(spelled, model))
+        self.assertEqual([], model.asked)
+        self.assertEqual(set(spelled), set(runs.status(self.lib.photos.upper())["suggestions"]))
+
+    def test_a_poll_never_pairs_a_finished_run_with_rows_read_before_it_finished(self):
+        # The rows were read first: a run finishing meanwhile was reported "completed"
+        # with the rows from before its consensus (#93).
+        from tagpup.core import paths
+        from tagpup.services import suggestions as saved
+
+        key = paths.key(self.lib.photos)
+        self.runs.statuses[key] = {"status": "running", "completed": 1, "total": 2}
+        real = saved.saved_in
+
+        def finishing_while_read(db_path, folder):
+            self.runs.statuses[key]["status"] = "completed"
+            return real(db_path, folder)
+
+        with mock.patch.object(saved, "saved_in", finishing_while_read):
+            self.assertEqual("running", self.runs.status(self.lib.photos)["status"])
+
+    def test_a_suggestion_that_cannot_be_kept_does_not_end_the_run(self):
+        # One write locked past its retries ended the run in "error" (#95).
+        from tagpup.services import suggestions as saved
+
+        c = self.lib.photo("c.jpg")
+        d = self.lib.photo("d.jpg")
+        real = saved.keep
+
+        def locked_for_one(db_path, photo, found, model_key=None):
+            if photo == c:
+                raise RuntimeError("database is locked")
+            return real(db_path, photo, found, model_key)
+
+        with mock.patch.object(saved, "keep", locked_for_one):
+            self.runs.run(self.lib.photos, Work([self.a, self.b, c, d]))
+        status = self.runs.status(self.lib.photos)
+        self.assertEqual("completed", status["status"])
+        self.assertIn(d, status["suggestions"])
+        self.assertNotIn(c, status["suggestions"])
 
 
 if __name__ == "__main__":

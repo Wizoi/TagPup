@@ -271,6 +271,26 @@ class TestTheFolderScanUsesWhatTheIndexKnows(HandlerCase):
         self.assertTrue(all(p["tags"] == ["Cross Country"] for p in listed))
 
 
+class TestTheFolderScanReadsARowWithNoStamp(HandlerCase):
+    def test_a_photo_suggest_saw_but_the_index_never_read_is_read(self):
+        # Suggest makes a row for such a photo with no mtime or size; the scan compared
+        # them with the file's and failed with TypeError (docs/findings.md, #94).
+        from tagpup.store import photos as store_photos
+        photo = self.make_file("IMG_0001.jpg")
+        conn = tagpup_db.connect(self.db_path)
+        try:
+            store_photos.ensure_row(conn, photo)
+            conn.commit()
+        finally:
+            conn.close()
+        extractor = fake_extractor()
+        with patch("metadata.MetadataExtractor", extractor):
+            listed = self.call("handle_get_folder_scan",
+                               query={"path": [forward(self.folder)], "force": ["true"]})
+        extractor.return_value.batch_read.assert_called_once()
+        self.assertEqual([os.path.abspath(photo)], [p["path"] for p in listed])
+
+
 class TestSmartRenameNumbersByDateTaken(HandlerCase):
     """Reported: a photo whose caption was just saved -- so its file is the newest --
     was numbered last although it was taken first. The folder cache lookup never

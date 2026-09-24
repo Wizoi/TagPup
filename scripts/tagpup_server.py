@@ -865,7 +865,10 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 continue
                 
             cached = db_records.get(file_norm)
-            if cached and abs(cached["mtime"] - mtime) < 0.1 and cached["size"] == size:
+            # A row with no stamp -- made for a photo Suggest saw, never read -- is read
+            # now (docs/findings.md, #94).
+            if (cached and cached.get("mtime") is not None and cached.get("size") is not None
+                    and abs(cached["mtime"] - mtime) < 0.1 and cached["size"] == size):
                 from metadata import build_photo_ui_record
                 folder_map[file_norm] = build_photo_ui_record(cached["path"], cached, mtime, size)
             else:
@@ -899,7 +902,9 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         if not folder_path_list:
             self.send_json_error(400, "Missing 'path' parameter")
             return
-        self.send_json(self.suggestion_runs().status(urllib.parse.unquote(folder_path_list[0])))
+        folder = urllib.parse.unquote(folder_path_list[0])
+        # Under the spellings this server's scan gave the page (tagpup.jobs.suggestions).
+        self.send_json(self.suggestion_runs().status(folder, self.folder_cache.get(paths.key(folder))))
 
     def handle_post_folder_suggest_start(self):
         """Suggest tags for a folder's photos (tagpup.jobs.suggestions)."""

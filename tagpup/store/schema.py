@@ -423,12 +423,18 @@ def _suggestions(conn):
         return
     from tagpup.store import suggestions   # the store imports this module
     ids = {paths.key(p): i for i, p in conn.execute("SELECT id, path FROM photos")}
+    succeeded = set()
     taken = left = 0
     for status in saved.values() if isinstance(saved, dict) else ():
         entries = status.get("suggestions") if isinstance(status, dict) else None
         for photo, found in (entries or {}).items():
             if not isinstance(found, dict):
                 continue
+            # A photo listed under two folders: a success is not replaced by an error.
+            if paths.key(photo) in succeeded and "error" in found:
+                continue
+            if "error" not in found:
+                succeeded.add(paths.key(photo))
             photo_id = ids.get(paths.key(photo))
             if photo_id is not None:
                 suggestions.put_for(conn, photo_id, found)

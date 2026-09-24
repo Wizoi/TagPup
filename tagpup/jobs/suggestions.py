@@ -75,30 +75,47 @@ class SuggestionRuns:
         self.db_path = db_path
         self.lock = threading.Lock()
         self.statuses = {}
+        #: {folder key: {paths.key of a photo: the path its run was handed}}: the
+        #: spelling the page knows each photo by, which the library's row need not share.
+        self.spellings = {}
 
-    def _saved(self, folder):
-        """{photo as stored: entry} of what the library holds for a folder's photos."""
-        return saved.saved_in(self.db_path, folder)
+    def _saved(self, folder, photos=None):
+        """{photo: entry} of what the library holds for a folder's photos, each under the
+        spelling its run or `photos` (the folder's scan, {key: metadata with "path"}) was
+        handed: the row's spelling may differ, and the page looks a photo up by the
+        scan's (docs/findings.md, #92)."""
+        with self.lock:
+            spelled = dict(self.spellings.get(paths.key(folder), {}))
+        for meta in (photos or {}).values():
+            spelled[paths.key(meta["path"])] = paths.stored(meta["path"])
+        return {spelled.get(paths.key(photo), photo): found
+                for photo, found in saved.saved_in(self.db_path, folder).items()}
 
     # ---- What a page asks -----------------------------------------------------------
 
-    def status(self, folder):
+    def status(self, folder, photos=None):
         """A folder's run and its suggestions, or {"status": "idle"}: a copy, taken under
         the lock the workers write under -- serialising the live dict while four workers
-        added to it failed the poll with "dictionary changed size during iteration"."""
-        saved = self._saved(folder)
-        with self.lock:
-            run = self.statuses.get(paths.key(folder))
-            if run is not None:
-                return plain(dict(run, suggestions=saved))
-        if not saved:
-            return {"status": "idle"}
-        done = sum(1 for found in saved.values() if _succeeded(found))
-        return {"status": "completed", "completed": done, "total": len(saved), "suggestions": saved}
+        added to it failed the poll with "dictionary changed size during iteration".
 
-    def suggestions(self, folder):
+        The run's state first, then the rows: a run takes its consensus before it says
+        "completed", so rows read after are never older than the state. Read the other
+        way round, a poll could pair "completed" with the rows from before consensus,
+        which the page keeps (#93). `photos` is the folder's scan, whose spellings the
+        rows are handed back under."""
+        with self.lock:
+            run = copy.deepcopy(self.statuses.get(paths.key(folder)))
+        found = self._saved(folder, photos)
+        if run is not None:
+            return plain(dict(run, suggestions=found))
+        if not found:
+            return {"status": "idle"}
+        done = sum(1 for entry in found.values() if _succeeded(entry))
+        return {"status": "completed", "completed": done, "total": len(found), "suggestions": found}
+
+    def suggestions(self, folder, photos=None):
         """What a folder's runs suggested, each photo to its entry, or None."""
-        return self._saved(folder) or None
+        return self._saved(folder, photos) or None
 
     # ---- Starting and running -------------------------------------------------------
 
@@ -143,8 +160,12 @@ class SuggestionRuns:
                     entry.update(status="error", message="No images found in this folder.")
                     self.statuses[key] = entry
                 return
-            saved = self._saved(folder)
-            todo = [photo for photo in photos if not _succeeded(saved.get(paths.stored(photos[photo]["path"])))]
+            with self.lock:
+                self.spellings[key] = {paths.key(meta["path"]): paths.stored(meta["path"])
+                                       for meta in photos.values()}
+            # By key: the row's spelling need not be the scan's (#92).
+            done_before = {paths.key(photo): found for photo, found in self._saved(folder).items()}
+            todo = [photo for photo in photos if not _succeeded(done_before.get(paths.key(photos[photo]["path"])))]
             with self.lock:
                 self.statuses.setdefault(key, {"status": "preparing", "completed": 0, "total": 0}).update(
                     status="preparing", total=len(photos), completed=len(photos) - len(todo))
@@ -191,7 +212,13 @@ class SuggestionRuns:
             # it instead of skipping it for good.
             found = {"tags": [], "people": [], "title": None,
                      "raw_suggestions": {"suggested_tags": []}, "error": str(e) or type(e).__name__}
-        saved.keep(self.db_path, photo, plain(found), getattr(model, "model_key", None))
+        try:
+            saved.keep(self.db_path, photo, plain(found), getattr(model, "model_key", None))
+        except Exception as e:
+            # Not kept, so the next run suggests for it again; the rest of this run and
+            # its consensus go on (#95).
+            logger.error("Could not keep the suggestions for %s: %s", photo, e)
+            return None
         with self.lock:
             if key in self.statuses:
                 self.statuses[key]["completed"] += 1
@@ -201,12 +228,12 @@ class SuggestionRuns:
         """Folder consensus over copies of the suggester's own output, so what is kept is
         never adjusted twice."""
         try:
-            in_run = {paths.stored(meta["path"]) for meta in photos.values()}
+            in_run = {paths.key(meta["path"]) for meta in photos.values()}
             # Each under the path its row has now: the suggester's output names the path
             # it was made for, and a photo renamed since was written back to nothing (#90).
             raw = [dict(copy.deepcopy(found["raw_suggestions"]), path=photo)
                    for photo, found in self._saved(folder).items()
-                   if photo in in_run and _succeeded(found) and found.get("raw_before_consensus")
+                   if paths.key(photo) in in_run and _succeeded(found) and found.get("raw_before_consensus")
                    and isinstance(found.get("raw_suggestions"), dict) and found["raw_suggestions"].get("path")]
             if len(raw) < 2:
                 return

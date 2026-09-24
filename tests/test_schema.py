@@ -407,6 +407,19 @@ class ALibraryWithItsSuggestionsInAFile(SchemaTestCase):
         self.assertTrue(os.path.exists(self.file))
 
 
+class APhotoSavedUnderTwoFolders(SchemaTestCase):
+    def test_keeps_its_success_over_an_error(self):
+        # The last entry won, an error over a success (#96).
+        make_unmigrated_library(self.db_path)
+        good = {"tags": [], "people": [], "title": "Rowing", "raw_suggestions": {"suggested_tags": []}}
+        failed = dict(good, title=None, error="timed out")
+        with open(os.path.join(self.dir, "gui_suggestions_cache_library.json"), "w", encoding="utf-8") as f:
+            json.dump({"D:/": {"suggestions": {"D:/a.jpg": good}},
+                       "D:/b": {"suggestions": {"D:/a.jpg": failed}}}, f)
+        schema.ensure(self.db_path)
+        self.assertEqual([("Rowing", None)], self.connect().execute("SELECT title, error FROM suggestions").fetchall())
+
+
 class ThePhotoIdMigration(SchemaTestCase):
     def test_refuses_a_connection_with_foreign_keys_on(self):
         # Dropping the tables to rebuild them would delete every face and crop first (#83).
