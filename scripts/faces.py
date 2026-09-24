@@ -25,6 +25,16 @@ except ImportError:  # imported as a top-level module
 
 logger = logging.getLogger("tagpup_cli.faces")
 
+
+def resolution_trace_path(db_path):
+    """Where clustering records how it named each face, for this library alone.
+
+    It was face_resolution_trace.json beside the database -- one file for every
+    library in the folder, so clustering one overwrote the record of another.
+    """
+    return os.path.splitext(db_path)[0] + "_face_resolution_trace.json"
+
+
 class FaceProcessor:
     def __init__(self, device: str = None):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -887,7 +897,7 @@ class FaceProcessor:
             
         # Save traces to JSON
         try:
-            trace_path = os.path.join(os.path.dirname(photo_index.db_path), "face_resolution_trace.json")
+            trace_path = resolution_trace_path(photo_index.db_path)
             with open(trace_path, "w", encoding="utf-8") as f:
                 json.dump(list(traces.values()), f, indent=2)
             logger.info(f"Face resolution traces saved to {trace_path}")

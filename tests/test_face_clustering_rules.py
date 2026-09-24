@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from index import PhotoIndex
 from taxonomy import TagTaxonomy
-from faces import FaceProcessor
+from faces import FaceProcessor, resolution_trace_path
 
 FACE_DIM = 512
 DBSCAN_EPS = 0.48
@@ -123,7 +123,7 @@ class FaceClusteringTestBase(unittest.TestCase):
         return row[0] if row else None
 
     def traces(self):
-        trace_path = os.path.join(os.path.dirname(self.db_path), "face_resolution_trace.json")
+        trace_path = resolution_trace_path(self.db_path)
         if not os.path.exists(trace_path):
             return {}
         with open(trace_path, encoding="utf-8") as f:
@@ -406,7 +406,7 @@ class TestResolutionOutputs(FaceClusteringTestBase):
         self.add_face(photo, jane)
 
         self.resolve()
-        trace_path = os.path.join(os.path.dirname(self.db_path), "face_resolution_trace.json")
+        trace_path = resolution_trace_path(self.db_path)
         self.assertTrue(os.path.exists(trace_path), "no trace file written")
 
     def test_every_face_appears_in_the_trace(self):
