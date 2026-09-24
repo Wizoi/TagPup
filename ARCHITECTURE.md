@@ -243,6 +243,22 @@ An MCP server, `tagpup.mcp`, so that Claude works with a library through the sam
 
 Exit: every check in `tools/doctor.py`, and each question asked of the library while settling a finding, is one tool call. Every tool calls a service, and each has a test.
 
+### Phase 8: Sync
+A job that keeps each library in step with its folders. Today a row changes only when an app writes the photo or someone indexes its folder again, so the library drifts: files added outside the apps are missing, a deleted folder leaves its rows and face work behind (#42 and #47 in docs/findings.md), and a file edited elsewhere keeps a row describing what it used to hold. It needs photo ids (phase 4), which let a moved or renamed file keep its row, and its faces with it.
+- `tagpup.jobs.sync`: for each indexed folder, compare what is on disk with the rows, by path, size and modified time. Content identity (the DocumentID) links a file that moved.
+- What it finds, sorted: new files (indexed through the indexing job's queue), changed files (their rows re-read from the file, as `refresh_rows_from_files.py` does now), moved files (the row follows the file), and missing files.
+- A missing file is reported, never removed on its own: a folder on an unplugged drive looks the same as a deleted one. Removing rows stays the owner's choice, and the report says which folders are wholly gone.
+- It runs when a library opens and when asked, and may watch the indexed folders while an app runs. A scan that finds nothing costs one directory walk and no file reads.
+- Each run reports what it changed, not what it looked at, and leaves a record the apps can show ("last in step: ...").
+
+Exit: after files are added, edited, moved or deleted outside the apps, one sync brings the rows back in step. `tools/doctor.py` finds nothing it would change, except missing files it has reported.
+
+## After the re-architecture
+
+Behaviour changes queued behind the phases. They wait so that they land once, in the new code, rather than in both servers and again afterwards.
+
+- Remove Folder chooses from the library's indexed folders, not from the folders on disk (docs/findings.md, #47). Each folder shows its photo count and whether it is still on disk, and one that is gone is the obvious one to pick. Removing takes the folder out of the library and never touches the files. The list comes from the same place as sync's report of missing folders (phase 8).
+
 ## Decisions
 
 | Date | Decision |
@@ -268,3 +284,4 @@ Exit: every check in `tools/doctor.py`, and each question asked of the library w
 | 5. One server | not started |
 | 6. Pages | not started |
 | 7. MCP | not started |
+| 8. Sync | not started |
