@@ -91,12 +91,13 @@ def plan_for(db_path):
 
 
 def apply_plan(db_path, duplicates, affected):
-    conn = tagpup_db.connect(db_path, timeout=60.0)
-    cursor = conn.cursor()
-    for bare in duplicates:
-        cursor.execute("DELETE FROM tag_taxonomy WHERE tag = ?", (bare,))
-    conn.commit()
-    conn.close()
+    """Delete the duplicate nodes. Returns how many rows were deleted, not planned."""
+    def delete(conn):
+        cursor = conn.cursor()
+        return sum(cursor.execute("DELETE FROM tag_taxonomy WHERE tag = ?", (bare,)).rowcount
+                   for bare in duplicates)
+
+    removed = tagpup_db.write_with_connection(db_path, delete, label="merge duplicate person tags")
 
     # Keep the JSON copy of the taxonomy in step with the table.
     tax_path = os.path.splitext(db_path)[0] + "_taxonomy.json"
@@ -110,6 +111,7 @@ def apply_plan(db_path, duplicates, affected):
             taxonomy.save()
         except Exception as exc:  # the table is the source of truth either way
             print("  (could not rewrite %s: %s)" % (tax_path, exc))
+    return removed
 
 
 def main():
@@ -143,8 +145,8 @@ def main():
 
     print("\nbacked up to %s" % tagpup_db.backup(args.db, "merge-person-tags"))
 
-    apply_plan(args.db, duplicates, affected)
-    print("\nRemoved %d duplicate taxonomy node(s)." % len(duplicates))
+    removed = apply_plan(args.db, duplicates, affected)
+    print("\nRemoved %d of %d planned duplicate taxonomy node(s)." % (removed, len(duplicates)))
 
     remaining, _ = plan_for(args.db)
     print("duplicates remaining: %d" % len(remaining))
