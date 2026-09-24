@@ -49,7 +49,13 @@ class Result:
 
 
 class NotFound(Exception):
-    """What a read asked for is not there. A web route answers it with 404."""
+    """What a read or a write was asked about is not there. A web route answers it
+    with 404."""
+
+
+class Conflict(Exception):
+    """A write that cannot be made while things stand as they do: naming a face that has
+    been excluded, say. A web route answers it with 409."""
 
 
 class Refused(Exception):

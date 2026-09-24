@@ -1,17 +1,74 @@
 """The faces table.
 
-For now, the names a photo's faces were given, and turning their boxes when a photo
-is turned. The rest of the table's queries, in scripts/index.py and the servers, move
-here with the store step of phase 2 (ARCHITECTURE.md).
+The names a photo's faces were given, turning their boxes when a photo is turned, a
+face's crop, and a write to the table that the Identify Faces grids can account for. The
+rest of the table's queries, in scripts/index.py and the servers, move here with the
+store step of phase 2 (ARCHITECTURE.md).
 """
+import contextlib
 import json
 import logging
 import os
+import sqlite3
+import types
 
 from tagpup.core import paths
 from tagpup.store import db
 
 logger = logging.getLogger(__name__)
+
+
+def generation(conn):
+    """The faces table's generation counter (PhotoIndex keeps it moving with triggers),
+    or 0 on a library that does not have it yet. It moves when a name changes, which
+    none of the table's counts need to."""
+    try:
+        row = conn.execute("SELECT generation FROM faces_generation WHERE id = 1").fetchone()
+    except sqlite3.OperationalError:
+        return 0
+    return row[0] if row else 0
+
+
+def fingerprint(conn):
+    """A cheap signature of the faces table, which moves whenever a face is added, named,
+    renamed, given to someone else or excluded. TagTuner caches its Identify Faces grids
+    against it."""
+    # SUM(excluded) matters: excluding an unnamed face changes what the queue should show
+    # without changing the row count, the name count, or the maximum id, so leaving it
+    # out serves a stale queue after every exclusion.
+    row = conn.execute(
+        "SELECT COUNT(*), COUNT(name), COALESCE(MAX(id), 0), COALESCE(SUM(excluded), 0) FROM faces"
+    ).fetchone()
+    return (tuple(row) if row else (0, 0, 0, 0)) + (generation(conn),)
+
+
+@contextlib.contextmanager
+def accounted_write(db_path, label="faces write"):
+    """A write to the faces table whose effect alone the fingerprint's change describes.
+
+    Holds the library's write lock and one IMMEDIATE transaction. Yields `write`, with
+    `conn` and `before`, the fingerprint as the write began; `after` is read just before
+    the commit. Nobody else can write between the two, so a cache that drops the faces
+    this write took out of the pool may re-stamp itself with `after`: the difference is
+    this write, and no batch the indexer or TagPup committed meanwhile. Reading them
+    before the lock and after the commit stamped such a batch as accounted for, and its
+    faces never reached the grid. Rolled back if the block raises.
+    """
+    with db.lock_for(db_path):
+        conn = db.connect(db_path, timeout=30.0)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            write = types.SimpleNamespace(conn=conn, before=fingerprint(conn), after=None)
+            try:
+                yield write
+            except BaseException:
+                conn.rollback()
+                raise
+            write.after = fingerprint(conn)
+            conn.commit()
+            logger.debug("%s committed", label)
+        finally:
+            conn.close()
 
 
 def face_names(photo_path, db_path=None, conn=None):

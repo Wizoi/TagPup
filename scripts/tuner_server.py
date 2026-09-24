@@ -27,8 +27,10 @@ import _root  # noqa: F401
 from tagpup import config as tagpup_config
 from tagpup.core import dates, vocabulary
 from tagpup.core.library import Library
-from tagpup.core.result import NotFound
+from tagpup.core.result import Conflict, NotFound
 from tagpup.jobs import indexing as indexing_jobs
+from tagpup.services import faces as faces_service
+from tagpup.store import faces as store_faces
 from tagpup.services import indexing
 from tagpup.services import people as people_service
 from tagpup.services import tags as tags_service
@@ -1073,569 +1075,125 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         return json.loads(body.decode('utf-8'))
 
     def handle_post_match(self):
-        conn = None
+        """Name one face (tagpup.services.faces.name_face)."""
+        data = self._face_request()
+        if data is None:
+            return
+        face_id, person_name = data.get("face_id"), data.get("person_name")
+        if face_id is None or not person_name:
+            self.send_error(400, "Missing face_id or person_name")
+            return
         try:
-            try:
-                data = self.read_json_body()
-            except Exception as json_err:
-                self.send_error(400, f"Malformed JSON: {json_err}")
-                return
-
-            face_id = data.get("face_id")
-            person_name = data.get("person_name")
-            
-            if face_id is None or not person_name:
-                self.send_error(400, "Missing face_id or person_name")
-                return
-                
-            try:
-                face_id = int(face_id)
-                person_name = str(person_name).strip()
-            except (ValueError, TypeError):
-                self.send_error(400, "Invalid parameters")
-                return
-            problem = vocabulary.problem_with_name(person_name)
-            if problem:
-                self.send_json_error(400, problem)
-                return
-
-            if not os.path.exists(self.db_path):
-                self.send_error(404, "Database not found")
-                return
-
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-
-            # The state the cached identify views were built against, read before this
-            # write touches anything. Only an entry stamped with this can be carried
-            # forward; anything older was built before something else changed the
-            # table -- a folder removed, a batch of photos indexed -- and re-stamping
-            # it would quietly revive a grid full of faces that no longer exist.
-            fingerprint_before = self.begin_identify_write(conn)
-
-            # 1. Fetch face details: photo_path and old name
-            cursor.execute("SELECT photo_path, name, excluded FROM faces WHERE id = ?", (face_id,))
-            face_row = cursor.fetchone()
-            if not face_row:
-                self.send_error(404, "Face ID not found")
-                return
-
-            photo_path, old_name, excluded = face_row
-
-            # An excluded face has been ruled out of identity work; naming it leaves a
-            # face that is both ruled out and claimed, which no view shows and no Undo
-            # reaches. Restoring it first is the way to name it.
-            if excluded:
-                self.send_json_error(
-                    409, "Cannot match: this face is excluded. Restore it first to name it.")
-                return
-
-            # If name is unchanged (case-insensitive), just return success
-            if old_name and old_name.strip().lower() == person_name.lower():
-                self.send_json({"success": True})
-                return
-
-            # Check for conflict: is person_name already tagged on another face in this photo?
-            #
-            # One lookup, by equality. There used to be a `photo_path LIKE ?` retry
-            # whenever this found nothing -- which is the ordinary case, since finding
-            # nothing is what "no conflict" looks like -- and it was wrong twice over.
-            # LIKE cannot use idx_faces_photo_path, so it scanned every face row (0.38s
-            # on this library, on every single assignment); and in LIKE an underscore
-            # matches any character, so `IMG_1234.jpg` also matched `IMG-1234.jpg` and
-            # refused a legitimate assignment because a different photo had that person.
-            path_sql, path_args = paths.sql_equals("photo_path", photo_path)
-            cursor.execute("SELECT id FROM faces WHERE " + path_sql + " AND name = ? AND id != ?", path_args + (person_name, face_id,))
-            conflict_row = cursor.fetchone()
-
-            if conflict_row:
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "success": False,
-                    "error": f"Cannot match: '{person_name}' is already tagged on another face in this photo."
-                }).encode("utf-8"))
-                return
-
-            # 2. Update faces table
-            # A person chose this, so record it as a manual decision: re-clustering
-            # re-derives every name from scratch and must not discard it.
-            cursor.execute("UPDATE faces SET name = ?, name_source = 'manual' WHERE id = ?", (person_name, face_id))
-
-            # 3. Update photos table people list
-            path_sql, path_args = paths.sql_equals("path", photo_path)
-            cursor.execute("SELECT path, people FROM photos WHERE " + path_sql, path_args)
-            photo_row = cursor.fetchone()
-                
-            actual_photo_path = photo_path
-            people = []
-            if photo_row:
-                actual_photo_path = photo_row[0]
-                if photo_row[1]:
-                    try:
-                        people = json.loads(photo_row[1])
-                    except Exception:
-                        people = []
-
-            # Append the new person name if missing
-            if person_name not in people:
-                people.append(person_name)
-
-            # Check if old name is no longer matched to any other faces in the photo
-            if old_name and old_name != person_name:
-                path_sql, path_args = paths.sql_equals("photo_path", photo_path)
-                cursor.execute("SELECT count(*) FROM faces WHERE " + path_sql + " AND name = ? AND id != ?", path_args + (old_name, face_id,))
-                count_row = cursor.fetchone()
-                
-                other_count = count_row[0] if count_row else 0
-                if other_count == 0:
-                    # Remove old name from people list
-                    people = [p for p in people if p != old_name]
-
-            # Save the updated people list
-            people_json = json.dumps(people)
-            path_sql, path_args = paths.sql_equals("path", actual_photo_path)
-            cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (people_json,) + path_args)
-
-            with tagpup_db.writing(self.db_path, label="name a face"):
-                fingerprint_after = self.faces_fingerprint(conn)
-                conn.commit()
-                # This face has left the identify pool; take it out of the cached
-                # views rather than making the next click rebuild them.
-                self.identify_cache_forget_faces(conn, [face_id], fingerprint_before, fingerprint_after)
+            face_id, person_name = int(face_id), str(person_name).strip()
+        except (ValueError, TypeError):
+            self.send_error(400, "Invalid parameters")
+            return
+        if self._faces_write(lambda library: faces_service.name_face(library, face_id, person_name)):
             self.send_json({"success": True})
 
+    def _faces_write(self, action):
+        """Run a face action (tagpup.services.faces) on this request's library, and answer
+        what went wrong: 404 for a face or a library that is not there, 409 for a face
+        that cannot be named as things stand, 400 for a request refused, 500 for anything
+        else. Returns its Result, or None once answered.
+
+        The faces an action took out of the identify pool come off the cached grids,
+        rather than making the next click rebuild them: the action says which, and the
+        fingerprints either side of its write (tagpup.store.faces.accounted_write).
+        """
+        try:
+            result = action(Library(self.db_path))
+        except NotFound as missing:
+            self.send_error(404, str(missing))
+            return None
+        except Conflict as conflict:
+            self.send_json_error(409, str(conflict))
+            return None
         except Exception as e:
-            logger.error(f"Error in handle_post_match: {e}")
-            self.send_error(500, f"Internal error: {e}")
+            logger.error("Error in a face action: %s" % e)
+            self.send_error(500, "Internal error: %s" % e)
+            return None
+        if result.refused:
+            self.send_json_error(400, result.refused)
+            return None
+        fingerprints = result.details.get("fingerprints")
+        if fingerprints and result.changed:
+            self.identify_cache_forget_faces(None, result.details["face_ids"], *fingerprints)
+        return result
+
+    def named_faces(self):
+        """Every named face, as named_face_matrix gives them: for automatch."""
+        conn = tagpup_db.connect(tagpup_db.readonly_uri(self.db_path), uri=True)
+        try:
+            return self.named_face_matrix(conn, self.faces_fingerprint(conn))
         finally:
-            self.end_identify_write()
-            if conn:
-                conn.close()
+            conn.close()
+
+    def _face_request(self):
+        """The request's JSON body, or None once a malformed one has been answered."""
+        try:
+            return self.read_json_body()
+        except Exception as json_err:
+            self.send_error(400, f"Malformed JSON: {json_err}")
+            return None
 
     def handle_post_unmatch(self):
-        conn = None
+        """Take a face's name off (tagpup.services.faces.unname_face)."""
+        data = self._face_request()
+        if data is None:
+            return
+        face_id = data.get("face_id")
+        if face_id is None:
+            self.send_error(400, "Missing face_id")
+            return
         try:
-            try:
-                data = self.read_json_body()
-            except Exception as json_err:
-                self.send_error(400, f"Malformed JSON: {json_err}")
-                return
-
-            face_id = data.get("face_id")
-            
-            if face_id is None:
-                self.send_error(400, "Missing face_id")
-                return
-                
-            try:
-                face_id = int(face_id)
-            except (ValueError, TypeError):
-                self.send_error(400, "Invalid face_id")
-                return
-
-            if not os.path.exists(self.db_path):
-                self.send_error(404, "Database not found")
-                return
-
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-
-            # 1. Fetch face details: photo_path and old name
-            cursor.execute("SELECT photo_path, name FROM faces WHERE id = ?", (face_id,))
-            face_row = cursor.fetchone()
-            if not face_row:
-                self.send_error(404, "Face ID not found")
-                return
-                
-            photo_path, old_name = face_row
-            
-            if old_name is None:
-                # Already unmatched
-                self.send_json({"success": True})
-                return
-
-            # 2. Update faces table
-            # A person chose this, so record it as a manual decision: re-clustering
-            # re-derives every name from scratch and must not discard it.
-            cursor.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE id = ?", (face_id,))
-
-            # 3. Check if old name is no longer matched to any other faces in the photo
-            path_sql, path_args = paths.sql_equals("photo_path", photo_path)
-            cursor.execute("SELECT count(*) FROM faces WHERE " + path_sql + " AND name = ? AND id != ?", path_args + (old_name, face_id,))
-            count_row = cursor.fetchone()
-                
-            other_count = count_row[0] if count_row else 0
-            if other_count == 0:
-                # Remove old name from people list in photos table
-                path_sql, path_args = paths.sql_equals("path", photo_path)
-                cursor.execute("SELECT path, people FROM photos WHERE " + path_sql, path_args)
-                photo_row = cursor.fetchone()
-                    
-                actual_photo_path = photo_path
-                people = []
-                if photo_row:
-                    actual_photo_path = photo_row[0]
-                    if photo_row[1]:
-                        try:
-                            people = json.loads(photo_row[1])
-                        except Exception:
-                            people = []
-                        
-                people = [p for p in people if p != old_name]
-                people_json = json.dumps(people)
-                
-                path_sql, path_args = paths.sql_equals("path", actual_photo_path)
-                cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (people_json,) + path_args)
-
-            conn.commit()
+            face_id = int(face_id)
+        except (ValueError, TypeError):
+            self.send_error(400, "Invalid face_id")
+            return
+        if self._faces_write(lambda library: faces_service.unname_face(library, face_id)):
             self.send_json({"success": True})
-            
-        except Exception as e:
-            logger.error(f"Error in handle_post_unmatch: {e}")
-            self.send_error(500, f"Internal error: {e}")
-        finally:
-            if conn:
-                conn.close()
 
     def handle_post_unmatch_all(self):
-        conn = None
-        try:
-            try:
-                data = self.read_json_body()
-            except Exception as json_err:
-                self.send_error(400, f"Malformed JSON: {json_err}")
-                return
-
-            photo_path = data.get("photo_path")
-            if not photo_path:
-                self.send_error(400, "Missing photo_path")
-                return
-
-            if not os.path.exists(self.db_path):
-                self.send_error(404, "Database not found")
-                return
-
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.conn.cursor() if hasattr(conn, 'conn') else conn.cursor()
-
-            # 1. Fetch currently matched names for faces in this photo
-            path_sql, path_args = paths.sql_equals("photo_path", photo_path)
-            cursor.execute("SELECT DISTINCT name FROM faces WHERE " + path_sql + " AND name IS NOT NULL", path_args)
-            matched_names = {row[0] for row in cursor.fetchall()}
-
-            # 2. Update faces table: set name = NULL
-            # A person chose this, so record it as a manual decision: re-clustering
-            # re-derives every name from scratch and must not discard it.
-            #
-            # One equality, not an equality and then a LIKE as well: in LIKE an
-            # underscore matches any character, so the LIKE pass also cleared every
-            # name in a photo called IMG-1234.jpg when this one was IMG_1234.jpg.
-            path_sql, path_args = paths.sql_equals("photo_path", photo_path)
-            cursor.execute(
-                "UPDATE faces SET name = NULL, name_source = 'manual' WHERE " + path_sql, path_args)
-
-            # 3. Update photos table: remove the matched names from people metadata
-            if matched_names:
-                path_sql, path_args = paths.sql_equals("path", photo_path)
-                cursor.execute("SELECT path, people FROM photos WHERE " + path_sql, path_args)
-                photo_row = cursor.fetchone()
-                
-                if photo_row:
-                    actual_photo_path = photo_row[0]
-                    people = []
-                    if photo_row[1]:
-                        try:
-                            people = json.loads(photo_row[1])
-                        except Exception:
-                            people = []
-
-                    # Filter out names that were matched
-                    people = [p for p in people if p not in matched_names]
-                    path_sql, path_args = paths.sql_equals("path", actual_photo_path)
-                    cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (json.dumps(people),) + path_args)
-
-            conn.commit()
+        """Take the names off every face in a photo (tagpup.services.faces.unname_photo)."""
+        data = self._face_request()
+        if data is None:
+            return
+        photo_path = data.get("photo_path")
+        if not photo_path:
+            self.send_error(400, "Missing photo_path")
+            return
+        if self._faces_write(lambda library: faces_service.unname_photo(library, photo_path)):
             self.send_json({"success": True})
-        except Exception as e:
-            logger.error(f"Error in handle_post_unmatch_all: {e}")
-            self.send_error(500, f"Internal error: {e}")
-        finally:
-            if conn:
-                conn.close()
 
     def handle_post_automatch(self):
-        conn = None
-        try:
-            try:
-                data = self.read_json_body()
-            except Exception as json_err:
-                self.send_error(400, f"Malformed JSON: {json_err}")
-                return
-
-            photo_path = data.get("photo_path")
-            if not photo_path:
-                self.send_error(400, "Missing photo_path")
-                return
-
-            if not os.path.exists(self.db_path):
-                self.send_error(404, "Database not found")
-                return
-
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-
-            # 1. Fetch unmatched faces in this photo
-            path_sql, path_args = paths.sql_equals("photo_path", photo_path)
-            cursor.execute("SELECT id, embedding FROM faces WHERE " + path_sql + " AND name IS NULL AND excluded = 0", path_args)
-            unmatched_rows = cursor.fetchall()
-
-            if not unmatched_rows:
-                self.send_json({"success": True, "matched_count": 0})
-                return
-
-            # 2. Every named face, from the matrix shared with the rest of Identify
-            # Faces rather than read from SQLite again on each automatch.
-            _ids, resolved_names, resolved_matrix = self.named_face_matrix(
-                conn, self.faces_fingerprint(conn))
-
-            if resolved_matrix is None:
-                self.send_json({"success": True, "matched_count": 0})
-                return
-
-            # Fetch names already resolved in this photo to avoid duplicate assignments
-            path_sql, path_args = paths.sql_equals("photo_path", photo_path)
-            cursor.execute("SELECT name FROM faces WHERE " + path_sql + " AND name IS NOT NULL", path_args)
-            already_tagged_rows = cursor.fetchall()
-            already_tagged_names = {row[0] for row in already_tagged_rows if row[0]}
-
-            # 3. For each unmatched face, find the best candidate match
-            proposed_matches = {}  # face_id -> matched_name
-            for face_id, target_emb_bytes in unmatched_rows:
-                target_emb = np.frombuffer(target_emb_bytes, dtype=np.float32)
-                
-                # Calculate similarities
-                similarities = np.dot(resolved_matrix, target_emb)
-                best_idx = np.argmax(similarities)
-                best_sim = similarities[best_idx]
-
-                # High confidence threshold for auto-matching (cosine similarity >= 0.8)
-                if best_sim >= 0.8:
-                    proposed_matches[face_id] = resolved_names[best_idx]
-
-            # Detect conflicts (proposed same name for multiple faces, or name already tagged)
-            proposed_counts = {}
-            for name in proposed_matches.values():
-                proposed_counts[name] = proposed_counts.get(name, 0) + 1
-
-            conflicting_names = set()
-            for name, count in proposed_counts.items():
-                if count > 1 or name in already_tagged_names:
-                    conflicting_names.add(name)
-
-            # Apply only non-conflicting matches
-            matched_count = 0
-            newly_matched_names = set()
-            for face_id, matched_name in proposed_matches.items():
-                if matched_name not in conflicting_names:
-                    # Automatch is a bulk guess, not a per-face human decision, so it is
-                    # left as an automatic assignment that re-clustering may revise.
-                    cursor.execute(
-                        "UPDATE faces SET name = ? WHERE id = ? AND excluded = 0",
-                        (matched_name, face_id))
-                    if cursor.rowcount:
-                        newly_matched_names.add(matched_name)
-                        matched_count += cursor.rowcount
-
-            # 4. Append newly matched names to photos table people list
-            if newly_matched_names:
-                path_sql, path_args = paths.sql_equals("path", photo_path)
-                cursor.execute("SELECT path, people FROM photos WHERE " + path_sql, path_args)
-                photo_row = cursor.fetchone()
-
-                if photo_row:
-                    actual_photo_path = photo_row[0]
-                    people = []
-                    if photo_row[1]:
-                        try:
-                            people = json.loads(photo_row[1])
-                        except Exception:
-                            people = []
-
-                    updated = False
-                    for name in newly_matched_names:
-                        if name and name not in people:
-                            people.append(name)
-                            updated = True
-
-                    if updated:
-                        path_sql, path_args = paths.sql_equals("path", actual_photo_path)
-                        cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (json.dumps(people),) + path_args)
-
-            conn.commit()
-            self.send_json({"success": True, "matched_count": matched_count})
-        except Exception as e:
-            logger.error(f"Error in handle_post_automatch: {e}")
-            self.send_error(500, f"Internal error: {e}")
-        finally:
-            if conn:
-                conn.close()
+        """Automatch a photo's faces (tagpup.services.faces.automatch_photo)."""
+        data = self._face_request()
+        if data is None:
+            return
+        photo_path = data.get("photo_path")
+        if not photo_path:
+            self.send_error(400, "Missing photo_path")
+            return
+        result = self._faces_write(
+            lambda library: faces_service.automatch_photo(library, photo_path, self.named_faces))
+        if result:
+            self.send_json({"success": True, "matched_count": result.changed})
 
     def handle_post_folder_automatch(self):
-        conn = None
-        try:
-            try:
-                data = self.read_json_body()
-            except Exception as json_err:
-                self.send_error(400, f"Malformed JSON: {json_err}")
-                return
-
-            folder_path = data.get("folder_path")
-            if not folder_path:
-                self.send_error(400, "Missing folder_path")
-                return
-
-            if not os.path.exists(self.db_path):
-                self.send_error(404, "Database not found")
-                return
-
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-
-            # 1. Fetch unmatched faces in this folder -- and, as ever, in the folders
-            # under it. A prefix comparison rather than LIKE, whose "_" and "%" are
-            # wildcards that also occur in folder names.
-            under_sql, under_args = paths.sql_under("photo_path", folder_path)
-            cursor.execute("""
-                SELECT id, embedding, photo_path
-                FROM faces
-                WHERE """ + under_sql + """ AND name IS NULL AND excluded = 0
-            """, under_args)
-            unmatched_rows = cursor.fetchall()
-
-            if not unmatched_rows:
-                self.send_json({"success": True, "matched_count": 0})
-                return
-
-            # 2. Every named face, from the matrix shared with the rest of Identify
-            # Faces rather than read from SQLite again on each automatch.
-            _ids, resolved_names, resolved_matrix = self.named_face_matrix(
-                conn, self.faces_fingerprint(conn))
-
-            if resolved_matrix is None:
-                self.send_json({"success": True, "matched_count": 0})
-                return
-
-            # Fetch all resolved names for photos in this folder to check for already-tagged conflicts
-            cursor.execute("""
-                SELECT name, photo_path
-                FROM faces
-                WHERE """ + under_sql + """ AND name IS NOT NULL
-            """, under_args)
-            already_tagged_rows = cursor.fetchall()
-
-            already_tagged_by_photo = {}
-            for name, p_path in already_tagged_rows:
-                already_tagged_by_photo.setdefault(paths.key(p_path), set()).add(name)
-
-            # 3. For each unmatched face, find the best candidate match, grouped by photo
-            proposed_by_photo = {}  # photo_path -> list of (face_id, proposed_name)
-            for face_id, target_emb_bytes, photo_path in unmatched_rows:
-                target_emb = np.frombuffer(target_emb_bytes, dtype=np.float32)
-                
-                # Calculate similarities
-                similarities = np.dot(resolved_matrix, target_emb)
-                best_idx = np.argmax(similarities)
-                best_sim = similarities[best_idx]
-
-                # High confidence threshold for auto-matching (cosine similarity >= 0.8)
-                if best_sim >= 0.8:
-                    matched_name = resolved_names[best_idx]
-                    if photo_path not in proposed_by_photo:
-                        proposed_by_photo[photo_path] = []
-                    proposed_by_photo[photo_path].append((face_id, matched_name))
-
-            # Detect conflicts per photo and apply updates
-            matched_count = 0
-            photos_to_update = {}
-
-            for photo_path, proposed_list in proposed_by_photo.items():
-                already_tagged = already_tagged_by_photo.get(paths.key(photo_path), set())
-                
-                proposed_counts = {}
-                for _, name in proposed_list:
-                    proposed_counts[name] = proposed_counts.get(name, 0) + 1
-                    
-                conflicting_names = set()
-                for name, count in proposed_counts.items():
-                    if count > 1 or name in already_tagged:
-                        conflicting_names.add(name)
-                        
-                for face_id, name in proposed_list:
-                    if name not in conflicting_names:
-                        cursor.execute(
-                            "UPDATE faces SET name = ? WHERE id = ? AND excluded = 0",
-                            (name, face_id))
-                        if not cursor.rowcount:
-                            continue
-                        if photo_path not in photos_to_update:
-                            photos_to_update[photo_path] = set()
-                        photos_to_update[photo_path].add(name)
-                        matched_count += cursor.rowcount
-
-            # 4. Update photos table people lists for each affected photo
-            for photo_path, newly_matched_names in photos_to_update.items():
-                path_sql, path_args = paths.sql_equals("path", photo_path)
-                cursor.execute("SELECT path, people FROM photos WHERE " + path_sql, path_args)
-                photo_row = cursor.fetchone()
-
-                if photo_row:
-                    actual_photo_path = photo_row[0]
-                    people = []
-                    if photo_row[1]:
-                        try:
-                            people = json.loads(photo_row[1])
-                        except Exception:
-                            people = []
-
-                    updated = False
-                    for name in newly_matched_names:
-                        if name and name not in people:
-                            people.append(name)
-                            updated = True
-
-                    if updated:
-                        path_sql, path_args = paths.sql_equals("path", actual_photo_path)
-                        cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (json.dumps(people),) + path_args)
-
-            # Query the remaining unmatched counts for photos in this folder
-            cursor.execute("""
-                SELECT f.photo_path, COUNT(*)
-                FROM faces f
-                WHERE """ + under_sql + """ AND f.name IS NULL
-                GROUP BY f.photo_path
-            """, under_args)
-            remaining_rows = cursor.fetchall()
-            remaining_counts = {r[0]: r[1] for r in remaining_rows}
-
-            conn.commit()
-            self.send_json({
-                "success": True, 
-                "matched_count": matched_count,
-                "remaining_counts": remaining_counts
-            })
-        except Exception as e:
-            logger.error(f"Error in handle_post_folder_automatch: {e}")
-            self.send_error(500, f"Internal error: {e}")
-        finally:
-            if conn:
-                conn.close()
+        """Automatch a folder's faces (tagpup.services.faces.automatch_folder)."""
+        data = self._face_request()
+        if data is None:
+            return
+        folder_path = data.get("folder_path")
+        if not folder_path:
+            self.send_error(400, "Missing folder_path")
+            return
+        result = self._faces_write(
+            lambda library: faces_service.automatch_folder(library, folder_path, self.named_faces))
+        if result:
+            self.send_json({"success": True, "matched_count": result.changed,
+                            "remaining_counts": result.details.get("remaining_counts", {})})
 
     def handle_get_people_with_counts(self):
         if not os.path.exists(self.db_path):
@@ -1904,274 +1462,42 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 conn.close()
 
     def handle_post_unmatch_bulk(self):
-        conn = None
+        """Take the names off many faces (tagpup.services.faces.unname_faces)."""
+        data = self._face_request()
+        if data is None:
+            return
+        face_ids = data.get("face_ids")
+        if not face_ids or not isinstance(face_ids, list):
+            self.send_error(400, "Missing or invalid face_ids")
+            return
         try:
-            try:
-                data = self.read_json_body()
-            except Exception as json_err:
-                self.send_error(400, f"Malformed JSON: {json_err}")
-                return
-
-            face_ids = data.get("face_ids")
-            if not face_ids or not isinstance(face_ids, list):
-                self.send_error(400, "Missing or invalid face_ids")
-                return
-
-            try:
-                face_ids = [int(fid) for fid in face_ids]
-            except (ValueError, TypeError):
-                self.send_error(400, "Invalid face_ids format")
-                return
-
-            if not os.path.exists(self.db_path):
-                self.send_error(404, "Database not found")
-                return
-
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-
-            photos_to_check = {}
-
-            for face_id in face_ids:
-                cursor.execute("SELECT photo_path, name FROM faces WHERE id = ?", (face_id,))
-                row = cursor.fetchone()
-                if row:
-                    photo_path, old_name = row
-                    if old_name:
-                        if photo_path not in photos_to_check:
-                            photos_to_check[photo_path] = set()
-                        photos_to_check[photo_path].add(old_name)
-
-            placeholders = ",".join("?" for _ in face_ids)
-            # Unmatching is a decision -- "this is nobody" -- recorded as manual. Undoing
-            # an assignment is not: it puts the faces back as they were, unreviewed, and
-            # used to leave them marked as deliberately nobody instead.
-            source = None if data.get("undo") else "manual"
-            cursor.execute(f"UPDATE faces SET name = NULL, name_source = ? WHERE id IN ({placeholders})",
-                           [source] + face_ids)
-
-            for photo_path, old_names in photos_to_check.items():
-                path_sql, path_args = paths.sql_equals("path", photo_path)
-                cursor.execute("SELECT path, people FROM photos WHERE " + path_sql, path_args)
-                photo_row = cursor.fetchone()
-
-                if photo_row:
-                    actual_photo_path = photo_row[0]
-                    people = []
-                    if photo_row[1]:
-                        try:
-                            people = json.loads(photo_row[1])
-                        except Exception:
-                            people = []
-
-                    updated_people = list(people)
-                    for old_name in old_names:
-                        path_sql, path_args = paths.sql_equals("photo_path", photo_path)
-                        cursor.execute("SELECT count(*) FROM faces WHERE " + path_sql + " AND name = ?", path_args + (old_name,))
-                        count_row = cursor.fetchone()
-
-                        other_count = count_row[0] if count_row else 0
-                        if other_count == 0:
-                            updated_people = [p for p in updated_people if p != old_name]
-
-                    if updated_people != people:
-                        path_sql, path_args = paths.sql_equals("path", actual_photo_path)
-                        cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (json.dumps(updated_people),) + path_args)
-
-            conn.commit()
+            face_ids = [int(fid) for fid in face_ids]
+        except (ValueError, TypeError):
+            self.send_error(400, "Invalid face_ids format")
+            return
+        if self._faces_write(lambda library: faces_service.unname_faces(
+                library, face_ids, undo=bool(data.get("undo")))):
             self.send_json({"success": True})
-        except Exception as e:
-            logger.error(f"Error in handle_post_unmatch_bulk: {e}")
-            self.send_error(500, f"Internal error: {e}")
-        finally:
-            if conn:
-                conn.close()
 
     def handle_post_match_bulk(self):
-        conn = None
+        """Name many faces as one person (tagpup.services.faces.name_faces)."""
+        data = self._face_request()
+        if data is None:
+            return
+        face_ids, person_name = data.get("face_ids"), data.get("person_name")
+        if not face_ids or not isinstance(face_ids, list) or not person_name:
+            self.send_error(400, "Missing or invalid face_ids or person_name")
+            return
         try:
-            try:
-                data = self.read_json_body()
-            except Exception as json_err:
-                self.send_error(400, f"Malformed JSON: {json_err}")
-                return
-
-            face_ids = data.get("face_ids")
-            person_name = data.get("person_name")
-            
-            if not face_ids or not isinstance(face_ids, list) or not person_name:
-                self.send_error(400, "Missing or invalid face_ids or person_name")
-                return
-                
-            try:
-                face_ids = [int(fid) for fid in face_ids]
-                person_name = str(person_name).strip()
-            except (ValueError, TypeError):
-                self.send_error(400, "Invalid parameters format")
-                return
-            problem = vocabulary.problem_with_name(person_name)
-            if problem:
-                self.send_json_error(400, problem)
-                return
-
-            if not os.path.exists(self.db_path):
-                self.send_error(404, "Database not found")
-                return
-
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-
-            # The state the cached identify views were built against, read before this
-            # write touches anything. Only an entry stamped with this can be carried
-            # forward; anything older was built before something else changed the
-            # table -- a folder removed, a batch of photos indexed -- and re-stamping
-            # it would quietly revive a grid full of faces that no longer exist.
-            fingerprint_before = self.begin_identify_write(conn)
-
-            # Read the selected faces once.
-            #
-            # Their path and current name were fetched three times over, one query per
-            # face per pass: to drop the ones already named this person, to note the
-            # names being displaced, and to group them by photo. A selection of fifty
-            # was a hundred and fifty round trips for fifty rows.
-            selected = {}
-            excluded_ids = set()
-            for start in range(0, len(face_ids), 500):
-                chunk = face_ids[start:start + 500]
-                cursor.execute(
-                    "SELECT id, photo_path, name, excluded FROM faces WHERE id IN (%s)"
-                    % ",".join("?" * len(chunk)), chunk)
-                for row_id, photo_path, current_name, excluded in cursor.fetchall():
-                    if excluded:
-                        excluded_ids.add(row_id)
-                    else:
-                        selected[row_id] = (photo_path, current_name)
-
-            # An excluded face is left alone. Naming one leaves a face both ruled out
-            # and claimed -- a page acting on a stale list of faces did exactly that --
-            # so it is skipped and reported, and the reply says which faces were named.
-            skipped_excluded = [fid for fid in face_ids if fid in excluded_ids]
-
-            # Faces already assigned to this person are nothing to do (case-insensitive),
-            # and neither is an id that is not in the table.
-            face_ids = [
-                fid for fid in face_ids
-                if fid in selected
-                and not (selected[fid][1] or "").strip().lower() == person_name.lower()
-            ]
-            if not face_ids:
-                self.send_json({"success": True, "matched": 0, "matched_ids": [],
-                                "skipped_excluded": skipped_excluded})
-                return
-
-            photos_to_check = {}
-            # Group selected face IDs by photo_path to detect duplicates and verify
-            # existing matches, and note which names this assignment displaces.
-            photo_to_selected_fids = {}
-            for face_id in face_ids:
-                if face_id not in selected:
-                    continue
-                photo_path, old_name = selected[face_id]
-                photos_to_check.setdefault(photo_path, set())
-                if old_name and old_name != person_name:
-                    photos_to_check[photo_path].add(old_name)
-                photo_to_selected_fids.setdefault(photo_path, []).append(face_id)
-
-            # Check conflicts for each photo
-            for photo_path, fids in photo_to_selected_fids.items():
-                # Conflict 1: Multiple selected faces in the same photo are being assigned to this person
-                if len(fids) > 1:
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({
-                        "success": False,
-                        "error": f"Cannot match: Multiple selected faces in photo '{os.path.basename(photo_path)}' are being assigned to '{person_name}'."
-                    }).encode("utf-8"))
-                    return
-
-                # Conflict 2: The person is already tagged on another face in this photo
-                #
-                # By equality only. The LIKE retry this used to fall back on scanned
-                # every face row per selected face -- nineteen seconds for a selection
-                # of fifty -- and treated an underscore in a filename as a wildcard,
-                # so a lookalike name in an unrelated photo blocked the assignment.
-                fid = fids[0]
-                path_sql, path_args = paths.sql_equals("photo_path", photo_path)
-                cursor.execute("SELECT id FROM faces WHERE " + path_sql + " AND name = ? AND id != ?", path_args + (person_name, fid,))
-                conflict_row = cursor.fetchone()
-
-                if conflict_row:
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({
-                        "success": False,
-                        "error": f"Cannot match: '{person_name}' is already tagged on another face in photo '{os.path.basename(photo_path)}'."
-                    }).encode("utf-8"))
-                    return
-
-            # 2. Update faces table in one transaction
-            placeholders = ",".join("?" for _ in face_ids)
-            cursor.execute(
-                f"UPDATE faces SET name = ?, name_source = 'manual'"
-                f" WHERE id IN ({placeholders}) AND excluded = 0",
-                [person_name] + face_ids)
-            # The rows this write named, which the reply reports rather than the
-            # number asked for.
-            matched = cursor.rowcount
-
-            # 3. Update photos table people list for each affected photo
-            for photo_path, old_names in photos_to_check.items():
-                path_sql, path_args = paths.sql_equals("path", photo_path)
-                cursor.execute("SELECT path, people FROM photos WHERE " + path_sql, path_args)
-                photo_row = cursor.fetchone()
-
-                if photo_row:
-                    actual_photo_path = photo_row[0]
-                    people = []
-                    if photo_row[1]:
-                        try:
-                            people = json.loads(photo_row[1])
-                        except Exception:
-                            people = []
-
-                    # Append the new person name if missing. To a copy: appended to the
-                    # list it is compared with, it was written only when an old name
-                    # went too (docs/findings.md, #42).
-                    updated_people = list(people)
-                    if person_name and person_name not in updated_people:
-                        updated_people.append(person_name)
-
-                    # Remove old names if they are no longer matched to any other faces in the photo
-                    for old_name in old_names:
-                        path_sql, path_args = paths.sql_equals("photo_path", photo_path)
-                        cursor.execute("SELECT count(*) FROM faces WHERE " + path_sql + " AND name = ?", path_args + (old_name,))
-                        count_row = cursor.fetchone()
-
-                        other_count = count_row[0] if count_row else 0
-                        if other_count == 0:
-                            updated_people = [p for p in updated_people if p != old_name]
-
-                    if updated_people != people:
-                        path_sql, path_args = paths.sql_equals("path", actual_photo_path)
-                        cursor.execute("UPDATE photos SET people = ? WHERE " + path_sql, (json.dumps(updated_people),) + path_args)
-
-            with tagpup_db.writing(self.db_path, label="name faces in bulk"):
-                fingerprint_after = self.faces_fingerprint(conn)
-                conn.commit()
-                self.identify_cache_forget_faces(conn, face_ids, fingerprint_before, fingerprint_after)
-            self.send_json({"success": True, "matched": matched, "matched_ids": face_ids,
-                            "skipped_excluded": skipped_excluded})
-        except Exception as e:
-            logger.error(f"Error in handle_post_match_bulk: {e}")
-            self.send_error(500, f"Internal error: {e}")
-        finally:
-            self.end_identify_write()
-            if conn:
-                conn.close()
+            face_ids, person_name = [int(fid) for fid in face_ids], str(person_name).strip()
+        except (ValueError, TypeError):
+            self.send_error(400, "Invalid parameters format")
+            return
+        result = self._faces_write(lambda library: faces_service.name_faces(library, face_ids, person_name))
+        if result:
+            self.send_json({"success": True, "matched": result.details["matched"],
+                            "matched_ids": result.details["matched_ids"],
+                            "skipped_excluded": result.details["skipped_excluded"]})
 
     def _read_face_ids(self, data):
         """Accept either face_ids (list) or a single face_id, as ints."""
@@ -2362,203 +1688,53 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         return index
 
     def handle_post_folder_remove(self):
-        """Remove a folder's photos and faces from this database.
-
-        Only the index is touched: the photo files themselves are never deleted. This
-        does discard face work for those photos -- manual names and exclusions included
-        -- because the rows holding them go away, so the caller is told what it cost.
-        """
+        """Take a folder's photos and faces out of this library
+        (tagpup.services.faces.remove_folder). The photo files are never touched."""
         try:
             data = self.read_json_body()
         except Exception:
             self.send_json_error(400, "Invalid JSON payload")
             return
-
         folder_path = data.get("folder_path")
         if not folder_path:
             self.send_json_error(400, "Missing folder_path")
             return
-
-        conn = None
         try:
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-
-            # Everything under the folder, at any depth, compared the way the
-            # filesystem compares -- in SQL, rather than by reading every path in the
-            # library into Python to filter it. Faces are matched on their own
-            # photo_path rather than through the photo rows, so a face is removed
-            # with its folder even where its photo row is missing or spelled apart.
-            photos_sql, photos_args = paths.sql_under("path", folder_path)
-            faces_sql, faces_args = paths.sql_under("photo_path", folder_path)
-
-            manual_lost = cursor.execute(
-                "SELECT COUNT(*) FROM faces WHERE " + faces_sql + " AND name_source = 'manual'",
-                faces_args,
-            ).fetchone()[0]
-            excluded_lost = cursor.execute(
-                "SELECT COUNT(*) FROM faces WHERE " + faces_sql + " AND excluded = 1",
-                faces_args,
-            ).fetchone()[0]
-
-            # Delete faces explicitly rather than relying on the cascade, which is only
-            # active when foreign keys are enabled on this particular connection. The
-            # counts reported are what the deletes removed, not what was expected.
-            faces_removed = cursor.execute(
-                "DELETE FROM faces WHERE " + faces_sql, faces_args).rowcount
-            photos_removed = cursor.execute(
-                "DELETE FROM photos WHERE " + photos_sql, photos_args).rowcount
-            conn.commit()
-
-            logger.info(
-                "Removed %d photo(s) and %d face(s) under %s"
-                % (photos_removed, faces_removed, folder_path)
-            )
-            self.send_json({
-                "success": True,
-                "photos_removed": photos_removed,
-                "faces_removed": faces_removed,
-                "manual_lost": manual_lost,
-                "excluded_lost": excluded_lost,
-            })
+            result = faces_service.remove_folder(Library(self.db_path), folder_path)
         except Exception as e:
             logger.error("Error removing folder %s: %s" % (folder_path, e))
             self.send_json_error(500, str(e))
-        finally:
-            if conn:
-                conn.close()
+            return
+        self.send_json(dict(result.details, success=True))
 
     def handle_post_faces_exclude(self):
-        """Mark faces as not-a-person so they stop influencing identity work.
-
-        Crowd shots collect passers-by and a bad crop is not a person at all. Left in the
-        database they cluster, vote, and drag centroids around. Excluding is reversible
-        and keeps the row, so the face still exists on the photo -- it simply stops being
-        a candidate for anyone.
-        """
-        conn = None
-        try:
-            try:
-                data = self.read_json_body()
-            except Exception as json_err:
-                self.send_error(400, "Malformed JSON: %s" % json_err)
-                return
-
-            face_ids = self._read_face_ids(data)
-            if face_ids is None:
-                self.send_error(400, "Missing or invalid face_ids")
-                return
-
-            reason = data.get("reason") or "not a person"
-            if not os.path.exists(self.db_path):
-                self.send_error(404, "Database not found")
-                return
-
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            cursor = conn.cursor()
-
-            # The state the cached identify views were built against, read before this
-            # write touches anything. Only an entry stamped with this can be carried
-            # forward; anything older was built before something else changed the
-            # table -- a folder removed, a batch of photos indexed -- and re-stamping
-            # it would quietly revive a grid full of faces that no longer exist.
-            fingerprint_before = self.begin_identify_write(conn)
-            placeholders = ",".join("?" for _ in face_ids)
-
-            cursor.execute(
-                "SELECT id, photo_path, name FROM faces WHERE id IN (%s)" % placeholders,
-                face_ids,
-            )
-            affected = cursor.fetchall()
-
-            # Excluding retires any name the face carried. name_source stays 'manual'
-            # so re-clustering cannot quietly re-assign it.
-            cursor.execute(
-                "UPDATE faces SET excluded = 1, excluded_reason = ?, name = NULL,"
-                " name_source = 'manual' WHERE id IN (%s)" % placeholders,
-                [reason] + face_ids,
-            )
-            excluded_count = cursor.rowcount
-
-            # Drop the person from the photo when no other face of theirs remains there.
-            for _face_id, photo_path, old_name in affected:
-                if not old_name:
-                    continue
-                faces_sql, faces_args = paths.sql_equals("photo_path", photo_path)
-                cursor.execute(
-                    "SELECT COUNT(*) FROM faces WHERE " + faces_sql + " AND name = ? AND excluded = 0",
-                    faces_args + (old_name,),
-                )
-                if cursor.fetchone()[0] == 0:
-                    photo_sql, photo_args = paths.sql_equals("path", photo_path)
-                    cursor.execute("SELECT people FROM photos WHERE " + photo_sql, photo_args)
-                    row = cursor.fetchone()
-                    if row and row[0]:
-                        try:
-                            people = [p for p in json.loads(row[0]) if p != old_name]
-                            cursor.execute(
-                                "UPDATE photos SET people = ? WHERE " + photo_sql,
-                                (json.dumps(people),) + photo_args,
-                            )
-                        except Exception:
-                            pass
-
-            with tagpup_db.writing(self.db_path, label="exclude faces"):
-                fingerprint_after = self.faces_fingerprint(conn)
-                conn.commit()
-                # Ignoring a cluster is the single most expensive thing to have
-                # invalidated the grid, and it is pure removal.
-                self.identify_cache_forget_faces(conn, face_ids, fingerprint_before, fingerprint_after)
-            # The rows changed, not the ids sent: an id that is not in the table was
-            # never excluded, and saying it was is how a write reports success on
-            # nothing.
-            self.send_json({"success": True, "excluded": excluded_count})
-        except Exception as e:
-            logger.error("Error excluding faces: %s" % e)
-            self.send_error(500, "Internal error: %s" % e)
-        finally:
-            self.end_identify_write()
-            if conn:
-                conn.close()
+        """Take faces out of identity work (tagpup.services.faces.exclude)."""
+        data = self._face_request()
+        if data is None:
+            return
+        face_ids = self._read_face_ids(data)
+        if face_ids is None:
+            self.send_error(400, "Missing or invalid face_ids")
+            return
+        reason = data.get("reason") or "not a person"
+        result = self._faces_write(lambda library: faces_service.exclude(library, face_ids, reason))
+        if result:
+            # The rows changed, not the ids sent: an id that is not in the table was never
+            # excluded, and saying it was is how a write reports success on nothing.
+            self.send_json({"success": True, "excluded": result.changed})
 
     def handle_post_faces_restore(self):
-        """Bring excluded faces back into identity work, unnamed and unclaimed."""
-        conn = None
-        try:
-            try:
-                data = self.read_json_body()
-            except Exception as json_err:
-                self.send_error(400, "Malformed JSON: %s" % json_err)
-                return
-
-            face_ids = self._read_face_ids(data)
-            if face_ids is None:
-                self.send_error(400, "Missing or invalid face_ids")
-                return
-
-            if not os.path.exists(self.db_path):
-                self.send_error(404, "Database not found")
-                return
-
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            placeholders = ",".join("?" for _ in face_ids)
-            # Only faces that are excluded. Clearing name_source on any other face
-            # would unpin a manual name that re-clustering must not revise -- and
-            # Undo after Ignore Cluster sends whatever ids it was given.
-            restored = conn.execute(
-                "UPDATE faces SET excluded = 0, excluded_reason = NULL, name_source = NULL"
-                " WHERE id IN (%s) AND excluded = 1" % placeholders,
-                face_ids,
-            ).rowcount
-            conn.commit()
-            self.send_json({"success": True, "restored": restored})
-        except Exception as e:
-            logger.error("Error restoring faces: %s" % e)
-            self.send_error(500, "Internal error: %s" % e)
-        finally:
-            if conn:
-                conn.close()
+        """Bring excluded faces back, unnamed (tagpup.services.faces.restore)."""
+        data = self._face_request()
+        if data is None:
+            return
+        face_ids = self._read_face_ids(data)
+        if face_ids is None:
+            self.send_error(400, "Missing or invalid face_ids")
+            return
+        result = self._faces_write(lambda library: faces_service.restore(library, face_ids))
+        if result:
+            self.send_json({"success": True, "restored": result.changed})
 
     def handle_get_excluded_faces(self):
         """List excluded faces so they can be reviewed and restored."""
@@ -2627,17 +1803,8 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         self.send_json(reply)
 
     def faces_fingerprint(self, conn):
-        """Cheap signature of the faces table; changes whenever a face is added or named."""
-        # SUM(excluded) matters: excluding an unnamed face changes what the queue should
-        # show without changing the row count, the name count, or the maximum id, so
-        # leaving it out serves a stale queue after every exclusion.
-        row = conn.execute(
-            "SELECT COUNT(*), COUNT(name), COALESCE(MAX(id), 0), COALESCE(SUM(excluded), 0) FROM faces"
-        ).fetchone()
-        # None of those counts moves when a person is renamed or a face is given to
-        # someone else; the generation does. See index.ensure_faces_generation.
-        from index import faces_generation
-        return (tuple(row) if row else (0, 0, 0, 0)) + (faces_generation(conn),)
+        """Cheap signature of the faces table (tagpup.store.faces.fingerprint)."""
+        return store_faces.fingerprint(conn)
 
     def identify_cache_get(self, key, fingerprint):
         entry = TunerHTTPRequestHandler.identify_cache.get(key)
@@ -2744,30 +1911,6 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             dissolved.append(face)
         return dissolved
 
-    def begin_identify_write(self, conn):
-        """Hold this library's write locks until the commit; return the fingerprint now.
-
-        Taking faces out of the cached grids needs the table's fingerprint before this
-        write and after it, and the difference has to be this write alone. It was read
-        before anything was locked and again after the commit, so a batch the indexer
-        or TagPup committed in between was stamped as accounted for, and its faces
-        never reached the grid. Both are now read inside one IMMEDIATE transaction:
-        nobody else can write between them. The in-process lock is taken first, in the
-        order every other writer here takes the two. end_identify_write releases it;
-        closing the connection ends the transaction if the handler returns early.
-        """
-        lock = tagpup_db.lock_for(self.db_path)
-        lock.acquire()
-        self._identify_write_lock = lock
-        conn.execute("BEGIN IMMEDIATE")
-        return self.faces_fingerprint(conn)
-
-    def end_identify_write(self):
-        lock = getattr(self, "_identify_write_lock", None)
-        if lock is not None:
-            self._identify_write_lock = None
-            lock.release()
-
     def identify_cache_forget_faces(self, conn, face_ids, expected_fingerprint,
                                     fingerprint_after=None):
         """Take faces out of the cached Identify Faces views instead of discarding them.
@@ -2792,14 +1935,17 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         faces that has since grown by the handful just assigned, which moves a score in
         the third decimal and never changes which card is in front of you.
 
-        Must be called with the write lock held, so the fingerprint read here cannot
-        pick up another thread's write and stamp it as though it were accounted for.
+        `fingerprint_after` is read inside the write, before its commit
+        (tagpup.store.faces.accounted_write), so it cannot pick up another thread's
+        write and stamp it as though it were accounted for. Without it, this reads the
+        fingerprint on `conn`, and must be called with the write lock held. After a
+        commit is fine: an entry another write has re-stamped meanwhile no longer
+        carries `expected_fingerprint`, and is left to be rebuilt.
         """
         removed = {int(fid) for fid in face_ids}
         if not removed:
             return
 
-        # Read inside the write, when the caller has one (begin_identify_write).
         fingerprint = fingerprint_after or self.faces_fingerprint(conn)
         cache = TunerHTTPRequestHandler.identify_cache
 

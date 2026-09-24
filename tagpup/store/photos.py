@@ -287,6 +287,43 @@ def carrying(db_path, tag):
     return found
 
 
+def update_people(conn, photo_path, gained=(), lost=()):
+    """Keep a photo's list of people in step after some of its faces were named or
+    unnamed: each name in `gained` is added, and each in `lost` goes unless another face
+    in the photo still carries it. On `conn`, whose transaction the caller holds.
+    Returns whether the list changed.
+
+    Seven face actions each kept the list with a copy of their own. Naming faces in bulk
+    appended to the list it then compared with, so it wrote only when an old name went
+    too (docs/findings.md, #42).
+    """
+    where, params = paths.sql_equals("path", photo_path)
+    row = conn.execute("SELECT path, people FROM photos WHERE " + where, params).fetchone()
+    if not row:
+        return False
+    try:
+        people = json.loads(row[1]) if row[1] else []
+    except (TypeError, ValueError):
+        people = []
+    updated = list(people)
+    for name in gained:
+        if name and name not in updated:
+            updated.append(name)
+    faces_where, faces_params = paths.sql_equals("photo_path", photo_path)
+    for name in lost:
+        if not name or name in gained or name not in updated:
+            continue
+        still = conn.execute("SELECT COUNT(*) FROM faces WHERE " + faces_where
+                             + " AND name = ? AND excluded = 0", faces_params + (name,)).fetchone()[0]
+        if not still:
+            updated = [person for person in updated if person != name]
+    if updated == people:
+        return False
+    where, params = paths.sql_equals("path", row[0])
+    conn.execute("UPDATE photos SET people = ? WHERE " + where, (json.dumps(updated),) + params)
+    return True
+
+
 def tag_usage(db_path):
     """Photos per tag, a photo counting toward each level above its tags as well: a
     photo tagged "Activity/Hiking" counts for "Activity". What the tree view shows.

@@ -15,12 +15,14 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
 import db as tagpup_db  # noqa: E402
 import tuner_server  # noqa: E402
 from index import PhotoIndex  # noqa: E402
+from tagpup.store import faces as store_faces  # noqa: E402
 from tuner_server import TunerHTTPRequestHandler  # noqa: E402
 
 PHOTO = r"D:\Pictures\Regatta\start.jpg"
@@ -80,10 +82,11 @@ class IdentifyCacheKeepsOthersWrites(unittest.TestCase):
         }
         handler = Handler(self.db, {"face_ids": [self.faces[0]], "reason": "passer-by"})
         pending = []
-        real = TunerHTTPRequestHandler.faces_fingerprint
+        real = store_faces.fingerprint
 
-        def faces_fingerprint(this, conn):
-            value = real(this, conn)
+        # The write reads the fingerprint in the store (tagpup.store.faces.accounted_write).
+        def fingerprint(conn):
+            value = real(conn)
             if not pending:
                 # The indexer, writing while the exclude is under way.
                 other = sqlite3.connect(self.db, timeout=0.2)
@@ -97,8 +100,9 @@ class IdentifyCacheKeepsOthersWrites(unittest.TestCase):
                     other.close()
             return value
 
-        handler.faces_fingerprint = faces_fingerprint.__get__(handler)
-        handler.handle_post_faces_exclude()
+        with mock.patch.object(store_faces, "fingerprint", side_effect=fingerprint):
+            handler.handle_post_faces_exclude()
+        self.assertEqual(["waiting"], pending, "the other write was not held off")
         self.assertEqual(200, getattr(handler, "status", 200))
         if pending == ["waiting"]:
             # Held off until the exclude committed; it lands now.
