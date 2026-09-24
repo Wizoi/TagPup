@@ -79,7 +79,7 @@ Some tests exist to stop a whole class of mistake rather than to cover a feature
 - `tests/test_spec_accuracy.py` fails when a route exists in the code but not in the
   spec. Add the endpoint to the spec in the same commit.
 - `tests/frontend/dom-contract.test.mjs` fails when a script looks up an element id the
-  markup does not define, and when retired concepts (`Unmatched`, `Non Person`) return.
+  markup does not define, and when a retired concept (`Unmatched`) returns.
 - `tests/test_path_locker.py` covers locks left behind by a killed process.
 - `tests/test_person_tag_duplication.py` covers a tag being written whole rather than
   scattered into its segments.

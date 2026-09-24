@@ -100,20 +100,6 @@ describe("retired concepts stay retired", () => {
         `'Unknown Faces', 'Ungrouped' and 'Excluded'.`
     );
   });
-
-  test("the 'Non Person' marker is carried onto the excluded column, not discarded", () => {
-    // The old migration cleared these to NULL, which returned deliberately rejected
-    // faces to the matching pool. They mean what `excluded` means.
-    // The schema's one owner since phase 3 (tagpup/store/schema.py).
-    const schema = fs.readFileSync(path.join(REPO_ROOT, "tagpup", "store", "schema.py"), "utf8");
-    assert.ok(schema.includes("Non Person"), "the Non Person migration is gone from the schema");
-    const migration = schema.slice(schema.indexOf("Non Person"));
-    assert.match(
-      migration,
-      /excluded = 1/,
-      "the Non Person migration no longer preserves the exclusion"
-    );
-  });
 });
 
 describe("sidebar refreshes follow the selected mode", () => {

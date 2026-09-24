@@ -1,8 +1,9 @@
-"""A library's tables come from one place, tagpup.store.schema, whatever its age.
+"""A library's tables come from one place, tagpup.store.schema.
 
 There were four: PhotoIndex.load, TagTuner's start-up, the desktop runner and the tag
-tree, each with its own idea of the schema (docs/findings.md, #48). The runner's made a
-faces table without the columns every screen filters on.
+tree, each with its own idea of the schema (docs/findings.md, #48). Migration 1 makes the
+tables of 2026-09; a library older than them is refused, not converted: every library
+the owner has was already that shape, and the conversions retired on 2026-09-24.
 """
 import os
 import shutil
@@ -26,27 +27,43 @@ def columns(conn, table):
     return {row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)}
 
 
-def make_old_library(db_path):
-    """A library as the desktop runner made one, with the two generation tables the
-    servers added later, and a tag tree from before has_face."""
+def make_unmigrated_library(db_path):
+    """A library as it stood before phase 3: today's columns, none of the indexes added
+    later, no schema_version, and the two generation tables the servers kept."""
     conn = db.connect(db_path)
     try:
         conn.execute("CREATE TABLE photos (path TEXT PRIMARY KEY, mtime REAL, size INTEGER, tags TEXT,"
-                     " people TEXT, captions TEXT, raw_metadata TEXT, embedding BLOB)")
+                     " people TEXT, captions TEXT, raw_metadata TEXT, embedding BLOB, document_id TEXT)")
         conn.execute("CREATE TABLE faces (id INTEGER PRIMARY KEY AUTOINCREMENT, photo_path TEXT, box TEXT,"
-                     " embedding BLOB, name TEXT, crop_image BLOB, prob REAL,"
+                     " embedding BLOB, name TEXT, crop_image BLOB, prob REAL, name_source TEXT,"
+                     " excluded INTEGER DEFAULT 0, excluded_reason TEXT,"
                      " FOREIGN KEY(photo_path) REFERENCES photos(path) ON DELETE CASCADE)")
         conn.execute("CREATE TABLE tag_taxonomy (id INTEGER PRIMARY KEY AUTOINCREMENT, tag TEXT UNIQUE,"
-                     " parent_id INTEGER, name TEXT, is_people INTEGER DEFAULT 0)")
-        conn.execute("INSERT INTO tag_taxonomy (tag, name, is_people) VALUES ('People', 'People', 1)")
-        conn.execute("INSERT INTO photos VALUES ('D:/a.jpg', 1.0, 1, '[]', '[]', '[]', '{}', NULL)")
-        conn.execute("INSERT INTO faces (photo_path, box, name) VALUES ('D:/a.jpg', '[0,0,1,1]', 'Non Person')")
+                     " parent_id INTEGER, name TEXT, has_face INTEGER DEFAULT 0,"
+                     " hidden_from_autocomplete INTEGER DEFAULT 0)")
+        conn.execute("INSERT INTO photos (path, mtime, size, tags, people) VALUES ('D:/a.jpg', 1.0, 1, '[]', '[]')")
+        conn.execute("INSERT INTO faces (photo_path, box, name) VALUES ('D:/a.jpg', '[0,0,1,1]', 'Wren Halloway')")
         for name, value in (("faces", 7), ("taxonomy", 3)):
             conn.execute("CREATE TABLE %s_generation (id INTEGER PRIMARY KEY CHECK (id = 1),"
                          " generation INTEGER NOT NULL)" % name)
             conn.execute("INSERT INTO %s_generation VALUES (1, ?)" % name, (value,))
         conn.execute("CREATE TRIGGER faces_generation_insert AFTER INSERT ON faces"
                      " BEGIN UPDATE faces_generation SET generation = generation + 1 WHERE id = 1; END")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def make_runner_library(db_path):
+    """A library as the desktop runner made one: a faces table without the columns every
+    screen now filters on."""
+    conn = db.connect(db_path)
+    try:
+        conn.execute("CREATE TABLE photos (path TEXT PRIMARY KEY, mtime REAL, size INTEGER, tags TEXT,"
+                     " people TEXT, captions TEXT, raw_metadata TEXT, embedding BLOB)")
+        conn.execute("CREATE TABLE faces (id INTEGER PRIMARY KEY AUTOINCREMENT, photo_path TEXT, box TEXT,"
+                     " embedding BLOB, name TEXT, crop_image BLOB, prob REAL)")
+        conn.execute("INSERT INTO faces (photo_path, box, name) VALUES ('D:/a.jpg', '[0,0,1,1]', 'Wren Halloway')")
         conn.commit()
     finally:
         conn.close()
@@ -97,25 +114,16 @@ class ANewLibrary(SchemaTestCase):
         self.assertIn("faces", tables(self.connect()))
 
 
-class ABackupBeforeRewritingDecisions(SchemaTestCase):
-    def backups(self):
-        folder = os.path.join(self.dir, "backups")
-        return os.listdir(folder) if os.path.isdir(folder) else []
-
-    def test_a_library_whose_decisions_migration_1_rewrites_is_backed_up_first(self):
-        # 'Non Person' names become exclusions, is_people becomes has_face (#59).
-        make_old_library(self.db_path)
-        schema.ensure(self.db_path)
-        self.assertEqual(1, len(self.backups()), self.backups())
-
-    def test_a_library_with_nothing_to_rewrite_is_not_copied(self):
-        make_old_library(self.db_path)
+class ALibraryOlderThanTheColumns(SchemaTestCase):
+    def test_is_refused_and_left_as_it_was(self):
+        make_runner_library(self.db_path)
+        with self.assertRaises(schema.TooOld) as refused:
+            schema.ensure(self.db_path)
+        self.assertIn("faces.excluded", str(refused.exception))
         conn = self.connect()
-        conn.execute("DELETE FROM faces WHERE name = 'Non Person'")
-        conn.execute("ALTER TABLE tag_taxonomy ADD COLUMN has_face INTEGER DEFAULT 0")
-        conn.commit()
-        schema.ensure(self.db_path)
-        self.assertEqual([], self.backups())
+        self.assertEqual(0, schema.version(conn))
+        self.assertNotIn("excluded", columns(conn, "faces"))
+        self.assertEqual({"photos", "faces", "schema_version"}, tables(conn))
 
 
 class ALibraryRestoredInPlace(SchemaTestCase):
@@ -124,30 +132,31 @@ class ALibraryRestoredInPlace(SchemaTestCase):
         # a library restored from before the migration stayed unmigrated (#56).
         schema.ensure(self.db_path)
         old = os.path.join(self.dir, "backup.db")
-        make_old_library(old)
+        make_unmigrated_library(old)
         shutil.copyfile(old, self.db_path)
         schema.ensure(self.db_path)
         self.assertEqual(schema.LATEST, schema.version(self.connect()))
 
 
-class AnOldLibrary(SchemaTestCase):
+class AnUnmigratedLibrary(SchemaTestCase):
     def setUp(self):
         super().setUp()
-        make_old_library(self.db_path)
+        make_unmigrated_library(self.db_path)
 
-    def test_gains_the_columns_the_screens_filter_on(self):
+    def test_gains_the_indexes_the_screens_need(self):
+        schema.ensure(self.db_path)
+        self.assertLessEqual({"idx_faces_identify", "idx_photos_document_id"}, indexes(self.connect()))
+
+    def test_keeps_its_rows(self):
         schema.ensure(self.db_path)
         conn = self.connect()
-        self.assertLessEqual({"excluded", "excluded_reason", "name_source"}, columns(conn, "faces"))
-        self.assertIn("document_id", columns(conn, "photos"))
-        self.assertLessEqual({"has_face", "hidden_from_autocomplete"}, columns(conn, "tag_taxonomy"))
-        self.assertLessEqual({"idx_faces_identify", "idx_photos_document_id"}, indexes(conn))
+        self.assertEqual(("Wren Halloway", 0), conn.execute("SELECT name, excluded FROM faces").fetchone())
 
-    def test_keeps_what_the_old_columns_said(self):
+    def test_is_not_copied_first(self):
+        # Nothing in either migration rewrites a decision, so a large library is not
+        # backed up for nothing.
         schema.ensure(self.db_path)
-        conn = self.connect()
-        self.assertEqual((1,), conn.execute("SELECT has_face FROM tag_taxonomy WHERE tag = 'People'").fetchone())
-        self.assertEqual((None, 1), conn.execute("SELECT name, excluded FROM faces").fetchone())
+        self.assertFalse(os.path.isdir(os.path.join(self.dir, "backups")))
 
     def test_carries_its_generations_over_and_drops_the_old_tables(self):
         schema.ensure(self.db_path)

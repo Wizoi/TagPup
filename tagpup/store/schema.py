@@ -1,4 +1,4 @@
-"""A library's tables, and the migrations that bring any library to them.
+"""A library's tables, and the migrations that bring a library to them.
 
 The only place a table, a column, an index or a trigger is made. There were four:
 PhotoIndex.load, TagTuner's start-up (without the write lock), the desktop runner
@@ -6,8 +6,11 @@ PhotoIndex.load, TagTuner's start-up (without the write lock), the desktop runne
 tree, which made its own table when it saved. Each carried its own idea of the schema.
 
 A migration runs once per library, in order, and `schema_version` records it. The
-first is every change the four made, written so that it finds any library, of any
-age, and leaves it as a new one would be; the rest are ordinary steps forward.
+first makes the tables as they stood in 2026-09, when every library the owner has was
+already that shape; the rest are ordinary steps forward. A library older than that is
+refused, not converted: the code that converted older libraries -- missing columns,
+'Non Person' names, is_people -- ran on every open for months, had nothing left to
+convert, and retired on 2026-09-24.
 
 `ensure` is called wherever a library is opened, including each request that names
 one. After the first time in a process it costs a stat.
@@ -25,7 +28,7 @@ from tagpup.store import db
 logger = logging.getLogger(__name__)
 
 #: One step. `changes_data` says whether it rewrites what people decided or what files
-#: hold, which is worth a backup first; adding a column, an index or a trigger is not.
+#: hold, which is worth a backup first; making a table, an index or a trigger is not.
 Migration = collections.namedtuple("Migration", "version name apply changes_data")
 
 
@@ -33,14 +36,22 @@ def _columns(conn, table):
     return [row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)]
 
 
-def _add_column(conn, table, column, declaration):
-    if column not in _columns(conn, table):
-        logger.info("Adding %s.%s", table, column)
-        conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, column, declaration))
+#: The columns a library of 2026-09 has, which the older ones lacked. A library without
+#: them is older than TagPup opens.
+REQUIRED_COLUMNS = {
+    "photos": ("document_id",),
+    "faces": ("crop_image", "prob", "name_source", "excluded", "excluded_reason"),
+    "tag_taxonomy": ("has_face", "hidden_from_autocomplete"),
+}
+
+
+class TooOld(Exception):
+    """A library older than the tables of 2026-09, which TagPup no longer converts."""
 
 
 def _tables(conn):
-    """Every table, column and index the four places made, on a library of any age."""
+    """The tables of 2026-09, and their indexes. A library that already has tables must
+    have their columns: it is refused, not converted, when it does not."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS photos (
             path TEXT PRIMARY KEY,
@@ -104,25 +115,11 @@ def _tables(conn):
         )
     """)
 
-    # Columns later than the tables. The runner and TagTuner made faces tables without
-    # most of them, and a library made before a column was added has not got it.
-    _add_column(conn, "faces", "crop_image", "BLOB")
-    _add_column(conn, "faces", "prob", "REAL")
-    # Faces deliberately kept out of identity work: passers-by, crowd noise, bad crops.
-    _add_column(conn, "faces", "excluded", "INTEGER DEFAULT 0")
-    _add_column(conn, "faces", "excluded_reason", "TEXT")
-    # Who decided a face's name. 'manual' survives re-clustering.
-    _add_column(conn, "faces", "name_source", "TEXT")
-    # A photo's identity, independent of where it sits on disk (XMP DocumentID).
-    _add_column(conn, "photos", "document_id", "TEXT")
-    _add_column(conn, "tag_taxonomy", "hidden_from_autocomplete", "INTEGER DEFAULT 0")
-    taxonomy_columns = _columns(conn, "tag_taxonomy")
-    if "has_face" not in taxonomy_columns:
-        _add_column(conn, "tag_taxonomy", "has_face", "INTEGER DEFAULT 0")
-        for older in ("is_people", "is_face"):
-            if older in taxonomy_columns:
-                conn.execute("UPDATE tag_taxonomy SET has_face = %s" % older)
-                break
+    missing = ["%s.%s" % (table, column) for table, columns in REQUIRED_COLUMNS.items()
+               for column in columns if column not in _columns(conn, table)]
+    if missing:
+        raise TooOld("This library is older than TagPup opens: it has no %s. A version of "
+                     "TagPup from before 2026-09-24 converts it." % ", ".join(missing))
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_photo_path ON faces(photo_path)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_name ON faces(name)")
@@ -144,12 +141,6 @@ def _tables(conn):
         ):
             conn.execute("CREATE INDEX IF NOT EXISTS %s ON %s(%s COLLATE %s)"
                          % (index_name, table, column, paths.COLLATE))
-
-    # The old 'Non Person' marker meant what excluded means now. A name cannot survive
-    # re-clustering; the column can.
-    conn.execute(
-        "UPDATE faces SET name = NULL, excluded = 1, excluded_reason = 'migrated from Non Person'"
-        " WHERE name = 'Non Person'")
 
 
 #: What moves each generation (tagpup.store.generations). Faces: whatever changes who a
@@ -188,23 +179,8 @@ def _generations(conn):
                          % (name, event, when, table, bump))
 
 
-def _old_decisions(conn):
-    """Does migration 1 have decisions to rewrite here: faces named 'Non Person', or a
-    tree whose face flag is still is_people or is_face? (docs/findings.md, #59)"""
-    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    if "faces" in tables and conn.execute(
-            "SELECT 1 FROM faces WHERE name = 'Non Person' LIMIT 1").fetchone():
-        return True
-    if "tag_taxonomy" in tables:
-        columns = _columns(conn, "tag_taxonomy")
-        return "has_face" not in columns and bool({"is_people", "is_face"} & set(columns))
-    return False
-
-
-#: `changes_data` is True, False, or a question of the library: a backup of a large
-#: library for a migration with nothing to rewrite in it is minutes for nothing.
 MIGRATIONS = (
-    Migration(1, "the tables as of 2026-09", _tables, changes_data=_old_decisions),
+    Migration(1, "the tables as of 2026-09", _tables, changes_data=False),
     Migration(2, "one generations table", _generations, changes_data=False),
 )
 
@@ -313,9 +289,7 @@ def _ensure(db_path):
             for migration in MIGRATIONS:
                 if version(conn) >= migration.version:
                     continue
-                changes_data = (migration.changes_data(conn) if callable(migration.changes_data)
-                                else migration.changes_data)
-                if changes_data and _has_rows(conn):
+                if migration.changes_data and _has_rows(conn):
                     logger.info("Backed up to %s", db.backup(db_path, "migration-%d" % migration.version))
                 conn.execute("BEGIN IMMEDIATE")
                 try:

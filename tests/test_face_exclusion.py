@@ -3,8 +3,8 @@
 Crowd photographs collect passers-by, and MTCNN occasionally returns something that is
 not a face at all. Left in the database they cluster, vote in identity resolution, and
 drag person centroids around. An earlier attempt at this stored the magic name
-'Non Person', which index.py still migrates away on every open, because a name cannot
-survive re-clustering. This is the column-based replacement.
+'Non Person', which was migrated away on every open until 2026-09-24, because a name
+cannot survive re-clustering. This is the column-based replacement.
 """
 import os
 import sys

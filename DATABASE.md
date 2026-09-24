@@ -137,7 +137,7 @@ Replaces `faces_generation` and `taxonomy_generation`, one table each, whose cou
 | `value` | INTEGER | NOT NULL | Bumped by the triggers; only ever compared for change. |
 
 ### 7. `schema_version` Table
-The migrations applied to this library, one row each, in order (`tagpup.store.schema`). `schema.ensure()` applies the ones missing wherever a library is opened: by PhotoIndex, TagTuner's start-up, the desktop runner, the tag tree, and each request that names a library. Migration 1 brings a library of any age to the tables of 2026-09; each one after is a step forward.
+The migrations applied to this library, one row each, in order (`tagpup.store.schema`). `schema.ensure()` applies the ones missing wherever a library is opened: by PhotoIndex, TagTuner's start-up, the desktop runner, the tag tree, and each request that names a library. Migration 1 makes the tables of 2026-09; each one after is a step forward. A library older than those tables -- missing a column such as `faces.excluded` -- is refused (`schema.TooOld`), not converted: every library in use was already that shape, and the conversions retired on 2026-09-24.
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
