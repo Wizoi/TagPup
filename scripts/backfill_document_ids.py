@@ -59,14 +59,29 @@ def rows_without_identity(db_path):
     return missing, gone
 
 
-def record(db_path, found):
-    """Write a batch of identities into the index."""
+def record(db_path, found, minted=()):
+    """Write a batch of identities into the index. Returns rows written.
+
+    Rows are found by sql_equals, as every lookup is. A photo given an identity
+    here was written to, so its row takes the file's new mtime and size: left with
+    the old ones, every scan afterwards distrusted it and read it again.
+    """
     def store(conn):
         cursor = conn.cursor()
         written = 0
         for path, doc_id in found.items():
-            cursor.execute("UPDATE photos SET document_id = ? WHERE path = ?",
-                           (doc_id, path))
+            where, params = photo_paths.sql_equals("path", path)
+            if path in minted:
+                try:
+                    stat = os.stat(path)
+                except OSError:
+                    stat = None
+                if stat is not None:
+                    cursor.execute("UPDATE photos SET document_id = ?, mtime = ?, size = ? WHERE " + where,
+                                   (doc_id, stat.st_mtime, stat.st_size) + params)
+                    written += cursor.rowcount
+                    continue
+            cursor.execute("UPDATE photos SET document_id = ? WHERE " + where, (doc_id,) + params)
             written += cursor.rowcount
         return written
 
@@ -75,7 +90,11 @@ def record(db_path, found):
 
 
 def backfill(db_path, paths, exiftool_path=None, batch_size=200, on_progress=None):
-    """Read, mint where missing, and record. Returns (read, minted, failed)."""
+    """Read, mint where missing, and record. Returns (read, minted, failed, recorded).
+
+    `recorded` is rows the index took, not identities found: a row whose spelling
+    matched nothing used to count as done.
+    """
     from exiftool_session import ExifToolSession
 
     # ExifTool answers with forward slashes whatever it was handed, and the index
@@ -88,7 +107,7 @@ def backfill(db_path, paths, exiftool_path=None, batch_size=200, on_progress=Non
     def indexed_path(reported):
         return as_indexed.get(photo_paths.key(reported), reported)
 
-    read_count = minted_count = 0
+    read_count = minted_count = recorded = 0
     failed = []
 
     with ExifToolSession(executable=exiftool_path) as et:
@@ -107,7 +126,7 @@ def backfill(db_path, paths, exiftool_path=None, batch_size=200, on_progress=Non
                     except Exception as e:
                         failed.append((one, str(e)))
 
-            found = {}
+            found, minted_here = {}, set()
             for row in results:
                 reported = row.get("SourceFile")
                 if not reported:
@@ -121,17 +140,18 @@ def backfill(db_path, paths, exiftool_path=None, batch_size=200, on_progress=Non
                 minted = ensure_document_id(et, reported, row)
                 if minted:
                     found[path] = minted
+                    minted_here.add(path)
                     minted_count += 1
                 else:
                     failed.append((path, "could not write an identity"))
 
             if found:
-                record(db_path, found)
+                recorded += record(db_path, found, minted_here)
             if on_progress:
                 on_progress(min(start + batch_size, len(paths)), len(paths),
                             read_count, minted_count, len(failed))
 
-    return read_count, minted_count, failed
+    return read_count, minted_count, failed, recorded
 
 
 def main():
@@ -173,12 +193,13 @@ def main():
               % (done, total, rate, int(left / 60), read_count, minted_count, failures),
               flush=True)
 
-    read_count, minted_count, failed = backfill(
+    read_count, minted_count, failed, recorded = backfill(
         args.db, missing, args.exiftool, args.batch, progress)
 
     print("\nread an existing identity : %d" % read_count)
     print("minted a new one          : %d" % minted_count)
     print("could not be given one    : %d" % len(failed))
+    print("rows the index recorded   : %d of %d" % (recorded, read_count + minted_count))
     for path, why in failed[:5]:
         print("   %s: %s" % (os.path.basename(path), why))
 
