@@ -181,6 +181,9 @@ Exit: the guard tests for config, database connections, ExifTool and layers pass
 
 ### Phase 2: Services
 - [x] Delete TagTuner's eight unused routes: its copies of rename, time shift, delete, open in Explorer, rotate, save metadata and bulk tags (the TagPup page calls its own server's), and `/api/faces/recluster`, which no page calls.
+- The rules, bottom-up. A service cannot live in `tagpup/` while what it calls is still in `scripts/`, and `metadata.py`, `index.py` and `taxonomy.py` each mix layers (files, store, rules). So the pure rules move first, then file reading into `tagpup.files`, then the tables into `tagpup.store` (phase 3 work the services pull forward):
+  - [x] When a photo was taken: `tagpup.core.dates` (seven copies became one).
+  - [ ] The tag vocabulary: `tagpup.core.vocabulary`.
 - `tagpup.result.Result`, shaped by the first services that return it.
 - One service per user action. Start with the ones both servers implement (rename, rotate, delete, save metadata, bulk tags, time shift, indexing), then tag-tree edits, face identification and suggestions.
 - Tests move down to the service level.

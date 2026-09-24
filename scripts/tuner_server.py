@@ -27,42 +27,11 @@ from sklearn.neighbors import sort_graph_by_row_values
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
+from tagpup.core import dates
 from tagpup.core.library import Library
 
 logger = logging.getLogger("tagtuner.server")
 
-import re
-
-YEAR_RE = re.compile(r"^(\d{4})")
-DATE_KEYS = [
-    "EXIF:DateTimeOriginal", "DateTimeOriginal",
-    "XMP:DateTimeOriginal",
-    "EXIF:CreateDate", "CreateDate",
-    "XMP:CreateDate",
-    "EXIF:ModifyDate", "ModifyDate",
-    "XMP:ModifyDate"
-]
-
-_year_cache = {}
-
-def parse_year_from_raw_metadata(raw_meta):
-    if not raw_meta:
-        return None
-    for key in DATE_KEYS:
-        val = raw_meta.get(key)
-        if val:
-            if isinstance(val, list) and val:
-                val = val[0]
-            val_str = str(val).strip()
-            match = YEAR_RE.match(val_str)
-            if match:
-                try:
-                    year = int(match.group(1))
-                    if 1800 <= year <= 2100:
-                        return year
-                except ValueError:
-                    pass
-    return None
 
 def compute_geometric_median(X, eps=1e-5, max_iter=20):
     if len(X) == 0:
@@ -85,16 +54,6 @@ def compute_geometric_median(X, eps=1e-5, max_iter=20):
 
 _metadata_year_cache = {}
 _path_year_cache = {}
-
-def extract_4_digit_year(s):
-    if not s:
-        return None
-    matches = re.findall(r'\d{4}', s)
-    for m in matches:
-        val = int(m)
-        if 1800 <= val <= 2100:
-            return val
-    return None
 
 #: Every nameless face still in play, for the Identify Faces queue.
 #:
@@ -190,6 +149,12 @@ def cluster_candidates(embeddings, on_progress=None):
 
 
 def get_year_from_mtime_or_meta(mtime, raw_meta_json, path=None):
+    """The year to file a photo under, or "Unknown": tagpup.core.dates, cached.
+
+    Cached by path and by metadata text, since the Identify views ask for thousands at
+    once. This read ModifyDate as well -- when the file was last edited, not when the
+    photo was taken; it now reads the same Date Taken as everything else.
+    """
     path_key = paths.key(path)
     if path_key and path_key in _path_year_cache:
         return _path_year_cache[path_key]
@@ -204,31 +169,14 @@ def get_year_from_mtime_or_meta(mtime, raw_meta_json, path=None):
                     raw_meta = json.loads(raw_meta_json)
                 else:
                     raw_meta = raw_meta_json
-                parsed_year = parse_year_from_raw_metadata(raw_meta)
+                parsed_year = dates.year_taken(raw_meta)
                 _metadata_year_cache[raw_meta_json] = parsed_year
             except Exception:
                 pass
-                
-    if not parsed_year and path:
-        # The stored spelling has one separator throughout, so it splits on that.
-        parts = paths.stored(path).split(os.sep)
 
-        # The filename is the last segment
-        if parts:
-            filename = parts[-1]
-            parsed_year = extract_4_digit_year(filename)
-            
-        # The directory components are all segments except the last
-        if not parsed_year and len(parts) > 1:
-            # Check folders starting from the closest parent (right to left)
-            for folder in reversed(parts[:-1]):
-                if not folder:
-                    continue
-                year = extract_4_digit_year(folder)
-                if year:
-                    parsed_year = year
-                    break
-                    
+    if not parsed_year and path:
+        parsed_year = dates.year_in_name(paths.stored(path))
+
     year_str = parsed_year if parsed_year else "Unknown"
     if path_key:
         _path_year_cache[path_key] = year_str

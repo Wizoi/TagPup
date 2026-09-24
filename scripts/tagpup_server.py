@@ -23,6 +23,7 @@ import numpy as np
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
+from tagpup.core import dates
 from tagpup.core.library import Library
 
 logger = logging.getLogger("tagpup.server")
@@ -770,73 +771,11 @@ def make_json_serializable(obj):
         return make_json_serializable(obj.tolist())
     return obj
 
-# Date parsing helpers
-YEAR_RE = re.compile(r"^(\d{4})")
-DATE_KEYS = [
-    "EXIF:DateTimeOriginal", "DateTimeOriginal",
-    "XMP:DateTimeOriginal",
-    "EXIF:CreateDate", "CreateDate",
-    "XMP:CreateDate",
-    "EXIF:ModifyDate", "ModifyDate",
-    "XMP:ModifyDate"
-]
 
-def parse_year_from_raw_metadata(raw_meta):
-    if not raw_meta:
-        return None
-    for key in DATE_KEYS:
-        val = raw_meta.get(key)
-        if val:
-            if isinstance(val, list) and val:
-                val = val[0]
-            val_str = str(val).strip()
-            match = YEAR_RE.match(val_str)
-            if match:
-                try:
-                    year = int(match.group(1))
-                    if 1800 <= year <= 2100:
-                        return year
-                except ValueError:
-                    pass
-    return None
+def taken_order(record):
+    """The folder view's order for a cached photo record: when it was taken, then file time."""
+    return dates.date_taken_sort_key(record.get("raw_metadata", {}), record.get("mtime", 0.0))
 
-def get_year_from_mtime_or_meta(mtime, raw_meta_json, path=None):
-    parsed_year = None
-    if raw_meta_json:
-        try:
-            if isinstance(raw_meta_json, str):
-                raw_meta = json.loads(raw_meta_json)
-            else:
-                raw_meta = raw_meta_json
-            parsed_year = parse_year_from_raw_metadata(raw_meta)
-        except Exception:
-            pass
-                
-    if not parsed_year and path:
-        # Either separator: the path's segments are all that is wanted here.
-        parts = re.split(r"[\\/]", path)
-        if parts:
-            filename = parts[-1]
-            matches = re.findall(r'\d{4}', filename)
-            for m in matches:
-                val = int(m)
-                if 1800 <= val <= 2100:
-                    parsed_year = val
-                    break
-        if not parsed_year and len(parts) > 1:
-            for folder in reversed(parts[:-1]):
-                if not folder:
-                    continue
-                matches = re.findall(r'\d{4}', folder)
-                for m in matches:
-                    val = int(m)
-                    if 1800 <= val <= 2100:
-                        parsed_year = val
-                        break
-                if parsed_year:
-                    break
-                    
-    return parsed_year if parsed_year else "Unknown"
 
 _thread_local = threading.local()
 
@@ -1788,16 +1727,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         # Check cache
         if folder_path_norm in TagPupHTTPRequestHandler.folder_cache and not force_refresh:
             cached_data = list(TagPupHTTPRequestHandler.folder_cache[folder_path_norm].values())
-            def get_date_taken_str(meta):
-                raw_meta = meta.get("raw_metadata", {})
-                for k in ["EXIF:DateTimeOriginal", "DateTimeOriginal", "XMP:DateTimeOriginal", "EXIF:CreateDate", "CreateDate"]:
-                    val = raw_meta.get(k)
-                    if val:
-                        if isinstance(val, list) and val:
-                            val = val[0]
-                        return str(val).strip()
-                return f"mtime_{meta.get('mtime', 0.0)}"
-            cached_data.sort(key=get_date_taken_str)
+            cached_data.sort(key=taken_order)
             self.send_json(cached_data)
             return
             
@@ -1879,16 +1809,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         TagPupHTTPRequestHandler.folder_cache[folder_path_norm] = folder_map
         
         response_list = list(folder_map.values())
-        def get_date_taken_str(meta):
-            raw_meta = meta.get("raw_metadata", {})
-            for k in ["EXIF:DateTimeOriginal", "DateTimeOriginal", "XMP:DateTimeOriginal", "EXIF:CreateDate", "CreateDate"]:
-                val = raw_meta.get(k)
-                if val:
-                    if isinstance(val, list) and val:
-                        val = val[0]
-                    return str(val).strip()
-            return f"mtime_{meta.get('mtime', 0.0)}"
-        response_list.sort(key=get_date_taken_str)
+        response_list.sort(key=taken_order)
         self.send_json(response_list)
 
     def handle_get_folder_suggest_status(self, query):
@@ -2949,14 +2870,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 # never matched, so every photo sorted by its file time instead.
                 entry = cache.get(paths.key(p_path))
                 if entry:
-                    raw = entry.get("raw_metadata", {})
-                    for k in ["EXIF:DateTimeOriginal", "DateTimeOriginal", "XMP:DateTimeOriginal", "EXIF:CreateDate", "CreateDate"]:
-                        val = raw.get(k)
-                        if val:
-                            if isinstance(val, list) and val:
-                                val = val[0]
-                            return str(val).strip()
-                    return f"mtime_{entry.get('mtime', 0.0)}"
+                    return taken_order(entry)
                 try:
                     return f"mtime_{os.path.getmtime(p_path)}"
                 except OSError:
@@ -3148,17 +3062,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             
             # Send updated photos sorted chronologically
             updated_list = list(TagPupHTTPRequestHandler.folder_cache.get(paths.key(folder_path), {}).values())
-            
-            def get_date_taken_str(meta):
-                raw_meta = meta.get("raw_metadata", {})
-                for k in ["EXIF:DateTimeOriginal", "DateTimeOriginal", "XMP:DateTimeOriginal", "EXIF:CreateDate", "CreateDate"]:
-                    val = raw_meta.get(k)
-                    if val:
-                        if isinstance(val, list) and val:
-                            val = val[0]
-                        return str(val).strip()
-                return f"mtime_{meta.get('mtime', 0.0)}"
-            updated_list.sort(key=get_date_taken_str)
+            updated_list.sort(key=taken_order)
             
             self.send_json({
                 "success": True,

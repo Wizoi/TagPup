@@ -9,7 +9,6 @@ try:
 except ImportError:  # imported as a top-level module
     import paths
 import logging
-from pathlib import PurePath
 from typing import List, Dict, Any, Optional, Set
 from exiftool_session import ExifToolSession
 
@@ -17,6 +16,7 @@ from identity import ensure_document_id, read_document_id
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
+from tagpup.core import dates
 
 logger = logging.getLogger("tagpup_cli.metadata")
 
@@ -466,59 +466,9 @@ class MetadataExtractor:
         }
 
 def parse_year_from_metadata(meta: Dict[str, Any]) -> Optional[int]:
-    """Extract a 4-digit numeric year from EXIF/XMP date tags, or fallback to filename/folder."""
-    import re
-    date_keys = [
-        "EXIF:DateTimeOriginal", "DateTimeOriginal",
-        "XMP:DateTimeOriginal",
-        "EXIF:CreateDate", "CreateDate"
-    ]
-    raw_meta = meta.get("raw_metadata", meta)
-    if raw_meta:
-        for key in date_keys:
-            val = raw_meta.get(key)
-            if val:
-                if isinstance(val, list) and val:
-                    val = val[0]
-                val_str = str(val).strip()
-                match = re.match(r"^(\d{4})", val_str)
-                if match:
-                    year = int(match.group(1))
-                    if 1800 <= year <= 2100:
-                        return year
-
-    def extract_year(s):
-        if not s:
-            return None
-        matches = re.findall(r'\d{4}', s)
-        for m in matches:
-            val = int(m)
-            if 1800 <= val <= 2100:
-                return val
-        return None
-
-    path = meta.get("path")
-    if path:
-        # The path's own components, whichever separators it was spelled with.
-        parts = PurePath(path).parts
-
-        # Check filename
-        if parts:
-            filename = parts[-1]
-            year = extract_year(filename)
-            if year:
-                return year
-                
-        # Check folders from right to left
-        if len(parts) > 1:
-            for folder in reversed(parts[:-1]):
-                if not folder:
-                    continue
-                year = extract_year(folder)
-                if year:
-                    return year
-                    
-    return None
+    """The year a photo was taken, for a record holding raw_metadata and a path (or a
+    raw_metadata dict itself): tagpup.core.dates.photo_year."""
+    return dates.photo_year(meta.get("raw_metadata", meta), meta.get("path"))
 
 
 def build_photo_ui_record(path: str, meta: Dict[str, Any], mtime: float = 0.0, size: int = 0) -> Dict[str, Any]:
