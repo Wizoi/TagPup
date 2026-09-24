@@ -1,0 +1,17 @@
+# One line ending for every text file, in the repository and in every checkout.
+#
+# The repository has always held LF, but checkouts were CRLF (core.autocrlf) while
+# editors and tools wrote LF, so files ended up with both: seven had mixed endings at
+# once, and edits that matched text across lines missed without saying why. eol=lf
+# takes precedence over core.autocrlf, so every checkout matches what the tools write.
+* text=auto eol=lf
+
+# Batch files are read by cmd.exe, which expects CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.db binary
