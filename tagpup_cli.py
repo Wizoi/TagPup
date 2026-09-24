@@ -57,6 +57,7 @@ from faces import FaceProcessor
 import paths
 import db as tagpup_db
 from tagpup import config as tagpup_config
+from tagpup.core import vocabulary
 from tagpup.core.library import Library
 
 def get_config():
@@ -448,7 +449,7 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
 
         # Merge non-people taxonomy tags into candidates
         for path in taxonomy.paths:
-            parts = path.split("/")
+            parts = vocabulary.segments(path)
             if parts and parts[0].lower() in ["family", "friends", "pets"]:
                 continue
             leaf = parts[-1].strip()

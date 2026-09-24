@@ -79,6 +79,7 @@ Guard tests, each of which fails the build. The ones marked *exists* are in plac
 - `sqlite3.connect` only in `tagpup.store.db`. *Exists:* `tests/test_db_access.py`.
 - pyexiftool's classes constructed only in `tagpup.files.exiftool_session`. *Exists:* `tests/test_exiftool_single_owner.py`.
 - Photo paths spelled and compared only by `tagpup.core.paths`. *Exists:* `tests/test_paths_single_owner.py`.
+- Tags taken apart only by `tagpup.core.vocabulary`. *Exists:* `tests/test_vocabulary.py`.
 - SQL only inside `tagpup.store`.
 - `config.ini` read, and path settings resolved, only by `tagpup.config`; inside `tagpup/`, only it finds folders from `__file__`. *Exists:* `tests/test_config_single_owner.py`.
 - ExifTool and `Image.open` only inside `tagpup.files`.
@@ -183,7 +184,7 @@ Exit: the guard tests for config, database connections, ExifTool and layers pass
 - [x] Delete TagTuner's eight unused routes: its copies of rename, time shift, delete, open in Explorer, rotate, save metadata and bulk tags (the TagPup page calls its own server's), and `/api/faces/recluster`, which no page calls.
 - The rules, bottom-up. A service cannot live in `tagpup/` while what it calls is still in `scripts/`, and `metadata.py`, `index.py` and `taxonomy.py` each mix layers (files, store, rules). So the pure rules move first, then file reading into `tagpup.files`, then the tables into `tagpup.store` (phase 3 work the services pull forward):
   - [x] When a photo was taken: `tagpup.core.dates` (seven copies became one).
-  - [ ] The tag vocabulary: `tagpup.core.vocabulary`.
+  - [x] The tag vocabulary: `tagpup.core.vocabulary` (55 hand-written splits became one reading).
 - `tagpup.result.Result`, shaped by the first services that return it.
 - One service per user action. Start with the ones both servers implement (rename, rotate, delete, save metadata, bulk tags, time shift, indexing), then tag-tree edits, face identification and suggestions.
 - Tests move down to the service level.

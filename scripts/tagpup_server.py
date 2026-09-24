@@ -23,7 +23,7 @@ import numpy as np
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
-from tagpup.core import dates
+from tagpup.core import dates, vocabulary
 from tagpup.core.library import Library
 
 logger = logging.getLogger("tagpup.server")
@@ -214,9 +214,9 @@ def people_paths_for(db_path):
         for tag_path in taxonomy.paths:
             if "/" not in tag_path:
                 continue
-            if tag_path.split("/")[0].strip().lower() not in roots:
+            if vocabulary.key(vocabulary.root_of(tag_path)) not in roots:
                 continue
-            leaf = tag_path.split("/")[-1].strip().lower()
+            leaf = vocabulary.key(vocabulary.leaf_of(tag_path))
             # Someone filed in two places cannot be resolved without guessing, so
             # they are left alone rather than filed in whichever came first.
             mapping[leaf] = None if leaf in mapping and mapping[leaf] != tag_path else tag_path
@@ -256,7 +256,7 @@ def resolve_people_tags(tags, db_path):
     if not people:
         return list(tags)
 
-    pathed_leaves = {t.split("/")[-1].strip().lower() for t in tags if "/" in t}
+    pathed_leaves = {vocabulary.key(vocabulary.leaf_of(t)) for t in tags if "/" in t}
 
     resolved = []
     for tag in tags:
@@ -492,7 +492,7 @@ def zero_shot_candidates(taxonomy, configured):
     candidates = list(configured)
     seen = {c.lower() for c in candidates}
     for path in sorted(taxonomy.paths):
-        parts = [p.strip() for p in path.split("/") if p.strip()]
+        parts = vocabulary.segments(path)
         if not parts or parts[0].lower() in face_roots:
             continue
         leaf = parts[-1]
@@ -1648,15 +1648,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             conn.close()
 
             def is_tag_hidden(tag):
-                normalized = TagTaxonomy.normalize_tag(tag)
-                if not normalized:
-                    return False
-                parts = normalized.split("/")
-                for i in range(1, len(parts) + 1):
-                    ancestor = "/".join(parts[:i])
-                    if ancestor in hidden_tags:
-                        return True
-                return False
+                return vocabulary.hidden_by(tag, hidden_tags)
 
             final_tags = [t for t in db_tags if not is_tag_hidden(t)]
             self.send_json(sorted(final_tags))
@@ -1677,17 +1669,8 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 cursor.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")
                 hidden_tags = {row[0] for row in cursor.fetchall()}
 
-                from taxonomy import TagTaxonomy
                 def is_tag_hidden(tag):
-                    normalized = TagTaxonomy.normalize_tag(tag)
-                    if not normalized:
-                        return False
-                    parts = normalized.split("/")
-                    for i in range(1, len(parts) + 1):
-                        ancestor = "/".join(parts[:i])
-                        if ancestor in hidden_tags:
-                            return True
-                    return False
+                    return vocabulary.hidden_by(tag, hidden_tags)
 
                 filtered_people = []
                 for p in people:
@@ -3143,16 +3126,11 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     if orphans:
                         logger.info(f"Taxonomy self-healing: found {len(orphans)} orphaned paths. Healing...")
                         for node_id, tag_path, has_face in orphans:
-                            parts = [p.strip() for p in tag_path.split("/") if p.strip()]
+                            parts = vocabulary.segments(tag_path)
                             current_parent_id = None
-                            current_path = ""
                             
-                            for i in range(len(parts) - 1):
-                                part = parts[i]
-                                if current_path:
-                                    current_path = current_path + "/" + part
-                                else:
-                                    current_path = part
+                            # Every ancestor, not the node itself.
+                            for part, current_path in zip(parts[:-1], vocabulary.lineage(tag_path)):
                                     
                                 cursor.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (current_path,))
                                 row = cursor.fetchone()
@@ -3175,7 +3153,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     if bad_names:
                         logger.info(f"Taxonomy self-healing: found {len(bad_names)} nodes with bad name values. Healing...")
                         for node_id, tag_path, name in bad_names:
-                            leaf_name = tag_path.split("/")[-1].strip()
+                            leaf_name = vocabulary.leaf_of(tag_path)
                             cursor.execute("UPDATE tag_taxonomy SET name = ? WHERE id = ?", (leaf_name, node_id))
                         conn.commit()
                         
@@ -3185,7 +3163,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     if zero_faces:
                         healed_face_nodes = 0
                         for node_id, tag_path in zero_faces:
-                            parts = tag_path.split("/")
+                            parts = vocabulary.segments(tag_path)
                             if len(parts) >= 2:
                                 root = parts[0].lower()
                                 if root in ("people", "family", "friends", "pets"):
@@ -3262,7 +3240,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             tag_path = TagTaxonomy.normalize_tag(tag_path)
             
             # Recursive build of hierarchy
-            parts = [p.strip() for p in tag_path.split("/") if p.strip()]
+            parts = vocabulary.segments(tag_path)
             current_parent_id = None
             current_path = ""
             parent_has_face = has_face
@@ -3282,7 +3260,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                         continue
                         
                 if current_path:
-                    if current_path.split("/")[-1].lower() == part.lower():
+                    if vocabulary.leaf_of(current_path).lower() == part.lower():
                         continue
                     current_path = current_path + "/" + part
                 else:
@@ -3603,8 +3581,8 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             # tree has to follow through to the faces table. Without this the taxonomy,
             # the photo files and the photos table all say the new name while every
             # matched face still says the old one, and TagTuner keeps showing it.
-            old_leaf = old_tag_path.split("/")[-1]
-            new_leaf = new_tag_path.split("/")[-1]
+            old_leaf = vocabulary.leaf_of(old_tag_path)
+            new_leaf = vocabulary.leaf_of(new_tag_path)
             if old_leaf != new_leaf:
                 conn = tagpup_db.connect(self.db_path, timeout=10.0)
                 cursor = conn.cursor()
@@ -3685,13 +3663,7 @@ def get_tag_usage_counts(db_path):
             try:
                 tags_list = json.loads(row[0])
                 for tag in tags_list:
-                    from taxonomy import TagTaxonomy
-                    normalized = TagTaxonomy.normalize_tag(tag)
-                    if not normalized:
-                        continue
-                    parts = normalized.split("/")
-                    for i in range(1, len(parts) + 1):
-                        ancestor = "/".join(parts[:i])
+                    for ancestor in vocabulary.lineage(tag):
                         counts[ancestor] = counts.get(ancestor, 0) + 1
             except Exception:
                 pass
@@ -3706,15 +3678,9 @@ def insert_tag_path_to_db(cursor, path: str, has_face_root: bool = False) -> int
     if not normalized:
         return None
     
-    parts = normalized.split("/")
+    parts = vocabulary.segments(normalized)
     parent_id = None
-    accumulated_path = ""
-    
-    for i, part in enumerate(parts):
-        if i == 0:
-            accumulated_path = part
-        else:
-            accumulated_path += "/" + part
+    for i, (part, accumulated_path) in enumerate(zip(parts, vocabulary.lineage(normalized))):
             
         cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
         row = cursor.fetchone()

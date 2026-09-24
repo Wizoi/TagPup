@@ -17,6 +17,7 @@ from identity import ensure_document_id, read_document_id
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
 from tagpup.core import dates
+from tagpup.core import vocabulary as tag_vocabulary  # extract_people has a `vocabulary` argument
 
 logger = logging.getLogger("tagpup_cli.metadata")
 
@@ -120,9 +121,8 @@ def extract_tags(meta: Dict[str, Any]) -> List[str]:
     hierarchical_tags = [t for t in unique_tags if "/" in t]
     to_remove = set()
     for h in hierarchical_tags:
-        parts = h.split("/")
-        for part in parts:
-            to_remove.add(part.strip())
+        for part in tag_vocabulary.segments(h):
+            to_remove.add(part)
             
     cleaned_tags = []
     for t in unique_tags:
@@ -221,8 +221,7 @@ def extract_people(meta: Dict[str, Any], tags: List[str], db_path: Optional[str]
 
     # Extract person name from hierarchical tags starting with any people roots
     for tag in tags:
-        normalized = tag.replace("|", "/").replace("\\", "/")  # not a path: a keyword hierarchy
-        parts = [p.strip() for p in normalized.split("/") if p.strip()]
+        parts = tag_vocabulary.segments(tag)
         if len(parts) >= 2:
             root = parts[0].lower()
             if root in vocabulary.roots:

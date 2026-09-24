@@ -5,6 +5,9 @@ import logging
 from typing import List, Optional
 from exiftool_session import ExifToolSession
 
+import _root  # noqa: F401
+from tagpup.core import vocabulary
+
 logger = logging.getLogger("tagpup_cli.writer")
 
 def derive_caption_from_tags(tags: List[str]) -> Optional[str]:
@@ -22,9 +25,8 @@ def derive_caption_from_tags(tags: List[str]) -> Optional[str]:
     sorted_tags = sorted(list(set(tags)))
     
     for tag in sorted_tags:
-        parts = tag.split("/")
-        leaf = parts[-1]
-        root = parts[0].lower()
+        leaf = vocabulary.leaf_of(tag)
+        root = vocabulary.root_of(tag).lower()
         
         if root in ["family", "friends"]:
             people.append(leaf)

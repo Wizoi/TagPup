@@ -77,9 +77,10 @@ the config of the app somebody is using. `tests/test_config_single_owner.py` enf
 
 **Never convert between a person's name and their tag by hand.** Identity is a leaf
 (`Rowan Thackeray`); the tag is a path (`People/Rowan Thackeray`). Use `leafOf`,
-`rootOf`, `samePerson`, `photoAlreadyHas` in `gui_tagpup/app.js`, and
-`taxonomy.find_person_path()` in Python. `tests/frontend/tag-vocabulary.test.mjs`
-enforces it.
+`rootOf`, `samePerson`, `photoAlreadyHas` in `gui_tagpup/app.js`. In Python,
+`tagpup.core.vocabulary` takes a tag apart and `taxonomy.find_person_path()` finds where
+a name is filed. `tests/frontend/tag-vocabulary.test.mjs` and `tests/test_vocabulary.py`
+enforce it.
 
 **A bulk write must tell the index what it wrote.** Saving one photo always did;
 the bulk paths did not, and rows described what photos used to hold.

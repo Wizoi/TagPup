@@ -6,6 +6,9 @@ from taxonomy import TagTaxonomy
 from index import PhotoIndex
 import paths
 
+import _root  # noqa: F401
+from tagpup.core import vocabulary
+
 import threading
 logger = logging.getLogger("tagpup_cli.suggester")
 
@@ -75,7 +78,7 @@ class TagSuggester:
             if self._people is None:
                 names = set()
                 for path in self.taxonomy.paths:
-                    parts = path.split("/")
+                    parts = vocabulary.segments(path)
                     if len(parts) >= 2 and parts[0].lower() in ["family", "friends"]:
                         names.add(parts[-1].lower())
                 centroids = {}
@@ -136,7 +139,7 @@ class TagSuggester:
         for tag in self.candidate_tags:
             is_person = False
             for path in self.taxonomy.paths:
-                parts = path.split("/")
+                parts = vocabulary.segments(path)
                 if len(parts) >= 2 and parts[0].lower() in ["family", "friends", "pets"]:
                     if parts[-1].lower() == tag.lower() or path.lower() == tag.lower():
                         is_person = True
@@ -224,14 +227,14 @@ class TagSuggester:
             # Expand tags according to the taxonomy, excluding family and friends branches and known people
             expanded_tags = set()
             for tag in raw_tags:
-                tag_parts = tag.split("/")
+                tag_parts = vocabulary.segments(tag)
                 if tag_parts and tag_parts[0].lower() in ["family", "friends"]:
                     continue
                 if tag_parts and tag_parts[-1].lower() in known_people:
                     continue
                 expanded = self.taxonomy.expand_tag(tag)
                 for t in expanded:
-                    t_parts = t.split("/")
+                    t_parts = vocabulary.segments(t)
                     if t_parts and t_parts[0].lower() in ["family", "friends"]:
                         continue
                     if t_parts and t_parts[-1].lower() in known_people:
@@ -270,7 +273,7 @@ class TagSuggester:
                 # Check for folder path hints boost
                 # We boost if the tag or any component of the tag matches a path hint
                 boost = 0.0
-                tag_parts = [p.lower() for p in tag.split("/")]
+                tag_parts = [p.lower() for p in vocabulary.segments(tag)]
                 
                 for hint in path_hints_lower:
                     # Match exact folder name or check if folder name matches part of the tag
@@ -462,7 +465,7 @@ class TagSuggester:
                     is_redundant = True
                     break
                 # Check if active_tag is a hierarchical tag whose leaf node matches the current tag (e.g. 'Family/Laurel' implies 'Laurel')
-                active_parts = active_tag.split("/")
+                active_parts = vocabulary.segments(active_tag)
                 if len(active_parts) >= 2 and active_parts[-1].lower() == tag.lower():
                     is_redundant = True
                     break

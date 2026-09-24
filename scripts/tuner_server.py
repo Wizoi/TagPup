@@ -27,7 +27,7 @@ from sklearn.neighbors import sort_graph_by_row_values
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
-from tagpup.core import dates
+from tagpup.core import dates, vocabulary
 from tagpup.core.library import Library
 
 logger = logging.getLogger("tagtuner.server")
@@ -1011,14 +1011,14 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             # word tag -- and saying so is the point, since that is the fault the
             # keyword convention forbids.
             person_leaves = {
-                tag.split("/")[-1].strip().lower()
+                vocabulary.key(vocabulary.leaf_of(tag))
                 for tag in in_taxonomy
-                if "/" in tag and tag.split("/")[0].strip().lower() in people_roots
+                if "/" in tag and vocabulary.key(vocabulary.root_of(tag)) in people_roots
             }
 
             def is_person_tag(tag):
                 if "/" in tag:
-                    return tag.split("/")[0].strip().lower() in people_roots
+                    return vocabulary.key(vocabulary.root_of(tag)) in people_roots
                 low = tag.strip().lower()
                 return (low in people_roots
                         or low in person_leaves
@@ -1053,7 +1053,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 count = counts.get(tag, 0)
                 out.append({
                     "tag": tag,
-                    "leaf": tag.split("/")[-1].strip(),
+                    "leaf": vocabulary.leaf_of(tag),
                     "count": count,
                     "flat": "/" not in tag,
                     "in_taxonomy": tag in in_taxonomy,
@@ -1309,17 +1309,8 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 cursor.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")
                 hidden_tags = {row[0] for row in cursor.fetchall()}
 
-                from taxonomy import TagTaxonomy
                 def is_tag_hidden(tag):
-                    normalized = TagTaxonomy.normalize_tag(tag)
-                    if not normalized:
-                        return False
-                    parts = normalized.split("/")
-                    for i in range(1, len(parts) + 1):
-                        ancestor = "/".join(parts[:i])
-                        if ancestor in hidden_tags:
-                            return True
-                    return False
+                    return vocabulary.hidden_by(tag, hidden_tags)
 
                 filtered_people = []
                 for p in all_people:
@@ -2084,17 +2075,8 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 for row in cursor.fetchall():
                     hidden_tags.add(row[0])
             
-            from taxonomy import TagTaxonomy
             def is_tag_hidden(tag):
-                normalized = TagTaxonomy.normalize_tag(tag)
-                if not normalized:
-                    return False
-                parts = normalized.split("/")
-                for i in range(1, len(parts) + 1):
-                    ancestor = "/".join(parts[:i])
-                    if ancestor in hidden_tags:
-                        return True
-                return False
+                return vocabulary.hidden_by(tag, hidden_tags)
 
             # Fetch people with matched counts
             cursor.execute("""
@@ -3300,8 +3282,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             # (node id, old path, new path, whether the new path already has a node)
             renamed_paths = []
             for node_id, node_tag in person_nodes:
-                parts = node_tag.split("/")
-                new_tag = "/".join(parts[:-1] + [new_name]) if len(parts) > 1 else new_name
+                new_tag = vocabulary.with_leaf(node_tag, new_name)
                 cursor.execute(
                     "SELECT id FROM tag_taxonomy WHERE tag = ? AND id != ?", (new_tag, node_id)
                 )
@@ -4271,15 +4252,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             conn.close()
 
             def is_tag_hidden(tag):
-                normalized = TagTaxonomy.normalize_tag(tag)
-                if not normalized:
-                    return False
-                parts = normalized.split("/")
-                for i in range(1, len(parts) + 1):
-                    ancestor = "/".join(parts[:i])
-                    if ancestor in hidden_tags:
-                        return True
-                return False
+                return vocabulary.hidden_by(tag, hidden_tags)
                 
             final_paths = [p for p in taxonomy.paths if not is_tag_hidden(p)]
             self.send_json(sorted(final_paths))

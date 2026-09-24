@@ -8,6 +8,9 @@ except ImportError:  # imported as a top-level module
 import logging
 from typing import Set, List, Dict, Optional
 
+import _root  # noqa: F401
+from tagpup.core import vocabulary
+
 logger = logging.getLogger("tagpup_cli.taxonomy")
 
 class TagTaxonomy:
@@ -113,14 +116,9 @@ class TagTaxonomy:
             # deleted or renamed in the app meanwhile came back on its next save.
             added = self.paths - self._in_db
             for path in sorted(added):
-                parts = self.normalize_tag(path).split("/")
+                parts = vocabulary.segments(path)
                 parent_id = None
-                accumulated_path = ""
-                for i, part in enumerate(parts):
-                    if i == 0:
-                        accumulated_path = part
-                    else:
-                        accumulated_path += "/" + part
+                for i, (part, accumulated_path) in enumerate(zip(parts, vocabulary.lineage(path))):
                     
                     cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
                     row = cursor.fetchone()
@@ -150,11 +148,8 @@ class TagTaxonomy:
 
     @staticmethod
     def normalize_tag(tag: str) -> str:
-        """Normalize a tag by replacing common hierarchy separators (e.g. '|' or '\') with '/'."""
-        tag = tag.strip()
-        tag = tag.replace("|", "/").replace("\\", "/")  # not a path: tag hierarchy separators
-        parts = [p.strip() for p in tag.split("/") if p.strip()]
-        return "/".join(parts)
+        """The one spelling of a tag (tagpup.core.vocabulary.normalize)."""
+        return vocabulary.normalize(tag)
 
     def add_tag(self, tag: str):
         """Add a tag to the taxonomy, building all of its ancestor paths.
@@ -174,10 +169,7 @@ class TagTaxonomy:
         if "/" not in normalized and self.find_person_path(normalized):
             return
 
-        parts = normalized.split("/")
-        for i in range(1, len(parts) + 1):
-            path = "/".join(parts[:i])
-            self.paths.add(path)
+        self.paths.update(vocabulary.lineage(normalized))
 
     def add_tags(self, tags: List[str]):
         """Add multiple tags to the taxonomy."""
@@ -215,16 +207,16 @@ class TagTaxonomy:
 
     def find_person_path(self, name: str) -> Optional[str]:
         """An existing people path whose last segment is this name."""
-        wanted = self.normalize_tag(name).split("/")[-1].strip().lower()
+        wanted = vocabulary.key(vocabulary.leaf_of(name))
         if not wanted:
             return None
         roots = self.people_roots()
         for path in self.paths:
             if "/" not in path:
                 continue
-            if path.split("/")[0].strip().lower() not in roots:
+            if vocabulary.key(vocabulary.root_of(path)) not in roots:
                 continue
-            if path.split("/")[-1].strip().lower() == wanted:
+            if vocabulary.key(vocabulary.leaf_of(path)) == wanted:
                 return path
         return None
 
@@ -236,12 +228,12 @@ class TagTaxonomy:
         guessing which was meant, and a wrong guess files a photo under the wrong
         branch where nobody will look for it.
         """
-        wanted = self.normalize_tag(name).split("/")[-1].strip().lower()
+        wanted = vocabulary.key(vocabulary.leaf_of(name))
         if not wanted:
             return None
         found = None
         for path in self.paths:
-            if path.split("/")[-1].strip().lower() != wanted:
+            if vocabulary.key(vocabulary.leaf_of(path)) != wanted:
                 continue
             if found is not None and found != path:
                 return None
@@ -254,7 +246,7 @@ class TagTaxonomy:
         Whichever of the usual people roots already exists, so a library using
         "Family" does not suddenly grow a "People" beside it. Falls back to People.
         """
-        existing = {p.split("/")[0].strip().lower() for p in self.paths}
+        existing = {vocabulary.key(vocabulary.root_of(p)) for p in self.paths}
         for root in self.DEFAULT_PEOPLE_ROOTS:
             if root.lower() in existing:
                 return root
@@ -272,12 +264,12 @@ class TagTaxonomy:
         roots = self.people_roots()
         parents = {}
         for path in self.paths:
-            parts = path.split("/")
+            parts = vocabulary.segments(path)
             if len(parts) < 2:
                 continue
-            if parts[0].strip().lower() not in roots:
+            if vocabulary.key(parts[0]) not in roots:
                 continue
-            parent = "/".join(parts[:-1])
+            parent = vocabulary.parent_of(path)
             parents[parent] = parents.get(parent, 0) + 1
         if not parents:
             return self.people_root()
@@ -316,34 +308,23 @@ class TagTaxonomy:
         if not normalized:
             return []
             
-        results = []
         matched_path = None
         if normalized in self.paths:
             matched_path = normalized
         else:
             sorted_paths = sorted(list(self.paths), key=len, reverse=True)
             for p in sorted_paths:
-                parts = p.split("/")
-                if normalized == parts[-1] or p.endswith("/" + normalized):
+                if normalized == vocabulary.leaf_of(p) or p.endswith(vocabulary.SEPARATOR + normalized):
                     matched_path = p
                     break
-        
-        if matched_path:
-            parts = matched_path.split("/")
-            for i in range(1, len(parts) + 1):
-                results.append("/".join(parts[:i]))
-        else:
-            parts = normalized.split("/")
-            for i in range(1, len(parts) + 1):
-                results.append("/".join(parts[:i]))
-                
-        return results
+
+        return vocabulary.lineage(matched_path or normalized)
 
     def get_root_categories(self) -> Dict[str, int]:
         """Get count of elements under each root (top-level) category."""
         roots = {}
         for path in self.paths:
-            root = path.split("/")[0]
+            root = vocabulary.root_of(path)
             roots[root] = roots.get(root, 0) + 1
         return roots
 
@@ -406,14 +387,9 @@ def seed_taxonomy_from_db(db_path: str):
                 normalized = TagTaxonomy.normalize_tag(tag)
                 if not normalized:
                     continue
-                parts = normalized.split("/")
+                parts = vocabulary.segments(normalized)
                 parent_id = None
-                accumulated_path = ""
-                for i, part in enumerate(parts):
-                    if i == 0:
-                        accumulated_path = part
-                    else:
-                        accumulated_path += "/" + part
+                for i, (part, accumulated_path) in enumerate(zip(parts, vocabulary.lineage(normalized))):
                     
                     cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
                     row = cursor.fetchone()
@@ -474,14 +450,9 @@ def seed_taxonomy_from_db(db_path: str):
                     normalized = TagTaxonomy.normalize_tag(path)
                     if not normalized:
                         continue
-                    parts = normalized.split("/")
+                    parts = vocabulary.segments(normalized)
                     parent_id = None
-                    accumulated_path = ""
-                    for i, part in enumerate(parts):
-                        if i == 0:
-                            accumulated_path = part
-                        else:
-                            accumulated_path += "/" + part
+                    for i, (part, accumulated_path) in enumerate(zip(parts, vocabulary.lineage(normalized))):
                         
                         cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
                         row = cursor.fetchone()

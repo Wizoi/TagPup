@@ -36,6 +36,9 @@ except ImportError:  # imported as a top-level module
     import db as tagpup_db
     import paths as photo_paths   # `paths` here means taxonomy paths
 
+import _root  # noqa: E402,F401
+from tagpup.core import vocabulary  # noqa: E402
+
 
 DEFAULT_PEOPLE_ROOTS = {"people", "family", "friends", "pets"}
 
@@ -60,9 +63,9 @@ def people_paths(conn):
     for (tag,) in cur.fetchall():
         if not tag:
             continue
-        if tag.split("/")[0].strip().lower() not in roots:
+        if vocabulary.key(vocabulary.root_of(tag)) not in roots:
             continue
-        leaf = tag.split("/")[-1].strip().lower()
+        leaf = vocabulary.key(vocabulary.leaf_of(tag))
         # A person filed in two places is ambiguous; leave them to a human.
         if leaf in paths and paths[leaf] != tag:
             paths[leaf] = None
@@ -85,8 +88,8 @@ def repair_tags(tags, paths, roots):
     that is not a person -- "Cross Country", "Kentridge" -- is a legitimate flat tag
     and is none of this script's business.
     """
-    pathed_leaves = {t.split("/")[-1].strip().lower() for t in tags if "/" in t}
-    pathed_roots = {t.split("/")[0].strip().lower() for t in tags if "/" in t}
+    pathed_leaves = {vocabulary.key(vocabulary.leaf_of(t)) for t in tags if "/" in t}
+    pathed_roots = {vocabulary.key(vocabulary.root_of(t)) for t in tags if "/" in t}
 
     result = []
     replaced = []

@@ -29,11 +29,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
+from tagpup.core import vocabulary  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 
 
 def leaf_of(tag):
-    return tag.split("/")[-1].strip().lower()
+    return vocabulary.key(vocabulary.leaf_of(tag))
 
 
 def plan_for(db_path):
@@ -64,7 +65,7 @@ def plan_for(db_path):
             people_roots.add(row[0].strip().lower())
 
     def under_people(tag):
-        return tag.split("/")[0].strip().lower() in people_roots
+        return vocabulary.key(vocabulary.root_of(tag)) in people_roots
 
     pathed = {}
     for tag in tags:
