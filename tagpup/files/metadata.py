@@ -10,52 +10,12 @@ import os
 from typing import Any, Dict, List, Optional
 
 from tagpup.core import renaming, vocabulary
+from tagpup.core.fields import METADATA_FIELDS
 from tagpup.core.renaming import sanitize_filename  # noqa: F401  (imported from here by older code)
 from tagpup.files.exiftool_session import ExifToolSession
 from tagpup.files.identity import ensure_document_id, read_document_id
 
 logger = logging.getLogger("tagpup_cli.metadata")
-
-# Define target fields mapped to keys we want to return
-# ExifTool output keys can be namespaced or bare (without prefix).
-# We check both to be safe.
-METADATA_FIELDS = [
-    # Keywords / tags
-    "IPTC:Keywords", "Keywords",
-    "XMP:Subject", "Subject",
-    "XMP:HierarchicalSubject", "HierarchicalSubject",
-    # People / faces
-    "XMP:PersonInImage", "PersonInImage",
-    "XMP:RegionName", "RegionName",
-    # Caption
-    "IPTC:Caption-Abstract", "Caption-Abstract",
-    "XMP:Description", "Description",
-    # Title
-    "XMP:Title", "Title",
-    "IPTC:ObjectName", "ObjectName",
-    # Date taken
-    "EXIF:DateTimeOriginal", "DateTimeOriginal",
-    "XMP:DateTimeOriginal",
-    "EXIF:CreateDate", "CreateDate",
-    # Location
-    "XMP:City", "City",
-    "XMP:State", "State",
-    "XMP:Country", "Country",
-    "IPTC:Province-State", "Province-State",
-    "IPTC:Country-PrimaryLocationName", "Country-PrimaryLocationName",
-    # GPS
-    "Composite:GPSLatitude", "GPSLatitude",
-    "Composite:GPSLongitude", "GPSLongitude",
-    # Camera
-    "EXIF:Make", "Make",
-    "EXIF:Model", "Model",
-    # Rating
-    "XMP:Rating", "Rating",
-    # Identity. A path is a bad name for a photo -- rename the file and the index is
-    # left describing something that no longer exists. DocumentID is the XMP
-    # standard's per-document identifier, and most photos already carry one.
-    "XMP-xmpMM:DocumentID", "XMP:DocumentID", "DocumentID"
-]
 
 
 def clean_metadata_value(val: Any) -> Any:

@@ -1,94 +1,17 @@
-"""Writing a photo's keyword and caption fields, and reading its tags back.
+"""Writing a photo's keyword fields, and reading its tags back.
 
-The fields a keyword write sets are listed once (keyword_fields), and both the write
-and the record of it in raw_metadata (record_keyword_fields) go by that list, so the
-file and its index row cannot drift apart one field at a time.
+Which fields a write sets is tagpup.core.fields' (keyword_fields, caption_fields), and
+both the write here and the record of it in the index go by that one list, so the file
+and its index row cannot drift apart one field at a time.
 
 Which person a bare name means is the library's business, not the file's: callers
 resolve people to their tags (tagpup_server.resolve_people_tags) before writing.
 """
 from tagpup.core import vocabulary
-from tagpup.files.metadata import METADATA_FIELDS, clean_metadata_value
-
-
-def expand_tag_fields(tags):
-    """Split a tag list into the flat and hierarchical keyword forms written to files.
-
-    A tag is written whole. It used to be written whole *and* broken into its
-    segments, so "Family/Immediate/Cora Ingersoll" became four keywords -- the path plus
-    "Family", "Immediate" and "Cora Ingersoll". That buries a deliberate hierarchy under
-    its own fragments, and the bare leaf is the form that gave one person two entries
-    in the Add Person list.
-
-    The convention comes from the library rather than from a default: of 18,502
-    keyword values in this one, 18,364 are full paths separated by "/" and none are
-    bare leaves.
-    """
-    flat, hierarchical = [], []
-    for tag in tags:
-        if tag not in flat:
-            flat.append(tag)
-        if "/" in tag and tag not in hierarchical:
-            hierarchical.append(tag)
-    return flat, hierarchical
-
-
-def keyword_fields(flat, hierarchical):
-    """Every field a keyword write sets, and what it sets it to.
-
-    The one list of them. write_keywords writes exactly these, and
-    record_keyword_fields records exactly these, so the file and its index row cannot
-    drift apart one field at a time. They did: the index recorded the two XMP fields
-    and not IPTC:Keywords, which vocabulary.extract_tags also reads, so a tag removed
-    in bulk stayed in raw_metadata and came back the next time anything re-derived
-    tags from it -- renaming an unrelated tag, for one.
-
-    An empty value means the field is cleared.
-    """
-    return {
-        "XMP:Subject": list(flat),
-        "IPTC:Keywords": list(flat),
-        "EXIF:XPKeywords": ";".join(flat),
-        "XMP:HierarchicalSubject": list(hierarchical),
-    }
-
-
-def caption_fields(caption):
-    """Every field a caption write sets. An empty caption clears them all.
-
-    Written by saving a photo and by the CLI's writer, which each kept their own copy
-    of this list.
-    """
-    return {
-        "XMP:Description": caption,
-        "IPTC:Caption-Abstract": caption,
-        # EXIF ImageDescription maps to System.Title (Title) in C# code
-        "EXIF:ImageDescription": caption,
-        # EXIF XPComment maps to System.Comment (Caption) in C# code
-        "EXIF:XPComment": caption,
-    }
-
-
-def record_keyword_fields(raw_meta, flat, hierarchical):
-    """Make `raw_meta` say what a keyword write just put in the file. Returns it.
-
-    Only fields the scan reads are recorded, so a row written here looks the same as
-    one read back from the file. A field under its bare name ("Keywords") is the same
-    value the scan stored twice, and is rewritten too; a stale copy there would be
-    read back just the same. A cleared field is removed, as a scan would find nothing.
-    """
-    for field, value in keyword_fields(flat, hierarchical).items():
-        if field not in METADATA_FIELDS:
-            continue
-        bare = field.split(":", 1)[1]
-        for name in (field, bare):
-            if name != field and name not in raw_meta:
-                continue
-            if value:
-                raw_meta[name] = list(value)
-            else:
-                raw_meta.pop(name, None)
-    return raw_meta
+from tagpup.core.fields import (  # noqa: F401  (imported from here by older code)
+    TAG_SOURCE_FIELDS, caption_fields, expand_tag_fields, keyword_fields,
+    record_keyword_fields)
+from tagpup.files.metadata import clean_metadata_value
 
 
 def write_keywords(et, path, tags, extra_params=None):
@@ -120,11 +43,6 @@ def write_keywords(et, path, tags, extra_params=None):
         et.execute(*clear_args, "-overwrite_original", path)
 
     return flat, hierarchical
-
-
-#: The fields a photo's tags are read from: exactly what vocabulary.extract_tags
-#: reads, so tags read here are the tags a folder scan would have found.
-TAG_SOURCE_FIELDS = ("IPTC:Keywords", "XMP:Subject", "XMP:HierarchicalSubject")
 
 
 def tags_in_file(et, photo_path):
