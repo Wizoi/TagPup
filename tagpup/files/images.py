@@ -1,9 +1,21 @@
-"""Opening a photo's image.
+"""Opening a photo's image: how Pillow shows it, a smaller copy of it for a page, and a
+face cut out of it.
 
-For now, how Pillow shows a photo. Thumbnails and face crops move here with the
-services that make them (ARCHITECTURE.md, phase 2).
+Thumbnails for the folder view move here with the services that make them
+(ARCHITECTURE.md, phase 2).
 """
-from PIL import Image
+import io
+import json
+import os
+
+from PIL import Image, ImageOps
+
+#: The photo types the servers send. Anything else is refused: the path is the caller's.
+SERVABLE = frozenset({".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff", ".tif",
+                      ".heic", ".heif"})
+
+#: The largest side of a face crop, as face detection cuts them.
+CROP_SIZE = 256
 
 
 def shown_size(photo_path):
@@ -20,3 +32,64 @@ def shown_size(photo_path):
             img.load()
         width, height = img.size
     return width, height, oriented
+
+
+def is_servable(photo_path):
+    return os.path.splitext(photo_path.lower())[1] in SERVABLE
+
+
+def content_type(photo_path):
+    """The Content-Type a photo's own bytes go out under."""
+    ext = os.path.splitext(photo_path)[1].lower()
+    return {".png": "image/png", ".webp": "image/webp"}.get(ext, "image/jpeg")
+
+
+def smaller_copy(photo_path, max_size, upright):
+    """A JPEG of the photo no larger than `max_size` on a side.
+
+    `upright` turns it by its Orientation first, as a person sees it. TagTuner draws
+    face boxes over its photos, in the stored pixels' coordinates, and asks for them as
+    stored (docs/findings.md, #1).
+    """
+    with Image.open(photo_path) as img:
+        if upright:
+            img = ImageOps.exif_transpose(img)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=85)
+        return out.getvalue()
+
+
+def parse_box(box):
+    """A face box as stored -- JSON, or the bare "[x1, y1, x2, y2]" of older rows -- as a
+    list of numbers, or [] if it cannot be read."""
+    try:
+        parsed = json.loads(box) if box else []
+    except Exception:
+        try:
+            parsed = [int(x) for x in str(box).replace("[", "").replace("]", "").split(",")]
+        except Exception:
+            parsed = []
+    return parsed if isinstance(parsed, list) else []
+
+
+def face_crop(photo_path, box):
+    """The face in `box` cut from its photo, as a JPEG no larger than CROP_SIZE on a
+    side. A box that falls outside the picture gives a plain grey square."""
+    with Image.open(photo_path) as img:
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        width, height = img.size
+        x1, y1 = max(0, int(box[0])), max(0, int(box[1]))
+        x2, y2 = min(width, int(box[2])), min(height, int(box[3]))
+        if (x2 - x1) <= 0 or (y2 - y1) <= 0:
+            crop = Image.new("RGB", (100, 100), color=(50, 50, 50))
+        else:
+            crop = img.crop((x1, y1, x2, y2))
+        if max(crop.size) > CROP_SIZE:
+            crop.thumbnail((CROP_SIZE, CROP_SIZE), Image.Resampling.LANCZOS)
+        out = io.BytesIO()
+        crop.save(out, format="JPEG", quality=90)
+        return out.getvalue()

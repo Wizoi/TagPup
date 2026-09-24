@@ -1,7 +1,6 @@
 # tagpup_server.py
 import os
 import json
-import sqlite3
 try:
     from . import db as tagpup_db
     from . import localserver
@@ -11,13 +10,12 @@ except ImportError:  # imported as a top-level module
     import localserver
     import paths
 import urllib.parse
-import io
 import logging
 import re
 import threading
 import subprocess
 from http.server import BaseHTTPRequestHandler
-from PIL import Image, ImageOps
+from PIL import Image
 Image.MAX_IMAGE_PIXELS = 500000000
 import numpy as np
 
@@ -30,6 +28,8 @@ from tagpup.files import keywords as file_keywords
 from tagpup.store.photos import move_rows as move_photo_rows  # noqa: F401  (saving, tests)
 from tagpup.store.photos import record_tags as record_tags_in_index  # noqa: F401  (writers, tests)
 from tagpup.store import taxonomy as store_taxonomy
+from tagpup.core.result import NotFound
+from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.services import tagging as tagging_actions
 from tagpup.store.photos import record_file_stat as record_file_stat_in_index  # noqa: F401  (writer.py)
@@ -786,21 +786,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 
     def handle_get_browse_folder(self):
         try:
-            import sys
-            python_cmd = (
-                "import tkinter as tk; "
-                "from tkinter import filedialog; "
-                "root = tk.Tk(); "
-                "root.withdraw(); "
-                "root.lift(); "
-                "root.focus_force(); "
-                "root.attributes('-topmost', True); "
-                "print(filedialog.askdirectory(title='Select Image Folder'))"
-            )
-            cmd = [sys.executable, "-c", python_cmd]
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=0x08000000)
-            path = res.stdout.strip()
-            self.send_json({"path": path})
+            self.send_json({"path": localserver.ask_for_folder()})
         except Exception as e:
             self.send_json_error(500, str(e))
 
@@ -962,7 +948,7 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 conn.close()
 
     def handle_serve_face_crop(self, query):
-        """Serve a face thumbnail, cropping from the original when not cached."""
+        """A face's crop (tagpup.services.photos.face_crop)."""
         face_id_list = query.get("id")
         if not face_id_list:
             self.send_json_error(400, "Missing 'id' parameter")
@@ -972,80 +958,16 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
         except (ValueError, TypeError):
             self.send_json_error(400, "Invalid 'id' parameter")
             return
-
-        conn = None
         try:
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT photo_path, box, crop_image FROM faces WHERE id = ?", (face_id,)
-            )
-            row = cursor.fetchone()
-            if not row:
-                self.send_json_error(404, "Face not found")
-                return
-
-            photo_path, box_str, crop_image = row
-            if crop_image:
-                self.send_response(200)
-                self.send_header("Content-Type", "image/jpeg")
-                self.send_header("Content-Length", str(len(crop_image)))
-                self.end_headers()
-                self.wfile.write(crop_image)
-                return
-
-            if not photo_path or not os.path.exists(photo_path):
-                self.send_json_error(404, "Original photo not found")
-                return
-
-            try:
-                box = json.loads(box_str) if box_str else []
-            except Exception:
-                box = []
-            if len(box) < 4:
-                self.send_json_error(500, "Invalid bounding box")
-                return
-
-            with Image.open(photo_path) as img:
-                if img.mode != "RGB":
-                    img = img.convert("RGB")
-                width, height = img.size
-                x1, y1 = max(0, int(box[0])), max(0, int(box[1]))
-                x2, y2 = min(width, int(box[2])), min(height, int(box[3]))
-                if (x2 - x1) <= 0 or (y2 - y1) <= 0:
-                    crop_img = Image.new("RGB", (100, 100), color=(50, 50, 50))
-                else:
-                    crop_img = img.crop((x1, y1, x2, y2))
-                if max(crop_img.size) > 256:
-                    try:
-                        resample = Image.Resampling.LANCZOS
-                    except AttributeError:
-                        resample = Image.LANCZOS
-                    crop_img.thumbnail((256, 256), resample)
-                buffer = io.BytesIO()
-                crop_img.save(buffer, format="JPEG", quality=90)
-                crop_bytes = buffer.getvalue()
-
-            try:
-                cursor.execute(
-                    "UPDATE faces SET crop_image = ? WHERE id = ?",
-                    (sqlite3.Binary(crop_bytes), face_id),
-                )
-                conn.commit()
-            except Exception as cache_err:
-                logger.warning("Could not cache face crop %s: %s" % (face_id, cache_err))
-
-            self.send_response(200)
-            self.send_header("Content-Type", "image/jpeg")
-            self.send_header("Content-Length", str(len(crop_bytes)))
-            self.end_headers()
-            self.wfile.write(crop_bytes)
+            crop = photo_actions.face_crop(Library(self.db_path), face_id)
+        except NotFound as missing:
+            self.send_json_error(404, str(missing))
+            return
         except Exception as e:
             logger.error("Error serving face crop %s: %s" % (face_id, e))
             self.send_json_error(500, str(e))
-        finally:
-            if conn:
-                conn.close()
+            return
+        localserver.send_image(self, crop, "image/jpeg")
 
     def handle_get_tags(self):
         try:
@@ -1090,40 +1012,11 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             self.send_json_error(500, str(e))
 
     def handle_get_people(self):
-        conn = None
+        """The people offered while a name is typed (tagpup.services.people.names)."""
         try:
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT name FROM faces WHERE name IS NOT NULL ORDER BY name")
-            people = [row[0] for row in cursor.fetchall()]
-
-            # Filter out people hidden from autocomplete
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-            if cursor.fetchone():
-                cursor.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")
-                hidden_tags = {row[0] for row in cursor.fetchall()}
-
-                def is_tag_hidden(tag):
-                    return vocabulary.hidden_by(tag, hidden_tags)
-
-                filtered_people = []
-                for p in people:
-                    cursor.execute("SELECT tag FROM tag_taxonomy WHERE name = ? AND has_face = 1", (p,))
-                    paths = [r[0] for r in cursor.fetchall()]
-                    if paths:
-                        hidden = all(is_tag_hidden(path) for path in paths)
-                    else:
-                        hidden = False
-                    if not hidden:
-                        filtered_people.append(p)
-                people = filtered_people
-
-            self.send_json(people)
+            self.send_json(people_service.names(Library(self.db_path)))
         except Exception as e:
             self.send_json_error(500, str(e))
-        finally:
-            if conn:
-                conn.close()
 
     def handle_get_folder_scan(self, query):
         folder_path_list = query.get("path")
@@ -2210,53 +2103,10 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             self.send_json_error(500, str(e))
 
     def handle_serve_photo_file(self, query):
-        photo_path_list = query.get("path")
-        if not photo_path_list:
-            self.send_error(400, "Missing 'path' parameter")
-            return
-        photo_path = urllib.parse.unquote(photo_path_list[0])
-        
-        # Security check: Restrict serving to only standard image extensions
-        VALID_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff", ".tif", ".heic", ".heif"}
-        _, ext = os.path.splitext(photo_path.lower())
-        if ext not in VALID_IMAGE_EXTS:
-            self.send_error(400, "Forbidden: Invalid file type requested")
-            return
-
-        if not os.path.exists(photo_path):
-            self.send_error(404, f"Photo file not found: {photo_path}")
-            return
-        try:
-            size_param = query.get("size")
-            content_type = "image/jpeg"
-            if size_param:
-                try:
-                    max_size = int(size_param[0])
-                    with Image.open(photo_path) as img:
-                        # Exif transpose so preview is rotated properly in UI
-                        img = ImageOps.exif_transpose(img)
-                        if img.mode != "RGB":
-                            img = img.convert("RGB")
-                        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-                        
-                        out_io = io.BytesIO()
-                        img.save(out_io, format="JPEG", quality=85)
-                        content = out_io.getvalue()
-                except Exception as e:
-                    logger.warning(f"Could not resize thumbnail for {photo_path}: {e}")
-                    with open(photo_path, "rb") as f:
-                        content = f.read()
-            else:
-                with open(photo_path, "rb") as f:
-                    content = f.read()
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(content)))
-            self.send_header("Cache-Control", "max-age=86400") # Cache local thumbnails
-            self.end_headers()
-            self.wfile.write(content)
-        except Exception as e:
-            self.send_error(500, f"Internal error serving image: {e}")
+        # Turned upright, and kept by the browser for a day: the page puts the photo's
+        # mtime in the URL, so a rotated photo is asked for again.
+        localserver.serve_photo_file(self, query.get("path"), query.get("size"),
+                                     upright=True, cache_seconds=86400)
 
     def handle_get_taxonomy_tree(self):
         try:

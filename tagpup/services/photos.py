@@ -3,11 +3,57 @@ import logging
 import os
 
 from tagpup.core import renaming
-from tagpup.core.result import Result
+from tagpup.core.result import NotFound, Refused, Result
 from tagpup.files import images, metadata, names, recycle_bin, times
 from tagpup.store import faces, photos, taxonomy
 
 logger = logging.getLogger(__name__)
+
+
+def page_copy(photo_path, max_size=None, upright=True):
+    """(bytes, content type) of a photo for a page: the file itself, or with `max_size`
+    a JPEG no larger than that on a side -- turned upright by its Orientation when
+    `upright`. A copy that cannot be made falls back to the file.
+
+    Refused for a file the servers do not send: the path is the page's to name.
+    """
+    if not images.is_servable(photo_path):
+        raise Refused("Forbidden: Invalid file type requested")
+    if not os.path.exists(photo_path):
+        raise NotFound("Photo file not found: %s" % photo_path)
+    if max_size:
+        try:
+            return images.smaller_copy(photo_path, max_size, upright), "image/jpeg"
+        except Exception as e:
+            logger.warning("Could not make a smaller copy of %s: %s", photo_path, e)
+    with open(photo_path, "rb") as f:
+        return f.read(), images.content_type(photo_path)
+
+
+def face_crop(library, face_id):
+    """A face's crop, as JPEG bytes: kept in its row, or cut from its photo and kept
+    there the first time it is asked for. Both servers had a copy of this, and each
+    wrote the crop back on a connection of its own, without the write lock.
+
+    Raises ValueError for a box that cannot be read.
+    """
+    found = faces.crop_of(library.path, face_id)
+    if not found:
+        raise NotFound("Face not found")
+    photo_path, box, crop = found
+    if crop:
+        return crop
+    if not photo_path or not os.path.exists(photo_path):
+        raise NotFound("Original photo not found")
+    box = images.parse_box(box)
+    if len(box) < 4:
+        raise ValueError("Invalid bounding box")
+    crop = images.face_crop(photo_path, box)
+    try:
+        faces.cache_crop(library.path, face_id, crop)
+    except Exception as e:
+        logger.warning("Could not cache face crop %s: %s", face_id, e)
+    return crop
 
 
 def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):

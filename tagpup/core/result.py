@@ -1,10 +1,13 @@
-"""What a write did. Every service returns one.
+"""What a write did. Every service that writes returns one.
 
 Writes reported what they attempted, not what they changed, and it hid failures: a
 backfill read 60 photos, reported 60 done and wrote nothing, because the paths did not
 match and nothing said so. A Result keeps the counts apart -- attempted, changed,
 skipped with why, failed with how -- and carries whatever else the caller needs back,
 such as a photo's new mtime.
+
+A service that reads returns what it read, and raises NotFound or Refused where a write
+would have skipped or refused.
 """
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -43,3 +46,12 @@ class Result:
         if self.refused:
             return self.refused
         return "; ".join(error for _, error in self.errors)
+
+
+class NotFound(Exception):
+    """What a read asked for is not there. A web route answers it with 404."""
+
+
+class Refused(Exception):
+    """A read that will not be answered: a file type the servers do not send, say. A web
+    route answers it with 400, as it does a Result that was refused."""

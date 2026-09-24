@@ -22,14 +22,18 @@ did.
 import logging
 import os
 import socket
+import subprocess
 import sys
 import time
 import urllib.parse
 from socketserver import ThreadingTCPServer
 
 import _root  # noqa: F401
+from tagpup.core.result import NotFound, Refused
 from tagpup.logs import REQUESTS
+from tagpup.services import photos as photo_actions
 
+logger = logging.getLogger(__name__)
 requests_log = logging.getLogger(REQUESTS)
 
 #: A request slower than this is logged with how long it took.
@@ -154,3 +158,76 @@ def is_local_request(handler):
             handler.send_error(403, "Forbidden: Cross-Origin Requests Denied")
             return False
     return True
+
+
+# ---- What both apps serve alike ------------------------------------------------------
+
+#: Start a process without a console window of its own. Windows only.
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+_FOLDER_DIALOG = (
+    "import tkinter as tk; "
+    "from tkinter import filedialog; "
+    "root = tk.Tk(); "
+    "root.withdraw(); "
+    "root.lift(); "
+    "root.focus_force(); "
+    "root.attributes('-topmost', True); "
+    "print(filedialog.askdirectory(title='Select Image Folder'))"
+)
+
+
+def ask_for_folder():
+    """The folder picked in a folder dialog on this machine's desktop, or "" if it was
+    cancelled. Browse, in either app.
+
+    The dialog runs in an interpreter of its own, so no window or Tk state lives in the
+    server.
+    """
+    picked = subprocess.run([sys.executable, "-c", _FOLDER_DIALOG], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, creationflags=CREATE_NO_WINDOW)
+    return picked.stdout.strip()
+
+
+def send_image(handler, content, content_type, cache_seconds=None):
+    """Answer with an image. `cache_seconds` lets the browser keep it that long."""
+    handler.send_response(200)
+    handler.send_header("Content-Type", content_type)
+    handler.send_header("Content-Length", str(len(content)))
+    if cache_seconds:
+        handler.send_header("Cache-Control", "max-age=%d" % cache_seconds)
+    handler.end_headers()
+    handler.wfile.write(content)
+
+
+def serve_photo_file(handler, wanted, size, upright, cache_seconds=None):
+    """GET /api/photo-file?path=<photo>[&size=<pixels>]: a photo for an <img>, or a smaller
+    copy of it (tagpup.services.photos.page_copy). `wanted` and `size` are the request's
+    `path` and `size` as parse_qs gives them: a list, or None. Errors go out as plain
+    error pages.
+
+    The two apps differ in `upright` and `cache_seconds`. TagPup turns a copy upright
+    and lets the browser keep it for a day: its pages put the file's mtime in the URL,
+    so a rotated photo is asked for again. TagTuner draws face boxes over its photos in
+    the stored pixels' coordinates (docs/findings.md, #1), so it asks for them as
+    stored, and keeps nothing.
+    """
+    if not wanted:
+        handler.send_error(400, "Missing 'path' parameter")
+        return
+    photo_path = urllib.parse.unquote(wanted[0])   # a second decoding: docs/findings.md, #32
+    try:
+        max_size = int(size[0]) if size else None
+    except ValueError:
+        max_size = None   # a size that is not a number gets the photo itself, as it always did
+    try:
+        content, content_type = photo_actions.page_copy(photo_path, max_size, upright)
+    except Refused as refused:
+        handler.send_error(400, str(refused))
+    except NotFound as missing:
+        handler.send_error(404, str(missing))
+    except Exception as e:
+        logger.error("Error serving %s: %s", photo_path, e)
+        handler.send_error(500, "Error serving file: %s" % e)
+    else:
+        send_image(handler, content, content_type, cache_seconds)

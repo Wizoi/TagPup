@@ -3,9 +3,7 @@ import collections
 import os
 import time
 import threading
-import subprocess
 import json
-import sqlite3
 try:
     from . import db as tagpup_db
     from . import localserver
@@ -15,7 +13,6 @@ except ImportError:  # imported as a top-level module
     import localserver
     import paths
 import urllib.parse
-import io
 import logging
 from http.server import BaseHTTPRequestHandler
 from PIL import Image
@@ -30,6 +27,9 @@ from tagpup import config as tagpup_config
 from tagpup.core import dates, vocabulary
 from tagpup.core.library import Library
 from tagpup.core import library as libraries
+from tagpup.core.result import NotFound
+from tagpup.services import people as people_service
+from tagpup.services import photos as photo_actions
 from tagpup.services import tagging as tagging_actions
 
 logger = logging.getLogger("tagtuner.server")
@@ -726,186 +726,31 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 conn.close()
 
     def handle_serve_photo_file(self, query):
-        photo_path_list = query.get("path")
-        if not photo_path_list:
-            self.send_error(400, "Missing 'path' parameter")
-            return
-
-        photo_path = urllib.parse.unquote(photo_path_list[0])
-        
-        # Security check: Restrict serving to only standard image extensions
-        VALID_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff", ".tif", ".heic", ".heif"}
-        _, ext = os.path.splitext(photo_path.lower())
-        if ext not in VALID_IMAGE_EXTS:
-            self.send_error(400, "Forbidden: Invalid file type requested")
-            return
-
-        if not os.path.exists(photo_path):
-            self.send_error(404, f"Photo file not found: {photo_path}")
-            return
-
-        try:
-            # Check if size parameter is present to resize dynamically and speed up loading
-            size_param = query.get("size")
-            content_type = "image/jpeg"
-            
-            if size_param:
-                try:
-                    max_size = int(size_param[0])
-                    with Image.open(photo_path) as img:
-                        if img.mode != "RGB":
-                            img = img.convert("RGB")
-                        
-                        # Handle Pillow version compatibility for resampling filter
-                        try:
-                            resample = Image.Resampling.LANCZOS
-                        except AttributeError:
-                            try:
-                                resample = Image.LANCZOS
-                            except AttributeError:
-                                resample = Image.ANTIALIAS
-                                
-                        img.thumbnail((max_size, max_size), resample)
-                        buffer = io.BytesIO()
-                        img.save(buffer, format="JPEG", quality=85)
-                        content = buffer.getvalue()
-                except Exception as resize_err:
-                    logger.warning(f"Failed to resize image {photo_path}: {resize_err}. Falling back to original.")
-                    with open(photo_path, "rb") as f:
-                        content = f.read()
-                    ext = os.path.splitext(photo_path)[1].lower()
-                    if ext == ".png":
-                        content_type = "image/png"
-                    elif ext == ".webp":
-                        content_type = "image/webp"
-            else:
-                # Guess content type based on extension
-                ext = os.path.splitext(photo_path)[1].lower()
-                if ext == ".png":
-                    content_type = "image/png"
-                elif ext == ".webp":
-                    content_type = "image/webp"
-                
-                with open(photo_path, "rb") as f:
-                    content = f.read()
-
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(content)))
-            self.end_headers()
-            self.wfile.write(content)
-        except Exception as e:
-            logger.error(f"Error serving file {photo_path}: {e}")
-            self.send_error(500, f"Error serving file: {e}")
+        # As stored, and not kept: the page draws face boxes over it in the stored
+        # pixels' coordinates (localserver.serve_photo_file).
+        localserver.serve_photo_file(self, query.get("path"), query.get("size"), upright=False)
 
     def handle_serve_face_crop(self, query):
+        """A face's crop (tagpup.services.photos.face_crop)."""
         face_id_list = query.get("id")
         if not face_id_list:
             self.send_error(400, "Missing 'id' parameter")
             return
-
         try:
             face_id = int(face_id_list[0])
         except ValueError:
             self.send_error(400, "Invalid 'id' parameter")
             return
-
-        if not os.path.exists(self.db_path):
-            self.send_error(404, "Database not found")
-            return
-
-        conn = None
         try:
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-            cursor.execute("SELECT photo_path, box, crop_image FROM faces WHERE id = ?", (face_id,))
-            row = cursor.fetchone()
-
-            if not row:
-                self.send_error(404, f"Face ID {face_id} not found in DB")
-                return
-
-            photo_path = row[0]
-            box_str = row[1]
-            crop_image = row[2]
-
-            if crop_image is not None:
-                self.send_response(200)
-                self.send_header("Content-Type", "image/jpeg")
-                self.send_header("Content-Length", str(len(crop_image)))
-                self.end_headers()
-                self.wfile.write(crop_image)
-                return
-
-            # Fallback if crop_image is None (older records)
-            if not os.path.exists(photo_path):
-                self.send_error(404, f"Original photo file not found: {photo_path}")
-                return
-
-            try:
-                box = json.loads(box_str)
-            except Exception:
-                try:
-                    box = [int(x) for x in box_str.replace('[', '').replace(']', '').split(',')]
-                except Exception:
-                    self.send_error(500, "Invalid bounding box format stored in DB")
-                    return
-
-            x1, y1, x2, y2 = box
-            
-            # Crop image on the fly using PIL
-            with Image.open(photo_path) as img:
-                if img.mode != "RGB":
-                    img = img.convert("RGB")
-                    
-                width, height = img.size
-                
-                # Clamp coordinates to safety
-                x1, y1 = max(0, int(x1)), max(0, int(y1))
-                x2, y2 = min(width, int(x2)), min(height, int(y2))
-                
-                if (x2 - x1) <= 0 or (y2 - y1) <= 0:
-                    # Return a fallback empty thumbnail if box coordinates are corrupt
-                    crop_img = Image.new("RGB", (100, 100), color=(50, 50, 50))
-                else:
-                    crop_img = img.crop((x1, y1, x2, y2))
-                
-                # Downscale to max 256px if larger to match faces.py behavior
-                if max(crop_img.size) > 256:
-                    try:
-                        resample = Image.Resampling.LANCZOS
-                    except AttributeError:
-                        try:
-                            resample = Image.LANCZOS
-                        except AttributeError:
-                            resample = Image.ANTIALIAS
-                    crop_img.thumbnail((256, 256), resample)
-                
-                # Save crop to in-memory buffer
-                buffer = io.BytesIO()
-                crop_img.save(buffer, format="JPEG", quality=90)
-                crop_bytes = buffer.getvalue()
-
-            # Cache the crop image back into the DB
-            try:
-                cursor.execute("UPDATE faces SET crop_image = ? WHERE id = ?", (sqlite3.Binary(crop_bytes), face_id))
-                conn.commit()
-            except Exception as cache_err:
-                logger.warning(f"Failed to cache face crop in database for face ID {face_id}: {cache_err}")
-
-            self.send_response(200)
-            self.send_header("Content-Type", "image/jpeg")
-            self.send_header("Content-Length", str(len(crop_bytes)))
-            self.end_headers()
-            self.wfile.write(crop_bytes)
-
+            crop = photo_actions.face_crop(Library(self.db_path), face_id)
+        except NotFound as missing:
+            self.send_error(404, str(missing))
+            return
         except Exception as e:
             logger.error(f"Error serving face crop for ID {face_id}: {e}")
             self.send_error(500, f"Error cropping face: {e}")
-        finally:
-            if conn:
-                conn.close()
+            return
+        localserver.send_image(self, crop, "image/jpeg")
 
 
     # ---- Word tags -------------------------------------------------------------
@@ -1228,66 +1073,16 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 conn.close()
 
     def handle_get_people(self, query=None):
-        if not os.path.exists(self.db_path):
-            self.send_json([])
-            return
-        conn = None
+        """Everyone the library knows, the people keywords name included
+        (tagpup.services.people.names). ?include_hidden=1 adds those hidden from
+        autocomplete: it answers "does this person exist?", which a hidden person does."""
+        include_hidden = (query or {}).get("include_hidden", ["0"])[0] == "1"
         try:
-            conn = tagpup_db.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            cursor = conn.cursor()
-            
-            # Get people from faces table
-            cursor.execute("SELECT DISTINCT name FROM faces WHERE name IS NOT NULL")
-            faces_names = {row[0] for row in cursor.fetchall()}
-            
-            # Get people from photos table
-            cursor.execute("SELECT people FROM photos")
-            photos_people = set()
-            for row in cursor.fetchall():
-                if row[0]:
-                    try:
-                        names = json.loads(row[0])
-                        for name in names:
-                            if name:
-                                photos_people.add(name)
-                    except Exception:
-                        pass
-                        
-            all_people = faces_names.union(photos_people)
-
-            # Filter out people hidden from autocomplete -- for the list offered while
-            # typing. ?include_hidden=1 answers "does this person exist?", which a
-            # hidden person does: asked of the filtered list, assigning one offered to
-            # create them as someone new.
-            include_hidden = (query or {}).get("include_hidden", ["0"])[0] == "1"
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
-            if not include_hidden and cursor.fetchone():
-                cursor.execute("SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")
-                hidden_tags = {row[0] for row in cursor.fetchall()}
-
-                def is_tag_hidden(tag):
-                    return vocabulary.hidden_by(tag, hidden_tags)
-
-                filtered_people = []
-                for p in all_people:
-                    cursor.execute("SELECT tag FROM tag_taxonomy WHERE name = ? AND has_face = 1", (p,))
-                    tag_paths = [r[0] for r in cursor.fetchall()]
-                    if tag_paths:
-                        hidden = all(is_tag_hidden(path) for path in tag_paths)
-                    else:
-                        hidden = False
-                    if not hidden:
-                        filtered_people.append(p)
-                all_people = filtered_people
-
-            self.send_json(sorted([p for p in all_people if p]))
+            self.send_json(people_service.names(Library(self.db_path), keywords_too=True,
+                                                include_hidden=include_hidden))
         except Exception as e:
             logger.error(f"Error fetching people: {e}")
             self.send_error(500, f"Database error: {e}")
-        finally:
-            if conn:
-                conn.close()
 
     def handle_get_face_matches(self, query):
         face_id_list = query.get("id")
@@ -4182,22 +3977,7 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 
     def handle_get_browse_folder(self):
         try:
-            # Native Windows Vista-style Folder Browser Dialog via Python to avoid GUI blocks
-            import sys
-            python_cmd = (
-                "import tkinter as tk; "
-                "from tkinter import filedialog; "
-                "root = tk.Tk(); "
-                "root.withdraw(); "
-                "root.lift(); "
-                "root.focus_force(); "
-                "root.attributes('-topmost', True); "
-                "print(filedialog.askdirectory(title='Select Image Folder'))"
-            )
-            cmd = [sys.executable, "-c", python_cmd]
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=0x08000000)
-            path = res.stdout.strip()
-            self.send_json({"path": path})
+            self.send_json({"path": localserver.ask_for_folder()})
         except Exception as e:
             self.send_json_error(500, str(e))
 

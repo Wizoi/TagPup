@@ -78,3 +78,28 @@ def turn_boxes(db_path, photo_path, direction, width, height):
 
     return db.write_with_connection(
         db_path, turn, label="face boxes for rotated %s" % os.path.basename(photo_path))
+
+
+def crop_of(db_path, face_id):
+    """(photo path, box, cached crop) of a face, or None if there is no such face -- or
+    no such library, which connecting would create."""
+    if not os.path.exists(db_path):
+        return None
+    conn = db.connect(db_path, timeout=30.0)
+    try:
+        row = conn.execute("SELECT photo_path, box, crop_image FROM faces WHERE id = ?",
+                           (face_id,)).fetchone()
+    finally:
+        conn.close()
+    return tuple(row) if row else None
+
+
+def cache_crop(db_path, face_id, jpeg):
+    """Keep a face's crop in its row, so it is cut from the photo once. Returns rows changed.
+
+    Through the write lock: both servers used to write it back on their own connection."""
+    def store(conn):
+        return conn.execute("UPDATE faces SET crop_image = ? WHERE id = ?",
+                            (jpeg, face_id)).rowcount
+
+    return db.write_with_connection(db_path, store, label="crop of face %s" % face_id)
