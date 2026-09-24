@@ -144,9 +144,14 @@ class TheCacheFileIsNeverLeftHalfWritten(_LibraryFixture):
                         "an unthrottled save must always write")
 
 
+class _FakeIndex:
+    def reload_if_changed(self):
+        return False
+
+
 class _FakeEmbedder:
     def __init__(self):
-        self.photo_index = object()
+        self.photo_index = _FakeIndex()
 
     def embed_image(self, path):
         return [0.0]

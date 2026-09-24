@@ -2012,6 +2012,33 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             except Exception as e:
                 logger.error(f"Error loading suggestions cache: {e}")
 
+    _library_embedder_lock = threading.Lock()
+
+    @classmethod
+    def library_embedder(cls, db_path, embedder_kwargs):
+        """This library's embedder and index, made once and brought up to date.
+
+        The startup library's was made at startup and never reloaded, so photos
+        indexed and tags saved since never reached Suggest. Every other library had
+        none, and loaded its whole index again on every run. Each library now keeps
+        one, and a run reloads its index only when the photos table has changed.
+        The CLIP model itself is shared by every embedder (ClipEmbedder._shared_model).
+        Call with the library active on this thread.
+        """
+        from embedder import ClipEmbedder
+        from index import PhotoIndex
+
+        with cls._library_embedder_lock:
+            embedder = cls.shared_embedder
+            if embedder is None:
+                photo_index = PhotoIndex(db_path=db_path)
+                photo_index.load()
+                embedder = ClipEmbedder(photo_index=photo_index, **embedder_kwargs)
+                cls.shared_embedder = embedder
+                return embedder
+        embedder.photo_index.reload_if_changed()
+        return embedder
+
     @classmethod
     def move_saved_suggestions(cls, db_path, renames):
         """File each renamed photo's saved suggestions under its new name, and save.
@@ -2209,11 +2236,9 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             candidate_str = config.get("candidates", "tags", fallback="")
             candidate_tags = [t.strip() for t in candidate_str.split(",") if t.strip()]
             
-            from index import PhotoIndex
             from taxonomy import TagTaxonomy
             from suggester import TagSuggester
-            from embedder import ClipEmbedder
-            
+
             tax_path = os.path.splitext(db_path)[0] + "_taxonomy.json"
             taxonomy = TagTaxonomy(file_path=tax_path)
             taxonomy.load()
@@ -2232,22 +2257,16 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
             force_image_size = config.get("model", "force_image_size", fallback=None)
             force_image_size = int(force_image_size) if force_image_size else None
             
-            if hasattr(cls, "shared_embedder") and cls.shared_embedder is not None:
-                embedder = cls.shared_embedder
-                photo_index = embedder.photo_index
-            else:
-                photo_index = PhotoIndex(db_path=db_path)
-                photo_index.load()
-                embedder = ClipEmbedder(
-                    model_name=model_name,
-                    pretrained=pretrained,
-                    cache_dir=cache_dir,
-                    preserve_full_frame=preserve_full_frame,
-                    max_aspect_ratio=max_aspect_ratio,
-                    force_image_size=force_image_size,
-                    photo_index=photo_index
-                )
-            
+            embedder = cls.library_embedder(db_path, {
+                "model_name": model_name,
+                "pretrained": pretrained,
+                "cache_dir": cache_dir,
+                "preserve_full_frame": preserve_full_frame,
+                "max_aspect_ratio": max_aspect_ratio,
+                "force_image_size": force_image_size,
+            })
+            photo_index = embedder.photo_index
+
             suggester = TagSuggester(photo_index, taxonomy, embedder=embedder, candidate_tags=candidate_tags)
             # Precompute candidate text embeddings sequentially so they are cached before the parallel loop
             suggester._precompute_candidates()
