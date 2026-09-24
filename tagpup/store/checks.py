@@ -42,14 +42,22 @@ def schema_current(conn):
     return _check("migrations not applied", [m.name for m in schema.MIGRATIONS if m.version > current])
 
 
-def generations_counted(conn):
-    """Generations the triggers are not keeping."""
-    have = {name for (name,) in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'generations'")}
-    if not have:
-        return _check("generations not counted", generations.NAMES)
-    counted = {name for (name,) in conn.execute("SELECT name FROM generations")}
-    return _check("generations not counted", [n for n in generations.NAMES if n not in counted])
+def generations_kept(conn):
+    """What stops the generations moving as they should: a row or a trigger missing, or
+    the counters of an older version, made again beside them (docs/findings.md, #55,
+    #60)."""
+    objects = {(kind, name) for kind, name in conn.execute("SELECT type, name FROM sqlite_master")}
+    broken = []
+    if ("table", "generations") not in objects:
+        broken += ["row %s" % n for n in generations.NAMES]
+    else:
+        counted = {name for (name,) in conn.execute("SELECT name FROM generations")}
+        broken += ["row %s" % n for n in generations.NAMES if n not in counted]
+    broken += ["trigger generation_%s_%s" % (n, event) for n in generations.NAMES
+               for event in ("insert", "delete", "update")
+               if ("trigger", "generation_%s_%s" % (n, event)) not in objects]
+    broken += ["left over: %s" % name for name in schema.legacy_counters(conn)]
+    return _check("generations not kept", broken)
 
 
 def faces_without_a_photo(conn):
@@ -108,7 +116,7 @@ def missing_files(conn):
 
 
 #: The rules a library keeps, in the order a report lists them.
-RULES = (schema_current, generations_counted, faces_without_a_photo, named_and_excluded,
+RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excluded,
          face_names_missing_from_people, orphan_nodes, one_file_two_rows)
 
 

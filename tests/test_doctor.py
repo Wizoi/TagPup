@@ -82,6 +82,17 @@ class TheRules(Library):
         self.conn.commit()
         self.assertEqual({"migrations not applied": 1}, self.broken())
 
+    def test_a_trigger_that_keeps_a_generation_gone(self):
+        # Three rows in `generations` say nothing about whether anything moves them (#60).
+        self.conn.execute("DROP TRIGGER generation_faces_update")
+        self.conn.commit()
+        self.assertEqual({"generations not kept": 1}, self.broken())
+
+    def test_the_counters_an_older_version_made_again(self):
+        self.conn.execute("CREATE TABLE faces_generation (id INTEGER PRIMARY KEY, generation INTEGER)")
+        self.conn.commit()
+        self.assertEqual({"generations not kept": 1}, self.broken())
+
     def test_missing_files_are_counted_by_folder_not_as_broken(self):
         self.photo("gone.jpg", on_disk=False)
         self.assertEqual({}, self.broken())
