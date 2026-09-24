@@ -3,9 +3,13 @@
 Runs the whole loop against a throwaway copy of a database, on its own ports, so it
 cannot disturb a live session and a live session cannot confound its results.
 
-Three things keep it out of the way:
+These keep it out of the way:
 
   * It works on a copy. Nothing it does reaches the real database.
+  * It indexes and suggests on a copy of --folder, in a temporary directory. Indexing
+    writes an identity into photos that lack one, and those are somebody's photos.
+  * Its servers take free ports, so two runs -- or a run and a test suite -- never
+    answer each other's requests.
   * It refuses to start while another indexer is running, because indexing is
     GPU-bound and two jobs on one GPU make each other crawl.
   * It kills every subprocess it started before exiting. The server spawns the
@@ -38,7 +42,28 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-TUNER_PORT, TAGPUP_PORT = 9401, 9402
+#: Chosen when the run starts. They were fixed (9401, 9402), so two runs at once --
+#: or a run beside a test suite -- could reach each other's servers.
+TUNER_PORT = TAGPUP_PORT = None
+
+
+def free_port():
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def sandbox_folder(folder, into):
+    """A copy of `folder` under `into`, to index and suggest on. Returns its path.
+
+    Indexing writes into the photos it reads -- an identity, where one is missing --
+    and this ran on the folder given, which is somebody's real photos.
+    """
+    target = os.path.join(into, os.path.basename(os.path.normpath(folder)))
+    shutil.copytree(folder, target)
+    return target
 
 
 class Report:
@@ -137,8 +162,19 @@ def main():
         shutil.copyfile(tax, work_db.replace(".db", "_taxonomy.json"))
     print(f"working on a copy: {work_db} ({os.path.getsize(work_db)/1e6:.1f} MB)\n")
 
-    from tuner_server import start_server as start_tuner
-    from tagpup_server import start_server as start_tagpup
+    import tempfile
+    photos_dir = tempfile.mkdtemp(prefix="verify_workflow_photos_")
+    if args.folder:
+        print(f"copying {args.folder} to work on ...")
+        args.folder = sandbox_folder(args.folder, photos_dir)
+        print(f"working on a copy: {args.folder}\n")
+
+    global TUNER_PORT, TAGPUP_PORT
+    TUNER_PORT, TAGPUP_PORT = free_port(), free_port()
+
+    import tuner_server
+    import tagpup_server
+    start_tuner, start_tagpup = tuner_server.start_server, tagpup_server.start_server
 
     threading.Thread(target=start_tuner, kwargs={
         "port": TUNER_PORT, "db_path": work_db, "gui_dir": "gui"}, daemon=True).start()
@@ -166,6 +202,14 @@ def main():
                     print(f"  ({leftover} is still open; the next run will clear it)")
         else:
             print(f"\ncopy kept at {work_db}")
+        # The photo copies go whatever --keep says: they are only ever a copy.
+        for attempt in range(20):
+            shutil.rmtree(photos_dir, ignore_errors=True)
+            if not os.path.exists(photos_dir):
+                break
+            time.sleep(0.5)
+        else:
+            print(f"  could not delete {photos_dir}; remove it by hand")
 
     return report.summary()
 
