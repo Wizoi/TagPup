@@ -59,10 +59,11 @@ reaches most of the suite anyway. The full suite still runs before each commit a
 merge: what a test reaches through a subprocess or a file named at run time is not an
 import.
 
-`tools/run_tests.py` runs each test file as its own process across half the cores. The
-files that use the checkout's own `data/` or `config.ini` -- or import a test file that
-does -- run one after another in a lane of their own, and that lane is most of the time
-until those tests move into homes of their own (docs/findings.md, #14).
+`tools/run_tests.py` runs each test file as its own process across half the cores, each
+with a `TAGPUP_HOME` of its own. A file that named the checkout's own `data/` or
+`config.ini` -- or imported a test file that did -- would run in a lane of its own, one
+after another; none does since the tests moved into homes of their own
+(docs/findings.md, #14), and `tests/test_tests_have_homes_of_their_own.py` keeps it so.
 
 Use the glob for the frontend suite. `node --test tests/frontend/` treats `harness.mjs`
 as a test file, finds no tests in it, and reports a failure that is purely the
@@ -116,9 +117,12 @@ Some tests exist to stop a whole class of mistake rather than to cover a feature
   imports both servers inside it, in an interpreter that cannot see the repository.
   Moving code into `tagpup/` once broke that sandbox without any test noticing.
 
-A test that selects, creates or lists libraries sets `TAGPUP_HOME` to a folder of its
-own (`tests/test_multiple_databases.py` shows how). Without it, the servers write the
-checkout's `config.ini` and create libraries in the checkout's `data/`.
+A test that makes a library, or needs settings, logs or anything else a library keeps
+beside it, takes a home of its own from `tests/own_home.py`: `own_home.for_class(cls)`
+in `setUpClass`, `own_home.for_test(self)` in a test, then `home.library("x.db")`.
+Without one, the servers write the checkout's `config.ini` and create libraries in the
+checkout's `data/`, where the owner's are. A server a test starts holds its library
+until the process ends, so a home it still holds is deleted once the process has gone.
 
 ## Traps
 

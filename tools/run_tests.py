@@ -5,11 +5,14 @@
     .venv/Scripts/python.exe tools/run_tests.py --jobs 4
 
 Each test file runs as its own process: `python -m unittest tests.<file>`, as the suite
-has always been run, so a file sees nothing of another's state. The files that use the
-checkout's own data/ folder or config.ini run one after another in a lane of their
-own, since their libraries have fixed names there (docs/findings.md, #14); the rest
-share the other cores. Each file's time is kept in tests/.durations.json (not in git),
-and the longest start first next time.
+has always been run, so a file sees nothing of another's state -- and with a TAGPUP_HOME
+of its own, an empty temporary folder, so that anything a test does not give a home of
+its own (tests/own_home.py) still lands there and not in the checkout's data/ folder or
+config.ini. The tests' libraries were in data/ under fixed names, so the files that used
+it ran one after another in a lane of their own (docs/findings.md, #14). None does now,
+and tests/test_tests_have_homes_of_their_own.py keeps it so; a file that named the
+checkout's data/ or config.ini would still get the lane. Each file's time is kept in
+tests/.durations.json (not in git), and the longest start first next time.
 
 Prints each file that failed, with its output, and one line of totals. Exits 1 when
 any file failed.
@@ -19,8 +22,10 @@ import concurrent.futures
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -28,8 +33,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TESTS = os.path.join(ROOT, "tests")
 DURATIONS = os.path.join(TESTS, ".durations.json")
 
-#: A test file that reads or writes the checkout's data/ folder or config.ini.
-SHARED = re.compile(r"""(WORKSPACE_DIR|REPO_ROOT|ROOT),\s*["']data["']|os\.path\.join\(["']data["']|["']data/|config\.ini""")
+#: A test file that names the checkout's data/ folder or config.ini: joined to the
+#: checkout's own folder, relative to the working directory (the checkout, as files are
+#: run here), or config.ini by name. A home's own settings file is config.config_path().
+SHARED = re.compile(
+    r"""\b(?:WORKSPACE_DIR|REPO_ROOT|ROOT|PROJECT_ROOT|project_root|CODE_ROOT)\s*,\s*["'](?:data|config\.ini)["']"""
+    r"""|os\.path\.join\(\s*["']data["']|["']data(?:/|\\\\)"""
+    r"""|["']config\.ini["']""")
+
+#: Test files SHARED matches that read the code, not the checkout's data or settings:
+#: their subject is the text "config.ini" in the sources.
+READS_CODE_NOT_DATA = frozenset({"test_config_single_owner"})
 
 #: The summary unittest ends with: "Ran 12 tests in 0.3s".
 RAN = re.compile(r"^Ran (\d+) tests? in", re.M)
@@ -61,7 +75,7 @@ def uses_the_checkout(module, seen=None):
     test file it imports? test_tag_view_api takes its library from test_tuner_server_api's
     base class, and the two ran at once on one file."""
     seen = set() if seen is None else seen
-    if module in seen:
+    if module in seen or module in READS_CODE_NOT_DATA:
         return False
     seen.add(module)
     path = os.path.join(TESTS, module + ".py")
@@ -93,12 +107,28 @@ def save_durations(durations):
 def run_one(module):
     """(module, passed, tests run, seconds, output)."""
     started = time.time()
-    done = subprocess.run([sys.executable, "-m", "unittest", "tests." + module], cwd=ROOT,
-                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          encoding="utf-8", errors="replace")
+    home = tempfile.mkdtemp(prefix="tagpup_run_tests_")
+    try:
+        done = subprocess.run([sys.executable, "-m", "unittest", "tests." + module], cwd=ROOT,
+                              env=dict(os.environ, TAGPUP_HOME=home),
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              encoding="utf-8", errors="replace")
+    finally:
+        remove(home)
     output = done.stdout or ""
     ran = RAN.search(output)
     return module, done.returncode == 0, int(ran.group(1)) if ran else 0, time.time() - started, output
+
+
+def remove(folder):
+    """Delete a file's home once its process has ended, retrying while Windows lets go
+    of what it held; say so if it cannot be."""
+    for _attempt in range(20):
+        shutil.rmtree(folder, ignore_errors=True)
+        if not os.path.exists(folder):
+            return
+        time.sleep(0.25)
+    print("note: could not delete %s" % folder, flush=True)
 
 
 def run(modules, jobs):
@@ -122,7 +152,9 @@ def run(modules, jobs):
         for module in shared:
             record(run_one(module))
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs - 1)) as pool:
+    # The lane has a process of its own while it has anything to run.
+    spread_jobs = max(1, jobs - 1) if shared else jobs
+    with concurrent.futures.ThreadPoolExecutor(max_workers=spread_jobs) as pool:
         lane_thread = threading.Thread(target=lane)
         lane_thread.start()
         for future in concurrent.futures.as_completed([pool.submit(run_one, m) for m in spread]):
