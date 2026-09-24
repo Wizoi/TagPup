@@ -137,7 +137,7 @@ class TestASubfolderPhotoIsFoundInTheCache(unittest.TestCase):
         def remove(path):
             os.remove(path)
             return True
-        with mock.patch.object(tagpup_server, "send_to_recycle_bin", side_effect=remove):
+        with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=remove):
             status, reply = self.handler.call("handle_post_photo_delete", {"path": self.photo})
         self.assertEqual(status, 200, reply)
         self.assertIsNone(self.cached())

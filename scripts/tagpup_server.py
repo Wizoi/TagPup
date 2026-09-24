@@ -419,30 +419,6 @@ def shift_photo_times(db_path, exiftool_path, photo_paths, shift_minutes):
     return updated, entries
 
 
-def forget_photo_in_index(db_path, photo_path):
-    """Remove a deleted photo's row, its faces and its cached embedding.
-
-    Returns how many rows of each were removed. The faces are deleted by name rather
-    than left to the foreign key's cascade: db.connect() does not turn foreign keys
-    on, and a face left behind points at a photo that no longer exists.
-    """
-    def forget(conn):
-        cursor = conn.cursor()
-        removed = {}
-        for table, column in (("faces", "photo_path"), ("photos", "path"),
-                              ("embedding_cache", "path")):
-            where, params = paths.sql_equals(column, photo_path)
-            cursor.execute("DELETE FROM %s WHERE %s" % (table, where), params)
-            removed[table] = cursor.rowcount
-        return removed
-
-    removed = tagpup_db.write_with_connection(
-        db_path, forget, label="index rows for deleted %s" % os.path.basename(photo_path))
-    if not removed.get("photos"):
-        logger.info("Deleted %s, which the index had no row for.", photo_path)
-    return removed
-
-
 def move_photo_rows(db_path, renames):
     """Move index rows from each old path to its new one, and its faces with them.
 
@@ -545,53 +521,6 @@ def explorer_select_command(photo_path):
     A Windows path cannot contain a quote, so quoting it is safe.
     """
     return 'explorer.exe /select,"%s"' % paths.stored(photo_path)
-
-
-def send_to_recycle_bin(file_path):
-    import ctypes
-    from ctypes import wintypes
-    
-    # SHFileOperationW wants native separators, which is what stored() gives.
-    file_path = paths.stored(file_path)
-    if not os.path.exists(file_path):
-        return False
-        
-    class SHFILEOPSTRUCTW(ctypes.Structure):
-        _fields_ = [
-            ("hwnd", wintypes.HWND),
-            ("wFunc", wintypes.UINT),
-            ("pFrom", wintypes.LPCWSTR),
-            ("pTo", wintypes.LPCWSTR),
-            ("fFlags", wintypes.WORD),
-            ("fAnyOperationsAborted", wintypes.BOOL),
-            ("hNameMappings", wintypes.LPVOID),
-            ("lpszProgressTitle", wintypes.LPCWSTR),
-        ]
-        
-    FO_DELETE = 3
-    FOF_ALLOWUNDO = 0x0040
-    FOF_NOCONFIRMATION = 0x0010
-    FOF_NOERRORUI = 0x0400
-    FOF_SILENT = 0x0004
-    
-    pFrom = file_path + "\0\0"
-    
-    fileop = SHFILEOPSTRUCTW()
-    fileop.hwnd = None
-    fileop.wFunc = FO_DELETE
-    fileop.pFrom = pFrom
-    fileop.pTo = None
-    fileop.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT
-    fileop.fAnyOperationsAborted = False
-    fileop.hNameMappings = None
-    fileop.lpszProgressTitle = None
-    
-    SHFileOperationW = ctypes.windll.shell32.SHFileOperationW
-    SHFileOperationW.argtypes = [ctypes.POINTER(SHFILEOPSTRUCTW)]
-    SHFileOperationW.restype = ctypes.c_int
-    
-    res = SHFileOperationW(ctypes.byref(fileop))
-    return res == 0 and not fileop.fAnyOperationsAborted
 
 
 def make_json_serializable(obj):
@@ -2231,14 +2160,10 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             return
             
         try:
-            # First, send the file to the recycle bin
-            success = send_to_recycle_bin(photo_path)
-            if not success:
-                self.send_json_error(500, "Failed to move file to Recycle Bin")
+            result = photo_actions.delete(Library(self.db_path), photo_path)
+            if not result.ok:
+                self.send_json_error(500, result.message())
                 return
-
-            # Delete the file record, its faces and its cached embedding.
-            forget_photo_in_index(self.db_path, photo_path)
 
             # Remove from every folder-cache map that holds it.
             for folder_map, _entry in self.cached_photo_entries(photo_path):

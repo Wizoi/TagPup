@@ -153,7 +153,7 @@ class TestDeletingAPhotoForgetsIt(HandlerCase):
             os.remove(path)
             return True
 
-        with patch.object(tagpup_server, "send_to_recycle_bin", side_effect=recycle):
+        with patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=recycle):
             result = self.call("handle_post_photo_delete", {"path": forward(photo)})
 
         self.assertTrue(result["success"])

@@ -2,8 +2,31 @@
 import os
 
 from tagpup.core.result import Result
-from tagpup.files import images, metadata
+from tagpup.files import images, metadata, recycle_bin
 from tagpup.store import faces, photos
+
+
+def delete(library, photo_path):
+    """Send a photo to the Recycle Bin, and forget it: its row, faces and cached
+    embedding. Clicking Delete.
+
+    The file goes first. A photo that could not be moved stays in the library, and its
+    rows with it.
+
+    details: `removed`, the rows removed from each table.
+    """
+    result = Result(attempted=1)
+    try:
+        moved = recycle_bin.send_to_recycle_bin(photo_path)
+    except Exception as e:
+        result.fail(photo_path, e)
+        return result
+    if not moved:
+        result.fail(photo_path, "Failed to move file to Recycle Bin")
+        return result
+    result.changed = 1
+    result.details["removed"] = photos.forget_photo(library.path, photo_path)
+    return result
 
 
 def rotate(library, photo_path, direction, exiftool_path):

@@ -191,6 +191,7 @@ Exit: the guard tests for config, database connections, ExifTool and layers pass
 - [x] `Result`: `tagpup.core.result.Result`, shaped by the first service. It is in core rather than a layer of its own: a plain value that every layer passes along.
 - One service per user action. Start with the ones both servers implement (rename, rotate, delete, save metadata, bulk tags, time shift, indexing), then tag-tree edits, face identification and suggestions.
   - [x] Rotate: `tagpup.services.photos.rotate`.
+  - [x] Delete: `tagpup.services.photos.delete`.
 - Tests move down to the service level.
 
 Exit: no action is implemented in two places, and migrated handlers only parse the request, call a service and reply.
