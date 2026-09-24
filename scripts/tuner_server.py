@@ -580,12 +580,8 @@ class TunerHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TunerHTTPRequest
 
         try:
             if not os.path.exists(db_path):
-                os.makedirs(os.path.dirname(db_path), exist_ok=True)
-                from index import PhotoIndex
-                from taxonomy import seed_taxonomy_from_db
-                photo_index = PhotoIndex(db_path=db_path)
-                photo_index.load()
-                seed_taxonomy_from_db(db_path)
+                from tagpup_server import create_library
+                create_library(db_path)
 
             tagpup_config.remember_library(db_name)
             self.send_json({"success": True, "db_name": os.path.splitext(db_name)[0]})

@@ -1,3 +1,4 @@
+import gc
 import os
 import shutil
 import sys
@@ -181,6 +182,31 @@ class TestMultipleDatabases(unittest.TestCase):
                          "multiple_db_startup.db")
         self.assertEqual(file_bytes(CHECKOUT_CONFIG), self.checkout_config,
                          "selecting a library changed the checkout's config.ini")
+
+    def test_a_created_library_is_not_left_open(self):
+        """Creating a library opened it for its schema and never closed it.
+
+        The file stayed open until a garbage-collection pass: on Windows it could not be
+        moved or deleted until then, and this test's own home could not be removed.
+        Collection is off here, so the old behaviour fails every time rather than only
+        when no pass happened to run.
+        """
+        was_enabled = gc.isenabled()
+        gc.disable()
+        try:
+            urllib.request.urlopen(urllib.request.Request(
+                f"http://127.0.0.1:{self.TEST_PORT}/api/databases/create",
+                data=json.dumps({"db_name": "created_db_1"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST"))
+            created = os.path.join(self.data_dir, "test_created_db_1.db")
+            self.assertTrue(os.path.exists(created))
+            try:
+                os.remove(created)
+            except PermissionError:
+                self.fail("the new library is still held open by the server")
+        finally:
+            if was_enabled:
+                gc.enable()
 
     def test_prefix_routing_and_isolation(self):
         # Create two database files

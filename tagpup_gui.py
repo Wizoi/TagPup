@@ -30,7 +30,7 @@ logger = logging.getLogger("tagpup_gui")
 
 # Add scripts directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
-from tagpup_server import start_server
+from tagpup_server import create_library, start_server
 from tagpup import config as tagpup_config
 
 def find_available_port(start_port=8090):
@@ -122,11 +122,7 @@ def main():
     
     if not os.path.exists(db_path):
         logger.info(f"Database not found at {db_path}. Initializing empty database with default categories...")
-        from index import PhotoIndex
-        from taxonomy import seed_taxonomy_from_db
-        photo_index = PhotoIndex(db_path=db_path)
-        photo_index.load()
-        seed_taxonomy_from_db(db_path)
+        create_library(db_path)
         logger.info("Database initialized successfully.")
         
     port_env = os.environ.get("TAGPUP_PORT")

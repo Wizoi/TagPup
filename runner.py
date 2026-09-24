@@ -1012,12 +1012,8 @@ class RunnerApp:
         if not os.path.exists(db_path):
             self.log_text(f"Database not found at {db_path}. Initializing empty database with default categories...\n", tag="info")
             try:
-                os.makedirs(os.path.dirname(db_path), exist_ok=True)
-                from index import PhotoIndex
-                from taxonomy import seed_taxonomy_from_db
-                photo_index = PhotoIndex(db_path=db_path)
-                photo_index.load()
-                seed_taxonomy_from_db(db_path)
+                from tagpup_server import create_library
+                create_library(db_path)
                 self.log_text("Database initialized successfully.\n", tag="success")
             except Exception as init_err:
                 self.log_text(f"Error initializing database: {init_err}\n", tag="error")

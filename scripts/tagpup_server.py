@@ -847,6 +847,25 @@ def set_active_db_path(db_path):
         _thread_local.active_db_path = os.path.abspath(db_path).replace("\\", "/").lower()  # not a path: the database file, as a registry key
 
 
+def create_library(db_path):
+    """Make an empty library at db_path: its tables, and the tag tree's starting roots.
+
+    Both servers' Create, both launchers and the desktop runner each did this, and none
+    closed the index opened for the tables. The new file stayed open until a garbage-
+    collection pass, and on Windows could not be moved or deleted until then.
+    """
+    from index import PhotoIndex
+    from taxonomy import seed_taxonomy_from_db
+
+    os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+    photo_index = PhotoIndex(db_path=db_path)
+    try:
+        photo_index.load()
+    finally:
+        photo_index.close()
+    seed_taxonomy_from_db(db_path)
+
+
 def resolve_library_from_url(handler, set_active):
     """Point `handler` at the library its URL names. False means it has been answered.
 
@@ -1301,12 +1320,7 @@ class TagPupHTTPRequestHandler(BaseHTTPRequestHandler, metaclass=TagPupHTTPReque
 
         try:
             if not os.path.exists(db_path):
-                os.makedirs(os.path.dirname(db_path), exist_ok=True)
-                from index import PhotoIndex
-                from taxonomy import seed_taxonomy_from_db
-                photo_index = PhotoIndex(db_path=db_path)
-                photo_index.load()
-                seed_taxonomy_from_db(db_path)
+                create_library(db_path)
 
             tagpup_config.remember_library(db_name)
             self.send_json({"success": True, "db_name": os.path.splitext(db_name)[0]})
