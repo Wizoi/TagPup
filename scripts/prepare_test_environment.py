@@ -17,6 +17,8 @@ import io
 import shutil
 import sys
 
+import _root  # noqa: F401
+
 # Ensure project root is in search path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
@@ -92,13 +94,9 @@ def main():
     face_emb = np.random.randn(512).astype(np.float32)
     face_emb /= np.linalg.norm(face_emb)
 
-    # Insert Pets/Puppy into tag_taxonomy
-    c.execute("SELECT id FROM tag_taxonomy WHERE tag = 'Pets'")
-    pets_id = c.fetchone()[0]
-    c.execute("""
-        INSERT OR IGNORE INTO tag_taxonomy (tag, parent_id, name, has_face)
-        VALUES (?, ?, ?, 1)
-    """, ("Pets/Puppy", pets_id, "Puppy"))
+    # Insert Pets/Puppy into tag_taxonomy: below Pets, it holds faces
+    from tagpup.store import taxonomy as store_taxonomy
+    store_taxonomy.add_path(conn, "Pets/Puppy")
     print("Taxonomy seeded: Added 'Pets/Puppy' (has_face = 1).")
 
     # Crop real face from puppy.png (head region, approx [350, 200, 750, 600])

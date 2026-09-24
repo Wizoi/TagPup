@@ -10,6 +10,7 @@ from typing import Set, List, Dict, Optional
 
 import _root  # noqa: F401
 from tagpup.core import vocabulary
+from tagpup.store import taxonomy as store_taxonomy
 
 logger = logging.getLogger("tagpup_cli.taxonomy")
 
@@ -116,30 +117,7 @@ class TagTaxonomy:
             # deleted or renamed in the app meanwhile came back on its next save.
             added = self.paths - self._in_db
             for path in sorted(added):
-                parts = vocabulary.segments(path)
-                parent_id = None
-                for i, (part, accumulated_path) in enumerate(zip(parts, vocabulary.lineage(path))):
-                    
-                    cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
-                    row = cursor.fetchone()
-                    if row:
-                        parent_id = row[0]
-                    else:
-                        is_p = 0
-                        if i == 0:
-                            if part.lower() in ["people", "family", "friends", "pets"]:
-                                is_p = 1
-                        else:
-                            if parent_id is not None:
-                                cursor.execute("SELECT has_face FROM tag_taxonomy WHERE id = ?", (parent_id,))
-                                p_row = cursor.fetchone()
-                                if p_row:
-                                    is_p = p_row[0]
-                        cursor.execute(
-                            "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
-                            (accumulated_path, parent_id, part, is_p)
-                        )
-                        parent_id = cursor.lastrowid
+                store_taxonomy.add_path(conn, path)
             conn.commit()
             conn.close()
             self._in_db |= added
@@ -331,7 +309,6 @@ class TagTaxonomy:
 
 def seed_taxonomy_from_db(db_path: str):
     """Seed taxonomy tree from DB index and default categories if empty."""
-    import sqlite3
     try:
         conn = tagpup_db.connect(db_path, timeout=30.0)
         cursor = conn.cursor()
@@ -357,19 +334,9 @@ def seed_taxonomy_from_db(db_path: str):
             return
             
         # Seed default categories
-        default_categories = ["People", "Activity", "Pets", "School", "Trips"]
-        category_ids = {}
-        for category in default_categories:
-            is_p = 1 if category.lower() in ["people", "pets"] else 0
-            try:
-                cursor.execute(
-                    "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, NULL, ?, ?)",
-                    (category, category, is_p)
-                )
-                category_ids[category] = cursor.lastrowid
-            except sqlite3.IntegrityError:
-                pass
-                
+        for category in ("People", "Activity", "Pets", "School", "Trips"):
+            store_taxonomy.add_path(conn, category)
+
         # Now seed tags from photos table
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='photos'")
         if cursor.fetchone():
@@ -382,59 +349,17 @@ def seed_taxonomy_from_db(db_path: str):
                         all_tags.add(t)
                 except Exception:
                     pass
-            
             for tag in all_tags:
-                normalized = TagTaxonomy.normalize_tag(tag)
-                if not normalized:
-                    continue
-                parts = vocabulary.segments(normalized)
-                parent_id = None
-                for i, (part, accumulated_path) in enumerate(zip(parts, vocabulary.lineage(normalized))):
-                    
-                    cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
-                    row = cursor.fetchone()
-                    if row:
-                        parent_id = row[0]
-                    else:
-                        is_p = 0
-                        if i == 0:
-                            if part.lower() in ["people", "family", "friends", "pets"]:
-                                is_p = 1
-                        else:
-                            if parent_id is not None:
-                                cursor.execute("SELECT has_face FROM tag_taxonomy WHERE id = ?", (parent_id,))
-                                p_row = cursor.fetchone()
-                                if p_row:
-                                    is_p = p_row[0]
-                        cursor.execute(
-                            "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
-                            (accumulated_path, parent_id, part, is_p)
-                        )
-                        parent_id = cursor.lastrowid
-                        
-        # Seed people names from faces table if they exist
+                store_taxonomy.add_path(conn, tag)
+
+        # Seed people names from faces table if they exist, under People, which holds faces
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='faces'")
         if cursor.fetchone():
             cursor.execute("SELECT DISTINCT name FROM faces WHERE name IS NOT NULL")
             for row in cursor.fetchall():
-                name = row[0].strip()
-                if not name:
-                    continue
-                people_root_id = category_ids.get("People")
-                if not people_root_id:
-                    cursor.execute("SELECT id FROM tag_taxonomy WHERE tag = 'People'")
-                    root_row = cursor.fetchone()
-                    if root_row:
-                        people_root_id = root_row[0]
-                
-                path = f"People/{name}"
-                cursor.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (path,))
-                if not cursor.fetchone():
-                    cursor.execute(
-                        "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, 1)",
-                        (path, people_root_id, name)
-                    )
-                    
+                if row[0].strip():
+                    store_taxonomy.add_path(conn, "People/" + row[0])
+
         # Check if taxonomy json file exists and seed from there too
         if os.path.basename(db_path) == "photo_index.db":
             tax_path = os.path.join(os.path.dirname(db_path), "photo_taxonomy.json")
@@ -447,33 +372,7 @@ def seed_taxonomy_from_db(db_path: str):
                     data = json.load(f)
                     paths = data.get("paths", [])
                 for path in paths:
-                    normalized = TagTaxonomy.normalize_tag(path)
-                    if not normalized:
-                        continue
-                    parts = vocabulary.segments(normalized)
-                    parent_id = None
-                    for i, (part, accumulated_path) in enumerate(zip(parts, vocabulary.lineage(normalized))):
-                        
-                        cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
-                        row = cursor.fetchone()
-                        if row:
-                            parent_id = row[0]
-                        else:
-                            is_p = 0
-                            if i == 0:
-                                if part.lower() in ["people", "family", "friends", "pets"]:
-                                    is_p = 1
-                            else:
-                                if parent_id is not None:
-                                    cursor.execute("SELECT has_face FROM tag_taxonomy WHERE id = ?", (parent_id,))
-                                    p_row = cursor.fetchone()
-                                    if p_row:
-                                        is_p = p_row[0]
-                            cursor.execute(
-                                "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
-                                (accumulated_path, parent_id, part, is_p)
-                            )
-                            parent_id = cursor.lastrowid
+                    store_taxonomy.add_path(conn, path)
             except Exception as json_err:
                 logger.error(f"Error seeding from taxonomy json: {json_err}")
                 

@@ -90,6 +90,17 @@ def hidden_by(tag, hidden):
     return any(path in hidden for path in lineage(tag))
 
 
+#: The roots made holding faces when the tree makes them. A node made below a root
+#: takes its parent's flag instead. Five writers of the tree each spelled this set out
+#: for themselves (docs/findings.md, #39).
+FACE_ROOTS = frozenset({"people", "family", "friends", "pets"})
+
+
+def root_holds_faces(name):
+    """Is a new root of this name made holding faces?"""
+    return key(name) in FACE_ROOTS
+
+
 def problem_with_tag(tag):
     """Why this cannot be set as a tag, or None if it can.
 

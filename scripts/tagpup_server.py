@@ -1982,25 +1982,10 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     if orphans:
                         logger.info(f"Taxonomy self-healing: found {len(orphans)} orphaned paths. Healing...")
                         for node_id, tag_path, has_face in orphans:
-                            parts = vocabulary.segments(tag_path)
-                            current_parent_id = None
-                            
                             # Every ancestor, not the node itself.
-                            for part, current_path in zip(parts[:-1], vocabulary.lineage(tag_path)):
-                                    
-                                cursor.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (current_path,))
-                                row = cursor.fetchone()
-                                if row:
-                                    current_parent_id = row[0]
-                                else:
-                                    parent_has_face = 1 if part.lower() in ("people", "family", "friends", "pets") else has_face
-                                    cursor.execute(
-                                        "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
-                                        (current_path, current_parent_id, part, parent_has_face)
-                                    )
-                                    current_parent_id = cursor.lastrowid
-                                    
-                            cursor.execute("UPDATE tag_taxonomy SET parent_id = ? WHERE id = ?", (current_parent_id, node_id))
+                            parent_id = store_taxonomy.add_path(
+                                conn, vocabulary.parent_of(tag_path), root_has_face=has_face)
+                            cursor.execute("UPDATE tag_taxonomy SET parent_id = ? WHERE id = ?", (parent_id, node_id))
                         conn.commit()
                         
                     # Heal name column if it contains '/'
@@ -2020,11 +2005,9 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                         healed_face_nodes = 0
                         for node_id, tag_path in zero_faces:
                             parts = vocabulary.segments(tag_path)
-                            if len(parts) >= 2:
-                                root = parts[0].lower()
-                                if root in ("people", "family", "friends", "pets"):
-                                    cursor.execute("UPDATE tag_taxonomy SET has_face = 1 WHERE id = ?", (node_id,))
-                                    healed_face_nodes += 1
+                            if len(parts) >= 2 and vocabulary.root_holds_faces(parts[0]):
+                                cursor.execute("UPDATE tag_taxonomy SET has_face = 1 WHERE id = ?", (node_id,))
+                                healed_face_nodes += 1
                         if healed_face_nodes > 0:
                             logger.info(f"Taxonomy self-healing: healed has_face flags for {healed_face_nodes} nodes.")
                             conn.commit()
@@ -2088,7 +2071,6 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
             # Crew/Divers/Crew, Crew/Divers/Crew/Divers and Crew/Divers/Crew/Divers/Jane.
             levels = vocabulary.segments(name)
             above = []
-            current_parent_id = None
             if parent_id:
                 cursor.execute("SELECT tag, has_face FROM tag_taxonomy WHERE id = ?", (parent_id,))
                 parent_row = cursor.fetchone()
@@ -2101,34 +2083,17 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                 # Typed as the whole path from the root: the part the parent already is.
                 if [vocabulary.key(p) for p in levels[:len(above)]] == [vocabulary.key(p) for p in above]:
                     levels = levels[len(above):]
-                current_parent_id = parent_id
 
+            conn.close()
             from taxonomy import TagTaxonomy
             tag_path = vocabulary.SEPARATOR.join(above + levels)
-            parent_has_face = has_face
-            # Nothing named below the parent: the parent is the tag asked for.
-            new_id = parent_id if parent_id and not levels else None
+            # Nothing named below the parent: the parent is the tag asked for, and
+            # add_path answers with its id.
+            new_id = tagpup_db.write_with_connection(
+                self.db_path,
+                lambda conn: store_taxonomy.add_path(conn, tag_path, root_has_face=has_face),
+                label="tag tree: %s" % tag_path)
 
-            for part, current_path in zip(levels, vocabulary.lineage(tag_path)[len(above):]):
-                cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (current_path,))
-                row = cursor.fetchone()
-                if row:
-                    current_parent_id = row[0]
-                    parent_has_face = row[1]
-                    new_id = row[0]
-                else:
-                    segment_has_face = parent_has_face if current_parent_id is not None else (1 if part.lower() in ("people", "family", "friends", "pets") else has_face)
-                    cursor.execute(
-                        "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
-                        (current_path, current_parent_id, part, segment_has_face)
-                    )
-                    current_parent_id = cursor.lastrowid
-                    new_id = current_parent_id
-                    parent_has_face = segment_has_face
-            
-            conn.commit()
-            conn.close()
-            
             taxonomy = TagTaxonomy(db_path=self.db_path)
             taxonomy.load()
             taxonomy.add_tag(tag_path)
@@ -2273,13 +2238,10 @@ class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                     if not target_tag:
                         self.send_json_error(400, "Target tag path is required for move action")
                         return
-                    from taxonomy import TagTaxonomy
-                    target_tag = TagTaxonomy.normalize_tag(target_tag)
-                    conn = tagpup_db.connect(self.db_path, timeout=10.0)
-                    cursor = conn.cursor()
-                    insert_tag_path_to_db(cursor, target_tag)
-                    conn.commit()
-                    conn.close()
+                    target_tag = vocabulary.normalize(target_tag)
+                    tagpup_db.write_with_connection(
+                        self.db_path, lambda conn: store_taxonomy.add_path(conn, target_tag),
+                        label="tag tree: %s" % target_tag)
                     # The writes resolve names against the tree, which now has the target.
                     invalidate_people_cache(self.db_path)
 
@@ -2525,43 +2487,6 @@ def get_tag_usage_counts(db_path):
     except Exception:
         pass
     return counts
-
-def insert_tag_path_to_db(cursor, path: str, has_face_root: bool = False) -> int:
-    from taxonomy import TagTaxonomy
-    normalized = TagTaxonomy.normalize_tag(path)
-    if not normalized:
-        return None
-    
-    parts = vocabulary.segments(normalized)
-    parent_id = None
-    for i, (part, accumulated_path) in enumerate(zip(parts, vocabulary.lineage(normalized))):
-            
-        cursor.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (accumulated_path,))
-        row = cursor.fetchone()
-        if row:
-            parent_id = row[0]
-            current_has_face = row[1]
-            if i == 0 and has_face_root and not current_has_face:
-                cursor.execute("UPDATE tag_taxonomy SET has_face = 1 WHERE id = ?", (parent_id,))
-        else:
-            is_p = 0
-            if i == 0:
-                if has_face_root or part.lower() in ["people", "family", "friends", "pets"]:
-                    is_p = 1
-            else:
-                if parent_id is not None:
-                    cursor.execute("SELECT has_face FROM tag_taxonomy WHERE id = ?", (parent_id,))
-                    p_row = cursor.fetchone()
-                    if p_row:
-                        is_p = p_row[0]
-            
-            cursor.execute(
-                "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
-                (accumulated_path, parent_id, part, is_p)
-            )
-            parent_id = cursor.lastrowid
-            
-    return parent_id
 
 #: Listens on IPv4 and IPv6 alike -- see scripts/localserver.py for why that is
 #: worth two seconds on every click.

@@ -28,6 +28,32 @@ def generation(conn):
     return row[0] if row else 0
 
 
+def add_path(conn, path, root_has_face=0):
+    """Put a tag in the tree on `conn`, with each of its levels that is missing, and
+    return the id of its node: None for a tag with no levels. The caller commits.
+
+    A new root holds faces if `root_has_face` says so or its name does
+    (vocabulary.root_holds_faces); a node made below another takes its parent's flag.
+    A level already in the tree is left as it is. This is the one writer of new nodes:
+    there were five, each with its own copy of the rule (docs/findings.md, #39).
+    """
+    parent_id, parent_has_face = None, 0
+    for part, level in zip(vocabulary.segments(path), vocabulary.lineage(path)):
+        row = conn.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (level,)).fetchone()
+        if row:
+            parent_id, parent_has_face = row[0], row[1] or 0
+            continue
+        if parent_id is None:
+            has_face = 1 if root_has_face or vocabulary.root_holds_faces(part) else 0
+        else:
+            has_face = 1 if parent_has_face else 0
+        parent_id = conn.execute(
+            "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
+            (level, parent_id, part, has_face)).lastrowid
+        parent_has_face = has_face
+    return parent_id
+
+
 def people_roots(conn):
     """Lowercased roots the library open on `conn` files people under."""
     roots = {r.lower() for r in PEOPLE_ROOTS}
