@@ -6,7 +6,8 @@
 
 Notes for changing this codebase: how to run things, how the tests work, and the traps
 that have cost real time. The specs describe what the system does; this describes what
-it is like to work on.
+it is like to work on. [ARCHITECTURE.md](ARCHITECTURE.md) describes where the code is
+going, and [docs/findings.md](docs/findings.md) tracks known problems.
 
 ## Running things
 

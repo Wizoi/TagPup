@@ -133,6 +133,7 @@ For guides, tutorials, specifications, and schemas:
 *   🐶 [AI CLI Engine Specification](SPEC_TAGPUP_CLI.md): Machine learning architecture, CLIP embeddings, consensus scoring formulas, and CLI parameters.
 *   🗄️ [Database Specification](DATABASE.md): SQLite schema table structures and visual Entity-Relationship/Data-Flow diagrams.
 *   🛠️ [Development Notes](DEVELOPMENT.md): running the suites, how the jsdom harness works, and the traps that have cost real time.
+*   🏗️ [Architecture](ARCHITECTURE.md): the layers the code is moving to, where each module goes, and the phases that get it there.
 
 ---
 

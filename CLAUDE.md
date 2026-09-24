@@ -3,6 +3,13 @@
 Short on purpose. Every rule here is one that has actually cost time on this project.
 The reasoning lives in [DEVELOPMENT.md](DEVELOPMENT.md); this is what to do.
 
+**New code goes where [ARCHITECTURE.md](ARCHITECTURE.md) puts it.** Today two servers,
+a CLI and many scripts each implement parts of the photo library. The code is moving
+into one `tagpup/` package, with one owner for each concern. Check the phase table
+before adding a module, a route or a query. **Record every review finding in
+[docs/findings.md](docs/findings.md) before fixing it.** Findings that lived only in a
+conversation were lost, and decisions were made twice.
+
 ## Running things
 
 ```
