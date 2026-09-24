@@ -15,7 +15,7 @@ from typing import List, Dict, Any, Tuple, Optional, Set
 import numpy as np
 import faiss
 
-from tagpup.store import schema
+from tagpup.store import generations, schema
 
 logger = logging.getLogger("tagpup_cli.index")
 
@@ -411,13 +411,10 @@ class PhotoIndex:
             raise e
 
     def _photos_signature(self):
-        """Something that moves whenever a photo row is added, removed or rewritten.
-
-        Every write that changes a row records the file's new mtime, so the sum of
-        them moves with it. 41ms on a 68,000-photo library, against 1.3s to load it.
-        """
-        return tuple(self.conn.execute(
-            "SELECT COUNT(*), COALESCE(MAX(rowid), 0), TOTAL(mtime) FROM photos").fetchone())
+        """Something that moves whenever a photo row is added, removed or rewritten: the
+        photos generation. It was a sum of mtimes, which a change to a row's people
+        leaves alone (docs/findings.md, #52)."""
+        return generations.value(self.conn, "photos")
 
     def reload_if_changed(self) -> bool:
         """Load again if the photos table has changed since it was read. True if it did.

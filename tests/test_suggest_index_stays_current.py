@@ -57,6 +57,19 @@ class IndexReloadsWhenChanged(unittest.TestCase):
         self.assertEqual(2, len(self.index.metadata))
         self.assertFalse(self.index.reload_if_changed())
 
+    def test_people_named_since_are_picked_up(self):
+        # Naming a face changes who is in a photo and leaves the file, and so the
+        # row's mtime, alone. The index watched mtimes (docs/findings.md, #52).
+        from tagpup.store import photos
+        conn = tagpup_db.connect(self.db_path)
+        try:
+            photos.update_people(conn, os.path.join(self.dir, "a.jpg"), gained=["Wren Halloway"])
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertTrue(self.index.reload_if_changed())
+        self.assertEqual(["Wren Halloway"], self.index.metadata[0]["people"])
+
 
 class OneEmbedderPerLibrary(unittest.TestCase):
     def setUp(self):
