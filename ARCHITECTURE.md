@@ -209,9 +209,16 @@ Exit: the guard tests for config, database connections, ExifTool and layers pass
 Exit: no action is implemented in two places, and migrated handlers only parse the request, call a service and reply.
 
 ### Phase 3: Store
-- SQL moves into repositories as the services come out. Guard: no SQL outside `tagpup.store`.
-- One `generations` table and one cache helper; versioned migrations.
-- `tools/doctor.py`.
+On 2026-09-24, 210 SQL calls sat outside `tagpup.store`: 65 in `scripts/index.py`, 43 in TagTuner's server, 21 in `tagpup.services.faces`, 7 in TagPup's server, 7 in the desktop runner, and the rest in maintenance scripts, the embedder, the suggester and the writer. The schema was made in four places (docs/findings.md, #48).
+- [ ] The schema: `tagpup.store.schema`, the only place a table, column, index or trigger is made, as versioned migrations recorded in `schema_version`. The first brings a library of any age to today's tables; `PhotoIndex.load`, TagTuner's start-up, the runner and the tag tree call it instead of making their own.
+- [ ] Generations: one `generations` table for photos, faces and the tag tree, kept by triggers, and one cache helper, `tagpup.store.generations.Cache`. The Suggest index reloads by the photos generation (#52).
+- [ ] `PhotoIndex` split: its SQL into `tagpup.store` (`photos`, `faces`, `embeddings`), the vector index into `tagpup.ml.vector_index`. `scripts/index.py` keeps the class as a composition of the two, with no SQL.
+- [ ] The services' SQL: `tagpup.services.faces` calls store functions.
+- [ ] TagTuner's reads: the Identify queue and grids, the person grid, counts, the excluded list, the tag list and the people list (#49, #50), as store functions.
+- [ ] TagPup's reads, the runner, the CLI, the embedder, the suggester and the writer.
+- [ ] The maintenance scripts: each calls store functions, or retires once a dry run shows it has nothing left to do on either library.
+- [ ] Guard: no SQL outside `tagpup.store`.
+- [ ] `tools/doctor.py`: the library's invariants, read-only, with counts. The schema is current; every face points at a photo; no named face is excluded; face names are among their photo's people (#42); the tree has no orphans; rows whose file is gone, by folder.
 
 Exit: the servers contain no SQL.
 
