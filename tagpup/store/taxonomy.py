@@ -442,7 +442,7 @@ def seed(db_path):
                 # One face root; the others are words. A library flags any other root
                 # that holds faces itself (docs/findings.md, #66).
                 add_path(conn, vocabulary.NEW_LIBRARY_FACE_ROOT, root_has_face=1)
-                for root in ("Activity", "Pets", "School", "Trips"):
+                for root in vocabulary.NEW_LIBRARY_ROOTS:
                     add_path(conn, root)
                 carried = set()
                 for (tags_json,) in conn.execute("SELECT tags FROM photos WHERE tags IS NOT NULL").fetchall():

@@ -293,5 +293,31 @@ class TheCameraOfATimeShift(unittest.TestCase):
         self.assertEqual([], lines)
 
 
+class TheRootsANewLibraryIsGiven(unittest.TestCase):
+    """A new library's roots, and what the caption and the suggester read into them, are
+    named in tagpup.core.vocabulary: the seed made Activity, Pets, School and Trips, the
+    caption knew activity, school and trips by name, and the suggester Activity/, School/
+    and Trips/ among its context roots."""
+
+    def test_are_named_once(self):
+        from tagpup.core import vocabulary
+        self.assertEqual(("Activity", "Pets", "School", "Trips"), vocabulary.NEW_LIBRARY_ROOTS)
+        self.assertIn(vocabulary.ACTIVITY_ROOT, vocabulary.NEW_LIBRARY_ROOTS)
+        self.assertTrue(set(vocabulary.PLACE_ROOTS) <= set(vocabulary.NEW_LIBRARY_ROOTS))
+        self.assertTrue({vocabulary.ACTIVITY_ROOT, *vocabulary.PLACE_ROOTS} <= set(vocabulary.CONTEXT_ROOTS))
+
+    def test_the_caption_reads_them(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        from writer import derive_caption_from_tags
+        self.assertEqual("Oda Castellane - Rowing, Harbour School and Lakes",
+                         derive_caption_from_tags(["People/Oda Castellane", "Activity/Rowing",
+                                                   "Trips/Lakes", "School/Harbour School"], {"people"}))
+
+    def test_nobody_else_spells_them(self):
+        # "Location" alone is an HTTP header.
+        spelled = r"[\"'](Activity|School|Trips|Scenic|Albums)/?[\"']|[\"']Location/[\"']|[\"'](activity|school|trips)[\"']"
+        self.assertEqual([], sources_matching(spelled, os.path.join("tagpup", "core", "vocabulary.py")))
+
+
 if __name__ == "__main__":
     unittest.main()

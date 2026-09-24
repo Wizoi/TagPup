@@ -327,7 +327,7 @@ def carrying(db_path, tag):
 
 def tag_usage(db_path):
     """Photos per tag, a photo counting toward each level above its tags as well: a
-    photo tagged "Activity/Hiking" counts for "Activity". What the tree view shows.
+    photo tagged Activity/Hiking counts for Activity. What the tree view shows.
 
     Once per photo: a photo carrying two tags under a node counted twice toward it and
     toward everything above it (docs/findings.md, #41).

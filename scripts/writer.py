@@ -21,10 +21,12 @@ def derive_caption_from_tags(tags: List[str], face_roots) -> Optional[str]:
     if not tags:
         return None
         
+    # The roots are tagpup.core.vocabulary's, as a new library is given them.
+    activity_root = vocabulary.ACTIVITY_ROOT.lower()
+    place_roots = [root.lower() for root in vocabulary.PLACE_ROOTS]
     people = []
     activities = []
-    schools = []
-    trips = []
+    places = {root: [] for root in place_roots}
     others = []
     
     # Sort tags to ensure consistent, deterministic ordering (e.g. alphabetical)
@@ -36,12 +38,10 @@ def derive_caption_from_tags(tags: List[str], face_roots) -> Optional[str]:
         
         if root in face_roots:
             people.append(leaf)
-        elif root == "activity":
+        elif root == activity_root:
             activities.append(leaf)
-        elif root == "school":
-            schools.append(leaf)
-        elif root == "trips":
-            trips.append(leaf)
+        elif root in places:
+            places[root].append(leaf)
         else:
             others.append(leaf)
             
@@ -52,11 +52,10 @@ def derive_caption_from_tags(tags: List[str], face_roots) -> Optional[str]:
         
     people = unique_list(people)
     activities = unique_list(activities)
-    schools = unique_list(schools)
-    trips = unique_list(trips)
+    loc_list = [leaf for root in place_roots for leaf in unique_list(places[root])]
     others = unique_list(others)
-    
-    if not people and not activities and not schools and not trips and not others:
+
+    if not people and not activities and not loc_list and not others:
         return None
         
     # Helper to join list with commas and 'and'
@@ -71,7 +70,6 @@ def derive_caption_from_tags(tags: List[str], face_roots) -> Optional[str]:
         
     people_str = format_list(people)
     activity_str = format_list(activities)
-    loc_list = schools + trips
     loc_str = format_list(loc_list)
     
     if people_str:

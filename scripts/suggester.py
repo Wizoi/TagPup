@@ -550,9 +550,8 @@ class TagSuggester:
                     score = item["score"]
                     consensus_rate = tag_consensus.get(tag, 0.0)
 
-                    is_context_tag = any(tag.startswith(prefix) for prefix in [
-                        "Activity/", "School/", "Trips/", "Scenic/", "Location/", "Albums/"
-                    ])
+                    is_context_tag = any(tag.startswith(root + vocabulary.SEPARATOR)
+                                         for root in vocabulary.CONTEXT_ROOTS)
 
                     new_score = score
                     if consensus_rate >= 0.40:

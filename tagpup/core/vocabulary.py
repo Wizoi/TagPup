@@ -96,6 +96,21 @@ def hidden_by(tag, hidden):
 #: and they disagreed with the tree and with each other (docs/findings.md, #66).
 NEW_LIBRARY_FACE_ROOT = "People"
 
+#: The root a photo's activities are filed under: the caption puts them after its people.
+ACTIVITY_ROOT = "Activity"
+
+#: The roots of where a photo was taken, in the order a caption names them.
+PLACE_ROOTS = ("School", "Trips")
+
+#: The roots a new library is given beside its face root (tagpup.store.taxonomy.seed).
+#: The seed, the caption (scripts/writer.py) and the suggester each named these
+#: themselves (docs/findings.md, #74).
+NEW_LIBRARY_ROOTS = (ACTIVITY_ROOT, "Pets") + PLACE_ROOTS
+
+#: Roots whose tags describe a photo's setting: the suggester marks such a tag down in a
+#: folder where few photos share it.
+CONTEXT_ROOTS = (ACTIVITY_ROOT,) + PLACE_ROOTS + ("Scenic", "Location", "Albums")
+
 
 def problem_with_tag(tag):
     """Why this cannot be set as a tag, or None if it can.
