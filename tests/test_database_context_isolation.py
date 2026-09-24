@@ -34,6 +34,7 @@ from tagpup_server import (
 import paths
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
+import own_home  # noqa: E402
 from face_rows import add_face, add_people  # noqa: E402
 from tagpup.store import db as tagpup_store_db  # noqa: E402
 from tagpup.store import schema  # noqa: E402
@@ -72,16 +73,19 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
 
     TEST_PORT = free_port()
     # Server boots on this database...
-    STARTUP_DB = os.path.join(WORKSPACE_DIR, "data", "test_ctx_startup.db")
+    STARTUP_NAME = "test_ctx_startup.db"   # in a home of the class's own
     # ...but every request below is addressed to this one via the URL prefix.
     OTHER_DB_URL_NAME = "ctx_other"
-    OTHER_DB = os.path.join(WORKSPACE_DIR, "data", "test_ctx_other.db")
+    OTHER_NAME = "test_ctx_other.db"
 
     @classmethod
     def setUpClass(cls):
         # Its own port: subclasses inherit the attribute, and a port
         # already held by the last class's server is refused.
         cls.TEST_PORT = free_port()
+        home = own_home.for_class(cls, "tagpup_ctx_")
+        cls.STARTUP_DB = home.library(cls.STARTUP_NAME)
+        cls.OTHER_DB = home.library(cls.OTHER_NAME)
         from index import PhotoIndex
 
         for db in (cls.STARTUP_DB, cls.OTHER_DB):
@@ -104,13 +108,6 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         set_active_db_path(None)
-        for db in (cls.STARTUP_DB, cls.OTHER_DB):
-            for path in (db, db.replace(".db", "_taxonomy.json")):
-                if os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except Exception:
-                        pass
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="tagpup_ctx_")

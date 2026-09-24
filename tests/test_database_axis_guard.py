@@ -24,6 +24,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
 from face_rows import add_face, add_people  # noqa: E402
+import own_home  # noqa: E402
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
@@ -204,8 +205,8 @@ class CrossDatabaseReadIsolationMixin:
     SERVER_START = None   # set by subclass
     GUI_DIR = None
     TEST_PORT = None
-    STARTUP_DB = None
-    OTHER_DB = None
+    STARTUP_NAME = None   # file names, in a home of the class's own
+    OTHER_NAME = None
     OTHER_URL_NAME = None
     READ_ENDPOINTS = ()
 
@@ -213,6 +214,9 @@ class CrossDatabaseReadIsolationMixin:
     def _boot(cls):
         from index import PhotoIndex
 
+        home = own_home.for_class(cls, "tagpup_axis_")
+        cls.STARTUP_DB = home.library(cls.STARTUP_NAME)
+        cls.OTHER_DB = home.library(cls.OTHER_NAME)
         for db in (cls.STARTUP_DB, cls.OTHER_DB):
             pi = PhotoIndex(db_path=db)
             pi.load()
@@ -229,16 +233,6 @@ class CrossDatabaseReadIsolationMixin:
         )
         cls.server_thread.start()
         time.sleep(1.0)
-
-    @classmethod
-    def _cleanup(cls):
-        for db in (cls.STARTUP_DB, cls.OTHER_DB):
-            for path in (db, db.replace(".db", "_taxonomy.json")):
-                if os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except Exception:
-                        pass
 
     def _seed(self, db, marker):
         conn = sqlite3.connect(db)
@@ -301,8 +295,8 @@ class CrossDatabaseReadIsolationMixin:
 class TestTagPupCrossDatabaseReads(CrossDatabaseReadIsolationMixin, unittest.TestCase):
     TEST_PORT = free_port()
     GUI_DIR = "gui_tagpup"
-    STARTUP_DB = os.path.join(WORKSPACE_DIR, "data", "test_axis_tagpup_startup.db")
-    OTHER_DB = os.path.join(WORKSPACE_DIR, "data", "test_axis_tagpup_other.db")
+    STARTUP_NAME = "test_axis_tagpup_startup.db"
+    OTHER_NAME = "test_axis_tagpup_other.db"
     OTHER_URL_NAME = "axis_tagpup_other"
     READ_ENDPOINTS = ("/api/people", "/api/tags", "/api/taxonomy/tree")
 
@@ -318,14 +312,13 @@ class TestTagPupCrossDatabaseReads(CrossDatabaseReadIsolationMixin, unittest.Tes
         from tagpup_server import set_active_db_path
 
         set_active_db_path(None)
-        cls._cleanup()
 
 
 class TestTunerCrossDatabaseReads(CrossDatabaseReadIsolationMixin, unittest.TestCase):
     TEST_PORT = free_port()
     GUI_DIR = "gui"
-    STARTUP_DB = os.path.join(WORKSPACE_DIR, "data", "test_axis_tuner_startup.db")
-    OTHER_DB = os.path.join(WORKSPACE_DIR, "data", "test_axis_tuner_other.db")
+    STARTUP_NAME = "test_axis_tuner_startup.db"
+    OTHER_NAME = "test_axis_tuner_other.db"
     OTHER_URL_NAME = "axis_tuner_other"
     READ_ENDPOINTS = ("/api/people", "/api/people-with-counts")
 
@@ -341,7 +334,6 @@ class TestTunerCrossDatabaseReads(CrossDatabaseReadIsolationMixin, unittest.Test
         from tuner_server import set_active_db_path
 
         set_active_db_path(None)
-        cls._cleanup()
 
 
 if __name__ == "__main__":

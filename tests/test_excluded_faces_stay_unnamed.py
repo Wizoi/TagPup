@@ -36,7 +36,7 @@ NAMED = "Rowan Thackeray"
 
 class ExcludedFaceBase(ExclusionTestBase):
     TEST_PORT = free_port()
-    TEST_DB = os.path.join(WORKSPACE_DIR, "data", "test_excluded_faces_stay_unnamed.db")
+    DB_NAME = "test_excluded_faces_stay_unnamed.db"   # in a home of the class's own
 
     def exclude(self, *face_ids):
         status, body = self.post("/api/faces/exclude",

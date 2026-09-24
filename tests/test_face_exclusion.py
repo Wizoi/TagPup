@@ -30,6 +30,7 @@ from tuner_server import start_server as start_tuner_server, set_active_db_path
 from tests.test_face_clustering_rules import identity_vector, near
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
+import own_home  # noqa: E402
 from face_rows import add_face, people_of  # noqa: E402
 
 from tagpup.store import people as store_people  # noqa: E402
@@ -37,13 +38,15 @@ from tagpup.store import people as store_people  # noqa: E402
 
 class ExclusionTestBase(unittest.TestCase):
     TEST_PORT = free_port()
-    TEST_DB = os.path.join(WORKSPACE_DIR, "data", "test_face_exclusion.db")
+    DB_NAME = "test_face_exclusion.db"   # in a home of the class's own
 
     @classmethod
     def setUpClass(cls):
         # Its own port: subclasses inherit the attribute, and a port
         # already held by the last class's server is refused.
         cls.TEST_PORT = free_port()
+        cls.home = own_home.for_class(cls)
+        cls.TEST_DB = cls.home.library(cls.DB_NAME)
         pi = PhotoIndex(db_path=cls.TEST_DB)
         pi.load()
         pi.close()
@@ -62,12 +65,6 @@ class ExclusionTestBase(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         set_active_db_path(None)
-        for p in (cls.TEST_DB, cls.TEST_DB.replace(".db", "_taxonomy.json")):
-            if os.path.exists(p):
-                try:
-                    os.remove(p)
-                except Exception:
-                    pass
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="tagpup_excl_")

@@ -1,6 +1,5 @@
 import gc
 import os
-import shutil
 import sys
 import json
 import sqlite3
@@ -22,8 +21,7 @@ from tagpup import config as tagpup_config  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
 from face_rows import add_face, add_people  # noqa: E402
-
-CHECKOUT_CONFIG = os.path.join(WORKSPACE_DIR, "config.ini")
+import own_home  # noqa: E402
 
 
 def file_bytes(path):
@@ -39,6 +37,9 @@ class TestMultipleDatabases(unittest.TestCase):
     These wrote the checkout's config.ini -- the one the app somebody is using reads --
     and put it back afterwards, so a run stopped in between left that app pointing at a
     test library. They also made their libraries in the checkout's data folder.
+
+    The code folder is one of the test's own as well, holding settings of its own, so
+    that "nothing was written beside the code" is checked without reading the checkout.
     """
     TEST_PORT = free_port()
     server_thread = None
@@ -48,13 +49,19 @@ class TestMultipleDatabases(unittest.TestCase):
         # Its own port: subclasses inherit the attribute, and a port
         # already held by the last class's server is refused.
         cls.TEST_PORT = free_port()
-        cls.home = tempfile.mkdtemp(prefix="tagpup_multiple_db_")
-        cls.data_dir = os.path.join(cls.home, "data")
-        os.makedirs(cls.data_dir)
-        cls.environ = mock.patch.dict(os.environ, {"TAGPUP_HOME": cls.home})
-        cls.environ.start()
+        home = own_home.for_class(cls, "tagpup_multiple_db_")
+        cls.home = home.root
+        cls.data_dir = home.data
+        code_folder = tempfile.mkdtemp(prefix="tagpup_code_folder_")
+        cls.addClassCleanup(own_home.remove, code_folder)
+        tagpup_config.write_file({"paths": {"default_db": "the_code_folders.db"}},
+                                 folder=code_folder)
+        cls.code_config = tagpup_config.config_path(code_folder)
+        cls.code_config_bytes = file_bytes(cls.code_config)
+        code_root = mock.patch.object(tagpup_config, "CODE_ROOT", code_folder)
+        code_root.start()
+        cls.addClassCleanup(code_root.stop)
         cls.TEST_DB_PATH = os.path.join(cls.data_dir, "test_multiple_db_startup.db")
-        cls.checkout_config = file_bytes(CHECKOUT_CONFIG)
 
         # Ensure startup db file is created before server starts to avoid migration warning
         from index import PhotoIndex
@@ -70,16 +77,6 @@ class TestMultipleDatabases(unittest.TestCase):
         )
         cls.server_thread.start()
         time.sleep(1.0) # wait for bind
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.environ.stop()
-        # The server thread runs until the process ends and may still hold a library
-        # open, so say so rather than fail if the folder cannot go yet.
-        shutil.rmtree(cls.home, ignore_errors=True)
-        if os.path.exists(cls.home):
-            print("\nnote: could not delete %s yet (held open by the test server)" % cls.home,
-                  file=sys.stderr)
 
     def setUp(self):
         # Ensure startup db file is clean
@@ -181,8 +178,8 @@ class TestMultipleDatabases(unittest.TestCase):
         # Remembered in this test's home, and only there.
         self.assertEqual(tagpup_config.read_file().get("paths", "default_db"),
                          "multiple_db_startup.db")
-        self.assertEqual(file_bytes(CHECKOUT_CONFIG), self.checkout_config,
-                         "selecting a library changed the checkout's config.ini")
+        self.assertEqual(file_bytes(self.code_config), self.code_config_bytes,
+                         "selecting a library changed the config.ini beside the code")
 
     def test_a_created_library_is_not_left_open(self):
         """Creating a library opened it for its schema and never closed it.
@@ -272,7 +269,7 @@ class TestMultipleDatabases(unittest.TestCase):
 
 class TestFolderIndexingAPI(unittest.TestCase):
     TEST_PORT = free_port()
-    TEST_DB_PATH = os.path.join(WORKSPACE_DIR, "data", "test_index_api.db")
+    DB_NAME = "test_index_api.db"   # in a home of the class's own
     server_thread = None
 
     @classmethod
@@ -280,6 +277,7 @@ class TestFolderIndexingAPI(unittest.TestCase):
         # Its own port: subclasses inherit the attribute, and a port
         # already held by the last class's server is refused.
         cls.TEST_PORT = free_port()
+        cls.TEST_DB_PATH = own_home.for_class(cls, "tagpup_index_api_").library(cls.DB_NAME)
         # Create DB file
         from index import PhotoIndex
         pi = PhotoIndex(db_path=cls.TEST_DB_PATH)
@@ -300,21 +298,6 @@ class TestFolderIndexingAPI(unittest.TestCase):
         )
         cls.server_thread.start()
         time.sleep(1.0)
-
-    @classmethod
-    def tearDownClass(cls):
-        if os.path.exists(cls.TEST_DB_PATH):
-            try:
-                os.remove(cls.TEST_DB_PATH)
-            except Exception:
-                pass
-        # Also clean up index status cache if created
-        cache_json = cls.TEST_DB_PATH.replace(".db", "_taxonomy.json")
-        if os.path.exists(cache_json):
-            try:
-                os.remove(cache_json)
-            except Exception:
-                pass
 
     @patch("subprocess.Popen")
     def test_folder_indexing_flow(self, mock_popen):

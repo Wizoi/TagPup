@@ -20,6 +20,7 @@ from tagpup_server import TagPupHTTPRequestHandler
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_people, add_vector, configured_model, people_of  # noqa: E402
 from free_port import free_port  # noqa: E402
+import own_home  # noqa: E402
 
 
 def native(path):
@@ -28,7 +29,7 @@ def native(path):
 
 
 class TestStability(unittest.TestCase):
-    TEST_DB_PATH = os.path.join(WORKSPACE_DIR, "data", "test_validation_index.db")
+    DB_NAME = "test_validation_index.db"   # in a home of the class's own
     TEST_PORT = free_port()
     server_thread = None
 
@@ -37,6 +38,7 @@ class TestStability(unittest.TestCase):
         # Its own port: subclasses inherit the attribute, and a port
         # already held by the last class's server is refused.
         cls.TEST_PORT = free_port()
+        cls.TEST_DB_PATH = own_home.for_class(cls, "tagpup_stability_").library(cls.DB_NAME)
         # Start the server once in a background thread
         cls.server_thread = threading.Thread(
             target=start_server,
@@ -888,24 +890,17 @@ class TestPhotoActions(unittest.TestCase):
 
     These ran against TagTuner's copies of the routes, which no page ever called and
     which are gone; TagPup's are the ones people use. Its library lives in a folder of
-    its own, not the checkout's data/.
+    its own (own_home), not the checkout's data/.
     """
 
     @classmethod
     def setUpClass(cls):
-        import hashlib
-        import shutil
-        import tempfile
         from tagpup_server import start_server as start_tagpup_server
 
         cls.TEST_PORT = free_port()
-        # One folder per checkout, cleared here: the server holds its library open until
-        # the process ends, so a run cannot delete its own, but the next one can.
-        checkout = hashlib.md5(WORKSPACE_DIR.lower().encode("utf-8")).hexdigest()[:8]
-        cls.home = os.path.join(tempfile.gettempdir(), "tagpup_photo_actions_" + checkout)
-        shutil.rmtree(cls.home, ignore_errors=True)
-        os.makedirs(cls.home, exist_ok=True)
-        cls.TEST_DB_PATH = os.path.join(cls.home, "photo_actions.db")
+        # The server holds its library open until the process ends; own_home deletes
+        # the home once it has.
+        cls.TEST_DB_PATH = own_home.for_class(cls, "tagpup_photo_actions_").library("photo_actions.db")
         PhotoIndex(db_path=cls.TEST_DB_PATH).load()
         threading.Thread(
             target=start_tagpup_server,
@@ -914,11 +909,6 @@ class TestPhotoActions(unittest.TestCase):
             daemon=True,
         ).start()
         time.sleep(1.0)  # Wait for server to bind
-
-    @classmethod
-    def tearDownClass(cls):
-        import shutil
-        shutil.rmtree(cls.home, ignore_errors=True)   # the next run clears what this cannot
 
     def setUp(self):
         from tagpup_server import set_active_db_path

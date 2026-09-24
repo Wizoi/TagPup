@@ -31,19 +31,22 @@ from tagpup_server import (
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
+import own_home  # noqa: E402
 from tagpup.store import db as tagpup_store_db  # noqa: E402
 from tagpup.store import suggestions as saved_suggestions  # noqa: E402
 
 
 class TagPupAPITestBase(unittest.TestCase):
     TEST_PORT = free_port()
-    TEST_DB = os.path.join(WORKSPACE_DIR, "data", "test_tagpup_api.db")
+    DB_NAME = "test_tagpup_api.db"   # in a home of the class's own
 
     @classmethod
     def setUpClass(cls):
         # Its own port: subclasses inherit the attribute, and a port
         # already held by the last class's server is refused.
         cls.TEST_PORT = free_port()
+        cls.home = own_home.for_class(cls)
+        cls.TEST_DB = cls.home.library(cls.DB_NAME)
         from index import PhotoIndex
 
         pi = PhotoIndex(db_path=cls.TEST_DB)
@@ -65,12 +68,6 @@ class TagPupAPITestBase(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         set_active_db_path(None)
-        for path in (cls.TEST_DB, cls.TEST_DB.replace(".db", "_taxonomy.json")):
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                except Exception:
-                    pass
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="tagpup_api_")
