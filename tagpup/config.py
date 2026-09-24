@@ -130,6 +130,13 @@ def library_path(db_name, settings=None):
     return os.path.join(data_dir(settings), db_name)
 
 
+def default_library(settings=None):
+    """Where the library to open lives: default_db in data_dir. The index, both servers
+    and the bulk scripts named theirs data/<name>.db, which is the working directory's
+    data folder -- another library wherever they were started (docs/findings.md, #74)."""
+    return library_path(default_db(settings), settings)
+
+
 def default_exiftool():
     """Where ExifTool's Windows installer puts it, or the one on PATH elsewhere."""
     if platform.system() == "Windows":

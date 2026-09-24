@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
 import db as tagpup_db  # noqa: E402
+from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import vocabulary  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
@@ -84,7 +85,7 @@ def apply_plan(db_path, duplicates, affected):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", default="data/kr-track.db")
+    parser.add_argument("--db", default=tagpup_config.library_path("kr-track.db"))
     parser.add_argument("--apply", action="store_true",
                         help="write the changes; without this nothing is modified")
     args = parser.parse_args()

@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
 import db as tagpup_db  # noqa: E402
+from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import clustering  # noqa: E402
 from tagpup.store import checks  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
@@ -133,7 +134,7 @@ def call(port, path, body=None, timeout=1800):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", default="data/kr-track.db")
+    ap.add_argument("--source", default=tagpup_config.library_path("kr-track.db"))
     ap.add_argument("--folder", required=False)
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--no-index", action="store_true")
@@ -149,7 +150,7 @@ def main():
         return 2
 
     # test_ prefix keeps the copy out of the database selector in both interfaces.
-    work_db = os.path.join("data", "test_verify_workflow.db")
+    work_db = tagpup_config.library_path("test_verify_workflow.db")
     if os.path.exists(work_db):
         os.remove(work_db)
 

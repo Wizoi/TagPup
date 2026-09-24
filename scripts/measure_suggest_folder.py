@@ -180,7 +180,7 @@ def print_log(log_path, since):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", default="data/photo_index.db",
+    parser.add_argument("--source", default=tagpup_config.library_path("photo_index.db"),
                         help="the library to copy; opened read-only and never written")
     parser.add_argument("--photos", required=True, help="the folder to open")
     parser.add_argument("--timeout", type=int, default=900, help="seconds")

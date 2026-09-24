@@ -245,7 +245,7 @@ def get_active_db_path():
             return Library(handler_cls.db_path).key
         except Exception:
             pass
-    return "data/photo_index.db"
+    return Library(tagpup_config.default_library()).key
 
 class DatabaseIsolatedDict(dict):
     def __init__(self, registry):
@@ -312,7 +312,7 @@ class TagPupHTTPRequestHandlerMeta(type):
 
 class TagPupHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                                metaclass=TagPupHTTPRequestHandlerMeta):
-    db_path = "data/photo_index.db"
+    db_path = tagpup_config.default_library()   # until start_server names the one it serves
     gui_dir = "gui_tagpup"
 
     # Database-specific registries
@@ -1607,7 +1607,8 @@ def warmup_embedder_thread(embedder):
     except Exception as e:
         logger.error(f"Error warming up Face models: {e}")
 
-def start_server(port=8090, db_path="data/photo_index.db", gui_dir="gui_tagpup"):
+def start_server(port=8090, db_path=None, gui_dir="gui_tagpup"):
+    db_path = db_path or tagpup_config.default_library()
     TagPupHTTPRequestHandler.db_path = db_path
     TagPupHTTPRequestHandler.gui_dir = gui_dir
 

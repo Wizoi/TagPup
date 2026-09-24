@@ -148,7 +148,7 @@ def get_active_db_path():
             return Library(handler_cls.db_path).key
         except Exception:
             pass
-    return "data/photo_index.db"
+    return Library(tagpup_config.default_library()).key
 
 class DatabaseIsolatedDict(dict):
     def __init__(self, registry):
@@ -233,7 +233,7 @@ def clustering(db_path):
 
 class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
                               metaclass=TunerHTTPRequestHandlerMeta):
-    db_path = "data/photo_index.db"
+    db_path = tagpup_config.default_library()   # until start_server names the one it serves
     gui_dir = "gui"
 
     # Database-specific registries
@@ -2347,7 +2347,8 @@ class TunerHTTPRequestHandler(localserver.RequestLog, BaseHTTPRequestHandler,
 #: worth two seconds on every click.
 ThreadedHTTPServer = localserver.ThreadedHTTPServer
 
-def start_server(port=8080, db_path="data/photo_index.db", gui_dir="gui"):
+def start_server(port=8080, db_path=None, gui_dir="gui"):
+    db_path = db_path or tagpup_config.default_library()
     TunerHTTPRequestHandler.db_path = db_path
     TunerHTTPRequestHandler.gui_dir = gui_dir
 

@@ -172,7 +172,7 @@ class PhotoIndex:
     have always used.
     """
 
-    def __init__(self, db_path: str = "data/photo_index.db", model: Optional[str] = None):
+    def __init__(self, db_path: str, model: Optional[str] = None):
         self.db_path = db_path
         #: Whose vectors are searched: tagpup.store.embeddings.model_key of the model the
         #: config names, unless another is given. Vectors from other settings cannot be

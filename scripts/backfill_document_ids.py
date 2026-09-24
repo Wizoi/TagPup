@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
 import db as tagpup_db  # noqa: E402
+from tagpup import config as tagpup_config  # noqa: E402
 import paths as photo_paths  # noqa: E402  -- not `paths`: backfill() takes a list by that name
 from tagpup.store import photos as store_photos  # noqa: E402
 
@@ -144,7 +145,7 @@ def backfill(db_path, paths, exiftool_path=None, batch_size=200, on_progress=Non
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", default="data/photo_index.db")
+    parser.add_argument("--db", default=tagpup_config.library_path("photo_index.db"))
     parser.add_argument("--exiftool", default=None)
     parser.add_argument("--batch", type=int, default=200)
     parser.add_argument("--limit", type=int, default=0,

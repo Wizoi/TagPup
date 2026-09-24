@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _root  # noqa: E402,F401
 from tagpup.files import images  # noqa: E402
 import db as tagpup_db  # noqa: E402
+from tagpup import config as tagpup_config  # noqa: E402
 import paths as photo_paths  # noqa: E402  -- not `paths`: the walks below use that name
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
@@ -209,7 +210,7 @@ def apply_moves(db_path, moves):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", default="data/kr-track.db")
+    parser.add_argument("--db", default=tagpup_config.library_path("kr-track.db"))
     parser.add_argument("--exiftool", default=None)
     parser.add_argument("--apply", action="store_true",
                         help="write the changes; without this nothing is modified")

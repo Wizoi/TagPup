@@ -205,5 +205,25 @@ class ATestLibrarysName(unittest.TestCase):
         self.assertEqual([], [path for path in found if not path.startswith("tools")])
 
 
+class WhereALibraryIs(unittest.TestCase):
+    """Where a library lives is tagpup.config's to say (data_dir, library_path): the index,
+    both servers and the bulk scripts named theirs as data/<name>.db, which is the
+    working directory's data folder -- a library of its own wherever they were started."""
+
+    def test_the_configured_library(self):
+        from tagpup import config
+        self.assertEqual(config.library_path(config.default_db()), config.default_library())
+
+    def test_nobody_spells_it_from_the_working_directory(self):
+        self.assertEqual([], sources_matching(r"[\"']data/[^\"']*\.db[\"']|os\.path\.join\(\s*[\"']data[\"']"))
+
+    def test_an_index_names_its_library(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import inspect
+
+        from index import PhotoIndex
+        self.assertIs(inspect.Parameter.empty, inspect.signature(PhotoIndex).parameters["db_path"].default)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -247,7 +247,7 @@ def drive(url, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", default="data/photo_index.db",
+    parser.add_argument("--source", default=tagpup_config.library_path("photo_index.db"),
                         help="the library to copy; opened read-only and never written")
     parser.add_argument("--person", default="Unknown Faces")
     parser.add_argument("--rounds", type=int, default=5)
