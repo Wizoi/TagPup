@@ -234,3 +234,107 @@ def clear_automatic_names(conn):
     return conn.execute(
         "UPDATE faces SET name = NULL"
         " WHERE name IS NOT NULL AND COALESCE(name_source, '') <> 'manual'").rowcount
+
+
+# ---- What the face actions read and write (tagpup.services.faces) ------------------------
+
+#: How many ids go in one IN (...): well under SQLite's limit on parameters.
+CHUNK = 500
+
+
+def _chunks(face_ids):
+    face_ids = list(face_ids)
+    for start in range(0, len(face_ids), CHUNK):
+        yield face_ids[start:start + CHUNK]
+
+
+def _in(chunk):
+    return "id IN (%s)" % ",".join("?" * len(chunk))
+
+
+def rows(conn, face_ids):
+    """{id: (photo_path, name, excluded)} of the faces among `face_ids` that exist."""
+    found = {}
+    for chunk in _chunks(face_ids):
+        for face_id, photo_path, name, excluded in conn.execute(
+                "SELECT id, photo_path, name, excluded FROM faces WHERE " + _in(chunk), chunk):
+            found[face_id] = (photo_path, name, excluded)
+    return found
+
+
+def name(conn, face_ids, person_name):
+    """Name faces as a person's decision (name_source 'manual'), which re-clustering does
+    not revise. Excluded faces are left alone. Returns rows named. The caller commits."""
+    return sum(conn.execute(
+        "UPDATE faces SET name = ?, name_source = 'manual' WHERE " + _in(chunk) + " AND excluded = 0",
+        [person_name] + chunk).rowcount for chunk in _chunks(face_ids))
+
+
+def name_if_unnamed(conn, face_id, person_name):
+    """Give an unnamed, unexcluded face a name as a guess -- who decided is left alone,
+    so re-clustering may revise it. Returns rows named. The caller commits."""
+    return conn.execute("UPDATE faces SET name = ? WHERE id = ? AND name IS NULL AND excluded = 0",
+                        (person_name, face_id)).rowcount
+
+
+def unname(conn, face_ids, source="manual"):
+    """Take the names off faces, recording who decided in name_source: 'manual' for
+    "this is nobody", None for an undone guess. Returns rows changed. The caller commits."""
+    return sum(conn.execute(
+        "UPDATE faces SET name = NULL, name_source = ? WHERE " + _in(chunk),
+        [source] + chunk).rowcount for chunk in _chunks(face_ids))
+
+
+def unname_photo(conn, photo_path):
+    """Take the names off every face in a photo, as a decision. Returns rows changed. By
+    equality: a LIKE pass as well cleared every name in IMG-1234.jpg along with
+    IMG_1234.jpg. The caller commits."""
+    where, params = paths.sql_equals("photo_path", photo_path)
+    return conn.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE " + where,
+                        params).rowcount
+
+
+def exclude(conn, face_ids, reason):
+    """Take faces out of identity work, their names with them, as a decision. Returns
+    rows excluded. The caller commits."""
+    return sum(conn.execute(
+        "UPDATE faces SET excluded = 1, excluded_reason = ?, name = NULL, name_source = 'manual'"
+        " WHERE " + _in(chunk), [reason] + chunk).rowcount for chunk in _chunks(face_ids))
+
+
+def restore(conn, face_ids):
+    """Bring excluded faces back, unnamed and unclaimed. Only faces that are excluded:
+    clearing name_source on another would unpin a manual name. Returns rows restored.
+    The caller commits."""
+    return sum(conn.execute(
+        "UPDATE faces SET excluded = 0, excluded_reason = NULL, name_source = NULL"
+        " WHERE " + _in(chunk) + " AND excluded = 1", chunk).rowcount for chunk in _chunks(face_ids))
+
+
+def named_elsewhere_in_photo(conn, photo_path, person_name, face_id):
+    """Does a face in the photo other than `face_id` carry the name? By equality: a LIKE
+    retry scanned every face row, and read an underscore in a file name as any character."""
+    where, params = paths.sql_equals("photo_path", photo_path)
+    return conn.execute("SELECT 1 FROM faces WHERE " + where + " AND name = ? AND id != ?",
+                        params + (person_name, face_id)).fetchone() is not None
+
+
+def _scope(photo_path=None, folder=None):
+    if photo_path is not None:
+        return paths.sql_equals("photo_path", photo_path)
+    return paths.sql_under("photo_path", folder)
+
+
+def unnamed(conn, photo_path=None, folder=None):
+    """(id, embedding bytes, photo_path) of the unnamed, unexcluded faces in one photo, or
+    under a folder at any depth."""
+    where, params = _scope(photo_path, folder)
+    return conn.execute("SELECT id, embedding, photo_path FROM faces WHERE " + where
+                        + " AND name IS NULL AND excluded = 0", params).fetchall()
+
+
+def unnamed_counts(conn, folder):
+    """{photo_path as stored: faces still unnamed} for the photos under a folder."""
+    where, params = paths.sql_under("photo_path", folder)
+    return dict(conn.execute("SELECT photo_path, COUNT(*) FROM faces WHERE " + where
+                             + " AND name IS NULL GROUP BY photo_path", params).fetchall())

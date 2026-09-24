@@ -440,3 +440,25 @@ def set_people(conn, people_by_path):
     """Replace the people of each photo in {stored path: [names]}. The caller commits."""
     conn.executemany("UPDATE photos SET people = ? WHERE path = ?",
                      [(json.dumps(people), path) for path, people in people_by_path.items()])
+
+
+def remove_under(conn, folder):
+    """Take the photos under a folder, at any depth, out of the library with their faces.
+    The files are not touched. Returns {photos_removed, faces_removed, manual_lost,
+    excluded_lost}: what the deletes removed, and the face work that went with them. The
+    caller commits.
+
+    Faces are matched on their own photo_path, so a face goes with its folder even where
+    its photo row is missing or spelled apart; and deleted explicitly, since the cascade
+    runs only where a connection turned foreign keys on.
+    """
+    faces_where, faces_params = paths.sql_under("photo_path", folder)
+    photos_where, photos_params = paths.sql_under("path", folder)
+    manual = conn.execute("SELECT COUNT(*) FROM faces WHERE " + faces_where
+                          + " AND name_source = 'manual'", faces_params).fetchone()[0]
+    excluded = conn.execute("SELECT COUNT(*) FROM faces WHERE " + faces_where
+                            + " AND excluded = 1", faces_params).fetchone()[0]
+    faces_removed = conn.execute("DELETE FROM faces WHERE " + faces_where, faces_params).rowcount
+    photos_removed = conn.execute("DELETE FROM photos WHERE " + photos_where, photos_params).rowcount
+    return dict(photos_removed=photos_removed, faces_removed=faces_removed,
+                manual_lost=manual, excluded_lost=excluded)
