@@ -25,3 +25,6 @@ package-lock.json
 
 # Database backups
 backups/
+
+# Each test file's last time, kept by tools/run_tests.py
+tests/.durations.json

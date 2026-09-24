@@ -46,9 +46,23 @@ The CLI still logs to the console only; redirect it when it matters.
 
 | suite | command | count |
 | --- | --- | --- |
-| Python | `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py"` | ~1,000 |
+| Python | `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py"` | ~1,300 |
+| Python, across the cores | `.venv/Scripts/python.exe tools/run_tests.py` | the same |
+| Python, what a change affects | `.venv/Scripts/python.exe tools/affected_tests.py --run` | a subset |
 | Frontend | `node --test tests/frontend/*.test.mjs` | ~500 |
 | Lint | `.venv/Scripts/python.exe -m ruff check .` | runs inside the Python suite |
+
+`tools/affected_tests.py` picks the test files that import what changed since the last
+commit (`--since` for another point), directly or through other modules, or name a
+changed file; use it while working. A change to a core module (`paths`, `db`, `schema`)
+reaches most of the suite anyway. The full suite still runs before each commit and each
+merge: what a test reaches through a subprocess or a file named at run time is not an
+import.
+
+`tools/run_tests.py` runs each test file as its own process across half the cores. The
+files that use the checkout's own `data/` or `config.ini` -- or import a test file that
+does -- run one after another in a lane of their own, and that lane is most of the time
+until those tests move into homes of their own (docs/findings.md, #14).
 
 Use the glob for the frontend suite. `node --test tests/frontend/` treats `harness.mjs`
 as a test file, finds no tests in it, and reports a failure that is purely the
