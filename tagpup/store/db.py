@@ -227,6 +227,35 @@ def backup(db_path, reason, into=None):
     return target
 
 
+def space(db_path):
+    """(bytes the file takes, bytes inside it that hold nothing) of the library at
+    `db_path`. Rows deleted and columns dropped leave their pages free in the file until
+    it is compacted: migration 3's crops alone left about 1 GB of photo_index's."""
+    conn = connect(readonly_uri(db_path), uri=True)
+    try:
+        page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+        pages = conn.execute("PRAGMA page_count").fetchone()[0]
+        free = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    finally:
+        conn.close()
+    return pages * page_size, free * page_size
+
+
+def compact(db_path):
+    """Rewrite the library at `db_path` without its free pages (VACUUM), under its write
+    lock. It needs the file to itself for as long as it takes -- 41 s for photo_index --
+    and fails with "database is locked" while an app has it open to write. Returns
+    (bytes before, bytes after)."""
+    before = space(db_path)[0]
+    with lock_for(db_path):
+        conn = connect(db_path, timeout=30.0)
+        try:
+            conn.execute("VACUUM")
+        finally:
+            conn.close()
+    return before, space(db_path)[0]
+
+
 #: How many backups each library keeps; the oldest beyond it goes when a new one is made.
 #: Nothing deleted a copy before, and backups/ once held 28 GB in 41 of them
 #: (docs/findings.md, #7). Per library, so one library's never push out another's

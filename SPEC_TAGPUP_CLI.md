@@ -274,5 +274,8 @@ Runs self-tuning identity resolution to cluster face embeddings and assign names
 ---
 [◀ Back to README](README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
 
+### `compact [--apply]`
+Says how much of the library's file holds nothing: pages left free by deleted rows and dropped columns, which SQLite keeps until the file is rewritten. With `--apply`, backs the library up (`db.backup`, into `backups/`), then rewrites it without them (`VACUUM`, `db.compact`) and says the size before and after. The rewrite needs the file to itself; close the apps first. After phase 4's migrations photo_index holds about 1 GB free of 4 GB.
+
 ### `export-tree OUTPUT`
 Writes the library's tag tree to OUTPUT as JSON (`{"paths": [...]}`): a copy to keep or read. The tree lives in the library; nothing reads this file back.

@@ -697,6 +697,31 @@ def export_tree(ctx, output: str):
 
 
 @cli.command()
+@click.option("--apply", "apply_", is_flag=True, help="Back the library up, then compact it. Without it, only says how much would be freed.")
+@click.pass_context
+def compact(ctx, apply_: bool):
+    """Give back the space the library holds free: pages left empty by deleted rows and
+    dropped columns, which the file keeps until it is rewritten. Close the apps first;
+    the rewrite needs the file to itself."""
+    config = get_config()
+    db_path = get_db_path(config, ctx.obj.get("test", False), ctx.obj.get("db"))
+    if not os.path.exists(db_path):
+        raise click.ClickException("There is no library at %s." % db_path)
+    size, free = tagpup_db.space(db_path)
+    console.print(f"{os.path.basename(db_path)}: {size / 1e6:,.0f} MB, of which {free / 1e6:,.0f} MB is free.")
+    if not apply_:
+        console.print("Nothing changed. --apply backs the library up, then compacts it.")
+        return
+    copy = tagpup_db.backup(db_path, "compact")
+    console.print(f"Backed up to [bold cyan]{copy}[/bold cyan].")
+    try:
+        before, after = tagpup_db.compact(db_path)
+    except Exception as e:
+        raise click.ClickException("Could not compact the library (is an app using it?): %s" % e) from e
+    console.print(f"Compacted: {before / 1e6:,.0f} MB -> {after / 1e6:,.0f} MB.")
+
+
+@cli.command()
 @click.argument("photo_path", type=click.Path(exists=True, dir_okay=False))
 @click.pass_context
 def inspect(ctx, photo_path: str):
