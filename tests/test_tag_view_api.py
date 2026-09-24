@@ -30,10 +30,9 @@ class TagViewTestBase(TunerAPITestBase):
         cur = conn.cursor()
         for path, tags in photos:
             cur.execute(
-                "INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, "
-                "captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (path, 1000.0, 10, json.dumps(tags), json.dumps([]),
-                 json.dumps([]), json.dumps({})),
+                "INSERT OR REPLACE INTO photos (path, mtime, size, tags, "
+                "captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                (path, 1000.0, 10, json.dumps(tags), json.dumps([]), json.dumps({})),
             )
         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
         if cur.fetchone():

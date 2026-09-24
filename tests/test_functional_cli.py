@@ -107,7 +107,8 @@ class TestFunctionalCLI(unittest.TestCase):
         self.assertTrue(os.path.exists(self.db_path), "Database was not created")
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
-        c.execute("SELECT path, tags, people FROM photos")
+        from tagpup.store.people import PEOPLE_JSON
+        c.execute("SELECT p.path, p.tags, " + PEOPLE_JSON + " FROM photos p")
         rows = c.fetchall()
         paths = [r[0] for r in rows]
         

@@ -20,6 +20,9 @@ from tuner_server import TunerHTTPRequestHandler  # noqa: E402
 
 from tagpup.store import db  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_people  # noqa: E402
+
 
 class Handler(TunerHTTPRequestHandler):
     """A TagTuner handler with no socket, which keeps what it would have sent."""
@@ -68,9 +71,10 @@ class TunerReads(unittest.TestCase):
 
     def photo(self, name, people=(), tags=(), mtime=1.0):
         path = os.path.join(self.dir, name)
-        self.conn.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-                          " VALUES (?, ?, 1, ?, ?, '[]', '{}')",
-                          (path, mtime, json.dumps(list(tags)), json.dumps(list(people))))
+        self.conn.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+                          " VALUES (?, ?, 1, ?, '[]', '{}')",
+                          (path, mtime, json.dumps(list(tags))))
+        add_people(self.conn, path, list(people))
         self.conn.commit()
         return path
 
@@ -124,7 +128,9 @@ class TheIdentifyQueue(TunerReads):
         self.face(first)
         self.face(second)
         self.assertIn("Wren Halloway", self.groups())
-        self.conn.execute("UPDATE photos SET people = ?", (json.dumps(["Ansel Ditmore"]),))
+        self.conn.execute("DELETE FROM photo_people")
+        for path in (first, second):
+            add_people(self.conn, path, ["Ansel Ditmore"])
         self.conn.commit()
         groups = self.groups()
         self.assertIn("Ansel Ditmore", groups)

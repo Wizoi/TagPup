@@ -16,8 +16,30 @@ def photo_id(conn, photo_path):
     row = conn.execute("SELECT id FROM photos WHERE path = ?", (photo_path,)).fetchone()
     if row:
         return row[0]
-    return conn.execute("INSERT INTO photos (path, tags, people, captions, raw_metadata)"
-                        " VALUES (?, '[]', '[]', '[]', '{}')", (photo_path,)).lastrowid
+    return conn.execute("INSERT INTO photos (path, tags, captions, raw_metadata)"
+                        " VALUES (?, '[]', '[]', '{}')", (photo_path,)).lastrowid
+
+
+#: A photo's people with its path: `SELECT p.path, pp.name FROM ` + PEOPLE_WITH_PATHS.
+PEOPLE_WITH_PATHS = "photo_people pp JOIN photos p ON p.id = pp.photo_id"
+
+
+def add_people(conn, photo_path, names, source="keyword"):
+    """List `names` as the people of the photo at `photo_path`, after any it lists, as
+    though its keywords (or, with source "face", its faces) named them. For a test of
+    what reads a photo's people; a test of what writes them goes through the store. The
+    photo's row is made if it has none. The caller commits."""
+    photo = photo_id(conn, photo_path)
+    start = conn.execute("SELECT COALESCE(MAX(position) + 1, 0) FROM photo_people WHERE photo_id = ?",
+                         (photo,)).fetchone()[0]
+    conn.executemany("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, ?, ?, ?)",
+                     [(photo, start + n, name, source) for n, name in enumerate(names)])
+
+
+def people_of(conn, photo_path):
+    """The people of the photo stored at exactly `photo_path`, in order."""
+    return [name for (name,) in conn.execute(
+        "SELECT pp.name FROM " + PEOPLE_WITH_PATHS + " WHERE p.path = ? ORDER BY pp.position", (photo_path,))]
 
 
 def configured_model():

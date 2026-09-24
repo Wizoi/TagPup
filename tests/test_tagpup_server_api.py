@@ -139,14 +139,13 @@ class TagPupAPITestBase(unittest.TestCase):
         raw_meta = {"XMP:Subject": flat, "XMP:HierarchicalSubject": hierarchical}
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(
-            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
             (
                 path,
                 os.path.getmtime(path),
                 os.path.getsize(path),
                 json.dumps(list(tags)),
-                json.dumps([]),
                 json.dumps([title] if title else []),
                 json.dumps(raw_meta),
             ),

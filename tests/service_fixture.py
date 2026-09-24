@@ -42,8 +42,8 @@ class TempLibrary:
         return path
 
     def add_row(self, path, mtime=1.0, size=1, tags=()):
-        self.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-                     " VALUES (?, ?, ?, ?, '[]', '[]', '{}')", (path, mtime, size, json.dumps(list(tags))))
+        self.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+                     " VALUES (?, ?, ?, ?, '[]', '{}')", (path, mtime, size, json.dumps(list(tags))))
 
     def add_face(self, path, box, name=None, crop=b"crop"):
         """A face in the photo at `path`, which gets a row holding only the path if it

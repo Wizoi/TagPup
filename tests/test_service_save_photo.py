@@ -11,8 +11,10 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from service_fixture import TempLibrary  # noqa: E402
+from face_rows import people_of  # noqa: E402
 
 from tagpup.services import tagging  # noqa: E402
+from tagpup.store import db  # noqa: E402
 
 FORMAT = "{grouping} - {index} - {caption}"
 
@@ -60,10 +62,15 @@ class SavingAPhoto(unittest.TestCase):
     def test_the_row_records_what_the_file_holds_after(self):
         self.holds = {"XMP:Subject": ["Beach", "Relay"], "XMP:Description": "Start"}
         self.save()
-        tags, people, captions = self.lib.rows("SELECT tags, people, captions FROM photos")[0]
+        tags, captions = self.lib.rows("SELECT tags, captions FROM photos")[0]
+        conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
+        try:
+            people = people_of(conn, self.photo)
+        finally:
+            conn.close()
         self.assertEqual(json.loads(tags), ["Beach", "Relay"])
         self.assertEqual(json.loads(captions), ["Start"])
-        self.assertEqual(json.loads(people), ["Rowan Thackeray"], "the named face was dropped")
+        self.assertEqual(people, ["Rowan Thackeray"], "the named face was dropped")
 
     def test_a_new_tag_that_may_not_be_set_refuses_the_save(self):
         result = self.save(tags=["Beach", "Places|Harbour"])

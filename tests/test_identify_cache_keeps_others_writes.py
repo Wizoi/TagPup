@@ -61,7 +61,7 @@ class IdentifyCacheKeepsOthersWrites(unittest.TestCase):
         index.load()
         index.close()
         conn = tagpup_db.connect(self.db)
-        conn.execute("INSERT INTO photos (path, people) VALUES (?, '[]')", (PHOTO,))
+        conn.execute("INSERT INTO photos (path) VALUES (?)", (PHOTO,))
         self.faces = [add_face(conn, PHOTO, box="[1,2,3,4]") for _ in range(3)]
         conn.commit()
         conn.close()

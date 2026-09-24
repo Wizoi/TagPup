@@ -84,11 +84,11 @@ class FaceClusteringTestBase(unittest.TestCase):
             raw_meta["EXIF:DateTimeOriginal"] = f"{year}:06:15 12:00:00"
         conn = sqlite3.connect(self.db_path)
         conn.execute(
-            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (path, 1.0, 1, json.dumps([]), json.dumps(list(people)), json.dumps([]),
-             json.dumps(raw_meta)),
+            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (path, 1.0, 1, json.dumps([]), json.dumps([]), json.dumps(raw_meta)),
         )
+        face_rows.add_people(conn, path, list(people))
         conn.commit()
         conn.close()
         return path

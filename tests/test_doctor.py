@@ -1,8 +1,9 @@
 """A library's rules, and the doctor that reports them (tagpup.store.checks, tools/doctor.py).
 
-Each rule is a thing that has actually been wrong in a library: face names missing from
-their photo's people (docs/findings.md, #42), faces both named and excluded (#3), rows
-for a file under two spellings, a tree node whose parent is gone (#37).
+Each rule is a thing that has actually been wrong in a library: a photo's people not
+what its keywords, faces and tree make them (docs/findings.md, #42, #63), faces both
+named and excluded (#3), rows for a file under two spellings, a tree node whose parent
+is gone (#37).
 """
 import hashlib
 import json
@@ -12,7 +13,7 @@ import sys
 import tempfile
 import unittest
 
-from tagpup.store import checks, db, schema
+from tagpup.store import checks, db, people, schema
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 import doctor  # noqa: E402
@@ -32,18 +33,23 @@ class Library(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
 
-    def photo(self, name, people=(), tags=(), on_disk=True):
+    def photo(self, name, tags=(), on_disk=True):
         path = os.path.join(self.dir, name)
         if on_disk:
             with open(path, "wb") as f:
                 f.write(b"photo")
-        self.conn.execute("INSERT INTO photos (path, mtime, size, tags, people) VALUES (?, 1, 1, ?, ?)",
-                          (path, json.dumps(list(tags)), json.dumps(list(people))))
+        self.conn.execute("INSERT INTO photos (path, mtime, size, tags) VALUES (?, 1, 1, ?)",
+                          (path, json.dumps(list(tags))))
+        people.rebuild_photos(self.conn, [path])
         self.conn.commit()
         return path
 
-    def face(self, photo_path, name=None, excluded=0):
+    def face(self, photo_path, name=None, excluded=0, rebuilt=True):
+        """A face, and the photo's people rebuilt as the store does -- or, without
+        `rebuilt`, left as they were: a writer that named a face by hand."""
         add_face(self.conn, photo_path, box="[0,0,1,1]", name=name, excluded=excluded)
+        if rebuilt:
+            people.rebuild_photos(self.conn, [photo_path])
         self.conn.commit()
 
     def broken(self):
@@ -52,15 +58,31 @@ class Library(unittest.TestCase):
 
 class TheRules(Library):
     def test_a_library_made_new_keeps_them_all(self):
-        self.face(self.photo("a.jpg", people=["Wren Halloway"]), name="Wren Halloway")
+        self.face(self.photo("a.jpg", tags=["People/Ansel Ditmore"]), name="Wren Halloway")
         self.assertEqual({}, self.broken())
 
     def test_a_face_name_its_photo_does_not_list(self):
-        self.face(self.photo("a.jpg"), name="Wren Halloway")
-        self.assertEqual({"face names missing from their photo's people": 1}, self.broken())
+        self.face(self.photo("a.jpg"), name="Wren Halloway", rebuilt=False)
+        self.assertEqual({"photos whose people are out of date": 1}, self.broken())
+
+    def test_people_written_by_hand(self):
+        # Rows the rule would not make: someone no keyword or face names, a person the
+        # rule lists missing, and the right names in the wrong order.
+        for name, broken in (("a.jpg", "INSERT INTO photo_people (photo_id, position, name, source)"
+                                       " SELECT id, 9, 'Somebody Else', 'keyword' FROM photos WHERE path = ?"),
+                             ("b.jpg", "DELETE FROM photo_people WHERE name = 'Wren Halloway'"
+                                       " AND photo_id = (SELECT id FROM photos WHERE path = ?)"),
+                             ("c.jpg", "UPDATE photo_people SET name = CASE name WHEN 'Wren Halloway'"
+                                       " THEN 'Ansel Ditmore' ELSE 'Wren Halloway' END"
+                                       " WHERE photo_id = (SELECT id FROM photos WHERE path = ?)")):
+            photo = self.photo(name, tags=["People/Ansel Ditmore"])
+            self.face(photo, name="Wren Halloway")
+            self.conn.execute(broken, (photo,))
+            self.conn.commit()
+        self.assertEqual({"photos whose people are out of date": 3}, self.broken())
 
     def test_a_face_named_and_excluded(self):
-        self.face(self.photo("a.jpg", people=["Wren Halloway"]), name="Wren Halloway", excluded=1)
+        self.face(self.photo("a.jpg"), name="Wren Halloway", excluded=1)
         self.assertEqual({"faces named and excluded": 1}, self.broken())
 
     def test_a_face_whose_photo_has_no_row(self):
@@ -124,13 +146,13 @@ class TheDoctor(Library):
         return code, lines
 
     def test_says_nothing_is_broken_when_nothing_is(self):
-        self.face(self.photo("a.jpg", people=["Wren Halloway"]), name="Wren Halloway")
+        self.face(self.photo("a.jpg"), name="Wren Halloway")
         broken, lines = self.run_doctor()
         self.assertEqual(0, broken)
         self.assertEqual(0, doctor.main(["--db", self.db_path]))
 
     def test_counts_without_naming_anyone_unless_asked(self):
-        self.face(self.photo("Wren Halloway at the lake.jpg"), name="Wren Halloway")
+        self.face(self.photo("Wren Halloway at the lake.jpg"), name="Wren Halloway", rebuilt=False)
         broken, lines = self.run_doctor()
         self.assertEqual(1, broken)
         self.assertNotIn("Wren", "\n".join(lines))
@@ -139,7 +161,7 @@ class TheDoctor(Library):
         self.assertEqual(1, doctor.main(["--db", self.db_path]))
 
     def test_changes_nothing(self):
-        self.face(self.photo("a.jpg"), name="Wren Halloway")
+        self.face(self.photo("a.jpg"), name="Wren Halloway", rebuilt=False)
         self.conn.close()
 
         def digest():

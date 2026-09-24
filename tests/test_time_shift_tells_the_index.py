@@ -50,8 +50,8 @@ class TimeShiftTellsTheIndex(unittest.TestCase):
             handle.write(b"not a picture")
         for path in self.photos:
             self.lib.execute(
-                "INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-                " VALUES (?, 1.0, 1, '[]', '[]', '[]', ?)",
+                "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+                " VALUES (?, 1.0, 1, '[]', '[]', ?)",
                 (path, json.dumps({"EXIF:DateTimeOriginal": TAKEN, "EXIF:Model": "Harbour Cam"})))
 
     def shift(self):

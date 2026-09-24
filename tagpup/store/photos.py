@@ -10,7 +10,8 @@ import logging
 import os
 
 from tagpup.core import fields, paths, vocabulary
-from tagpup.store import db, embeddings, faces, taxonomy
+from tagpup.store import db, embeddings, faces, people
+from tagpup.store.people import PEOPLE_JSON
 
 logger = logging.getLogger(__name__)
 
@@ -213,25 +214,16 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None, before=
             raw_meta = {}
         fields.record_keyword_fields(raw_meta, flat or [], hierarchical or [])
 
-        people = vocabulary.people_in_photo(
-            raw_meta, tags, faces.face_names(photo_path, conn=conn),
-            taxonomy.people_vocabulary(conn=conn))
         if stat is None:
-            cursor.execute(
-                "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE id = ?",
-                (json.dumps(tags), json.dumps(people), json.dumps(raw_meta), photo_id),
-            )
+            cursor.execute("UPDATE photos SET tags = ?, raw_metadata = ? WHERE id = ?",
+                           (json.dumps(tags), json.dumps(raw_meta), photo_id))
         else:
-            cursor.execute(
-                "UPDATE photos SET tags = ?, people = ?, raw_metadata = ?, mtime = ?, size = ?"
-                " WHERE id = ?",
-                (json.dumps(tags), json.dumps(people), json.dumps(raw_meta),
-                 stat.st_mtime, stat.st_size, photo_id),
-            )
-            changed = cursor.rowcount > 0
+            cursor.execute("UPDATE photos SET tags = ?, raw_metadata = ?, mtime = ?, size = ? WHERE id = ?",
+                           (json.dumps(tags), json.dumps(raw_meta), stat.st_mtime, stat.st_size, photo_id))
             embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
-            return changed
-        return cursor.rowcount > 0
+        changed = cursor.rowcount > 0
+        people.rebuild(conn, [photo_id])
+        return changed
 
     try:
         return db.write_with_connection(
@@ -294,41 +286,6 @@ def carrying(db_path, tag):
     return found
 
 
-def update_people(conn, photo_path, gained=(), lost=()):
-    """Keep a photo's list of people in step after some of its faces were named or
-    unnamed: each name in `gained` is added, and each in `lost` goes unless another face
-    in the photo still carries it. On `conn`, whose transaction the caller holds.
-    Returns whether the list changed.
-
-    Seven face actions each kept the list with a copy of their own. Naming faces in bulk
-    appended to the list it then compared with, so it wrote only when an old name went
-    too (docs/findings.md, #42).
-    """
-    where, params = paths.sql_equals("path", photo_path)
-    row = conn.execute("SELECT id, people FROM photos WHERE " + where, params).fetchone()
-    if not row:
-        return False
-    try:
-        people = json.loads(row[1]) if row[1] else []
-    except (TypeError, ValueError):
-        people = []
-    updated = list(people)
-    for name in gained:
-        if name and name not in updated:
-            updated.append(name)
-    for name in lost:
-        if not name or name in gained or name not in updated:
-            continue
-        still = conn.execute("SELECT COUNT(*) FROM faces WHERE photo_id = ?"
-                             " AND name = ? AND excluded = 0", (row[0], name)).fetchone()[0]
-        if not still:
-            updated = [person for person in updated if person != name]
-    if updated == people:
-        return False
-    conn.execute("UPDATE photos SET people = ? WHERE id = ?", (json.dumps(updated), row[0]))
-    return True
-
-
 def tag_usage(db_path):
     """Photos per tag, a photo counting toward each level above its tags as well: a
     photo tagged "Activity/Hiking" counts for "Activity". What the tree view shows.
@@ -356,9 +313,10 @@ def tag_usage(db_path):
     return counts
 
 
-def record_saved(db_path, photo_path, tags, people, captions, raw_meta, before=None):
-    """Record what saving one photo left in its file, and the file's mtime and size.
-    Returns rows changed.
+def record_saved(db_path, photo_path, tags, captions, raw_meta, before=None):
+    """Record what saving one photo left in its file, and the file's mtime and size; its
+    people are rebuilt from what the file now says. `before` is the file's stamp just
+    before the save wrote it (_stamp). Returns rows changed.
 
     A photo the index has never seen is not added here: that would be a row with no
     embedding and no faces, which is an index entry in name only.
@@ -367,11 +325,13 @@ def record_saved(db_path, photo_path, tags, people, captions, raw_meta, before=N
     where, where_params = paths.sql_equals("path", photo_path)
 
     def update_row(conn):
-        _stamp(conn, photo_path, stat.st_mtime, stat.st_size, before=before)
-        return conn.execute(
-            "UPDATE photos SET tags = ?, people = ?, captions = ?, raw_metadata = ? WHERE " + where,
-            (json.dumps(tags), json.dumps(people), json.dumps(captions), json.dumps(raw_meta))
-            + where_params).rowcount
+        photo_id = _stamp(conn, photo_path, stat.st_mtime, stat.st_size, before=before)
+        changed = conn.execute(
+            "UPDATE photos SET tags = ?, captions = ?, raw_metadata = ? WHERE " + where,
+            (json.dumps(tags), json.dumps(captions), json.dumps(raw_meta)) + where_params).rowcount
+        if photo_id is not None:
+            people.rebuild(conn, [photo_id])
+        return changed
 
     return db.write_with_connection(
         db_path, update_row, label="index row for %s" % os.path.basename(photo_path))
@@ -388,7 +348,7 @@ def index_rows(conn, model):
     """Every photo row, INDEX_COLUMNS each, with its vector under `model`: the whole
     library, as PhotoIndex loads it."""
     return conn.execute(
-        "SELECT p.path, p.mtime, p.size, p.tags, p.people, p.captions, p.raw_metadata, e.vector"
+        "SELECT p.path, p.mtime, p.size, p.tags, " + PEOPLE_JSON + ", p.captions, p.raw_metadata, e.vector"
         " FROM photos p LEFT JOIN embeddings e ON e.photo_id = p.id AND e.model = ?", (model,)).fetchall()
 
 
@@ -405,8 +365,8 @@ def ensure_row(conn, photo_path):
     row = conn.execute("SELECT id FROM photos WHERE " + clause + " LIMIT 1", params).fetchone()
     if row:
         return row[0]
-    return conn.execute("INSERT INTO photos (path, tags, people, captions, raw_metadata)"
-                        " VALUES (?, '[]', '[]', '[]', '{}')", (paths.stored(photo_path),)).lastrowid
+    return conn.execute("INSERT INTO photos (path, tags, captions, raw_metadata)"
+                        " VALUES (?, '[]', '[]', '{}')", (paths.stored(photo_path),)).lastrowid
 
 
 def stored_spelling(conn, photo_path):
@@ -416,11 +376,11 @@ def stored_spelling(conn, photo_path):
     return row[0] if row else None
 
 
-def record_indexed(conn, photo_path, row, model=None):
-    """Record what indexing read of a photo: `row` has mtime, size, tags, people,
-    captions, raw_metadata (as values), embedding (bytes) and document_id; the
-    embedding is kept under `model`, stamped with the row's mtime and size. The caller
-    commits.
+def record_indexed(conn, photo_path, row, model=None, known=None):
+    """Record what indexing read of a photo: `row` has mtime, size, tags, captions,
+    raw_metadata (as values), embedding (bytes) and document_id; the embedding is kept
+    under `model`, stamped with the row's mtime and size, and the photo's people are
+    rebuilt. The caller commits.
 
     A photo indexed before is updated in place, under the spelling its row already has.
     faces.photo_id references photos.id ON DELETE CASCADE, so anything that deletes
@@ -430,16 +390,16 @@ def record_indexed(conn, photo_path, row, model=None):
     """
     stored = stored_spelling(conn, photo_path) or paths.stored(photo_path)
     conn.execute(
-        "INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, document_id)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata, document_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(path) DO UPDATE SET"
         " mtime = excluded.mtime, size = excluded.size, tags = excluded.tags,"
-        " people = excluded.people, captions = excluded.captions,"
-        " raw_metadata = excluded.raw_metadata,"
+        " captions = excluded.captions, raw_metadata = excluded.raw_metadata,"
         " document_id = COALESCE(excluded.document_id, photos.document_id)",
         (stored, row.get("mtime", 0.0), row.get("size", 0), json.dumps(row.get("tags", [])),
-         json.dumps(row.get("people", [])), json.dumps(row.get("captions", [])),
-         json.dumps(row.get("raw_metadata", {})), row.get("document_id")))
+         json.dumps(row.get("captions", [])), json.dumps(row.get("raw_metadata", {})),
+         row.get("document_id")))
+    people.rebuild_photos(conn, [stored], known)
     if row.get("embedding") is not None:
         if model is None:
             # Dropped without a word, it left a library without the vector (#85).
@@ -461,18 +421,6 @@ def remove(conn, photo_paths):
 def clear_embeddings(conn):
     """Forget every photo's CLIP vectors. Returns rows deleted. The caller commits."""
     return embeddings.clear(conn)
-
-
-def keyword_sources(conn):
-    """(path, raw_metadata JSON, tags JSON) of every photo: what its keyword people are
-    derived from."""
-    return conn.execute("SELECT path, raw_metadata, tags FROM photos").fetchall()
-
-
-def set_people(conn, people_by_path):
-    """Replace the people of each photo in {stored path: [names]}. The caller commits."""
-    conn.executemany("UPDATE photos SET people = ? WHERE path = ?",
-                     [(json.dumps(people), path) for path, people in people_by_path.items()])
 
 
 def remove_under(conn, folder):
@@ -503,8 +451,8 @@ def details(conn, photo_path):
     """(people JSON, tags JSON, captions JSON, mtime, raw_metadata JSON) of one photo, or
     None."""
     where, params = paths.sql_equals("path", photo_path)
-    return conn.execute("SELECT people, tags, captions, mtime, raw_metadata FROM photos WHERE " + where,
-                        params).fetchone()
+    return conn.execute("SELECT " + PEOPLE_JSON + ", p.tags, p.captions, p.mtime, p.raw_metadata"
+                        " FROM photos p WHERE " + where, params).fetchone()
 
 
 def tag_lists(conn):
@@ -544,8 +492,8 @@ def rows_under(conn, folder):
     """(path, mtime, size, tags JSON, people JSON, captions JSON, raw_metadata JSON) of
     each photo under a folder, at any depth."""
     where, params = paths.sql_under("path", folder)
-    return conn.execute("SELECT path, mtime, size, tags, people, captions, raw_metadata FROM photos"
-                        " WHERE " + where, params).fetchall()
+    return conn.execute("SELECT p.path, p.mtime, p.size, p.tags, " + PEOPLE_JSON + ", p.captions,"
+                        " p.raw_metadata FROM photos p WHERE " + where, params).fetchall()
 
 
 def set_captions(conn, photo_path, captions):
@@ -560,7 +508,7 @@ def set_captions(conn, photo_path, captions):
 def rows_to_check(conn, folder=None):
     """(path, mtime, size, tags JSON, captions JSON, raw_metadata JSON, people JSON) of
     every photo, or of those under `folder`: what is compared with the files."""
-    query = "SELECT path, mtime, size, tags, captions, raw_metadata, people FROM photos"
+    query = "SELECT p.path, p.mtime, p.size, p.tags, p.captions, p.raw_metadata, " + PEOPLE_JSON + " FROM photos p"
     params = ()
     if folder:
         where, params = paths.sql_under("path", folder)
@@ -571,24 +519,27 @@ def rows_to_check(conn, folder=None):
 def row_as_recorded(conn, stored_path):
     """(tags, people, captions, raw_metadata, mtime, size, document_id) of the row stored
     under exactly `stored_path`, or None."""
-    return conn.execute("SELECT tags, people, captions, raw_metadata, mtime, size, document_id"
-                        " FROM photos WHERE path = ?", (stored_path,)).fetchone()
+    return conn.execute("SELECT p.tags, " + PEOPLE_JSON + ", p.captions, p.raw_metadata, p.mtime, p.size,"
+                        " p.document_id FROM photos p WHERE p.path = ?", (stored_path,)).fetchone()
 
 
 def record_refreshed(conn, stored_path, record, seen=None):
-    """Record what was read from a photo's file: tags, people, captions, raw_metadata,
-    mtime, size, and its document_id where the row has none. With `seen` (mtime, size),
-    only while the row still has them: a row the app saved since describes something
-    newer. Returns rows changed. The caller commits."""
+    """Record what was read from a photo's file: tags, captions, raw_metadata, mtime,
+    size, and its document_id where the row has none, and rebuild its people from them.
+    With `seen` (mtime, size), only while the row still has them: a row the app saved
+    since describes something newer. Returns rows changed. The caller commits."""
     guard, guard_params = "", ()
     if seen is not None:
         guard, guard_params = " AND mtime IS ? AND size IS ?", tuple(seen)
-    return conn.execute(
-        "UPDATE photos SET tags = ?, people = ?, captions = ?, raw_metadata = ?, mtime = ?, size = ?,"
+    changed = conn.execute(
+        "UPDATE photos SET tags = ?, captions = ?, raw_metadata = ?, mtime = ?, size = ?,"
         " document_id = COALESCE(document_id, ?) WHERE path = ?" + guard,
-        (json.dumps(record["tags"]), json.dumps(record["people"]), json.dumps(record["captions"]),
-         json.dumps(record["raw_metadata"]), record["mtime"], record["size"], record.get("document_id"),
-         stored_path) + guard_params).rowcount
+        (json.dumps(record["tags"]), json.dumps(record["captions"]), json.dumps(record["raw_metadata"]),
+         record["mtime"], record["size"], record.get("document_id"), stored_path) + guard_params).rowcount
+    if changed:
+        people.rebuild(conn, [photo_id for (photo_id,) in conn.execute(
+            "SELECT id FROM photos WHERE path = ?", (stored_path,))])
+    return changed
 
 
 # ---- What relink_renamed_photos reads ---------------------------------------------------

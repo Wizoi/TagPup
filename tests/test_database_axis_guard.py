@@ -23,7 +23,7 @@ import unittest
 import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
-from face_rows import add_face  # noqa: E402
+from face_rows import add_face, add_people  # noqa: E402
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
@@ -234,18 +234,18 @@ class CrossDatabaseReadIsolationMixin:
         conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM tag_taxonomy")
         conn.execute(
-            "INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
             (
                 f"C:/{marker}.jpg",
                 1.0,
                 1,
                 json.dumps([marker]),
-                json.dumps([marker]),
                 json.dumps([]),
                 json.dumps({}),
             ),
         )
+        add_people(conn, f"C:/{marker}.jpg", [marker])
         add_face(conn, f"C:/{marker}.jpg", box="[]", embedding=b"", name=marker)
         conn.execute(
             "INSERT INTO tag_taxonomy (tag, parent_id, name) VALUES (?, NULL, ?)",

@@ -358,12 +358,39 @@ def _embeddings(conn):
     conn.execute("ALTER TABLE photos DROP COLUMN embedding")
 
 
+def _photo_people(conn):
+    """Each photo's people in `photo_people`, written only by tagpup.store.people.rebuild
+    (docs/findings.md, #63), in place of the `photos.people` list.
+
+    Every photo is rebuilt by the rule from its keywords, its faces and the tree. On
+    both libraries of 2026-09-24 that gave every photo the people its list held, bar
+    one listed in another order. A photo's people moving moves the photos generation,
+    as a change to the list did.
+    """
+    from tagpup.store import people   # the store imports this module
+    conn.execute("CREATE TABLE photo_people ("
+                 " photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,"
+                 " position INTEGER NOT NULL, name TEXT NOT NULL,"
+                 " source TEXT NOT NULL CHECK (source IN ('keyword', 'face')),"
+                 " PRIMARY KEY (photo_id, position))")
+    conn.execute("CREATE INDEX idx_photo_people_name ON photo_people(name)")
+    conn.execute("CREATE TRIGGER photo_people_go_with_their_photo AFTER DELETE ON photos"
+                 " BEGIN DELETE FROM photo_people WHERE photo_id = OLD.id; END")
+    people.rebuild(conn)
+    for event in ("insert", "delete"):
+        conn.execute("CREATE TRIGGER generation_photos_people_%s AFTER %s ON photo_people"
+                     " BEGIN UPDATE generations SET value = value + 1 WHERE name = 'photos'; END"
+                     % (event, event.upper()))
+    conn.execute("ALTER TABLE photos DROP COLUMN people")
+
+
 MIGRATIONS = (
     Migration(1, "the tables as of 2026-09", _tables, changes_data=False),
     Migration(2, "one generations table", _generations, changes_data=False),
     Migration(3, "face crops in their own table", _face_crops, changes_data=True),
     Migration(4, "photos by id", _photo_ids, changes_data=True),
     Migration(5, "one embeddings table", _embeddings, changes_data=True),
+    Migration(6, "each photo's people in photo_people", _photo_people, changes_data=True),
 )
 
 LATEST = MIGRATIONS[-1].version

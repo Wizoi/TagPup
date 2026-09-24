@@ -86,8 +86,8 @@ class HandlerCase(unittest.TestCase):
         conn = tagpup_db.connect(self.db_path)
         try:
             conn.execute(
-                "INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-                " VALUES (?, ?, ?, ?, '[]', '[]', ?)",
+                "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+                " VALUES (?, ?, ?, ?, '[]', ?)",
                 (stored, mtime, size, json.dumps(list(tags)),
                  json.dumps({"XMP:Subject": list(tags)})))
             add_vector(conn, stored, embedding)

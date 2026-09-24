@@ -67,7 +67,7 @@ def create(library, name, parent_id=None, has_face=0):
 
     existed = taxonomy.find(library.path, tag)
     node_id = db.write_with_connection(
-        library.path, lambda conn: taxonomy.add_path(conn, tag, root_has_face=has_face),
+        library.path, lambda conn: taxonomy.add_node(conn, tag, root_has_face=has_face),
         label="tag tree: add %s" % tag)
     if not existed:
         result.changed = 1
@@ -307,7 +307,7 @@ def _retag(library, old, new, carrying, exiftool_path, result, always_move=False
     rewritten = unwritten = 0
     if carrying:
         if new:
-            db.write_with_connection(library.path, lambda conn: taxonomy.add_path(conn, new),
+            db.write_with_connection(library.path, lambda conn: taxonomy.add_node(conn, new),
                                      label="tag tree: add %s" % new)
             # The writes resolve names against the tree, which now has the target.
             taxonomy.forget_people_paths(library.path)

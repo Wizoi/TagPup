@@ -47,9 +47,9 @@ class BackfillCase(unittest.TestCase):
     def add(self, path, document_id=None):
         def store(conn):
             conn.execute(
-                "INSERT INTO photos (path, tags, people, captions, raw_metadata, "
-                "document_id) VALUES (?, ?, ?, ?, ?, ?)",
-                (path, json.dumps([]), json.dumps([]), json.dumps([]),
+                "INSERT INTO photos (path, tags, captions, raw_metadata, "
+                "document_id) VALUES (?, ?, ?, ?, ?)",
+                (path, json.dumps([]), json.dumps([]),
                  json.dumps({}), document_id))
         tagpup_db.write_with_connection(self.db_path, store)
 

@@ -51,10 +51,10 @@ Any new connection should go through `configure_connection()`.
 
 ## Database Schema
 
-The database consists of five primary tables: `photos`, `faces`, `embeddings`, `tag_taxonomy`, and `tag_embeddings`.
+The database consists of six primary tables: `photos`, `faces`, `embeddings`, `photo_people`, `tag_taxonomy`, and `tag_embeddings`.
 
 ### 1. `photos` Table
-Stores high-level image metadata, tags (keywords), captions and resolved people lists. Its CLIP vectors are in `embeddings`.
+Stores high-level image metadata, tags (keywords) and captions. Its people are in `photo_people`, its CLIP vectors in `embeddings`.
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
@@ -63,7 +63,6 @@ Stores high-level image metadata, tags (keywords), captions and resolved people 
 | `mtime` | REAL | | Last modification time (epoch timestamp) of the image file. |
 | `size` | INTEGER | | File size in bytes. |
 | `tags` | TEXT | | JSON-serialized array of metadata keyword strings (e.g., `["nature", "sunset"]`). |
-| `people` | TEXT | | JSON-serialized array of resolved names present in the photo (sync'd from faces). |
 | `captions` | TEXT | | JSON-serialized array of caption/description strings. |
 | `raw_metadata` | TEXT | | JSON-serialized key-value dictionary of raw EXIF/IPTC properties. |
 | `document_id` | TEXT | INDEXED | The photo's identity, independent of its path: `XMP-xmpMM:DocumentID`. Read from the file where present — most photos already carry one, written by Lightroom or Camera Raw — and minted as `xmp.did:<uuid>` where absent. A path is a bad name for a photo: rename it and the row describes something that no longer exists, while the photo looks unindexed. `scripts/relink_renamed_photos.py` matches on this first. NULL on rows indexed before this column existed; they fill in as those photos are re-indexed. |
@@ -139,7 +138,19 @@ Replaces `faces_generation` and `taxonomy_generation`, one table each, whose cou
 | `name` | TEXT | PRIMARY KEY | `photos`, `faces` or `taxonomy`. |
 | `value` | INTEGER | NOT NULL | Bumped by the triggers; only ever compared for change. |
 
-### 8. `schema_version` Table
+### 8. `photo_people` Table
+Each photo's people, in order (`tagpup/store/people.py`). Written only by `people.rebuild`, from the photo's keywords, the names on its faces that are not excluded, and the tag tree, by the one rule (`vocabulary.people_in_photo`); read as the JSON list `photos.people` held (`people.PEOPLE_JSON`). Whatever changes one of the three rebuilds the photos it touched: a keyword write, every write of the faces store, and a tree edit that changes who is a person (`people.tree_edit`). Replaced `photos.people`, which seven face actions patched by a rule of their own and clustering, re-detection and tree edits never updated (findings #42, #63), in migration 6. The doctor's `people_out_of_date` finds a photo whose rows are not what the rule makes them.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `photo_id` | INTEGER | PRIMARY KEY (with `position`), FOREIGN KEY | The photo, `photos(id)`. A trigger, `photo_people_go_with_their_photo`, deletes its rows with it on any connection. |
+| `position` | INTEGER | PRIMARY KEY (with `photo_id`) | Order in the photo's list: keyword people first, then the names on its faces, each name once whatever its case. |
+| `name` | TEXT | NOT NULL, INDEXED | The person, as spelled where they were first found. |
+| `source` | TEXT | NOT NULL | `keyword` when the photo's metadata names them, else `face`. |
+
+A row's insert or delete moves the `photos` generation, as a change to the old list did.
+
+### 9. `schema_version` Table
 The migrations applied to this library, one row each, in order (`tagpup.store.schema`). `schema.ensure()` applies the ones missing wherever a library is opened: by PhotoIndex, TagTuner's start-up, the desktop runner, the tag tree, and each request that names a library. Migration 1 makes the tables of 2026-09; each one after is a step forward. A library older than those tables -- missing a column such as `faces.excluded` -- is refused (`schema.TooOld`), not converted: every library in use was already that shape, and the conversions retired on 2026-09-24.
 
 | Column | Type | Constraints | Description |
@@ -162,7 +173,6 @@ erDiagram
         REAL mtime
         INTEGER size
         TEXT tags
-        TEXT people
         TEXT captions
         TEXT raw_metadata
         TEXT document_id
@@ -197,6 +207,13 @@ erDiagram
         INTEGER hidden_from_autocomplete
     }
 
+    photo_people {
+        INTEGER photo_id PK
+        INTEGER position PK
+        TEXT name
+        TEXT source
+    }
+
     tag_embeddings {
         TEXT tag PK
         TEXT prompt PK
@@ -223,6 +240,7 @@ erDiagram
 
     photos ||--o{ faces : "contains"
     photos ||--o{ embeddings : "embedded as"
+    photos ||--o{ photo_people : "shows"
     faces ||--o| face_crops : "cropped as"
     tag_taxonomy ||--o{ tag_taxonomy : "parent of"
 ```
@@ -263,7 +281,7 @@ flowchart TD
     %% CLI Identity Clustering Interactions
     C -->|5. Read face embeddings & compute DBSCAN clusters| T2
     C -->|6. Resolve identities & write name assignments| T2
-    C -->|7. Sync matched names back to photos' people field| T1
+    C -->|7. Rebuild the people of the photos whose faces were named| T1
 
     %% Server & Web UI Interactions
     D <-->|8. Read metadata, images, and diagnostics| T1 & T2

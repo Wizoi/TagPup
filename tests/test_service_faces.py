@@ -4,7 +4,6 @@ Called directly on a temporary library. What the routes add -- parsing, and taki
 faces a write removed off TagTuner's cached grids -- is in test_tuner_server_api.py and
 test_identify_faces_hot_paths.py.
 """
-import json
 import os
 import sys
 import unittest
@@ -14,12 +13,13 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from service_fixture import TempLibrary  # noqa: E402
-from face_rows import add_face  # noqa: E402
+from face_rows import add_face, people_of  # noqa: E402
 
 from tagpup.core.result import Conflict, NotFound  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.services import faces  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
+from tagpup.store import people as store_people  # noqa: E402
 
 
 def vector(seed, dim=8):
@@ -33,10 +33,19 @@ class FacesCase(unittest.TestCase):
         self.folder = self.lib.photos
 
     def photo(self, name, people=()):
+        """A photo whose keywords name `people`, its people rebuilt from them."""
         path = self.lib.photo(name)
-        self.lib.add_row(path)
-        self.lib.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(list(people)), path))
+        self.lib.add_row(path, tags=["People/" + person for person in people])
+        self.rebuild(path)
         return path
+
+    def rebuild(self, photo):
+        conn = db.connect(self.lib.library.path)
+        try:
+            store_people.rebuild_photos(conn, [photo])
+            conn.commit()
+        finally:
+            conn.close()
 
     def face(self, photo, name=None, excluded=0, embedding=None, source=None):
         conn = db.connect(self.lib.library.path)
@@ -44,13 +53,18 @@ class FacesCase(unittest.TestCase):
             face_id = add_face(conn, photo, box="[0,0,10,10]", name=name, excluded=excluded,
                                embedding=embedding.tobytes() if embedding is not None else None,
                                name_source=source)
+            store_people.rebuild_photos(conn, [photo])   # as the store does, inserting a named face
             conn.commit()
             return face_id
         finally:
             conn.close()
 
     def people(self, photo):
-        return json.loads(self.lib.rows("SELECT people FROM photos WHERE path = ?", (photo,))[0][0])
+        conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
+        try:
+            return people_of(conn, photo)
+        finally:
+            conn.close()
 
     def face_row(self, face_id):
         return self.lib.rows("SELECT name, name_source, excluded FROM faces WHERE id = ?", (face_id,))[0]
@@ -73,13 +87,16 @@ class NamingAFace(FacesCase):
         self.assertEqual(result.details["face_ids"], [face])
 
     def test_the_old_name_leaves_the_photo_unless_another_face_there_has_it(self):
-        photo = self.photo("a.jpg", people=["Ada Pembrook", "Milo Garrick"])
+        # In the photo by their faces alone. The rule lists a photo's face names in the
+        # order the faces were found, where the patch appended a new name at the end.
+        photo = self.photo("a.jpg")
         ada = self.face(photo, name="Ada Pembrook")
         milo = self.face(photo, name="Milo Garrick")
         self.face(photo, name="Milo Garrick")
+        self.assertEqual(self.people(photo), ["Ada Pembrook", "Milo Garrick"])
         faces.name_face(self.lib.library, ada, "Wren Halloway")
         faces.name_face(self.lib.library, milo, "Jude Ferris")
-        self.assertEqual(self.people(photo), ["Milo Garrick", "Wren Halloway", "Jude Ferris"])
+        self.assertEqual(self.people(photo), ["Wren Halloway", "Jude Ferris", "Milo Garrick"])
 
     def test_a_name_on_another_face_in_the_photo_is_refused(self):
         photo = self.photo("a.jpg")
@@ -136,29 +153,32 @@ class NamingFacesInBulk(FacesCase):
 
 class TakingNamesOff(FacesCase):
     def test_one_face_the_person_goes_from_the_photo(self):
-        photo = self.photo("a.jpg", people=["Wren Halloway"])
+        photo = self.photo("a.jpg")
         face = self.face(photo, name="Wren Halloway")
+        self.assertEqual(self.people(photo), ["Wren Halloway"])
         self.assertEqual(faces.unname_face(self.lib.library, face).changed, 1)
         self.assertEqual((self.face_row(face), self.people(photo)), ((None, "manual", 0), []))
 
     def test_undo_leaves_the_faces_unreviewed(self):
-        photo = self.photo("a.jpg", people=["Wren Halloway"])
+        photo = self.photo("a.jpg")
         face = self.face(photo, name="Wren Halloway", source="manual")
         faces.unname_faces(self.lib.library, [face], undo=True)
         self.assertEqual(self.face_row(face), (None, None, 0))
 
     def test_every_face_in_a_photo(self):
-        photo = self.photo("a.jpg", people=["Wren Halloway", "Ada Pembrook", "Kit Morrow"])
+        photo = self.photo("a.jpg", people=["Kit Morrow"])
         self.face(photo, name="Wren Halloway")
         self.face(photo, name="Ada Pembrook")
+        self.assertEqual(self.people(photo), ["Kit Morrow", "Wren Halloway", "Ada Pembrook"])
         self.assertEqual(faces.unname_photo(self.lib.library, photo).changed, 2)
         self.assertEqual(self.people(photo), ["Kit Morrow"])
 
 
 class ExcludingAndRestoring(FacesCase):
     def test_an_excluded_face_loses_its_name_and_leaves_the_photos_people(self):
-        photo = self.photo("a.jpg", people=["Wren Halloway"])
+        photo = self.photo("a.jpg")
         face = self.face(photo, name="Wren Halloway")
+        self.assertEqual(self.people(photo), ["Wren Halloway"])
         result = faces.exclude(self.lib.library, [face, 999], "stranger")
         self.assertEqual((result.changed, result.details["face_ids"]), (1, [face, 999]))
         self.assertEqual((self.face_row(face), self.people(photo)), ((None, "manual", 1), []))

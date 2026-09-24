@@ -6,7 +6,7 @@ from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, keywords, metadata
-from tagpup.store import embeddings, faces, photos, taxonomy
+from tagpup.store import embeddings, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -51,18 +51,14 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
             raw_meta = metadata.raw_metadata(et, new_path)
         recorded_tags = vocabulary.extract_tags(raw_meta)
-        # The faces are still filed under the old name until the row moves.
-        people_in_it = vocabulary.people_in_photo(
-            raw_meta, recorded_tags, faces.face_names(photo_path, db_path=library.path),
-            taxonomy.people_vocabulary(library.path))
         skipped = photos.move_rows(library.path, {photo_path: new_path})[1] if renamed else []
         if skipped:
             result.details["index_warning"] = (
                 "Renamed, but the index already has a photo at %s; its rows were left as they were."
                 % new_path)
         else:
-            photos.record_saved(library.path, new_path, recorded_tags, people_in_it,
-                                [title] if title else [], raw_meta, before=before)
+            photos.record_saved(library.path, new_path, recorded_tags, [title] if title else [], raw_meta,
+                                before=before)
     except Exception as e:
         logger.warning("Failed to update SQLite database metadata for %s: %s", new_path, e)
     return result

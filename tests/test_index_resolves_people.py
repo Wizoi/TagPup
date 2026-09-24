@@ -4,7 +4,7 @@ Who a keyword names depends on the library: `Crew/Rowan Thackeray` is a person o
 where `Crew` is a face root, and a bare `Imogen Vale` only where the taxonomy lists
 her. The metadata reader resolves that when it is given the database, and nothing
 made its callers give it one. `tagpup_cli index` did not -- nor the folder indexers in
-either server -- so re-indexing rebuilt `photos.people` from the three default roots
+either server -- so re-indexing rebuilt a photo's people from the three default roots
 and dropped everyone else: 2,594 names over 2,291 rows of one library, nearly all of
 them under `Pets`, a face root that only the taxonomy knows about.
 
@@ -21,6 +21,9 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from index import PhotoIndex
 from metadata import extract_people
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import people_of  # noqa: E402
 
 
 class TheIndexResolvesPeople(unittest.TestCase):
@@ -42,9 +45,7 @@ class TheIndexResolvesPeople(unittest.TestCase):
         self.tmp.cleanup()
 
     def stored_people(self, path):
-        import json
-        row = self.index.conn.execute("SELECT people FROM photos WHERE path = ?", (path,)).fetchone()
-        return json.loads(row[0])
+        return people_of(self.index.conn, path)
 
     def test_a_reader_without_the_database_does_not_cost_the_row_its_people(self):
         tags = ["Crew/Rowan Thackeray", "Imogen Vale", "Activity/Rowing"]

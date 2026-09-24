@@ -1,5 +1,10 @@
 """The faces table.
 
+Every write here that changes who a face is -- named, unnamed, excluded, detected,
+deleted -- rebuilds the people of the photos it touched (tagpup.store.people.rebuild),
+in the same transaction: clustering, re-detection and dedupe changed faces and left
+each photo's people as they were (docs/findings.md, #63).
+
 The names a photo's faces were given, turning their boxes when a photo is turned, a
 face's crop, a write to the table that the Identify Faces grids can account for, and
 what indexing and clustering read and record. The servers' queries move here in
@@ -12,7 +17,8 @@ import os
 import types
 
 from tagpup.core import paths
-from tagpup.store import db, generations
+from tagpup.store import db, generations, people
+from tagpup.store.people import PEOPLE_JSON
 
 logger = logging.getLogger(__name__)
 
@@ -194,11 +200,29 @@ def count_for_photo(conn, photo_path):
     return conn.execute("SELECT COUNT(*) FROM faces WHERE " + where, params).fetchone()[0]
 
 
+def _photos_of(conn, face_ids):
+    """The ids of the photos the faces among `face_ids` are in."""
+    found = set()
+    for chunk in _chunks(face_ids):
+        found.update(photo_id for (photo_id,) in conn.execute(
+            "SELECT DISTINCT photo_id FROM faces WHERE " + _in(chunk), chunk))
+    return found
+
+
+def _rebuilt(conn, photo_ids, changed):
+    """`changed`, after rebuilding the people of `photo_ids` if anything changed."""
+    if changed and photo_ids:
+        people.rebuild(conn, photo_ids)
+    return changed
+
+
 def remove_for_photo(conn, photo_path):
     """Delete a photo's face rows, names and decisions with them. Returns rows deleted.
     The caller commits."""
+    found, found_params = paths.sql_equals("path", photo_path)
+    photo_ids = {photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + found, found_params)}
     where, params = _on_photo(photo_path)
-    return conn.execute("DELETE FROM faces WHERE " + where, params).rowcount
+    return _rebuilt(conn, photo_ids, conn.execute("DELETE FROM faces WHERE " + where, params).rowcount)
 
 
 def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
@@ -211,6 +235,7 @@ def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
         (photo_id, json.dumps(box), embedding, name, prob)).lastrowid
     if crop:
         conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, crop))
+    _rebuilt(conn, [photo_id], bool(name))
     return face_id
 
 
@@ -253,14 +278,15 @@ def set_names(conn, names_by_id):
     commits."""
     conn.executemany("UPDATE faces SET name = ? WHERE id = ?",
                      [(name, face_id) for face_id, name in names_by_id.items()])
+    _rebuilt(conn, _photos_of(conn, names_by_id), bool(names_by_id))
 
 
 def clear_automatic_names(conn):
     """Clear the names clustering gave, leaving the ones given by hand. Returns how many
     were cleared. The caller commits."""
-    return conn.execute(
-        "UPDATE faces SET name = NULL"
-        " WHERE name IS NOT NULL AND COALESCE(name_source, '') <> 'manual'").rowcount
+    automatic = "name IS NOT NULL AND COALESCE(name_source, '') <> 'manual'"
+    photo_ids = {photo_id for (photo_id,) in conn.execute("SELECT DISTINCT photo_id FROM faces WHERE " + automatic)}
+    return _rebuilt(conn, photo_ids, conn.execute("UPDATE faces SET name = NULL WHERE " + automatic).rowcount)
 
 
 # ---- What the face actions read and write (tagpup.services.faces) ------------------------
@@ -293,24 +319,27 @@ def rows(conn, face_ids):
 def name(conn, face_ids, person_name):
     """Name faces as a person's decision (name_source 'manual'), which re-clustering does
     not revise. Excluded faces are left alone. Returns rows named. The caller commits."""
-    return sum(conn.execute(
+    changed = sum(conn.execute(
         "UPDATE faces SET name = ?, name_source = 'manual' WHERE " + _in(chunk) + " AND excluded = 0",
         [person_name] + chunk).rowcount for chunk in _chunks(face_ids))
+    return _rebuilt(conn, _photos_of(conn, face_ids), changed)
 
 
 def name_if_unnamed(conn, face_id, person_name):
     """Give an unnamed, unexcluded face a name as a guess -- who decided is left alone,
     so re-clustering may revise it. Returns rows named. The caller commits."""
-    return conn.execute("UPDATE faces SET name = ? WHERE id = ? AND name IS NULL AND excluded = 0",
-                        (person_name, face_id)).rowcount
+    changed = conn.execute("UPDATE faces SET name = ? WHERE id = ? AND name IS NULL AND excluded = 0",
+                           (person_name, face_id)).rowcount
+    return _rebuilt(conn, _photos_of(conn, [face_id]), changed)
 
 
 def unname(conn, face_ids, source="manual"):
     """Take the names off faces, recording who decided in name_source: 'manual' for
     "this is nobody", None for an undone guess. Returns rows changed. The caller commits."""
-    return sum(conn.execute(
+    changed = sum(conn.execute(
         "UPDATE faces SET name = NULL, name_source = ? WHERE " + _in(chunk),
         [source] + chunk).rowcount for chunk in _chunks(face_ids))
+    return _rebuilt(conn, _photos_of(conn, face_ids), changed)
 
 
 def unname_photo(conn, photo_path):
@@ -318,16 +347,19 @@ def unname_photo(conn, photo_path):
     equality: a LIKE pass as well cleared every name in IMG-1234.jpg along with
     IMG_1234.jpg. The caller commits."""
     where, params = _on_photo(photo_path)
-    return conn.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE " + where,
-                        params).rowcount
+    changed = conn.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE " + where,
+                           params).rowcount
+    return _rebuilt(conn, {photo_id for (photo_id,) in conn.execute(
+        "SELECT DISTINCT photo_id FROM faces WHERE " + where, params)}, changed)
 
 
 def exclude(conn, face_ids, reason):
     """Take faces out of identity work, their names with them, as a decision. Returns
     rows excluded. The caller commits."""
-    return sum(conn.execute(
+    changed = sum(conn.execute(
         "UPDATE faces SET excluded = 1, excluded_reason = ?, name = NULL, name_source = 'manual'"
         " WHERE " + _in(chunk), [reason] + chunk).rowcount for chunk in _chunks(face_ids))
+    return _rebuilt(conn, _photos_of(conn, face_ids), changed)
 
 
 def restore(conn, face_ids):
@@ -386,7 +418,7 @@ def identify_candidates(conn):
     to answer a question about integers.
     """
     return conn.execute(
-        "SELECT f.id, p.path, p.people, LENGTH(f.embedding) FROM faces f" + PHOTO
+        "SELECT f.id, p.path, " + PEOPLE_JSON + ", LENGTH(f.embedding) FROM faces f" + PHOTO
         + " WHERE f.name IS NULL AND f.excluded = 0").fetchall()
 
 
@@ -394,7 +426,7 @@ def unnamed_for_matching(conn):
     """(id, photo_path, box JSON, prob, mtime, embedding, raw_metadata JSON, people JSON)
     of every nameless face still in play, for a person's Identify grid."""
     return conn.execute(
-        "SELECT f.id, p.path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata, p.people"
+        "SELECT f.id, p.path, f.box, f.prob, p.mtime, f.embedding, p.raw_metadata, " + PEOPLE_JSON + ""
         " FROM faces f" + PHOTO + " WHERE f.name IS NULL AND f.excluded = 0").fetchall()
 
 
@@ -530,8 +562,9 @@ def decisions(conn):
 
 def delete(conn, face_ids):
     """Delete faces by id. Returns rows deleted. The caller commits."""
-    return sum(conn.execute("DELETE FROM faces WHERE " + _in(chunk), chunk).rowcount
-               for chunk in _chunks(face_ids))
+    photo_ids = _photos_of(conn, face_ids)
+    return _rebuilt(conn, photo_ids, sum(conn.execute("DELETE FROM faces WHERE " + _in(chunk), chunk).rowcount
+                                         for chunk in _chunks(face_ids)))
 
 
 # ---- What verify_workflow reads --------------------------------------------------------

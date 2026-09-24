@@ -46,6 +46,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
 from face_rows import add_face  # noqa: E402
 
+from tagpup.store import people as store_people  # noqa: E402
+
 
 class TestFacesTableIsIndexedForIdentifying(unittest.TestCase):
     """The identify screen filters on `excluded` and `name`. An index has to cover it.
@@ -197,14 +199,16 @@ class MatchingTestBase(unittest.TestCase):
             return e.code, e.read().decode("utf-8", errors="replace")
 
     def add_photo(self, name, people=()):
+        """A photo whose keywords name `people`, its people rebuilt from them."""
         # As the indexer writes it: absolute, native separators.
         path = os.path.abspath(os.path.join(self.tmpdir, name))
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(
-            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions,"
-            " raw_metadata) VALUES (?, 1.0, 1, '[]', ?, '[]', '{}')",
-            (path, json.dumps(list(people))),
+            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions,"
+            " raw_metadata) VALUES (?, 1.0, 1, ?, '[]', '{}')",
+            (path, json.dumps(["People/" + person for person in people])),
         )
+        store_people.rebuild_photos(conn, [path])
         conn.commit()
         conn.close()
         return path
@@ -213,6 +217,7 @@ class MatchingTestBase(unittest.TestCase):
         conn = sqlite3.connect(self.TEST_DB)
         fid = add_face(conn, photo, box="[0,0,10,10]", embedding=unit_vector(seed).tobytes(),
                        name=name, prob=0.99)
+        store_people.rebuild_photos(conn, [photo])   # as the store does, inserting a named face
         conn.commit()
         conn.close()
         return fid
@@ -455,17 +460,18 @@ class TestRemovingFacesKeepsTheGridWarm(MatchingTestBase):
 
     def a_grid_of(self, count, tag=None):
         """`count` nameless faces that all resemble each other, so they cluster."""
-        people = [tag] if tag else []
+        keywords = ["People/" + tag] if tag else []
         base = unit_vector(31)
         conn = sqlite3.connect(self.TEST_DB)
         ids = []
         for i in range(count):
             photo = os.path.abspath(os.path.join(self.tmpdir, "IMG_%04d.jpg" % i))
             conn.execute(
-                "INSERT OR REPLACE INTO photos (path, mtime, size, tags, people,"
-                " captions, raw_metadata) VALUES (?, 1.0, 1, '[]', ?, '[]', '{}')",
-                (photo, json.dumps(people)),
+                "INSERT OR REPLACE INTO photos (path, mtime, size, tags,"
+                " captions, raw_metadata) VALUES (?, 1.0, 1, ?, '[]', '{}')",
+                (photo, json.dumps(keywords)),
             )
+            store_people.rebuild_photos(conn, [photo])
             jitter = unit_vector(900 + i) * 0.02
             vec = base + jitter
             vec = (vec / np.linalg.norm(vec)).astype(np.float32)

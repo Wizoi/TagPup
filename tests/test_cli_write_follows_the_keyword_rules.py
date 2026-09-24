@@ -34,8 +34,8 @@ class CliWriteFollowsTheKeywordRules(unittest.TestCase):
                     (2, "People/Rowan Thackeray", "Rowan Thackeray", 1, 1)]:
             self.lib.execute("INSERT INTO tag_taxonomy (id, tag, name, parent_id, has_face)"
                              " VALUES (?, ?, ?, ?, ?)", row)
-        self.lib.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-                         " VALUES (?, 1.0, 1, '[\"Places/Harbour\"]', '[]', '[]', '{}')", (self.photo,))
+        self.lib.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+                         " VALUES (?, 1.0, 1, '[\"Places/Harbour\"]', '[]', '{}')", (self.photo,))
         self.suggestions = os.path.join(self.lib.root, "suggestions.json")
         with open(self.suggestions, "w", encoding="utf-8") as handle:
             json.dump([{"path": self.photo, "suggested_tags": [

@@ -1,8 +1,8 @@
 """Naming faces, and taking them out of identity work: TagTuner's Identify Faces.
 
-Each action keeps each photo's list of people in step with its faces
-(tagpup.store.photos.update_people), and writes through the library's write lock: most
-of them wrote on a connection of their own.
+Each photo's people follow its faces through the faces store, which rebuilds them at
+every write (tagpup.store.people.rebuild). Each action writes through the library's
+write lock: most of them wrote on a connection of their own.
 
 TagTuner caches its Identify Faces grids against a fingerprint of the faces table. The
 actions that take faces out of the pool -- naming, excluding -- write through
@@ -62,8 +62,6 @@ def name_face(library, face_id, person_name):
                           % person_name)
             return result
         faces.name(write.conn, [face_id], person_name)
-        photos.update_people(write.conn, photo_path, gained=[person_name],
-                             lost=[old_name] if old_name and old_name != person_name else [])
         result.changed = 1
     result.details.update(face_ids=[face_id], fingerprints=(write.before, write.after))
     return result
@@ -123,9 +121,6 @@ def name_faces(library, face_ids, person_name):
                 return result
 
         matched = faces.name(conn, face_ids, person_name)
-        for photo_path, fids in in_photo.items():
-            old_names = [selected[fid][1] for fid in fids if selected[fid][1] and selected[fid][1] != person_name]
-            photos.update_people(conn, photo_path, gained=[person_name], lost=old_names)
         result.changed = matched
     result.details.update(matched=matched, matched_ids=face_ids, face_ids=face_ids,
                           fingerprints=(write.before, write.after))
@@ -146,7 +141,6 @@ def unname_face(library, face_id):
         if old_name is None:
             return 0
         faces.unname(conn, [face_id])
-        photos.update_people(conn, photo_path, lost=[old_name])
         return 1
 
     result.changed = db.write_with_connection(library.path, unname, label="unname a face")
@@ -164,14 +158,7 @@ def unname_faces(library, face_ids, undo=False):
     source = None if undo else "manual"
 
     def unname(conn):
-        named = {}
-        for photo_path, name, _excluded in faces.rows(conn, face_ids).values():
-            if name:
-                named.setdefault(photo_path, set()).add(name)
-        changed = faces.unname(conn, face_ids, source)
-        for photo_path, old_names in named.items():
-            photos.update_people(conn, photo_path, lost=sorted(old_names))
-        return changed
+        return faces.unname(conn, face_ids, source)
 
     result.changed = db.write_with_connection(library.path, unname, label="unname faces")
     return result
@@ -183,11 +170,7 @@ def unname_photo(library, photo_path):
     result = Result(attempted=1)
 
     def unname(conn):
-        names = sorted(faces.names_in_photo(conn, photo_path))
-        changed = faces.unname_photo(conn, photo_path)
-        if names:
-            photos.update_people(conn, photo_path, lost=names)
-        return changed
+        return faces.unname_photo(conn, photo_path)
 
     result.changed = db.write_with_connection(library.path, unname, label="unname a photo's faces")
     return result
@@ -213,11 +196,7 @@ def exclude(library, face_ids, reason="not a person"):
                       % (reason, ", ".join(EXCLUSION_REASONS)))
         return result
     with faces.accounted_write(library.path, "exclude faces") as write:
-        named = faces.rows(write.conn, face_ids).values()
         result.changed = faces.exclude(write.conn, face_ids, reason)
-        for photo_path, old_name, _excluded in named:
-            if old_name:
-                photos.update_people(write.conn, photo_path, lost=[old_name])
     result.details.update(face_ids=list(face_ids), fingerprints=(write.before, write.after))
     return result
 
@@ -317,18 +296,12 @@ def _automatch(library, named, photo_path=None, folder=None):
             # and every other face action waited (docs/findings.md, #45).
             taken = faces.names_in_photo(conn, face_photo)
             proposed_names = [name for _fid, name in faces_proposed]
-            gained = set()
             for face_id, name in faces_proposed:
                 if proposed_names.count(name) > 1 or name in taken:
                     continue
                 # A bulk guess, not a per-face human decision, so it is left as an
                 # automatic assignment that re-clustering may revise.
-                changed = faces.name_if_unnamed(conn, face_id, name)
-                if changed:
-                    gained.add(name)
-                    count += changed
-            if gained:
-                photos.update_people(conn, face_photo, gained=sorted(gained))
+                count += faces.name_if_unnamed(conn, face_id, name)
         return count
 
     result.changed = db.write_with_connection(library.path, match, label="automatch faces")

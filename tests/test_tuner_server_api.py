@@ -36,6 +36,7 @@ from free_port import free_port  # noqa: E402
 import face_rows  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.store import people as store_people  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 
 FACE_DIM = 512
@@ -189,20 +190,22 @@ class TunerAPITestBase(unittest.TestCase):
         return path
 
     def add_photo(self, path, people=(), tags=(), caption=None):
+        """A photo row listing `people` as its own, for what reads them. A test of what
+        writes them seeds their sources and calls rebuild."""
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(
-            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
             (
                 path,
                 os.path.getmtime(path) if os.path.exists(path) else 1.0,
                 os.path.getsize(path) if os.path.exists(path) else 1,
                 json.dumps(list(tags)),
-                json.dumps(list(people)),
                 json.dumps([caption] if caption else []),
                 json.dumps({}),
             ),
         )
+        face_rows.add_people(conn, path, list(people))
         conn.commit()
         conn.close()
         return path
@@ -221,13 +224,19 @@ class TunerAPITestBase(unittest.TestCase):
         conn.close()
         return row[0] if row else None
 
+    def rebuild(self, photo_path):
+        """The photo's people made by the rule from its keywords and faces, as the store
+        makes them at every write."""
+        conn = sqlite3.connect(self.TEST_DB)
+        store_people.rebuild_photos(conn, [photo_path])
+        conn.commit()
+        conn.close()
+
     def photo_people(self, photo_path):
         conn = sqlite3.connect(self.TEST_DB)
-        row = conn.execute(
-            "SELECT people FROM photos WHERE path = ?", (photo_path,)
-        ).fetchone()
+        listed = face_rows.people_of(conn, photo_path)
         conn.close()
-        return json.loads(row[0]) if row and row[0] else []
+        return listed
 
 
 class TestPhotoDetails(TunerAPITestBase):
@@ -426,17 +435,21 @@ class TestUnmatch(TunerAPITestBase):
         self.assertIsNone(self.face_name(face_id))
 
     def test_removes_person_from_photo_when_no_other_face_matches(self):
-        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
+        # In the photo by the face alone: a keyword naming her would keep her there.
+        photo = self.add_photo(self.make_photo_file("a.jpg"))
         face_id = self.add_face(photo, unit_vector(61), name="Jane Doe")
+        self.rebuild(photo)
+        self.assertEqual(["Jane Doe"], self.photo_people(photo))
 
         self.post("/api/face/unmatch", {"face_id": face_id})
         self.assertNotIn("Jane Doe", self.photo_people(photo))
 
     def test_keeps_person_when_another_face_still_matches(self):
         """Two faces of the same person in one photo: unmatching one must not drop them."""
-        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
+        photo = self.add_photo(self.make_photo_file("a.jpg"))
         first = self.add_face(photo, unit_vector(62), name="Jane Doe")
         self.add_face(photo, unit_vector(63), name="Jane Doe")
+        self.rebuild(photo)
 
         self.post("/api/face/unmatch", {"face_id": first})
         self.assertIn(
@@ -464,8 +477,10 @@ class TestMatchBulkListsThePerson(TunerAPITestBase):
     def test_naming_unnamed_faces_lists_the_person_on_their_photo(self):
         """docs/findings.md, #42: the photo's people were written only when the
         assignment also displaced another name."""
-        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Bob"])
+        photo = self.add_photo(self.make_photo_file("a.jpg"), tags=["People/Bob"])
         face = self.add_face(photo, unit_vector(80))
+        self.rebuild(photo)
+        self.assertEqual(["Bob"], self.photo_people(photo))
 
         status, body = self.post("/api/faces/match-bulk", {"face_ids": [face], "person_name": "Jane"})
         self.assertEqual(status, 200, body)
@@ -525,8 +540,10 @@ class TestUnmatchAll(TunerAPITestBase):
 
 class TestPersonRename(TunerAPITestBase):
     def test_renames_across_faces_and_photo_people(self):
-        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
+        photo = self.add_photo(self.make_photo_file("a.jpg"))
         face_id = self.add_face(photo, unit_vector(90), name="Jane Doe")
+        self.rebuild(photo)
+        self.assertEqual(["Jane Doe"], self.photo_people(photo))
 
         status, body = self.post(
             "/api/person/rename", {"old_name": "Jane Doe", "new_name": "Jane Smith"}
@@ -537,9 +554,10 @@ class TestPersonRename(TunerAPITestBase):
         self.assertNotIn("Jane Doe", self.photo_people(photo))
 
     def test_leaves_other_people_untouched(self):
-        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe", "Bob Roe"])
+        photo = self.add_photo(self.make_photo_file("a.jpg"))
         self.add_face(photo, unit_vector(91), name="Jane Doe")
         bob = self.add_face(photo, unit_vector(92), name="Bob Roe")
+        self.rebuild(photo)
 
         self.post("/api/person/rename", {"old_name": "Jane Doe", "new_name": "Jane Smith"})
         self.assertEqual(self.face_name(bob), "Bob Roe")
@@ -1051,7 +1069,7 @@ class TestSubfolderListing(TunerAPITestBase):
         child = self.make_child("shoot", images=2)
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(
-            "INSERT INTO photos (path, tags, people, captions) VALUES (?, '[]', '[]', '[]')",
+            "INSERT INTO photos (path, tags, captions) VALUES (?, '[]', '[]')",
             (os.path.join(child, "img0.jpg"),),
         )
         conn.commit()
@@ -1155,8 +1173,8 @@ class TestTunerFolderRemoval(TunerAPITestBase):
 
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(
-            "INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-            " VALUES (?, 1.0, 1, '[]', '[]', '[]', '{}')",
+            "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+            " VALUES (?, 1.0, 1, '[]', '[]', '{}')",
             (photo,),
         )
         conn.execute(
@@ -1334,8 +1352,10 @@ class TestPathsMatchTheRowsTheIndexerWrote(TunerAPITestBase):
         self.assertEqual(self.photo_people(sibling), ["Tamsin Okafor"])
 
     def test_unmatch_all_finds_the_photo_whichever_way_it_is_spelled(self):
-        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Rowan Thackeray"])
+        photo = self.add_photo(self.make_photo_file("a.jpg"))
         face = self.add_face(photo, unit_vector(902), name="Rowan Thackeray")
+        self.rebuild(photo)
+        self.assertEqual(["Rowan Thackeray"], self.photo_people(photo))
 
         status, body = self.post("/api/photo/unmatch-all", {"photo_path": other_spelling(photo)})
         self.assertEqual(status, 200, body)
@@ -1454,7 +1474,7 @@ class TestSubfoldersOfATypedParent(TestSubfolderListing):
         child = self.make_child("shoot", images=1)
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(
-            "INSERT INTO photos (path, tags, people, captions) VALUES (?, '[]', '[]', '[]')",
+            "INSERT INTO photos (path, tags, captions) VALUES (?, '[]', '[]')",
             (os.path.join(child, "img0.jpg"),),
         )
         conn.commit()

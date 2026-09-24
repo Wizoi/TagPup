@@ -52,7 +52,7 @@ class FaceClickReadsNamedFacesOnce(unittest.TestCase):
         index.close()
         emb = lambda v: np.asarray(v, dtype=np.float32).tobytes()  # noqa: E731
         conn = tagpup_db.connect(self.db)
-        conn.execute("INSERT INTO photos (path, tags, people, captions) VALUES (?, '[]', '[]', '[]')", (PHOTO,))
+        conn.execute("INSERT INTO photos (path, tags, captions) VALUES (?, '[]', '[]')", (PHOTO,))
         add_face(conn, PHOTO, box="[1,2,3,4]", embedding=emb([1, 0, 0, 0]), name="Rowan Thackeray")
         add_face(conn, PHOTO, box="[5,6,7,8]", embedding=emb([0.8, 0.6, 0, 0]))
         conn.commit()

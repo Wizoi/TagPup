@@ -10,10 +10,9 @@ from typing import Dict, List, Optional, Set
 
 from tagpup.core import paths, vocabulary
 from tagpup.core.vocabulary import PeopleVocabulary
-from tagpup.store import db, generations, schema
+from tagpup.store import db, generations, people, schema
 
 logger = logging.getLogger(__name__)
-
 
 
 def generation(conn):
@@ -57,6 +56,14 @@ def add_path(conn, path, root_has_face=0):
             (level, parent_id, part, has_face)).lastrowid
         parent_has_face = has_face
     return parent_id
+
+
+def add_node(conn, path, root_has_face=0):
+    """add_path, for one node added on its own: the photos whose people it changes are
+    rebuilt (people.tree_edit). A loop adding many wraps the loop instead. Returns the
+    node's id. The caller commits."""
+    with people.tree_edit(conn):
+        return add_path(conn, path, root_has_face=root_has_face)
 
 
 def people_roots(conn):
@@ -215,11 +222,12 @@ def repair(db_path):
         return 0
 
     def put_right(conn):
-        for node_id, tag, has_face in orphans:
-            parent_id = add_path(conn, vocabulary.parent_of(tag), root_has_face=has_face)
-            conn.execute("UPDATE tag_taxonomy SET parent_id = ? WHERE id = ?", (parent_id, node_id))
-        for node_id, tag in misnamed:
-            conn.execute("UPDATE tag_taxonomy SET name = ? WHERE id = ?", (vocabulary.leaf_of(tag), node_id))
+        with people.tree_edit(conn):
+            for node_id, tag, has_face in orphans:
+                parent_id = add_path(conn, vocabulary.parent_of(tag), root_has_face=has_face)
+                conn.execute("UPDATE tag_taxonomy SET parent_id = ? WHERE id = ?", (parent_id, node_id))
+            for node_id, tag in misnamed:
+                conn.execute("UPDATE tag_taxonomy SET name = ? WHERE id = ?", (vocabulary.leaf_of(tag), node_id))
         return len(orphans) + len(misnamed)
 
     count = db.write_with_connection(db_path, put_right, label="tag tree repair")
@@ -242,26 +250,27 @@ def move_branch(conn, old, new):
     Renaming a node moves its branch to a free place. Merging one tag into another joins
     the branches.
     """
-    where, params = sql_branch(old)
-    nodes = conn.execute("SELECT id, tag FROM tag_taxonomy WHERE %s ORDER BY length(tag)" % where,
-                         params).fetchall()
-    if nodes and vocabulary.parent_of(new):
-        add_path(conn, vocabulary.parent_of(new))
-    joined = []
-    # Parents first, so each node's new parent is in place when the node gets there.
-    for node_id, tag in nodes:
-        place = new + tag[len(old):]
-        if conn.execute("SELECT 1 FROM tag_taxonomy WHERE tag = ?", (place,)).fetchone():
-            joined.append(node_id)
-            continue
-        parent = vocabulary.parent_of(place)
-        parent_id = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?",
-                                 (parent,)).fetchone()[0] if parent else None
-        conn.execute("UPDATE tag_taxonomy SET tag = ?, name = ?, parent_id = ? WHERE id = ?",
-                     (place, vocabulary.leaf_of(place), parent_id, node_id))
-    if joined:
-        conn.execute("DELETE FROM tag_taxonomy WHERE id IN (%s)" % ", ".join("?" * len(joined)), joined)
-    return len(nodes)
+    with people.tree_edit(conn):
+        where, params = sql_branch(old)
+        nodes = conn.execute("SELECT id, tag FROM tag_taxonomy WHERE %s ORDER BY length(tag)" % where,
+                             params).fetchall()
+        if nodes and vocabulary.parent_of(new):
+            add_path(conn, vocabulary.parent_of(new))
+        joined = []
+        # Parents first, so each node's new parent is in place when the node gets there.
+        for node_id, tag in nodes:
+            place = new + tag[len(old):]
+            if conn.execute("SELECT 1 FROM tag_taxonomy WHERE tag = ?", (place,)).fetchone():
+                joined.append(node_id)
+                continue
+            parent = vocabulary.parent_of(place)
+            parent_id = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?",
+                                     (parent,)).fetchone()[0] if parent else None
+            conn.execute("UPDATE tag_taxonomy SET tag = ?, name = ?, parent_id = ? WHERE id = ?",
+                         (place, vocabulary.leaf_of(place), parent_id, node_id))
+        if joined:
+            conn.execute("DELETE FROM tag_taxonomy WHERE id IN (%s)" % ", ".join("?" * len(joined)), joined)
+        return len(nodes)
 
 
 def people_nodes(db_path, name):
@@ -322,7 +331,8 @@ def tags(conn):
 def remove_node(conn, tag):
     """Take one node out of the tree, and nothing under it. Returns nodes removed. The
     caller commits."""
-    return conn.execute("DELETE FROM tag_taxonomy WHERE tag = ?", (tag,)).rowcount
+    with people.tree_edit(conn):
+        return conn.execute("DELETE FROM tag_taxonomy WHERE tag = ?", (tag,)).rowcount
 
 
 def face_flags(conn):
@@ -379,21 +389,24 @@ def forget_tag_embeddings(conn, tag):
 def delete_branch(conn, path):
     """Take the node `path` and every node under it out of the tree. The caller commits.
     Returns the nodes taken out."""
-    where, params = sql_branch(path)
-    return conn.execute("DELETE FROM tag_taxonomy WHERE " + where, params).rowcount
+    with people.tree_edit(conn):
+        where, params = sql_branch(path)
+        return conn.execute("DELETE FROM tag_taxonomy WHERE " + where, params).rowcount
 
 
 def set_branch_flags(conn, path, has_face=None, hidden=None):
     """Set a node's flags -- holding faces, hidden from autocomplete -- and the same on
     every node under it. None leaves a flag as it is. The caller commits. Returns the
     nodes the branch holds, when a flag was set."""
-    where, params = sql_branch(path)
-    changed = 0
-    for column, value in (("has_face", has_face), ("hidden_from_autocomplete", hidden)):
-        if value is not None:
-            changed = conn.execute("UPDATE tag_taxonomy SET %s = ? WHERE %s" % (column, where),
-                                   (value,) + params).rowcount
-    return changed
+    with people.tree_edit(conn):
+        where, params = sql_branch(path)
+        changed = 0
+        for column, value in (("has_face", has_face), ("hidden_from_autocomplete", hidden)):
+            if value is not None:
+                changed = conn.execute("UPDATE tag_taxonomy SET %s = ? WHERE %s" % (column, where),
+                                       (value,) + params).rowcount
+        return changed
+
 
 
 # ---- The JSON file beside a library ----------------------------------------------------
@@ -425,14 +438,12 @@ def seed(db_path):
         try:
             if conn.execute("SELECT COUNT(*) FROM tag_taxonomy").fetchone()[0] > 0:
                 return
-            # One face root; the others are words. A library flags any other root that
-            # holds faces itself (docs/findings.md, #66).
-            add_path(conn, vocabulary.NEW_LIBRARY_FACE_ROOT, root_has_face=1)
-            for root in ("Activity", "Pets", "School", "Trips"):
-                add_path(conn, root)
-
-            tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if "photos" in tables:
+            with people.tree_edit(conn):
+                # One face root; the others are words. A library flags any other root
+                # that holds faces itself (docs/findings.md, #66).
+                add_path(conn, vocabulary.NEW_LIBRARY_FACE_ROOT, root_has_face=1)
+                for root in ("Activity", "Pets", "School", "Trips"):
+                    add_path(conn, root)
                 carried = set()
                 for (tags_json,) in conn.execute("SELECT tags FROM photos WHERE tags IS NOT NULL").fetchall():
                     try:
@@ -441,8 +452,7 @@ def seed(db_path):
                         pass
                 for tag in carried:
                     add_path(conn, tag)
-            # Under People, which holds faces.
-            if "faces" in tables:
+                # Under People, which holds faces.
                 for (name,) in conn.execute("SELECT DISTINCT name FROM faces WHERE name IS NOT NULL").fetchall():
                     if name.strip():
                         add_path(conn, vocabulary.NEW_LIBRARY_FACE_ROOT + "/" + name)
@@ -505,8 +515,9 @@ class TagTaxonomy:
             # the whole set: a long-running indexer holds what it loaded, and a tag
             # deleted or renamed in the app meanwhile came back on its next save.
             added = self.paths - self._in_db
-            for path in sorted(added):
-                add_path(conn, path)
+            with people.tree_edit(conn):
+                for path in sorted(added):
+                    add_path(conn, path)
             conn.commit()
             conn.close()
             self._in_db |= added

@@ -6,11 +6,10 @@ how many rows break the rule and a few of them, so a report can say how much wit
 saying whose.
 """
 import collections
-import json
 import os
 
 from tagpup.core import paths
-from tagpup.store import generations, schema
+from tagpup.store import generations, people, schema
 
 #: One rule and what breaks it. `examples` are paths, ids or tags, a few at most.
 Check = collections.namedtuple("Check", "name count examples")
@@ -84,23 +83,15 @@ def named_and_excluded(conn):
         "SELECT id FROM faces WHERE excluded = 1 AND name IS NOT NULL ORDER BY id")])
 
 
-def face_names_missing_from_people(conn):
-    """Names on a photo's faces that its people do not list (docs/findings.md, #42)."""
-    if not _faces_by_id(conn):
-        return _check("face names missing from their photo's people", [])
-    broken = []
-    listed = {}
-    for photo_path, people_json, name in conn.execute(
-            "SELECT p.path, p.people, f.name FROM faces f JOIN photos p ON p.id = f.photo_id"
-            " WHERE f.name IS NOT NULL AND f.excluded = 0 ORDER BY p.path"):
-        if photo_path not in listed:
-            try:
-                listed[photo_path] = set(json.loads(people_json or "[]"))
-            except (TypeError, ValueError):
-                listed[photo_path] = set()
-        if name not in listed[photo_path]:
-            broken.append(photo_path)
-    return _check("face names missing from their photo's people", broken)
+def people_out_of_date(conn):
+    """Photos whose people are not what the rule makes them from their keywords, faces
+    and the tree (tagpup.store.people.rebuild): a writer that changed one of them and
+    did not rebuild (docs/findings.md, #42, #63). Waits for migration 6."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'photo_people'").fetchone():
+        return _check("photos whose people are out of date", [])
+    stale = set(people.stale(conn))
+    return _check("photos whose people are out of date", sorted(
+        path for photo_id, path in conn.execute("SELECT id, path FROM photos") if photo_id in stale))
 
 
 def orphan_nodes(conn):
@@ -140,7 +131,7 @@ def missing_files(conn):
 
 #: The rules a library keeps, in the order a report lists them.
 RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excluded,
-         face_names_missing_from_people, orphan_nodes, crops_without_a_face, one_file_two_rows)
+         people_out_of_date, orphan_nodes, crops_without_a_face, one_file_two_rows)
 
 
 def run(conn):

@@ -14,10 +14,12 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from service_fixture import TempLibrary  # noqa: E402
+from face_rows import people_of  # noqa: E402
 
+from tagpup.core import vocabulary  # noqa: E402
 from tagpup.core.result import NotFound, Result  # noqa: E402
 from tagpup.services import tags  # noqa: E402
-from tagpup.store import taxonomy  # noqa: E402
+from tagpup.store import db, people as store_people, photos as store_photos, taxonomy  # noqa: E402
 
 
 class TreeCase(unittest.TestCase):
@@ -33,6 +35,10 @@ class TreeCase(unittest.TestCase):
             for path in photo_paths:
                 if path in self.unwritable:
                     result.fail(path, "the file is open elsewhere")
+                else:
+                    # What the real one records in the index, having written the file.
+                    held = json.loads(self.lib.rows("SELECT tags FROM photos WHERE path = ?", (path,))[0][0])
+                    store_photos.record_tags(library.path, path, vocabulary.retag(held, old, new)[0])
             return result
 
         patcher = mock.patch("tagpup.services.tagging.replace_tag", side_effect=replace_tag)
@@ -49,10 +55,32 @@ class TreeCase(unittest.TestCase):
         return taxonomy.find(self.lib.library.path, path)["id"]
 
     def photo(self, name, tags_=(), people=()):
+        """A photo carrying `tags_`, and keywords naming `people` after them; its people
+        rebuilt from them."""
         path = self.lib.photo(name)
-        self.lib.add_row(path, tags=tags_)
-        self.lib.execute("UPDATE photos SET people = ? WHERE path = ?", (json.dumps(list(people)), path))
+        self.lib.add_row(path, tags=list(tags_) + ["People/" + person for person in people])
+        self.rebuild(path)
         return path
+
+    def face(self, photo, box, name):
+        """A named face, the photo's people rebuilt as the store does."""
+        self.lib.add_face(photo, box, name=name)
+        self.rebuild(photo)
+
+    def rebuild(self, photo):
+        conn = db.connect(self.lib.library.path)
+        try:
+            store_people.rebuild_photos(conn, [photo])
+            conn.commit()
+        finally:
+            conn.close()
+
+    def people(self, photo):
+        conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
+        try:
+            return people_of(conn, photo)
+        finally:
+            conn.close()
 
     def tree(self):
         return {row[0]: row[1:] for row in self.lib.rows(
@@ -156,19 +184,20 @@ class Renaming(TreeCase):
 
     def test_a_person_is_renamed_on_their_faces_and_in_each_photos_people(self):
         person = self.node("People/Rowan Thackeray", has_face=1)
+        # Its keywords name the new name already, so after the rename it is listed once.
         photo = self.photo("a.jpg", ["People/Rowan Thackeray"],
-                           people=["Rowan Thackeray", "Ada Pembrook", "Rowan Thackeray-Vale"])
-        self.lib.add_face(photo, [0, 0, 10, 10], name="Rowan Thackeray")
+                           people=["Ada Pembrook", "Rowan Thackeray-Vale"])
+        self.face(photo, [0, 0, 10, 10], name="Rowan Thackeray")
+        self.assertEqual(self.people(photo), ["Rowan Thackeray", "Ada Pembrook", "Rowan Thackeray-Vale"])
         result = tags.rename(self.lib.library, person, "Rowan Thackeray-Vale", "exiftool")
         self.assertEqual(result.details["faces_renamed"], 1)
         self.assertEqual(self.lib.rows("SELECT name FROM faces"), [("Rowan Thackeray-Vale",)])
-        self.assertEqual(json.loads(self.lib.rows("SELECT people FROM photos")[0][0]),
-                         ["Rowan Thackeray-Vale", "Ada Pembrook"])
+        self.assertEqual(self.people(photo), ["Rowan Thackeray-Vale", "Ada Pembrook"])
 
     def test_a_keyword_that_holds_no_faces_leaves_faces_alone(self):
         rowing = self.node("Activity/Rowan")
         photo = self.photo("a.jpg", ["Activity/Rowan"], people=["Rowan"])
-        self.lib.add_face(photo, [0, 0, 10, 10], name="Rowan")
+        self.face(photo, [0, 0, 10, 10], name="Rowan")
         tags.rename(self.lib.library, rowing, "Rowing", "exiftool")
         self.assertEqual(self.lib.rows("SELECT name FROM faces"), [("Rowan",)])
 
@@ -261,14 +290,16 @@ class RenamingAPerson(TreeCase):
         self.assertEqual(result.details["photos_affected"], 1)
 
     def test_faces_whatever_their_case_and_each_photos_people(self):
-        photo = self.photo("a.jpg", people=["rowan thackeray", "Ada Pembrook"])
-        self.lib.add_face(photo, [0, 0, 10, 10], name="Rowan Thackeray")
-        self.lib.add_face(photo, [10, 10, 20, 20], name="rowan thackeray")
+        # Listed by a face named in lower case; the keyword people come first, then
+        # whom only a face names, in the order the faces were found.
+        photo = self.photo("a.jpg", people=["Ada Pembrook"])
+        self.face(photo, [0, 0, 10, 10], name="rowan thackeray")
+        self.face(photo, [10, 10, 20, 20], name="Rowan Thackeray")
+        self.assertEqual(self.people(photo), ["Ada Pembrook", "rowan thackeray"])
         result = self.rename("Rowan Thackeray", "Rowan Vale")
         self.assertEqual(result.details["faces_renamed"], 2)
         self.assertEqual(self.lib.rows("SELECT DISTINCT name FROM faces"), [("Rowan Vale",)])
-        self.assertEqual(json.loads(self.lib.rows("SELECT people FROM photos")[0][0]),
-                         ["Rowan Vale", "Ada Pembrook"])
+        self.assertEqual(self.people(photo), ["Ada Pembrook", "Rowan Vale"])
 
     def test_into_a_name_filed_already_the_two_become_one(self):
         self.node("People/Rowan Vale")

@@ -30,7 +30,9 @@ from tuner_server import start_server as start_tuner_server, set_active_db_path
 from tests.test_face_clustering_rules import identity_vector, near
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
-from face_rows import add_face  # noqa: E402
+from face_rows import add_face, people_of  # noqa: E402
+
+from tagpup.store import people as store_people  # noqa: E402
 
 
 class ExclusionTestBase(unittest.TestCase):
@@ -99,6 +101,7 @@ class ExclusionTestBase(unittest.TestCase):
             return json.loads(r.read().decode("utf-8"))
 
     def add_photo(self, name, people=()):
+        """A photo whose keywords name `people`, its people rebuilt from them."""
         from PIL import Image
 
         # As the indexer writes it: absolute, native separators.
@@ -106,10 +109,11 @@ class ExclusionTestBase(unittest.TestCase):
         Image.new("RGB", (64, 64), (80, 90, 100)).save(path, "JPEG")
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(
-            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-            " VALUES (?, 1.0, 1, '[]', ?, '[]', '{}')",
-            (path, json.dumps(list(people))),
+            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+            " VALUES (?, 1.0, 1, ?, '[]', '{}')",
+            (path, json.dumps(["People/" + person for person in people])),
         )
+        store_people.rebuild_photos(conn, [path])
         conn.commit()
         conn.close()
         return path
@@ -117,6 +121,7 @@ class ExclusionTestBase(unittest.TestCase):
     def add_face(self, photo, embedding, name=None, box=(0, 0, 100, 100)):
         conn = sqlite3.connect(self.TEST_DB)
         fid = add_face(conn, photo, box=box, embedding=embedding.tobytes(), name=name, prob=0.99)
+        store_people.rebuild_photos(conn, [photo])   # as the store does, inserting a named face
         conn.commit()
         conn.close()
         return fid
@@ -132,9 +137,9 @@ class ExclusionTestBase(unittest.TestCase):
 
     def photo_people(self, photo):
         conn = sqlite3.connect(self.TEST_DB)
-        r = conn.execute("SELECT people FROM photos WHERE path = ?", (photo,)).fetchone()
+        listed = people_of(conn, photo)
         conn.close()
-        return json.loads(r[0]) if r and r[0] else []
+        return listed
 
 
 class TestExcludeEndpoint(ExclusionTestBase):
@@ -160,14 +165,23 @@ class TestExcludeEndpoint(ExclusionTestBase):
         self.assertIsNone(self.row(face)["name"])
 
     def test_the_person_leaves_the_photo_when_no_face_of_theirs_remains(self):
-        photo = self.add_photo("a.jpg", people=["Jane Doe"])
+        # In the photo by the face alone: no keyword names her (docs/findings.md, #63).
+        photo = self.add_photo("a.jpg")
         face = self.add_face(photo, identity_vector(1), name="Jane Doe")
+        self.assertIn("Jane Doe", self.photo_people(photo))
 
         self.post("/api/faces/exclude", {"face_ids": [face]})
         self.assertNotIn("Jane Doe", self.photo_people(photo))
 
-    def test_the_person_stays_when_another_face_of_theirs_remains(self):
+    def test_the_person_stays_when_a_keyword_still_names_them(self):
         photo = self.add_photo("a.jpg", people=["Jane Doe"])
+        face = self.add_face(photo, identity_vector(1), name="Jane Doe")
+
+        self.post("/api/faces/exclude", {"face_ids": [face]})
+        self.assertEqual(["Jane Doe"], self.photo_people(photo))
+
+    def test_the_person_stays_when_another_face_of_theirs_remains(self):
+        photo = self.add_photo("a.jpg")
         first = self.add_face(photo, identity_vector(1), name="Jane Doe")
         self.add_face(photo, identity_vector(2), name="Jane Doe", box=(200, 0, 300, 100))
 

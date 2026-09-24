@@ -64,10 +64,9 @@ class RenameCase(unittest.TestCase):
         conn = tagpup_db.connect(self.db_path)
         try:
             conn.execute(
-                "INSERT INTO photos (path, tags, people, raw_metadata) "
-                "VALUES (?, ?, ?, ?)",
-                (native(path), json.dumps(["Cross Country"]), json.dumps([]),
-                 json.dumps({})),
+                "INSERT INTO photos (path, tags, raw_metadata) "
+                "VALUES (?, ?, ?)",
+                (native(path), json.dumps(["Cross Country"]), json.dumps({})),
             )
             add_vector(conn, native(path), embedding)
             for name in face_names:

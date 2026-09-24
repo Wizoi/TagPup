@@ -22,6 +22,9 @@ import db as tagpup_db
 import tagpup_server
 from tagpup.store import schema  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import people_of  # noqa: E402
+
 PHOTO = "D:/Library/2020/a.jpg"
 
 # What the indexer writes, and so what every real row looks like: os.path.abspath,
@@ -47,9 +50,8 @@ class TestTheIndexHearsAboutBulkEdits(unittest.TestCase):
              ("People/Jane Doe", "Jane Doe", 1, 1)],
         )
         conn.execute(
-            "INSERT INTO photos (path, tags, people, raw_metadata) VALUES (?,?,?,?)",
-            (STORED, json.dumps(["Beach"]), json.dumps([]),
-             json.dumps({"XMP:Subject": ["Beach"]})),
+            "INSERT INTO photos (path, tags, raw_metadata) VALUES (?,?,?)",
+            (STORED, json.dumps(["Beach"]), json.dumps({"XMP:Subject": ["Beach"]})),
         )
         conn.commit()
         conn.close()
@@ -71,17 +73,18 @@ class TestTheIndexHearsAboutBulkEdits(unittest.TestCase):
         conn = tagpup_db.connect(self.db_path)
         try:
             cur = conn.execute(
-                "SELECT tags, people, raw_metadata FROM photos WHERE path = ?", (stored,),
+                "SELECT tags, raw_metadata FROM photos WHERE path = ?", (stored,),
             )
             found = cur.fetchone()
+            listed = people_of(conn, stored)
         finally:
             conn.close()
         if not found:
             return None
         return {
             "tags": json.loads(found[0] or "[]"),
-            "people": json.loads(found[1] or "[]"),
-            "raw": json.loads(found[2] or "{}"),
+            "people": listed,
+            "raw": json.loads(found[1] or "{}"),
         }
 
     def test_the_new_tags_are_recorded(self):

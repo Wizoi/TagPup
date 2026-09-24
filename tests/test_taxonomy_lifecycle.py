@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 from tagpup_server import start_server as start_tagpup_server, set_active_db_path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from free_port import free_port  # noqa: E402
-from face_rows import add_face  # noqa: E402
+from face_rows import add_face, add_people, people_of  # noqa: E402
 
 
 def _exiftool_path():
@@ -186,14 +186,13 @@ class TaxonomyTestBase(unittest.TestCase):
         raw_meta = {"XMP:Subject": flat, "XMP:HierarchicalSubject": hierarchical}
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(
-            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
             (
                 path,
                 os.path.getmtime(path),
                 os.path.getsize(path),
                 json.dumps(tags),
-                json.dumps([]),
                 json.dumps([]),
                 json.dumps(raw_meta),
             ),
@@ -561,9 +560,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
             "INSERT INTO faces (photo_id, box, embedding, name) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, ?)",
             (photo, b"", "Jane Doe"),
         )
-        conn.execute(
-            "UPDATE photos SET people = ? WHERE path = ?", ('["Jane Doe"]', photo)
-        )
+        add_people(conn, photo, ["Jane Doe"])
         conn.commit()
         conn.close()
 
@@ -574,9 +571,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
 
         conn = sqlite3.connect(self.TEST_DB)
         face_names = {r[0] for r in conn.execute("SELECT name FROM faces").fetchall()}
-        people = conn.execute(
-            "SELECT people FROM photos WHERE path = ?", (photo,)
-        ).fetchone()[0]
+        people = people_of(conn, photo)
         conn.close()
         self.assertIn("Jane Smith", face_names, "resolved faces kept the old name")
         self.assertNotIn("Jane Doe", face_names)

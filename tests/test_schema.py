@@ -5,6 +5,7 @@ tree, each with its own idea of the schema (docs/findings.md, #48). Migration 1 
 tables of 2026-09; a library older than them is refused, not converted: every library
 the owner has was already that shape, and the conversions retired on 2026-09-24.
 """
+import json
 import os
 import shutil
 import sys
@@ -96,7 +97,7 @@ class ANewLibrary(SchemaTestCase):
         conn = self.connect()
         self.assertEqual([m.name for m in schema.MIGRATIONS], applied)
         self.assertEqual(schema.LATEST, schema.version(conn))
-        self.assertEqual({"photos", "faces", "face_crops", "embeddings", "tag_taxonomy",
+        self.assertEqual({"photos", "faces", "face_crops", "embeddings", "photo_people", "tag_taxonomy",
                           "tag_embeddings", "generations", "schema_version"}, tables(conn))
 
     def test_has_the_document_id_index(self):
@@ -358,6 +359,29 @@ class ALibraryWithTwoCopiesOfEachVector(SchemaTestCase):
         self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0])
 
 
+class ALibraryWithAListOfPeoplePerPhoto(SchemaTestCase):
+    """Before migration 6 a photo's people were a JSON list on its row, patched by
+    whichever action changed them (#63)."""
+
+    def setUp(self):
+        super().setUp()
+        make_unmigrated_library(self.db_path)
+        conn = self.connect()
+        # The keyword names Oda; the list, written by hand at some point, also names
+        # someone neither the keywords nor the faces do.
+        conn.execute("UPDATE photos SET tags = ?, people = ? WHERE path = 'D:/a.jpg'",
+                     (json.dumps(["People/Oda Castellane"]), json.dumps(["Oda Castellane", "Nobody Here"])))
+        conn.commit()
+        schema.ensure(self.db_path)
+
+    def test_each_photo_lists_whom_its_keywords_and_faces_name(self):
+        self.assertEqual([("Oda Castellane", "keyword"), ("Wren Halloway", "face")], self.connect().execute(
+            "SELECT name, source FROM photo_people ORDER BY position").fetchall())
+
+    def test_the_list_goes(self):
+        self.assertNotIn("people", columns(self.connect(), "photos"))
+
+
 class ThePhotoIdMigration(SchemaTestCase):
     def test_refuses_a_connection_with_foreign_keys_on(self):
         # Dropping the tables to rebuild them would delete every face and crop first (#83).
@@ -392,7 +416,7 @@ class Generations(SchemaTestCase):
         super().setUp()
         schema.ensure(self.db_path)
         self.conn = self.connect()
-        self.conn.execute("INSERT INTO photos (path, mtime, size, people) VALUES ('D:/a.jpg', 1.0, 1, '[]')")
+        self.conn.execute("INSERT INTO photos (path, mtime, size) VALUES ('D:/a.jpg', 1.0, 1)")
         add_face(self.conn, "D:/a.jpg")
         self.conn.commit()
 
@@ -403,7 +427,7 @@ class Generations(SchemaTestCase):
         return generations.value(self.conn, name) != before
 
     def test_a_change_to_a_photo_row_moves_photos(self):
-        self.assertTrue(self.moved("photos", "UPDATE photos SET people = '[\"Wren Halloway\"]'"))
+        self.assertTrue(self.moved("photos", "UPDATE photos SET captions = '[]'"))
 
     def test_naming_a_face_moves_faces(self):
         self.assertTrue(self.moved("faces", "UPDATE faces SET name = 'Wren Halloway'"))

@@ -18,7 +18,7 @@ from index import PhotoIndex
 from tuner_server import start_server, TunerHTTPRequestHandler
 from tagpup_server import TagPupHTTPRequestHandler
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from face_rows import add_vector, configured_model  # noqa: E402
+from face_rows import add_people, add_vector, configured_model, people_of  # noqa: E402
 from free_port import free_port  # noqa: E402
 
 
@@ -80,17 +80,17 @@ class TestStability(unittest.TestCase):
         
         # Insert parent photo
         cursor.execute("""
-            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
             "C:/photos/test_photo.jpg",
             12345.67,
             98765,
             json.dumps(["Nature", "Forest"]),
-            json.dumps(["John Doe"]),
             json.dumps(["A beautiful forest"]),
             json.dumps({"Make": "Canon", "Model": "EOS 5D"})
         ))
+        add_people(cursor, "C:/photos/test_photo.jpg", ["John Doe"])
         add_vector(photo_index.conn, "C:/photos/test_photo.jpg", dummy_emb_bytes)
         
         # Insert linked face
@@ -215,11 +215,12 @@ class TestStability(unittest.TestCase):
         
         # Photo 1: Tagged with "Alice"
         cursor.execute("""
-            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
-            "C:/photos/photo1.jpg", 1000.0, 500, json.dumps([]), json.dumps(["Alice"]), json.dumps([]), json.dumps({})
+            "C:/photos/photo1.jpg", 1000.0, 500, json.dumps([]), json.dumps([]), json.dumps({})
         ))
+        add_people(cursor, "C:/photos/photo1.jpg", ["Alice"])
         cursor.execute("""
             INSERT INTO faces (photo_id, box, embedding, name, prob)
             VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)
@@ -229,10 +230,10 @@ class TestStability(unittest.TestCase):
         
         # Photo 2: Untagged
         cursor.execute("""
-            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
-            "C:/photos/photo2.jpg", 2000.0, 500, json.dumps([]), json.dumps([]), json.dumps([]), json.dumps({})
+            "C:/photos/photo2.jpg", 2000.0, 500, json.dumps([]), json.dumps([]), json.dumps({})
         ))
         cursor.execute("""
             INSERT INTO faces (photo_id, box, embedding, name, prob)
@@ -300,11 +301,12 @@ class TestStability(unittest.TestCase):
         
         # Photo 1: Single face, tagged with "Alice" (Anchor photo)
         cursor.execute("""
-            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
-            "C:/photos/photo1.jpg", 1000.0, 500, json.dumps([]), json.dumps(["Alice"]), json.dumps([]), json.dumps({})
+            "C:/photos/photo1.jpg", 1000.0, 500, json.dumps([]), json.dumps([]), json.dumps({})
         ))
+        add_people(cursor, "C:/photos/photo1.jpg", ["Alice"])
         cursor.execute("""
             INSERT INTO faces (photo_id, box, embedding, name, prob)
             VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)
@@ -314,11 +316,12 @@ class TestStability(unittest.TestCase):
         
         # Photo 2: Two faces, tagged with "Alice", but both faces have similarity < 0.80 to Alice
         cursor.execute("""
-            INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
-            "C:/photos/photo2.jpg", 2000.0, 500, json.dumps([]), json.dumps(["Alice"]), json.dumps([]), json.dumps({})
+            "C:/photos/photo2.jpg", 2000.0, 500, json.dumps([]), json.dumps([]), json.dumps({})
         ))
+        add_people(cursor, "C:/photos/photo2.jpg", ["Alice"])
         # Face 2 (in Photo 2)
         cursor.execute("""
             INSERT INTO faces (photo_id, box, embedding, name, prob)
@@ -384,7 +387,6 @@ class TestStability(unittest.TestCase):
                 123456.0 + i,
                 1000 + i,
                 json.dumps(["tag"]),
-                json.dumps(["John Doe"]),
                 json.dumps(["caption"]),
                 json.dumps({"EXIF:DateTimeOriginal": "2026:06:24 18:00:00", "Make": "Canon"})
             ))
@@ -398,9 +400,11 @@ class TestStability(unittest.TestCase):
             
         cursor.execute("BEGIN TRANSACTION")
         cursor.executemany("""
-            INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, photo_rows)
+        for row in photo_rows:
+            add_people(cursor, row[0], ["John Doe"])
         model = configured_model()
         cursor.executemany(
             "INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector)"
@@ -477,10 +481,11 @@ class TestStability(unittest.TestCase):
         resolved_emb /= norm
         
         # Insert unmatched face with same embedding (similarity = 1.0) but name IS NULL
-        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (native("C:/photos/automatch_test.jpg"), 1000.0, 100, "[]", "[]", "[]", "{}"))
-        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (native("C:/photos/john_doe.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                       (native("C:/photos/automatch_test.jpg"), 1000.0, 100, "[]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                       (native("C:/photos/john_doe.jpg"), 1000.0, 100, "[]", "[]", "{}"))
+        add_people(cursor, native("C:/photos/john_doe.jpg"), ['John Doe'])
         
         cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/john_doe.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
@@ -510,8 +515,7 @@ class TestStability(unittest.TestCase):
         self.assertEqual(name, "John Doe")
         
         # Also verify photo's people field is updated
-        c.execute("SELECT people FROM photos WHERE path = ?", (native("C:/photos/automatch_test.jpg"),))
-        people = json.loads(c.fetchone()[0])
+        people = people_of(conn, native("C:/photos/automatch_test.jpg"))
         self.assertIn("John Doe", people)
         conn.close()
 
@@ -525,12 +529,13 @@ class TestStability(unittest.TestCase):
         resolved_emb /= norm
         
         # Insert photos in the same folder
-        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (native("C:/photos/folderA/photo1.jpg"), 1000.0, 100, "[]", "[]", "[]", "{}"))
-        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (native("C:/photos/folderA/photo2.jpg"), 1000.0, 100, "[]", "[]", "[]", "{}"))
-        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (native("C:/photos/folderA/john_doe.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                       (native("C:/photos/folderA/photo1.jpg"), 1000.0, 100, "[]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                       (native("C:/photos/folderA/photo2.jpg"), 1000.0, 100, "[]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                       (native("C:/photos/folderA/john_doe.jpg"), 1000.0, 100, "[]", "[]", "{}"))
+        add_people(cursor, native("C:/photos/folderA/john_doe.jpg"), ['John Doe'])
         
         # Insert faces
         cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
@@ -574,10 +579,11 @@ class TestStability(unittest.TestCase):
         norm = np.linalg.norm(resolved_emb)
         resolved_emb /= norm
         
-        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (native("C:/photos/duplicate_test.jpg"), 1000.0, 100, "[]", "[]", "[]", "{}"))
-        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (native("C:/photos/john_doe.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                       (native("C:/photos/duplicate_test.jpg"), 1000.0, 100, "[]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                       (native("C:/photos/john_doe.jpg"), 1000.0, 100, "[]", "[]", "{}"))
+        add_people(cursor, native("C:/photos/john_doe.jpg"), ['John Doe'])
         
         cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/john_doe.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
@@ -620,10 +626,12 @@ class TestStability(unittest.TestCase):
         norm = np.linalg.norm(resolved_emb)
         resolved_emb /= norm
         
-        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (native("C:/photos/already_tagged_test.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
-        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (native("C:/photos/john_doe.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                       (native("C:/photos/already_tagged_test.jpg"), 1000.0, 100, "[]", "[]", "{}"))
+        add_people(cursor, native("C:/photos/already_tagged_test.jpg"), ['John Doe'])
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                       (native("C:/photos/john_doe.jpg"), 1000.0, 100, "[]", "[]", "{}"))
+        add_people(cursor, native("C:/photos/john_doe.jpg"), ['John Doe'])
         
         cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/john_doe.jpg"), "[0,0,10,10]", resolved_emb.tobytes(), "John Doe", 0.95))
@@ -663,8 +671,9 @@ class TestStability(unittest.TestCase):
         photo_index.load()
         cursor = photo_index.conn.cursor()
         
-        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (native("C:/photos/conflict_test.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                       (native("C:/photos/conflict_test.jpg"), 1000.0, 100, "[]", "[]", "{}"))
+        add_people(cursor, native("C:/photos/conflict_test.jpg"), ['John Doe'])
         
         # Face 1 is John Doe, Face 2 is unmatched
         cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
@@ -700,8 +709,9 @@ class TestStability(unittest.TestCase):
         cursor = photo_index.conn.cursor()
         
         # Photo 1 has John Doe already, and an unmatched face
-        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (native("C:/photos/conflict_p1.jpg"), 1000.0, 100, "[]", "[\"John Doe\"]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                       (native("C:/photos/conflict_p1.jpg"), 1000.0, 100, "[]", "[]", "{}"))
+        add_people(cursor, native("C:/photos/conflict_p1.jpg"), ['John Doe'])
         cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/conflict_p1.jpg"), "[0,0,10,10]", b"", "John Doe", 0.95))
         cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
@@ -709,8 +719,8 @@ class TestStability(unittest.TestCase):
         face2_id = cursor.lastrowid
         
         # Photo 2 has another unmatched face
-        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (native("C:/photos/conflict_p2.jpg"), 1000.0, 100, "[]", "[]", "[]", "{}"))
+        cursor.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                       (native("C:/photos/conflict_p2.jpg"), 1000.0, 100, "[]", "[]", "{}"))
         cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",
                        (native("C:/photos/conflict_p2.jpg"), "[0,0,10,10]", b"", None, 0.95))
         face3_id = cursor.lastrowid
@@ -825,14 +835,16 @@ class TestStability(unittest.TestCase):
         for i in range(6):
             path = f"C:/photos/2010_child_{i}.jpg"
             raw_meta = {"EXIF:DateTimeOriginal": "2010:06:01 12:00:00"}
-            cursor.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, 1000.0, 10, '[\"People/Wren\"]', '[\"Wren\"]', '[]', ?)", (path, json.dumps(raw_meta)))
+            cursor.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, 1000.0, 10, '[\"People/Wren\"]', '[]', ?)", (path, json.dumps(raw_meta)))
+            add_people(cursor, path, ["Wren"])
             cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), '[10, 10, 50, 50]', ?, 'Wren', 0.99)", (path, emb_child_bytes))
             
         # Insert Era 2 teen faces (2026)
         for i in range(6):
             path = f"C:/photos/2026_teen_{i}.jpg"
             raw_meta = {"EXIF:DateTimeOriginal": "2026:06:01 12:00:00"}
-            cursor.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata) VALUES (?, 2000.0, 10, '[\"People/Wren\"]', '[\"Wren\"]', '[]', ?)", (path, json.dumps(raw_meta)))
+            cursor.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, 2000.0, 10, '[\"People/Wren\"]', '[]', ?)", (path, json.dumps(raw_meta)))
+            add_people(cursor, path, ["Wren"])
             cursor.execute("INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), '[10, 10, 50, 50]', ?, 'Wren', 0.99)", (path, emb_teen_bytes))
             
         photo_index.conn.commit()
@@ -1008,10 +1020,11 @@ class TestPhotoActions(unittest.TestCase):
     def _seed_rename_photo(self, conn, path, mtime, taken, face_name=None):
         """A photo row -- and optionally a named face -- as the indexer writes them."""
         conn.execute(
-            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (path, mtime, 100, "[]", json.dumps([face_name] if face_name else []), "[]",
+            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (path, mtime, 100, "[]", "[]",
              json.dumps({"EXIF:DateTimeOriginal": taken} if taken else {})))
+        add_people(conn, path, [face_name] if face_name else [])
         if face_name:
             conn.execute(
                 "INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?)",

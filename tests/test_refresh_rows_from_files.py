@@ -32,8 +32,8 @@ class RefreshRowsFromFiles(unittest.TestCase):
 
         def row(name, tags, raw, captions=(), mtime=1_000_000.0, size=4):
             index.conn.execute(
-                "INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-                " VALUES (?, ?, ?, ?, '[]', ?, ?)",
+                "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
                 (self.files[name], mtime, size, json.dumps(tags), json.dumps(list(captions)),
                  json.dumps(raw)))
 

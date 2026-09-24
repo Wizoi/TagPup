@@ -17,6 +17,9 @@ import db as tagpup_db  # noqa: E402
 from index import PhotoIndex  # noqa: E402
 from tuner_server import TunerHTTPRequestHandler  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import add_people  # noqa: E402
+
 PHOTO = r"D:\Pictures\Regatta\start.jpg"
 
 
@@ -46,10 +49,11 @@ class UndoLeavesFacesUnreviewed(unittest.TestCase):
         index.load()
         index.close()
         conn = tagpup_db.connect(self.db)
-        conn.execute("INSERT INTO photos (path, people) VALUES (?, '[\"Rowan Thackeray\"]')", (PHOTO,))
+        conn.execute("INSERT INTO photos (path) VALUES (?)", (PHOTO,))
         self.face = conn.execute("INSERT INTO faces (photo_id, box, name, name_source) VALUES"
                                  " ((SELECT id FROM photos WHERE path = ?), '[1,2,3,4]', 'Rowan Thackeray', 'manual')",
                                  (PHOTO,)).lastrowid
+        add_people(conn, PHOTO, ["Rowan Thackeray"], source="face")
         conn.commit()
         conn.close()
 

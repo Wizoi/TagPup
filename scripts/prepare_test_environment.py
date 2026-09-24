@@ -100,7 +100,7 @@ def main():
     # below it does too. A new library flags only People.
     from tagpup.store import taxonomy as store_taxonomy
     store_taxonomy.set_branch_flags(conn, "Pets", has_face=1)
-    store_taxonomy.add_path(conn, "Pets/Puppy")
+    store_taxonomy.add_node(conn, "Pets/Puppy")
     print("Taxonomy seeded: Added 'Pets/Puppy' (has_face = 1).")
 
     # Crop real face from puppy.png (head region, approx [350, 200, 750, 600])

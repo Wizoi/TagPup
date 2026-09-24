@@ -15,15 +15,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import db as tagpup_db  # noqa: E402
 import merge_duplicate_person_tags as merge  # noqa: E402
 
+from tagpup.store import schema  # noqa: E402
+
 
 class MergeReportsRows(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="merge_tags_")
         self.addCleanup(shutil.rmtree, self.dir, True)
         self.db = os.path.join(self.dir, "lib.db")
+        # A library as the app makes it: a tree edit rebuilds the people of the photos
+        # it touches, so it reads the photos table as well as the tree.
+        schema.ensure(self.db)
         conn = tagpup_db.connect(self.db)
-        conn.execute("CREATE TABLE tag_taxonomy (id INTEGER PRIMARY KEY, tag TEXT, name TEXT,"
-                     " parent_id INTEGER, has_face INTEGER)")
         conn.execute("INSERT INTO tag_taxonomy (tag, name, has_face) VALUES ('Rowan Thackeray', 'Rowan Thackeray', 1)")
         conn.commit()
         conn.close()

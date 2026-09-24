@@ -250,42 +250,21 @@ class PhotoIndex:
             self.indexed_metadata = []
             return False
 
-    def _with_face_names(self, meta):
-        """meta's people plus the names already given to this photo's faces."""
-        people = list(meta.get("people", []))
-        seen = {p.lower() for p in people}
-        for name in store_faces.face_names(meta["path"], conn=self.conn):
-            if name.lower() not in seen:
-                seen.add(name.lower())
-                people.append(name)
-        return people
-
     def build_or_update(self, embeddings: List[List[float]], metas: List[Dict[str, Any]], dim: int = 512, reload: bool = True):
         """Batch insert/update photos inside the SQLite database (transaction-safe)."""
         if not embeddings or self.conn is None:
             return
 
         from identity import read_document_id
-        from metadata import extract_people
         try:
+            # Who each photo's keywords name depends on this library's tree, read once;
+            # the store rebuilds each photo's people from it and the photo's faces.
+            known = store_taxonomy.read_people_vocabulary(self.conn)
             for meta, emb in zip(metas, embeddings):
-                # Who the keywords name depends on this library's taxonomy, which
-                # the reader only consults when a caller remembers to pass it. The
-                # CLI and both folder indexers did not, and the row lost everyone
-                # outside the default roots. Resolve here, against this connection.
-                resolved = extract_people(meta.get("raw_metadata", {}), meta.get("tags", []),
-                                          conn=self.conn)
-                known = {p.lower() for p in meta.get("people", [])}
-                meta = dict(meta, people=list(meta.get("people", []))
-                            + [p for p in resolved if p.lower() not in known])
                 store_photos.record_indexed(self.conn, meta["path"], {
                     "mtime": meta.get("mtime", 0.0),
                     "size": meta.get("size", 0),
                     "tags": meta.get("tags", []),
-                    # Keyword people and the photo's named faces: a re-index rebuilt
-                    # this from keywords alone and dropped everyone identified only by
-                    # their face. See metadata.photo_people.
-                    "people": self._with_face_names(meta),
                     "captions": meta.get("captions", []),
                     "raw_metadata": meta.get("raw_metadata", {}),
                     "embedding": np.array(emb, dtype=np.float32).tobytes(),
@@ -294,7 +273,7 @@ class PhotoIndex:
                     # minted one into the file by now.
                     "document_id": (meta.get("document_id")
                                     or read_document_id(meta.get("raw_metadata", {}))),
-                }, model=self.model)
+                }, model=self.model, known=known)
             self.conn.commit()
 
             if reload:
@@ -545,7 +524,8 @@ class PhotoIndex:
             raise e
 
     def reset_face_assignments(self):
-        """Clear the names clustering gave to faces, and rebuild photos.people.
+        """Clear the names clustering gave to faces; the store rebuilds the people of the
+        photos they were in.
 
         Names given by hand (name_source = 'manual') are left alone: they are the
         person's decisions and the anchors clustering starts from. Clearing their name
@@ -554,21 +534,8 @@ class PhotoIndex:
         """
         if self.conn is None:
             return 0
-        from metadata import extract_people
         try:
             cleared = store_faces.clear_automatic_names(self.conn)
-            # Each photo's people again: its keyword people, and the faces still named,
-            # which after the clear are the manual ones.
-            people_by_path = {}
-            for path, raw_meta_json, tags_json in store_photos.keyword_sources(self.conn):
-                try:
-                    raw_meta = json.loads(raw_meta_json) if raw_meta_json else {}
-                    tags = json.loads(tags_json) if tags_json else []
-                except Exception:
-                    raw_meta, tags = {}, []
-                orig_people = extract_people(raw_meta, tags, db_path=self.db_path, conn=self.conn)
-                people_by_path[path] = self._with_face_names({"path": path, "people": orig_people})
-            store_photos.set_people(self.conn, people_by_path)
             self.conn.commit()
             return cleared
         except Exception as e:

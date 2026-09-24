@@ -3,15 +3,15 @@
 TagPup lists the names given to faces; TagTuner adds the people keywords name, and can
 be asked for the hidden ones too. Both had a copy of the rest.
 """
-import json
 import os
 import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from service_fixture import TempLibrary  # noqa: E402
+from face_rows import add_people  # noqa: E402
 
-from tagpup.store import people  # noqa: E402
+from tagpup.store import db, people  # noqa: E402
 
 
 class ThePeopleALibraryKnows(unittest.TestCase):
@@ -42,7 +42,12 @@ class ThePeopleALibraryKnows(unittest.TestCase):
 
     def test_the_people_keywords_name_only_when_asked(self):
         self.face("Ada Pembrook")
-        self.lib.execute("UPDATE photos SET people = ?", (json.dumps(["Milo Garrick", ""]),))
+        conn = db.connect(self.lib.library.path)
+        try:
+            add_people(conn, self.photo, ["Milo Garrick", ""])
+            conn.commit()
+        finally:
+            conn.close()
         self.assertEqual(self.names(), ["Ada Pembrook"])
         self.assertEqual(self.names(keywords_too=True), ["Ada Pembrook", "Milo Garrick"])
 

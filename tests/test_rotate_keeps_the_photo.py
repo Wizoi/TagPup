@@ -195,9 +195,9 @@ class TestTheRotateRoute(unittest.TestCase):
         write_fields(self.photo)
         stat = os.stat(self.photo)
         self.lib.execute(
-            "INSERT INTO photos (path, mtime, size, tags, people, raw_metadata) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO photos (path, mtime, size, tags, raw_metadata) VALUES (?,?,?,?,?)",
             (os.path.abspath(self.photo), stat.st_mtime, stat.st_size,
-             json.dumps(["Beach"]), "[]", "{}"))
+             json.dumps(["Beach"]), "{}"))
         self.face = face_in(self.lib, os.path.abspath(self.photo), [0, 0, 10, 8], name="Rowan Thackeray")
         self.lib.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (self.face, b"crop"))
         self.handler = self.lib.handler(EXIFTOOL)

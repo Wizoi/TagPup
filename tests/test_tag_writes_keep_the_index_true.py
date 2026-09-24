@@ -125,8 +125,8 @@ class IndexCase(unittest.TestCase):
         conn = tagpup_db.connect(self.db_path)
         try:
             conn.execute(
-                "INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-                " VALUES (?, ?, ?, ?, '[]', '[]', ?)",
+                "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+                " VALUES (?, ?, ?, ?, '[]', ?)",
                 (stored, st.st_mtime, st.st_size, json.dumps(list(keywords)),
                  json.dumps(raw_metadata_as_scanned(keywords, hierarchical))))
             conn.commit()

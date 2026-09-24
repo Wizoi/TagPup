@@ -20,6 +20,8 @@ from exiftool_session import ExifToolSession
 from index import PhotoIndex
 from tuner_server import TunerHTTPRequestHandler
 
+from tagpup.store import people
+
 OLD, NEW = "Rowan Thackeray", "Rowan Thackeray-Vale"
 
 
@@ -86,10 +88,17 @@ class PersonRenameReachesTheFiles(unittest.TestCase):
         else:
             with open(path, "wb") as handle:
                 handle.write(b"not a picture")
-        self.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-                     " VALUES (?, 1.0, 1, ?, ?, '[]', '{}')", (path, json.dumps(tags), json.dumps([OLD])))
+        self.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+                     " VALUES (?, 1.0, 1, ?, '[]', '{}')", (path, json.dumps(tags)))
         self.execute("INSERT INTO faces (photo_id, box, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[0,0,1,1]', ?, 'manual')",
                      (path, OLD))
+        # Its people as the store keeps them: the keyword and the face both name OLD.
+        conn = tagpup_db.connect(self.db_path)
+        try:
+            people.rebuild(conn)
+            conn.commit()
+        finally:
+            conn.close()
         return path
 
     def hierarchical(self, path):

@@ -23,15 +23,15 @@ from index import PhotoIndex  # noqa: E402
 from tagpup_server import TagPupHTTPRequestHandler, set_active_db_path  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from face_rows import add_vector  # noqa: E402
+from face_rows import add_face, add_vector  # noqa: E402
 
 
 def add_photo(db_path, name):
     conn = tagpup_db.connect(db_path)
     try:
         path = os.path.join(os.path.dirname(db_path), name)
-        conn.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-                     " VALUES (?, 1.0, 1, '[\"Activity/Rowing\"]', '[]', '[]', '{}')", (path,))
+        conn.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+                     " VALUES (?, 1.0, 1, '[\"Activity/Rowing\"]', '[]', '{}')", (path,))
         add_vector(conn, path, np.ones(512, dtype=np.float32).tobytes())
         conn.commit()
     finally:
@@ -63,10 +63,17 @@ class IndexReloadsWhenChanged(unittest.TestCase):
     def test_people_named_since_are_picked_up(self):
         # Naming a face changes who is in a photo and leaves the file, and so the
         # row's mtime, alone. The index watched mtimes (docs/findings.md, #52).
-        from tagpup.store import photos
+        from tagpup.store import faces
         conn = tagpup_db.connect(self.db_path)
         try:
-            photos.update_people(conn, os.path.join(self.dir, "a.jpg"), gained=["Wren Halloway"])
+            face_id = add_face(conn, os.path.join(self.dir, "a.jpg"))
+            conn.commit()
+        finally:
+            conn.close()
+        self.index.reload_if_changed()
+        conn = tagpup_db.connect(self.db_path)
+        try:
+            faces.name(conn, [face_id], "Wren Halloway")
             conn.commit()
         finally:
             conn.close()

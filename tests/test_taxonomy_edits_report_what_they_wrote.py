@@ -54,8 +54,8 @@ class TaxonomyEditsReportWhatTheyWrote(unittest.TestCase):
         else:
             with open(path, "wb") as handle:
                 handle.write(b"not a picture")
-        self.lib.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata)"
-                         " VALUES (?, 1.0, 1, ?, '[]', '[]', '{}')", (path, json.dumps(tags)))
+        self.lib.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+                         " VALUES (?, 1.0, 1, ?, '[]', '{}')", (path, json.dumps(tags)))
         return path
 
     def hierarchical(self, path):

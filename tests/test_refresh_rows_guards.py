@@ -14,6 +14,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_refresh_rows_from_files as base  # noqa: E402
+from face_rows import people_of  # noqa: E402
 
 import db  # noqa: E402
 
@@ -60,8 +61,7 @@ class RefreshGuards(base.RefreshRowsFromFiles):
         self.run_script("--apply")
         conn = db.connect(db.readonly_uri(self.db), uri=True)
         try:
-            people = json.loads(conn.execute("SELECT people FROM photos WHERE path = ?",
-                                             (self.files["stale_keywords"],)).fetchone()[0])
+            people = people_of(conn, self.files["stale_keywords"])
         finally:
             conn.close()
         self.assertIn("Rowan Thackeray", people)
@@ -77,8 +77,7 @@ class RefreshGuards(base.RefreshRowsFromFiles):
         self.assertIn("people incomplete", out)
         conn = db.connect(db.readonly_uri(self.db), uri=True)
         try:
-            people = json.loads(conn.execute("SELECT people FROM photos WHERE path = ?",
-                                             (self.files["fine"],)).fetchone()[0])
+            people = people_of(conn, self.files["fine"])
         finally:
             conn.close()
         self.assertIn("Imogen Vale", people)
