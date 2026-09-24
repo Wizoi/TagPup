@@ -222,15 +222,6 @@ def ensure_taxonomy_generation(conn):
     conn.commit()
 
 
-def taxonomy_generation(conn):
-    """The counter above, or 0 on a database that does not have it yet."""
-    try:
-        row = conn.execute("SELECT generation FROM taxonomy_generation WHERE id = 1").fetchone()
-    except sqlite3.OperationalError:
-        return 0
-    return row[0] if row else 0
-
-
 class PhotoIndex:
     def __init__(self, db_path: str = "data/photo_index.db"):
         self.db_path = db_path

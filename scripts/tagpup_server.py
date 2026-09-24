@@ -27,6 +27,8 @@ from tagpup.core import dates, renaming, vocabulary
 from tagpup.core.library import Library
 from tagpup.files import keywords as file_keywords
 from tagpup.store.photos import move_rows as move_photo_rows  # noqa: F401  (saving, tests)
+from tagpup.store.photos import record_tags as record_tags_in_index  # noqa: F401  (writers, tests)
+from tagpup.store import taxonomy as store_taxonomy
 from tagpup.services import photos as photo_actions
 from tagpup.store.photos import record_file_stat as record_file_stat_in_index  # noqa: F401  (writer.py)
 from tagpup.files.keywords import (  # noqa: F401  (imported from here by other scripts)
@@ -157,174 +159,17 @@ def index_folder_with_cli(folder_path, db_path, run_clustering, status, while_cl
     return True
 
 
-#: One loaded taxonomy per database, so resolving on every write costs nothing after
-#: the first. Each entry is (the tree's generation when it was read, the mapping):
-#: this process clears it when it writes the tree (invalidate_people_cache), and the
-#: generation catches the edits it cannot see -- TagTuner's, in another process.
-_people_cache = {}
-_people_cache_guard = threading.Lock()
-
-
-def _taxonomy_generation_of(db_path):
-    from index import taxonomy_generation
-
-    try:
-        conn = tagpup_db.connect(tagpup_db.readonly_uri(db_path), uri=True)
-    except Exception:
-        return None
-    try:
-        return taxonomy_generation(conn)
-    finally:
-        conn.close()
-
-
-def people_paths_for(db_path):
-    """Every person the taxonomy names, keyed by their lowercased leaf name."""
-    if not db_path:
-        return {}
-    key = paths.key(str(db_path))
-    generation = _taxonomy_generation_of(db_path) if os.path.exists(db_path) else None
-    with _people_cache_guard:
-        cached = _people_cache.get(key)
-    # A generation that cannot be read says nothing changed; what was read stands.
-    if cached is not None and (generation is None or cached[0] == generation):
-        return cached[1]
-
-    mapping = {}
-    try:
-        from taxonomy import TagTaxonomy
-
-        taxonomy = TagTaxonomy(db_path=db_path)
-        taxonomy.load()
-        roots = taxonomy.people_roots()
-        for tag_path in taxonomy.paths:
-            if "/" not in tag_path:
-                continue
-            if vocabulary.key(vocabulary.root_of(tag_path)) not in roots:
-                continue
-            leaf = vocabulary.key(vocabulary.leaf_of(tag_path))
-            # Someone filed in two places cannot be resolved without guessing, so
-            # they are left alone rather than filed in whichever came first.
-            mapping[leaf] = None if leaf in mapping and mapping[leaf] != tag_path else tag_path
-        mapping = {k: v for k, v in mapping.items() if v}
-    except Exception as e:
-        logger.debug("Could not load people paths from %s: %s", db_path, e)
-
-    with _people_cache_guard:
-        _people_cache[key] = (generation, mapping)
-    return mapping
-
-
-def invalidate_people_cache(db_path=None):
-    """Forget the cached taxonomy, after something changed it."""
-    with _people_cache_guard:
-        if db_path is None:
-            _people_cache.clear()
-        else:
-            _people_cache.pop(paths.key(str(db_path)), None)
+#: Who a bare name means, per library, read and cached by the store; the rule that
+#: applies it is tagpup.core.vocabulary.resolve_people. Kept here under the old names,
+#: which the writers and their tests call.
+people_paths_for = store_taxonomy.people_paths
+invalidate_people_cache = store_taxonomy.forget_people_paths
 
 
 def resolve_people_tags(tags, db_path):
-    """Give every person in `tags` the path they are filed under.
-
-    The last line of defence, and deliberately at the write boundary rather than at
-    each caller. A person's name reaches this program as a leaf from half a dozen
-    directions -- the faces table, CLIP suggestions, neighbour propagation, a typed
-    name -- and each of those paths resolving it for itself is exactly how "Hailey
-    Brookmire" kept being written beside "People/Hazel Brookmire". One of them
-    always gets missed; folder auto-apply was the one that outlived three fixes.
-
-    Only a bare tag whose name matches somebody already in the people taxonomy is
-    touched. A flat keyword that is not a person -- "Cross Country", "Kentridge" --
-    is legitimate and is left exactly as it is.
-    """
-    people = people_paths_for(db_path)
-    if not people:
-        return list(tags)
-
-    pathed_leaves = {vocabulary.key(vocabulary.leaf_of(t)) for t in tags if "/" in t}
-
-    resolved = []
-    for tag in tags:
-        if "/" in tag:
-            if tag not in resolved:
-                resolved.append(tag)
-            continue
-        low = str(tag).strip().lower()
-        # A leaf duplicating a path already on this photo is simply dropped.
-        if low in pathed_leaves:
-            continue
-        person = people.get(low)
-        target = person or tag
-        if target not in resolved:
-            resolved.append(target)
-    return resolved
-
-
-def record_tags_in_index(db_path, photo_path, tags, flat=None, hierarchical=None):
-    """Tell the index what a photo's keywords now are.
-
-    Saving one photo has always done this; the bulk writers did not, so tagging fifty
-    photos left fifty index rows describing what they used to hold. Nothing in the app
-    showed the difference -- the folder cache was updated, so the screen was right --
-    which is how it went unnoticed until a repair script, planning from the index,
-    reported nothing to do on a folder that had just been tagged wholesale.
-
-    `flat` and `hierarchical` are what was actually written to the file, as
-    write_keyword_fields returns them, so raw_metadata keeps agreeing with the photo.
-    Left out, they are what write_keyword_fields would have written for `tags`.
-
-    The file's new mtime and size are recorded too. Writing keywords changes both, and
-    the folder scan only trusts a row whose mtime and size match the file; without
-    them every photo tagged in bulk was re-read with ExifTool on every scan after.
-    """
-    from metadata import photo_people
-
-    if flat is None and hierarchical is None:
-        flat, hierarchical = expand_tag_fields(tags)
-    where, where_params = paths.sql_equals("path", photo_path)
-    try:
-        stat = os.stat(photo_path)
-    except OSError:
-        stat = None
-
-    def store(conn):
-        cursor = conn.cursor()
-        cursor.execute("SELECT rowid, raw_metadata FROM photos WHERE " + where, where_params)
-        row = cursor.fetchone()
-        if not row:
-            return False   # never indexed; adding it here would be an index, not an edit
-        rowid, raw_json = row
-
-        try:
-            raw_meta = json.loads(raw_json) if raw_json else {}
-        except Exception:
-            raw_meta = {}
-        record_keyword_fields(raw_meta, flat or [], hierarchical or [])
-
-        people = photo_people(raw_meta, tags, photo_path, db_path=db_path, conn=conn)
-        if stat is None:
-            cursor.execute(
-                "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE rowid = ?",
-                (json.dumps(tags), json.dumps(people), json.dumps(raw_meta), rowid),
-            )
-        else:
-            cursor.execute(
-                "UPDATE photos SET tags = ?, people = ?, raw_metadata = ?, mtime = ?, size = ?"
-                " WHERE rowid = ?",
-                (json.dumps(tags), json.dumps(people), json.dumps(raw_meta),
-                 stat.st_mtime, stat.st_size, rowid),
-            )
-        return cursor.rowcount > 0
-
-    try:
-        return tagpup_db.write_with_connection(
-            db_path, store, label="index row for %s" % os.path.basename(photo_path)
-        )
-    except Exception as e:
-        # The file is already written and correct; a stale index row is recoverable.
-        logger.warning("Could not update the index for %s: %s", photo_path, e)
-        return False
+    """Give every person in `tags` the path they are filed under in the library at
+    `db_path` (tagpup.core.vocabulary.resolve_people)."""
+    return vocabulary.resolve_people(tags, people_paths_for(db_path))
 
 
 def write_keyword_fields(et, path, tags, extra_params=None, db_path=None):

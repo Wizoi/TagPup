@@ -259,3 +259,40 @@ def people_in_photo(meta, tags, face_names, known=None):
             seen.add(name.lower())
             people.append(name)
     return people
+
+
+def resolve_people(tags, people_paths):
+    """Give every person in `tags` the path they are filed under.
+
+    `people_paths` maps a lowercased name to its tag (tagpup.store.taxonomy.people_paths).
+    This is the last line of defence, and deliberately at the write boundary rather
+    than at each caller. A person's name reaches this program as a leaf from half a
+    dozen directions -- the faces table, CLIP suggestions, neighbour propagation, a
+    typed name -- and each of those resolving it for itself is exactly how "Hailey
+    Brookmire" kept being written beside "People/Hazel Brookmire". One of them always
+    gets missed; folder auto-apply was the one that outlived three fixes.
+
+    Only a bare tag whose name matches somebody already in the people tree is touched.
+    A flat keyword that is not a person -- "Cross Country", "Kentridge" -- is legitimate
+    and is left exactly as it is. A leaf duplicating a path already on the photo is
+    dropped.
+    """
+    if not people_paths:
+        return list(tags)
+
+    pathed_leaves = {key(leaf_of(t)) for t in tags if "/" in t}
+
+    resolved = []
+    for tag in tags:
+        if "/" in tag:
+            if tag not in resolved:
+                resolved.append(tag)
+            continue
+        low = str(tag).strip().lower()
+        if low in pathed_leaves:
+            continue
+        person = people_paths.get(low)
+        target = person or tag
+        if target not in resolved:
+            resolved.append(target)
+    return resolved

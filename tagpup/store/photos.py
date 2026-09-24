@@ -1,7 +1,8 @@
 """The photos table.
 
-For now, recording what a write did to a file, or what was read back from it, moving
-renamed photos' rows, and forgetting a deleted photo. The rest of the table's queries,
+For now, recording what a write did to a file -- its tags, or only its new mtime and
+size -- or what was read back from it, moving renamed photos' rows, and forgetting a
+deleted photo. The rest of the table's queries,
 in scripts/index.py and the servers, move here with the store step of phase 2
 (ARCHITECTURE.md).
 """
@@ -9,8 +10,8 @@ import json
 import logging
 import os
 
-from tagpup.core import paths
-from tagpup.store import db
+from tagpup.core import fields, paths, vocabulary
+from tagpup.store import db, faces, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -167,3 +168,69 @@ def move_rows(db_path, renames):
         logger.warning("Renamed %s to %s, but the index already has rows for the new "
                        "name; left both as they were.", old_path, new_path)
     return moved, skipped
+
+
+def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None):
+    """Tell the index what a photo's keywords now are.
+
+    Saving one photo has always done this; the bulk writers did not, so tagging fifty
+    photos left fifty index rows describing what they used to hold. Nothing in the app
+    showed the difference -- the folder cache was updated, so the screen was right --
+    which is how it went unnoticed until a repair script, planning from the index,
+    reported nothing to do on a folder that had just been tagged wholesale.
+
+    `flat` and `hierarchical` are what was actually written to the file, as
+    write_keyword_fields returns them, so raw_metadata keeps agreeing with the photo.
+    Left out, they are what write_keyword_fields would have written for `tags`.
+
+    The file's new mtime and size are recorded too. Writing keywords changes both, and
+    the folder scan only trusts a row whose mtime and size match the file; without
+    them every photo tagged in bulk was re-read with ExifTool on every scan after.
+    """
+    if flat is None and hierarchical is None:
+        flat, hierarchical = fields.expand_tag_fields(tags)
+    where, where_params = paths.sql_equals("path", photo_path)
+    try:
+        stat = os.stat(photo_path)
+    except OSError:
+        stat = None
+
+    def store(conn):
+        cursor = conn.cursor()
+        cursor.execute("SELECT rowid, raw_metadata FROM photos WHERE " + where, where_params)
+        row = cursor.fetchone()
+        if not row:
+            return False   # never indexed; adding it here would be an index, not an edit
+        rowid, raw_json = row
+
+        try:
+            raw_meta = json.loads(raw_json) if raw_json else {}
+        except Exception:
+            raw_meta = {}
+        fields.record_keyword_fields(raw_meta, flat or [], hierarchical or [])
+
+        people = vocabulary.people_in_photo(
+            raw_meta, tags, faces.face_names(photo_path, conn=conn),
+            taxonomy.people_vocabulary(conn=conn))
+        if stat is None:
+            cursor.execute(
+                "UPDATE photos SET tags = ?, people = ?, raw_metadata = ? WHERE rowid = ?",
+                (json.dumps(tags), json.dumps(people), json.dumps(raw_meta), rowid),
+            )
+        else:
+            cursor.execute(
+                "UPDATE photos SET tags = ?, people = ?, raw_metadata = ?, mtime = ?, size = ?"
+                " WHERE rowid = ?",
+                (json.dumps(tags), json.dumps(people), json.dumps(raw_meta),
+                 stat.st_mtime, stat.st_size, rowid),
+            )
+        return cursor.rowcount > 0
+
+    try:
+        return db.write_with_connection(
+            db_path, store, label="index row for %s" % os.path.basename(photo_path)
+        )
+    except Exception as e:
+        # The file is already written and correct; a stale index row is recoverable.
+        logger.warning("Could not update the index for %s: %s", photo_path, e)
+        return False
