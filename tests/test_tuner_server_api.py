@@ -323,7 +323,7 @@ class TestFaceCrop(TunerAPITestBase):
 
         conn = sqlite3.connect(self.TEST_DB)
         row = conn.execute(
-            "SELECT crop_image FROM faces WHERE id = ?", (face_id,)
+            "SELECT (SELECT jpeg FROM face_crops c WHERE c.face_id = faces.id) FROM faces WHERE id = ?", (face_id,)
         ).fetchone()
         conn.close()
         self.assertTrue(row[0], "crop was not cached back into the faces table")

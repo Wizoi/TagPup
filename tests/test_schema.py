@@ -42,7 +42,8 @@ def make_unmigrated_library(db_path):
                      " parent_id INTEGER, name TEXT, has_face INTEGER DEFAULT 0,"
                      " hidden_from_autocomplete INTEGER DEFAULT 0)")
         conn.execute("INSERT INTO photos (path, mtime, size, tags, people) VALUES ('D:/a.jpg', 1.0, 1, '[]', '[]')")
-        conn.execute("INSERT INTO faces (photo_path, box, name) VALUES ('D:/a.jpg', '[0,0,1,1]', 'Wren Halloway')")
+        conn.execute("INSERT INTO faces (photo_path, box, name, crop_image)"
+                     " VALUES ('D:/a.jpg', '[0,0,1,1]', 'Wren Halloway', x'FFD8')")
         for name, value in (("faces", 7), ("taxonomy", 3)):
             conn.execute("CREATE TABLE %s_generation (id INTEGER PRIMARY KEY CHECK (id = 1),"
                          " generation INTEGER NOT NULL)" % name)
@@ -89,8 +90,8 @@ class ANewLibrary(SchemaTestCase):
         conn = self.connect()
         self.assertEqual([m.name for m in schema.MIGRATIONS], applied)
         self.assertEqual(schema.LATEST, schema.version(conn))
-        self.assertEqual({"photos", "faces", "embedding_cache", "tag_taxonomy", "tag_embeddings",
-                          "generations", "schema_version"}, tables(conn))
+        self.assertEqual({"photos", "faces", "face_crops", "embedding_cache", "tag_taxonomy",
+                          "tag_embeddings", "generations", "schema_version"}, tables(conn))
 
     def test_has_the_document_id_index(self):
         # Only a library that gained the column by migration had it.
@@ -152,11 +153,19 @@ class AnUnmigratedLibrary(SchemaTestCase):
         conn = self.connect()
         self.assertEqual(("Wren Halloway", 0), conn.execute("SELECT name, excluded FROM faces").fetchone())
 
-    def test_is_not_copied_first(self):
-        # Nothing in either migration rewrites a decision, so a large library is not
-        # backed up for nothing.
+    def test_is_copied_once_before_its_crops_move(self):
+        # Migration 3 moves data; the others add tables, columns and triggers.
         schema.ensure(self.db_path)
-        self.assertFalse(os.path.isdir(os.path.join(self.dir, "backups")))
+        self.assertEqual(1, len(os.listdir(os.path.join(self.dir, "backups"))))
+
+    def test_its_crops_move_to_their_own_table_and_go_with_their_face(self):
+        schema.ensure(self.db_path)
+        conn = self.connect()
+        self.assertNotIn("crop_image", columns(conn, "faces"))
+        self.assertEqual([(b"\xff\xd8",)], conn.execute("SELECT jpeg FROM face_crops").fetchall())
+        conn.execute("DELETE FROM faces")    # on a connection without foreign keys
+        conn.commit()
+        self.assertEqual([], conn.execute("SELECT jpeg FROM face_crops").fetchall())
 
     def test_carries_its_generations_over_and_drops_the_old_tables(self):
         schema.ensure(self.db_path)
@@ -226,7 +235,8 @@ class Generations(SchemaTestCase):
         self.assertTrue(self.moved("faces", "UPDATE faces SET name = 'Wren Halloway'"))
 
     def test_caching_a_crop_does_not_move_faces(self):
-        self.assertFalse(self.moved("faces", "UPDATE faces SET crop_image = x'00'"))
+        self.assertFalse(self.moved("faces", "INSERT INTO face_crops (face_id, jpeg)"
+                                              " SELECT MIN(id), x'00' FROM faces"))
 
     def test_a_new_node_moves_the_tree(self):
         self.assertTrue(self.moved("taxonomy", "INSERT INTO tag_taxonomy (tag, name) VALUES ('Pets', 'Pets')"))

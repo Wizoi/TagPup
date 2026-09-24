@@ -40,7 +40,8 @@ def _columns(conn, table):
 #: them is older than TagPup opens.
 REQUIRED_COLUMNS = {
     "photos": ("document_id",),
-    "faces": ("crop_image", "prob", "name_source", "excluded", "excluded_reason"),
+    # crop_image is not among them: migration 3 moves it to face_crops.
+    "faces": ("prob", "name_source", "excluded", "excluded_reason"),
     "tag_taxonomy": ("has_face", "hidden_from_autocomplete"),
 }
 
@@ -179,9 +180,32 @@ def _generations(conn):
                          % (name, event, when, table, bump))
 
 
+def _face_crops(conn):
+    """Each face's crop in `face_crops`, out of `faces`.
+
+    6 KB of JPEG a face, 1.1 GB of photo_index, carried by every read of the faces table
+    that forgot to leave it out, and by every rebuild of it. A trigger takes a face's
+    crop with the face, whichever connection deletes it: only one connection in the app
+    turns foreign keys on, so ON DELETE CASCADE alone would leave crops behind. The
+    column goes; the space it held is free within the file until it is vacuumed.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS face_crops ("
+                 " face_id INTEGER PRIMARY KEY REFERENCES faces(id) ON DELETE CASCADE,"
+                 " jpeg BLOB NOT NULL)")
+    conn.execute("CREATE TRIGGER IF NOT EXISTS face_crops_go_with_their_face AFTER DELETE ON faces"
+                 " BEGIN DELETE FROM face_crops WHERE face_id = OLD.id; END")
+    # A library whose record of migrations was lost has run this before, and has no
+    # column left to move.
+    if "crop_image" in _columns(conn, "faces"):
+        conn.execute("INSERT OR IGNORE INTO face_crops (face_id, jpeg)"
+                     " SELECT id, crop_image FROM faces WHERE crop_image IS NOT NULL")
+        conn.execute("ALTER TABLE faces DROP COLUMN crop_image")
+
+
 MIGRATIONS = (
     Migration(1, "the tables as of 2026-09", _tables, changes_data=False),
     Migration(2, "one generations table", _generations, changes_data=False),
+    Migration(3, "face crops in their own table", _face_crops, changes_data=True),
 )
 
 LATEST = MIGRATIONS[-1].version

@@ -78,7 +78,6 @@ Stores details of faces detected within photos, including face crop coordinates,
 | `box` | TEXT | | JSON-serialized bounding box coordinates `[x1, y1, x2, y2]`. |
 | `embedding` | BLOB | | 512-dimensional face embedding vector (binary representation of float32 array). |
 | `name` | TEXT | | The resolved name of the person (or `NULL` if unmatched). |
-| `crop_image` | BLOB | | Cache of the cropped face thumbnail (JPEG bytes). |
 | `prob` | REAL | | Detection confidence/probability score from MTCNN. |
 | `name_source` | TEXT | | Who decided `name`. `'manual'` marks a decision made by a person in TagTuner — including a deliberate unmatch, which is stored as `name = NULL` with this column set. `cluster-faces` re-derives every other name from scratch but preserves manual rows and uses them as anchors. `NULL` means the name was assigned automatically and may be revised. |
 | `excluded` | INTEGER | DEFAULT 0 | `1` marks a face as not-a-person: a passer-by in a crowd shot, or a detection that is not a face at all. Excluded faces are dropped before identity resolution runs, and are hidden from match suggestions and the Identify Faces queue, so they cannot cluster, vote, or pull a person's centroid around. Reversible. |
@@ -122,7 +121,15 @@ Stores cached visual embeddings of tag prompts to accelerate zero-shot tag conse
 | `pretrained` | TEXT | PRIMARY KEY | Pretrained weights identifier of the model. |
 | `embedding` | BLOB | | Binary representation of float array for the prompt embedding. |
 
-### 6. `generations` Table
+### 6. `face_crops` Table
+Each face's crop, a JPEG no larger than 256 px on a side, cut when the face is detected or the first time it is shown (`tagpup.store.faces.cache_crop`). Out of `faces` since migration 3: 6 KB a face, carried by every read of `faces` that forgot to leave it out. The trigger `face_crops_go_with_their_face` deletes a face's crop with the face, whichever connection deletes it; rotating a photo whose boxes turn drops its faces' crops, to be cut again.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `face_id` | INTEGER | PRIMARY KEY, → `faces.id` ON DELETE CASCADE | The face. |
+| `jpeg` | BLOB | NOT NULL | The crop. |
+
+### 7. `generations` Table
 Counters that move whenever a table changes, whoever changes it: TagPup, TagTuner, the CLI or a script. A cache stores the generations it was built at and is current while they have not moved (`tagpup.store.generations`). Triggers made by `tagpup.store.schema` bump them:
 
 - `photos`: every insert, delete and update of a photo row (`generation_photos_insert`, `_delete`, `_update`). The Suggest index reloads when it moves.
@@ -136,7 +143,7 @@ Replaces `faces_generation` and `taxonomy_generation`, one table each, whose cou
 | `name` | TEXT | PRIMARY KEY | `photos`, `faces` or `taxonomy`. |
 | `value` | INTEGER | NOT NULL | Bumped by the triggers; only ever compared for change. |
 
-### 7. `schema_version` Table
+### 8. `schema_version` Table
 The migrations applied to this library, one row each, in order (`tagpup.store.schema`). `schema.ensure()` applies the ones missing wherever a library is opened: by PhotoIndex, TagTuner's start-up, the desktop runner, the tag tree, and each request that names a library. Migration 1 makes the tables of 2026-09; each one after is a step forward. A library older than those tables -- missing a column such as `faces.excluded` -- is refused (`schema.TooOld`), not converted: every library in use was already that shape, and the conversions retired on 2026-09-24.
 
 | Column | Type | Constraints | Description |
@@ -170,7 +177,6 @@ erDiagram
         TEXT box
         BLOB embedding
         TEXT name
-        BLOB crop_image
         REAL prob
         TEXT name_source
         INTEGER excluded
@@ -206,6 +212,11 @@ erDiagram
         BLOB embedding
     }
 
+    face_crops {
+        INTEGER face_id PK
+        BLOB jpeg
+    }
+
     generations {
         TEXT name PK
         INTEGER value
@@ -218,6 +229,7 @@ erDiagram
     }
 
     photos ||--o{ faces : "contains"
+    faces ||--o| face_crops : "cropped as"
     tag_taxonomy ||--o{ tag_taxonomy : "parent of"
 ```
 

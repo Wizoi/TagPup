@@ -82,7 +82,7 @@ class AFacesCrop(unittest.TestCase):
         return photos.face_crop(self.lib.library, face_id)
 
     def kept(self, face_id):
-        return self.lib.rows("SELECT crop_image FROM faces WHERE id = ?", (face_id,))[0][0]
+        return self.lib.rows("SELECT (SELECT jpeg FROM face_crops c WHERE c.face_id = faces.id) FROM faces WHERE id = ?", (face_id,))[0][0]
 
     def test_a_kept_crop_is_served_as_it_is(self):
         face = self.lib.add_face(self.photo, [10, 10, 50, 50], crop=b"kept crop")

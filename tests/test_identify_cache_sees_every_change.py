@@ -66,7 +66,7 @@ class IdentifyCacheSeesEveryChange(unittest.TestCase):
 
     def test_caching_a_crop_does_not(self):
         self.assertFalse(self.changes(
-            "UPDATE faces SET crop_image = x'FFD8' WHERE id = (SELECT MIN(id) FROM faces)"))
+            "INSERT OR REPLACE INTO face_crops (face_id, jpeg) SELECT MIN(id), x'FFD8' FROM faces"))
 
 
 if __name__ == "__main__":

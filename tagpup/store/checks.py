@@ -98,6 +98,14 @@ def orphan_nodes(conn):
         " WHERE c.parent_id IS NOT NULL AND p.id IS NULL ORDER BY c.tag")])
 
 
+def crops_without_a_face(conn):
+    """Crops whose face is gone. The trigger that takes a crop with its face makes this
+    none, whichever connection deletes the face."""
+    return _check("crops whose face is gone", [face_id for (face_id,) in conn.execute(
+        "SELECT c.face_id FROM face_crops c LEFT JOIN faces f ON f.id = c.face_id"
+        " WHERE f.id IS NULL ORDER BY c.face_id")])
+
+
 def one_file_two_rows(conn):
     """Photos with more than one row, their paths differing only as paths.key ignores."""
     seen = collections.Counter(paths.key(p) for (p,) in conn.execute("SELECT path FROM photos"))
@@ -117,7 +125,7 @@ def missing_files(conn):
 
 #: The rules a library keeps, in the order a report lists them.
 RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excluded,
-         face_names_missing_from_people, orphan_nodes, one_file_two_rows)
+         face_names_missing_from_people, orphan_nodes, crops_without_a_face, one_file_two_rows)
 
 
 def run(conn):

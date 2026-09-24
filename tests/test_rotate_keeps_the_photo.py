@@ -184,8 +184,9 @@ class TestTheRotateRoute(unittest.TestCase):
             (os.path.abspath(self.photo), stat.st_mtime, stat.st_size,
              json.dumps(["Beach"]), "[]", "{}"))
         self.face = self.lib.execute(
-            "INSERT INTO faces (photo_path, box, name, crop_image) VALUES (?,?,?,?)",
-            (os.path.abspath(self.photo), json.dumps([0, 0, 10, 8]), "Rowan Thackeray", b"crop"))
+            "INSERT INTO faces (photo_path, box, name) VALUES (?,?,?)",
+            (os.path.abspath(self.photo), json.dumps([0, 0, 10, 8]), "Rowan Thackeray"))
+        self.lib.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (self.face, b"crop"))
         self.handler = self.lib.handler(EXIFTOOL)
         status, _ = self.handler.call("handle_get_folder_scan", None,
                                       {"path": [self.lib.photos]})
@@ -223,16 +224,16 @@ class TestTheRotateRoute(unittest.TestCase):
         before = face_pixels()
         self.assertEqual(self.rotate("left")[0], 200)
         self.assertEqual(face_pixels(), before)
-        self.assertEqual(self.lib.rows("SELECT crop_image FROM faces")[0][0], b"crop")
+        self.assertEqual(self.lib.rows("SELECT (SELECT jpeg FROM face_crops c WHERE c.face_id = faces.id) FROM faces")[0][0], b"crop")
 
     def test_a_tiff_face_box_turns_with_the_photo(self):
         from PIL import Image
 
         tiff = make_picture(os.path.join(self.lib.photos, "scan.tif"), fmt="TIFF")
         box = [0, 0, 10, 8]
-        face = self.lib.execute(
-            "INSERT INTO faces (photo_path, box, crop_image) VALUES (?,?,?)",
-            (os.path.abspath(tiff), json.dumps(box), b"crop"))
+        face = self.lib.execute("INSERT INTO faces (photo_path, box) VALUES (?,?)",
+                                (os.path.abspath(tiff), json.dumps(box)))
+        self.lib.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face, b"crop"))
         with Image.open(tiff) as img:
             img.load()
             face_before = img.convert("RGB").crop(box)
@@ -241,7 +242,7 @@ class TestTheRotateRoute(unittest.TestCase):
             status, reply = self.handler.call("handle_post_photo_rotate",
                                               {"path": tiff, "direction": direction})
             self.assertEqual(status, 200, reply)
-            new_box, crop = self.lib.rows("SELECT box, crop_image FROM faces WHERE id = ?", (face,))[0]
+            new_box, crop = self.lib.rows("SELECT box, (SELECT jpeg FROM face_crops c WHERE c.face_id = faces.id) FROM faces WHERE id = ?", (face,))[0]
             new_box = json.loads(new_box)
             self.assertIsNone(crop, "a crop cut from the old box must be cut again")
             with Image.open(tiff) as img:

@@ -46,13 +46,13 @@ class RotatingAPhoto(unittest.TestCase):
 
     def test_face_boxes_stay_where_pillow_shows_the_stored_pixels(self):
         result = self.rotate(oriented=False)
-        self.assertEqual(self.lib.rows("SELECT box, crop_image FROM faces"),
+        self.assertEqual(self.lib.rows("SELECT box, (SELECT jpeg FROM face_crops c WHERE c.face_id = faces.id) FROM faces"),
                          [(json.dumps([0, 0, 10, 8]), b"crop")])
         self.assertEqual(result.details["faces_turned"], 0)
 
     def test_face_boxes_turn_where_pillow_turns_the_picture(self):
         result = self.rotate(oriented=True)
-        box, crop = self.lib.rows("SELECT box, crop_image FROM faces")[0]
+        box, crop = self.lib.rows("SELECT box, (SELECT jpeg FROM face_crops c WHERE c.face_id = faces.id) FROM faces")[0]
         self.assertEqual(json.loads(box), turned_box([0, 0, 10, 8], "right", 40, 30))
         self.assertIsNone(crop, "a crop cut from the old box must be cut again")
         self.assertEqual(result.details["faces_turned"], 1)

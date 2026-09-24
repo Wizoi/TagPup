@@ -45,8 +45,11 @@ class TempLibrary:
                      " VALUES (?, ?, ?, ?, '[]', '[]', '{}')", (path, mtime, size, json.dumps(list(tags))))
 
     def add_face(self, path, box, name=None, crop=b"crop"):
-        return self.execute("INSERT INTO faces (photo_path, box, name, crop_image) VALUES (?, ?, ?, ?)",
-                            (path, json.dumps(box), name, crop))
+        face_id = self.execute("INSERT INTO faces (photo_path, box, name) VALUES (?, ?, ?)",
+                               (path, json.dumps(box), name))
+        if crop is not None:
+            self.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, crop))
+        return face_id
 
     def execute(self, sql, params=()):
         conn = db.connect(self.library.path)

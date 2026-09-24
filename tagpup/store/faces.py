@@ -131,9 +131,10 @@ def turn_boxes(db_path, photo_path, direction, width, height):
                 continue
             if not isinstance(box, list) or len(box) < 4:
                 continue
-            cursor.execute("UPDATE faces SET box = ?, crop_image = NULL WHERE id = ?",
+            cursor.execute("UPDATE faces SET box = ? WHERE id = ?",
                            (json.dumps(turned_box(box, direction, width, height)), face_id))
             changed += cursor.rowcount
+            cursor.execute("DELETE FROM face_crops WHERE face_id = ?", (face_id,))
         return changed
 
     return db.write_with_connection(
@@ -147,7 +148,8 @@ def crop_of(db_path, face_id):
         return None
     conn = db.connect(db_path, timeout=30.0)
     try:
-        row = conn.execute("SELECT photo_path, box, crop_image FROM faces WHERE id = ?",
+        row = conn.execute("SELECT f.photo_path, f.box, c.jpeg FROM faces f"
+                           " LEFT JOIN face_crops c ON c.face_id = f.id WHERE f.id = ?",
                            (face_id,)).fetchone()
     finally:
         conn.close()
@@ -155,12 +157,15 @@ def crop_of(db_path, face_id):
 
 
 def cache_crop(db_path, face_id, jpeg):
-    """Keep a face's crop in its row, so it is cut from the photo once. Returns rows changed.
+    """Keep a face's crop in face_crops, so it is cut from the photo once. Returns rows
+    changed: none for a face that is not there.
 
     Through the write lock: both servers used to write it back on their own connection."""
     def store(conn):
-        return conn.execute("UPDATE faces SET crop_image = ? WHERE id = ?",
-                            (jpeg, face_id)).rowcount
+        if not conn.execute("SELECT 1 FROM faces WHERE id = ?", (face_id,)).fetchone():
+            return 0
+        return conn.execute("INSERT OR REPLACE INTO face_crops (face_id, jpeg) VALUES (?, ?)",
+                            (face_id, jpeg)).rowcount
 
     return db.write_with_connection(db_path, store, label="crop of face %s" % face_id)
 
@@ -181,11 +186,14 @@ def remove_for_photo(conn, photo_path):
 
 
 def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
-    """Record one detected face: `box` as a list, `embedding` as float32 bytes. The caller
-    commits."""
-    conn.execute(
-        "INSERT INTO faces (photo_path, box, embedding, name, crop_image, prob) VALUES (?, ?, ?, ?, ?, ?)",
-        (paths.stored(photo_path), json.dumps(box), embedding, name, crop, prob))
+    """Record one detected face: `box` as a list, `embedding` as float32 bytes, and its
+    crop, if one was cut, in face_crops. Returns the face's id. The caller commits."""
+    face_id = conn.execute(
+        "INSERT INTO faces (photo_path, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+        (paths.stored(photo_path), json.dumps(box), embedding, name, prob)).lastrowid
+    if crop:
+        conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, crop))
+    return face_id
 
 
 def manual_names(conn):
