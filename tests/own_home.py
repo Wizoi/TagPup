@@ -96,7 +96,11 @@ def _reap_after_exit(folder):
         os.close(handle)
         flags = 0
         if os.name == "nt":
-            flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            # A hidden console, not none (DETACHED_PROCESS): the venv's python.exe is
+            # a launcher that starts the real interpreter as a child, and a child with
+            # no console to inherit is given a new one -- a terminal window on the
+            # desktop for every test process, 140 a run.
+            flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
         _POPEN([sys.executable, os.path.abspath(__file__), "--reap", str(os.getpid()), _reap_list],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
