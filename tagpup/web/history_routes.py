@@ -5,7 +5,8 @@ gear's History dialog shows (web/common/history-dialog.js; docs/ARCHITECTURE.md,
 Every bulk edit, file write and settings change is a change of the library's journal
 (tagpup.services.journal), and until now only the CLI and the MCP server could list or
 undo one. GET lists the library the URL names' last changes, newest first: what each
-was, when, what it touched by count, and whether it stands to be undone. No values are
+was, when, what it touched by count, and whether it can be undone -- or why not, as the
+journal's refusal says it (tagpup.services.journal.refusals). No values are
 sent -- a change's rows can name people -- and the summary holds counts only. POST
 rehearses the undo of one (`apply` false: nothing is written, and the answer says what
 would be put back and what refused) or makes it (`apply` true): a change of rows only
@@ -20,7 +21,6 @@ from flask import Blueprint, jsonify, request
 
 from tagpup.core.result import NotFound
 from tagpup.services import journal as journal_service
-from tagpup.services import settings as settings_service
 from tagpup.web import responses, state, tagpup_routes
 
 logger = logging.getLogger(__name__)
@@ -31,19 +31,14 @@ LIMIT = 20
 MOST = 100
 
 
-def undoable(entry):
-    """May the dialog offer to undo this change? One applied, and not the stamp of the
-    library's first settings, which is never undone (tagpup.services.settings.STAMPS).
-    The undo itself decides the rest -- a newer change in the way, a file changed since
-    -- and says why."""
-    return entry["status"] == "applied" and entry["operation"] not in settings_service.STAMPS
-
-
-def _listed(entry):
+def _listed(entry, why_not):
+    """An entry as the dialog lists it: offered to be undone unless the journal says why
+    not (journal_service.refusals, the account the rehearsal refuses by). A change of
+    files whose files have changed since is still offered; its rehearsal reads them."""
     return {"id": entry["id"], "operation": entry["operation"], "status": entry["status"],
             "created": entry["created"], "applied": entry["applied"], "undone": entry["undone"],
             "summary": entry["summary"], "rows": entry["rows"], "files": entry["files"],
-            "undoable": undoable(entry)}
+            "undoable": why_not is None, "why_not": why_not}
 
 
 @routes.get("/api/history")
@@ -55,10 +50,11 @@ def library_history():
         return responses.error(400, "Say how many changes to list as a number: ?limit=20.")
     try:
         found = journal_service.history(library, limit=max(1, min(limit, MOST)))
+        why_not = journal_service.refusals(library, found["changes"])
     except Exception as e:
         return responses.error(500, str(e))
     return jsonify({"library": library.name, "retention_days": found["retention_days"],
-                    "changes": [_listed(entry) for entry in found["changes"]]})
+                    "changes": [_listed(entry, why_not.get(entry["id"])) for entry in found["changes"]]})
 
 
 def _answer(result, change_id):

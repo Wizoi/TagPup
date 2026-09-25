@@ -80,6 +80,35 @@ class TheHistoryRoutes(HistoryCase):
                 self.assertFalse(again["success"])
                 self.assertTrue(again["refused"])
 
+    def test_a_change_the_undo_would_refuse_is_listed_with_why_not_a_button(self):
+        """Review of pass/journal, item 1: the listing offered Undo on migrations and on
+        changes older than the schema, and every press was refused. It asks the journal
+        what the rehearsal asks now, and gives the reason instead."""
+        for kind, client, _home, library in self.apps():
+            with self.subTest(app=kind):
+                settings.of(library)
+                first = settings.change(library, {"candidates.tags": "harbour"}).details["change"]
+                second = settings.change(library, {"candidates.tags": "regatta"}).details["change"]
+                third = settings.change(library, {"renaming.format": "{grouping} - {index}"}).details["change"]
+                conn = db.connect(library.path)
+                try:
+                    conn.execute("UPDATE changes SET schema_version = schema_version - 1 WHERE id = ?", (third,))
+                    conn.commit()
+                finally:
+                    conn.close()
+                listed = {c["id"]: c for c in self.listed(client)["changes"]}
+                self.assertEqual((True, None), (listed[second]["undoable"], listed[second]["why_not"]))
+                self.assertFalse(listed[first]["undoable"])
+                self.assertIn("change %d (change settings)" % second, listed[first]["why_not"])
+                self.assertFalse(listed[third]["undoable"])
+                self.assertIn("was made at schema", listed[third]["why_not"])
+                stamp = [c for c in listed.values() if c["operation"] in settings.STAMPS][0]
+                self.assertEqual((False, settings.NOT_UNDONE), (stamp["undoable"], stamp["why_not"]))
+                # The listing and the rehearsal agree on every change.
+                for change in listed.values():
+                    status, rehearsed = self.undo(client, change["id"], apply=False)
+                    self.assertEqual(change["undoable"], not rehearsed["refused"], (change, rehearsed))
+
     def test_a_change_there_is_not_is_refused(self):
         for kind, client, _home, _library in self.apps():
             with self.subTest(app=kind):

@@ -36,6 +36,26 @@ def history(library, change_id=None, reveal=False, limit=20):
     return {"changes": entries, "retention_days": RETENTION_DAYS}
 
 
+def _stamp_refusal(operation):
+    """Why a change made as `operation` is never undone: a stamp of the library's first
+    settings (NOT_UNDONE). None for any other."""
+    return library_settings.NOT_UNDONE if operation in library_settings.STAMPS else None
+
+
+def refusals(library, entries):
+    """{id: why it cannot be undone now, or None} of each of `entries`, entries of
+    `library`'s history ({"id", "operation"}): what the History dialog shows instead of
+    an Undo button. The account the rehearsal refuses by -- a stamp of the settings
+    (_stamp_refusal), then the journal's (tagpup.store.journal.refusal: status, schema
+    version, a newer change of the same rows or files) -- so a change offered is one the
+    rehearsal does not refuse out of hand. Reads only."""
+    reasons = {entry["id"]: _stamp_refusal(entry["operation"]) for entry in entries}
+    found = journal.refusals(library.path, [cid for cid, why in reasons.items() if why is None])
+    for change_id, why in found.items():
+        reasons[change_id] = "; ".join(why) or None
+    return reasons
+
+
 def rehearse(library, change_id, exiftool_path=None):
     """Undo change `change_id` and apply it again inside a transaction rolled back. A
     Result: `attempted` is the rows the undo would write; details["rehearsal"] says
@@ -45,8 +65,9 @@ def rehearse(library, change_id, exiftool_path=None):
     if file_changes.writes_files(library, change_id):
         return file_changes.rehearse_undo(library, change_id, exiftool_path)
     result = Result(details={"dry_run": True, "change": change_id})
-    if journal.operation(library.path, change_id) in library_settings.STAMPS:
-        result.refuse(library_settings.NOT_UNDONE)
+    stamped = _stamp_refusal(journal.operation(library.path, change_id))
+    if stamped:
+        result.refuse(stamped)
         return result
     rehearsal = journal.rehearse_undo(library.path, change_id)
     result.details["rehearsal"] = rehearsal.as_dict()

@@ -69,7 +69,8 @@ async function openFrom(appName, t, { changes, undo }) {
 const CHANGES = [
   change(12, "add to all selected", { files: { done: 2 } }),
   change(11, "change settings", { rows: { settings: { update: 1 } } }),
-  change(10, "stamp settings with the defaults", { undoable: false, rows: { settings: { insert: 9 } } }),
+  change(10, "stamp settings with the defaults", { undoable: false, rows: { settings: { insert: 9 } },
+                                                   why_not: "A library's first settings cannot be undone; change them instead." }),
 ];
 
 for (const appName of ["tagpup", "tagtuner"]) {
@@ -86,6 +87,8 @@ for (const appName of ["tagpup", "tagtuner"]) {
       assert.equal(rows[1].querySelector(".history-counts").textContent, "1 row(s)");
       assert.ok(undoButton(12) && undoButton(11));
       assert.equal(undoButton(10), null, "the settings stamp is offered to be undone");
+      assert.equal(rows[2].querySelector(".history-why").textContent,
+                   "A library's first settings cannot be undone; change them instead.");
     });
 
     test("Undo rehearses first, then Confirm undo makes it and the list is read again", async (t) => {

@@ -95,6 +95,9 @@ function changeRow(change) {
         });
         button.addEventListener('click', () => undoChange(change, button, note));
         row.querySelector('.history-what').append(button);
+    } else if (change.why_not) {
+        // Why not, as the server's undo would refuse it: no button to press in vain.
+        row.append(buildElement('div', { className: 'history-why', text: change.why_not }));
     }
     return row;
 }
