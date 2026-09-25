@@ -110,7 +110,8 @@ class TheInstalledAppRuns(InstallCase):
         process = subprocess.Popen(["cmd", "/c", os.path.join(self.dest, "TagTuner.cmd"),
                                     "--db", "installed", "--tuner-port", str(port),
                                     "--tagpup-port", str(other)], env=env,
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         self.addCleanup(self.stop, process)
 
         deadline = time.time() + 60

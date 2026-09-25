@@ -38,6 +38,7 @@ def run_screenshot_flow():
             [sys.executable, os.path.join(PROJECT_ROOT, "tagpup_web.py"), "--db", "test_photo_index",
              "--tagpup-port", str(gui_port), "--tuner-port", str(tuner_port)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         for _ in range(60):
             try:

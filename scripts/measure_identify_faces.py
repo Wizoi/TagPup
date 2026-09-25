@@ -121,6 +121,7 @@ def start_sandbox_server(sandbox, db_path, port):
         env=dict(os.environ, TAGPUP_HOME=sandbox),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     for _ in range(60):
         try:

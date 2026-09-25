@@ -695,7 +695,9 @@ class RunnerApp:
             cmd.extend(["--db", libraries.for_mode(db_val + ".db", self.var_test_db.get())])
         self.log_text("Starting the web server: %s\n" % " ".join(cmd[1:]), tag="info")
         try:
-            self.server_process = subprocess.Popen(cmd, cwd=os.path.dirname(SERVER))
+            # It logs to data/logs/tagpup_web.log; a console of its own is only a popup.
+            self.server_process = subprocess.Popen(cmd, cwd=os.path.dirname(SERVER),
+                                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except Exception as e:
             self.log_text(f"Failed to start the server: {e}\n", tag="error")
             self.server_process = None

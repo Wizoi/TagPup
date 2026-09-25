@@ -99,6 +99,8 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
             [sys.executable, "tagpup_cli.py"] + args,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, env=env, bufsize=1, cwd=code_folder,
+            # Its output is read here; a console window of its own is only a popup.
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         with proc.stdout:
             for line in iter(proc.stdout.readline, ""):

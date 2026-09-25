@@ -106,7 +106,8 @@ def start_server(sandbox, db_path, port):
     # Its home is the sandbox, whatever TAGPUP_HOME this was run with.
     process = subprocess.Popen([sys.executable, launcher], cwd=sandbox,
                                env=dict(os.environ, TAGPUP_HOME=sandbox),
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     return process, log_path
 
 

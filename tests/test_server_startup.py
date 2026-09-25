@@ -26,7 +26,8 @@ class TestServerStartup(unittest.TestCase):
             [sys.executable, os.path.join(PROJECT_ROOT, "tagpup_web.py"),
              "--tagpup-port", str(tagpup_port), "--tuner-port", str(tuner_port)],
             env=dict(os.environ, TAGPUP_HOME=home.root),
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT)
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         try:
             deadline = time.time() + 60
             while time.time() < deadline:
