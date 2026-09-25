@@ -90,7 +90,15 @@ def record_year(meta):
     """The year a photo was taken, from a record of it: the record's "year", as the
     library records it (photos.year) and the reader gives it; else, for a record without
     one or a raw_metadata dict itself, photo_year. What the suggester's time decay and
-    clustering's years go by."""
+    clustering's years go by.
+
+    A number or None, whatever the record's shape: the library gives its year as a
+    number, the page's record of a photo as text ("2020", or "Unknown"), and Suggest
+    compares the two -- given text, it failed on every photo of a folder."""
     if "year" in meta:
-        return meta["year"]
+        year = meta["year"]
+        if isinstance(year, int):
+            return year
+        text = str(year).strip() if year is not None else ""
+        return int(text) if text.isdigit() else None
     return photo_year(meta.get("raw_metadata", meta), meta.get("path"))
