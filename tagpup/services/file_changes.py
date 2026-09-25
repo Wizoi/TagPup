@@ -15,7 +15,10 @@ per file. dpkg's per-item states, and its recovery at start, are the model here:
    read, it is a `conflict` -- changed outside since -- reported and never overwritten.
    Otherwise mark it `writing`, write it, and in one transaction record its row
    (tagpup.store.photos.follow_fields, which record_tags' rule generalises) and mark it
-   `done`. The change is `applied` once every file is done or a conflict.
+   `done`. Then the files written are read back, in one read, and a file that does not
+   hold quite what was written -- IPTC cuts a keyword at 64 bytes -- is recorded, in the
+   journal and its row, as it holds it (_read_back). The change is `applied` once every
+   file is done or a conflict.
 3. **Settle**, at start (settle_once): a file a crash left `writing` is settled by what it
    holds -- what the plan read: written again; what it was to hold: marked done and its
    row recorded; neither: a conflict. Files the crash left `planned` are written too, so
@@ -129,6 +132,7 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
                 continue
             planned.append((path, before, after, plan.detail))
         _follow(library, followed)
+        wrote = {}
         if not planned:
             return result
         found = _rows_of(library, [path for path, _b, _a, _d in planned])
@@ -140,7 +144,8 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
             _reached("plan committed")
             for n, row in enumerate(rows):
                 path, detail = planned[n][0], planned[n][3]
-                outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw")
+                outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw",
+                                      wrote=wrote)
                 if outcome == "done":
                     result.changed += 1
                     written[path] = detail
@@ -151,6 +156,7 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
                 elif stop_at_first_error:
                     file_journal.withdraw(library.path, [r.id for r in rows[n + 1:]])
                     break
+            _read_back(et, library, wrote)
             file_journal.finish(library.path, change_id)
         except BaseException:
             file_journal.release(library.path, change_id)
@@ -185,7 +191,8 @@ def _follow(library, followed):
 
 
 def _record(library, row, values, state, stamp=None, wrote=True):
-    """Record what a file holds now in its row, and mark it `state`, in one transaction."""
+    """Record what a file holds now in its row, and mark it `state`, in one transaction.
+    Returns the file's stat, as recorded."""
     stat = None
     if wrote:
         try:
@@ -198,6 +205,54 @@ def _record(library, row, values, state, stamp=None, wrote=True):
         file_journal.set_state(conn, row.id, state)
 
     db.write_with_connection(library.path, work, label="%s: %s" % (row.named(), state))
+    return stat
+
+
+def _read_back(et, library, wrote):
+    """Record what each file written holds, where ExifTool did not keep a value as it was
+    written: IPTC:Keywords cut at 64 bytes, a letter outside Latin-1 as "?", "1.50" as
+    1.5. The file was recorded done holding what was asked for, and undoing the change
+    refused it for holding neither (docs/findings.md, #273). `wrote` is {file id: (row,
+    its stat as recorded)}; the files are read in one read for them all. A file whose stat
+    is not what was recorded was written by another program since, and is left as the
+    journal has it, for an undo to refuse. Never raises: the files are written either
+    way."""
+    if not wrote:
+        return
+    written = list(wrote.values())
+    try:
+        held = field_values.read(et, [row.path for row, _stat in written],
+                                 sorted({field for row, _stat in written for field in row.after}))
+    except Exception as e:
+        logger.warning("%s: could not read back %d file(s) written: %s", library.path, len(written), e)
+        return
+    for row, stat in written:
+        now = held.get(paths.key(row.path))
+        if now is None or isinstance(now, Exception):
+            continue
+        kept = {field: now.get(field, []) for field in row.after}
+        if fields.same_fields(kept, row.after):
+            continue
+        try:
+            current = os.stat(row.path)
+        except OSError:
+            continue
+        if stat is None or (current.st_mtime_ns, current.st_size) != (stat.st_mtime_ns, stat.st_size):
+            continue
+        differ = sorted(field for field in row.after if not fields.same_values(kept[field], row.after[field]))
+
+        def work(conn, row=row, kept=kept):
+            photos.follow_fields(conn, row.path, kept)
+            file_journal.set_after(conn, row.id, kept)
+
+        try:
+            db.write_with_connection(library.path, work, label="%s: read back" % row.named())
+        except Exception as e:
+            logger.warning("%s: could not record what %s holds: %s", library.path, row.named(), e)
+            continue
+        row.after = kept
+        logger.warning("%s: %s does not hold %s quite as written; recorded as it holds it",
+                       library.path, row.named(), ", ".join(differ))
 
 
 def _conflict(library, row, why):
@@ -205,12 +260,13 @@ def _conflict(library, row, why):
     return "conflict", "%s: %s" % (row.named(), why)
 
 
-def _carry(et, library, row, origin, target, finished, on_failure):
+def _carry(et, library, row, origin, target, finished, on_failure, wrote=None):
     """Bring a file holding `origin` to `target`, and mark it `finished`: forward (before
     to after, done) and in an undo (after to before, undone). A file holding `target`
     already is recorded as it is; one holding neither is a conflict. A write that fails
     leaves a file holding `origin` withdrawn from its change (`on_failure="withdraw"`) or
-    a conflict. Returns (outcome, why): `finished`, "conflict" or "failed"."""
+    a conflict. A file written goes in `wrote`, for _read_back. Returns (outcome, why):
+    `finished`, "conflict" or "failed"."""
     try:
         now = field_values.read_one(et, row.path, list(target))
     except field_values.Unreadable as e:
@@ -230,7 +286,9 @@ def _carry(et, library, row, origin, target, finished, on_failure):
     except Exception as e:
         return _after_failure(et, library, row, origin, target, finished, on_failure, e)
     _reached("file written")
-    _record(library, row, target, finished, stamp)
+    stat = _record(library, row, target, finished, stamp)
+    if wrote is not None:
+        wrote[row.id] = (row, stat)
     _reached("file recorded")
     return finished, None
 
@@ -468,11 +526,13 @@ def _finish(library, change, exiftool_path):
     changed = [row for row in pending if not row.is_rename]
     if changed:
         with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
+            wrote = {}
             for row in changed:
                 if undoing:
                     _carry(et, library, row, row.after, row.before, "undone", on_failure="conflict")
                 else:
-                    _carry(et, library, row, row.before, row.after, "done", on_failure="conflict")
+                    _carry(et, library, row, row.before, row.after, "done", on_failure="conflict", wrote=wrote)
+            _read_back(et, library, wrote)
     file_journal.finish(library.path, change.id)
 
 

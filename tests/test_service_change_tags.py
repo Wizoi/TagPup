@@ -13,6 +13,8 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from service_fixture import TempLibrary  # noqa: E402
 
+from test_service_replace_tag import keeps_writes  # noqa: E402
+
 from tagpup.services import tagging  # noqa: E402
 
 
@@ -30,6 +32,7 @@ class ChangingTags(unittest.TestCase):
         self.et = mock.MagicMock()
         self.et.get_tags.side_effect = lambda paths, tags=None: [
             {"SourceFile": p, "XMP:Subject": list(self.files.get(p, []))} for p in paths]
+        keeps_writes(self.et, self.files)
         session = mock.MagicMock()
         session.return_value.__enter__.return_value = self.et
         session.return_value.__exit__.return_value = False

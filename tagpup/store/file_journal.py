@@ -165,6 +165,12 @@ def set_state(conn, file_id, state, note=None):
     conn.execute("UPDATE change_files SET state = ?, note = ? WHERE id = ?", (state, note, file_id))
 
 
+def set_after(conn, file_id, after):
+    """Record what a file holds after its write, where ExifTool did not keep a value as
+    written (tagpup.services.file_changes). The caller commits, with the file's row."""
+    conn.execute("UPDATE change_files SET fields_after = ? WHERE id = ?", (json.dumps(after, sort_keys=True), file_id))
+
+
 def mark(db_path, file_ids, state, note=None):
     """Mark files, in a transaction of their own: `writing`, before ExifTool runs."""
     file_ids = list(file_ids)

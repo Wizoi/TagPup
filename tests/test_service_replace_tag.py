@@ -22,10 +22,31 @@ def exiftool(files):
     et = mock.MagicMock()
     et.get_tags.side_effect = lambda paths, tags=None: [
         {"SourceFile": p, "XMP:Subject": list(files.get(p, []))} for p in paths]
+    keeps_writes(et, files)
     session = mock.MagicMock()
     session.return_value.__enter__.return_value = et
     session.return_value.__exit__.return_value = False
     return session, et
+
+
+def keeps_writes(et, files):
+    """Have the stand-in `et` keep each keyword write in `files` (path -> tags), as a
+    file would: the journal reads back what it wrote (tagpup.services.file_changes)."""
+    def set_tags(paths, tags=None, params=None):
+        for path in paths:
+            if "XMP:Subject" in (tags or {}):
+                value = tags["XMP:Subject"]
+                files[path] = list(value) if isinstance(value, list) else [value]
+            elif "-XMP:Subject=" in (params or []):
+                files[path] = []
+
+    def execute(*args):
+        if "-XMP:Subject=" in args:
+            files[args[-1]] = []
+        return ""
+
+    et.set_tags.side_effect = set_tags
+    et.execute.side_effect = execute
 
 
 HARBOUR = ["Places/Harbour", "Places/Harbour/Pier", "Relay"]
@@ -38,7 +59,7 @@ class ReplacingATag(unittest.TestCase):
         self.beach = self.lib.photo("beach.jpg")
         self.lib.add_row(self.harbour, tags=HARBOUR)
         self.lib.add_row(self.beach, tags=["Beach"])
-        self.files = {self.harbour: HARBOUR, self.beach: ["Beach"]}
+        self.files = {self.harbour: list(HARBOUR), self.beach: ["Beach"]}
 
     def replace(self, old, new, photos=None):
         session, et = exiftool(self.files)
