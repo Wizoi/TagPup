@@ -17,7 +17,6 @@ registers.
 """
 import logging
 import os
-import re
 import socket
 import time
 import urllib.parse
@@ -50,7 +49,8 @@ STYLE_TYPE = PAGE_FILES["style.css"]
 
 #: What a module's name may be: a page's modules and the shared ones are all named so,
 #: and nothing else in their folders -- nor anything above them -- can be asked for.
-MODULE_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+#: The router's pattern, so the two cannot drift (#165).
+MODULE_NAME = libraries.MODULE_NAME
 NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0"}
 
 #: A request that takes this long is logged, with its time.

@@ -3,13 +3,13 @@
 import { api } from './common/api.js';
 import { dialogOpen } from './common/dialog.js';
 import { buildElement, replaceContent } from './common/dom.js';
+import { baseName } from './common/paths.js';
 import { leafOf, photoAlreadyHas, tagProblem, textProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { btnSaveDetails, inputAddPerson, inputAddTag, inputPhotoTitle } from './elements.js';
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
-import { baseName } from './format.js';
 import {
     fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson, updateTagsDatalist
 } from './tags.js';

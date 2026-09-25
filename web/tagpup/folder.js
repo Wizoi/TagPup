@@ -1,7 +1,7 @@
 // TagPup's page: the folder list -- choosing, scanning and closing a folder, the list of
 // its photos and the folder view's header, and the sidebar's width.
 import { api } from './common/api.js';
-import { samePath } from './common/paths.js';
+import { baseName, samePath } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
@@ -12,7 +12,6 @@ import {
 } from './elements.js';
 import { flagField } from './status.js';
 import { CACHE_TTL_MS, folderCacheKey, saveToLocalStorageCache } from './cache.js';
-import { baseName } from './format.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen } from './edits.js';
 

@@ -148,8 +148,10 @@ def photo_details():
 @routes.get("/api/photo-file")
 def photo_file():
     # As stored, and not kept: the page draws face boxes over it in the stored pixels'
-    # coordinates (tagpup.web.responses.photo).
-    return responses.photo(request.args.get("path"), request.args.get("size"), upright=False)
+    # coordinates (tagpup.web.responses.photo). `upright=1` turns a copy as a person
+    # sees it, for a view that draws no boxes: the Tags view's cards (#31).
+    return responses.photo(request.args.get("path"), request.args.get("size"),
+                           upright=request.args.get("upright") == "1")
 
 
 @routes.get("/api/face-crop")
@@ -597,6 +599,14 @@ def folder_remove():
         logger.error("Error removing folder %s: %s", folder_path, e)
         _refuse(500, str(e))
     return jsonify(dict(result.details, success=True))
+
+
+@routes.get("/api/folder/indexed")
+def folder_indexed():
+    """The folders this library holds photos in (tagpup.services.photos.indexed_folders):
+    what Remove Folder offers, a folder gone from disk included (#47)."""
+    library = state.require()
+    return jsonify({"folders": photo_actions.indexed_folders(library)})
 
 
 @routes.get("/api/folder/subfolders")

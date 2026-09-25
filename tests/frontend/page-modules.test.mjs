@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pageModules, pageScript, entryModule } from "./harness.mjs";
+import { REPO_ROOT, pageModules, pageScript, entryModule } from "./harness.mjs";
 
 const made = [];
 after(() => made.forEach((folder) => fs.rmSync(folder, { recursive: true, force: true })));
@@ -31,6 +31,36 @@ function site(files, html = '<html><body><script type="module" src="main.js"></s
 }
 
 const names = (modules) => modules.map((m) => path.basename(path.dirname(m.file)) + "/" + path.basename(m.file));
+
+describe("TagTuner's elements.js holds what more than one feature reaches (#160)", () => {
+  // Its header says so. tagViewContent stayed there, used by sidebar.js alone, with the
+  // old page's comment on why it was declared early -- a hazard of one closure's `const`
+  // that modules do not have.
+  const tuner = path.join(REPO_ROOT, "web", "tuner");
+  const elements = path.join(tuner, "elements.js");
+
+  test("every element it exports is imported by two modules or more", () => {
+    const source = fs.readFileSync(elements, "utf8");
+    const exported = [...source.matchAll(/^export const (\w+)/gm)].map((m) => m[1]);
+    assert.ok(exported.length > 5, "found too few exports to be reading the right file");
+    const importers = new Map(exported.map((name) => [name, []]));
+    for (const module of pageModules(tuner)) {
+      if (path.resolve(module.file) === path.resolve(elements)) continue;
+      const text = fs.readFileSync(module.file, "utf8");
+      const block = text.match(/import\s*\{([^}]*)\}\s*from\s*['"]\.\/elements\.js['"]/);
+      if (!block) continue;
+      for (const name of block[1].split(",").map((s) => s.trim()).filter(Boolean)) {
+        if (importers.has(name)) importers.get(name).push(path.basename(module.file));
+      }
+    }
+    const single = [...importers].filter(([, users]) => users.length < 2).map(([n, u]) => `${n}: ${u.join(", ") || "none"}`);
+    assert.deepEqual(single, []);
+  });
+
+  test("it keeps no comment about a closure's declaration order", () => {
+    assert.doesNotMatch(fs.readFileSync(elements, "utf8"), /before its line had run/);
+  });
+});
 
 describe("the order a page's modules run in", () => {
   test("each module's imports first, in the order it names them, each once", () => {

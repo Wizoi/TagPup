@@ -2,6 +2,7 @@
 // right-click menu.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
+import { baseName } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
@@ -10,7 +11,7 @@ import {
 } from './elements.js';
 import { saveToLocalStorageCache } from './cache.js';
 import {
-    baseName, formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
+    formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
 import { queuePhotoWrite } from './edits.js';
 import { renderFileList, visiblePhotos } from './folder.js';

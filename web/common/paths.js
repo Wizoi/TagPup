@@ -21,6 +21,18 @@ export function pathKey(p) {
     return String(p).trim().replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 }
 
+/**
+ * The last segment of a path: a photo's file name, or a folder's name. Either
+ * separator, and a trailing one is ignored ("D:\\Run\\2019\\" is "2019"; a drive
+ * root is its drive). A path with no last segment -- null, '', a bare "/" -- gives '',
+ * and the caller says what to show instead. Both pages' own versions differed there
+ * (#146).
+ */
+export function baseName(p) {
+    if (!p) return '';
+    return String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
+}
+
 /** Whether two spellings name the same file or folder. */
 export function samePath(a, b) {
     if (!a || !b) return false;

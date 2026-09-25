@@ -397,6 +397,37 @@ def indexed_by_folder(library):
         conn.close()
 
 
+def indexed_folders(library):
+    """The folders Remove Folder offers, by path: each the library holds photos directly
+    in, and each folder above those up to (not including) its drive's root, which holds
+    none of its own -- removing a folder takes every folder under it
+    (store.photos.remove_under), so a parent removes a season in one step. Each is
+    {"path" (as stored), "photos" (every photo under it: what removing it takes),
+    "own_photos" (those directly in it; 0 for a folder above), "on_disk"}. TagTuner
+    offers these rather than the disk's folders, so a folder deleted from disk can still
+    be taken out (#47)."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        held = photos.folders_held(conn)
+    finally:
+        conn.close()
+    # {key: [spelling, photos under it, photos directly in it]}
+    listed = {paths.key(folder): [folder, 0, count] for folder, count in held}
+    for folder, count in held:
+        # Up through its ancestors, adding its photos to each; one not yet listed is
+        # listed under the spelling of the first folder found below it.
+        current = folder
+        while True:
+            parent = os.path.dirname(current)
+            if parent == current:
+                break   # a drive's root: never offered
+            entry = listed.setdefault(paths.key(current), [current, 0, 0])
+            entry[1] += count
+            current = parent
+    return [{"path": folder, "photos": under, "own_photos": own, "on_disk": os.path.isdir(folder)}
+            for _key, (folder, under, own) in sorted(listed.items())]
+
+
 def is_photo(path):
     """Does `path` name a photo, by its extension (tagpup.files.images)? The web layer
     asks before opening one on the desktop."""

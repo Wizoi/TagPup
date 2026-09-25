@@ -1,19 +1,20 @@
 // The mode, the sidebar's lists and the photo list (Folder Matches).
 import { api } from './common/api.js';
 import { dialogOpen } from './common/dialog.js';
-import { samePath } from './common/paths.js';
+import { baseName, samePath } from './common/paths.js';
 import { state } from './state.js';
 import {
     emptyState, faceMatchingContent, listStats, modeSelect, panelContent, photoList,
-    photoSearch, showMatchedToggle, tagViewContent,
+    photoSearch, showMatchedToggle,
 } from './elements.js';
 import { UNKNOWN_YEAR } from './rules.js';
-import { basename, updateURLParams } from './shared.js';
+import { updateURLParams } from './shared.js';
 import { loadTags, renderTagList } from './tags.js';
 import { fetchPeopleWithCounts, selectPerson } from './people.js';
 import { postFolderAutoMatch, selectPhoto } from './faces-strip.js';
 
 const btnRefreshList = document.getElementById('btn-refresh-list');
+const tagViewContent = document.getElementById('tag-view-content');
 const sidebar = document.querySelector('.sidebar');
 const sidebarResizer = document.getElementById('sidebar-resizer');
 const showMatchedContainer = document.getElementById('show-matched-container');
@@ -221,7 +222,7 @@ function renderPhotoList() {
             
             const folderTitle = document.createElement('span');
             folderTitle.className = 'folder-title';
-            folderTitle.textContent = basename(folderGroup.name);
+            folderTitle.textContent = baseName(folderGroup.name) || folderGroup.name;
             folderTitle.title = folderGroup.name;
             folderHeader.appendChild(folderTitle);
             

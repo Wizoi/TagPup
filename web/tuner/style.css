@@ -1467,6 +1467,17 @@ select {
     opacity: 0.55;
 }
 
+/* Remove Folder: a folder the library holds that is gone from disk. */
+.folder-picker-row.not-on-disk .folder-picker-meta {
+    color: #f87171;
+}
+
+.remove-folder-filter {
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 8px;
+}
+
 .folder-picker-name {
     flex: 1;
     overflow: hidden;

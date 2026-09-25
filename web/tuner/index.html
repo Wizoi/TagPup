@@ -386,6 +386,24 @@
             </div>
         </div>
     </div>
+    <div id="remove-folder-modal" class="modal hidden">
+        <div class="modal-content folder-picker-content">
+            <div class="modal-header">
+                <h3>Remove a folder from this library</h3>
+                <button id="btn-close-remove-folder" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="search" id="remove-folder-filter" class="remove-folder-filter" placeholder="Filter the library's folders">
+                <div id="remove-folder-empty" class="folder-picker-empty">Reading the library's folders...</div>
+                <div id="remove-folder-list" class="folder-picker-list hidden"></div>
+            </div>
+            <div class="modal-footer">
+                <span id="remove-folder-selection" class="folder-picker-selection"></span>
+                <button id="btn-remove-folder-cancel" class="btn btn-secondary">Cancel</button>
+                <button id="btn-remove-folder-confirm" class="btn btn-danger" disabled>Remove</button>
+            </div>
+        </div>
+    </div>
     <div id="new-person-modal" class="modal hidden">
         <div class="modal-content">
             <div class="modal-header">

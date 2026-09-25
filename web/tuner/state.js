@@ -58,6 +58,10 @@ export const state = {
     pickerFolders: [],
     pickerSelected: new Set(),
 
+    // Remove Folder: the library's folders (/api/folder/indexed), and the one chosen.
+    removeFolders: [],
+    removeFolderChosen: null,
+
     // The last folder whose poll reached a terminal status. index-active and
     // index-status are two reads of state that moves between them, so the first can
     // still name a folder the second has already called finished. Following that

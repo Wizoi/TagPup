@@ -13,12 +13,6 @@ export const showMatchedToggle = document.getElementById('show-matched-toggle');
 // Face Matching Mode DOM Elements
 export const faceMatchingContent = document.getElementById('face-matching-content');
 
-// Declared here with the other elements rather than beside the code that uses
-// them. fetchPhotos() runs during startup and hides this panel, so a `const`
-// further down would be reached before its line had run -- which throws, and
-// takes the rest of this closure with it.
-export const tagViewContent = document.getElementById('tag-view-content');
-
 export const matchingPersonCount = document.getElementById('matching-person-count');
 export const btnUnmatchSelected = document.getElementById('btn-unmatch-selected');
 export const matchingFacesGrid = document.getElementById('matching-faces-grid');

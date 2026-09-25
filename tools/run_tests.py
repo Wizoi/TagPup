@@ -14,8 +14,11 @@ and tests/test_tests_have_homes_of_their_own.py keeps it so; a file that named t
 checkout's data/ or config.ini would still get the lane. Each file's time is kept in
 tests/.durations.json (not in git), and the longest start first next time.
 
-Prints each file that failed, with its output, and one line of totals. Exits 1 when
-any file failed.
+Prints each file that failed, with its output, and one line of totals, and keeps the
+same in data/logs/run_tests-<time>.log (not in git; the last ten failed runs), naming
+the file: a failure that happens once in six runs is otherwise gone with the console
+(docs/findings.md, #101). A file that exits 0 having run no tests -- it ended before
+unittest's summary, or holds none -- fails. Exits 1 when any file failed.
 """
 import argparse
 import concurrent.futures
@@ -51,6 +54,11 @@ READS_CODE_NOT_DATA = frozenset({"test_config_single_owner"})
 
 #: The summary unittest ends with: "Ran 12 tests in 0.3s".
 RAN = re.compile(r"^Ran (\d+) tests? in", re.M)
+
+#: Where a failed run's output is kept, and how many failed runs are.
+FAILED_RUNS = os.path.join(ROOT, "data", "logs")
+KEEP_FAILED_RUNS = 10
+FAILED_RUN = re.compile(r"^run_tests-\d{8}-\d{6}(?:-\d+)?\.log$")
 
 
 def test_files(names=None):
@@ -121,7 +129,12 @@ def run_one(module):
         remove(home)
     output = done.stdout or ""
     ran = RAN.search(output)
-    return module, done.returncode == 0, int(ran.group(1)) if ran else 0, time.time() - started, output
+    count = int(ran.group(1)) if ran else 0
+    passed = done.returncode == 0 and count > 0
+    if done.returncode == 0 and not count:
+        output += ("\n[run_tests] exited 0 having run no tests: it %s (#101)"
+                   % ("holds none" if ran else "ended before unittest's summary"))
+    return module, passed, count, time.time() - started, output
 
 
 def remove(folder):
@@ -133,6 +146,29 @@ def remove(folder):
             return
         time.sleep(0.25)
     print("note: could not delete %s" % folder, flush=True)
+
+
+def keep_failed_run(text):
+    """Write a failed run's report to FAILED_RUNS and drop all but the latest
+    KEEP_FAILED_RUNS; returns the file's path, or None if it could not be written."""
+    try:
+        os.makedirs(FAILED_RUNS, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        path = os.path.join(FAILED_RUNS, "run_tests-%s.log" % stamp)
+        suffix = 1
+        while os.path.exists(path):
+            suffix += 1
+            path = os.path.join(FAILED_RUNS, "run_tests-%s-%d.log" % (stamp, suffix))
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        runs = sorted(n for n in os.listdir(FAILED_RUNS) if FAILED_RUN.match(n))   # by their time
+        for old in runs[:-KEEP_FAILED_RUNS]:
+            if os.path.join(FAILED_RUNS, old) != path:
+                os.remove(os.path.join(FAILED_RUNS, old))
+        return path
+    except OSError as error:
+        print("note: could not keep this run's output in %s: %s" % (FAILED_RUNS, error), flush=True)
+        return None
 
 
 def run(modules, jobs):
@@ -178,11 +214,17 @@ def main(argv=None):
     started = time.time()
     results = run(modules, args.jobs)
     failed = [r for r in results if not r[1]]
+    report = []
     for module, _passed, _ran, _seconds, output in sorted(failed):
-        print("\n" + "=" * 70 + "\n" + module + "\n" + "=" * 70)
-        print(output.rstrip())
-    print("\n%d file(s), %d test(s), %d file(s) failed, in %.0fs with %d processes" % (
+        report.append("\n" + "=" * 70 + "\n" + module + "\n" + "=" * 70)
+        report.append(output.rstrip())
+    report.append("\n%d file(s), %d test(s), %d file(s) failed, in %.0fs with %d processes" % (
         len(results), sum(r[2] for r in results), len(failed), time.time() - started, args.jobs))
+    print("\n".join(report))
+    if failed:
+        kept = keep_failed_run("\n".join(report) + "\n")
+        if kept:
+            print("This run's failures are kept in %s" % kept)
     return 1 if failed else 0
 
 

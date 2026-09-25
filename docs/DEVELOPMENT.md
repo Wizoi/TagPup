@@ -64,6 +64,8 @@ with a `TAGPUP_HOME` of its own. A file that named the checkout's own `data/` or
 `config.ini` -- or imported a test file that did -- would run in a lane of its own, one
 after another; none does since the tests moved into homes of their own
 (findings.md, #14), and `tests/test_tests_have_homes_of_their_own.py` keeps it so.
+A failed run's output is also kept in `data/logs/run_tests-<time>.log` (the last ten),
+and the run names the file; a file that exits 0 having run no tests fails (#101).
 
 Use the glob for the frontend suite. `node --test tests/frontend/` treats `harness.mjs`
 as a test file, finds no tests in it, and reports a failure that is purely the
