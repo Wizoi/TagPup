@@ -393,6 +393,24 @@ for files here.
 
 Exit: no bulk operation or data-changing migration takes a full copy of the library; each is recorded, rehearsed before it is applied and undoable after, and a crash at any step is settled at the next start.
 
+### Phase 7.6: Settings in the library, and a gear on each page
+The settings a library depends on live in `config.ini`, one file for the machine, which
+nothing in the pages shows *(owner, 2026-09-25)*: the CLIP model its vectors were made
+with, the face-detection thresholds, Suggest's candidate words, the rename format, and
+where ExifTool is. A library opened on another machine, or with the file edited, is
+read with settings it was not made with, and nothing says so.
+
+- [ ] **The gears.** TagPup's top bar has a gear holding the tag editor (moved from its own button) and a link to TagTuner on the same library; TagTuner's has the tag editor, the library's settings, and a link to TagPup on the same library. The tag editor is one module in `web/common/`, which both pages load, and its routes are served by both apps.
+- [ ] **Settings in the library**: a `settings` table (a migration), each value recorded with the change that set it (phase 7.5), so a change is in the library's history and can be undone. A new library is stamped with the defaults; a library without settings is stamped once from `config.ini` when it is next opened, so nothing changes for a library in use. Then nothing reads `config.ini`, and it goes, with `config.example.ini` and its copy in `setup.bat`. Where the libraries are is not a setting: `data/` in `TAGPUP_HOME`. ExifTool is found where its installer puts it or on PATH, and a library may name another.
+- [ ] **The settings dialog** (TagTuner's gear): each setting with an info button saying what it changes and when. Settings with consequences are locked -- shown, not editable -- and open only through Change..., which lists what changing it does and asks for each to be acknowledged before it is saved; the page reloads after:
+  - the CLIP model (name, weights, framing, size): every photo's vector was made with the old one, so Suggest finds nothing until every folder is indexed again;
+  - face detection (smallest face, confidence, thresholds): only photos indexed after the change; indexing a folder again applies it to that folder;
+  - the ExifTool program: every read and write of a photo file goes through it.
+  Suggest's candidate words and the rename format apply from the next run, and are not locked.
+- [ ] **Everything reads the library's settings**: the runtime keys its models by a library's model settings (two libraries on one model share it), the CLI and the MCP server read the library they are given, and the settings owner is `tagpup.services.settings` over `tagpup.store.settings`. `tests/test_config_single_owner.py` becomes: nothing reads `config.ini` but the one-time stamping.
+
+Exit: `config.ini` is gone; every setting a library depends on is in the library, shown in TagTuner's gear, changed only through a recorded, undoable change, with its consequences acknowledged.
+
 ### Phase 8: Sync
 A job that keeps each library in step with its folders. Today a row changes only when an app writes the photo or someone indexes its folder again, so the library drifts: files added outside the apps are missing, a deleted folder leaves its rows and face work behind (#42 and #47 in findings.md), and a file edited elsewhere keeps a row describing what it used to hold. It needs photo ids (phase 4), which let a moved or renamed file keep its row, and its faces with it.
 - `tagpup.jobs.sync`: for each indexed folder, compare what is on disk with the rows, by path, size and modified time. Content identity (the DocumentID) links a file that moved.
@@ -429,6 +447,7 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 2026-09-25 | The pages move to `web/tagpup/` and `web/tuner/`, sharing `web/common/`, imported relative to the page so every request carries its library. |
 | 2026-09-25 | The MCP server names a library in every tool call; it has no library of its own (#100). Its reads are a read-only service, `tagpup.services.inspect`, since an entry point may not import `store`; its writes are the maintenance scripts' operations, moved into services the scripts call too. |
 | 2026-09-25 | Bulk edits and migrations are recorded in a journal in the library, per changed column, applied and undone only where the rows are what the change expects, and rehearsed by a dry run that applies and undoes inside a rolled-back transaction. SQLite's session extension was weighed and its semantics copied, not the library: it needs APSW, a second owner of the database beside `tagpup.store.db`. Full backups remain only for migrations that destroy information. |
+| 2026-09-25 | A library's settings live in the library and are changed from TagTuner's gear, through the journal; `config.ini` is retired *(owner)*. The data folder is fixed (`TAGPUP_HOME/data`), not a setting. Settings with consequences are locked behind a Change... that asks for each consequence to be acknowledged. |
 
 ## Progress
 
@@ -445,4 +464,5 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 6.5. No shims | done, 2026-09-25 |
 | 7. MCP | done, 2026-09-25 |
 | 7.5. A journal for every bulk edit and migration | in progress, 2026-09-25 |
+| 7.6. Settings in the library, and a gear on each page | in progress, 2026-09-25 |
 | 8. Sync | not started |
