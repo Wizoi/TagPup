@@ -55,6 +55,8 @@ describe("the order a page's modules run in", () => {
     assert.match(script, /^function helper\(\)/m);
     assert.match(script, /^const other = 'y';/m);
     assert.ok(script.indexOf("function helper") < script.indexOf("document.title"));
+    // Each module in a function of its own, handed its imports.
+    assert.match(script, /const \{ helper, other \} = __module0;/);
   });
 
   test("the entry is the module index.html starts", () => {
@@ -64,14 +66,27 @@ describe("the order a page's modules run in", () => {
   });
 });
 
-describe("what one scope cannot hold is refused", () => {
-  test("a name declared in two modules", () => {
+describe("each module has a scope of its own, as in a browser", () => {
+  test("two modules may declare the same name, and each sees its own", () => {
     const { page, common } = site({
-      "page/main.js": 'import { pathKey } from "./common/paths.js";\nfunction samePath() {}\n',
-      "common/paths.js": "export function pathKey() {}\nexport function samePath() {}\n",
+      "page/main.js": 'import { pathKey } from "./common/paths.js";\nfunction samePath() { return "page"; }\ndocument.title = pathKey() + samePath();\n',
+      "common/paths.js": 'export function pathKey() { return samePath(); }\nexport function samePath() { return "common"; }\n',
     });
-    assert.throws(() => pageModules(page, common), /samePath is declared in .*paths\.js and again in .*main\.js/);
+    const title = { value: "" };
+    new Function("document", pageScript(page, common))({ set title(v) { title.value = v; } });
+    assert.equal(title.value, "commonpage");
   });
+
+  test("a module's own parameter or local is not a use of another module's name", () => {
+    const { page, common } = site({
+      "page/main.js": 'import { has } from "./common/vocabulary.js";\nexport function isPersonTag(t) { return has(t, (x) => x); }\n',
+      "common/vocabulary.js": "export function has(tag, isPersonTag) { const leaf = isPersonTag(tag); return leaf; }\n",
+    });
+    assert.equal(pageModules(page, common).length, 2);
+  });
+});
+
+describe("what the page loader cannot take is refused", () => {
 
   test("an import of something the module does not export", () => {
     const { page, common } = site({
@@ -85,7 +100,7 @@ describe("what one scope cannot hold is refused", () => {
     for (const line of ['import { a as b } from "./common/x.js";', 'import x from "./common/x.js";',
                         'import * as x from "./common/x.js";']) {
       const { page, common } = site({ "page/main.js": line + "\n", "common/x.js": "export const a = 1;\n" });
-      assert.throws(() => pageModules(page, common), /share one scope/, line);
+      assert.throws(() => pageModules(page, common), /takes only named imports|takes no renamed import/, line);
     }
   });
 
@@ -105,7 +120,7 @@ describe("what one scope cannot hold is refused", () => {
   });
 
   test("a name used from another module without importing it", () => {
-    // It works in the tests' one scope, and is a ReferenceError in a browser.
+    // A ReferenceError in a browser, and in the tests only on a path a test runs.
     const { page, common } = site({
       "page/main.js": 'import { api } from "./common/api.js";\nconst address = api.url(libraryIn("/x/"));\n',
       "common/api.js": "export function libraryIn(p) { return p; }\nexport const api = { url: (p) => p };\n",

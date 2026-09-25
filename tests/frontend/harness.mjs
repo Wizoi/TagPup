@@ -30,7 +30,8 @@ export const APPS = {
 // page's modules are put in the order the browser runs them -- each module's imports
 // before it, in the order it names them -- with the import lines dropped and the
 // `export` words taken off, and evaluated in the page's window as one strict script.
-// The modules then share one scope, so a name may be declared by one of them only.
+// Each module runs in a function of its own, handed its imports and returning its
+// exports, so each has its own scope, as in a browser.
 
 /** Where the modules both pages share live: the server serves them at common/. */
 export const COMMON_DIR = path.join(REPO_ROOT, "web", "common");
@@ -44,13 +45,13 @@ const PAGE_URL = "http://page/";
  */
 const IMPORT = /^import\s+(?:([\w$\s{},*]+?)\s+from\s+)?(["'])([^"']+)\2\s*;?[ \t]*$/gm;
 
-/** A declaration at the top of a module: what it adds to the page's one scope. */
+/** A declaration at the top of a module: what it may export. */
 const DECLARATION = /^(export\s+)?(?:(?:async\s+)?function\s*\*?\s*|class\s+|(?:const|let|var)\s+)([\w$]+)/gm;
 
 /** A top-level `const {a, b} = ...` or `let [a] = ...`: names the loader cannot read. */
 const DESTRUCTURING = /^(?:export\s+)?(?:const|let|var)\s*[{[]/m;
 
-/** Any other `export`: default, lists, re-exports, which one scope cannot honour. */
+/** Any other `export`: default, lists, re-exports, which the loader does not take. */
 const OTHER_EXPORT = /^export\s+(?!(?:async\s+)?function\b|class\b|const\b|let\b|var\b)/m;
 
 class PageModuleError extends Error {}
@@ -92,11 +93,11 @@ function readModule(file, url) {
     if (clause) {
       const braces = clause.trim().match(/^\{([\s\S]*)\}$/);
       if (!braces) {
-        throw new PageModuleError(`${url}: import ${clause.trim()} -- only named imports, { a, b }, can share one scope`);
+        throw new PageModuleError(`${url}: import ${clause.trim()} -- the page loader takes only named imports, { a, b }`);
       }
       for (const name of braces[1].split(",").map((s) => s.trim()).filter(Boolean)) {
         if (!/^[\w$]+$/.test(name)) {
-          throw new PageModuleError(`${url}: import { ${name} } -- a renamed import cannot share one scope`);
+          throw new PageModuleError(`${url}: import { ${name} } -- the page loader takes no renamed import`);
         }
         names.push(name);
       }
@@ -107,7 +108,7 @@ function readModule(file, url) {
     throw new PageModuleError(`${url} declares names by destructuring at its top; declare each by name`);
   }
   const other = source.match(OTHER_EXPORT);
-  if (other) throw new PageModuleError(`${url}: "${other[0]}..." -- only exported declarations can share one scope`);
+  if (other) throw new PageModuleError(`${url}: "${other[0]}..." -- the page loader takes only exported declarations`);
   const declared = [];
   const exported = new Set();
   for (const m of source.matchAll(DECLARATION)) {
@@ -148,23 +149,19 @@ export function pageModules(pageDir, commonDir = COMMON_DIR) {
 
   const owner = new Map();
   for (const module of ordered) {
-    for (const name of module.declared) {
-      if (owner.has(name)) {
-        throw new PageModuleError(
-          `${name} is declared in ${owner.get(name)} and again in ${module.url}; a page's modules share one scope in the tests, so a name is declared once per page`
-        );
-      }
-      owner.set(name, module.url);
-    }
+    for (const name of module.exported) if (!owner.has(name)) owner.set(name, module.url);
   }
 
-  // A module using another's name without importing it runs here, where the modules
-  // share one scope, and fails in a browser, where they do not.
+  // A module using another's export without importing it fails in a browser. In the
+  // tests it fails too -- each module has its own scope -- but only on a path a test
+  // runs; this finds it on every path. A name the module binds itself (a parameter, a
+  // local) is its own, not a use of the other module's.
   for (const module of ordered) {
     const imported = new Set(module.imports.flatMap((i) => i.names));
     const code = codeOf(module.body);
+    const own = boundIn(code);
     for (const [name, where] of owner) {
-      if (where === module.url || imported.has(name)) continue;
+      if (where === module.url || imported.has(name) || own.has(name) || module.declared.includes(name)) continue;
       // Not after a dot (a property) nor before a colon (an object's key).
       if (new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}(?![\\w$]|\\s*:)`).test(code)) {
         throw new PageModuleError(`${module.url} uses ${name} from ${where} without importing it; a browser would not find it`);
@@ -172,6 +169,24 @@ export function pageModules(pageDir, commonDir = COMMON_DIR) {
     }
   }
   return ordered;
+}
+
+/** The names a module binds anywhere in it: declarations, parameters, catch variables. */
+function boundIn(code) {
+  const names = new Set();
+  const add = (list) => {
+    for (const part of list.replace(/[{}\[\]]/g, ",").split(",")) {
+      const name = part.split("=")[0].replace(/\.\.\./, "").trim();
+      if (/^[\w$]+$/.test(name)) names.add(name);
+    }
+  };
+  for (const m of code.matchAll(/\b(?:const|let|var|function\*?|class)\s+([\w$]+)/g)) names.add(m[1]);
+  for (const m of code.matchAll(/\b(?:const|let|var)\s*([{[][^=]*)=/g)) add(m[1]);
+  for (const m of code.matchAll(/\bfunction\b[^(]*\(([^)]*)\)/g)) add(m[1]);
+  for (const m of code.matchAll(/\(([^()]*)\)\s*=>/g)) add(m[1]);
+  for (const m of code.matchAll(/(?<![\w$.])([\w$]+)\s*=>/g)) names.add(m[1]);
+  for (const m of code.matchAll(/\bcatch\s*\(\s*([\w$]+)/g)) names.add(m[1]);
+  return names;
 }
 
 /** A module's code with its comments and quoted strings emptied: where names are used. */
@@ -184,9 +199,22 @@ function codeOf(body) {
 
 /** A page's modules as the one strict script the page's window evaluates. */
 export function pageScript(pageDir, commonDir = COMMON_DIR) {
-  const parts = pageModules(pageDir, commonDir).map(
-    (m) => `// ---- ${path.relative(REPO_ROOT, m.file).split(path.sep).join("/")}\n${m.body}`
-  );
+  const modules = pageModules(pageDir, commonDir);
+  const slot = new Map(modules.map((m, i) => [m.url, `__module${i}`]));
+  const parts = modules.map((m) => {
+    const imports = m.imports
+      .filter((i) => i.names.length)
+      .map((i) => `const { ${i.names.join(", ")} } = ${slot.get(i.url)};`)
+      .join("\n");
+    return [
+      `// ---- ${path.relative(REPO_ROOT, m.file).split(path.sep).join("/")}`,
+      `const ${slot.get(m.url)} = (() => {`,
+      imports,
+      m.body,
+      `return { ${[...m.exported].join(", ")} };`,
+      "})();",
+    ].join("\n");
+  });
   return `"use strict";\n${parts.join("\n")}\n`;
 }
 
