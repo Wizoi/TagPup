@@ -16,6 +16,11 @@ to it; the two before it are kept, to go back to by editing current.txt.
 Start the apps with the launchers it writes: TagPup.cmd and TagTuner.cmd (one server
 for both; the second started opens its page in the running one), TagPup Runner.cmd,
 and TagPup CLI.cmd for indexing and the other CLI commands.
+
+Each launcher first runs this with --if-changed: when the checkout has moved to
+another commit and holds no uncommitted code, that commit is installed before the app
+starts, so a merge reaches the apps at their next start. A checkout in the middle of
+an edit is never installed; the version already installed starts instead.
 """
 import argparse
 import datetime
@@ -47,8 +52,10 @@ LAUNCHER = (
     "@echo off\r\n"
     "rem Written by scripts/install_app.py. Runs the installed {script} with this home.\r\n"
     'set "TAGPUP_HOME={home}"\r\n'
-    'set /p TAGPUP_VERSION=<"%~dp0current.txt"\r\n'
     'cd /d "%TAGPUP_HOME%"\r\n'
+    'if exist "%TAGPUP_HOME%\\scripts\\install_app.py" '
+    '"{python}" "%TAGPUP_HOME%\\scripts\\install_app.py" --apply --if-changed --to "%~dp0."\r\n'
+    'set /p TAGPUP_VERSION=<"%~dp0current.txt"\r\n'
     '"{python}" "%~dp0versions\\%TAGPUP_VERSION%\\{script}" {args} %*\r\n'
 )
 
@@ -77,6 +84,41 @@ def version_name(now=None):
     commit = git("rev-parse", "--short", "HEAD") or "nogit"
     dirty = "-uncommitted" if git("status", "--porcelain", "--untracked-files=no") else ""
     return "%s-%s%s" % (stamp, commit, dirty)
+
+
+def stale(current, commit, dirty):
+    """Should the installed version `current` be replaced by the checkout at `commit`?
+    Only when the checkout's code is all committed (not `dirty`) and the version came
+    from another commit, or from this one with uncommitted code."""
+    if not commit or dirty:
+        return False
+    if not current:
+        return True
+    parts = current.rstrip("+").split("-")
+    return len(parts) < 3 or parts[2] != commit or "uncommitted" in parts[3:]
+
+
+def update(destination, home, python, say=print):
+    """Install the checkout's commit if the installed version is `stale`; what a
+    launcher runs before it starts its app. Never stops the app from starting: a
+    failed install leaves the version there was. Returns the version installed, or None."""
+    commit = git("rev-parse", "--short", "HEAD")
+    dirty = bool(git("status", "--porcelain", "--untracked-files=no"))
+    current = read_current(destination)
+    if not stale(current, commit, dirty):
+        if dirty and stale(current, commit, False):
+            say("TagPup: the checkout has uncommitted changes, so %s was not installed; "
+                "starting the installed version." % commit)
+        return None
+    say("TagPup: installing %s before starting..." % commit)
+    try:
+        name, _removed = install(destination, home, python, apply=True, say=lambda line: None)
+    except Exception as error:   # the app still starts, from the version there was
+        say("TagPup: could not install (%s); starting the installed version." % error)
+        return None
+    say("TagPup: installed %s. An app already running keeps the old code until it is "
+        "closed and started again." % name)
+    return name
 
 
 def is_link(path):
@@ -164,6 +206,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--apply", action="store_true", help="install; the default is a dry run")
+    parser.add_argument("--if-changed", action="store_true",
+                        help="with --apply: install only if the checkout's commit is not the one "
+                             "installed and it holds no uncommitted code (what the launchers run)")
     parser.add_argument("--to", default=default_destination(),
                         help="where to install (default: %(default)s)")
     parser.add_argument("--home", default=tagpup_config.home(),
@@ -171,6 +216,9 @@ def main(argv=None):
     parser.add_argument("--python", default=default_python(),
                         help="the interpreter the launchers use (default: %(default)s)")
     args = parser.parse_args(argv)
+    if args.if_changed and args.apply:
+        update(os.path.abspath(args.to), os.path.abspath(args.home), args.python)
+        return 0
     install(os.path.abspath(args.to), os.path.abspath(args.home), args.python, apply=args.apply)
     return 0
 

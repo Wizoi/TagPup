@@ -14,6 +14,7 @@ import tempfile
 import time
 import unittest
 import urllib.request
+from unittest import mock
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
@@ -64,12 +65,53 @@ class WhatAnInstallIs(InstallCase):
             self.assertIn('"%s"' % sys.executable, text)
             # %~dp0 is the launcher's own folder, and ends in a backslash.
             self.assertIn('"%~dp0versions\\%TAGPUP_VERSION%\\' + script + '" ' + args, text)
+            # It installs a new commit first, then reads which version to run.
+            self.assertLess(text.index("--if-changed"), text.index("set /p TAGPUP_VERSION"))
             self.assertNotIn("\n", text.replace("\r\n", ""), "cmd.exe wants CRLF throughout")
 
     def test_a_version_is_named_for_when_and_which_commit(self):
         name = install_app.version_name(datetime.datetime(2026, 9, 23, 20, 5, 0))
         self.assertTrue(name.startswith("20260923-200500-"), name)
         self.assertGreater(len(name), len("20260923-200500-"))
+
+
+class InstallingANewCommitAtStart(InstallCase):
+    """What each launcher runs first: a merge reaches the apps at their next start."""
+
+    def test_only_a_committed_checkout_on_another_commit_is_installed(self):
+        self.assertTrue(install_app.stale("20260925-115722-0dd8402", "bfeb9b7", False))
+        self.assertFalse(install_app.stale("20260925-115722-0dd8402", "0dd8402", False))
+        self.assertFalse(install_app.stale("20260925-115722-0dd8402", "bfeb9b7", True),
+                         "half an edit must never be installed")
+        self.assertTrue(install_app.stale("20260925-115722-0dd8402-uncommitted", "0dd8402", False))
+        self.assertFalse(install_app.stale("20260925-115722-0dd8402+", "0dd8402", False))
+        self.assertTrue(install_app.stale(None, "0dd8402", False))
+        self.assertFalse(install_app.stale("20260925-115722-0dd8402", "", False), "no git: leave it")
+
+    def update(self, commit, dirty):
+        answers = {"rev-parse": commit, "status": " M tagpup/x.py" if dirty else ""}
+        with mock.patch.object(install_app, "git", side_effect=lambda *a: answers[a[0]]):
+            return install_app.update(self.dest, self.home, sys.executable, say=self.said.append)
+
+    def test_a_new_commit_is_installed_and_the_same_one_is_not(self):
+        first = self.install(name="20260925-115722-0dd8402")[0]
+        self.assertIsNone(self.update("0dd8402", False))
+        self.assertEqual(first, install_app.read_current(self.dest))
+        installed = self.update("bfeb9b7", False)
+        self.assertEqual(installed, install_app.read_current(self.dest))
+        self.assertNotEqual(first, installed)
+
+    def test_an_edit_in_progress_starts_the_installed_version(self):
+        first = self.install(name="20260925-115722-0dd8402")[0]
+        self.assertIsNone(self.update("bfeb9b7", True))
+        self.assertEqual(first, install_app.read_current(self.dest))
+        self.assertTrue(any("uncommitted" in line for line in self.said))
+
+    def test_a_failed_install_still_lets_the_app_start(self):
+        first = self.install(name="20260925-115722-0dd8402")[0]
+        with mock.patch.object(install_app, "copy_code", side_effect=OSError("disk full")):
+            self.assertIsNone(self.update("bfeb9b7", False))
+        self.assertEqual(first, install_app.read_current(self.dest))
 
 
 class KeepingVersions(InstallCase):
