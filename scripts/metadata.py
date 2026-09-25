@@ -9,12 +9,11 @@ This module mixed three layers, and has been split by them:
 What is left joins them back into the calls that took a `db_path` or `conn`, and holds
 the two helpers that format a photo for the pages, which go with the web layer.
 """
-import os
 from typing import Any, Dict, List, Optional, Set
 
 import _root  # noqa: F401
 from tagpup import config as tagpup_config
-from tagpup.core import dates, paths
+from tagpup.core import dates
 from tagpup.core import vocabulary as tag_vocabulary  # extract_people has a `vocabulary` argument
 from tagpup.core.vocabulary import extract_captions, extract_tags  # noqa: F401
 from tagpup.files import metadata as files_metadata
@@ -94,32 +93,8 @@ def parse_year_from_metadata(meta: Dict[str, Any]) -> Optional[int]:
 
 
 def build_photo_ui_record(path: str, meta: Dict[str, Any], mtime: float = 0.0, size: int = 0) -> Dict[str, Any]:
-    """Builds a standardized dictionary of photo attributes for the GUI frontend.
+    """A photo as the TagPup page reads it (tagpup.services.photos.page_record), under
+    the name the old callers use."""
+    from tagpup.services import photos as photo_actions
 
-    "path" is the stored spelling whatever the caller had, so the browser only ever
-    sees one spelling of a photo and hands back the one the index uses.
-    """
-    path = paths.stored(path)
-    tags = meta.get("tags", [])
-    people = meta.get("people", [])
-    raw_meta = meta.get("raw_metadata", {})
-    captions = meta.get("captions", [])
-    title = captions[0] if captions else ""
-
-    year = parse_year_from_metadata(meta)
-    year_str = dates.shown_year(None if year is None else str(year))
-
-    return {
-        "path": path,
-        "filename": os.path.basename(path),
-        "tags": tags,
-        "people": people,
-        "title": title,
-        "mtime": mtime,
-        "size": size,
-        "year": year_str,
-        # When it was taken, as the library records it (tagpup.core.dates.date_taken,
-        # photos.taken): the page reads this, not fields of its own (#67).
-        "taken": dates.date_taken(raw_meta),
-        "raw_metadata": raw_meta
-    }
+    return photo_actions.page_record(path, meta, mtime, size)

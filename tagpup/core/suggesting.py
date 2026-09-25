@@ -54,3 +54,20 @@ def clip_prompt(word, year=None, person=False):
     embedding is kept under in the library, so a change here computes them all again."""
     thing = word if person else "a " + word.lower()
     return "a photo of %s in %s" % (thing, year) if year is not None else "a photo of %s" % thing
+
+
+def offered_tags(entry, threshold=0.0):
+    """What Apply All writes for one photo from its saved suggestions `entry`: the
+    `tags` and `people` the panel showed, scoring at least `threshold`.
+
+    Exactly what the panel offered. Apply All read `raw_suggestions` -- everything the
+    suggester produced down to its own floor -- while the panel showed only what scored
+    OFFER_A_TAG or better. The two lists drifted: a photo came back from Apply All
+    carrying two people the panel had never mentioned, while the suggestions it *had*
+    listed were still sitting there unapplied. One list, two consumers.
+    """
+    offered = list(entry.get("tags") or [])
+    offered_people = list(entry.get("people") or [])
+    chosen = [t["tag"] for t in offered if t.get("score", 0.0) >= threshold]
+    chosen += [p["name"] for p in offered_people if p.get("score", 0.0) >= threshold]
+    return chosen

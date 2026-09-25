@@ -414,3 +414,114 @@ def _node(library, node_id):
 def _tree_changed(library):
     """What follows every edit of the tree: what was read of its people forgotten."""
     taxonomy.forget_people_paths(library.path)
+
+
+# ---- The word tags, read ------------------------------------------------------------------
+#
+# TagTuner curates faces because a wrong name spreads: a tagged photo is what the
+# suggester learns the next photo from. Word tags spread the same way and had no view at
+# all, so a misspelling could sit in the vocabulary for months, be suggested, be applied,
+# and become its own source. Finding one took SQL. These answer the two questions that
+# were unanswerable: what is in the vocabulary, and which photos a given tag touches.
+
+def listing(library, include_people=False):
+    """Every tag this library knows, with what it touches, and the buckets worth a look:
+    `flat` (no path), `used_once` (where typos hide), `unused` (in the vocabulary, on no
+    photo, still feeding zero-shot matching) and `people_without_a_path`.
+
+    `include_people` decides which side of the face/word split to return: the point of
+    this view is the tags TagTuner could not previously reach, so people are left out
+    by default.
+    """
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        taxonomy_rows = taxonomy.face_flags(conn)
+        people_roots = taxonomy.people_roots(conn)
+        embedded = taxonomy.embedded_tags(conn)
+        tag_lists = photos.tag_lists(conn)
+    finally:
+        conn.close()
+
+    in_taxonomy = {tag: bool(has_face) for tag, has_face in taxonomy_rows if tag}
+
+    # A person the taxonomy files under a people root, by their leaf name. A bare tag
+    # matching one is that person having lost their path, not a word tag -- and saying
+    # so is the point, since that is the fault the keyword convention forbids.
+    person_leaves = {
+        vocabulary.key(vocabulary.leaf_of(tag))
+        for tag in in_taxonomy
+        if "/" in tag and vocabulary.key(vocabulary.root_of(tag)) in people_roots
+    }
+
+    def is_person_tag(tag):
+        if "/" in tag:
+            return vocabulary.key(vocabulary.root_of(tag)) in people_roots
+        low = tag.strip().lower()
+        return low in people_roots or low in person_leaves or in_taxonomy.get(tag, False)
+
+    def is_stray_person(tag):
+        return "/" not in tag and tag.strip().lower() in person_leaves
+
+    counts = {}
+    for tags in tag_lists:
+        for tag in tags:
+            if tag:
+                counts[tag] = counts.get(tag, 0) + 1
+
+    every = set(counts) | set(in_taxonomy)
+    out = []
+    for tag in sorted(every):
+        if is_person_tag(tag) and not include_people:
+            continue
+        out.append({
+            "tag": tag,
+            "leaf": vocabulary.leaf_of(tag),
+            "count": counts.get(tag, 0),
+            "flat": "/" not in tag,
+            "in_taxonomy": tag in in_taxonomy,
+            "has_embedding": tag in embedded,
+            "is_person": is_person_tag(tag),
+            "person_without_path": is_stray_person(tag),
+        })
+
+    buckets = {
+        "flat": sorted(t["tag"] for t in out if t["flat"] and t["count"]),
+        "used_once": sorted(t["tag"] for t in out if t["count"] == 1),
+        "unused": sorted(t["tag"] for t in out if t["count"] == 0),
+        # Counted separately from the tags returned: a person who lost their path is
+        # excluded from the word-tag list by is_person_tag, but it is exactly what
+        # somebody opening this view wants told.
+        "people_without_a_path": sorted(
+            tag for tag in every if is_stray_person(tag) and counts.get(tag, 0) > 0),
+    }
+    return {"tags": out, "buckets": buckets}
+
+
+def photos_carrying(library, tag):
+    """The photos carrying exactly `tag`, newest first, each with its tags. Matches the
+    whole tag, never a prefix."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        rows = photos.with_tag(conn, tag)
+    finally:
+        conn.close()
+    found = [{"path": path, "filename": os.path.basename(path), "mtime": mtime or 0, "tags": tags}
+             for path, tags, mtime in rows]
+    found.sort(key=lambda p: p["mtime"], reverse=True)
+    return {"tag": tag, "photos": found, "total": len(found)}
+
+
+def autocomplete(library):
+    """Every tag offered while one is typed, sorted: the tags photos carry and the tree's
+    nodes, less those hidden from autocomplete and everything under them
+    (tagpup.core.vocabulary.hidden_by). TagPup's /api/tags."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        found = set()
+        for tags in photos.tag_lists(conn):
+            found.update(tags)
+        found.update(taxonomy.tags(conn))
+        hidden = taxonomy.hidden_tags(conn)
+    finally:
+        conn.close()
+    return sorted(tag for tag in found if not vocabulary.hidden_by(tag, hidden))

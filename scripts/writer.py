@@ -194,10 +194,12 @@ class MetadataWriter:
 
         # We will write tags to XMP:Subject, IPTC:Keywords, and XMP:HierarchicalSubject
         # and captions to XMP:Description and IPTC:Caption-Abstract
-        from tagpup_server import (record_file_stat_in_index, record_tags_in_index,
-                                   tags_in_file, write_keyword_fields)
+        from tagpup.files.keywords import tags_in_file, write_keywords
         from tagpup.store.embeddings import stamp_of
+        from tagpup.store.photos import record_file_stat, record_tags
 
+        # Who a bare name means, read once for the run, not once per photo.
+        people = store_taxonomy.people_paths(db_path)
         try:
             with ExifToolSession(executable=executable) as et:
                 for path, tags, caption in write_tasks:
@@ -221,11 +223,12 @@ class MetadataWriter:
                             # bare, and never told the index.
                             current = tags_in_file(et, path)
                             merged = current + [t for t in tags if t not in current]
-                            flat, hierarchical = write_keyword_fields(et, path, merged, db_path=db_path)
+                            flat, hierarchical = write_keywords(
+                                et, path, vocabulary.resolve_people(merged, people))
                             if db_path:
-                                record_tags_in_index(db_path, path, flat, flat, hierarchical, before=before)
+                                record_tags(db_path, path, flat, flat, hierarchical, before=before)
                         elif caption and db_path:
-                            record_file_stat_in_index(db_path, path, before=before)
+                            record_file_stat(db_path, path, before=before)
                         success_count += 1
                     except Exception as e:
                         logger.error(f"Failed to write metadata to {path}: {e}")

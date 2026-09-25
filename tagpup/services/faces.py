@@ -11,6 +11,7 @@ tagpup.store.faces.accounted_write and return `fingerprints` (before, after) and
 grids instead of rebuilding them. The rest move the fingerprint, and a grid built before
 them is rebuilt.
 """
+import json
 import logging
 import os
 
@@ -316,3 +317,69 @@ def _automatch(library, named, photo_path=None, folder=None):
 def _library_there(library):
     if not os.path.exists(library.path):
         raise NotFound("Database not found")
+
+
+# ---- What TagPup's photo panel shows -------------------------------------------------------
+
+def panel(library, photo_path):
+    """The faces detected on one photo, for the strip under its details: {"faces",
+    "total", "unmatched"}, each face with its box, area, name, prob, exclusion, and for
+    an unnamed one the closest name elsewhere in the library and how alike.
+
+    TagPup ran face recognition invisibly: the suggester matched faces and surfaced
+    only a name pill, so there was no way to see which face was unrecognised while
+    tagging. The similarity is to the nearest single resolved face of that person,
+    the measure TagTuner's suggestion list uses, so the two agree on how confident a
+    match looks. Below the value every screen offers a name from
+    (tagpup.core.clustering.is_offered) the nearest name is noise, not a candidate:
+    it was 0.5 here, which two strangers in three reach (docs/findings.md, #75).
+    Named first, then by confidence, then largest first: the faces needing attention
+    are the ones the eye should land on.
+    """
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        rows = faces.in_photo_for_panel(conn, photo_path)
+        if not rows:
+            return {"faces": [], "total": 0, "unmatched": 0}
+        known_names, known_vectors = [], []
+        for name, emb in faces.named_embeddings_elsewhere(conn, photo_path):
+            vec = _unit(emb)
+            if vec is not None:
+                known_names.append(name)
+                known_vectors.append(vec)
+    finally:
+        conn.close()
+    known = np.array(known_vectors, dtype=np.float32) if known_vectors else None
+
+    found = []
+    for face_id, box_json, name, prob, emb, excluded, reason in rows:
+        try:
+            box = json.loads(box_json) if box_json else []
+        except Exception:
+            box = []
+        suggestion = similarity = None
+        vec = _unit(emb) if known is not None and not excluded else None
+        if vec is not None:
+            sims = known @ vec
+            best = int(np.argmax(sims))
+            if clustering.is_offered(float(sims[best])):
+                suggestion, similarity = known_names[best], round(float(sims[best]), 4)
+        found.append({
+            "id": face_id, "box": box,
+            "area": (box[2] - box[0]) * (box[3] - box[1]) if len(box) >= 4 else 0,
+            "name": name, "prob": prob, "excluded": bool(excluded), "excluded_reason": reason,
+            "suggestion": suggestion if name is None else None,
+            "similarity": similarity if name is None else None,
+        })
+    found.sort(key=lambda f: (f["name"] is None, -(f["similarity"] or 0.0), -f["area"]))
+    return {"faces": found, "total": len(found),
+            "unmatched": sum(1 for f in found if f["name"] is None and not f["excluded"])}
+
+
+def _unit(embedding):
+    """A face's stored embedding as a unit vector, or None for an empty one."""
+    if not embedding:
+        return None
+    vec = np.frombuffer(embedding, dtype=np.float32)
+    norm = np.linalg.norm(vec)
+    return vec / norm if norm > 0 else None

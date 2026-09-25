@@ -1,13 +1,151 @@
-"""Actions on photo files."""
+"""Actions on photo files, and reading a folder of them for the page."""
+import json
 import logging
 import os
 
-from tagpup.core import renaming
+from tagpup.core import dates, fields, paths, renaming, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
 from tagpup.files import images, metadata, names, recycle_bin, times
-from tagpup.store import embeddings, faces, photos, taxonomy
+from tagpup.store import db, embeddings, faces, photos, taxonomy
 
 logger = logging.getLogger(__name__)
+
+#: Photos read from disk in one ExifTool call. A folder of thousands is read in these.
+READ_BATCH = 500
+
+
+# ---- A folder, as the page sees it --------------------------------------------------------
+
+def page_record(path, meta, mtime=0.0, size=0):
+    """One photo as the TagPup page reads it, from what was read of it: `meta` is a
+    record from the file reader or an index row (tags, people, captions, raw_metadata).
+
+    "path" is the stored spelling whatever the caller had, so the browser only ever
+    sees one spelling of a photo and hands back the one the index uses. `taken` is when
+    it was taken as the library records it, which the page reads rather than fields of
+    its own (docs/findings.md, #67). This was scripts/metadata.build_photo_ui_record.
+    """
+    path = paths.stored(path)
+    raw_meta = meta.get("raw_metadata", {})
+    captions = meta.get("captions", [])
+    year = meta["year"] if "year" in meta else dates.photo_year(raw_meta, path)
+    return {
+        "path": path,
+        "filename": os.path.basename(path),
+        "tags": meta.get("tags", []),
+        "people": meta.get("people", []),
+        "title": captions[0] if captions else "",
+        "mtime": mtime,
+        "size": size,
+        "year": dates.shown_year(None if year is None else str(year)),
+        "taken": dates.date_taken(raw_meta),
+        "raw_metadata": raw_meta,
+    }
+
+
+def taken_order(record):
+    """The folder view's order for a page record: when it was taken, then file time."""
+    return dates.date_taken_sort_key(record.get("raw_metadata", {}), record.get("mtime", 0.0))
+
+
+def scan_folder(library, folder, exiftool_path):
+    """The photos under `folder`, at any depth, as page records keyed by paths.key:
+    opening a folder in TagPup.
+
+    A photo whose index row matches the file's mtime and size is taken from the row;
+    the rest are read with ExifTool, in batches. A row with no stamp -- made for a
+    photo Suggest saw but the index never read -- is read now (docs/findings.md, #94).
+    The reader is told what the library says about people, as the indexer is; the
+    server's scan used the default face roots alone.
+    """
+    folder = paths.stored(folder)
+    image_files = images.photos_under(folder)
+    if not image_files:
+        return {}
+
+    known = {}
+    try:
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            for path, mtime, size, tags, people, captions, raw_meta in photos.rows_under(conn, folder):
+                known[paths.key(path)] = {
+                    "path": paths.stored(path), "mtime": mtime, "size": size,
+                    "tags": json.loads(tags) if tags else [],
+                    "people": json.loads(people) if people else [],
+                    "captions": json.loads(captions) if captions else [],
+                    "raw_metadata": json.loads(raw_meta) if raw_meta else {},
+                }
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning("Failed to query index DB for folder scan cache: %s", e)
+
+    found, to_read = {}, []
+    for file in image_files:
+        try:
+            stat = os.stat(file)
+        except OSError:
+            continue
+        row = known.get(paths.key(file))
+        if (row and row["mtime"] is not None and row["size"] is not None
+                and abs(row["mtime"] - stat.st_mtime) < 0.1 and row["size"] == stat.st_size):
+            found[paths.key(file)] = page_record(row["path"], row, stat.st_mtime, stat.st_size)
+        else:
+            to_read.append((file, stat.st_mtime, stat.st_size))
+
+    if to_read:
+        logger.info("Scan found %d new/modified files in %s. Running ExifTool...", len(to_read), folder)
+        try:
+            found.update(_read(library, [(f, mt, sz) for f, mt, sz in to_read], exiftool_path))
+        except Exception as e:
+            logger.error("Error running ExifTool during scan: %s", e)
+    return found
+
+
+def read_folder(library, folder, exiftool_path):
+    """Every photo under `folder` read from its file, whatever the index holds, as page
+    records keyed by paths.key: the folder after Smart Rename, and a time shift on a
+    folder never opened. `mtime` and `size` come from the reader."""
+    folder = paths.stored(folder)
+    image_files = images.photos_under(folder)
+    if not image_files:
+        return {}
+    return _read(library, [(f, None, None) for f in image_files], exiftool_path)
+
+
+def _read(library, files, exiftool_path):
+    """{paths.key: page record} of `files`, each (path, mtime, size), mtime and size the
+    reader's when None, read with ExifTool in batches of READ_BATCH."""
+    people = taxonomy.people_vocabulary(library.path)
+    reader = metadata.MetadataExtractor(exiftool_path=exiftool_path)
+    found = {}
+    for start in range(0, len(files), READ_BATCH):
+        batch = files[start:start + READ_BATCH]
+        for (file, mtime, size), meta in zip(batch, reader.batch_read([f for f, _, _ in batch], people=people)):
+            found[paths.key(file)] = page_record(
+                file, meta, meta.get("mtime", 0.0) if mtime is None else mtime,
+                meta.get("size", 0) if size is None else size)
+    return found
+
+
+def people_of(library, raw_meta, tags, photo_path):
+    """Everyone in a photo, by its metadata and its named faces
+    (tagpup.core.vocabulary.people_in_photo), for a page record just written."""
+    return vocabulary.people_in_photo(raw_meta, tags, faces.face_names(photo_path, db_path=library.path),
+                                      taxonomy.people_vocabulary(library.path))
+
+
+def record_written(library, record, path, tags, flat, hierarchical):
+    """Bring a page record up to date with the keywords just written to its photo: its
+    tags, every keyword field of its raw metadata, and its people.
+
+    Every keyword field, not just the XMP pair: the page re-derives tags from the raw
+    metadata, and a stale IPTC:Keywords brought a removed tag straight back.
+    """
+    raw_meta = fields.record_keyword_fields(record.setdefault("raw_metadata", {}), flat, hierarchical)
+    record["tags"] = list(tags)
+    record["people"] = people_of(library, raw_meta, tags, path)
+    return raw_meta
 
 
 def page_copy(photo_path, max_size=None, upright=True):
@@ -186,3 +324,47 @@ def rotate(library, photo_path, direction, exiftool_path):
     stat = os.stat(photo_path)
     result.details.update(mtime=stat.st_mtime, size=stat.st_size)
     return result
+
+
+def count_photos(folder, recursive=True):
+    """(how many photos are under `folder`, has it subfolders): what the folder picker
+    shows beside each folder. `recursive` counts every depth; else the folder's own
+    files only. What counts as a photo is tagpup.files.images' (docs/findings.md, #72)."""
+    count, has_subdirs = 0, False
+    try:
+        if recursive:
+            for root, dirs, files in os.walk(folder):
+                if root == folder and dirs:
+                    has_subdirs = True
+                count += sum(1 for f in files if images.is_photo(f))
+        else:
+            for entry in os.listdir(folder):
+                if os.path.isdir(os.path.join(folder, entry)):
+                    has_subdirs = True
+                elif images.is_photo(entry):
+                    count += 1
+    except OSError:
+        pass
+    return count, has_subdirs
+
+
+def indexed_by_folder(library):
+    """{paths.key of a folder: photos the library holds directly in it}. Lets the folder
+    picker show what is already in rather than offering it as if new; a library that
+    cannot be read just now counts as holding nothing."""
+    try:
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+    except Exception:
+        return {}
+    try:
+        return photos.folder_counts(conn)
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
+def is_photo(path):
+    """Does `path` name a photo, by its extension (tagpup.files.images)? The web layer
+    asks before opening one on the desktop."""
+    return images.is_photo(path)

@@ -203,9 +203,9 @@ def apply_moves(db_path, moves):
     its faces saved there -- got a second set, which is how 233 duplicate faces were
     made. `moved` counts rows changed, not rows planned.
     """
-    from tagpup_server import move_photo_rows
+    from tagpup.store.photos import move_rows
 
-    return move_photo_rows(db_path, {move["from"]: move["to"] for move in moves})
+    return move_rows(db_path, {move["from"]: move["to"] for move in moves})
 
 
 def main():

@@ -5,7 +5,8 @@ both the write here and the record of it in the index go by that one list, so th
 and its index row cannot drift apart one field at a time.
 
 Which person a bare name means is the library's business, not the file's: callers
-resolve people to their tags (tagpup_server.resolve_people_tags) before writing.
+resolve people to their tags first (tagpup.core.vocabulary.resolve_people, over
+tagpup.store.taxonomy.people_paths), as every writer in tagpup.services does.
 """
 from tagpup.core import vocabulary
 from tagpup.core.fields import (  # noqa: F401  (imported from here by older code)
