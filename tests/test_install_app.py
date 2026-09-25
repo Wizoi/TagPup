@@ -120,8 +120,12 @@ class Shortcuts(InstallCase):
     def test_each_app_gets_a_shortcut_with_its_icon(self):
         folder = tempfile.mkdtemp(prefix="tagpup_shortcuts_")
         self.addCleanup(remove_sandbox, folder)
-        install_app.install(self.dest, self.home, sys.executable, apply=True,
-                            say=self.said.append, shortcuts_in=[folder])
+        name = install_app.install(self.dest, self.home, sys.executable, apply=True,
+                                   say=self.said.append, shortcuts_in=[folder])[0]
+        # The code goes into the version, and nothing but the shortcuts into the folder:
+        # the Start menu once got a copy of the code, and the version folder none.
+        self.assertTrue(os.path.exists(os.path.join(self.dest, "versions", name, "tagpup_web.py")))
+        self.assertEqual(sorted(install_app.SHORTCUTS), sorted(os.listdir(folder)))
         for name, (launcher, icon, _description) in install_app.SHORTCUTS.items():
             self.assertTrue(os.path.exists(os.path.join(folder, name)), name)
             self.assertTrue(os.path.exists(os.path.join(self.dest, icon)), icon)

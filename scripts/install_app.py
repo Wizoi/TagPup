@@ -231,8 +231,8 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
         say("replacing    %s" % previous)
     for old in removing:
         say("removing     %s" % os.path.join(destination, "versions", old))
-    for folder in shortcuts_in:
-        say("shortcuts    %s" % ", ".join(os.path.join(folder, n) for n in SHORTCUTS))
+    for place in shortcuts_in:   # not `folder`: that is the version's, copied into below
+        say("shortcuts    %s" % ", ".join(os.path.join(place, n) for n in SHORTCUTS))
     if not apply:
         say("\nDry run. Nothing was changed. Re-run with --apply to install.")
         return name, []
