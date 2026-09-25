@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="common/gear.css">
     <link rel="stylesheet" href="common/tag-editor.css">
     <link rel="stylesheet" href="common/settings-dialog.css">
+    <link rel="stylesheet" href="common/history-dialog.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -27,12 +28,13 @@
                     <button id="btn-change-db" class="btn btn-secondary btn-sm hidden" title="Switch to a different dog park; the folder you have open will be closed" style="padding: 4px 10px; font-size: 12px; height: 32px; cursor: pointer;">Change</button>
                     <button id="btn-create-db" class="btn btn-secondary btn-sm" title="Create a new dog park" style="padding: 4px 8px; font-size: 13px; height: 32px; display: flex; align-items: center; justify-content: center; width: 32px; cursor: pointer;">➕</button>
                 </div>
-                <!-- The gear (web/common/gear.js): the tag editor, and TagTuner on this library. -->
+                <!-- The gear (web/common/gear.js): the tag editor, the settings, the history, and TagTuner on this library. -->
                 <div class="gear">
                     <button id="btn-gear" class="btn btn-secondary" title="Tag editor, settings, and TagTuner on this dog park" aria-label="Tools" aria-controls="gear-menu" style="display: flex; align-items: center; gap: 8px;">⚙️</button>
                     <div id="gear-menu" class="gear-menu hidden" role="menu" aria-label="Tools">
                         <button type="button" role="menuitem" data-action="tag-editor">Tag editor</button>
                         <button type="button" role="menuitem" data-action="library-settings" title="Settings for Suggest's words and Smart Rename's format">Settings</button>
+                        <button type="button" role="menuitem" data-action="library-history" title="This dog park's last changes, and Undo beside each that can be undone">History...</button>
                         <a role="menuitem" data-app="tuner" target="_blank" rel="noopener" aria-disabled="true">Open in TagTuner</a>
                     </div>
                 </div>
