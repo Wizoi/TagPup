@@ -112,50 +112,24 @@ describe("the tag vocabulary is used, not reinvented", () => {
 
 describe("the app starts itself last", () => {
   /**
-   * This one is worth the trouble, because its failures name the wrong line.
+   * CLAUDE.md: a page's main.js only wires it, and starts it at the very end.
    *
-   * Opening the ?path= folder on load calls into most of the app. Run from the middle
-   * of the closure, it reaches `let` bindings declared further down, and a `let`
-   * reached early does not read as undefined -- it throws, taking the rest of the
-   * closure's body with it. Every binding below that point is then permanently
-   * uninitialised, so the error a user sees comes from some later, unrelated line.
-   *
-   * That is exactly what happened: checkIndexingStatus touched indexProgressTimer and
-   * threw, so facesRequestToken was never initialised either, and the visible failure
-   * was "Error scanning folder: Cannot access 'facesRequestToken' before
-   * initialization" -- two removes from the line at fault. Which is why the rule is
-   * positional rather than a hunt for which bindings are safe: nothing runs the app
-   * until everything is defined.
+   * Opening the ?path= folder on load calls into most of the page -- through the
+   * listeners main.js adds and the calls up the page it fills in (hooks.js). Started
+   * before those lines, it runs without them. This guard began as one against a
+   * closure `let` reached before its line had run; main.js now declares no state
+   * (tests/frontend/page-state.test.mjs), so that bug cannot happen here, and what
+   * remains is the rule's position: the start-up block, then nothing (#164).
    */
   const anchor = LINES.findIndex((l) =>
     /^ {4}const params = new URLSearchParams\(window\.location\.search\);/.test(l)
   );
-  // Declared in the startup block itself, so below the anchor by definition.
-  const OWN = new Set(["params", "initialPath"]);
 
   test("the startup block is still where this guard expects it", () => {
     assert.ok(anchor > 0, "the startup block moved or changed shape; update this guard");
     assert.ok(
       LINES.slice(anchor).some((l) => l.includes("checkIndexingStatus(initialPath)")),
       "startup no longer picks up a running index; update this guard"
-    );
-  });
-
-  test("no closure-level state is declared after it", () => {
-    const offenders = [];
-    LINES.forEach((line, i) => {
-      if (i <= anchor) return;
-      const declared = line.match(/^ {4}(?:let|const)\s+(\w+)\s*=/);
-      if (declared && !OWN.has(declared[1])) {
-        offenders.push(`main.js:${i + 1}: ${declared[1]}`);
-      }
-    });
-
-    assert.deepEqual(
-      offenders,
-      [],
-      "declared after the app starts itself, so startup can reach them before this " +
-        "line has run: " + offenders.join(", ")
     );
   });
 
