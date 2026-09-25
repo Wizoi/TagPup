@@ -63,7 +63,7 @@ sat at 0% CPU for two days. The session drains both and gives each command a dea
 for anything written to the database, walked or sent to the browser; `key()` for
 in-memory comparison; `sql_equals()` / `sql_under()` for SQL. A helper that turned
 `D:\x` into `D:/x` made tag writes, renames and deletes match no row for three
-months while reporting success. In the pages, `pathKey` / `samePath`.
+months while reporting success. In the pages, `pathKey` / `samePath` (`web/common/paths.js`).
 `tests/test_paths_single_owner.py` and `tests/frontend/path-helpers.test.mjs` enforce it.
 
 **Never read `config.ini` yourself.** `tagpup/config.py` owns where it is (`TAGPUP_HOME`,
@@ -87,7 +87,7 @@ the config of the app somebody is using. `tests/test_config_single_owner.py` enf
 
 **Never convert between a person's name and their tag by hand.** Identity is a leaf
 (`Rowan Thackeray`); the tag is a path (`People/Rowan Thackeray`). Use `leafOf`,
-`rootOf`, `samePerson`, `photoAlreadyHas` in `gui_tagpup/app.js`. In Python,
+`rootOf`, `samePerson`, `photoAlreadyHas` in `web/common/vocabulary.js`. In Python,
 `tagpup.core.vocabulary` takes a tag apart and `taxonomy.find_person_path()` finds where
 a name is filed. `tests/frontend/tag-vocabulary.test.mjs` and `tests/test_vocabulary.py`
 enforce it.
@@ -96,8 +96,17 @@ enforce it.
 the bulk paths did not, and rows described what photos used to hold.
 `record_tags_in_index()`.
 
-**`gui_tagpup/app.js` starts itself at the very end.** Anything below the startup block
-can be reached before its `let` runs, which throws and reports an unrelated line.
+**A page's `main.js` only wires it, and starts it at the very end.** Each feature is a
+module in `web/tagpup/` or `web/tuner/`. The page's mutable state is `state` in its
+`state.js`, never a module's `let`, since a module cannot reassign what it imports. A call
+back up the import order goes through `upper` (`hooks.js`), which `main.js` fills in.
+
+**A page's request goes through `web/common/api.js`.** `api.json`, `api.fetch`,
+`api.image` and `api.url` put the library from the page's URL in front of `/api/`; a bare
+`fetch` reaches no library. The pages are ES modules with no build step; the page tests
+load a page's modules into jsdom in import order, each in a scope of its own
+(`tests/frontend/harness.mjs`), and refuse an import cycle or a name used without its
+import.
 
 **Write patch scripts with a file tool, not a shell heredoc.** Backslashes and `\u`
 escapes are mangled in transit. This cost time five times in two days, so it is no

@@ -15,6 +15,7 @@ its own blueprint.
 """
 import logging
 import os
+import re
 import socket
 import time
 
@@ -29,17 +30,22 @@ logger = logging.getLogger(__name__)
 requests_log = logging.getLogger(REQUESTS)
 
 #: Each page's folder, beside the package in the code folder (tagpup.config knows
-#: where that is). The folders keep their names until phase 6 moves them under web/.
-PAGES = {"tagpup": "gui_tagpup", "tuner": "gui"}
+#: where that is), and the modules both pages share, served to each at common/.
+PAGES = {"tagpup": os.path.join("web", "tagpup"), "tuner": os.path.join("web", "tuner")}
+COMMON = "common"
 ROUTES = {"tagpup": tagpup_routes.routes, "tuner": tuner_routes.routes}
 
 #: A page's own files and what they are sent as. They are never cached: a page that
-#: kept an old app.js after an install argued with its server for a day.
+#: kept an old script after an install argued with its server for a day.
 PAGE_FILES = {
     "index.html": "text/html; charset=utf-8",
     "style.css": "text/css; charset=utf-8",
-    "app.js": "application/javascript; charset=utf-8",
 }
+SCRIPT_TYPE = "application/javascript; charset=utf-8"
+
+#: What a module's name may be: a page's modules and the shared ones are all named so,
+#: and nothing else in their folders -- nor anything above them -- can be asked for.
+MODULE_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0"}
 
 #: A request that takes this long is logged, with its time.
@@ -63,6 +69,7 @@ def create_app(kind, startup=None, pages=None, runtime=None):
     app.config["STARTUP_LIBRARY"] = startup
     app.config["RUNTIME"] = runtime
     app.config["PAGES"] = pages or os.path.join(tagpup_config.CODE_ROOT, PAGES[kind])
+    app.config["COMMON"] = os.path.join(os.path.dirname(app.config["PAGES"]), COMMON)
     app.json.sort_keys = False
 
     app.before_request(security.guard)
@@ -79,18 +86,28 @@ def create_app(kind, startup=None, pages=None, runtime=None):
 
 
 def _page_routes(app):
-    def send(name):
-        path = os.path.join(app.config["PAGES"], name)
-        if not os.path.exists(path):
+    """The page's index.html and style.css, its modules (/<name>.js) and the shared
+    ones (/common/<name>.js). The page imports them relative to itself, so each is
+    asked for under the library's URL like every other request."""
+    def send(folder, name, content_type):
+        path = os.path.join(folder, name)
+        if not os.path.isfile(path):
             abort(404, description="File %s not found" % name)
         with open(path, "rb") as handle:
             content = handle.read()
-        return Response(content, content_type=PAGE_FILES[name], headers=NO_CACHE)
+        return Response(content, content_type=content_type, headers=NO_CACHE)
 
-    app.add_url_rule("/", "index", lambda: send("index.html"))
-    app.add_url_rule("/index.html", "index_html", lambda: send("index.html"))
-    app.add_url_rule("/style.css", "style", lambda: send("style.css"))
-    app.add_url_rule("/app.js", "script", lambda: send("app.js"))
+    def module(folder, name):
+        if not MODULE_NAME.match(name):
+            abort(404, description="File %s.js not found" % name)
+        return send(folder, name + ".js", SCRIPT_TYPE)
+
+    page = app.config["PAGES"]
+    app.add_url_rule("/", "index", lambda: send(page, "index.html", PAGE_FILES["index.html"]))
+    app.add_url_rule("/index.html", "index_html", lambda: send(page, "index.html", PAGE_FILES["index.html"]))
+    app.add_url_rule("/style.css", "style", lambda: send(page, "style.css", PAGE_FILES["style.css"]))
+    app.add_url_rule("/<name>.js", "script", lambda name: module(page, name))
+    app.add_url_rule("/%s/<name>.js" % COMMON, "common_script", lambda name: module(app.config["COMMON"], name))
 
 
 def _start_clock():

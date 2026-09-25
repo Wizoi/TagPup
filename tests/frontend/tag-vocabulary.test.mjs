@@ -18,42 +18,61 @@
  *
  * Fixing them one at a time is how a whole evening goes. These tests are the
  * structural fix, in the shape that already worked for the database: the conversions
- * live in one block, and a raw `.split('/')` anywhere else in the file fails here.
+ * live in a few named helpers -- web/common/vocabulary.js's, and TagPup's own
+ * normalizeTag and ancestorsOf -- and a raw `.split('/')` anywhere else in a page's
+ * modules fails here.
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, loadApp, FakeServer, flush } from "./harness.mjs";
+import { REPO_ROOT, APPS, loadApp, FakeServer, flush, pageModules } from "./harness.mjs";
 
-const APP_JS = path.join(REPO_ROOT, "gui_tagpup", "app.js");
+const APP_JS = path.join(REPO_ROOT, "web", "tagpup", "main.js");
 const SOURCE = fs.readFileSync(APP_JS, "utf8");
 const LINES = SOURCE.split(/\r?\n/);
+const VOCABULARY_JS = fs.readFileSync(path.join(REPO_ROOT, "web", "common", "vocabulary.js"), "utf8");
 
 /** The helpers that are allowed to split a tag, by the name they are declared with. */
 const VOCABULARY = ["leafOf", "rootOf", "ancestorsOf", "normalizeTag"];
 
-function inVocabularyBlock(lineIndex) {
-  // Walk back to the nearest `function <name>(` and see whether it is one of ours.
+/** Helpers that split something that is not a tag: api.js reading the library out of the URL. */
+const NOT_TAGS = ["libraryIn"];
+
+/** Each module of a page, its lines, as the browser loads them. */
+function modulesOf(app) {
+  return pageModules(path.join(REPO_ROOT, APPS[app].dir)).map((m) => ({
+    name: path.relative(REPO_ROOT, m.file).split(path.sep).join("/"),
+    lines: fs.readFileSync(m.file, "utf8").split(/\r?\n/),
+  }));
+}
+
+function declaredAbove(lines, lineIndex) {
+  // Walk back to the nearest `function <name>(` and see whose it is.
   for (let i = lineIndex; i >= 0 && i > lineIndex - 12; i--) {
-    const declared = LINES[i].match(/^\s*function\s+(\w+)\s*\(/);
-    if (declared) return VOCABULARY.includes(declared[1]);
+    const declared = lines[i].match(/^\s*(?:export\s+)?function\s+(\w+)\s*\(/);
+    if (declared) return declared[1];
   }
-  return false;
+  return null;
+}
+
+function handSplits(app) {
+  const offenders = [];
+  for (const { name, lines } of modulesOf(app)) {
+    lines.forEach((line, i) => {
+      if (!line.includes("split('/')") && !line.includes('split("/")')) return;
+      if (/^\s*(\/\/|\/?\*)/.test(line)) return;   // a comment says what it likes
+      const owner = declaredAbove(lines, i);
+      if (VOCABULARY.includes(owner) || NOT_TAGS.includes(owner)) return;
+      offenders.push(`${name}:${i + 1}: ${line.trim()}`);
+    });
+  }
+  return offenders;
 }
 
 describe("the tag vocabulary is used, not reinvented", () => {
   test("nothing outside the helpers splits a tag by hand", () => {
-    const offenders = [];
-    LINES.forEach((line, i) => {
-      if (!line.includes("split('/')") && !line.includes('split("/")')) return;
-      // Reading the database name out of the page URL is a different thing entirely.
-      if (line.includes("window.location.pathname")) return;
-      if (line.trimStart().startsWith("//")) return;
-      if (inVocabularyBlock(i)) return;
-      offenders.push(`app.js:${i + 1}: ${line.trim()}`);
-    });
-
+    const offenders = handSplits("tagpup");
     assert.deepEqual(
       offenders,
       [],
@@ -66,37 +85,25 @@ describe("the tag vocabulary is used, not reinvented", () => {
   test("TagTuner's page keeps the same rule, with the same helpers", () => {
     // It converted a keyword to a name by hand in the photo panel, and the rule
     // above only read TagPup's page.
-    const lines = fs.readFileSync(path.join(REPO_ROOT, "gui", "app.js"), "utf8").split(/\r?\n/);
-    const offenders = [];
-    lines.forEach((line, i) => {
-      if (!line.includes("split('/')") && !line.includes('split("/")')) return;
-      if (line.includes("window.location.pathname")) return;
-      if (line.trimStart().startsWith("//")) return;
-      for (let j = i; j >= 0 && j > i - 12; j--) {
-        const declared = lines[j].match(/^\s*function\s+(\w+)\s*\(/);
-        if (declared) {
-          if (VOCABULARY.includes(declared[1])) return;
-          break;
-        }
-      }
-      offenders.push(`gui/app.js:${i + 1}: ${line.trim()}`);
-    });
+    const offenders = handSplits("tagtuner");
     assert.deepEqual(offenders, [], "split by hand instead of leafOf:\n" + offenders.join("\n"));
   });
 
   test("the helpers themselves are allowed to", () => {
     // The check above is worthless if it matches nothing anywhere.
     assert.ok(
-      SOURCE.includes("function leafOf"),
+      VOCABULARY_JS.includes("export function leafOf"),
       "leafOf is gone; the guard above is now checking a rule nobody follows"
     );
-    assert.ok(/function leafOf[\s\S]{0,200}split\('\/'\)/.test(SOURCE));
+    assert.ok(/function leafOf[\s\S]{0,200}split\('\/'\)/.test(VOCABULARY_JS));
   });
 
   test("every helper the guard exempts actually exists", () => {
-    for (const name of VOCABULARY) {
+    const everything = [...modulesOf("tagpup"), ...modulesOf("tagtuner")]
+      .map((m) => m.lines.join("\n")).join("\n");
+    for (const name of [...VOCABULARY, ...NOT_TAGS]) {
       assert.ok(
-        SOURCE.includes(`function ${name}`),
+        new RegExp(`function ${name}\\(`).test(everything),
         `the guard exempts ${name}, which does not exist -- a stale exemption is a hole`
       );
     }
@@ -140,7 +147,7 @@ describe("the app starts itself last", () => {
       if (i <= anchor) return;
       const declared = line.match(/^ {4}(?:let|const)\s+(\w+)\s*=/);
       if (declared && !OWN.has(declared[1])) {
-        offenders.push(`app.js:${i + 1}: ${declared[1]}`);
+        offenders.push(`main.js:${i + 1}: ${declared[1]}`);
       }
     });
 
@@ -161,7 +168,7 @@ describe("the app starts itself last", () => {
       .filter(([text]) => text && text !== "}" && text !== "});" && !text.startsWith("//"));
 
     assert.deepEqual(
-      after.map(([text, line]) => `app.js:${line}: ${text}`),
+      after.map(([text, line]) => `main.js:${line}: ${text}`),
       [],
       "code runs after the app has started itself; move the startup block back to " +
         "the very end of the closure"

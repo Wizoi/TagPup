@@ -48,7 +48,7 @@ class WhatAnInstallIs(InstallCase):
     def test_a_version_holds_the_code_and_the_programs_and_nothing_else(self):
         name, _ = self.install()
         folder = os.path.join(self.dest, "versions", name)
-        for part in ("scripts", "tagpup", "gui", "gui_tagpup", "tagpup_web.py",
+        for part in ("scripts", "tagpup", os.path.join("web", "tagpup"), os.path.join("web", "tuner"), "tagpup_web.py",
                      "tagpup_cli.py", "runner.py", "VERSION.txt"):
             self.assertTrue(os.path.exists(os.path.join(folder, part)), part)
         # The libraries and the settings stay in the home.

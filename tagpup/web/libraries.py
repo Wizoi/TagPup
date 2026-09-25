@@ -29,11 +29,18 @@ from tagpup.web import responses
 logger = logging.getLogger(__name__)
 
 #: A URL's first part that is a page's own file, or nothing, rather than a library.
-PAGE_FILES = frozenset({"index.html", "style.css", "app.js", "favicon.ico", ""})
+PAGE_FILES = frozenset({"index.html", "style.css", "main.js", "favicon.ico", ""})
 PAGE_SUFFIXES = (".css", ".js", ".html", ".png", ".jpg", ".jpeg", ".ico")
 
-#: The page paths a request without a library is sent to the startup library for.
-PAGE_PATHS = ("/", "/index.html", "/style.css", "/app.js")
+#: The page paths a request without a library is sent to the startup library for: the
+#: page, its style, its modules and the shared ones (tagpup.web.app).
+PAGE_PATHS = ("/", "/index.html", "/style.css")
+PAGE_MODULE = re.compile(r"^/(?:common/)?[A-Za-z0-9_-]+\.js$")
+
+
+def is_page_path(path):
+    """Is `path` one of the page's own files, asked for without a library?"""
+    return path in PAGE_PATHS or bool(PAGE_MODULE.match(path))
 
 
 def names_a_library(first):
@@ -90,7 +97,7 @@ class LibraryFromUrl:
             environ["SCRIPT_NAME"] = environ.get("SCRIPT_NAME", "") + "/" + name
             environ["PATH_INFO"] = match.group(2) or "/"
         elif self.startup is not None:
-            if path in PAGE_PATHS:
+            if is_page_path(path):
                 location = "/%s%s" % (libraries.picker_name(self._startup_file()), path)
                 if environ.get("QUERY_STRING"):
                     location += "?" + environ["QUERY_STRING"]

@@ -142,7 +142,10 @@ def file_name_for(name):
 #: The first part of a URL the servers route themselves. A library is reached at
 #: /<its name>/, so one called any of these could be created and never opened: its URL
 #: reaches the route (docs/findings.md, #73). Whatever the case, as file names are.
-ROUTES = frozenset({"api", "gui", "gui_tagpup"})
+#: `common` is where a page opened without a library finds the shared modules
+#: (/common/api.js); gui and gui_tagpup were the pages' folders before web/, kept so
+#: that no library takes a name an old bookmark or link still reaches for.
+ROUTES = frozenset({"api", "common", "gui", "gui_tagpup"})
 
 
 def problem_with_new_name(file_name):

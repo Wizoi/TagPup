@@ -71,10 +71,23 @@ invocation.
 
 ### The frontend harness
 
-Both apps are a single `DOMContentLoaded` closure with no exports, so nothing inside
-them can be imported. `tests/frontend/harness.mjs` loads the real `index.html` and
-`app.js` into jsdom, stubs `fetch`, and drives the app through DOM events. What is under
-test is the shipped file.
+Each page is ES modules: `web/<page>/index.html` starts `main.js`, whose main closure
+runs on `DOMContentLoaded`, and it imports the modules both pages share from
+`web/common/` (as `./common/<name>.js`, relative to the page, so the server serves them
+under the library's URL). `tests/frontend/harness.mjs` loads the real `index.html` into
+jsdom and evaluates the page's modules in its window as one strict script: in the order
+the browser runs them, import lines dropped and `export` words taken off
+(`pageModules`, `pageScript`). jsdom cannot load modules, and modules run under node
+would keep their timers on node's clock, which closing the window cannot stop. The
+harness stubs `fetch` and drives the app through DOM events. What is under test is the
+shipped files.
+
+Because a page's modules share one scope there, the loader refuses what a browser would
+treat differently: a name declared at the top of two of a page's modules, a renamed,
+default or namespace import, an import of something not exported, and a name used from
+another module without importing it (`tests/frontend/page-modules.test.mjs`). The
+shared modules hold no DOM state, and node tests import them directly
+(`tests/frontend/common-modules.test.mjs`, `path-helpers`, `tag-rules`).
 
 Two jsdom gaps are shimmed there, both of which have masqueraded as application bugs:
 
@@ -102,9 +115,14 @@ Some tests exist to stop a whole class of mistake rather than to cover a feature
   they are filed under. Face recognition and the suggester both speak in leaf names, so
   every path that accepts one has to resolve it before writing; the ones that did not
   added a person a second time, bare, beside the `People/<name>` already there.
-- `tests/frontend/tag-vocabulary.test.mjs` fails on a raw `.split('/')` in
-  `gui_tagpup/app.js` outside the helper block, and on a closure-level `let` declared
-  after the startup call but read above it. See the next section for why both exist.
+- `tests/frontend/tag-vocabulary.test.mjs` fails on a raw `.split('/')` in a page's
+  modules outside the helpers, and on a closure-level `let` in `web/tagpup/main.js`
+  declared after the startup call but read above it. See the next section for why
+  both exist.
+- `tests/frontend/common-modules.test.mjs` fails when a page's module declares its own
+  copy of a helper `web/common/` exports, which would quietly shadow the import.
+- `tests/frontend/database-routing.test.mjs` fails on a `fetch(` or an `/api/` image
+  `src` in a page that does not go through `web/common/api.js`.
 - The single-owner guards (`test_db_access`, `test_exiftool_single_owner`,
   `test_paths_single_owner`, `test_config_single_owner`) all check one list of files,
   `tests/shipped_sources.py`: the launchers, `scripts/` and `tagpup/`. When each kept
@@ -126,7 +144,7 @@ until the process ends, so a home it still holds is deleted once the process has
 
 ## Traps
 
-**Trailing whitespace breaks exact-match patching.** `gui_tagpup/app.js` and others
+**Trailing whitespace breaks exact-match patching.** `web/tagpup/main.js` and others
 carry trailing spaces on many lines, so a quoted block retyped from a diff will not
 match. Match with trailing whitespace tolerated, or locate the block by its boundaries.
 
@@ -144,16 +162,16 @@ not only the part that failed.
 shapes and they are not interchangeable: their identity is a leaf (`Hazel Brookmire`),
 which is what the faces table, the suggester and `photo.people` speak in, and their tag
 is a path (`People/Hazel Brookmire`), which is what the keywords must hold and what the
-server matches on, exactly. Use `leafOf`, `rootOf`, `ancestorsOf`, `samePerson`,
-`preferPathed` and `photoAlreadyHas` in `gui_tagpup/app.js`, and
-`taxonomy.find_person_path()` in Python.
+server matches on, exactly. Use `leafOf`, `rootOf`, `samePerson` and `photoAlreadyHas`
+in `web/common/vocabulary.js`, `ancestorsOf` and `preferPathed` in `web/tagpup/main.js`,
+and `taxonomy.find_person_path()` in Python.
 
 Every bug in this area was a site doing the conversion itself, and none of them looked
 related: clicking a recognised face added the person a second time in the bare form;
 the `×` on a selection chip removed nothing while still rewriting every selected file;
 a suggested `Activity/Cross Country` was written as `Cross Country`.
 
-**`gui_tagpup/app.js` starts itself at the very end, and must stay that way.** The
+**`web/tagpup/main.js` starts itself at the very end, and must stay that way.** The
 `?path=` startup block calls into most of the app. Run from anywhere but the bottom of
 the closure it can reach a `let` declared further down, and reaching a `let` early does
 not give you `undefined` — it throws, which takes the rest of the closure's body with

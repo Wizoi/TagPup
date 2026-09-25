@@ -1,0 +1,4 @@
+{
+  "description": "The pages, as ES modules: the browser loads them natively, and node's tests import web/common/ directly.",
+  "type": "module"
+}

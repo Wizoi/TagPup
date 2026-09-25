@@ -6,22 +6,21 @@
  * writes the photo: refused only at the write, a bad tag would already be in the
  * tree. And the typed text stays where it was, with the reason, to be corrected.
  *
- * Each page carries its own copy of the rules. Both are run against
- * tests/tag_rules.json, the cases the server's copy is held to, so all three give
- * the same answer in the same words.
+ * Both pages ask web/common/vocabulary.js, which is run against tests/tag_rules.json,
+ * the cases the server's copy is held to, so the two give the same answer in the same
+ * words.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps } from "./harness.mjs";
+import { REPO_ROOT, loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, pageSource } from "./harness.mjs";
+import { tagProblem, nameProblem } from "../../web/common/vocabulary.js";
 
 const RULES = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tests", "tag_rules.json"), "utf8"));
 
-const PAGES = {
-  "gui_tagpup/app.js": path.join(REPO_ROOT, "gui_tagpup", "app.js"),
-  "gui/app.js": path.join(REPO_ROOT, "gui", "app.js"),
-};
+/** TagPup's page: its modules, as the browser loads them (harness.mjs). */
+const TAGPUP = pageSource("tagpup");
 
 function functionSource(source, name) {
   const lines = source.split(/\r?\n/);
@@ -33,35 +32,22 @@ function functionSource(source, name) {
   return lines.slice(start, end + 1).join("\n");
 }
 
-/** The page's own tagProblem and nameProblem, exactly as shipped. */
-function rulesOf(file) {
-  const source = fs.readFileSync(PAGES[file], "utf8");
-  const body = ["tagProblem", "nameProblem", "textProblem"]
-    .map((name) => functionSource(source, name))
-    .join("\n");
-  return new Function(`${body}\nreturn { tagProblem, nameProblem };`)();
-}
-
-for (const file of Object.keys(PAGES)) {
-  describe(`${file}: what may be set`, () => {
-    const { tagProblem, nameProblem } = rulesOf(file);
-
-    test("tags, as the server answers them", () => {
-      for (const [text, expected] of RULES.tags) {
-        assert.equal(tagProblem(text), expected, JSON.stringify(text));
-      }
-    });
-
-    test("names, as the server answers them", () => {
-      for (const [text, expected] of RULES.names) {
-        assert.equal(nameProblem(text), expected, JSON.stringify(text));
-      }
-    });
+describe("web/common/vocabulary.js: what may be set", () => {
+  test("tags, as the server answers them", () => {
+    for (const [text, expected] of RULES.tags) {
+      assert.equal(tagProblem(text), expected, JSON.stringify(text));
+    }
   });
-}
 
-describe("gui_tagpup/app.js: what a Smart Rename grouping may hold", () => {
-  const source = fs.readFileSync(PAGES["gui_tagpup/app.js"], "utf8");
+  test("names, as the server answers them", () => {
+    for (const [text, expected] of RULES.names) {
+      assert.equal(nameProblem(text), expected, JSON.stringify(text));
+    }
+  });
+});
+
+describe("web/tagpup/rename.js: what a Smart Rename grouping may hold", () => {
+  const source = TAGPUP;
   const groupingProblem = new Function(
     `${functionSource(source, "groupingProblem")}\nreturn groupingProblem;`)();
 
@@ -72,9 +58,9 @@ describe("gui_tagpup/app.js: what a Smart Rename grouping may hold", () => {
   });
 });
 
-describe("gui_tagpup/app.js: a typed tag is set in its one spelling", () => {
+describe("web/tagpup/tags.js: a typed tag is set in its one spelling", () => {
   // Only TagPup's page turns typed text into a tag path.
-  const source = fs.readFileSync(PAGES["gui_tagpup/app.js"], "utf8");
+  const source = TAGPUP;
   const normalizeTag = new Function(`${functionSource(source, "normalizeTag")}\nreturn normalizeTag;`)();
 
   test("as the server spells it", () => {
