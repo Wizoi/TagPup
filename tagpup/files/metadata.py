@@ -43,6 +43,23 @@ def clean_metadata_value(val: Any) -> Any:
     return val
 
 
+def structured(meta):
+    """One ExifTool record as a photo's row keeps it, its raw_metadata: each value cleaned
+    (clean_metadata_value), under the name ExifTool gives it ("XMP:Subject") and again
+    under its bare name ("Subject"). The one shape: the indexer's read and the single
+    save's read back both record it, and differed while each made its own
+    (docs/findings.md, #251); a row without the bare names reads as never read
+    (tagpup.services.refresh_rows)."""
+    cleaned = {}
+    for k, v in meta.items():
+        # ExifTool returns keys like 'SourceFile', 'XMP:Subject', etc.
+        val_cleaned = clean_metadata_value(v)
+        cleaned[k] = val_cleaned
+        if ":" in k:
+            cleaned[k.split(":")[-1]] = val_cleaned
+    return cleaned
+
+
 class MetadataExtractor:
     def __init__(self, exiftool_path: Optional[str] = None, mint_identities: bool = False):
         self.exiftool_path = exiftool_path
@@ -102,13 +119,7 @@ class MetadataExtractor:
 
     def _structure(self, path, meta, people):
         """Turn one ExifTool record into the shape the rest of the pipeline expects."""
-        cleaned = {}
-        for k, v in meta.items():
-            # ExifTool returns keys like 'SourceFile', 'XMP:Subject', etc.
-            val_cleaned = clean_metadata_value(v)
-            cleaned[k] = val_cleaned
-            if ":" in k:
-                cleaned[k.split(":")[-1]] = val_cleaned
+        cleaned = structured(meta)
 
         tags = vocabulary.extract_tags(cleaned)
 
@@ -313,7 +324,7 @@ def sync_title_to_filename(photo_path: str, new_title: str, exiftool_path: str,
 
 def raw_metadata(et, photo_path):
     """A photo's metadata as a save records it in the index: every field the reader
-    reads, cleaned, under the names ExifTool gives them. Read in the session given."""
+    reads, in the shape the indexer records it in (structured). Read in the session
+    given."""
     found = et.get_tags([photo_path], tags=METADATA_FIELDS)
-    meta = found[0] if found else {}
-    return {k: clean_metadata_value(v) for k, v in meta.items()}
+    return structured(found[0] if found else {})
