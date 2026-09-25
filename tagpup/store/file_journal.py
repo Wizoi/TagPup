@@ -203,14 +203,17 @@ def writes_files(db_path, change_id):
 
 def unfinished(db_path):
     """The changes of photo files not finished: `planned`, forward or undoing, oldest
-    first (Change)."""
+    first (Change). Only a change of photo files is ever `planned` (a change of rows is
+    recorded applied), and one whose every file was taken out again is listed too: a
+    process stopped before finishing it left it planned with no files (docs/findings.md,
+    #274), and finishing it marks it failed."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         if not has_table(conn):
             return []
         found = conn.execute(
             "SELECT id, operation, status, undone, owner, summary FROM changes"
-            " WHERE status = 'planned' AND id IN (SELECT change_id FROM change_files) ORDER BY id").fetchall()
+            " WHERE status = 'planned' ORDER BY id").fetchall()
     finally:
         conn.close()
     return [Change(r[0], r[1], r[2], r[3], r[4], json.loads(r[5] or "{}")) for r in found]
