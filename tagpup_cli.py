@@ -552,7 +552,8 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
 @click.option("-Live", "live", is_flag=True, help="Write tags to files for real (modifies files).")
 @click.option("-MinScore", "min_score", default=suggesting.OFFER_A_TAG, type=float,
               help="Write tags at or above this score (default: the value the app shows them from).")
-@click.option("--nobackup", is_flag=True, help="Avoid creating backup copies (_original files) during write operations.")
+@click.option("--nobackup", is_flag=True,
+              help="Kept for scripts that pass it: a write keeps no _original copies; it is one change, which undo reverses.")
 @click.pass_context
 def write(ctx, suggestions_file: str, live: bool, min_score: float, nobackup: bool):
     """Phase 3: Write suggested tags back to photos using ExifTool."""
@@ -641,6 +642,9 @@ def write_suggestions_file(suggestions_file, db_path, exiftool_path, live=False,
         writer_log.error(f"Failed to write metadata to {path}: {error}")
 
     print(f"Finished writing metadata. Success: {result.changed}, Errors: {len(result.errors)}")
+    change = result.details.get("change")
+    if change:
+        print(f"Recorded as change {change}; `undo {change}` shows what undoing it would put back.")
     return not result.errors
 
 @cli.command()
