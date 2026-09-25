@@ -12,7 +12,7 @@ process, and read and wrote the library's cache itself (docs/ARCHITECTURE.md, "T
 layers, revisited"). A model is now one object, built once by the runtime and shared by
 handing it on.
 """
-from tagpup.ml import refuse_in_tests
+from tagpup.ml import free_device_memory, refuse_in_tests
 import logging
 import os
 import threading
@@ -73,6 +73,16 @@ class ClipModel:
     def load(self):
         """Load the model now, if it is not loaded yet."""
         self._init_model()
+
+    def unload(self):
+        """Let the weights go, and the GPU memory they held (tagpup.runtime drops a model
+        no library it serves uses any more). Used again, it loads again."""
+        with self.model_lock:
+            if self.model is None:
+                return
+            self.model = self.preprocess = self.tokenizer = None
+        logger.info("Unloaded CLIP model %s (%s).", self.model_name, self.pretrained)
+        free_device_memory()
 
     def _init_model(self):
         """Lazily load the CLIP model."""

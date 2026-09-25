@@ -987,6 +987,19 @@ def _shown(value):
     return "<%d bytes>" % len(value) if isinstance(value, bytes) else value
 
 
+def operation(db_path, change_id):
+    """The name change `change_id` was applied under, or None for a change the library
+    at `db_path` has not (or a library without a journal)."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not has_journal(conn):
+            return None
+        row = conn.execute("SELECT operation FROM changes WHERE id = ?", (change_id,)).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
 def history(db_path, limit=20, change_id=None, values=False):
     """The library's changes, newest first (or change `change_id` alone): id, operation,
     status, schema version, when made, applied and undone, its summary, and how many rows

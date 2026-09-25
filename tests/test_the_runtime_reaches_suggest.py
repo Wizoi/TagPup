@@ -84,13 +84,13 @@ class ARuntime(unittest.TestCase):
         once, at start. Now they are the library's, changed in its settings."""
         library_settings.change(self.library, {"candidates.tags": "Kayak"})
         runtime = Runtime(clip=object(), faces=object())
+        self.addCleanup(runtime.forget, self.library)
         asked = []
         with mock.patch("tagpup.services.suggester.model_for_run",
-                        side_effect=lambda index, clip, faces, words: asked.append(words)), \
-                mock.patch.object(runtime, "photo_index", return_value=object()):
-            runtime.begin(self.library)
+                        side_effect=lambda index, clip, faces, words: asked.append(words)):
+            runtime.begin(self.library).end()
             library_settings.change(self.library, {"candidates.tags": "Kayak, Canoe"})
-            runtime.begin(self.library)
+            runtime.begin(self.library).end()
         self.assertEqual([["Kayak"], ["Kayak", "Canoe"]], asked)
 
     def test_a_command_with_no_face_model_reads_no_face_settings(self):
@@ -114,7 +114,8 @@ class ARuntime(unittest.TestCase):
                          Runtime().model_key(self.library))
 
     def test_reads_the_librarys_settings(self):
-        library_settings.change(self.library, {"faces.min_face_size": "33", "candidates.tags": "Kayak, Lighthouse"})
+        library_settings.change(self.library, {"faces.min_face_size": "33", "candidates.tags": "Kayak, Lighthouse"},
+                                acknowledged=["faces"])
         runtime = Runtime()
         self.assertEqual(33, runtime.settings(self.library).faces["min_face_size"])
         self.assertEqual(["Kayak", "Lighthouse"], runtime.candidate_words(self.library))

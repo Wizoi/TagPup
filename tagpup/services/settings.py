@@ -16,12 +16,18 @@ this is their one owner:
   new library is stamped with the defaults when it is made (tagpup.services.libraries).
 - `change` writes the ones asked, as a journaled change, so each is in the library's
   history and can be undone (tagpup.services.journal) -- refused, with nothing written,
-  when a value is not one the validator allows.
+  when a value is not one the validator allows, or when it changes a locked setting
+  (the CLIP model, face detection, ExifTool) whose group the caller does not name as
+  acknowledged. The lock is here, not in the page: a script, the CLI or a tool that set
+  model.name unasked left Suggest finding nothing among vectors made with the old model.
+- A stamp is a library's first settings: undoing one is refused (STAMPS;
+  tagpup.services.journal), as it would leave the library holding none.
 
 The layer below the entry points never reads config.ini: `of` and `read` are handed what
 it says (`config_ini`, a callable returning {key: value}, or None), and only
 tagpup.runtime hands it (tests/test_config_single_owner.py).
 """
+import os
 from dataclasses import dataclass
 from typing import Dict
 
@@ -36,7 +42,13 @@ DEFAULTS = validation.setting_defaults()
 #: The journal's name for each kind of change to the settings.
 FROM_CONFIG = "stamp settings from config.ini"
 WITH_DEFAULTS = "stamp settings with the defaults"
+FROM_REPLACED = "stamp settings from the library it replaced"
 CHANGE = "change settings"
+
+#: The stamps: a library's first settings, which cannot be undone -- undone, the library
+#: held none, and the next read stamped it again, from config.ini if one was still there.
+STAMPS = frozenset({FROM_CONFIG, WITH_DEFAULTS, FROM_REPLACED})
+NOT_UNDONE = "A library's first settings cannot be undone; change them instead."
 
 _TRUE = frozenset({"true", "yes", "on", "1"})
 
@@ -139,8 +151,8 @@ def _found(config_ini):
 
 def read(library, config_ini=None):
     """The library's settings without writing anything: those it holds, or, for one
-    never stamped, what stamping it would give (`stamped` False)."""
-    held = store_settings.read_only(library.path)
+    never stamped -- or not made yet -- what stamping it would give (`stamped` False)."""
+    held = store_settings.read_only(library.path) if os.path.exists(library.path) else {}
     if held:
         return LibrarySettings(_filled(held), stamped=True)
     values, _taken, _refused = _stamping(_found(config_ini))
@@ -158,14 +170,18 @@ def of(library, config_ini=None):
     return LibrarySettings(_filled(held), stamped=bool(held))
 
 
-def stamp(library, found=None):
+def stamp(library, found=None, operation=None):
     """Write every setting to a library that holds none, as one journaled change: from
     `found` ({key: value}, what config.ini says) where it gives an allowed value, else
-    the default. Named FROM_CONFIG when there was a config.ini, WITH_DEFAULTS when not.
-    A library already stamped, by another process meanwhile say, is left as it is
-    (changed 0)."""
+    the default. Named `operation` (one of STAMPS) when given -- FROM_REPLACED for a
+    library made again in place of one deleted, with that one's settings -- else
+    FROM_CONFIG when there was a config.ini, WITH_DEFAULTS when not. A library already
+    stamped, by another process meanwhile say, is left as it is (changed 0)."""
     values, taken, refused = _stamping(found)
-    operation = FROM_CONFIG if found is not None else WITH_DEFAULTS
+    if operation is None:
+        operation = FROM_CONFIG if found is not None else WITH_DEFAULTS
+    if operation not in STAMPS:
+        raise ValueError("%r is not a stamp" % operation)
     result = Result(attempted=len(values), details={"operation": operation, "from_config": taken,
                                                     "refused": refused})
     if store_settings.read(library.path):
@@ -182,16 +198,60 @@ def stamp(library, found=None):
     return result
 
 
-def change(library, values):
+def _acknowledged(named):
+    """The group names `named` gives (a list of them, or one), and the first that is no
+    group of settings (validation.SETTING_GROUPS), or None."""
+    if named is None:
+        return set(), None
+    names = [named] if isinstance(named, str) else named
+    if not isinstance(names, (list, tuple, set, frozenset)):
+        return set(), repr(named)
+    for name in names:
+        if name not in validation.SETTING_GROUPS:
+            return set(), str(name)
+    return set(names), None
+
+
+def unacknowledged(keys, acknowledged=()):
+    """The locked groups `keys` touch that `acknowledged` does not name, in the
+    declaration's order: [{"group", "title", "consequences"}]."""
+    touched = {validation.SETTINGS[key]["group"] for key in keys if validation.SETTINGS[key]["locked"]}
+    return [{"group": name, "title": group["title"], "consequences": list(group["consequences"])}
+            for name, group in validation.SETTING_GROUPS.items()
+            if name in touched and name not in acknowledged]
+
+
+def _lock_refusal(missing):
+    """What a change refused for its locked groups says: each group, and what changing it means."""
+    parts = ["Nothing was written: %s locked, and changing %s means --" % (
+        "this setting is" if len(missing) == 1 else "these settings are", "it" if len(missing) == 1 else "them")]
+    for group in missing:
+        parts.append(" %s: %s" % (group["title"], " ".join(group["consequences"])))
+    parts.append(" Name %s as acknowledged to change %s: %s." % (
+        "it" if len(missing) == 1 else "each", "it" if len(missing) == 1 else "them",
+        ", ".join(group["group"] for group in missing)))
+    return "".join(parts)
+
+
+def change(library, values, acknowledged=()):
     """Change the settings in `values` ({key: value}) as one journaled change, so it is in
     the library's history and can be undone. Refused, with nothing written, for a key
     that is no setting, a value the validator refuses (its message), a library never
-    stamped, or a setting changed by someone else since it was read. `changed` is the
-    settings whose value changed; details["locked"] says whether any was a locked one,
-    after which what the models made is from the old values."""
+    stamped, or a setting changed by someone else since it was read -- and for a change
+    to a locked setting whose group (validation.SETTING_GROUPS: "clip", "faces",
+    "exiftool") `acknowledged` does not name: the refusal lists each such group and what
+    changing it means, and details["unacknowledged"] holds them. Every caller -- the
+    dialog, the CLI, a tool -- names what it acknowledges, as the dialog asks the owner
+    to tick each consequence. `changed` is the settings whose value changed;
+    details["locked"] says whether any was a locked one, after which what the models
+    made is from the old values."""
     result = Result(attempted=len(values or {}))
     if not isinstance(values, dict) or not values:
         result.refuse("Say which settings to change.")
+        return result
+    acknowledged, unknown = _acknowledged(acknowledged)
+    if unknown is not None:
+        result.refuse("There is no group of settings called %s to acknowledge." % unknown)
         return result
     wanted = {}
     for key, value in values.items():
@@ -218,6 +278,11 @@ def change(library, values):
             continue
         changed.append(key)
     result.details.update({"changed": changed, "locked": any(validation.SETTINGS[k]["locked"] for k in changed)})
+    missing = unacknowledged(changed, acknowledged)
+    if missing:
+        result.details["unacknowledged"] = missing
+        result.refuse(_lock_refusal(missing))
+        return result
     if not edits:
         return result
     try:

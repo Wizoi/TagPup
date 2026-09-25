@@ -278,6 +278,17 @@ export function closeSettings() {
     if (settingsDialog.opener && typeof settingsDialog.opener.focus === 'function') settingsDialog.opener.focus();
 }
 
+/**
+ * The locked groups whose every consequence the owner ticked: what the save names as
+ * acknowledged. The server refuses a change to a locked setting without it
+ * (tagpup.services.settings.change), so the lock holds for every caller, not only here.
+ */
+function acknowledgedGroups() {
+    return [...settingsDialog.opened]
+        .filter(([, boxes]) => boxes.every(box => box.checked))
+        .map(([name]) => name);
+}
+
 /** Save what changed, as one change of the library's journal; reload after a locked one. */
 export function saveSettings() {
     const values = changedValues();
@@ -288,7 +299,7 @@ export function saveSettings() {
     return api.json('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values }),
+        body: JSON.stringify({ values, acknowledged: acknowledgedGroups() }),
     }).then(result => {
         settingsDialog.saving = false;
         if (!result || !result.success) {

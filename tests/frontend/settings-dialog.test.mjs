@@ -164,7 +164,8 @@ describe("the settings dialog", () => {
     assert.ok(!save().disabled);
     click(window, save());
     await flush(window, 6);
-    assert.deepEqual(posted().map((c) => c.body), [{ values: { "candidates.tags": "Kayak, Lighthouse" } }]);
+    assert.deepEqual(posted().map((c) => c.body), [{ values: { "candidates.tags": "Kayak, Lighthouse" },
+                                                     acknowledged: [] }]);
     assert.ok(!consoleErrors.some((e) => /navigation/i.test(String(e && (e.message || e)))), "the page reloaded");
   });
 
@@ -177,7 +178,10 @@ describe("the settings dialog", () => {
     boxes("faces").forEach((box) => click(window, box));
     click(window, save());
     await flush(window, 6);
-    assert.deepEqual(posted().map((c) => c.body), [{ values: { "faces.min_face_size": "40" } }]);
+    // The server refuses a locked change its group is not acknowledged for: the
+    // dialog names the group whose consequences were ticked.
+    assert.deepEqual(posted().map((c) => c.body), [{ values: { "faces.min_face_size": "40" },
+                                                     acknowledged: ["faces"] }]);
     // jsdom does not navigate; it reports the reload it was asked for as not implemented.
     assert.ok(consoleErrors.some((e) => /navigation/i.test(String(e && (e.message || e)))),
               "the page did not reload after a locked setting was saved");

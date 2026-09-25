@@ -7,8 +7,13 @@ the rehearsal -- the undo and the change again inside a transaction rolled back 
 says whether that restored every row exactly, or why the undo would be refused. What a
 change holds can name people, so its values are shown only when asked (`reveal`): the
 library is photographs of real people, many of them minors.
+
+A stamp of a library's settings (tagpup.services.settings.STAMPS) is never undone: it
+is the library's first settings, and undone the library held none -- the next read
+stamped it again, from config.ini if one was still there.
 """
 from tagpup.core.result import NotFound, Result
+from tagpup.services import settings as library_settings
 from tagpup.store import journal
 
 #: How long a change stays undoable, in days; then pruning takes its values away.
@@ -28,8 +33,12 @@ def history(library, change_id=None, reveal=False, limit=20):
 def rehearse(library, change_id):
     """Undo change `change_id` and apply it again inside a transaction rolled back. A
     Result: `attempted` is the rows the undo would write; details["rehearsal"] says
-    whether the round trip restored every row exactly. Refused when the undo would be."""
+    whether the round trip restored every row exactly. Refused when the undo would be,
+    and for a stamp of the library's settings (NOT_UNDONE), which undo() refuses too."""
     result = Result(details={"dry_run": True, "change": change_id})
+    if journal.operation(library.path, change_id) in library_settings.STAMPS:
+        result.refuse(library_settings.NOT_UNDONE)
+        return result
     rehearsal = journal.rehearse_undo(library.path, change_id)
     result.details["rehearsal"] = rehearsal.as_dict()
     if rehearsal.refused:

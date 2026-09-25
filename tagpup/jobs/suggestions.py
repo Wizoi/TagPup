@@ -57,6 +57,17 @@ def work_for(library, photos, models):
     return Work()
 
 
+def _end(model):
+    """Tell what began the run that it is over (tagpup.runtime.RunModel.end): the photo
+    index and the models it held may be let go. A model without `end` holds nothing."""
+    end = getattr(model, "end", None)
+    if callable(end):
+        try:
+            end()
+        except Exception as e:
+            logger.error("Could not end a suggestion run: %s", e)
+
+
 def runs_for(library):
     """This process's runs for a library, made the first time they are asked for."""
     with _runs_lock:
@@ -150,7 +161,8 @@ class SuggestionRuns:
         `work` gives the run what it runs: `photos()`, the folder's photos as
         {key: metadata with "path"}, and `begin()`, which readies the model and returns
         something with `suggest(path, metadata)`, `offered(suggestion)` -> (tags, people,
-        title) as the panel shows them, `consensus(suggestions)`, and `model_key`.
+        title) as the panel shows them, `consensus(suggestions)`, and `model_key` -- and,
+        if it holds something for the run, `end()`, called when the run is over.
         """
         key = paths.key(folder)
         # A photo whose suggestion failed is tried again, so it is not done yet.
@@ -195,20 +207,23 @@ class SuggestionRuns:
                     status="preparing", total=len(photos), completed=len(photos) - len(todo))
 
             model = work.begin()
-            with self.lock:
-                self.statuses[key]["status"] = "running"
+            try:
+                with self.lock:
+                    self.statuses[key]["status"] = "running"
 
-            fresh = []
-            with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as pool:
-                for done in concurrent.futures.as_completed(
-                        [pool.submit(self._suggest, key, photos[photo], model) for photo in todo]):
-                    if done.result() is not None:
-                        fresh.append(done.result())
+                fresh = []
+                with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as pool:
+                    for done in concurrent.futures.as_completed(
+                            [pool.submit(self._suggest, key, photos[photo], model) for photo in todo]):
+                        if done.result() is not None:
+                            fresh.append(done.result())
 
-            if fresh and key in self.statuses:
-                self._take_consensus(folder, photos, model)
-            with self.lock:
-                self.statuses[key]["status"] = "completed"
+                if fresh and key in self.statuses:
+                    self._take_consensus(folder, photos, model)
+                with self.lock:
+                    self.statuses[key]["status"] = "completed"
+            finally:
+                _end(model)
         except Exception as e:
             logger.exception("Error running suggestions for %s: %s", folder, e)
             # Always said, even with the entry gone, so the page stops polling instead of

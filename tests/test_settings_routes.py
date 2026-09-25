@@ -34,7 +34,8 @@ class TheSettingsRoutes(unittest.TestCase):
     def test_they_answer_the_library_in_the_url_with_its_declarations(self):
         for kind, client, home in self.apps():
             with self.subTest(app=kind):
-                settings.change(Library(home.library("meadow.db")), {"faces.min_face_size": "40"})
+                settings.change(Library(home.library("meadow.db")), {"faces.min_face_size": "40"},
+                                acknowledged=["faces"])
                 reply = client.get("/meadow/api/settings")
                 self.assertEqual(200, reply.status_code, reply.data)
                 answer = reply.get_json()
@@ -57,7 +58,8 @@ class TheSettingsRoutes(unittest.TestCase):
         for kind, client, home in self.apps():
             with self.subTest(app=kind):
                 reply = client.post("/meadow/api/settings", json={"values": {"renaming.format": "{index} {grouping}",
-                                                                           "model.name": "ViT-B-32"}})
+                                                                           "model.name": "ViT-B-32"},
+                                                                "acknowledged": ["clip"]})
                 self.assertEqual(200, reply.status_code, reply.data)
                 answer = reply.get_json()
                 self.assertEqual((answer["success"], answer["changed"], answer["locked"]), (True, 2, True))
@@ -79,6 +81,38 @@ class TheSettingsRoutes(unittest.TestCase):
                 self.assertEqual(rows(home.library("meadow.db")), settings.DEFAULTS)
                 self.assertEqual(1, len(journal_service.history(Library(home.library("meadow.db")))["changes"]))
 
+    def test_a_locked_change_is_refused_unless_the_body_acknowledges_its_group(self):
+        """The lock was the page's alone: POST /api/settings took any values. Found in
+        review of f127e47."""
+        for kind, client, home in self.apps():
+            with self.subTest(app=kind):
+                reply = client.post("/meadow/api/settings", json={"values": {"model.name": "ViT-B-32"}})
+                self.assertEqual(400, reply.status_code)
+                error = reply.get_json()["error"]
+                self.assertIn(validation.SETTING_GROUPS["clip"]["title"], error)
+                self.assertIn(validation.SETTING_GROUPS["clip"]["consequences"][0], error)
+                self.assertEqual(rows(home.library("meadow.db")), settings.DEFAULTS)
+                self.assertEqual(400, client.post("/meadow/api/settings", json={
+                    "values": {"model.name": "ViT-B-32"}, "acknowledged": "clip, faces"}).status_code)
+                self.assertEqual(1, len(journal_service.history(Library(home.library("meadow.db")))["changes"]))
+                reply = client.post("/meadow/api/settings", json={"values": {"model.name": "ViT-B-32"},
+                                                                   "acknowledged": ["clip"]})
+                self.assertEqual(200, reply.status_code, reply.data)
+                self.assertEqual(rows(home.library("meadow.db"))["model.name"], "ViT-B-32")
+
+    def test_after_a_change_the_runtime_lets_go_of_what_the_library_no_longer_uses(self):
+        from unittest import mock
+        runtime = mock.Mock()
+        app, home = web_client.app_for(self, "tuner", runtime=runtime)
+        client = app.test_client()
+        reply = client.post("/library/api/settings", json={"values": {"model.name": "ViT-B-32"},
+                                                            "acknowledged": ["clip"]})
+        self.assertEqual(200, reply.status_code, reply.data)
+        runtime.settings_changed.assert_called_once_with(Library(home.library("library.db")))
+        runtime.settings_changed.reset_mock()
+        client.post("/library/api/settings", json={"values": {"model.name": "ViT-B-32"}, "acknowledged": ["clip"]})
+        runtime.settings_changed.assert_not_called()
+
     def test_a_library_in_use_is_stamped_from_config_ini_when_its_settings_are_asked(self):
         for kind, client, home in self.apps():
             with self.subTest(app=kind):
@@ -96,7 +130,8 @@ class TheSettingsRoutes(unittest.TestCase):
             with self.subTest(app=kind):
                 named = os.path.join(home.root, "exiftool-own.exe")
                 open(named, "w").close()
-                settings.change(Library(home.library("meadow.db")), {"paths.exiftool": named})
+                settings.change(Library(home.library("meadow.db")), {"paths.exiftool": named},
+                                acknowledged=["exiftool"])
                 app = client.application
                 with app.test_request_context():
                     self.assertEqual(state.exiftool(Library(home.library("meadow.db"))), named)

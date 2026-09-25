@@ -64,9 +64,19 @@ class _LibraryFixture(unittest.TestCase):
 
 
 class _FakeIndex:
-    """A library's photo index with nothing in it, and no connection to keep vectors on."""
+    """A library's photo index with nothing in it, and no connection to keep vectors on:
+    what the runtime makes in place of tagpup.services.search.PhotoIndex."""
     db_path = "no such library.db"
     conn = None
+
+    def __init__(self, db_path=None, model=None):
+        self.model = model
+
+    def reload_if_changed(self):
+        return False
+
+    def close(self):
+        pass
 
 
 class _FakeClip:
@@ -128,7 +138,7 @@ class _RunFixture(_LibraryFixture):
 
         # The models are the runtime's fakes, and this library's index an empty one.
         self.runtime = Runtime(clip=_FakeClip(), faces=object())
-        for patched in (mock.patch.object(self.runtime, "photo_index", lambda library: _FakeIndex()),
+        for patched in (mock.patch("tagpup.runtime.search.PhotoIndex", _FakeIndex),
                         mock.patch.object(suggester_service, "TagSuggester", ScriptedSuggester),
                         mock.patch.object(suggester_service, "TagTaxonomy", _FakeTaxonomy)):
             patched.start()

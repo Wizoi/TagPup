@@ -7,7 +7,7 @@ FaceProcessor, which read config.ini itself and also resolved who is who across 
 library -- which is a service's, tagpup.services.identities (docs/ARCHITECTURE.md, "The
 layers, revisited").
 """
-from tagpup.ml import refuse_in_tests
+from tagpup.ml import free_device_memory, refuse_in_tests
 import logging
 import os
 import threading
@@ -44,6 +44,16 @@ class FaceModel:
     def load(self):
         """Load the models now, if they are not loaded yet."""
         self._init_models()
+
+    def unload(self):
+        """Let the weights go, and the GPU memory they held (tagpup.runtime drops a model
+        no library it serves uses any more). Used again, they load again."""
+        with self._init_lock:
+            if self.mtcnn is None and self.resnet is None:
+                return
+            self.mtcnn = self.resnet = None
+        logger.info("Unloaded the face models.")
+        free_device_memory()
 
     def _init_models(self):
         """Lazily initialize MTCNN detector and InceptionResnetV1 face embedder.

@@ -66,19 +66,23 @@ from tagpup.files import images as image_files
 from tagpup.core import library as libraries
 from tagpup.core.library import Library
 
-def get_runtime():
+def get_runtime(read_only=False):
     """The models a command runs (tagpup.runtime), from the settings of the library it is
     given: each is built the first time the command asks for it, and loaded the first
-    time it is used."""
-    return Runtime()
+    time it is used. `read_only` for a command that only looks (stats, list-index,
+    search): it reads the library's settings without stamping one that holds none, as
+    the MCP server's inspections and the doctor do -- a look was a journaled change."""
+    return Runtime(read_only=read_only)
 
 def library_index(runtime, db_path):
     """The library's photos, with their vectors under its CLIP model."""
     return PhotoIndex(db_path=db_path, model=runtime.model_key(Library(db_path)))
 
-def get_exiftool_path(db_path) -> str:
-    """The ExifTool the library names, else the machine's (tagpup.runtime.exiftool)."""
-    return runtimes.exiftool(Library(db_path))
+def get_exiftool_path(db_path, read_only=False) -> str:
+    """The ExifTool the library names, else the machine's (tagpup.runtime.exiftool).
+    `read_only` reads it without stamping the library (inspect)."""
+    library = Library(db_path)
+    return runtimes.exiftool(library, runtimes.peek_settings(library) if read_only else None)
 
 def get_db_path(test_mode=False, cli_db=None):
     """The library the command works on: --db (a name in the data folder, or a path;
@@ -136,8 +140,8 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(test_mode, cli_db)
     # A reset deletes the library, and its settings with it; the new one is stamped
-    # with them again, not with the defaults.
-    kept_settings = runtimes.library_settings(Library(db_path)).values if reset and os.path.exists(db_path) else None
+    # with them again, not with the defaults. Read without stamping the one deleted.
+    kept_settings = runtimes.peek_settings(Library(db_path)).values if reset and os.path.exists(db_path) else None
 
     # Handle reset flag
     if reset:
@@ -151,7 +155,7 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
             except Exception as e:
                 console.print(f"[bold red]Failed to delete {db_path}: {e}[/bold red]")
         if kept_settings is not None and not os.path.exists(db_path):
-            library_settings.stamp(Library(db_path), kept_settings)
+            library_settings.stamp(Library(db_path), kept_settings, operation=library_settings.FROM_REPLACED)
 
     settings = runtime.settings(Library(db_path))
     exiftool_path = runtimes.exiftool(Library(db_path), settings)
@@ -645,7 +649,7 @@ def write_suggestions_file(suggestions_file, db_path, exiftool_path, live=False,
 @click.pass_context
 def search(ctx, query: str, k: int):
     """Semantic text search across indexed library."""
-    runtime = get_runtime()
+    runtime = get_runtime(read_only=True)
 
     # Load Index
     test_mode = ctx.obj.get("test", False)
@@ -693,7 +697,7 @@ def search(ctx, query: str, k: int):
 @click.pass_context
 def stats(ctx):
     """Index statistics (tag counts, people, coverage)."""
-    runtime = get_runtime()
+    runtime = get_runtime(read_only=True)
 
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
@@ -899,7 +903,7 @@ def inspect(ctx, photo_path: str):
     """Inspect metadata found in a single image (useful for debugging)."""
     # Who the keywords name depends on the library's taxonomy.
     db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
-    exiftool_path = get_exiftool_path(db_path)
+    exiftool_path = get_exiftool_path(db_path, read_only=True)
 
     console.print(f"Inspecting file: [bold cyan]{photo_path}[/bold cyan]")
     extractor = MetadataExtractor(exiftool_path=exiftool_path)
@@ -928,7 +932,7 @@ def inspect(ctx, photo_path: str):
 @click.pass_context
 def list_index(ctx, folder):
     """List all photos currently stored in the index, optionally filtered by folder."""
-    runtime = get_runtime()
+    runtime = get_runtime(read_only=True)
 
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")

@@ -72,7 +72,8 @@ def open_page(url):
 
 def served_libraries(startup=None):
     """The libraries whose models are warmed at start: the startup library, or else each
-    one the picker offers in the data folder."""
+    one the picker offers in the data folder, of which the warm-up loads the one set of
+    models most of them share (tagpup.runtime.Runtime.warm_up)."""
     if startup is not None:
         return [startup]
     folder = tagpup_config.data_dir()
@@ -128,8 +129,8 @@ def main(argv=None):
                 return 2
         startup = Library(db_path)
     # The process's models, one per set of settings a library names, given to both apps;
-    # warmed on a thread of their own for the libraries in the data folder -- their
-    # models, never a library held open (#99).
+    # one set warmed on a thread of their own -- the startup library's, or the one most
+    # libraries in the data folder share -- never a library held open (#99).
     runtime = Runtime()
     apps = {ports[kind]: web.create_app(kind, startup=startup, runtime=runtime, ports=ports)
             for kind in ("tagpup", "tuner")}

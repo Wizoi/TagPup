@@ -211,13 +211,17 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     already had rows in the index, left as they were.
 
     Refused, and nothing renamed, for a grouping that may not be used
-    (tagpup.core.validation).
+    (tagpup.core.validation). The grouping is used trimmed as the rules trim it
+    (validation.trim): the rules allow blanks at its ends, and a trailing space -- from
+    a caller that does not strip, or before a U+FEFF, which strip() leaves -- put a
+    double space before every photo's number.
     """
     result = Result(attempted=len(photo_paths))
     problem = validation.problem("grouping", grouping)
     if problem:
         result.refuse(problem)
         return result
+    grouping = validation.trim(grouping)
     width = len(str(len(photo_paths)))
     captions = names.read_for_renaming(exiftool_path, [p for p in photo_paths if os.path.exists(p)])
     renames = {}
