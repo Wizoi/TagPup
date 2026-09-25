@@ -29,9 +29,11 @@ class OneValue(unittest.TestCase):
         self.assertEqual(suggesting.OFFER_A_TAG, option.default)
 
     def test_the_writer_writes_from_it(self):
-        from writer import MetadataWriter
-        default = inspect.signature(MetadataWriter.write_tags_to_photos).parameters["min_score"].default
-        self.assertEqual(suggesting.OFFER_A_TAG, default)
+        import tagpup_cli
+        from tagpup.services import tagging
+        for writer in (tagpup_cli.write_suggestions_file, tagging.suggestion_writes, suggesting.written_tags):
+            default = inspect.signature(writer).parameters["min_score"].default
+            self.assertEqual(suggesting.OFFER_A_TAG, default, writer.__name__)
 
     def test_the_runner_starts_from_it(self):
         self.assertIn('insert(0, "%.2f" % suggesting.OFFER_A_TAG)', source("runner.py"))
@@ -40,7 +42,7 @@ class OneValue(unittest.TestCase):
         # Where a tag's score decides, it is compared with the one value: TagPup's
         # routes and the model that offers, the writer, the CLI and the runner.
         for name in ("tagpup/web/tagpup_routes.py", "tagpup/core/suggesting.py", "tagpup/jobs/suggestions.py",
-                     "scripts/writer.py", "tagpup_cli.py", "runner.py"):
+                     "tagpup/services/tagging.py", "tagpup_cli.py", "runner.py"):
             found = re.findall(r"score[\w\"'\].)]*\s*>=\s*0\.\d", source(name))
             self.assertEqual([], found, name)
         # What a run offers (tagpup.services.suggester.SuggestionModel.offered). The

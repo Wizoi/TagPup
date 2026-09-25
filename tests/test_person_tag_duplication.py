@@ -21,7 +21,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-from taxonomy import TagTaxonomy
+from tagpup.store.taxonomy import TagTaxonomy
 
 from tagpup.store import db, schema  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402

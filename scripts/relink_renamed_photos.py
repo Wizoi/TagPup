@@ -30,9 +30,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
 from tagpup.files import images  # noqa: E402
-import db as tagpup_db  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
-import paths as photo_paths  # noqa: E402  -- not `paths`: the walks below use that name
+from tagpup.core import paths as photo_paths  # noqa: E402  -- not `paths`: the walks below use that name
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 
@@ -56,7 +56,7 @@ def identities(folder, exiftool_path=None):
     filename that collides with another photo's original. PreservedFileName only ever
     worked for renames TagPup itself performed.
     """
-    from exiftool_session import ExifToolSession
+    from tagpup.files.exiftool_session import ExifToolSession
 
     paths = []
     for root, _dirs, files in os.walk(folder):
@@ -103,7 +103,7 @@ def preserved_names(folder, exiftool_path=None):
     a renamed file beside it. Keyed by stem alone, the last folder searched won, and
     a row's named faces could be re-pointed at a stranger's photo in another folder.
     """
-    from exiftool_session import ExifToolSession
+    from tagpup.files.exiftool_session import ExifToolSession
 
     paths = []
     for root, _dirs, files in os.walk(folder):

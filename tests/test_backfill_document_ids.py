@@ -19,7 +19,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-import db as tagpup_db
+from tagpup.store import db as tagpup_db
 from backfill_document_ids import record, rows_without_identity
 
 from tagpup.store import schema  # noqa: E402

@@ -1,12 +1,13 @@
 """Actions on photos' tags and captions."""
 import logging
+import os
 
-from tagpup.core import fields, paths, vocabulary
+from tagpup.core import fields, paths, suggesting, vocabulary
 from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, keywords, metadata
-from tagpup.store import embeddings, photos, taxonomy
+from tagpup.store import db, embeddings, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -163,4 +164,71 @@ def replace_tag(library, photo_paths, old, new, exiftool_path):
             except Exception as err:
                 logger.error("Failed to update metadata on disk/db for %s: %s", path, err)
                 result.fail(path, err)
+    return result
+
+
+def suggestion_writes(library, suggestions, min_score=suggesting.OFFER_A_TAG):
+    """What the CLI's `write` writes from the entries of a suggestions file: (path, tags,
+    caption) for each photo with a tag scoring at least `min_score`
+    (tagpup.core.suggesting.written_tags), or a caption made from them; and the paths
+    left out because there is no file there.
+
+    The library's face roots, which the caption files people under, are read once for
+    the run; scripts/writer.py read them again for every photo.
+    """
+    face_roots = taxonomy.people_vocabulary(library.path).roots
+    writes, missing = [], []
+    for entry in suggestions:
+        path = entry.get("path")
+        if not path or not os.path.exists(path):
+            missing.append(path)
+            continue
+        tags = suggesting.written_tags(entry.get("suggested_tags", []), min_score)
+        caption = suggesting.caption_from_tags(tags, face_roots)
+        if tags or caption:
+            writes.append((path, tags, caption))
+    return writes, missing
+
+
+def write_suggestions(library, writes, exiftool_path, nobackup=False):
+    """Write each (path, tags, caption) of `writes` (suggestion_writes') in one ExifTool
+    session, and tell the index what was written.
+
+    The caption first, so the stat recorded with the keywords is the file's final one.
+    The tags are added to what the file holds, through the one keyword writer: whole
+    paths only, people filed where the library's tree files them. The writer had its
+    own ExifTool code that also wrote every path's parts as loose keywords, wrote people
+    bare, and never told the index.
+
+    A photo that cannot be written is an error, and the next is tried; ExifTool that
+    cannot be started raises. changed: the photos written. `nobackup` has ExifTool
+    overwrite each file rather than keep an _original beside it.
+    """
+    result = Result(attempted=len(writes))
+    params = ["-overwrite_original"] if nobackup else None
+    # Who a bare name means, read once for the run, not once per photo.
+    people = taxonomy.people_paths(library.path)
+    with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
+        for path, tags, caption in writes:
+            try:
+                # The file's stamp before this write, over which its CLIP vectors are
+                # carried (tagpup.store.embeddings).
+                before = embeddings.stamp_of(path)
+                if caption:
+                    et.set_tags([path], tags=fields.caption_fields(caption), params=params)
+                    db.write_with_connection(
+                        library.path, lambda conn: photos.set_captions(conn, path, [caption]),
+                        label="caption for %s" % path)
+                if tags:
+                    current = keywords.tags_in_file(et, path)
+                    merged = current + [t for t in tags if t not in current]
+                    flat, hierarchical = keywords.write_keywords(
+                        et, path, vocabulary.resolve_people(merged, people))
+                    photos.record_tags(library.path, path, flat, flat, hierarchical, before=before)
+                elif caption:
+                    photos.record_file_stat(library.path, path, before=before)
+            except Exception as err:
+                result.fail(path, err)
+                continue
+            result.changed += 1
     return result

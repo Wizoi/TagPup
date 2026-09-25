@@ -21,9 +21,8 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-import suggester as suggester_module
-from suggester import TagSuggester, extract_path_hints
-from taxonomy import TagTaxonomy
+from tagpup.services.suggester import TagSuggester, extract_path_hints
+from tagpup.store.taxonomy import TagTaxonomy
 
 from tagpup.store import db, schema  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
@@ -71,7 +70,7 @@ class StubEmbedder:
 
 
 class StubFaceProcessor:
-    """Keeps suggest_for_photo from constructing a real MTCNN/FaceNet processor."""
+    """The face model a suggester is handed: finds no face in any photo."""
 
     def detect_and_embed_faces(self, path):
         return []
@@ -85,15 +84,6 @@ def photo_meta(path, tags=(), year=None, people=()):
 
 
 class SuggesterTestBase(unittest.TestCase):
-    def setUp(self):
-        # Prevent the on-the-fly face detection branch from loading models.
-        self._saved_processor = suggester_module._global_face_processor
-        suggester_module._global_face_processor = StubFaceProcessor()
-        self.addCleanup(self._restore_processor)
-
-    def _restore_processor(self):
-        suggester_module._global_face_processor = self._saved_processor
-
     def make_suggester(self, neighbors=(), taxonomy_paths=(), candidates=None, embedder=None,
                        face_roots=()):
         """`face_roots`: the roots the library's tree flags as holding faces, the only
@@ -113,7 +103,8 @@ class SuggesterTestBase(unittest.TestCase):
         taxonomy = TagTaxonomy(library)
         taxonomy.paths = set(taxonomy_paths)
         index = StubIndex(neighbors=list(neighbors))
-        return TagSuggester(index, taxonomy, embedder=embedder, candidate_tags=candidates or [])
+        return TagSuggester(index, taxonomy, embedder=embedder, candidate_tags=candidates or [],
+                            faces=StubFaceProcessor())
 
     def scores(self, result):
         return {item["tag"]: item["score"] for item in result["suggested_tags"]}

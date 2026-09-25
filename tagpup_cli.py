@@ -43,19 +43,16 @@ warnings.filterwarnings("ignore", category=UserWarning, module="huggingface_hub"
 
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
-# Add scripts folder to search path
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
-
 # Load components
-from metadata import MetadataExtractor
-from taxonomy import TagTaxonomy
-from writer import MetadataWriter
-import paths
-import db as tagpup_db
+from tagpup.files.metadata import MetadataExtractor
+from tagpup.store.taxonomy import TagTaxonomy
+from tagpup.core import paths
+from tagpup.store import db as tagpup_db
 from tagpup import config as tagpup_config
 from tagpup.runtime import Runtime
 from tagpup.services import faces as face_records
 from tagpup.services import identities
+from tagpup.services import tagging
 from tagpup.services.search import PhotoIndex, stored_mismatch
 from tagpup.services.suggester import TagSuggester
 from tagpup.store.locks import PathLocker
@@ -231,7 +228,7 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     from tqdm import tqdm
     for i in tqdm(range(0, len(images_to_process), batch_size), desc="Reading metadata"):
         batch = images_to_process[i:i+batch_size]
-        batch_meta = extractor.batch_read(batch, db_path=db_path)
+        batch_meta = extractor.batch_read(batch, people=store_taxonomy.people_vocabulary(db_path))
         all_metadata.extend(batch_meta)
 
     # Every scanned photo is indexed, tagged or not.
@@ -441,7 +438,7 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
         from tqdm import tqdm
         for i in tqdm(range(0, len(all_images), batch_size), desc="Reading metadata"):
             batch = all_images[i:i+batch_size]
-            batch_meta = extractor.batch_read(batch, db_path=db_path)
+            batch_meta = extractor.batch_read(batch, people=store_taxonomy.people_vocabulary(db_path))
             for meta in batch_meta:
                 metadata_map[meta["path"]] = meta
 
@@ -553,9 +550,88 @@ def write(ctx, suggestions_file: str, live: bool, min_score: float, nobackup: bo
     # The library: its taxonomy files people, and its index is told what was written.
     db_path = get_db_path(config, ctx.obj.get("test", False), ctx.obj.get("db"))
 
-    writer = MetadataWriter(exiftool_path=exiftool_path)
-    writer.write_tags_to_photos(suggestions_file, live=live, min_score=min_score,
-                                nobackup=nobackup, db_path=db_path)
+    write_suggestions_file(suggestions_file, db_path, exiftool_path, live=live,
+                           min_score=min_score, nobackup=nobackup)
+
+
+#: What `write` logs, under the name scripts/writer.py logged it.
+writer_log = logging.getLogger("tagpup_cli.writer")
+
+
+def write_suggestions_file(suggestions_file, db_path, exiftool_path, live=False,
+                           min_score=suggesting.OFFER_A_TAG, nobackup=False) -> bool:
+    """`write`: read the suggestions file, show what would be written, and with `live`
+    and a typed YES write it (tagpup.services.tagging.write_suggestions). True when
+    nothing failed.
+
+    `db_path` is the library: people are filed by its tree, and its index is told what
+    was written.
+    """
+    if not os.path.exists(suggestions_file):
+        writer_log.error(f"Suggestions file not found: {suggestions_file}")
+        return False
+
+    try:
+        with open(suggestions_file, "r", encoding="utf-8") as f:
+            suggestions = json.load(f)
+    except Exception as e:
+        writer_log.error(f"Error loading suggestions file: {e}")
+        return False
+
+    if not isinstance(suggestions, list):
+        # Might be a single entry wrapped or just invalid
+        if isinstance(suggestions, dict):
+            suggestions = [suggestions]
+        else:
+            writer_log.error("Invalid suggestions.json format. Expected array of objects.")
+            return False
+
+    library = Library(db_path)
+    write_tasks, missing = tagging.suggestion_writes(library, suggestions, min_score)
+    for path in missing:
+        writer_log.warning(f"File path does not exist, skipping: {path}")
+
+    if not write_tasks:
+        print("No tags or captions met the minimum score threshold to be written.")
+        return True
+
+    # Print summary/preview
+    print("\n--- Tag & Caption Writing Preview ---")
+    for path, tags, caption in write_tasks:
+        print(f"File: {path}")
+        if tags:
+            print(f"  Tags to append: {', '.join(tags)}")
+        if caption:
+            print(f"  Caption to set: \"{caption}\"")
+    print(f"Total files to modify: {len(write_tasks)}")
+    print(f"Write Mode: {'LIVE (files will be modified)' if live else 'PREVIEW (dry-run, no files changed)'}")
+    print("-------------------------------------")
+
+    if not live:
+        print("To write these tags and captions for real, run with the -Live flag.")
+        return True
+
+    # Ask for confirmation
+    confirm = input("Type 'YES' to confirm and write metadata to files: ").strip()
+    if confirm != "YES":
+        print("Aborted. No files were modified.")
+        return False
+
+    print("Writing metadata...")
+    executable = exiftool_path
+    if executable and not os.path.isabs(executable):
+        executable = os.path.abspath(executable)
+
+    try:
+        result = tagging.write_suggestions(library, write_tasks, executable, nobackup=nobackup)
+    except Exception as e:
+        writer_log.error(f"ExifTool writer error: {e}", exc_info=True)
+        return False
+    for path, error in result.errors:
+        writer_log.error(f"Failed to write metadata to {path}: {error}")
+
+    print(f"Finished writing metadata. Success: {result.changed}, Errors: {len(result.errors)}")
+    return not result.errors
 
 @cli.command()
 @click.argument("query")
@@ -727,7 +803,7 @@ def inspect(ctx, photo_path: str):
 
     console.print(f"Inspecting file: [bold cyan]{photo_path}[/bold cyan]")
     extractor = MetadataExtractor(exiftool_path=exiftool_path)
-    meta = extractor.batch_read([photo_path], db_path=db_path)[0]
+    meta = extractor.batch_read([photo_path], people=store_taxonomy.people_vocabulary(db_path))[0]
 
     console.print("\n[bold underline]Parsed Output[/bold underline]")
     console.print(f"Path: {meta['path']}")

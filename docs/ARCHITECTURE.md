@@ -344,10 +344,10 @@ files, `paths` by 14, `taxonomy` by 10, `exiftool_session` by 7, `identity` and
 they should not: `writer.py`, the CLI's `write` command, and `metadata.py`, imported by 6
 and 11. Phases 7 and 8 add features, not structure; they should find one name for
 everything.
-- [ ] The re-export shims (`db`, `paths`, `taxonomy`, `exiftool_session`, `identity`): every importer uses the package name, and the shims go.
-- [ ] The compositions (`embedder`, `faces`, `index`, `suggester`): their tests use `tagpup.ml` and `tagpup.services`, handing in fakes as arguments -- the two behaviour anchors pass `faces=` rather than setting a module slot (findings #136) -- and the shims go.
-- [ ] `writer.py` into `tagpup.services.tagging`, which the CLI's `write` calls; `metadata.py` into the owners "Where everything goes" names.
-- [ ] Guard: every module in `scripts/` is an entry point (it has a `__main__` block) or a helper the entry points share (`_root`, `code_snapshot`), and nothing but a script's own tests imports one. CLAUDE.md stops describing shims.
+- [x] The re-export shims (`db`, `paths`, `taxonomy`, `exiftool_session`, `identity`): every importer uses the package name, and the shims go.
+- [x] The compositions (`embedder`, `faces`, `index`, `suggester`): their tests use `tagpup.ml` and `tagpup.services`, handing in fakes as arguments -- the two behaviour anchors pass `faces=` rather than setting a module slot (findings #136) -- and the shims go.
+- [x] `writer.py` into `tagpup.services.tagging` (`suggestion_writes`, `write_suggestions`), which the CLI's `write` calls; which of a suggestion's tags it writes is `tagpup.core.suggesting.written_tags`. `metadata.py` into the owners "Where everything goes" names: its callers read with `tagpup.files.metadata`, handing each batch the library's people from `tagpup.store.taxonomy`.
+- [x] Guard: every module in `scripts/` is an entry point (it has a `__main__` block) or a helper the entry points share (`_root`, `code_snapshot`, and `reloader` until it is `tagpup/dev/reloader.py`), and nothing but a script's own tests imports one (`tests/test_scripts_are_entry_points.py`; two sandbox scripts share code until they move to `tools/`). CLAUDE.md stops describing shims.
 
 Exit: `scripts/` holds entry points only, and `import db` fails.
 
@@ -405,8 +405,8 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 4. Data model | done, 2026-09-24 |
 | 4.5. One owner for each rule | done, 2026-09-24 |
 | 5. One server | done, 2026-09-24 |
-| 5.5. Models in the package, one composition root | done, 2026-09-24 (shims for tests remain: findings #139) |
+| 5.5. Models in the package, one composition root | done, 2026-09-24 (the shims it left for tests went in 6.5) |
 | 6. Pages | done, 2026-09-25 |
-| 6.5. No shims | not started |
+| 6.5. No shims | done, 2026-09-25 |
 | 7. MCP | not started |
 | 8. Sync | not started |

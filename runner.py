@@ -8,9 +8,7 @@ import logging
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-# Add scripts directory to path to locate the CLI's modules
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
-import paths
+from tagpup.core import paths
 from tagpup import config as tagpup_config
 from tagpup.core import library as libraries
 from tagpup.core import suggesting

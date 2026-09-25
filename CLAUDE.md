@@ -10,10 +10,13 @@ before adding a module, a route or a query. **Record every review finding in
 [docs/findings.md](docs/findings.md) before fixing it.** Findings that lived only in a
 conversation were lost, and decisions were made twice.
 
-New code imports from the package (`from tagpup.store import db`). A module that has
-moved leaves a shim at its old name in `scripts/`, so `import db` in old code still
-works and is the same module; `tests/test_layers.py` fails package code that imports
-an old name or goes up a layer.
+New code imports from the package (`from tagpup.store import db`). `scripts/` holds
+programs to run, each with a `__main__` block, and the few helpers they share (`_root`,
+`code_snapshot`, `reloader`); nothing but a script's own tests imports from it. A module
+that moves takes every importer with it in the same commit and leaves nothing at its old
+name. `tests/test_scripts_are_entry_points.py` fails a module in `scripts/` that is
+neither, and `tests/test_layers.py` fails package code that imports from `scripts/` or
+goes up a layer.
 
 ## Running things
 

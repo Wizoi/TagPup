@@ -25,22 +25,22 @@ The tool is built as a modular Python application with script wrappers. It relie
                        [photo_index.db: tree]   ---> [suggestions.json]
                                                               |
                                                               v
-                                                      [MetadataWriter (ExifTool)]
+                                                      [write_suggestions (ExifTool)]
                                                               |
                                                               v
                                                       [Tagged Image]
 ```
 
 - **`tagpup_cli.py` (CLI entry point)**: Unified Command Line Interface using `click` and `rich`.
-- **`tagpup/files/metadata.py` (Metadata Extraction)**: Interfaces with `exiftool` to read standard metadata fields in batches of 500. Handles bare and namespaced tag keys. What the fields mean -- tags, people, captions -- is `tagpup/core/vocabulary.py`; the library's people are read once per batch by `tagpup/store/taxonomy.py`. `scripts/metadata.py` joins the three for older callers.
+- **`tagpup/files/metadata.py` (Metadata Extraction)**: Interfaces with `exiftool` to read standard metadata fields in batches of 500. Handles bare and namespaced tag keys. What the fields mean -- tags, people, captions -- is `tagpup/core/vocabulary.py`; the library's people are read by `tagpup/store/taxonomy.py` and handed to each batch.
 - **`tagpup/runtime.py` (The models)**: Builds the CLIP model and the face models once, from the settings the command read (`config.ini`), and hands them to what needs them. Nothing else builds a model.
 - **`tagpup/ml/clip.py` (Visual Embeddings)**: CLIP (`ViT-H-14` by default, customizable resolution up to $512 \times 512$) using PyTorch (supporting GPU/CUDA acceleration if available with FP16 half-precision, or falling back to CPU). Generates normalized embeddings. `tagpup/services/search.py` (`PhotoEmbeddings`) keeps each photo's in the library, so an unchanged file is not embedded again.
 - **`tagpup/services/search.py` (SQLite & FAISS Vector Index)**: `PhotoIndex` loads a library's photo records and their vectors from the store (`tagpup/store/`) and builds an in-memory `faiss.IndexFlatIP` flat index (`tagpup/ml/vector_index.py`) for rapid cosine similarity queries.
 - **`tagpup/ml/faces.py` (Face Recognition)**: Detects face bounding boxes using **MTCNN** and generates 512-dimensional face vectors using **InceptionResnetV1** (supporting GPU/CUDA and FP16 acceleration).
 - **`tagpup/services/identities.py` (Identity Clustering)**: Performs density-based clustering (**DBSCAN**) of a library's faces to resolve and assign names to visual identities based on co-occurrence tagging patterns, by the rules in `tagpup/core/clustering.py`.
-- **`scripts/taxonomy.py` (Hierarchical Tag Taxonomy)**: Builds and updates a tree of all known hierarchical paths (e.g. `Family/Immediate/John Doe`). Resolves leaf tags to their ancestors.
+- **`tagpup/store/taxonomy.py` (Hierarchical Tag Taxonomy)**: Builds and updates a tree of all known hierarchical paths (e.g. `Family/Immediate/John Doe`). Resolves leaf tags to their ancestors.
 - **`tagpup/services/suggester.py` (Tag Suggestion Engine)**: Scores tags using cosine similarity of nearest visual neighbors and boosts matched tags if specific face embeddings are recognized in the target image. It is given its models.
-- **`scripts/writer.py` (Metadata Writer)**: Writes suggested tags and derived captions back to photos using ExifTool. Creates default `_original` backup files.
+- **`tagpup/services/tagging.py` (`suggestion_writes`, `write_suggestions`)**: What `write` writes -- the tags at or above the score, and the caption made from them (`tagpup/core/suggesting.py`) -- written back to photos using ExifTool, and recorded in the index. Creates default `_original` backup files. The CLI reads the suggestions file, shows the preview and asks for confirmation.
 
 ---
 

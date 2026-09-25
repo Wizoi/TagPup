@@ -1,4 +1,4 @@
-"""Tests for the face identity resolution rules in faces.py.
+"""Tests for the face identity resolution rules (tagpup.services.identities).
 
 `test_stability.py` already covers strict tag enforcement, the similarity threshold
 and era-aware centroids. This file covers the rest of the resolution pipeline: how
@@ -11,8 +11,7 @@ faces of one identity sit within the 0.48 euclidean epsilon of each other, and
 different identities sit far outside it. That keeps every assertion about the
 *decision rules* rather than about clustering luck.
 
-No model is loaded -- FaceProcessor only initialises MTCNN and FaceNet inside
-detect_and_embed_faces, which these tests never call.
+No model is loaded: resolution reads the faces' stored vectors.
 """
 import os
 import sys
@@ -28,9 +27,9 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
+from tagpup.services import identities
+from tagpup.services.identities import resolution_trace_path
 from tagpup.services.search import PhotoIndex
-from taxonomy import TagTaxonomy
-from faces import FaceProcessor, resolution_trace_path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import face_rows  # noqa: E402
@@ -66,8 +65,6 @@ class FaceClusteringTestBase(unittest.TestCase):
         self.index.load()
         self.addCleanup(self._close_index)
 
-        self.taxonomy = TagTaxonomy(os.path.join(self.tmpdir, "tax.db"))
-        self.taxonomy.paths = set()
 
     def _close_index(self):
         try:
@@ -110,10 +107,7 @@ class FaceClusteringTestBase(unittest.TestCase):
         self.index.close()
         self.index = PhotoIndex(db_path=self.db_path)
         self.index.load()
-        processor = FaceProcessor.__new__(FaceProcessor)  # no model initialisation
-        return processor.cluster_and_resolve_identities(
-            self.index, self.taxonomy, max_iterations=max_iterations
-        )
+        return identities.resolve(self.index, max_iterations=max_iterations)
 
     def name_of(self, face_id):
         conn = sqlite3.connect(self.db_path)

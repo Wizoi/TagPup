@@ -9,9 +9,10 @@ import numpy as np
 # Add workspace and scripts directories to search path
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-from index import PhotoIndex
+from tagpup.services import identities  # noqa: E402
+from tagpup.services.search import PhotoIndex  # noqa: E402
+from tagpup.store import faces as store_faces  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_people, add_vector, configured_model, people_of  # noqa: E402
 import own_home  # noqa: E402
@@ -28,6 +29,11 @@ from tagpup.web import tuner_routes  # noqa: E402
 def native(path):
     """A path as the indexer stores it: absolute, with this platform's separators."""
     return os.path.abspath(path)
+
+
+def face_names(photo_index):
+    """The name of each face resolution reads, in its order."""
+    return [row[4] for row in store_faces.for_clustering(photo_index.conn)]
 
 
 class TestStability(unittest.TestCase):
@@ -48,7 +54,7 @@ class TestStability(unittest.TestCase):
             except Exception:
                 pass
                 
-        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
         photo_index.load()
         try:
             self._seed(photo_index)
@@ -111,7 +117,7 @@ class TestStability(unittest.TestCase):
                 pass
 
     def test_database_reset_logic(self):
-        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
         photo_index.load()
         
         # Verify metadata is loaded
@@ -120,9 +126,9 @@ class TestStability(unittest.TestCase):
         self.assertTrue(meta["has_embedding"], "Photo should report having an embedding")
         
         # Verify face record is present
-        faces = photo_index.get_all_faces()
+        faces = face_names(photo_index)
         self.assertEqual(len(faces), 1, "Face record should be loaded")
-        self.assertEqual(faces[0]["name"], "John Doe", "Face name should be preserved")
+        self.assertEqual(faces[0], "John Doe", "Face name should be preserved")
         
         # Clear CLIP embeddings
         photo_index.clear_clip_embeddings()
@@ -132,9 +138,9 @@ class TestStability(unittest.TestCase):
         meta_after = photo_index.metadata[0]
         self.assertFalse(meta_after["has_embedding"], "Photo embedding should be cleared (None)")
         
-        faces_after = photo_index.get_all_faces()
+        faces_after = face_names(photo_index)
         self.assertEqual(len(faces_after), 1, "Face record should STILL be present")
-        self.assertEqual(faces_after[0]["name"], "John Doe", "Face name assignment MUST be preserved")
+        self.assertEqual(faces_after[0], "John Doe", "Face name assignment MUST be preserved")
         
         photo_index.close()
 
@@ -164,11 +170,10 @@ class TestStability(unittest.TestCase):
         self.assertIn("clustering", error_body["error"].lower())
 
     def test_strict_tag_enforcement_in_clustering(self):
-        from faces import FaceProcessor
-        from taxonomy import TagTaxonomy
+        from tagpup.store.taxonomy import TagTaxonomy
         
         # Open the index
-        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
         photo_index.load()
         cursor = photo_index.conn.cursor()
         
@@ -220,10 +225,7 @@ class TestStability(unittest.TestCase):
         taxonomy.save()
         
         # Run clustering
-        processor = FaceProcessor()
-        processor.resnet = None # Prevent neural model load to keep unit tests fast
-        
-        processor.cluster_and_resolve_identities(photo_index, taxonomy, max_iterations=1)
+        identities.resolve(photo_index, max_iterations=1)
         
         # Query results from faces table
         cursor.execute("SELECT p.path, f.name FROM faces f JOIN photos p ON p.id = f.photo_id")
@@ -243,11 +245,10 @@ class TestStability(unittest.TestCase):
         self.assertIsNone(face2[1], "Face in untagged photo must remain None under strict tag enforcement")
 
     def test_similarity_threshold_in_clustering(self):
-        from faces import FaceProcessor
-        from taxonomy import TagTaxonomy
+        from tagpup.store.taxonomy import TagTaxonomy
         
         # Open the index
-        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
         photo_index.load()
         cursor = photo_index.conn.cursor()
         
@@ -315,10 +316,7 @@ class TestStability(unittest.TestCase):
         taxonomy.save()
         
         # Run clustering
-        processor = FaceProcessor()
-        processor.resnet = None
-        
-        processor.cluster_and_resolve_identities(photo_index, taxonomy, max_iterations=1)
+        identities.resolve(photo_index, max_iterations=1)
         
         # Query results
         cursor.execute("SELECT p.path, f.name FROM faces f JOIN photos p ON p.id = f.photo_id")
@@ -338,7 +336,7 @@ class TestStability(unittest.TestCase):
             self.assertIsNone(name, "Faces in Photo 2 must remain unmatched because similarity < 0.80")
 
     def test_large_lookup_performance(self):
-        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
         photo_index.load()
         cursor = photo_index.conn.cursor()
         
@@ -396,9 +394,6 @@ class TestStability(unittest.TestCase):
         self.assertEqual(len(res_data["faces"]), 5000)
 
     def test_year_fallback_chain(self):
-        import sys
-        sys.path.append("scripts")
-        from metadata import parse_year_from_metadata
         from tagpup.core.dates import shown_year
         from tagpup.core import dates
 
@@ -412,22 +407,22 @@ class TestStability(unittest.TestCase):
         self.assertEqual(shown_year(None), "Unknown")
         self.assertEqual(shown_year(2008), 2008)
         
-        # 2. Test metadata's parse_year_from_metadata
+        # 2. The year of a record (tagpup.core.dates.record_year)
         meta_1 = {"raw_metadata": {"EXIF:DateTimeOriginal": "2005:06:26 12:34:56"}, "path": "D:/2008/photo.jpg"}
-        self.assertEqual(parse_year_from_metadata(meta_1), 2005)
+        self.assertEqual(dates.record_year(meta_1), 2005)
         
         meta_2 = {"raw_metadata": None, "path": "D:/Training/Pictures/2008/family_2004.jpg"}
-        self.assertEqual(parse_year_from_metadata(meta_2), 2004)
+        self.assertEqual(dates.record_year(meta_2), 2004)
         
         meta_3 = {"raw_metadata": None, "path": "D:/Training/Pictures/2008/EarthDay/photo.jpg"}
-        self.assertEqual(parse_year_from_metadata(meta_3), 2008)
+        self.assertEqual(dates.record_year(meta_3), 2008)
         
         meta_4 = {"raw_metadata": None, "path": "D:/Training/Pictures/NoYear/photo.jpg"}
-        self.assertIsNone(parse_year_from_metadata(meta_4))
+        self.assertIsNone(dates.record_year(meta_4))
 
     def test_api_photo_automatch_unmatched(self):
         # Open database, insert a resolved face (e.g. John Doe) and an unmatched face (name = None) with similar embedding
-        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
         photo_index.load()
         cursor = photo_index.conn.cursor()
         
@@ -469,7 +464,7 @@ class TestStability(unittest.TestCase):
         conn.close()
 
     def test_api_folder_automatch(self):
-        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
         photo_index.load()
         cursor = photo_index.conn.cursor()
         
@@ -513,7 +508,7 @@ class TestStability(unittest.TestCase):
         conn.close()
 
     def test_api_photo_automatch_duplicate_protection(self):
-        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
         photo_index.load()
         cursor = photo_index.conn.cursor()
         
@@ -553,7 +548,7 @@ class TestStability(unittest.TestCase):
         conn.close()
 
     def test_api_photo_automatch_already_tagged_protection(self):
-        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
         photo_index.load()
         cursor = photo_index.conn.cursor()
         
@@ -595,7 +590,7 @@ class TestStability(unittest.TestCase):
 
     def test_api_face_match_duplicate_conflict(self):
         # Open database, insert two faces in the same photo
-        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
         photo_index.load()
         cursor = photo_index.conn.cursor()
         
@@ -621,7 +616,7 @@ class TestStability(unittest.TestCase):
         self.assertIn("already tagged on another face", data["error"])
 
     def test_api_faces_match_bulk_duplicate_conflict(self):
-        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
         photo_index.load()
         cursor = photo_index.conn.cursor()
         
@@ -653,14 +648,14 @@ class TestStability(unittest.TestCase):
         self.assertIn("already tagged on another face", data["error"])
 
     def test_build_photo_ui_record(self):
-        from metadata import build_photo_ui_record
+        from tagpup.services.photos import page_record
         dummy_meta = {
             "tags": ["A", "B"],
             "people": ["Alice"],
             "captions": ["Caption 1"],
             "raw_metadata": {"EXIF:DateTimeOriginal": "2026:05:27 12:34:56"}
         }
-        res = build_photo_ui_record("C:/path/to/my_photo.jpg", dummy_meta, mtime=123.45, size=999)
+        res = page_record("C:/path/to/my_photo.jpg", dummy_meta, mtime=123.45, size=999)
         self.assertEqual(res["filename"], "my_photo.jpg")
         self.assertEqual(res["year"], "2026")
         self.assertEqual(res["title"], "Caption 1")
@@ -672,7 +667,7 @@ class TestStability(unittest.TestCase):
         import tempfile
         import shutil
         from PIL import Image, ImageOps
-        from metadata import rotate_image_file
+        from tagpup.files.metadata import rotate_image_file
         from tests.test_taxonomy_lifecycle import EXIFTOOL
         if not EXIFTOOL:
             self.skipTest("ExifTool not installed")
@@ -702,7 +697,7 @@ class TestStability(unittest.TestCase):
         self.assertEqual(shown_size(), (10, 20), "Rotating right should swap dimensions back")
 
     def test_hierarchical_tags_cleaning(self):
-        from metadata import extract_tags
+        from tagpup.core.vocabulary import extract_tags
         dummy_meta = {
             "XMP:Subject": ["Family/John Doe", "John Doe", "Family", "Nature"],
             "XMP:HierarchicalSubject": ["Family/John Doe"]
@@ -714,7 +709,7 @@ class TestStability(unittest.TestCase):
         self.assertNotIn("Family", res, "Should hide redundant parent component tag")
 
     def test_era_aware_face_centroids(self):
-        photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
+        photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
         photo_index.load()
         cursor = photo_index.conn.cursor()
         
@@ -759,10 +754,8 @@ class TestStability(unittest.TestCase):
         # Re-load photo_index metadata
         photo_index.load()
         
-        # Now run FaceProcessor.cluster_and_resolve_identities()
-        from faces import FaceProcessor
-        fp = FaceProcessor()
-        fp.cluster_and_resolve_identities(photo_index, None, max_iterations=2)
+        # Now run identity resolution
+        identities.resolve(photo_index, max_iterations=2)
         
         # Verify that teen faces from 2026 were NOT unassigned
         cursor.execute("SELECT p.path, f.name FROM faces f JOIN photos p ON p.id = f.photo_id WHERE p.path LIKE '%2026%'")

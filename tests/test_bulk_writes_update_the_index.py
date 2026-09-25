@@ -171,9 +171,9 @@ class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
     #: rewriting that to funnel through the helper would be churn for its own sake.
     RECORDS = ("record_tags(", "record_saved(", "UPDATE photos", "INSERT OR REPLACE INTO photos")
 
-    #: Where keywords are written: the routes (which must not), the services, and the
-    #: CLI's writer.
-    SOURCES = (os.path.join("tagpup", "web", "tagpup_routes.py"), os.path.join("scripts", "writer.py"))
+    #: Where keywords are written: the routes (which must not), and the services, the
+    #: CLI's `write` among them.
+    SOURCES = (os.path.join("tagpup", "web", "tagpup_routes.py"),)
 
     def write_sites(self):
         """(where, the source from there on) of every keyword write in the routes, the
@@ -207,7 +207,6 @@ class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
         sites = [where for where, _ in self.write_sites()]
         self.assertTrue(any("tagging.py" in where for where in sites),
                         "the write sites moved; the guard above is checking nothing")
-        self.assertTrue(any("writer.py" in where for where in sites))
 
     def test_the_routes_write_no_keywords_themselves(self):
         # Every keyword write they serve is a service's (tagpup.services.tagging).

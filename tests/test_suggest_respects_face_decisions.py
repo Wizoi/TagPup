@@ -14,11 +14,10 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import suggester  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
-from suggester import TagSuggester  # noqa: E402
+from tagpup.services.suggester import TagSuggester  # noqa: E402
 
 ROWAN = [1.0, 0.0, 0.0]
 
@@ -55,13 +54,10 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         self.index = PhotoIndex(os.path.join(self.dir, "lib.db"))
         self.index.load()
         self.processor = CountingFaceProcessor()
-        self._saved = suggester._global_face_processor
-        suggester._global_face_processor = self.processor
         # Rowan is known from another photo.
         self.add_face(r"D:\Pictures\known.jpg", "Rowan Thackeray", None, 0)
 
     def tearDown(self):
-        suggester._global_face_processor = self._saved
         self.index.close()
         shutil.rmtree(self.dir, ignore_errors=True)
 
@@ -75,7 +71,7 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         conn.commit()
 
     def suggested(self, path):
-        result = TagSuggester(self.index, FakeTaxonomy()).suggest_for_photo(path, ROWAN)
+        result = TagSuggester(self.index, FakeTaxonomy(), faces=self.processor).suggest_for_photo(path, ROWAN)
         return [t["tag"] for t in result["suggested_tags"]]
 
     def test_an_unnamed_face_is_still_matched(self):
@@ -89,6 +85,12 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
     def test_a_face_decided_to_be_nobody_is_not_suggested(self):
         self.add_face(r"D:\Pictures\stranger.jpg", None, "manual", 0)
         self.assertNotIn("People/Rowan Thackeray", self.suggested(r"D:\Pictures\stranger.jpg"))
+
+    def test_a_photo_with_no_face_rows_is_detected_with_the_model_it_is_given(self):
+        # The other tests only show detection is skipped, which a suggester given no
+        # face model would pass too; this one needs the model (found in review of 6.5).
+        self.assertIn("People/Rowan Thackeray", self.suggested(r"D:\Pictures\new.jpg"))
+        self.assertEqual(1, self.processor.calls)
 
     def test_a_photo_whose_faces_are_all_decided_is_not_detected_again(self):
         self.add_face(r"D:\Pictures\crowd.jpg", None, "manual", 1)

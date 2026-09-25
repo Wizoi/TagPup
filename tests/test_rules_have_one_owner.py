@@ -191,8 +191,8 @@ class TheEmbeddersSettings(unittest.TestCase):
         model.assert_called_once_with(**config.embedder_settings())
 
     def test_it_has_no_model_of_its_own(self):
-        for module in (os.path.join("tagpup", "ml", "clip.py"), os.path.join("scripts", "embedder.py")):
-            self.assertNotRegex(read(module), r"[\"'](ViT-|laion)|max_aspect_ratio:\s*float\s*=", module)
+        module = os.path.join("tagpup", "ml", "clip.py")
+        self.assertNotRegex(read(module), r"[\"'](ViT-|laion)|max_aspect_ratio:\s*float\s*=", module)
 
     def test_a_setting_it_does_not_know_is_refused(self):
         from tagpup import config
@@ -323,10 +323,9 @@ class TheRootsANewLibraryIsGiven(unittest.TestCase):
         self.assertTrue({vocabulary.ACTIVITY_ROOT, *vocabulary.PLACE_ROOTS} <= set(vocabulary.CONTEXT_ROOTS))
 
     def test_the_caption_reads_them(self):
-        sys.path.insert(0, os.path.join(ROOT, "scripts"))
-        from writer import derive_caption_from_tags
+        from tagpup.core.suggesting import caption_from_tags
         self.assertEqual("Oda Castellane - Rowing, Harbour School and Lakes",
-                         derive_caption_from_tags(["People/Oda Castellane", "Activity/Rowing",
+                         caption_from_tags(["People/Oda Castellane", "Activity/Rowing",
                                                    "Trips/Lakes", "School/Harbour School"], {"people"}))
 
     def test_nobody_else_spells_them(self):

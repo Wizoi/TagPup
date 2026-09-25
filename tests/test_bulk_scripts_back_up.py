@@ -13,9 +13,10 @@ import tempfile
 import unittest
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-import db as tagpup_db  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
 
 
 #: A script that opens a database, in any of the ways the codebase imports db.

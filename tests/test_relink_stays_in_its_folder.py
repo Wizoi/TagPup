@@ -12,10 +12,11 @@ import tempfile
 import unittest
 from unittest import mock
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
-import db  # noqa: E402
-import paths  # noqa: E402
+from tagpup.store import db  # noqa: E402
+from tagpup.core import paths  # noqa: E402
 import relink_renamed_photos  # noqa: E402
 from tagpup.store import schema  # noqa: E402
 
@@ -77,7 +78,7 @@ class RelinkStaysInItsFolder(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def plan(self):
-        import exiftool_session
+        from tagpup.files import exiftool_session
         with mock.patch.object(exiftool_session, "ExifToolSession", FakeExifTool):
             return relink_renamed_photos.plan_for(self.db)
 

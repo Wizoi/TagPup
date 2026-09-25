@@ -11,7 +11,7 @@ import shutil
 import sys
 
 import _root  # noqa: F401
-import db as tagpup_db
+from tagpup.store import db as tagpup_db
 from tagpup import config as tagpup_config
 from tagpup.files import images
 from tagpup.runtime import Runtime
@@ -45,12 +45,12 @@ def main():
                 print(f"Error removing {p}: {e}")
 
     # 2. Seed empty database tables
-    from taxonomy import seed_taxonomy_from_db
+    from tagpup.store import taxonomy
     from tagpup.services.search import PhotoIndex
 
     photo_index = PhotoIndex(db_path=DB_PATH, model=MODEL)
     photo_index.load() # Creates tables
-    seed_taxonomy_from_db(DB_PATH)
+    taxonomy.seed(DB_PATH)
     print("Empty database tables initialized and seeded with default taxonomy.")
 
     # 3. Setup folder structure
@@ -79,7 +79,7 @@ def main():
     # Stored the way the indexer stores them. These rows used forward slashes, the
     # opposite of production, so the screenshots were taken of a database no real
     # index ever produces.
-    import paths
+    from tagpup.core import paths
     puppy_path = paths.stored(os.path.join(training_dir, "puppy.png"))
     puppy2_path = paths.stored(os.path.join(new_dir, "puppy2.png"))
 

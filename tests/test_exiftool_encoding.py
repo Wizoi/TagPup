@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tagpup.core import processes  # noqa: E402
 import own_home  # noqa: E402
-from exiftool_session import ExifToolSession  # noqa: E402
+from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 
 
 #: Where the machine has ExifTool; the checkout's settings are not read.

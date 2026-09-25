@@ -70,13 +70,11 @@ class FaceRootsAreTheTrees(unittest.TestCase):
     def test_a_caption_files_people_by_the_trees_roots(self):
         # The writer listed family and friends, and put everyone under People among the
         # others.
-        import sys
-        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-        from writer import derive_caption_from_tags
+        from tagpup.core.suggesting import caption_from_tags
         self.write(lambda conn: taxonomy.add_path(conn, "People/Wren Halloway", root_has_face=1))
         roots = taxonomy.people_vocabulary(self.db_path).roots
         self.assertEqual("Wren Halloway - Harbour Walk",
-                         derive_caption_from_tags(["People/Wren Halloway", "Activity/Harbour Walk"], roots))
+                         caption_from_tags(["People/Wren Halloway", "Activity/Harbour Walk"], roots))
 
 
 if __name__ == "__main__":

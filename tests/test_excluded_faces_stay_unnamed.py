@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 from tests.test_face_exclusion import ExclusionTestBase  # noqa: E402
 from tests.test_face_clustering_rules import identity_vector, near  # noqa: E402
 
-import db as tagpup_db  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
 
 NAMED = "Rowan Thackeray"
 

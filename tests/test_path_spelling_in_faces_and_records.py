@@ -12,10 +12,10 @@ import unittest
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-import paths
-from metadata import build_photo_ui_record, parse_year_from_metadata
+from tagpup.core import paths
+from tagpup.core.dates import record_year
+from tagpup.services.photos import page_record
 from tests.test_face_clustering_rules import FaceClusteringTestBase, identity_vector
 from tagpup.store import db, faces as store_faces
 
@@ -46,18 +46,18 @@ class TestFaceFindsItsPhotoUnderAnotherSpelling(FaceClusteringTestBase):
 class TestPhotoRecordSpelling(unittest.TestCase):
     def test_the_record_carries_the_stored_spelling(self):
         typed = os.path.join(os.path.abspath(os.sep), "Library", "Harbour", "boats.jpg")
-        rec = build_photo_ui_record(typed.replace(os.sep, "/"), {})
+        rec = page_record(typed.replace(os.sep, "/"), {})
         self.assertEqual(rec["path"], paths.stored(typed))
         self.assertEqual(rec["filename"], "boats.jpg")
 
     def test_year_is_read_from_folders_under_either_separator(self):
         for sep in {"/", os.sep}:
             path = sep.join(["", "Library", "Trips 2011", "Coast", "boats.jpg"])
-            self.assertEqual(parse_year_from_metadata({"path": path}), 2011, path)
+            self.assertEqual(record_year({"path": path}), 2011, path)
 
     def test_the_filename_year_wins_over_the_folder(self):
         path = os.path.join(os.sep, "Library", "Trips 2011", "boats 2013.jpg")
-        self.assertEqual(parse_year_from_metadata({"path": path}), 2013)
+        self.assertEqual(record_year({"path": path}), 2013)
 
 
 if __name__ == "__main__":

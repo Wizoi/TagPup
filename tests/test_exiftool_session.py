@@ -27,7 +27,7 @@ from exiftool.exceptions import ExifToolExecuteError  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-from exiftool_session import ExifToolSession, ExifToolTimeout  # noqa: E402
+from tagpup.files.exiftool_session import ExifToolSession, ExifToolTimeout  # noqa: E402
 
 
 #: Where the machine has ExifTool; the checkout's settings are not read.
@@ -144,7 +144,7 @@ class TestTheBatchReadersUseIt(unittest.TestCase):
             self.assertNotIn("ExifToolHelper(", source, name)
             self.assertIn("ExifToolSession(", source, name)
 
-        # The reader itself; scripts/metadata.py only hands it the library's people.
+        # The reader itself; its callers hand it the library's people.
         with open(os.path.join(WORKSPACE_DIR, "tagpup", "files", "metadata.py"), encoding="utf-8") as f:
             source = f.read()
         for method in ("batch_read", "_read_one_by_one"):

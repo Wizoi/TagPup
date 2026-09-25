@@ -20,11 +20,14 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-import db as tagpup_db
-import paths
-from index import PhotoIndex
+from tagpup.store import db as tagpup_db
+from tagpup.core import paths
+from tagpup.services.search import PhotoIndex
 from tagpup_cli import cli, get_config, scan_for_images
 from tagpup.ml.clip import output_dim
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import configured_model  # noqa: E402
 
 
 def make_jpeg(path):
@@ -84,7 +87,7 @@ class CliDatabaseCase(unittest.TestCase):
 
     def seed(self, rows):
         """rows: [(path as the index should hold it, file on disk)]"""
-        index = PhotoIndex(db_path=self.db_path)
+        index = PhotoIndex(self.db_path, configured_model())
         index.load()
         metas = []
         for stored_as, on_disk in rows:

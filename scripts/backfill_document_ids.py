@@ -27,12 +27,12 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
-import db as tagpup_db  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
-import paths as photo_paths  # noqa: E402  -- not `paths`: backfill() takes a list by that name
+from tagpup.core import paths as photo_paths  # noqa: E402  -- not `paths`: backfill() takes a list by that name
 from tagpup.store import photos as store_photos  # noqa: E402
 
-from identity import ensure_document_id, read_document_id
+from tagpup.files.identity import ensure_document_id, read_document_id
 
 
 def rows_without_identity(db_path):
@@ -84,7 +84,7 @@ def backfill(db_path, paths, exiftool_path=None, batch_size=200, on_progress=Non
     `recorded` is rows the index took, not identities found: a row whose spelling
     matched nothing used to count as done.
     """
-    from exiftool_session import ExifToolSession
+    from tagpup.files.exiftool_session import ExifToolSession
 
     # ExifTool answers with forward slashes whatever it was handed, and the index
     # stores whatever spelling it was given -- usually backslashes on Windows. The

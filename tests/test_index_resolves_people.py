@@ -17,20 +17,19 @@ import unittest
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-from index import PhotoIndex
-from metadata import extract_people
+from tagpup.core.vocabulary import extract_people
+from tagpup.services.search import PhotoIndex
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from face_rows import people_of  # noqa: E402
+from face_rows import configured_model, people_of  # noqa: E402
 
 
 class TheIndexResolvesPeople(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "crew.db")
-        self.index = PhotoIndex(self.db_path)
+        self.index = PhotoIndex(self.db_path, configured_model())
         self.index.load()
         self.index.conn.executemany(
             "INSERT INTO tag_taxonomy (id, tag, name, parent_id, has_face) VALUES (?, ?, ?, ?, ?)",
@@ -80,8 +79,9 @@ class TheCliReadsWithItsLibrary(unittest.TestCase):
         missing = [node.lineno for node in ast.walk(tree)
                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                    and node.func.attr == "batch_read"
-                   and not any(k.arg == "db_path" for k in node.keywords)]
-        self.assertEqual([], missing, "batch_read without db_path at tagpup_cli.py lines %s" % missing)
+                   and not any(k.arg == "people" for k in node.keywords)]
+        self.assertEqual([], missing, "batch_read without the library's people at tagpup_cli.py lines %s"
+                         % missing)
 
 
 if __name__ == "__main__":

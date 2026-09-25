@@ -105,11 +105,11 @@ class OneReadingOfTheDate(unittest.TestCase):
         self.assertEqual([], found)
 
     def test_the_page_is_given_when_each_photo_was_taken(self):
-        from metadata import build_photo_ui_record
-        record = build_photo_ui_record("D:/2019/a.jpg", {"raw_metadata": {
+        from tagpup.services.photos import page_record
+        record = page_record("D:/2019/a.jpg", {"raw_metadata": {
             "EXIF:ModifyDate": "2024:01:01 00:00:00", "XMP:CreateDate": "2019:05:04 10:00:00"}})
         self.assertEqual("2019:05:04 10:00:00", record["taken"])
-        self.assertIsNone(build_photo_ui_record("D:/a.jpg", {"raw_metadata": {
+        self.assertIsNone(page_record("D:/a.jpg", {"raw_metadata": {
             "EXIF:ModifyDate": "2024:01:01 00:00:00"}})["taken"])
 
     def test_the_guard_recognises_what_it_forbids(self):

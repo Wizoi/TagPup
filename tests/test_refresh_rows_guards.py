@@ -12,11 +12,12 @@ import os
 import sys
 import unittest
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_refresh_rows_from_files as base  # noqa: E402
 from face_rows import people_of  # noqa: E402
 
-import db  # noqa: E402
+from tagpup.store import db  # noqa: E402
 
 
 class RefreshGuards(base.RefreshRowsFromFiles):
@@ -24,8 +25,8 @@ class RefreshGuards(base.RefreshRowsFromFiles):
         saved_tags = ["Activity/Rowing"]
         real = self.fake_batch_read
 
-        def read_then_the_app_saves(extractor, paths, db_path=None):
-            records = real(extractor, paths, db_path)
+        def read_then_the_app_saves(extractor, paths, people=None):
+            records = real(extractor, paths, people)
             conn = db.connect(self.db)
             conn.execute("UPDATE photos SET tags = ?, mtime = 2000000.0 WHERE path = ?",
                          (json.dumps(saved_tags), self.files["stale_keywords"]))
@@ -44,9 +45,9 @@ class RefreshGuards(base.RefreshRowsFromFiles):
         used = []
         real = self.fake_batch_read
 
-        def recording(extractor, paths, db_path=None):
+        def recording(extractor, paths, people=None):
             used.append(extractor.exiftool_path)
-            return real(extractor, paths, db_path)
+            return real(extractor, paths, people)
 
         self.fake_batch_read = recording
         self.run_script("--exiftool", r"C:\Tools\exiftool.exe")

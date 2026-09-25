@@ -10,10 +10,11 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import db as tagpup_db  # noqa: E402
-from metadata import PeopleVocabulary, extract_people  # noqa: E402
+from tagpup.core.vocabulary import extract_people  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
+from tagpup.store.taxonomy import people_vocabulary  # noqa: E402
 
 
 class PeopleVocabularyCase(unittest.TestCase):
@@ -47,17 +48,17 @@ class PeopleVocabularyCase(unittest.TestCase):
     ]
 
     def test_a_vocabulary_resolves_as_a_database_read_does(self):
-        vocabulary = PeopleVocabulary.load(self.db_path)
+        vocabulary = people_vocabulary(self.db_path)
         for tags in self.CASES:
             with self.subTest(tags=tags):
-                self.assertEqual(extract_people({}, tags, db_path=self.db_path),
-                                 extract_people({}, tags, vocabulary=vocabulary))
+                self.assertEqual(extract_people({}, tags, people_vocabulary(self.db_path)),
+                                 extract_people({}, tags, vocabulary))
 
     def test_what_it_resolves(self):
-        vocabulary = PeopleVocabulary.load(self.db_path)
-        self.assertEqual(["Biscuit"], extract_people({}, ["Pets/Biscuit"], vocabulary=vocabulary))
-        self.assertEqual(["Imogen Vale"], extract_people({}, ["Imogen Vale"], vocabulary=vocabulary))
-        self.assertEqual([], extract_people({}, ["Pets", "People"], vocabulary=vocabulary))
+        vocabulary = people_vocabulary(self.db_path)
+        self.assertEqual(["Biscuit"], extract_people({}, ["Pets/Biscuit"], vocabulary))
+        self.assertEqual(["Imogen Vale"], extract_people({}, ["Imogen Vale"], vocabulary))
+        self.assertEqual([], extract_people({}, ["Pets", "People"], vocabulary))
 
     def test_without_a_library_only_a_new_librarys_people_root_counts(self):
         # docs/findings.md, #66: Family and Friends counted too, whatever a tree said.
