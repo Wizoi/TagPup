@@ -11,20 +11,22 @@ What every app does alike is here: refuse a request from anywhere but this machi
 (tagpup.web.security), name the library the URL names (tagpup.web.libraries), serve
 its page's files, and log every request slower than a second and every one that
 failed, with its traceback, to the requests log (tagpup.logs). Each app's routes are
-its own blueprint.
+its own blueprint; what both serve alike -- the picker, the tag tree, and where each
+app is -- is a blueprint each registers.
 """
 import logging
 import os
 import re
 import socket
 import time
+import urllib.parse
 
 import waitress
-from flask import Flask, Response, abort, g, request
+from flask import Blueprint, Flask, Response, abort, current_app, g, jsonify, request
 
 from tagpup import config as tagpup_config
 from tagpup.logs import REQUESTS
-from tagpup.web import libraries, security, tagpup_routes, tuner_routes
+from tagpup.web import libraries, security, tagpup_routes, taxonomy_routes, tuner_routes
 
 logger = logging.getLogger(__name__)
 requests_log = logging.getLogger(REQUESTS)
@@ -42,6 +44,7 @@ PAGE_FILES = {
     "style.css": "text/css; charset=utf-8",
 }
 SCRIPT_TYPE = "application/javascript; charset=utf-8"
+STYLE_TYPE = PAGE_FILES["style.css"]
 
 #: What a module's name may be: a page's modules and the shared ones are all named so,
 #: and nothing else in their folders -- nor anything above them -- can be asked for.
@@ -56,18 +59,22 @@ SLOW_REQUEST_SECONDS = 1.0
 THREADS = 16
 
 
-def create_app(kind, startup=None, pages=None, runtime=None):
+def create_app(kind, startup=None, pages=None, runtime=None, ports=None):
     """The Flask app for `kind` ("tagpup" or "tuner"): its page from `pages` (the
     page's folder, by default the one beside the package), `startup`, the Library a
     request naming none is served, and `runtime`, the process's models
     (tagpup.runtime.Runtime), which the routes take from app.config["RUNTIME"]. An app
-    made without one answers everything but Suggest."""
+    made without one answers everything but Suggest. `ports` is {kind: port} for the
+    apps the process serves, which the launcher knows (tagpup_web.PORTS, or the ports
+    it was told): /api/apps tells a page where the other app is, and an app made
+    without them knows of none."""
     if kind not in PAGES:
         raise ValueError("no such app: %r" % (kind,))
     app = Flask("tagpup.web." + kind, static_folder=None)
     app.config["APP_KIND"] = kind
     app.config["STARTUP_LIBRARY"] = startup
     app.config["RUNTIME"] = runtime
+    app.config["PORTS"] = dict(ports or {})
     app.config["PAGES"] = pages or os.path.join(tagpup_config.CODE_ROOT, PAGES[kind])
     app.config["COMMON"] = os.path.join(os.path.dirname(app.config["PAGES"]), COMMON)
     app.json.sort_keys = False
@@ -79,16 +86,38 @@ def create_app(kind, startup=None, pages=None, runtime=None):
     app.after_request(_log_slow)
     app.teardown_request(_log_failure)
     app.register_blueprint(libraries.picker)
+    app.register_blueprint(taxonomy_routes.routes)
+    app.register_blueprint(apps)
     app.register_blueprint(ROUTES[kind])
     _page_routes(app)
     app.wsgi_app = libraries.LibraryFromUrl(app.wsgi_app, startup)
     return app
 
 
+# ---- Where each app is, which both serve alike ------------------------------------------
+
+apps = Blueprint("apps", __name__)
+
+
+@apps.get("/api/apps")
+def app_urls():
+    """Each app's page for the library this request names, on this machine: the gear's
+    link to the other app (web/common/gear.js). A page never spells a port; the ports
+    are the process's (create_app's `ports`), and an app told none names no page."""
+    host = urllib.parse.urlsplit(request.host_url).hostname or "localhost"
+    if ":" in host:
+        host = "[%s]" % host   # an IPv6 address, as a URL spells it
+    library = urllib.parse.quote(request.script_root)   # "/<name>", or "" for none
+    urls = {kind: "%s://%s:%d%s/" % (request.scheme, host, port, library)
+            for kind, port in current_app.config["PORTS"].items()}
+    return jsonify({"this": current_app.config["APP_KIND"], "apps": urls})
+
+
 def _page_routes(app):
     """The page's index.html and style.css, its modules (/<name>.js) and the shared
-    ones (/common/<name>.js). The page imports them relative to itself, so each is
-    asked for under the library's URL like every other request."""
+    ones (/common/<name>.js), and the shared modules' stylesheets (/common/<name>.css:
+    the gear's and the tag editor's). The page asks for them relative to itself, so
+    each is asked for under the library's URL like every other request."""
     def send(folder, name, content_type):
         path = os.path.join(folder, name)
         if not os.path.isfile(path):
@@ -102,12 +131,18 @@ def _page_routes(app):
             abort(404, description="File %s.js not found" % name)
         return send(folder, name + ".js", SCRIPT_TYPE)
 
+    def stylesheet(folder, name):
+        if not MODULE_NAME.match(name):
+            abort(404, description="File %s.css not found" % name)
+        return send(folder, name + ".css", STYLE_TYPE)
+
     page = app.config["PAGES"]
     app.add_url_rule("/", "index", lambda: send(page, "index.html", PAGE_FILES["index.html"]))
     app.add_url_rule("/index.html", "index_html", lambda: send(page, "index.html", PAGE_FILES["index.html"]))
     app.add_url_rule("/style.css", "style", lambda: send(page, "style.css", PAGE_FILES["style.css"]))
     app.add_url_rule("/<name>.js", "script", lambda name: module(page, name))
     app.add_url_rule("/%s/<name>.js" % COMMON, "common_script", lambda name: module(app.config["COMMON"], name))
+    app.add_url_rule("/%s/<name>.css" % COMMON, "common_style", lambda name: stylesheet(app.config["COMMON"], name))
 
 
 def _start_clock():

@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TagPup GUI - Folder Tagging & Metadata Editor</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="common/gear.css">
+    <link rel="stylesheet" href="common/tag-editor.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -24,7 +26,14 @@
                     <button id="btn-change-db" class="btn btn-secondary btn-sm hidden" title="Switch to a different dog park; the folder you have open will be closed" style="padding: 4px 10px; font-size: 12px; height: 32px; cursor: pointer;">Change</button>
                     <button id="btn-create-db" class="btn btn-secondary btn-sm" title="Create a new dog park" style="padding: 4px 8px; font-size: 13px; height: 32px; display: flex; align-items: center; justify-content: center; width: 32px; cursor: pointer;">➕</button>
                 </div>
-                <button id="btn-manage-taxonomy" class="btn btn-secondary" style="display: flex; align-items: center; gap: 8px;">🏷️ Manage Tags</button>
+                <!-- The gear (web/common/gear.js): the tag editor, and TagTuner on this library. -->
+                <div class="gear">
+                    <button id="btn-gear" class="btn btn-secondary" title="Tag editor, and TagTuner on this dog park" aria-label="Tools" aria-controls="gear-menu" style="display: flex; align-items: center; gap: 8px;">⚙️</button>
+                    <div id="gear-menu" class="gear-menu hidden" role="menu" aria-label="Tools">
+                        <button type="button" role="menuitem" data-action="tag-editor">Tag editor</button>
+                        <a role="menuitem" data-app="tuner" target="_blank" rel="noopener" aria-disabled="true">Open in TagTuner</a>
+                    </div>
+                </div>
             </div>
             <div class="header-status">
                 <span class="status-indicator-dot" id="status-dot"></span>
@@ -381,28 +390,6 @@
     <datalist id="tags-datalist"></datalist>
     <datalist id="folder-datalist"></datalist>
 
-    <!-- Taxonomy Manager Modal -->
-    <div id="taxonomy-modal" class="modal-overlay">
-        <div class="modal-container" style="max-width: 650px;">
-            <div class="modal-header">
-                <h2>Tags Taxonomy Tree Manager</h2>
-                <button class="modal-close-btn" id="btn-close-taxonomy">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="taxonomy-controls">
-                    <input type="text" id="taxonomy-search-input" placeholder="Search taxonomy tags..." class="taxonomy-search-input">
-                    <button id="btn-taxonomy-add-root" class="btn btn-primary">➕ Add Root Category</button>
-                </div>
-                <div id="taxonomy-tree-container" style="min-height: 200px; max-height: 50vh; overflow-y: auto; padding: 10px; background: rgba(0,0,0,0.15); border-radius: 8px;">
-                    <!-- Tree will render dynamically here -->
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" id="btn-close-taxonomy-footer">Close</button>
-            </div>
-        </div>
-    </div>
-    
     <!-- Edit Date Taken Modal -->
     <div id="date-taken-modal" class="modal-overlay">
         <div class="modal-container" style="max-width: 400px;">

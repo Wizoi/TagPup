@@ -32,7 +32,8 @@ from tagpup.web import app as web  # noqa: E402
 
 logger = logging.getLogger("tagpup_web")
 
-#: The port each app answers on, as they always have.
+#: The port each app answers on, as they always have. The apps are told them, so a page
+#: can link to the other (/api/apps).
 PORTS = {"tagpup": 8090, "tuner": 8080}
 
 #: The reloader's environment variables: `_CHILD` marks the process holding the
@@ -113,7 +114,8 @@ def main(argv=None):
     # The process's models, from the settings, given to both apps; warmed on a thread of
     # their own -- the models, never a library (#99).
     runtime = Runtime(tagpup_config.load)   # read again where a run needs a setting
-    apps = {ports[kind]: web.create_app(kind, startup=startup, runtime=runtime) for kind in ("tagpup", "tuner")}
+    apps = {ports[kind]: web.create_app(kind, startup=startup, runtime=runtime, ports=ports)
+            for kind in ("tagpup", "tuner")}
     if not os.environ.get("TAGPUP_WEB_NO_WARMUP"):
         runtime.warm_up_in_background()
     ready = None

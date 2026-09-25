@@ -1,0 +1,280 @@
+/* The tag editor (web/common/tag-editor.js), on either page. Its own class names, so
+   neither page's .modal-* rules reach it: TagTuner's and TagPup's differ. The values
+   are the ones TagPup's Manage Tags dialog had; both pages define the same palette
+   (--bg-*, --text-*, --accent, --border-color) and their own .btn. */
+
+.tag-editor {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(9, 13, 22, 0.85);
+    backdrop-filter: blur(8px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.tag-editor.active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.tag-editor-dialog {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 650px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    transform: scale(0.97);
+    transition: transform 0.2s ease;
+    color: var(--text-primary);
+    font-family: var(--font-body);
+}
+
+.tag-editor.active .tag-editor-dialog {
+    transform: scale(1);
+}
+
+.tag-editor-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.tag-editor-header h2 {
+    font-family: var(--font-heading);
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0;
+}
+
+.tag-editor-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 24px;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.tag-editor-close:hover {
+    color: var(--text-primary);
+}
+
+.tag-editor-body {
+    padding: 24px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.tag-editor-tree {
+    min-height: 200px;
+    max-height: 50vh;
+    overflow-y: auto;
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 8px;
+}
+
+.tag-editor-footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 12px;
+}
+
+/* Where the editor says what it is doing on a page without a status line (TagTuner). */
+.tag-editor-status {
+    margin-right: auto;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+/* The tree */
+.tag-editor .taxonomy-controls {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.tag-editor .taxonomy-search-input {
+    flex: 1;
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-family: var(--font-body);
+    outline: none;
+}
+
+.tag-editor .taxonomy-search-input:focus {
+    border-color: var(--accent);
+}
+
+.tag-editor .taxonomy-tree-list {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+.tag-editor .taxonomy-node {
+    margin: 6px 0;
+}
+
+.tag-editor .taxonomy-node-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid transparent;
+    transition: background-color 0.2s, border-color 0.2s;
+}
+
+.tag-editor .taxonomy-node-content:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+    border-color: var(--border-color);
+}
+
+.tag-editor .taxonomy-node-expander {
+    cursor: pointer;
+    font-size: 12px;
+    width: 16px;
+    display: inline-flex;
+    justify-content: center;
+    color: var(--text-muted);
+    user-select: none;
+}
+
+.tag-editor .taxonomy-node-name {
+    font-weight: 500;
+    flex: 1;
+}
+
+.tag-editor .taxonomy-node-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-right: 8px;
+}
+
+.tag-editor .taxonomy-node-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tag-editor .taxonomy-node-badge {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+}
+
+.tag-editor .badge-people {
+    background-color: rgba(99, 102, 241, 0.15);
+    color: #a5b4fc;
+}
+
+.tag-editor .taxonomy-sublist {
+    list-style-type: none;
+    padding-left: 20px;
+    border-left: 1px dashed var(--border-color);
+    margin-left: 7px;
+}
+
+.tag-editor .taxonomy-sublist.hidden {
+    display: none;
+}
+
+/* The delete check's choices */
+.tag-editor .placement-options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 16px 0;
+}
+
+.tag-editor .placement-option-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-color);
+    padding: 12px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.2s, border-color 0.2s;
+    font-size: 14px;
+}
+
+.tag-editor .placement-option-label:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+.tag-editor .placement-option-label input[type="radio"]:checked + span {
+    color: #a5b4fc;
+    font-weight: 600;
+}
+
+/* A root's Face Matching switch */
+.tag-editor .switch {
+    position: relative;
+    display: inline-block;
+    width: 34px;
+    height: 20px;
+}
+
+.tag-editor .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.tag-editor .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    transition: .3s;
+    border-radius: 20px;
+}
+
+.tag-editor .slider:before {
+    position: absolute;
+    content: "";
+    height: 12px;
+    width: 12px;
+    left: 3px;
+    bottom: 3px;
+    background-color: var(--text-primary);
+    transition: .3s;
+    border-radius: 50%;
+}
+
+.tag-editor input:checked + .slider {
+    background-color: var(--accent);
+    border-color: var(--accent);
+}
+
+.tag-editor input:checked + .slider:before {
+    transform: translateX(14px);
+}

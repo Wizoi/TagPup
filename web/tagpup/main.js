@@ -17,7 +17,7 @@ import {
     browseFolder, filterFileList, renderFileList, scanFolder, showFolderView,
     wireChangeDogPark, wireFolderPathInput, wireSidebarResizer
 } from './folder.js';
-import { wireTaxonomyModal } from './taxonomy.js';
+import { wireTagPupGear } from './gear.js';
 import {
     carryTagsForward, deleteActivePhoto, openPhotoInDefaultApp, renderTags, rotatePhoto,
     saveSingleAddPerson, saveSingleAddTag, saveSingleTitle, selectPhoto,
@@ -118,7 +118,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     wireDateTakenModal();
 
-    wireTaxonomyModal();
+    // The gear: the tag editor (web/common/tag-editor.js) and TagTuner on this library.
+    wireTagPupGear();
 
     // ---- Start ------------------------------------------------------------
     //

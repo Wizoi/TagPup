@@ -16,6 +16,18 @@ This document records the design, specifications, prerequisites, and instruction
 
 ## Features and Mechanics
 
+### The gear
+
+A gear at the right of the header holds what is not tuning: **Tag editor** opens the tag
+tree's editor -- the same module TagPup's gear opens (`web/common/tag-editor.js`), over the
+same routes, which both apps serve. **Library settings** is shown disabled until the
+library's settings move into it (docs/ARCHITECTURE.md, phase 7.6). **Open in TagPup**
+opens TagPup on the same library in a new tab, its address from `/api/apps`. The menu
+opens on click, Enter or Space; the arrow keys move through it, Escape closes it and puts
+the focus back on the gear, and a click anywhere else closes it. An edit made in the
+editor refreshes the names offered while typing, and one that rewrote photos refreshes
+the list.
+
 ### 0. Managing the Index
 
 TagTuner can bring folders into the current database and take them out again, using the
@@ -357,12 +369,19 @@ matching can still read its name.
 
 - `/api/tags/list`: Every word tag the library knows, with `count` (photos carrying it), `flat`, `in_taxonomy`, `has_embedding` and `is_person`. People are excluded unless `?people=1`, since the point of this view is the tags face curation could not reach. Also returns `buckets`: `flat`, `used_once` (where typos hide), `unused` (in the vocabulary, on no photo, yet still feeding zero-shot matching) and `people_without_a_path` (a person written as a bare leaf, which the keyword convention forbids).
 - `/api/tags/photos?tag=`: The photos carrying one tag, newest first. Matches the whole tag, never a prefix.
+- `/api/taxonomy/tree`: The tag tree's nodes, with each node's photo count and its `has_face` and `hidden_from_autocomplete`. The tree's six routes are TagPup's too, the same routes on both apps (`tagpup.web.taxonomy_routes`); the tag editor, which both pages open, is what calls them. docs/SPEC_TAGPUP_GUI.md says what each does.
+- `/api/apps`: Returns `{"this": "tagpup" | "tuner", "apps": {"tagpup": url, "tuner": url}}` -- each app's page for the library the request names, on the host the page was reached by and the port the process serves that app on. The gear's link to the other app is read from it, so a page never spells a port. Both apps serve it alike.
 
 ### `POST` Endpoints
 
 **What may be set.** A tag or a person's name being set is refused with `400` and a message saying why if it holds `|` or `\` (which other programs read as a break between levels), a control character such as a tab or a line break, or nothing at all. A tag also may not have an empty level (`A//B`, `A/`); a person's name is one level, so it may not hold `/`. The rules are `problem_with_tag` and `problem_with_name` in `tagpup/core/vocabulary.py`, the same as TagPup's, and the page asks them before sending.
 
 - `/api/databases/create`: Expects JSON body `{"db_name": string}`. Creates a new empty database file, seeded with the default taxonomy categories.
+- `/api/taxonomy/create`: Expects JSON body `{"name": string, "parent_id": int, "has_face": int}`. Adds a tag to the tree (docs/SPEC_TAGPUP_GUI.md).
+- `/api/taxonomy/update`: Expects JSON body `{"id": int, "has_face": int, "hidden_from_autocomplete": int}`. Sets a node's flags, and its descendants'.
+- `/api/taxonomy/delete-check`: Expects JSON body `{"tag_id": int}`. How many photos carry the tag or one under it.
+- `/api/taxonomy/delete-confirm`: Expects JSON body `{"tag_id": int, "action": string, "target_tag": string}`. Takes the tag off its photos, or moves them to `target_tag`, then out of the tree. Clears TagPup's cached scans of the library whichever app served it.
+- `/api/taxonomy/rename`: Expects JSON body `{"tag_id": int, "new_name": string}`. Renames a node, its descendants and the photos carrying them. Clears TagPup's cached scans of the library whichever app served it.
 - `/api/face/match`: Expects JSON body `{"face_id": int, "person_name": string}`. An excluded face is refused with `409`: it must be restored before it can be named. `person_name` must be a name that may be set (above).
 - `/api/face/unmatch`: Expects JSON body `{"face_id": int}`.
 - `/api/faces/match-bulk`: Expects JSON body `{"face_ids": list, "person_name": string}`. Matches face IDs in bulk. Implements duplicate-tagging protection. Excluded faces are skipped, never named. Returns `{"success", "matched", "matched_ids", "skipped_excluded"}` — `matched` is the rows actually changed, and the page offers Undo for `matched_ids` only. `person_name` must be a name that may be set (above).

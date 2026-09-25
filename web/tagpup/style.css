@@ -1458,13 +1458,8 @@ body {
     gap: 12px;
 }
 
-/* Tree taxonomy custom styling */
-.taxonomy-controls {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 20px;
-}
-
+/* The tag tree's look is web/common/tag-editor.css; this search box is also the
+   placement dialog's (tags.js) */
 .taxonomy-search-input {
     flex: 1;
     background-color: var(--bg-primary);
@@ -1478,86 +1473,6 @@ body {
 
 .taxonomy-search-input:focus {
     border-color: var(--accent);
-}
-
-.taxonomy-tree-list {
-    list-style-type: none;
-    padding-left: 0;
-}
-
-.taxonomy-node {
-    margin: 6px 0;
-}
-
-.taxonomy-node-content {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    border-radius: 6px;
-    background-color: rgba(255, 255, 255, 0.02);
-    border: 1px solid transparent;
-    transition: background-color 0.2s, border-color 0.2s;
-}
-
-.taxonomy-node-content:hover {
-    background-color: rgba(255, 255, 255, 0.04);
-    border-color: var(--border-color);
-}
-
-.taxonomy-node-expander {
-    cursor: pointer;
-    font-size: 12px;
-    width: 16px;
-    display: inline-flex;
-    justify-content: center;
-    color: var(--text-muted);
-    user-select: none;
-}
-
-.taxonomy-node-name {
-    font-weight: 500;
-    flex: 1;
-}
-
-.taxonomy-node-meta {
-    font-size: 12px;
-    color: var(--text-muted);
-    margin-right: 8px;
-}
-
-.taxonomy-node-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.taxonomy-node-badge {
-    font-size: 11px;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-weight: 600;
-}
-
-.badge-people {
-    background-color: rgba(99, 102, 241, 0.15);
-    color: #a5b4fc;
-}
-
-.badge-hidden {
-    background-color: rgba(239, 68, 68, 0.15);
-    color: #fca5a5;
-}
-
-.taxonomy-sublist {
-    list-style-type: none;
-    padding-left: 20px;
-    border-left: 1px dashed var(--border-color);
-    margin-left: 7px;
-}
-
-.taxonomy-sublist.hidden {
-    display: none;
 }
 
 /* Radio placement option styling */
@@ -1588,54 +1503,6 @@ body {
 .placement-option-label input[type="radio"]:checked + span {
     color: #a5b4fc;
     font-weight: 600;
-}
-
-/* Toggle Switch */
-.switch {
-    position: relative;
-    display: inline-block;
-    width: 34px;
-    height: 20px;
-}
-
-.switch input { 
-    opacity: 0;
-    width: 0;
-    height: 0;
-}
-
-.slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    transition: .3s;
-    border-radius: 20px;
-}
-
-.slider:before {
-    position: absolute;
-    content: "";
-    height: 12px;
-    width: 12px;
-    left: 3px;
-    bottom: 3px;
-    background-color: var(--text-primary);
-    transition: .3s;
-    border-radius: 50%;
-}
-
-input:checked + .slider {
-    background-color: var(--accent);
-    border-color: var(--accent);
-}
-
-input:checked + .slider:before {
-    transform: translateX(14px);
 }
 
 #db-select {

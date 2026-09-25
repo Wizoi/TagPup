@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TagTuner - Photo Metadata and Face Tuning</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="common/gear.css">
+    <link rel="stylesheet" href="common/tag-editor.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -43,6 +45,16 @@
                         <span class="switch-slider"></span>
                         <span class="switch-label">Show Matched Photos</span>
                     </label>
+                </div>
+                <!-- The gear (web/common/gear.js): the tag editor, the library's settings, and TagPup on this library. -->
+                <div class="control-group gear">
+                    <button id="btn-gear" class="btn btn-secondary btn-sm" title="Tag editor, library settings, and TagPup on this library" aria-label="Tools" aria-controls="gear-menu">⚙️</button>
+                    <div id="gear-menu" class="gear-menu hidden" role="menu" aria-label="Tools">
+                        <button type="button" role="menuitem" data-action="tag-editor">Tag editor</button>
+                        <button type="button" role="menuitem" data-action="library-settings" aria-disabled="true" title="Comes next: this library's settings -- the CLIP model, face detection, Suggest's words, the rename format and ExifTool -- move into the library and are changed here.">Library settings</button>
+                        <div class="gear-menu-separator" role="separator"></div>
+                        <a role="menuitem" data-app="tagpup" target="_blank" rel="noopener" aria-disabled="true">Open in TagPup</a>
+                    </div>
                 </div>
             </div>
                     <div id="index-progress-container" class="index-progress-container hidden">

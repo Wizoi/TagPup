@@ -171,7 +171,8 @@ to be sitting on `<body>`.
 - Preserves the original filename in `XMP-xmpMM:PreservedFileName` metadata.
 
 ### 3. Tag Taxonomy Tree Manager
-- Open the hierarchical tree modal via **Manage Tags Tree** button.
+- Open the hierarchical tree modal from the gear at the right of the top bar: **Tag editor**. The editor is one module both pages open (`web/common/tag-editor.js`), and TagTuner's gear opens the same one; its routes are served by both apps.
+- The gear's other item, **Open in TagTuner**, opens TagTuner on the same library in a new tab (its address from `/api/apps`). The menu opens on click, Enter or Space; the arrow keys move through it, Escape closes it and puts the focus back on the gear, and a click anywhere else closes it.
 - Lists categories in a tree starting collapsed by default.
 - **Create Child**: Prompts for a child category tag and inserts it under the parent.
 - **Rename**: Prompts for a new name, automatically updates the tag itself, updates all child sub-tags recursively in the database and fallback files, and dynamically updates any photo files on disk and records using the tag.
@@ -207,7 +208,8 @@ to be sitting on `<body>`.
 - `/api/photo-file?path=<photo_path>`: Serves the photo image binary (supports resizing via `size` parameter).
 - `/api/tags`: Returns all autocomplete-visible tags.
 - `/api/people`: Returns all autocomplete-visible people names.
-- `/api/taxonomy/tree`: Returns the hierarchical tree nodes of tags with counts of photo usage and status attributes (`has_face`, `hidden_from_autocomplete`).
+- `/api/taxonomy/tree`: Returns the hierarchical tree nodes of tags with counts of photo usage and status attributes (`has_face`, `hidden_from_autocomplete`). The tree's routes (this and the five `/api/taxonomy/` POSTs below) are served by both apps alike (`tagpup.web.taxonomy_routes`).
+- `/api/apps`: Returns `{"this": "tagpup" | "tuner", "apps": {"tagpup": url, "tuner": url}}` -- each app's page for the library the request names, on the host the page was reached by and the port the process serves that app on. The gear's link to the other app is read from it, so a page never spells a port. Both apps serve it alike.
 
 ### `POST` Endpoints
 
