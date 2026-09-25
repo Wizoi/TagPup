@@ -113,16 +113,41 @@ def _forcing(et, path, write, written=()):
                      path, e)
 
 
+#: How ExifTool marks an error `-m` lets it write past.
+MINOR = "[minor]"
+
+
+def is_minor_refusal(error):
+    """Did ExifTool refuse a write for an error it calls minor (its message holds
+    "[minor]", on stderr)? Not a timeout, a locked file, a file it cannot read."""
+    stderr = getattr(error, "stderr", None)
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", "replace")
+    return MINOR in ("%s %s" % (stderr or "", error)).lower()
+
+
 def tolerating_minor_errors(et, path, write, written=()):
-    """Make a write that sets or takes away a photo's identity -- `write(extra_params)`,
-    one ExifTool command, with whatever else it writes (tagpup.files.field_values) -- and
-    when ExifTool refuses it, make it again telling ExifTool the objection is minor,
-    checking the keywords survived (_forcing); `written` are the fields the write sets,
-    as ExifTool answers them. Raises when neither write is made."""
+    """Make a write that sets or takes away a photo's identity -- `write(extra_params,
+    keep)`, one ExifTool command, with whatever else it writes (tagpup.files.field_values)
+    -- and when ExifTool refuses it for an error it calls minor, and only then, make it
+    again with `-m`. `-m` rewrites the photo's XMP, so the keyword fields the write does
+    not set (`written`: the fields it sets, as ExifTool answers them) go in that same
+    command as `keep`, with the values they hold: one command, as the file journal
+    records it; they were put back afterwards in a second, unrecorded one. Any other
+    failure -- a timeout, a locked file -- is raised as it is. Raises when the write is
+    not made."""
     try:
-        write([])
-    except Exception:
-        _forcing(et, path, write, written)
+        write([], {})
+    except Exception as error:
+        if not is_minor_refusal(error):
+            raise
+        before = _keywords(et, path) or {}
+        keep = {field: values for field, values in before.items() if values and field not in written}
+        write(["-m"], keep)
+        after = _keywords(et, path)
+        lost = sorted(field for field, values in keep.items() if after is not None and after.get(field) != values)
+        if lost:
+            logger.error("Writing %s past a minor error left %s other than it held", path, ", ".join(lost))
 
 
 def ensure_document_id(et, path, metadata=None):

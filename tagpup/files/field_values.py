@@ -94,14 +94,18 @@ def write(et, photo_path, values):
         else:
             params[field] = texts[0]
 
-    def command(extra):
-        if params:
+    def command(extra, keep):
+        # `keep`: fields the write does not set, written as they hold in the same command
+        # when it is forced (identity.tolerating_minor_errors).
+        tags = dict(params)
+        tags.update(keep)
+        if tags:
             # The clears go before the values, in the same command.
-            et.set_tags([photo_path], tags=params, params=list(extra) + ["-overwrite_original"] + clear)
+            et.set_tags([photo_path], tags=tags, params=list(extra) + ["-overwrite_original"] + clear)
         elif clear:
             et.execute(*extra, *clear, "-overwrite_original", photo_path)
 
     if identity.DOCUMENT_ID_FIELD in values:
         identity.tolerating_minor_errors(et, photo_path, command, written=[fields.read_key(f) for f in values])
     else:
-        command([])
+        command([], {})
