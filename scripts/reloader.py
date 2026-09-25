@@ -5,6 +5,9 @@ import time
 import threading
 import logging
 import subprocess
+from tagpup.core import processes
+
+import _root  # noqa: F401
 
 logger = logging.getLogger("reloader")
 
@@ -27,7 +30,7 @@ def start_reloader_thread(env_var_name: str = "TAGPUP_RELOADED"):
         while True:
             cmd = [sys.executable] + sys.argv
             try:
-                p = subprocess.Popen(cmd, env=child_env, stdout=sys.stdout, stderr=sys.stderr)
+                p = processes.start(cmd, env=child_env, stdout=sys.stdout, stderr=sys.stderr)
             except Exception as e:
                 logger.error(f"Failed to spawn child process: {e}")
                 sys.exit(1)

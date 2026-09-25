@@ -12,6 +12,7 @@ import unittest
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tagpup.core import processes  # noqa: E402
 import own_home  # noqa: E402
 from free_port import free_port  # noqa: E402
 
@@ -22,12 +23,11 @@ class TestServerStartup(unittest.TestCase):
     def test_both_pages_answer_from_one_process(self):
         home = own_home.for_test(self, "tagpup_startup_")
         tagpup_port, tuner_port = free_port(), free_port()
-        proc = subprocess.Popen(
+        proc = processes.start(
             [sys.executable, os.path.join(PROJECT_ROOT, "tagpup_web.py"),
              "--tagpup-port", str(tagpup_port), "--tuner-port", str(tuner_port)],
             env=dict(os.environ, TAGPUP_HOME=home.root),
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT)
         try:
             deadline = time.time() + 60
             while time.time() < deadline:

@@ -185,7 +185,7 @@ class TestProcessLiveness(PathLockerTestBase):
     def test_an_unanswerable_check_assumes_alive(self):
         """Never steal a lock on the strength of a failed check."""
         locker = self.locker()
-        with mock.patch("subprocess.run", side_effect=OSError("no tasklist")), \
+        with mock.patch("subprocess.run", side_effect=OSError("no process list")), \
              mock.patch("os.kill", side_effect=OSError("nope")):
             self.assertTrue(locker._process_alive(12345))
 

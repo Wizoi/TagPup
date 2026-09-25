@@ -18,7 +18,7 @@ test left, is not an import.
 import argparse
 import ast
 import os
-import subprocess
+from tagpup.core import processes
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,9 +27,9 @@ FRONTEND = ("gui/", "gui_tagpup/", "tests/frontend/")
 
 def changed_files(since):
     """Repo-relative paths changed since `since` (default HEAD), untracked ones included."""
-    tracked = subprocess.run(["git", "diff", "--name-only", since or "HEAD"], cwd=ROOT,
+    tracked = processes.run(["git", "diff", "--name-only", since or "HEAD"], cwd=ROOT,
                              capture_output=True, text=True, check=True).stdout.split()
-    untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"], cwd=ROOT,
+    untracked = processes.run(["git", "ls-files", "--others", "--exclude-standard"], cwd=ROOT,
                                capture_output=True, text=True, check=True).stdout.split()
     return sorted(set(tracked) | set(untracked))
 

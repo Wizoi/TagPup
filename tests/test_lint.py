@@ -19,7 +19,7 @@ It also found two `read_json_body` methods on one class, where the later one sil
 replaced a version that returned `{}` for an empty body.
 """
 import os
-import subprocess
+from tagpup.core import processes
 import sys
 import unittest
 
@@ -29,7 +29,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 class TestNothingTheLinterObjectsTo(unittest.TestCase):
     def test_ruff_is_available(self):
         # Skipping silently on a machine without it would make this test a decoration.
-        result = subprocess.run(
+        result = processes.run(
             [sys.executable, "-m", "ruff", "--version"],
             capture_output=True, text=True, cwd=WORKSPACE_DIR)
         self.assertEqual(
@@ -37,7 +37,7 @@ class TestNothingTheLinterObjectsTo(unittest.TestCase):
             "ruff is not installed: .venv/Scripts/python.exe -m pip install ruff")
 
     def test_the_tree_is_clean(self):
-        result = subprocess.run(
+        result = processes.run(
             [sys.executable, "-m", "ruff", "check", "--output-format", "concise", "."],
             capture_output=True, text=True, cwd=WORKSPACE_DIR)
         self.assertEqual(

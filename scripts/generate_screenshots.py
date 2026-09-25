@@ -9,6 +9,7 @@ from playwright.sync_api import sync_playwright
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
+from tagpup.core import processes  # noqa: E402
 
 # Import environment prep to seed test DB
 from prepare_test_environment import main as prepare_env
@@ -34,11 +35,10 @@ def run_screenshot_flow():
         # One server for both pages (tagpup_web.py), logging where the apps log
         # (data/logs), not into whatever folder this was run from.
         print(f"Starting the server: TagPup on port {gui_port}, TagTuner on port {tuner_port}...")
-        server = subprocess.Popen(
+        server = processes.start(
             [sys.executable, os.path.join(PROJECT_ROOT, "tagpup_web.py"), "--db", "test_photo_index",
              "--tagpup-port", str(gui_port), "--tuner-port", str(tuner_port)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         for _ in range(60):
             try:

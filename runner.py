@@ -5,7 +5,6 @@ import subprocess
 import threading
 import webbrowser
 import logging
-import platform
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
@@ -15,10 +14,13 @@ import paths
 from tagpup import config as tagpup_config
 from tagpup.core import library as libraries
 from tagpup.core import suggesting
+from tagpup.core import processes
 
-#: The one server for both pages (tagpup_web.py), and the ports its pages answer on.
+import tagpup_web
+
+#: The one server for both pages, and the ports its pages answer on.
 SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tagpup_web.py")
-PAGES = {"TagPup": 8090, "TagTuner": 8080}
+PAGES = {"TagPup": tagpup_web.PORTS["tagpup"], "TagTuner": tagpup_web.PORTS["tuner"]}
 
 class RunnerApp:
     def __init__(self, root):
@@ -66,10 +68,7 @@ class RunnerApp:
         # Terminate any running subprocesses
         if self.active_process:
             try:
-                if platform.system() == "Windows":
-                    subprocess.call(["taskkill", "/F", "/T", "/PID", str(self.active_process.pid)])
-                else:
-                    self.active_process.terminate()
+                processes.kill_tree(self.active_process.pid)
             except Exception:
                 pass
         self.root.destroy()
@@ -613,12 +612,8 @@ class RunnerApp:
     def cancel_process(self):
         if self.active_process:
             try:
-                # Terminate running subprocess
-                if platform.system() == "Windows":
-                    # Use taskkill to kill process tree cleanly on Windows
-                    subprocess.call(["taskkill", "/F", "/T", "/PID", str(self.active_process.pid)])
-                else:
-                    self.active_process.terminate()
+                # The whole tree: the CLI starts an indexer of its own.
+                processes.kill_tree(self.active_process.pid)
                 self.log_text("\n>>> Process termination requested by user.\n", tag="warning")
             except Exception as e:
                 self.log_text(f"\n>>> Error canceling process: {e}\n", tag="error")
@@ -631,17 +626,12 @@ class RunnerApp:
 
         def worker():
             try:
-                creationflags = 0
-                if platform.system() == "Windows":
-                    creationflags = subprocess.CREATE_NO_WINDOW
-
-                self.active_process = subprocess.Popen(
+                self.active_process = processes.start(
                     cmd_args,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.PIPE,
                     bufsize=-1,
-                    creationflags=creationflags
                 )
 
                 if auto_confirm_yes:
@@ -695,9 +685,7 @@ class RunnerApp:
             cmd.extend(["--db", libraries.for_mode(db_val + ".db", self.var_test_db.get())])
         self.log_text("Starting the web server: %s\n" % " ".join(cmd[1:]), tag="info")
         try:
-            # It logs to data/logs/tagpup_web.log; a console of its own is only a popup.
-            self.server_process = subprocess.Popen(cmd, cwd=os.path.dirname(SERVER),
-                                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self.server_process = processes.start(cmd, cwd=os.path.dirname(SERVER))
         except Exception as e:
             self.log_text(f"Failed to start the server: {e}\n", tag="error")
             self.server_process = None
@@ -728,11 +716,7 @@ class RunnerApp:
         self.server_process = None
         if process.poll() is None:
             try:
-                if platform.system() == "Windows":
-                    subprocess.call(["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                else:
-                    process.terminate()
+                processes.kill_tree(process.pid)
             except Exception as e:
                 self.log_text(f"Error stopping the server: {e}\n", tag="error")
         self.server_stopped()

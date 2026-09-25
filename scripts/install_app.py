@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _root  # noqa: E402,F401
 from code_snapshot import REPO_ROOT, copy_code  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
+from tagpup.core import processes  # noqa: E402
 
 #: Versions kept: the new one and the two before it.
 KEEP = 3
@@ -62,7 +63,7 @@ def default_python():
 
 def git(*args):
     try:
-        return subprocess.run(["git", "-C", REPO_ROOT] + list(args), capture_output=True,
+        return processes.run(["git", "-C", REPO_ROOT] + list(args), capture_output=True,
                               text=True, timeout=30).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ""

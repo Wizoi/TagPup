@@ -60,6 +60,7 @@ except ImportError:  # imported as a top-level module
 
 import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
+from tagpup.core import processes  # noqa: E402
 # The code a sandbox runs: scripts/code_snapshot.py, shared with the installer.
 from code_snapshot import copy_code  # noqa: E402
 
@@ -80,7 +81,7 @@ def build_sandbox(source_db, sandbox):
     that is missing whatever is still in the WAL.
     """
     os.makedirs(os.path.join(sandbox, "data"), exist_ok=True)
-    copy_code(sandbox)
+    copy_code(sandbox, launchers=True)
 
     # Its own config, so database names in URLs resolve inside the sandbox. The server
     # runs with the sandbox as its TAGPUP_HOME (start_sandbox_server).
@@ -102,26 +103,17 @@ def build_sandbox(source_db, sandbox):
 
 
 def start_sandbox_server(sandbox, db_path, port):
-    """The server under test, as its own process, running the snapshotted code."""
-    launcher = os.path.join(sandbox, "run_measured_server.py")
-    with open(launcher, "w", encoding="utf-8") as handle:
-        handle.write(
-            "import sys\n"
-            "sys.path.insert(0, %r)\n"
-            "sys.path.insert(0, %r)\n"
-            "from tagpup.core.library import Library\n"
-            "from tagpup.web import app as web\n"
-            "web.serve({%d: web.create_app('tuner', startup=Library(%r))})\n"
-            % (sandbox, os.path.join(sandbox, "scripts"), port, db_path))
-
-    process = subprocess.Popen(
-        [sys.executable, launcher],
+    """The server under test, as its own process, running the snapshotted code: its
+    tagpup_web.py, which is what installs Suggest's models and warms them, as the apps
+    people start get. A launcher written here once served the apps bare."""
+    process = processes.start(
+        [sys.executable, os.path.join(sandbox, "tagpup_web.py"), "--db", db_path,
+         "--tuner-port", str(port), "--tagpup-port", str(free_port())],
         cwd=sandbox,
         # Its home is the sandbox, whatever TAGPUP_HOME this was run with.
         env=dict(os.environ, TAGPUP_HOME=sandbox),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     for _ in range(60):
         try:

@@ -29,7 +29,6 @@ import os
 import shutil
 import subprocess
 import sys
-import threading
 import time
 import urllib.error
 import urllib.parse
@@ -42,6 +41,7 @@ import _root  # noqa: E402,F401
 import db as tagpup_db  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import clustering  # noqa: E402
+from tagpup.core import processes  # noqa: E402
 from tagpup.store import checks  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 
@@ -93,23 +93,29 @@ class Report:
 def indexers_running():
     """PIDs of any tagpup_cli index process, ours or anyone's."""
     try:
-        out = subprocess.check_output(
+        out = processes.run(
             ["powershell", "-NoProfile", "-Command",
              "Get-CimInstance Win32_Process -Filter \"Name = 'python.exe'\" | "
              "Where-Object { $_.CommandLine -like '*tagpup_cli.py*index*' } | "
              "Select-Object -ExpandProperty ProcessId"],
-            stderr=subprocess.DEVNULL, creationflags=0x08000000,
-        ).decode(errors="ignore")
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True,
+        ).stdout.decode(errors="ignore")
         return [int(x) for x in out.split() if x.strip().isdigit()]
     except Exception:
         return []
 
 
+def start_servers(work_db):
+    """The one server (tagpup_web.py) on this run's ports, as a process of its own, on
+    the working copy. It installs Suggest's models, which the apps served bare lacked."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return processes.start([sys.executable, os.path.join(root, "tagpup_web.py"), "--db", os.path.abspath(work_db),
+                            "--tuner-port", str(TUNER_PORT), "--tagpup-port", str(TAGPUP_PORT)])
+
+
 def kill_tree(pid):
     try:
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       creationflags=0x08000000)
+        processes.kill_tree(pid)
     except Exception:
         pass
 
@@ -171,12 +177,7 @@ def main():
     global TUNER_PORT, TAGPUP_PORT
     TUNER_PORT, TAGPUP_PORT = free_port(), free_port()
 
-    from tagpup.core.library import Library
-    from tagpup.web import app as web
-    startup = Library(work_db)
-    threading.Thread(target=web.serve, args=({TUNER_PORT: web.create_app("tuner", startup=startup),
-                                              TAGPUP_PORT: web.create_app("tagpup", startup=startup)},),
-                     daemon=True).start()
+    server = start_servers(work_db)
     time.sleep(3.0)
 
     started_before = set(indexers_running())
@@ -188,10 +189,10 @@ def main():
         for pid in set(indexers_running()) - started_before:
             print(f"  cleaning up indexer PID {pid}")
             kill_tree(pid)
+        if server is not None:
+            kill_tree(server.pid)
+            server.wait(timeout=30)
         if not args.keep:
-            # The servers run in daemon threads that hold their connections open for as
-            # long as this process lives, so on Windows the copy usually cannot be
-            # deleted from inside it. That is why the next run clears it on startup.
             try:
                 os.remove(work_db)
             except OSError:

@@ -11,6 +11,7 @@ import sys
 from contextlib import nullcontext
 
 from tagpup.core import paths
+from tagpup.core import processes
 from tagpup.core.result import Result
 
 #: Where faces are clustered when adding a folder did not: the runner's button, whose
@@ -95,12 +96,10 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
     env["TAGPUP_DB_PATH"] = library.path
 
     def run(args, scale):
-        proc = subprocess.Popen(
+        proc = processes.start(
             [sys.executable, "tagpup_cli.py"] + args,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, env=env, bufsize=1, cwd=code_folder,
-            # Its output is read here; a console window of its own is only a popup.
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         with proc.stdout:
             for line in iter(proc.stdout.readline, ""):

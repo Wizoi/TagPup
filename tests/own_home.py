@@ -30,6 +30,7 @@ if WORKSPACE_DIR not in sys.path:
     sys.path.insert(0, WORKSPACE_DIR)
 
 from tagpup import config as tagpup_config  # noqa: E402
+from tagpup.core import processes  # noqa: E402
 
 
 class OwnHome:
@@ -79,8 +80,8 @@ def remove(folder):
     return not os.path.exists(folder)
 
 
-#: Popen as it was when this was imported: a test that mocks it must not get the reaper.
-_POPEN = subprocess.Popen
+#: The spawn as it was when this was imported: a test that mocks it must not get the reaper.
+_START = None
 
 #: The file this process lists its homes in for the reaper, once it has started one.
 _reap_list = None
@@ -94,16 +95,11 @@ def _reap_after_exit(folder):
     if _reap_list is None:
         handle, _reap_list = tempfile.mkstemp(prefix="tagpup_homes_", suffix=".txt")
         os.close(handle)
-        flags = 0
-        if os.name == "nt":
-            # A hidden console, not none (DETACHED_PROCESS): the venv's python.exe is
-            # a launcher that starts the real interpreter as a child, and a child with
-            # no console to inherit is given a new one -- a terminal window on the
-            # desktop for every test process, 140 a run.
-            flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
-        _POPEN([sys.executable, os.path.abspath(__file__), "--reap", str(os.getpid()), _reap_list],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
+        # In a group of its own, so it outlives this process; with a hidden console,
+        # not none, or the venv launcher's child gets a visible one (tagpup.core.processes).
+        (_START or processes.start)([sys.executable, os.path.abspath(__file__), "--reap", str(os.getpid()), _reap_list],
+                                    own_group=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, close_fds=True)
     with open(_reap_list, "a", encoding="utf-8") as handle:
         handle.write(folder + os.linesep)
 

@@ -11,7 +11,6 @@ Everything here runs on a JPEG made for the test, never a real photo.
 """
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -21,6 +20,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tagpup.core import processes  # noqa: E402
 import own_home  # noqa: E402
 from exiftool_session import ExifToolSession  # noqa: E402
 
@@ -53,7 +53,7 @@ class TestNonAsciiSurvivesTheRoundTrip(unittest.TestCase):
 
     def file_holds(self, path, tag):
         """The tag's bytes as they are in the file, read by a separate ExifTool."""
-        out = subprocess.run([EXIFTOOL, "-charset", "filename=utf8", "-b", "-" + tag, path],
+        out = processes.run([EXIFTOOL, "-charset", "filename=utf8", "-b", "-" + tag, path],
                              capture_output=True, timeout=60)
         return out.stdout
 
@@ -77,7 +77,7 @@ class TestNonAsciiSurvivesTheRoundTrip(unittest.TestCase):
         args = os.path.join(self.dir, "args.txt")
         with open(args, "w", encoding="utf-8", newline="\n") as f:
             f.write("-overwrite_original\n-XMP:Description=%s\n%s\n" % (NAME, photo))
-        subprocess.run([EXIFTOOL, "-@", args], capture_output=True, timeout=60, check=True)
+        processes.run([EXIFTOOL, "-@", args], capture_output=True, timeout=60, check=True)
         self.assertEqual(self.file_holds(photo, "XMP:Description"), NAME.encode("utf-8"))
         row = self.et.get_tags([photo], tags=["XMP:Description"])[0]
         self.assertEqual(row.get("XMP:Description"), NAME)

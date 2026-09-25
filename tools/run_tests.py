@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+from tagpup.core import processes
 import sys
 import tempfile
 import threading
@@ -109,7 +110,7 @@ def run_one(module):
     started = time.time()
     home = tempfile.mkdtemp(prefix="tagpup_run_tests_")
     try:
-        done = subprocess.run([sys.executable, "-m", "unittest", "tests." + module], cwd=ROOT,
+        done = processes.run([sys.executable, "-m", "unittest", "tests." + module], cwd=ROOT,
                               env=dict(os.environ, TAGPUP_HOME=home),
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               encoding="utf-8", errors="replace")

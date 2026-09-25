@@ -8,7 +8,6 @@ import db as tagpup_db
 import paths
 import logging
 import hashlib
-import subprocess
 import threading
 import time
 from typing import List, Dict, Any, Tuple, Optional, Set
@@ -16,6 +15,7 @@ import numpy as np
 
 from tagpup import config as tagpup_config
 from tagpup.core import clustering
+from tagpup.core import processes
 from tagpup.ml.vector_index import VectorIndex
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import faces as store_faces
@@ -71,21 +71,7 @@ class PathLocker:
         """Best effort. When in doubt, say alive -- never steal a live lock."""
         if pid in self._alive_cache:
             return self._alive_cache[pid]
-        alive = True
-        try:
-            if os.name == "nt":
-                out = subprocess.run(
-                    ["tasklist", "/FI", f"PID eq {int(pid)}", "/NH"],
-                    capture_output=True, text=True, timeout=10,
-                ).stdout
-                alive = str(int(pid)) in out
-            else:
-                os.kill(int(pid), 0)
-                alive = True
-        except ProcessLookupError:
-            alive = False
-        except Exception:
-            alive = True
+        alive = processes.is_alive(pid)
         self._alive_cache[pid] = alive
         return alive
 

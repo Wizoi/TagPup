@@ -11,13 +11,13 @@ It fails if the snapshot is missing anything the apps import, and it fails if th
 load a module from anywhere but the sandbox.
 """
 import os
-import subprocess
 import sys
 import tempfile
 import unittest
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
+from tagpup.core import processes  # noqa: E402
 
 import code_snapshot  # noqa: E402
 import measure_identify_faces  # noqa: E402
@@ -40,7 +40,7 @@ class SandboxHasAllTheCode(unittest.TestCase):
         self.addCleanup(measure_identify_faces.remove_sandbox, sandbox)
         code_snapshot.copy_code(sandbox)
 
-        result = subprocess.run(
+        result = processes.run(
             [sys.executable, "-I", "-c", PROBE % (sandbox, os.path.join(sandbox, "scripts"))],
             cwd=sandbox, capture_output=True, text=True, timeout=300)
 

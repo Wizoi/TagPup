@@ -73,9 +73,10 @@ def main(argv=None):
     parser.add_argument("--tagpup-port", type=int, default=PORTS["tagpup"])
     parser.add_argument("--tuner-port", type=int, default=PORTS["tuner"])
     parser.add_argument("--db", default=None,
-                        help="serve this library to a URL naming none, making it if it is missing: for a "
-                             "sandbox or a test. Normally none: a page is reached by its library's URL, and "
-                             "the browser remembers the last one (docs/findings.md, #100).")
+                        help="serve this library (a name in the data folder, or a path) to a URL naming "
+                             "none, making it if it is missing: for a sandbox or a test. Normally none: a "
+                             "page is reached by its library's URL, and the browser remembers the last one "
+                             "(docs/findings.md, #100).")
     parser.add_argument("--open", choices=("tagpup", "tuner", "none"), default="none",
                         help="open this app's page in the browser once the server answers")
     parser.add_argument("--reload", action="store_true", help="restart when a .py file is saved (development)")
@@ -103,12 +104,20 @@ def main(argv=None):
 
     startup = None
     if args.db:
-        db_path = tagpup_config.library_path(libraries.file_name_for(args.db))
+        db_path = args.db if os.path.isabs(args.db) else tagpup_config.library_path(libraries.file_name_for(args.db))
         if not os.path.exists(db_path):
             logger.info("No library at %s; making one.", db_path)
             library_actions.create(db_path)
         startup = Library(db_path)
     apps = {ports[kind]: web.create_app(kind, startup=startup) for kind in ("tagpup", "tuner")}
+
+    # Suggest's models still live in scripts/ (suggester, embedder, faces, index), which
+    # the package may not import, so the entry point hands them to the suggestion runs
+    # and warms them on a thread of its own -- the models, never a library (#99).
+    import suggest_models
+    suggest_models.install()
+    if not os.environ.get("TAGPUP_WEB_NO_WARMUP"):
+        suggest_models.warm_up_in_background()
     ready = None
     if args.open != "none":
         def ready():

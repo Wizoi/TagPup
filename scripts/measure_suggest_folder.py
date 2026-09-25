@@ -46,13 +46,14 @@ except ImportError:  # imported as a top-level module
 import _root  # noqa: E402,F401
 from tagpup.files import images  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
+from tagpup.core import processes  # noqa: E402
 
 
 
 def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
     """Code, config, library and taxonomy, plus `copies` fresh copies of the photos."""
     os.makedirs(os.path.join(sandbox, "data"), exist_ok=True)
-    copy_code(sandbox, code_root)
+    copy_code(sandbox, code_root, launchers=True)
 
     # The real config, for its model and candidate settings -- suggestions made with a
     # different model would be measuring something else -- with every path pointed
@@ -88,26 +89,15 @@ def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
 
 
 def start_server(sandbox, db_path, port):
-    """The TagPup server as its own process, logging with timestamps to a file."""
-    launcher = os.path.join(sandbox, "run_measured_server.py")
-    log_path = os.path.join(sandbox, "server.log")
-    with open(launcher, "w", encoding="utf-8") as handle:
-        handle.write(
-            "import logging, sys\n"
-            "logging.basicConfig(level=logging.INFO, filename=%r,\n"
-            "    format='%%(asctime)s.%%(msecs)03d %%(threadName)s %%(name)s %%(message)s',\n"
-            "    datefmt='%%H:%%M:%%S')\n"
-            "sys.path.insert(0, %r)\n"
-            "sys.path.insert(0, %r)\n"
-            "from tagpup.core.library import Library\n"
-            "from tagpup.web import app as web\n"
-            "web.serve({%d: web.create_app('tagpup', startup=Library(%r))})\n"
-            % (log_path, sandbox, os.path.join(sandbox, "scripts"), port, db_path))
+    """The TagPup server as its own process: the sandbox's tagpup_web.py, which installs
+    Suggest's models and warms them as the apps people start get, logging to the
+    sandbox's data/logs (tagpup.logs)."""
+    log_path = os.path.join(sandbox, "data", "logs", "tagpup_web.log")
     # Its home is the sandbox, whatever TAGPUP_HOME this was run with.
-    process = subprocess.Popen([sys.executable, launcher], cwd=sandbox,
-                               env=dict(os.environ, TAGPUP_HOME=sandbox),
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    process = processes.start([sys.executable, os.path.join(sandbox, "tagpup_web.py"), "--db", db_path,
+                               "--tagpup-port", str(port), "--tuner-port", str(free_port())],
+                              cwd=sandbox, env=dict(os.environ, TAGPUP_HOME=sandbox),
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return process, log_path
 
 

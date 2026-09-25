@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 import install_app  # noqa: E402
 sys.path.insert(0, WORKSPACE_DIR)
 from tagpup import config as tagpup_config  # noqa: E402
+from tagpup.core import processes  # noqa: E402
 from measure_identify_faces import free_port, remove_sandbox  # noqa: E402
 
 
@@ -97,8 +98,7 @@ class TheInstalledAppRuns(InstallCase):
     """TagTuner.cmd, run for real: the installed code, against the home."""
 
     def stop(self, process):
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                       capture_output=True, timeout=30)
+        processes.kill_tree(process.pid)
         process.wait(timeout=30)
 
     def test_tagtuner_starts_from_the_install_and_keeps_its_data_in_the_home(self):
@@ -107,11 +107,10 @@ class TheInstalledAppRuns(InstallCase):
         # As a restart: the launcher's --open would open a tab, and a restart never does.
         env = dict(os.environ, TAGPUP_WEB_RELOADED="1")
         env.pop("TAGPUP_HOME", None)   # the launcher sets it
-        process = subprocess.Popen(["cmd", "/c", os.path.join(self.dest, "TagTuner.cmd"),
+        process = processes.start(["cmd", "/c", os.path.join(self.dest, "TagTuner.cmd"),
                                     "--db", "installed", "--tuner-port", str(port),
                                     "--tagpup-port", str(other)], env=env,
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(self.stop, process)
 
         deadline = time.time() + 60
