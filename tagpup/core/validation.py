@@ -175,6 +175,7 @@ KINDS = {
 #: one declaration.
 SETTING_GROUPS = {
     "clip": {
+        "app": "tuner",
         "title": "The CLIP model",
         "consequences": [
             "Every photo's vector was made with the model it has now, so Suggest finds nothing "
@@ -184,6 +185,7 @@ SETTING_GROUPS = {
         ],
     },
     "faces": {
+        "app": "tuner",
         "title": "Face detection",
         "consequences": [
             "Only photos indexed after the change are detected with it; the faces already found stay as they are.",
@@ -191,6 +193,7 @@ SETTING_GROUPS = {
         ],
     },
     "exiftool": {
+        "app": "tuner",
         "title": "ExifTool",
         "consequences": [
             "Every read and every write of a photo file goes through this program: tags, captions, "
@@ -198,8 +201,9 @@ SETTING_GROUPS = {
             "A program that is not ExifTool, or that is missing, makes every one of them fail.",
         ],
     },
-    "suggest": {"title": "Suggest", "consequences": []},
-    "renaming": {"title": "Smart Rename", "consequences": []},
+    # What TagPup's own features use is shown in TagPup's gear (owner, 2026-09-25).
+    "suggest": {"app": "tagpup", "title": "Suggest", "consequences": []},
+    "renaming": {"app": "tagpup", "title": "Smart Rename", "consequences": []},
 }
 
 

@@ -172,7 +172,8 @@ to be sitting on `<body>`.
 
 ### 3. Tag Taxonomy Tree Manager
 - Open the hierarchical tree modal from the gear at the right of the top bar: **Tag editor**. The editor is one module both pages open (`web/common/tag-editor.js`), and TagTuner's gear opens the same one; its routes are served by both apps.
-- The gear's other item, **Open in TagTuner**, opens TagTuner on the same library in a new tab (its address from `/api/apps`). The menu opens on click, Enter or Space; the arrow keys move through it, Escape closes it and puts the focus back on the gear, and a click anywhere else closes it.
+- **Settings** in the gear opens the library's settings for TagPup's own features -- Suggest's candidate words and Smart Rename's format -- in the same dialog TagTuner's gear opens for the model, face detection and ExifTool (`web/common/settings-dialog.js`, over `/api/settings`, which answers each app its own groups). Neither is locked: a change applies from the next Suggest or rename, and is journaled, so it is in the library's history and can be undone.
+- The gear's last item, **Open in TagTuner**, opens TagTuner on the same library in a new tab (its address from `/api/apps`). The menu opens on click, Enter or Space; the arrow keys move through it, Escape closes it and puts the focus back on the gear, and a click anywhere else closes it.
 - Lists categories in a tree starting collapsed by default.
 - **Create Child**: Prompts for a child category tag and inserts it under the parent.
 - **Rename**: Prompts for a new name, automatically updates the tag itself, updates all child sub-tags recursively in the database and fallback files, and dynamically updates any photo files on disk and records using the tag.

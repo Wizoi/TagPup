@@ -32,8 +32,8 @@ the list.
 
 **Library settings** in the gear opens the settings of the library the page is on
 (`web/common/settings-dialog.js`, over `/api/settings`): the CLIP model its vectors are
-made with, face detection, the ExifTool program, Suggest's candidate words and the rename
-format. They are the library's own, kept in it (`tagpup.services.settings`), not the
+made with, face detection and the ExifTool program. Suggest's candidate words and the
+rename format are TagPup's features, and are in TagPup's gear. They are the library's own, kept in it (`tagpup.services.settings`), not the
 machine's. The dialog is made from each setting's one declaration
 (`tagpup.core.validation.SETTINGS`): its label, its type (a checkbox for true or false,
 a box of text otherwise), its value, and an info button (i) that shows what it changes

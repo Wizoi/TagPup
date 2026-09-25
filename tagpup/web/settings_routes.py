@@ -1,7 +1,9 @@
 """A library's settings, which both apps serve alike: what the settings dialog shows and
 saves (web/common/settings-dialog.js; docs/ARCHITECTURE.md, phase 7.6).
 
-GET answers each setting of the library the URL names, with its declaration -- label,
+GET answers each setting of the library the URL names that the asking app's gear
+shows (TagPup: Suggest and Smart Rename; TagTuner: the model, face detection and
+ExifTool), with its declaration -- label,
 type, default, info text, whether it is locked and what changing it does -- in the
 groups the dialog shows, and where the machine's ExifTool is, for a library that names
 none. POST changes the settings it is sent, as one journaled change
@@ -13,7 +15,7 @@ no longer uses (tagpup.runtime.Runtime.settings_changed).
 """
 import logging
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
 from tagpup import config as tagpup_config
 from tagpup.services import settings as settings_service
@@ -27,7 +29,7 @@ routes = Blueprint("settings", __name__)
 def library_settings():
     library = state.require()
     try:
-        described = settings_service.described(state.settings(library))
+        described = settings_service.described(state.settings(library), app=current_app.config["APP_KIND"])
     except Exception as e:
         return responses.error(500, str(e))
     described["library"] = library.name

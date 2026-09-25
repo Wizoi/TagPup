@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="common/gear.css">
     <link rel="stylesheet" href="common/tag-editor.css">
+    <link rel="stylesheet" href="common/settings-dialog.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -28,9 +29,10 @@
                 </div>
                 <!-- The gear (web/common/gear.js): the tag editor, and TagTuner on this library. -->
                 <div class="gear">
-                    <button id="btn-gear" class="btn btn-secondary" title="Tag editor, and TagTuner on this dog park" aria-label="Tools" aria-controls="gear-menu" style="display: flex; align-items: center; gap: 8px;">⚙️</button>
+                    <button id="btn-gear" class="btn btn-secondary" title="Tag editor, settings, and TagTuner on this dog park" aria-label="Tools" aria-controls="gear-menu" style="display: flex; align-items: center; gap: 8px;">⚙️</button>
                     <div id="gear-menu" class="gear-menu hidden" role="menu" aria-label="Tools">
                         <button type="button" role="menuitem" data-action="tag-editor">Tag editor</button>
+                        <button type="button" role="menuitem" data-action="library-settings" title="Settings for Suggest's words and Smart Rename's format">Settings</button>
                         <a role="menuitem" data-app="tuner" target="_blank" rel="noopener" aria-disabled="true">Open in TagTuner</a>
                     </div>
                 </div>
