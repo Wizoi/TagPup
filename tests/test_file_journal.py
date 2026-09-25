@@ -12,6 +12,7 @@ import contextlib
 import io
 import json
 import os
+import socket
 import sys
 import unittest
 from unittest import mock
@@ -303,8 +304,8 @@ class Crashes(FilesCase):
         self.assertEqual(self.states(change), ["planned"] * 3)
         # A process that has gone -- no process has id 0x7FFFFFF0 -- leaves it to whoever
         # opens the library next.
-        self.execute("UPDATE changes SET owner = ? WHERE id = ?", ("%s:%d" % (file_journal.owner().rpartition(":")[0],
-                                                                              0x7FFFFFF0), change))
+        self.execute("UPDATE changes SET owner = ? WHERE id = ?", ("%s:%d" % (socket.gethostname(), 0x7FFFFFF0),
+                                                                      change))
         self.assert_finished(change)
 
     def test_the_first_read_of_the_librarys_settings_settles_it(self):

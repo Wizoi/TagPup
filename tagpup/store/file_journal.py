@@ -32,6 +32,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from tagpup.core import processes
 from tagpup.store import db, schema
 
 STATES = ("planned", "writing", "done", "conflict", "undone")
@@ -81,9 +82,35 @@ class Change:
         return self.status == "planned" and self.undone is not None
 
 
+_owner = None
+
+
 def owner():
-    """This process, as `changes.owner` names it: host and process id."""
-    return "%s:%d" % (socket.gethostname(), os.getpid())
+    """This process, as `changes.owner` names it: "host:pid:start", its host, its id and
+    when it started (tagpup.core.processes.started). Windows reuses an id soon after its
+    process ends, and an id alone took a change a crash left for one a live process was
+    carrying out (docs/findings.md, #275). Libraries written before name "host:pid", as
+    does a process whose start cannot be read."""
+    global _owner
+    if _owner is None or _owner[0] != os.getpid():
+        named = "%s:%d" % (socket.gethostname(), os.getpid())
+        started = processes.started(os.getpid())
+        _owner = (os.getpid(), named if started is None else "%s:%d" % (named, started))
+    return _owner[1]
+
+
+def owner_parts(named):
+    """(host, pid, start) of an owner `named` by owner(); start is None for one named the
+    old way, "host:pid", and pid None for a name that is neither."""
+    parts = str(named).split(":")
+    numbers = []
+    while parts and len(numbers) < 2 and parts[-1].isdigit():
+        numbers.insert(0, int(parts.pop()))
+    if not numbers or not parts:
+        return str(named), None, None
+    if len(numbers) == 1:
+        return ":".join(parts), numbers[0], None
+    return ":".join(parts), numbers[0], numbers[1]
 
 
 def _now():
