@@ -474,6 +474,49 @@ library view (they go through the same journaled writes, so they can be undone);
 of Photo Gallery's habits to keep (the date slider, the tag pane with counts, the info
 pane).
 
+### Phase 10: Family albums from many sources (idea, after phase 9)
+The owner's idea *(2026-09-25)*: once the local folders, the views and their management
+are right (phases 8 and 9), bring in photos from where the family keeps them --
+OneDrive, Google Photos, Instagram, Facebook and the like -- and copy them into the
+family's own photo folders, under one common root. An event's photos, taken by several
+people and posted to several services, become one album the family holds itself: like a
+shared Google album, except that the photos are ours, on our disks. First the owner and
+their spouse on the home network; later the children, remote, adding their own photos to
+family groups and albums.
+
+Design questions, to be settled before it starts:
+- **We hold the originals.** An import copies the file into the library's folders
+  (where, and named how: the event's folder, Smart Rename's format) and records where it
+  came from: service, account, the service's id for it, when it was taken and imported.
+  The copy is then an ordinary photo -- indexed, tagged, in the views -- and the source
+  is provenance, not a link to keep in step.
+- **The same photo from two places is one photo.** A photo shared by two people, or
+  posted and also in someone's camera roll, arrives more than once, often recompressed
+  and without its metadata. Matching by content (a perceptual hash beside the CLIP
+  vector), by Date Taken and by the service's id, with the duplicate offered for review
+  rather than silently dropped. Services strip metadata on upload; what was stripped
+  (Date Taken, place, people) is the import's to restore from what the service still
+  says, or to leave for tagging.
+- **How each source is reached.** Each service's access is its own and changes: some
+  offer an API for the account's own photos (OneDrive through Microsoft Graph); some
+  have narrowed theirs to what an app itself made or what the user picks each time
+  (Google Photos' picker), or retired it (Instagram's personal-account API); most offer
+  an export of everything (Google Takeout, Facebook's and Instagram's "download your
+  information"). An importer per source, behind one interface, and an export archive as
+  the fallback that always works. Checked against each service's terms when the phase
+  starts, not from memory.
+- **Albums and groups.** An album is a set of photos, possibly from many folders and
+  sources (a library view of phase 9 whose source is "album"); a group is the people who
+  may see and add to an album. Albums live in the library, journaled like any edit.
+- **People beyond this PC.** At first the home network: the apps already serve pages;
+  another person on the network needs a login of their own and what they may do
+  (view, add, tag, delete). Remote family members need the server reachable from outside
+  -- through a tunnel or a relay rather than an open port -- with accounts, sessions and
+  upload limits: security work the phases before have not needed. Their uploads land in
+  a holding area and join an album when accepted.
+- **Space and sync.** Imports grow the disk; the snapshots (phase 8) grow with the
+  library. Sync must tell an imported copy from an outside change.
+
 ## After the re-architecture
 
 Behaviour changes queued behind the phases. They wait so that they land once, in the new code, rather than in both servers and again afterwards.
@@ -524,3 +567,4 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 7.6. Settings in the library, and a gear on each page | done, 2026-09-25 |
 | 8. Sync | not started |
 | 9. Library views | planned for October 2026 *(owner, 2026-09-25)*; design questions open |
+| 10. Family albums from many sources | idea *(owner, 2026-09-25)*, after phase 9; design questions open |
