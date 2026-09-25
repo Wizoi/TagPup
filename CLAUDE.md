@@ -43,6 +43,12 @@ editing. Run long indexes through the CLI (`TagPup CLI.cmd`).
 **Never call `sqlite3.connect`.** Use `tagpup/store/db.py`. It owns journal mode, busy
 timeout, the per-file write lock and the retry. `tests/test_db_access.py` enforces it.
 
+**Never call `subprocess` yourself.** `tagpup/core/processes.py` owns `start`, `run`,
+`kill_tree` and `is_alive`, and gives every child a hidden console. A spawn that decided
+for itself put a terminal window on the desktop for every test process, 140 a run, and
+it took watching the process list to find which one. `tests/test_processes_single_owner.py`
+enforces it.
+
 **Never construct `ExifToolHelper` or `ExifTool` directly.** Use `ExifToolSession` from
 `tagpup/files/exiftool_session.py`. pyexiftool reads stdout to the end before stderr; a batch
 with ~4 KB of warnings fills the stderr pipe and both sides wait forever -- two scripts

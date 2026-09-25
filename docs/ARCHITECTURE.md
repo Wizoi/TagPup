@@ -257,6 +257,8 @@ Exit: every rule the sweep found has one owner, and the full check runs across t
 
 Exit: one server process, and no test opens a socket to check logic it could check in-process.
 
+Done 2026-09-24. Suggest's models still live in `scripts/` and reach the runs through `scripts/suggest_models.py` (findings #112), which goes when they move into `tagpup.ml`.
+
 ### Phase 6: Pages
 - `web/common/api.js` first, removing the monkeypatches; then the shared modules; then each page split by feature.
 
@@ -311,7 +313,7 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 3. Store | done, 2026-09-24 |
 | 4. Data model | done, 2026-09-24 |
 | 4.5. One owner for each rule | done, 2026-09-24 |
-| 5. One server | in progress, 2026-09-24: the skeleton (tagpup.web, tagpup_web.py) is in; the routes and the old servers' tests are moving |
+| 5. One server | done, 2026-09-24 |
 | 6. Pages | not started |
 | 7. MCP | not started |
 | 8. Sync | not started |
