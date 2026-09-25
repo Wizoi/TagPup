@@ -64,14 +64,15 @@ Imports only go down:
 | Layer | Package | Owns | May import |
 |---|---|---|---|
 | core | `tagpup.core` | Pure rules: path identity, a library's name and the files that belong to it (`Library`), the tag vocabulary (leaf, root, person), people derivation, suggestion scoring, clustering decisions | nothing but `core` |
-| config | `tagpup.config` | `TAGPUP_HOME`, `config.ini` and what it says: where the libraries are, which ExifTool, model settings, the library to open next. Read by entry points, which pass the values down | nothing |
+| config | `tagpup.config` | `TAGPUP_HOME`, `config.ini` and what it says: where the libraries are, which ExifTool, model settings. Read by entry points, which pass the values down. Never written by the app (#100) | nothing |
 | logs | `tagpup.logs` | Each program's log file in `data/logs/`. Set up by entry points | `config` |
 | store | `tagpup.store` | The library database: connections and locks, schema and migrations, generations, one repository per table, caches keyed by generation, backups | `core` |
 | files | `tagpup.files` | The photo files: ExifTool sessions, reading metadata, writing keyword, caption and orientation fields, identities, opening images (upright or as stored), crops and thumbnails | `core` |
 | ml | `tagpup.ml` | Models: CLIP embeddings, face detection and embeddings, the vector index | `core`, `files` |
 | services | `tagpup.services` | One function per user action. The only code that writes. Returns a `Result` | all of the above |
 | jobs | `tagpup.jobs` | Background work: queue, status, cancel, persistence, worker processes for GPU work | `core`, `services` |
-| entry points | `tagpup.web`, `tagpup.cli`, `tagpup.mcp`, `scripts/`, `tools/` | HTTP, the command line, the MCP server Claude works through, maintenance and development tools | `config`, `logs`, `services`, `jobs` (and `core` for formatting) |
+| runtime | `tagpup.runtime` | The composition root: turns the settings an entry point read into the process's long-lived objects -- CLIP and the face models, the per-library job runners -- builds each once, warms the models on a thread, and hands them down as arguments | every layer above but the entry points |
+| entry points | `tagpup.web`, `tagpup.cli`, `tagpup.mcp`, `scripts/`, `tools/` | HTTP, the command line, the MCP server Claude works through, maintenance and development tools. Each reads the settings, builds one `Runtime`, and passes it on | `config`, `logs`, `runtime`, `services`, `jobs` (and `core` for formatting) |
 
 Guard tests, each of which fails the build. The ones marked *exists* are in place; the rest arrive with their phase.
 
@@ -90,9 +91,39 @@ Guard tests, each of which fails the build. The ones marked *exists* are in plac
 
 Every guard checks the same list of files, `tests/shipped_sources.py`: the launchers, `scripts/`, and `tagpup/`.
 
+### The layers, revisited (2026-09-24)
+
+Phase 5 found three things with nowhere legal to live, and four modules that stayed in
+`scripts/` because each spans layers:
+
+- **A model that needs its settings.** The embedder and the face models read
+  `config.ini` themselves, and `ml` may not import `config`.
+- **Wiring.** Something has to build the models once and hand them to the suggestion
+  runs. Today that is `scripts/suggest_models.py`, a script that imports
+  `tagpup.web.state` and fills a module-level slot in `tagpup.jobs.suggestions`
+  (findings #112): a registry by another name, the thing principle 5 forbids.
+- **A generic helper several layers need.** `PerLibrary` lives in `tagpup.web`, and a
+  script needs it.
+- **The mixed modules.** `ClipEmbedder` is a model plus a store cache. `FaceProcessor`
+  is a model plus library-wide identity resolution, which is a service. `PhotoIndex` is
+  store wrappers plus a vector index. `TagSuggester` is service logic.
+
+What was weighed:
+
+| | Alternative | Verdict |
+|---|---|---|
+| A | Let `ml` import `config`. | Rejected. A model reading global settings is how 26 readers of `config.ini` came to disagree; a model's test would need a home of its own; two settings in one process (a sandbox beside the app) would be impossible. |
+| B | Merge `store`, `files` and `ml` into one infrastructure layer. | Rejected. The single-owner guards hang on those boundaries: SQL outside `store` is caught because `store` is a layer. Fewer rules, less caught. |
+| C | Ports and adapters throughout: every service takes Protocol-typed dependencies, adapters wired at the edge. | Rejected as a rule: forty services, nearly all with one implementation, would gain ceremony and no second adapter. Taken where it pays: a service that uses a model takes the model as an argument, and its test passes a fake. |
+| D | **Keep the layers; add one composition root, `tagpup.runtime`.** | **Chosen.** It is the only place that turns settings into objects. Entry points read `config`, build a `Runtime`, and hand it to the web factory or the CLI command. Services and jobs never reach for a model or a setting; they are given them. It replaces the slot and `scripts/suggest_models.py`. |
+
+With it, `PerLibrary` moves to `tagpup.core.per_library` (a locked map keyed by library;
+nothing of Flask's), and each mixed module splits along the layers (phase 5.5).
+
 ## Runtime
 
 - **One server, two apps.** One Flask app, served by Waitress, answers on both ports used today: 8090 for TagPup, 8080 for TagTuner. The library comes from the URL as it does now, and becomes a `Library` object for the request. The Host and Origin check is a `before_request` hook.
+- **One composition root.** `tagpup.runtime.Runtime` holds what lives as long as the process: the models, built once from the settings it was given and warmed on a thread, and each library's job runners. The web factory and each CLI command are handed one; nothing below them builds a model or reads a setting.
 - **Background jobs** (indexing, suggestions, clustering, refresh) run through one job runner per library, with status, cancel and persistence. GPU-heavy work runs in a worker process, as indexing does today through the CLI.
 - **The installed copy.** `scripts/install_app.py` copies the code into a version folder under `%LOCALAPPDATA%\TagPup` and writes launchers that run it. `TAGPUP_HOME` names the folder that holds `config.ini` and `data/`, with each library's backups and locks beside it. Updating is a deliberate step, installing again, and the two versions before stay to go back to. The auto-reloader is for development only.
 - **Logs** go to `data/logs/`, one rotating file per program. Each holds everything the console shows, plus every request slower than a second with its time, and every failed request with its traceback.
@@ -147,11 +178,12 @@ Target: the full check in under a minute.
 | `scripts/identity.py` | `tagpup/files/identity.py` |
 | `scripts/metadata.py` | `tagpup/files/metadata.py` (reading), `tagpup/core/vocabulary.py` (tags, people, captions), `tagpup/store/taxonomy.py` and `tagpup/store/faces.py` (the library's people, face names) |
 | keyword writing in `tagpup_server.py` | `tagpup/files/keywords.py`, `tagpup/core/vocabulary.py` |
-| `scripts/index.py` (`PhotoIndex`) | `tagpup/store/` (`schema`, `photos`, `faces`), `tagpup/ml/vector_index.py` |
+| `scripts/index.py` (`PhotoIndex`, `PathLocker`) | `tagpup/store/` (`schema`, `photos`, `faces`, `locks`), `tagpup/ml/vector_index.py`, `tagpup/services/search.py` (a library's index, loaded from the store) |
 | `scripts/taxonomy.py` | `tagpup/store/taxonomy.py`, `tagpup/core/vocabulary.py` |
-| `scripts/faces.py` | `tagpup/ml/faces.py` (detection), `tagpup/core/clustering.py` (who is who) |
-| `scripts/suggester.py` | `tagpup/core/suggest.py`, `tagpup/services/suggestions.py` |
-| `scripts/embedder.py` | `tagpup/ml/clip.py` |
+| `scripts/faces.py` | `tagpup/ml/faces.py` (detection and embeddings), `tagpup/services/identities.py` (resolving who is who across a library), `tagpup/core/clustering.py` (the rules) |
+| `scripts/suggester.py` | `tagpup/core/suggesting.py` (the rules), `tagpup/services/suggester.py` (`TagSuggester`, given its models) |
+| `scripts/embedder.py` | `tagpup/ml/clip.py` (the model); the embedding cache is `tagpup/store/embeddings.py`'s |
+| `scripts/suggest_models.py` | `tagpup/runtime.py` |
 | `scripts/writer.py` | `tagpup/services/tagging.py` |
 | `scripts/tagpup_server.py`, `scripts/tuner_server.py` | `tagpup/web/` (routes), `tagpup/services/` |
 | `scripts/localserver.py` | `tagpup/web/security.py` (Waitress does the rest) |
@@ -259,6 +291,22 @@ Exit: one server process, and no test opens a socket to check logic it could che
 
 Done 2026-09-24. Suggest's models still live in `scripts/` and reach the runs through `scripts/suggest_models.py` (findings #112), which goes when they move into `tagpup.ml`.
 
+### Phase 5.5: Models in the package, one composition root
+Suggest's models and the resolution of who is who still live in `scripts/` (embedder,
+faces, index, suggester: 2,150 lines) because each spans layers, and they reach the web
+through a script that fills a module slot (findings #112). See "The layers, revisited".
+- [ ] `tagpup.core.per_library.PerLibrary`; `tagpup.web.state` imports it from there.
+- [ ] `tagpup.ml.clip`: CLIP from the settings it is given. It embeds an image or a text and nothing else; the embedding cache is `tagpup.store.embeddings`', read and written by the service that asks.
+- [ ] `tagpup.ml.faces`: detection and face embeddings, from the settings it is given.
+- [ ] `tagpup.services.search`: a library's vector index loaded from the store (`PhotoIndex.load`, `search`, `reload_if_changed`). `PathLocker` goes to `tagpup.store.locks`.
+- [ ] `tagpup.services.identities`: resolving who is who across a library (`FaceProcessor.cluster_and_resolve_identities`) over `tagpup.core.clustering`'s rules.
+- [ ] `tagpup.services.suggester`: `TagSuggester`, given its models.
+- [ ] `tagpup.runtime`: the composition root. `tagpup_web.py`, `tagpup_cli.py` and the measurement tools build one; `tagpup.jobs.suggestions` takes its models from its constructor; `scripts/suggest_models.py` goes.
+- [ ] Shims at the old names in `scripts/` while anything imports them; the tests move to the package names.
+- [ ] Guards: `tests/test_layers.py` knows `runtime`; nothing but `tagpup.runtime` builds a model.
+
+Exit: no module in `scripts/` holds a model, SQL or a rule; the package imports no script; the web apps and the CLI get every model from a `Runtime`.
+
 ### Phase 6: Pages
 - `web/common/api.js` first, removing the monkeypatches; then the shared modules; then each page split by feature.
 
@@ -303,6 +351,8 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 2026-09-24 | A service that reads returns what it read, not a `Result`, and raises `NotFound` (a route's 404) or `Refused` (400), which live beside `Result` in `tagpup.core.result`. |
 | 2026-09-24 | Opening a photo, showing it in Explorer and the folder dialog stay web routes, not services: they act on the desktop of the machine the server runs on, and write nothing. |
 | 2026-09-24 | The web layer is two Flask apps from one factory (`tagpup.web.app.create_app`), one per page, served by one Waitress process that hands each request to the app for the port it arrived on. The pages ask for the same paths (/api/people, /api/photo-file, eight in all) and mean different things by them; one app would ask which port at every such route. The sockets are bound by us with SO_EXCLUSIVEADDRUSE, since Waitress's own SO_REUSEADDR lets a second server bind a port a live one holds on Windows. |
+| 2026-09-24 | One composition root, `tagpup.runtime`, and the layers kept as they are. Letting `ml` read `config`, merging the infrastructure layers, and ports-and-adapters throughout were weighed and rejected ("The layers, revisited"). A service that uses a model is given it. |
+| 2026-09-24 | `PerLibrary` lives in `core`: a locked map keyed by library that web, jobs and the runtime all use. |
 
 ## Progress
 
@@ -314,6 +364,7 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 4. Data model | done, 2026-09-24 |
 | 4.5. One owner for each rule | done, 2026-09-24 |
 | 5. One server | done, 2026-09-24 |
+| 5.5. Models in the package, one composition root | not started |
 | 6. Pages | not started |
 | 7. MCP | not started |
 | 8. Sync | not started |
