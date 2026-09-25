@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.services import refresh_rows  # noqa: E402
+from tagpup.services import maintenance, refresh_rows  # noqa: E402
 
 
 def progress(stage, counts):
@@ -69,17 +69,21 @@ def main(argv=None):
               % (os.path.basename(path), before, after))
 
     if result.details["dry_run"]:
-        print("\nDry run. Nothing was changed. Re-run with --apply to write.")
+        print("\n%s" % maintenance.rehearsed(result))
+        print("Dry run. Nothing was changed. Re-run with --apply to write.")
         return 0
     if not result.attempted:
         print("\nNothing to write.")
         return 0
-    print("\nbacked up to %s" % result.details["backup"])
+    if result.refused:
+        # A row the app saved while this run read the files: the whole change is refused
+        # rather than write the older read over the save.
+        print("\n%s" % result.refused)
+        print("Run it again to read those files again.")
+        return 1
+    print("\n%s" % maintenance.recorded(result, args.db))
     changed = result.details["changed"]
     print("rows changed from their files: %d" % changed["from_files"])
-    if changed["from_files"] < counts["to_write"]:
-        print("rows left alone because they changed after this run read them: %d"
-              % (counts["to_write"] - changed["from_files"]))
     print("rows with repeated captions removed: %d" % changed["captions"])
     return 0
 

@@ -6,7 +6,8 @@
 - It answered "KeyError" for a file ExifTool could not read.
 - A duplicate face named between the plan and the write was deleted with its name.
 - An apply whose write failed answered with the error's kind alone, not the backup it
-  had already taken.
+  had already taken. Since phase 7.5 an apply takes no backup: it is one transaction,
+  so a failed write leaves nothing written and no change recorded.
 """
 import json
 import os
@@ -21,7 +22,7 @@ import own_home  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.services import duplicate_faces, inspect, maintenance  # noqa: E402
-from tagpup.store import db, schema, taxonomy  # noqa: E402
+from tagpup.store import db, journal, schema, taxonomy  # noqa: E402
 
 
 class ALibrary(unittest.TestCase):
@@ -93,33 +94,40 @@ class AFaceNamedBetweenThePlanAndTheWrite(ALibrary):
         photo = self.execute("INSERT INTO photos (path) VALUES (?)", (os.path.abspath("D:/Pictures/a.jpg"),))
         kept = self.execute("INSERT INTO faces (photo_id, box) VALUES (?, '[0, 0, 10, 10]')", (photo,))
         copy = self.execute("INSERT INTO faces (photo_id, box) VALUES (?, '[0, 0, 10, 10]')", (photo,))
-        real_backup = maintenance.db.backup
+        real_plan = duplicate_faces._plan
 
-        def named_meanwhile(path, reason):
-            # What TagTuner could do while the library is copied.
+        def named_meanwhile(library):
+            planned = real_plan(library)
+            # What TagTuner could do between the plan and the write.
             self.execute("UPDATE faces SET name = 'Rowan Thackeray', name_source = 'manual' WHERE id = ?", (copy,))
-            return real_backup(path, reason)
+            return planned
 
-        with mock.patch.object(maintenance.db, "backup", side_effect=named_meanwhile):
+        with mock.patch.object(duplicate_faces, "_plan", side_effect=named_meanwhile):
             result = duplicate_faces.dedupe_faces(self.library, apply=True)
         self.assertEqual(1, result.attempted)
         self.assertEqual(0, result.changed)
+        self.assertIn("faces %d is not what the plan read: name, name_source changed" % copy, result.refused)
         self.assertEqual([(kept,), (copy,)], self.rows("SELECT id FROM faces ORDER BY id"))
 
 
 class AnApplyWhoseWriteFails(ALibrary):
-    def test_says_what_it_backed_up(self):
+    def test_says_so_and_leaves_nothing_written(self):
+        photo = self.execute("INSERT INTO photos (path, captions) VALUES (?, '[]')",
+                             (os.path.abspath("D:/Pictures/a.jpg"),))
+
         def plan(library):
             return maintenance.Plan(size=1, counts={"n": 1})
 
-        def write(library, planned, result):
-            raise RuntimeError("database is locked")
+        def edits(planned):
+            return [journal.update("photos", (photo,), {"captions": "[]"}, {"captions": '["Quay"]'})]
 
-        result = maintenance.run(self.library, "trial", plan, write, apply=True)
+        with mock.patch.object(journal, "_record", side_effect=RuntimeError("database is locked")):
+            result = maintenance.run(self.library, "trial", plan, edits, apply=True)
         self.assertFalse(result.ok)
         self.assertEqual(0, result.changed)
-        self.assertTrue(result.errors)
-        self.assertTrue(result.details["backup"] and os.path.exists(result.details["backup"]))
+        self.assertIn("database is locked", result.errors[0][1])
+        self.assertEqual([("[]",)], self.rows("SELECT captions FROM photos"))
+        self.assertEqual([], self.rows("SELECT id FROM changes"))
 
 
 if __name__ == "__main__":

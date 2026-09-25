@@ -1,11 +1,16 @@
-"""Every script that writes in bulk backs the database up first, through db.backup.
+"""A bulk operation records a change; a full copy of the library is taken only where the
+plan allows one.
 
 The rule in CLAUDE.md: bulk operations dry-run by default, --apply to write, and back
 up first. Every script here dry-runs; six of them wrote without a backup, among them
 dedupe_faces and relink_renamed_photos, which delete and re-point face rows. Three had
-their own copy of a backup function. This holds every --apply script to one: its own
-call of db.backup, or a service on the maintenance scaffold (tagpup.services.maintenance),
-which backs up before every apply.
+their own copy of a backup function.
+
+Phase 7.5 (docs/ARCHITECTURE.md) replaced the copy -- 1.4 GB of photo_index for each
+apply, five kept -- with the library's journal: a service on the maintenance scaffold
+(tagpup.services.maintenance) records each apply as one change, rehearsed first and
+undoable after, and copies nothing. A full copy stays only where the plan keeps one
+(FULL_COPIES), and this holds every --apply script to one or the other.
 """
 import os
 import re
@@ -17,7 +22,9 @@ import unittest
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import shipped_sources  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
 
 
@@ -26,6 +33,22 @@ OPENS_A_DATABASE = re.compile(r"\bimport db\b|from tagpup\.store import db\b|\bt
 
 #: The services a script imports: `from tagpup.services import refresh_rows`.
 IMPORTS_SERVICES = re.compile(r"^from tagpup\.services import ([\w, ]+)", re.M)
+
+#: A full copy of the library, taken by the one function that makes them.
+TAKES_A_COPY = re.compile(r"\b(?:db|tagpup_db)\.backup\(")
+
+#: The only shipped files that copy the whole library, and why each may.
+FULL_COPIES = {
+    # Until phase 7.5's migrations stage: then only a migration that destroys
+    # information copies the library, and one that changes data records its rows.
+    os.path.join("tagpup", "store", "schema.py"): "a migration that rewrites data",
+    # `index --reset` deletes the library; `compact` rewrites the whole file.
+    "tagpup_cli.py": "a library deleted or rewritten whole",
+    # Writes photo files, not rows: phase 7.5's last stage records each file instead.
+    os.path.join("scripts", "backfill_document_ids.py"): "photo files, until their stage",
+    # Re-points rows; not yet on the maintenance scaffold (docs/findings.md).
+    os.path.join("scripts", "relink_renamed_photos.py"): "not yet on the scaffold",
+}
 
 
 def read(*parts):
@@ -54,17 +77,27 @@ def bulk_scripts():
             yield name, source
 
 
-class EveryBulkScriptBacksUp(unittest.TestCase):
+class EveryBulkScriptRecordsAChange(unittest.TestCase):
     def test_there_are_bulk_scripts_to_check(self):
         self.assertGreaterEqual(len(list(bulk_scripts())), 5)
 
-    def test_each_one_backs_up_through_db(self):
+    def test_each_one_records_a_change_or_may_copy_the_library(self):
         missing = [name for name, source in bulk_scripts()
-                   if not re.search(r"\btagpup_db\.backup\(", source) and not maintenance_services(source)]
-        self.assertEqual([], missing, "these write with --apply and never back up")
+                   if not maintenance_services(source)
+                   and not (os.path.join("scripts", name) in FULL_COPIES and TAKES_A_COPY.search(source))]
+        self.assertEqual([], missing, "these write with --apply, record no change and take no copy")
 
-    def test_the_scaffold_backs_up_through_db(self):
-        self.assertRegex(read("tagpup", "services", "maintenance.py"), r"\bdb\.backup\(")
+    def test_the_scaffold_records_a_change_and_copies_nothing(self):
+        source = read("tagpup", "services", "maintenance.py")
+        self.assertRegex(source, r"\bjournal\.apply\(")
+        self.assertRegex(source, r"\bjournal\.rehearse\(")
+        self.assertNotRegex(source, r"\.backup\(")
+
+    def test_only_the_files_the_plan_allows_copy_the_library(self):
+        copying = {path for path in shipped_sources.python_sources()
+                   if TAKES_A_COPY.search(read(path))}
+        self.assertEqual(set(FULL_COPIES), copying,
+                         "a full copy of the library outside FULL_COPIES, or one listed there that takes none")
 
     def test_none_keeps_its_own_copy(self):
         own = [name for name, source in bulk_scripts() if re.search(r"^def backup\(", source, re.M)]

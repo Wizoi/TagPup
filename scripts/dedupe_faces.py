@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.services import duplicate_faces  # noqa: E402
+from tagpup.services import duplicate_faces, maintenance  # noqa: E402
 
 
 def main(argv=None):
@@ -44,13 +44,16 @@ def main(argv=None):
         print("   %-50s %s" % (os.path.basename(str(photo_path))[:50], " vs ".join(names)))
 
     if result.details["dry_run"]:
-        print("\nNothing was changed. Re-run with --apply to write it.")
+        print("\n%s" % maintenance.rehearsed(result))
+        print("Nothing was changed. Re-run with --apply to write it.")
         return
     if not result.attempted:
         print("\nNothing to remove.")
         return
 
-    print("\nbacked up to %s" % result.details["backup"])
+    if result.refused:
+        raise SystemExit(result.refused)
+    print("\n%s" % maintenance.recorded(result, args.db))
     print("\nremoved %d row(s)." % result.changed)
     remaining = result.details["remaining"]
     print("duplicates remaining: %d; disagreements remaining: %d"

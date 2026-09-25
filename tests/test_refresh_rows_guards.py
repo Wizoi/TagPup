@@ -1,7 +1,8 @@
 """refresh_rows_from_files: a row saved during the run keeps the save, and more cases.
 
 - A row the app saved after this run read the file was overwritten with the older read:
-  each UPDATE now requires the row to still have the mtime and size it was read with.
+  each row must still have what the run found before it read the files, or the whole
+  change is refused (phase 7.5's journal), and a second run reads it again.
 - It read with whatever ExifTool was on PATH, not the one config.ini names; --exiftool
   chooses, and the configured one is the default.
 - Two cases the tests did not cover: a person named only on a face stays in the row's
@@ -39,7 +40,8 @@ class RefreshGuards(base.RefreshRowsFromFiles):
         tags, _captions, _raw, mtime = self.rows()[self.files["stale_keywords"]]
         self.assertEqual(saved_tags, tags, "the app's save was overwritten with the older read")
         self.assertEqual(2000000.0, mtime)
-        self.assertIn("changed after this run read them: 1", out)
+        self.assertIn("is not what the plan read: mtime, tags changed", out)
+        self.assertIn("Nothing was written", out)
 
     def test_the_exiftool_asked_for_is_the_one_used(self):
         used = []
