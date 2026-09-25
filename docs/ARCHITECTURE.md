@@ -421,6 +421,47 @@ A job that keeps each library in step with its folders. Today a row changes only
 
 Exit: after files are added, edited, moved or deleted outside the apps, one sync brings the rows back in step. `tools/doctor.py` finds nothing it would change, except missing files it has reported.
 
+### Phase 9: Library views (planned)
+The owner's idea *(2026-09-25)*: TagPup shows the whole library, not only the folder it
+has open -- by folder, by keyword, by person, by date -- as Windows Live Photo Gallery
+did, from the database, with the editing TagPup gives a folder today. It follows phase 8:
+a view of the rows is only as good as the rows are current.
+
+The design, to be settled before it starts:
+- **One grid, two kinds of source.** A source says which photos are shown: a folder on
+  disk (today's view: it walks the folder and reads what is new or changed), or a
+  library query -- a folder and its subfolders, a keyword and everything under it, a
+  person, a year or month (`photos.taken`). The grid, the details panel, the selection
+  and the bulk edits are the same components on photo ids; an edit does the same
+  whichever source showed the photo. Two grids drifting apart is the failure to avoid.
+- **The transition.** A navigator beside the grid: Folders (the library's tree, counts,
+  each marked on disk or gone), Keywords (the tag tree with counts), People, Dates. A
+  library folder opens its library view; where the disk holds files the library does
+  not, a banner says so and offers to index them. "Show in library" goes from a disk
+  view to the same folder's library view. The header always says which source is shown,
+  and the URL names it, so Back and a bookmark work.
+- **Staleness is shown, not hidden.** A library view checks the thumbnails on screen
+  cheaply (size and modified time, no ExifTool) and marks a photo changed on disk or
+  missing; a missing photo is shown and not editable.
+- **Edits and sync.** Every edit writes the file and records its new size and modified
+  time in the transaction that marks the file written (phase 7.5), so sync (phase 8)
+  never takes our own edit for an outside one. A file changed outside while an edit is
+  planned fails the edit's precondition: a conflict, reported for sync to settle per
+  file, never overwritten. The views show sync's state ("last in step: ...").
+- **What it needs underneath.** Keywords are JSON in `photos.tags`, so "everything under
+  Trips/" reads every row: a derived `photo_tags(photo_id, tag)` table, indexed and
+  rebuilt from `photos.tags` as `photo_people` is. Folder counts scan the same way
+  (findings #168): a derived folders table, or an index-friendly path range. Browsing
+  thousands of photos needs cached thumbnails (derived, keyed by photo and modified
+  time) and a grid that renders only what is on screen -- the Identify Faces work showed
+  what rebuilding tens of thousands of cards costs.
+
+Open questions for the owner: sources beyond folder, keyword, person and date (ratings,
+saved searches such as "Trips/ and a person, 2019"); bulk edits across folders from a
+library view (they go through the same journaled writes, so they can be undone); which
+of Photo Gallery's habits to keep (the date slider, the tag pane with counts, the info
+pane).
+
 ## After the re-architecture
 
 Behaviour changes queued behind the phases. They wait so that they land once, in the new code, rather than in both servers and again afterwards.
@@ -466,3 +507,4 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 7.5. A journal for every bulk edit and migration | in progress, 2026-09-25 |
 | 7.6. Settings in the library, and a gear on each page | in progress, 2026-09-25 |
 | 8. Sync | not started |
+| 9. Library views | planned, 2026-09-25 (design open) |
