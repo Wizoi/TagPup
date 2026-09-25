@@ -1,0 +1,78 @@
+"""A library's journal, as the CLI and the MCP server use it: what was changed, undoing a
+change, and letting old changes go (tagpup.store.journal; docs/ARCHITECTURE.md, phase
+7.5).
+
+An undo is a dry run unless told to apply, as every bulk operation is: the dry run is
+the rehearsal -- the undo and the change again inside a transaction rolled back -- and
+says whether that restored every row exactly, or why the undo would be refused. What a
+change holds can name people, so its values are shown only when asked (`reveal`): the
+library is photographs of real people, many of them minors.
+"""
+from tagpup.core.result import NotFound, Result
+from tagpup.store import journal
+
+#: How long a change stays undoable, in days; then pruning takes its values away.
+RETENTION_DAYS = journal.RETENTION_DAYS
+
+
+def history(library, change_id=None, reveal=False, limit=20):
+    """The library's changes, newest first, up to `limit`; or change `change_id` alone,
+    with the keys of every row it wrote, and with `reveal` each column's values before
+    and after (a BLOB by its size). NotFound for a change the library has not."""
+    entries = journal.history(library.path, limit=limit, change_id=change_id, values=reveal)
+    if change_id is not None and not entries:
+        raise NotFound("There is no change %d in the library %s." % (change_id, library.name))
+    return {"changes": entries, "retention_days": RETENTION_DAYS}
+
+
+def rehearse(library, change_id):
+    """Undo change `change_id` and apply it again inside a transaction rolled back. A
+    Result: `attempted` is the rows the undo would write; details["rehearsal"] says
+    whether the round trip restored every row exactly. Refused when the undo would be."""
+    result = Result(details={"dry_run": True, "change": change_id})
+    rehearsal = journal.rehearse_undo(library.path, change_id)
+    result.details["rehearsal"] = rehearsal.as_dict()
+    if rehearsal.refused:
+        result.refuse(rehearsal.refused)
+    result.attempted = rehearsal.rows
+    return result
+
+
+def undo(library, change_id, apply=False):
+    """Undo change `change_id`: a rehearsal unless `apply`. Applied, a Result whose
+    `changed` is the rows the undo wrote back; refused, naming the rows, the newer change
+    or the schema in the way, with nothing written -- and when the rehearsal, which runs
+    first, finds the round trip does not restore every row exactly."""
+    rehearsal = rehearse(library, change_id)
+    if not apply or rehearsal.refused:
+        return rehearsal
+    rehearsed = rehearsal.details["rehearsal"]
+    if not rehearsed["exact"]:
+        rehearsal.details["dry_run"] = False
+        rehearsal.refuse("Nothing was written: undoing it and applying it again did not restore every row"
+                         " exactly: %s" % "; ".join(rehearsed["differences"]))
+        return rehearsal
+    result = Result(attempted=rehearsal.attempted, details={"dry_run": False, "change": change_id})
+    try:
+        undone = journal.undo(library.path, change_id)
+    except journal.Refusal as e:
+        result.refuse("Nothing was written: %s" % e)
+        return result
+    result.changed = undone.rows
+    if not undone.settled:
+        result.fail("the people and dates of the photos it touched",
+                    "not rebuilt yet; they are, the next time the library is opened")
+    return result
+
+
+def prune(library, days=RETENTION_DAYS, apply=False):
+    """Take away the values of every change older than `days`, keeping its summary; it
+    can no longer be undone. A dry run unless `apply`: `attempted` is the changes it
+    would prune, details["values"] the column values it would delete."""
+    changes, values = journal.prunable(library.path, days)
+    result = Result(attempted=changes, details={"dry_run": not apply, "days": days, "values": values})
+    if apply and changes:
+        pruned, deleted = journal.prune(library.path, days)
+        result.changed = pruned
+        result.details["values"] = deleted
+    return result

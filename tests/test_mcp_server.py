@@ -39,10 +39,14 @@ SECRETS = ("Rowan Thackeray", "Maren Oakhollow", "Pell Quarrington", "Tamsin Fer
            "Harbourview", "Lindqvist", "regatta_", "camp_", "Sailing", "Dinghy")
 
 READ_TOOLS = {"libraries", "summary", "folders", "photos", "photo_against_file", "faces_in_photo",
-              "check", "checks", "missing_files", "query_plan"}
+              "check", "checks", "missing_files", "query_plan", "history"}
 
 #: The maintenance operations (tests/test_mcp_write_tools.py applies them).
-WRITE_TOOLS = {"refresh_rows", "merge_duplicate_person_tags", "dedupe_faces"}
+MAINTENANCE_TOOLS = {"refresh_rows", "merge_duplicate_person_tags", "dedupe_faces"}
+
+#: What writes: the maintenance operations, and undoing and pruning the journal
+#: (tests/test_journal_through_the_tools.py).
+WRITE_TOOLS = MAINTENANCE_TOOLS | {"undo", "prune_journal"}
 
 TOOLS = READ_TOOLS | WRITE_TOOLS
 
@@ -166,8 +170,12 @@ class McpServer(unittest.TestCase):
             self.assertEqual(t.annotations.readOnlyHint, t.name in READ_TOOLS, t.name)
             if t.name in WRITE_TOOLS:
                 self.assertIn("dry run", t.description, t.name)
-                self.assertIn("backs the library up", t.description, t.name)
+                for copying in ("backup", "backs the library up"):
+                    self.assertNotIn(copying, t.description, "%s: no tool copies the library" % t.name)
                 self.assertIs(t.inputSchema["properties"]["apply"]["default"], False, t.name)
+            if t.name in MAINTENANCE_TOOLS:
+                self.assertIn("rehearses", t.description, t.name)
+                self.assertIn("journal", t.description, t.name)
             if "reveal" in t.inputSchema["properties"]:
                 self.assertIn("reveal", t.description, t.name)
             if t.name != "libraries":
@@ -181,7 +189,7 @@ class McpServer(unittest.TestCase):
         """Selecting a library that does not exist created it (#16); a tool never does."""
         for tool in TOOLS - {"libraries"}:
             arguments = {"library": "harbor", "photo_id": 1, "name": "orphan_nodes", "sql": "SELECT 1",
-                         "folder": self.here}
+                         "folder": self.here, "change": 1}
             schema_of = {t.name: t for t in self.session(lambda client: client.list_tools()).tools}[tool]
             arguments = {k: v for k, v in arguments.items() if k in schema_of.inputSchema["properties"]}
             self.assertIn("no library called", self.refused(tool, **arguments))
@@ -322,13 +330,14 @@ class McpServer(unittest.TestCase):
                  ("checks", {}), ("missing_files", {}),
                  ("query_plan", {"sql": "SELECT path FROM photos WHERE path = 'Harbourview'"})]
         # The write tools as dry runs: tearDown holds the library to being unchanged.
-        calls += [(tool, {}) for tool in sorted(WRITE_TOOLS)]
+        calls += [(tool, {}) for tool in sorted(MAINTENANCE_TOOLS)]
+        calls += [("history", {}), ("undo", {"change": 1}), ("prune_journal", {})]
         calls += [("check", {"name": rule.__name__}) for rule in checks.RULES]
         self.assertEqual({tool for tool, _ in calls}, TOOLS)
         for tool, arguments in calls:
             if tool != "libraries":
                 arguments = dict(arguments, library=LIBRARY)
-                if tool not in ("summary", "query_plan"):
+                if tool not in ("summary", "query_plan", "prune_journal", "undo"):
                     arguments["reveal"] = reveal
             result = self.result(tool, **arguments)
             texts.append((tool, " ".join(c.text for c in result.content) + json.dumps(result.structuredContent)))

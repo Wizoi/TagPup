@@ -3,10 +3,12 @@ session, each over a library in a home of its own.
 
 Phase 7 (docs/ARCHITECTURE.md) gives Claude the maintenance scripts' operations as tools
 that call the same services the scripts call (tagpup.services.maintenance's scaffold): a
-dry run unless told to apply, one backup before it applies, and the Result back. The
-scripts' own history is why each test checks what it does: one printed what it planned
-as what it had removed, six wrote without a backup (docs/findings.md, #54), and a
-backfill reported 60 done and wrote nothing.
+dry run unless told to apply, and the Result back. Since phase 7.5 the dry run rehearses
+the change and applying records it in the library's journal, which the `history` and
+`undo` tools read and take back; nothing copies the library. The scripts' own history is
+why each test checks what it does: one printed what it planned as what it had removed,
+six wrote without a backup (docs/findings.md, #54), and a backfill reported 60 done and
+wrote nothing.
 
 Rows are seeded in plain SQL, as the indexer stores them. ExifTool is never run: the
 refresh test's rows are either fixable from the row alone or read with an ExifTool that
@@ -99,24 +101,38 @@ class WriteTools(unittest.TestCase):
         return self._answers
 
     def dry_run_then_apply(self, tool, count, **arguments):
-        """The tool's dry run, which must change nothing and back nothing up, then its
-        apply, which must back up exactly once: (dry run, applied, rows before, rows after)
-        where `count` reads what the operation changes."""
+        """The tool's dry run, which must change nothing and rehearse the change exactly,
+        then its apply, which must record one change and copy nothing, then `history` and
+        `undo` of that change, which must put back what it changed: (dry run, applied, rows
+        before, rows after the apply) where `count` reads what the operation changes."""
         before = count()
         with open(self.db_path, "rb") as handle:
             file_before = handle.read()
         planned = self.call(tool, **arguments)
         with open(self.db_path, "rb") as handle:
             self.assertEqual(handle.read(), file_before, "a dry run changed the library")
-        self.assertEqual((planned["dry_run"], planned["changed"], planned["backup"]), (True, 0, None))
-        self.assertEqual(self.backups(), [], "a dry run took a backup")
+        self.assertEqual((planned["dry_run"], planned["changed"], planned["change"]), (True, 0, None))
+        self.assertEqual((planned["rehearsal"]["exact"], planned["rehearsal"]["derived_exact"]), (True, True))
         self.assertEqual(count(), before)
 
         applied = self.call(tool, apply=True, **arguments)
         after = count()
         self.assertFalse(applied["dry_run"])
-        self.assertEqual(len(self.backups()), 1, "applying backs up once, and the tool takes none of its own")
-        self.assertEqual(applied["backup"], self.backups()[0], "the backup is named by its file alone")
+        self.assertEqual(self.backups(), [], "applying copied the library")
+        self.assertIsInstance(applied["change"], int)
+
+        # The change is in the journal, and undone through the tools it is gone again.
+        listed = self.call("history", change=applied["change"])["changes"]
+        self.assertEqual([(c["id"], c["operation"], c["status"]) for c in listed],
+                         [(applied["change"], tool, "applied")])
+        rehearsed = self.call("undo", change=applied["change"])
+        self.assertEqual((rehearsed["dry_run"], rehearsed["refused"], rehearsed["rehearsal"]["exact"]),
+                         (True, None, True))
+        self.assertEqual(count(), after, "the undo's rehearsal changed the library")
+        undone = self.call("undo", change=applied["change"], apply=True)
+        self.assertEqual((undone["ok"], undone["dry_run"]), (True, False))
+        self.assertEqual(count(), before, "the undo did not put back what the change changed")
+        self.assertEqual(self.call("history", change=applied["change"])["changes"][0]["status"], "undone")
         return planned, applied, before, after
 
     # ---- The tools -----------------------------------------------------------------------
@@ -196,7 +212,7 @@ class WriteTools(unittest.TestCase):
             self.assertIn("no tag_taxonomy", answer["refused"])
             self.assertIn("bare", answer["refused"])
             self.assertNotIn(self.home.root, answer["refused"])
-            self.assertEqual((answer["ok"], answer["changed"], answer["backup"]), (False, 0, None))
+            self.assertEqual((answer["ok"], answer["changed"], answer["change"]), (False, 0, None))
         self.assertEqual(self.backups(), [])
 
     def test_refresh_rows(self):

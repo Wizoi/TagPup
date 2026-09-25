@@ -144,6 +144,7 @@ nothing of Flask's), and each mixed module splits along the layers (phase 5.5).
 | `generations` | infrastructure | `name`, `value` for photos, faces and taxonomy. Replaces `faces_generation` and `taxonomy_generation`. |
 | `schema_version` | infrastructure | Migrations applied in order, from `tagpup.store.schema`. |
 | `jobs` | infrastructure | id, kind, arguments, status, progress, message, created, finished. |
+| `changes`, `change_rows` | infrastructure | The journal (phase 7.5): each bulk edit, and what it found and left of each row, one row per changed column. |
 
 Each change ships as a migration with a dry run and a backup, and `tools/doctor.py` checks the library's invariants before and after.
 
@@ -192,7 +193,7 @@ Target: the full check in under a minute.
 | `tagpup_cli.py` | `tagpup/cli.py`; the file at the root stays as a launcher |
 | `tagpup_gui.py`, `tagtuner.py` | one launcher for the one server |
 | `runner.py` | `tagpup/desktop/runner.py`, over services |
-| maintenance scripts in `scripts/` | stay, each a thin entry point on one scaffold: dry run, backup, apply, report |
+| maintenance scripts in `scripts/` | stay, each a thin entry point on one scaffold: dry run (a rehearsal), apply (one change of the journal), report |
 | `measure_*`, `verify_workflow.py`, `generate_screenshots.py`, `prepare_test_environment.py` | `tools/`, sharing one sandbox module |
 | `gui/`, `gui_tagpup/` | `web/tuner/`, `web/tagpup/`, `web/common/` |
 
@@ -380,16 +381,16 @@ writes atomic; they find disagreement between the database and a file on the nex
 and resolve it per file. dpkg's per-item states and recovery at start are the model
 for files here.
 
-- [ ] **The journal** (a migration): `changes(id, operation, status, schema_version, created, applied, undone, summary)` -- status planned, applied, derived_pending, undone, failed, pruned -- and `change_rows(change_id, table_name, row_key, column_name, old, new)`, one row per changed column, the values stored as SQLite values (a BLOB as a BLOB). An inserted or deleted row records every column.
-- [ ] **Forward**, under the write lock in one transaction: read each row's current values, refuse the whole change if any differs from what the plan read, write, record, mark the change `derived_pending`, commit; then rebuild the derived data the change touched (the photos' people, generations) and mark it `applied`. A change left `derived_pending` by a crash is finished at start.
-- [ ] **Undo**: the same with old and new swapped. Refused when any row is not what the change left, when a newer applied change touched the same rows (named in the refusal), or when the schema has moved on since the change was made.
-- [ ] **The rehearsal**: a dry run applies the change and its undo inside a transaction that is rolled back, and says whether the undo restored every row exactly. Nothing is written; the real apply writes once.
-- [ ] **Keys never reused**: rows a journaled operation can delete (`faces`, `tag_taxonomy`, `photo_people`...) get keys SQLite never hands out again (AUTOINCREMENT), or an undo that re-inserts a deleted row could collide with -- or silently match -- a newer one. Cascades into journaled tables are either recorded or forbidden; a guard test holds it.
-- [ ] **The maintenance operations** (phase 7's scaffold) record a change instead of taking a backup; the MCP server and the CLI gain `history` and `undo` (a dry run by default). Merging photo_index's 98 duplicate person tags is the first journaled change *(owner, 2026-09-25)*.
-- [ ] **Retention**: how long a change stays undoable, and what pruning keeps (the summary stays; the values go; the change becomes `pruned`).
+- [x] **The journal** (a migration): `changes(id, operation, status, schema_version, created, applied, undone, summary)` -- status planned, applied, derived_pending, undone, failed, pruned -- and `change_rows(change_id, table_name, row_key, column_name, old, new)`, one row per changed column, the values stored as SQLite values (a BLOB as a BLOB). An inserted or deleted row records every column.
+- [x] **Forward**, under the write lock in one transaction: read each row's current values, refuse the whole change if any differs from what the plan read, write, record, mark the change `derived_pending`, commit; then rebuild the derived data the change touched (the photos' people, generations) and mark it `applied`. A change left `derived_pending` by a crash is finished at start.
+- [x] **Undo**: the same with old and new swapped. Refused when any row is not what the change left, when a newer applied change touched the same rows (named in the refusal), or when the schema has moved on since the change was made.
+- [x] **The rehearsal**: a dry run applies the change and its undo inside a transaction that is rolled back, and says whether the undo restored every row exactly. Nothing is written; the real apply writes once.
+- [x] **Keys never reused**: rows a journaled operation can delete (`faces`, `tag_taxonomy`, `photo_people`...) get keys SQLite never hands out again (AUTOINCREMENT), or an undo that re-inserts a deleted row could collide with -- or silently match -- a newer one. Cascades into journaled tables are either recorded or forbidden; a guard test holds it.
+- [x] **The maintenance operations** (phase 7's scaffold) record a change instead of taking a backup; the MCP server and the CLI gain `history` and `undo` (a dry run by default). Merging photo_index's 98 duplicate person tags is the first journaled change *(owner, 2026-09-25)*.
+- [x] **Retention**: how long a change stays undoable, and what pruning keeps (the summary stays; the values go; the change becomes `pruned`). 90 days (`journal.RETENTION_DAYS`), pruned after every apply and on request (`prune-journal`, the MCP tool `prune_journal`).
 - [ ] **Migrations**: each in one transaction, with the checks it names run before it commits. One that only adds needs no backup; one that changes data records its rows like any change; only one that destroys information takes a full backup, taken under the write lock. Recorded in `changes` as well.
 - [ ] **Photo files** (the last stage): a bulk edit that writes files -- Add to all selected, Apply All, Shift Date Taken, Smart Rename, a person's rename -- records each file's fields before and after, commits that plan, marks a file `writing` before ExifTool runs and `done` in the same transaction that records the row (`record_tags_in_index`). At start, a file left `writing` is settled by what it holds: the before, redo it; the after, mark it done; neither, a conflict, reported and never overwritten. Undo rewrites a file only where it still holds what the edit wrote.
-- [ ] Tests that crash an operation between each of its steps and prove recovery; forward-then-undo restoring the touched tables exactly on rows shaped like the real ones; and rehearsals on copies of both real libraries.
+- [ ] Tests that crash an operation between each of its steps and prove recovery; forward-then-undo restoring the touched tables exactly on rows shaped like the real ones; and rehearsals on copies of both real libraries. Done for the database stages (`tests/test_journal.py`, `tests/test_journal_keys_and_cascades.py`, `tests/test_journal_through_the_scripts.py`; rehearsed on copies of both libraries); the photo-file stage and migrations to come.
 
 Exit: no bulk operation or data-changing migration takes a full copy of the library; each is recorded, rehearsed before it is applied and undoable after, and a crash at any step is settled at the next start.
 
