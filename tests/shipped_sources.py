@@ -27,3 +27,15 @@ def python_sources():
         found += [os.path.relpath(os.path.join(folder, name), ROOT)
                   for name in sorted(names) if name.endswith(".py")]
     return found
+
+
+def page_source(page):
+    """A page's modules (web/<page>/*.js), one after another: where a guard looks for
+    the page's copy of a rule, whichever module holds it."""
+    folder = os.path.join(ROOT, "web", page)
+    texts = []
+    for name in sorted(os.listdir(folder)):
+        if name.endswith(".js"):
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                texts.append(f.read())
+    return "\n".join(texts)

@@ -14,14 +14,13 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps } from "./harness.mjs";
+import { REPO_ROOT, loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, pageSource } from "./harness.mjs";
 import { tagProblem, nameProblem } from "../../web/common/vocabulary.js";
 
 const RULES = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tests", "tag_rules.json"), "utf8"));
 
-const PAGES = {
-  "web/tagpup/main.js": path.join(REPO_ROOT, "web", "tagpup", "main.js"),
-};
+/** TagPup's page: its modules, as the browser loads them (harness.mjs). */
+const TAGPUP = pageSource("tagpup");
 
 function functionSource(source, name) {
   const lines = source.split(/\r?\n/);
@@ -47,8 +46,8 @@ describe("web/common/vocabulary.js: what may be set", () => {
   });
 });
 
-describe("web/tagpup/main.js: what a Smart Rename grouping may hold", () => {
-  const source = fs.readFileSync(PAGES["web/tagpup/main.js"], "utf8");
+describe("web/tagpup/rename.js: what a Smart Rename grouping may hold", () => {
+  const source = TAGPUP;
   const groupingProblem = new Function(
     `${functionSource(source, "groupingProblem")}\nreturn groupingProblem;`)();
 
@@ -59,9 +58,9 @@ describe("web/tagpup/main.js: what a Smart Rename grouping may hold", () => {
   });
 });
 
-describe("web/tagpup/main.js: a typed tag is set in its one spelling", () => {
+describe("web/tagpup/tags.js: a typed tag is set in its one spelling", () => {
   // Only TagPup's page turns typed text into a tag path.
-  const source = fs.readFileSync(PAGES["web/tagpup/main.js"], "utf8");
+  const source = TAGPUP;
   const normalizeTag = new Function(`${functionSource(source, "normalizeTag")}\nreturn normalizeTag;`)();
 
   test("as the server spells it", () => {

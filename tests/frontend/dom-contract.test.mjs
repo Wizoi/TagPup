@@ -91,7 +91,7 @@ describe("retired concepts stay retired", () => {
     // from the people list. Once the pseudo-person was removed from that list none of
     // them could ever be true, so they were dead branches that read as live ones --
     // nine of them, each implying a mode the app no longer has.
-    const js = fs.readFileSync(path.join(REPO_ROOT, "web", "tuner", "main.js"), "utf8");
+    const js = pageSource("tagtuner");
     const comparisons = [...js.matchAll(/[!=]==\s*['"]Unmatched['"]/g)];
     assert.equal(
       comparisons.length,
@@ -109,7 +109,7 @@ describe("sidebar refreshes follow the selected mode", () => {
     // renders the people list unconditionally. Calling the latter after a background
     // job finished put the people list in the sidebar while the dropdown still said
     // "Folder Matches" -- the two disagreeing about what you were looking at.
-    const js = fs.readFileSync(path.join(REPO_ROOT, "web", "tuner", "main.js"), "utf8");
+    const js = pageSource("tagtuner");
     const direct = [...js.matchAll(/fetchPeopleWithCounts\(\s*true\s*\)/g)];
     assert.equal(
       direct.length,
@@ -124,10 +124,10 @@ describe("sidebar refreshes follow the selected mode", () => {
     // first 900 characters and broke when a third mode was added ahead of the branch
     // it was looking for -- a passing test turning red for the length of the code
     // above it teaches nothing.
-    const js = fs.readFileSync(path.join(REPO_ROOT, "web", "tuner", "main.js"), "utf8");
+    const js = pageSource("tagtuner");
     const start = js.indexOf("function fetchPhotos()");
     assert.ok(start > 0, "fetchPhotos is gone");
-    const end = js.indexOf("\n    function ", start + 10);
+    const end = js.indexOf("\nfunction ", start + 10);
     const body = js.slice(start, end);
 
     for (const branch of [

@@ -96,14 +96,17 @@ enforce it.
 the bulk paths did not, and rows described what photos used to hold.
 `record_tags_in_index()`.
 
-**`web/tagpup/main.js` starts itself at the very end.** Anything below the startup block
-can be reached before its `let` runs, which throws and reports an unrelated line.
+**A page's `main.js` only wires it, and starts it at the very end.** Each feature is a
+module in `web/tagpup/` or `web/tuner/`. The page's mutable state is `state` in its
+`state.js`, never a module's `let`, since a module cannot reassign what it imports. A call
+back up the import order goes through `upper` (`hooks.js`), which `main.js` fills in.
 
 **A page's request goes through `web/common/api.js`.** `api.json`, `api.fetch`,
 `api.image` and `api.url` put the library from the page's URL in front of `/api/`; a bare
-`fetch` reaches no library. The pages are ES modules with no build step, and the page
-tests load a page's modules into jsdom as one script, so a page declares each name once
-(`tests/frontend/harness.mjs` refuses a second).
+`fetch` reaches no library. The pages are ES modules with no build step; the page tests
+load a page's modules into jsdom in import order, each in a scope of its own
+(`tests/frontend/harness.mjs`), and refuse an import cycle or a name used without its
+import.
 
 **Write patch scripts with a file tool, not a shell heredoc.** Backslashes and `\u`
 escapes are mangled in transit. This cost time five times in two days, so it is no

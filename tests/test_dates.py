@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from tagpup.core import dates  # noqa: E402
-from shipped_sources import ROOT, python_sources  # noqa: E402
+from shipped_sources import ROOT, page_source, python_sources  # noqa: E402
 
 
 class WhenItWasTaken(unittest.TestCase):
@@ -99,10 +99,9 @@ class OneReadingOfTheDate(unittest.TestCase):
         # The TagPup page kept a list that took the date a file was modified for the
         # date it was taken (#67); the pages read `taken` as the server gives it.
         found = []
-        for page in (os.path.join("web", "tagpup", "main.js"), os.path.join("web", "tuner", "main.js")):
-            with open(os.path.join(ROOT, page), encoding="utf-8") as handle:
-                found += ["%s: %s" % (page, name) for name in
-                          sorted(set(re.findall(r"\b\w*(?:DateTimeOriginal|CreateDate|ModifyDate)\b", handle.read())))]
+        for page in ("tagpup", "tuner"):
+            found += ["web/%s: %s" % (page, name) for name in
+                      sorted(set(re.findall(r"\b\w*(?:DateTimeOriginal|CreateDate|ModifyDate)\b", page_source(page))))]
         self.assertEqual([], found)
 
     def test_the_page_is_given_when_each_photo_was_taken(self):

@@ -7,6 +7,7 @@ own; the grid flagged half of every correctly named face (docs/findings.md, #71,
 """
 import os
 import re
+import sys
 import unittest
 
 import numpy as np
@@ -14,6 +15,8 @@ import numpy as np
 from tagpup.core import clustering
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "tests"))
+from shipped_sources import page_source  # noqa: E402
 
 
 def face(*values):
@@ -105,15 +108,13 @@ class OneOwner(unittest.TestCase):
         self.assertEqual([], found)
 
     def test_the_page_asks_the_server_which_names_look_wrong(self):
-        with open(os.path.join(ROOT, "web", "tuner", "main.js"), encoding="utf-8") as f:
-            page = f.read()
+        page = page_source("tuner")
         self.assertNotRegex(page, r"similarity\s*<\s*0\.\d")
         self.assertIn("possibly_wrong", page)
 
     def test_the_page_shows_the_bands_the_server_names(self):
         # Four sets of numbers decided Likely and Possible on the page; it keeps none.
-        with open(os.path.join(ROOT, "web", "tuner", "main.js"), encoding="utf-8") as f:
-            page = f.read()
+        page = page_source("tuner")
         self.assertEqual([], re.findall(r"(?:similarity|sim|ranked)\s*>=\s*0\.\d+", page))
 
     def test_nobody_writes_the_radius_as_a_number(self):

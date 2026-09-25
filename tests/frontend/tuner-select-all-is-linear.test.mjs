@@ -11,11 +11,11 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { REPO_ROOT, loadApp, FakeServer, click, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, click, closeAllApps, pageSource } from "./harness.mjs";
 
-const SOURCE = fs.readFileSync(path.join(REPO_ROOT, "web", "tuner", "main.js"), "utf8");
+// The page is modules now (web/tuner/); the button and its label are in whichever
+// holds them.
+const SOURCE = pageSource("tagtuner");
 
 function block(startMarker, length = 1400) {
   const at = SOURCE.indexOf(startMarker);

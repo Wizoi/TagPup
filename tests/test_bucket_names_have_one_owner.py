@@ -4,11 +4,14 @@ called "Excluded" opened the excluded faces instead of their own (docs/findings.
 """
 import os
 import re
+import sys
 import unittest
 
 from tagpup.core import vocabulary
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "tests"))
+from shipped_sources import page_source  # noqa: E402
 
 
 class NobodyIsCalledABucket(unittest.TestCase):
@@ -18,16 +21,14 @@ class NobodyIsCalledABucket(unittest.TestCase):
         self.assertIsNone(vocabulary.problem_with_name("Excluded Ferris"))
 
     def test_the_page_names_them_as_the_server_does(self):
-        with open(os.path.join(ROOT, "web", "tuner", "main.js"), encoding="utf-8") as f:
-            page = f.read()
+        page = page_source("tuner")
         found = re.search(r"const BUCKET = Object\.freeze\(\{(.*?)\}\)", page)
         self.assertIsNotNone(found, "the page's copy of the bucket names moved")
         copy = dict(re.findall(r"(\w+):\s*'([^']*)'", found.group(1)))
         self.assertEqual({key.upper(): name for key, name in vocabulary.BUCKETS.items()}, copy)
 
     def test_the_page_spells_them_nowhere_else(self):
-        with open(os.path.join(ROOT, "web", "tuner", "main.js"), encoding="utf-8") as f:
-            lines = f.read().splitlines()
+        lines = page_source("tuner").splitlines()
         spelled = [n for n, line in enumerate(lines, 1)
                    if re.search(r"'(Unknown Faces|Ungrouped|Excluded)'", line) and "const BUCKET" not in line]
         self.assertEqual([], spelled)
