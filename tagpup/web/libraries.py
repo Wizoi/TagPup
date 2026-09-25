@@ -36,7 +36,13 @@ PAGE_SUFFIXES = (".css", ".js", ".html", ".png", ".jpg", ".jpeg", ".ico")
 #: The page paths a request without a library is sent to the startup library for: the
 #: page, its style, its modules and the shared ones and their stylesheets (tagpup.web.app).
 PAGE_PATHS = ("/", "/index.html", "/style.css")
-PAGE_MODULE = re.compile(r"^/(?:common/)?[A-Za-z0-9_-]+\.js$|^/common/[A-Za-z0-9_-]+\.css$")
+
+#: What a page module's or shared stylesheet's name may be, said once: tagpup.web.app
+#: serves by it, PAGE_MODULE routes by it, and tests/test_page_module_names.py holds the
+#: page tests' loader (tests/frontend/harness.mjs) to it (#165).
+_NAME = r"[A-Za-z0-9_-]+"
+MODULE_NAME = re.compile(r"^%s$" % _NAME)
+PAGE_MODULE = re.compile(r"^/(?:common/)?%s\.js$|^/common/%s\.css$" % (_NAME, _NAME))
 
 
 def is_page_path(path):
