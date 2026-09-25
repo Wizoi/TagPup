@@ -23,7 +23,7 @@ from flask import Flask, Response, abort, g, request
 
 from tagpup import config as tagpup_config
 from tagpup.logs import REQUESTS
-from tagpup.web import libraries, security
+from tagpup.web import libraries, security, tagpup_routes, tuner_routes
 
 logger = logging.getLogger(__name__)
 requests_log = logging.getLogger(REQUESTS)
@@ -31,6 +31,7 @@ requests_log = logging.getLogger(REQUESTS)
 #: Each page's folder, beside the package in the code folder (tagpup.config knows
 #: where that is). The folders keep their names until phase 6 moves them under web/.
 PAGES = {"tagpup": "gui_tagpup", "tuner": "gui"}
+ROUTES = {"tagpup": tagpup_routes.routes, "tuner": tuner_routes.routes}
 
 #: A page's own files and what they are sent as. They are never cached: a page that
 #: kept an old app.js after an install argued with its server for a day.
@@ -67,6 +68,7 @@ def create_app(kind, startup=None, pages=None):
     app.after_request(_log_slow)
     app.teardown_request(_log_failure)
     app.register_blueprint(libraries.picker)
+    app.register_blueprint(ROUTES[kind])
     _page_routes(app)
     app.wsgi_app = libraries.LibraryFromUrl(app.wsgi_app, startup)
     return app
