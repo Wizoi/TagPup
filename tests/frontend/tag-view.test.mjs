@@ -169,6 +169,8 @@ describe("opening a tag", () => {
     for (const src of sources) {
       assert.match(src, /[?&]size=300(&|$)/, src);
       assert.doesNotMatch(src, /thumb=/, src);
+      // Turned as a person sees it: the cards draw no face boxes (#31, found in review).
+      assert.match(src, /[?&]upright=1(&|$)/, src);
     }
   });
 

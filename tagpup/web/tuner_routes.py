@@ -148,8 +148,10 @@ def photo_details():
 @routes.get("/api/photo-file")
 def photo_file():
     # As stored, and not kept: the page draws face boxes over it in the stored pixels'
-    # coordinates (tagpup.web.responses.photo).
-    return responses.photo(request.args.get("path"), request.args.get("size"), upright=False)
+    # coordinates (tagpup.web.responses.photo). `upright=1` turns a copy as a person
+    # sees it, for a view that draws no boxes: the Tags view's cards (#31).
+    return responses.photo(request.args.get("path"), request.args.get("size"),
+                           upright=request.args.get("upright") == "1")
 
 
 @routes.get("/api/face-crop")

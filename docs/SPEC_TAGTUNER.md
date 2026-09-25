@@ -388,7 +388,7 @@ matching can still read its name.
 - `/api/databases`: Returns `{"databases": list}` — the selectable database names (without the `.db` suffix). Which one was opened last is the browser's to remember.
 - `/api/photos?mode=<mode>`: Returns JSON array of photo records with unmatched face counts, file metadata, and folder paths. Only photos having at least one unmatched face are returned (`HAVING unmatched > 0`). The UI also appends `show_matched`, but the server does not currently read it — see the known limitation under *Matched Photos Toggle*.
 - `/api/photo-details?path=<photo_path>`: Returns metadata details (path, filename, caption, people, tags, faces list with `max_similarity` scores).
-- `/api/photo-file?path=<photo_path>`: Serves the original image file (supports dynamic resizing via `size=<int>` parameter).
+- `/api/photo-file?path=<photo_path>&size=<int>&upright=1`: Serves the original image file, or with `size` a JPEG copy no larger than that on a side. The copy is as stored -- the face views draw boxes over it in the stored pixels' coordinates -- unless `upright=1`, which turns it by its Orientation as a person sees it; the Tags view's cards, which draw no boxes, ask that way.
 - `/api/face-crop?id=<face_id>`: Dynamically crops the face from the original photo and returns it as a JPEG (caches the JPEG crop binary in the database).
 - `/api/people`: Returns a sorted list of all unique people names in the database, leaving out people hidden from autocomplete. `include_hidden=1` includes them: the page asks that way to check whether a name already exists.
 - `/api/people-with-counts`: Returns unique names with their respective face counts.
