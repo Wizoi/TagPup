@@ -67,13 +67,13 @@ class TestMultipleDatabases(unittest.TestCase):
         return reply.get_json()
 
     def test_database_api_endpoints(self):
-        # 1. GET /api/databases - the startup library is selected, and offered: it was
-        # hidden from the list by name while the tests kept theirs in the checkout (#14)
+        # 1. GET /api/databases - the startup library is offered: it was hidden from
+        # the list by name while the tests kept theirs in the checkout (#14). Nothing
+        # is "selected": which library was opened last is the browser's to remember
+        # (#100), and the server writes no setting.
         data = self.get("/api/databases")
-        self.assertIn("databases", data)
-        self.assertIn("selected", data)
+        self.assertEqual(["databases"], list(data))
         self.assertIn("multiple_db_startup", data["databases"])
-        self.assertTrue(data["selected"])
 
         # 2. POST /api/databases/create - create a new database (without .db suffix in request)
         create_res = self.post("/api/databases/create", {"db_name": "created_db_1"})
@@ -94,23 +94,14 @@ class TestMultipleDatabases(unittest.TestCase):
         self.assertIn("tag_taxonomy", tables)
 
         # 3. GET /api/databases again - new DB should now be listed without .db extension
-        data = self.get("/api/databases")
-        self.assertIn("created_db_1", data["databases"])
-        # And it should be selected because create sets it as default
-        self.assertEqual(data["selected"], "created_db_1")
+        self.assertIn("created_db_1", self.get("/api/databases")["databases"])
 
-        # 4. POST /api/databases/select - select database back to startup (without .db suffix in request)
-        select_res = self.post("/api/databases/select", {"db_name": "multiple_db_startup"})
-        self.assertTrue(select_res["success"])
-
-        # Verify selected changed
-        self.assertEqual(self.get("/api/databases")["selected"], "multiple_db_startup")
-
-        # Remembered in this test's home, and only there.
-        self.assertEqual(tagpup_config.read_file().get("paths", "default_db"),
-                         "multiple_db_startup.db")
+        # 4. There is no route to remember a choice by, and no setting was written:
+        # neither this home's nor the one beside the code.
+        self.assertEqual(404, self.client.post("/api/databases/select", json={"db_name": "x"}).status_code)
+        self.assertFalse(tagpup_config.read_file().has_option("paths", "default_db"))
         self.assertEqual(file_bytes(self.code_config), self.code_config_bytes,
-                         "selecting a library changed the config.ini beside the code")
+                         "creating a library changed the config.ini beside the code")
 
     def test_a_created_library_is_not_left_open(self):
         """Creating a library opened it for its schema and never closed it.

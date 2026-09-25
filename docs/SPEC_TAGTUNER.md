@@ -335,7 +335,7 @@ matching can still read its name.
 ## Backend APIs
 
 ### `GET` Endpoints
-- `/api/databases`: Returns `{"databases": list, "selected": string}` — the selectable database names (without the `.db` suffix) and the current default from `config.ini`.
+- `/api/databases`: Returns `{"databases": list}` — the selectable database names (without the `.db` suffix). Which one was opened last is the browser's to remember.
 - `/api/photos?mode=<mode>`: Returns JSON array of photo records with unmatched face counts, file metadata, and folder paths. Only photos having at least one unmatched face are returned (`HAVING unmatched > 0`). The UI also appends `show_matched`, but the server does not currently read it — see the known limitation under *Matched Photos Toggle*.
 - `/api/photo-details?path=<photo_path>`: Returns metadata details (path, filename, caption, people, tags, faces list with `max_similarity` scores).
 - `/api/photo-file?path=<photo_path>`: Serves the original image file (supports dynamic resizing via `size=<int>` parameter).
@@ -362,7 +362,6 @@ matching can still read its name.
 
 **What may be set.** A tag or a person's name being set is refused with `400` and a message saying why if it holds `|` or `\` (which other programs read as a break between levels), a control character such as a tab or a line break, or nothing at all. A tag also may not have an empty level (`A//B`, `A/`); a person's name is one level, so it may not hold `/`. The rules are `problem_with_tag` and `problem_with_name` in `tagpup/core/vocabulary.py`, the same as TagPup's, and the page asks them before sending.
 
-- `/api/databases/select`: Expects JSON body `{"db_name": string}`. Persists the chosen database as `default_db` in `config.ini`.
 - `/api/databases/create`: Expects JSON body `{"db_name": string}`. Creates a new empty database file, seeded with the default taxonomy categories.
 - `/api/face/match`: Expects JSON body `{"face_id": int, "person_name": string}`. An excluded face is refused with `409`: it must be restored before it can be named. `person_name` must be a name that may be set (above).
 - `/api/face/unmatch`: Expects JSON body `{"face_id": int}`.

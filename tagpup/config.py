@@ -31,7 +31,6 @@ CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULTS = {
     "paths": {
         "data_dir": "data",
-        "default_db": "photo_index.db",
     },
     "model": {
         "name": "ViT-H-14",
@@ -98,16 +97,6 @@ def write_file(settings, folder=None):
     os.replace(temporary, target)
 
 
-def remember_library(db_name):
-    """Make this the library to open next time: paths.default_db, and nothing else."""
-    with _write_lock:
-        settings = read_file()
-        if not settings.has_section("paths"):
-            settings.add_section("paths")
-        settings.set("paths", "default_db", db_name)
-        write_file(settings)
-
-
 def resolve(value):
     """A path setting as an absolute path. Relative means relative to home(), never to
     the folder the program happened to be started from."""
@@ -120,21 +109,9 @@ def data_dir(settings=None):
     return resolve((settings or load()).get("paths", "data_dir"))
 
 
-def default_db(settings=None):
-    """The file name of the library to open, such as photo_index.db."""
-    return (settings or load()).get("paths", "default_db").strip()
-
-
 def library_path(db_name, settings=None):
     """Where the library with that file name lives."""
     return os.path.join(data_dir(settings), db_name)
-
-
-def default_library(settings=None):
-    """Where the library to open lives: default_db in data_dir. The index, both servers
-    and the bulk scripts named theirs data/<name>.db, which is the working directory's
-    data folder -- another library wherever they were started (docs/findings.md, #74)."""
-    return library_path(default_db(settings), settings)
 
 
 def default_exiftool():

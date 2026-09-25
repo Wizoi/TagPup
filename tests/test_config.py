@@ -61,7 +61,6 @@ class WhereThingsAre(WithAHome):
 
     def test_nothing_configured_means_the_defaults(self):
         self.assertEqual(config.data_dir(), os.path.join(self.home, "data"))
-        self.assertEqual(config.default_db(), "photo_index.db")
         self.assertEqual(config.rename_format(), "{grouping} - {index} - {caption}")
         self.assertEqual(config.candidate_tags()[:3], ["Landscape", "Portrait", "Nature"])
 
@@ -137,41 +136,26 @@ class WhichExifTool(WithAHome):
             self.assertEqual(config.exiftool_path(), missing, "the error should name it")
 
 
-class RememberingALibrary(WithAHome):
-    def test_it_changes_default_db_and_nothing_else(self):
-        self.write_config("[paths]\ndata_dir = data\ndefault_db = photo_index.db\n\n"
-                          "[renaming]\nformat = {index} {caption}\n")
-        config.remember_library("family.db")
-        written = config.read_file()
-        self.assertEqual(written.get("paths", "default_db"), "family.db")
-        self.assertEqual(written.get("paths", "data_dir"), "data")
-        self.assertEqual(written.get("renaming", "format"), "{index} {caption}")
-        self.assertFalse(written.has_section("model"), "the defaults were written into the file")
+class NothingWritesTheSettings(WithAHome):
+    """The app kept "the library chosen last" in config.ini and wrote the file on every
+    choice (docs/findings.md, #100). Now a library is the URL's, and the browser
+    remembers; config.ini is one installation's, written by its owner alone."""
 
-    def test_it_writes_lf_line_endings(self):
-        config.remember_library("family.db")
+    def test_there_is_no_library_to_remember(self):
+        self.assertFalse(hasattr(config, "remember_library"))
+        self.assertFalse(hasattr(config, "default_db"))
+        self.assertNotIn("default_db", config.DEFAULTS["paths"])
+
+    def test_a_file_written_for_a_sandbox_has_lf_line_endings(self):
+        config.write_file({"paths": {"data_dir": "data"}}, folder=self.home)
         with open(config.config_path(), "rb") as handle:
             self.assertNotIn(b"\r\n", handle.read())
-
-    def test_it_writes_home_and_leaves_the_code_folder_alone(self):
-        # A code folder of the test's own, with settings in it: the checkout's are the
-        # ones the app somebody is using reads, and are neither written nor read here.
-        code_folder = tempfile.mkdtemp(prefix="tagpup_code_folder_")
-        self.addCleanup(shutil.rmtree, code_folder, True)
-        config.write_file({"paths": {"default_db": "the_code_folders.db"}}, folder=code_folder)
-        with open(config.config_path(code_folder), "rb") as handle:
-            before = handle.read()
-        with mock.patch.object(config, "CODE_ROOT", code_folder):
-            config.remember_library("somewhere_else.db")
-        with open(config.config_path(code_folder), "rb") as handle:
-            self.assertEqual(before, handle.read())
-        self.assertEqual(config.default_db(), "somewhere_else.db")
 
     def test_a_config_file_can_be_written_for_another_home(self):
         sandbox = tempfile.mkdtemp(prefix="tagpup_sandbox_")
         self.addCleanup(shutil.rmtree, sandbox, True)
-        config.write_file({"paths": {"default_db": "measured.db"}}, folder=sandbox)
-        self.assertEqual(config.read_file(sandbox).get("paths", "default_db"), "measured.db")
+        config.write_file({"paths": {"data_dir": "measured"}}, folder=sandbox)
+        self.assertEqual(config.read_file(sandbox).get("paths", "data_dir"), "measured")
         self.assertFalse(os.path.exists(config.config_path()), "it wrote this home too")
 
 

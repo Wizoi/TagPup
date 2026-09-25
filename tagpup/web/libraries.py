@@ -118,35 +118,18 @@ picker = Blueprint("libraries", __name__)
 
 @picker.get("/api/databases")
 def list_libraries():
-    """The libraries the picker offers, and the one chosen last. A server started on a
-    test library offers only test libraries (tagpup.core.library)."""
-    settings = tagpup_config.load()
-    data_dir = tagpup_config.data_dir(settings)
+    """The libraries the picker offers. A server started on a test library offers only
+    test libraries (tagpup.core.library). Which one was chosen last is the browser's
+    to remember (docs/findings.md, #100): the server kept it in config.ini, and wrote
+    that file on every choice."""
+    data_dir = tagpup_config.data_dir()
     files = os.listdir(data_dir) if os.path.exists(data_dir) else []
-    return jsonify({
-        "databases": sorted(libraries.picker_names(files, _test_mode())),
-        "selected": libraries.picker_name(tagpup_config.default_db(settings)),
-    })
-
-
-@picker.post("/api/databases/select")
-def select_library():
-    """Remember the library chosen, so the apps open it next."""
-    body = request.get_json(silent=True) or {}
-    db_name = body.get("db_name")
-    if not db_name:
-        return responses.error(400, "Invalid database name")
-    try:
-        tagpup_config.remember_library(libraries.file_name_for(db_name))
-    except Exception as e:
-        return responses.error(500, "Error saving default database: %s" % e)
-    return jsonify({"success": True})
+    return jsonify({"databases": sorted(libraries.picker_names(files, _test_mode()))})
 
 
 @picker.post("/api/databases/create")
 def create_library():
-    """Make the library named, unless it is there already, and remember it as the one
-    chosen."""
+    """Make the library named, unless it is there already."""
     body = request.get_json(silent=True) or {}
     db_name = body.get("db_name")
     if not db_name:
@@ -159,7 +142,6 @@ def create_library():
     try:
         if not os.path.exists(db_path):
             library_actions.create(db_path)
-        tagpup_config.remember_library(db_name)
     except Exception as e:
         return responses.error(500, "Error creating database: %s" % e)
     return jsonify({"success": True, "db_name": os.path.splitext(db_name)[0]})
