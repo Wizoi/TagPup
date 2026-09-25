@@ -76,7 +76,7 @@ describe("retired concepts stay retired", () => {
     // Nameless faces belong to the Identify Faces queue, which groups them. A flat
     // dump of every unnamed face inside the people list is what this replaced.
     const tuner = fs.readFileSync(
-      path.join(REPO_ROOT, "scripts", "tuner_server.py"),
+      path.join(REPO_ROOT, "tagpup", "services", "identify.py"),
       "utf8"
     );
     assert.ok(

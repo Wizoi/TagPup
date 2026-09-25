@@ -23,7 +23,7 @@ TagPup is structured around two equally important pillars, managed by a central 
          ┌───────────────────────┴───────────────────────┐
          ▼                                               ▼
 ┌──────────────────┐                            ┌──────────────────┐
-│   TagPup GUI     │ (tagpup_gui.py)            │   AI CLI Engine  │ (tagpup_cli.py)
+│   TagPup GUI     │ (tagpup_web.py)            │   AI CLI Engine  │ (tagpup_cli.py)
 │  (Local Web UI)  │                            │  (Advanced CLI)  │
 └────────┬─────────┘                            └────────┬─────────┘
          │                                               │
@@ -110,11 +110,11 @@ The **AI CLI Engine** is the underlying machine learning backend that indexes vi
 
    *   **Start Folder Tagging (TagPup GUI)**:
        ```cmd
-       .venv\Scripts\python tagpup_gui.py
+       .venv\Scripts\python tagpup_web.py --open tagpup
        ```
    *   **Start Face Matching (TagTuner)**:
        ```cmd
-       .venv\Scripts\python tagtuner.py
+       .venv\Scripts\python tagpup_web.py --open tuner
        ```
    *   **Start Developer Cockpit Dashboard**:
        ```cmd

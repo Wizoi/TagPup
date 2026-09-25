@@ -25,7 +25,7 @@ When you start with a brand-new collection, TagPup acts as your research assista
 ### 1. Tagging & Organizing Taxonomy
 Launch the **TagPup GUI** to scan your initial training folder:
 ```cmd
-.venv\Scripts\python tagpup_gui.py
+.venv\Scripts\python tagpup_web.py --open tagpup
 ```
 Open the **Taxonomy Manager** modal to organize category nodes. The default categories include **People** and **Pets** (which are both pre-configured to allow face-matching). Because of **Tree Propagation**, updating a category path here automatically cascades to update every photo using that tag on your hard drive:
 
@@ -50,7 +50,7 @@ Once your training folder is tagged with metadata, run the AI CLI command to sca
 
 Open **TagTuner** to view unmatched faces detected during the indexing step and associate them with identities in your taxonomy:
 ```cmd
-.venv\Scripts\python tagtuner.py
+.venv\Scripts\python tagpup_web.py --open tuner
 ```
 Clicking on a photo on the left sidebar opens its face cards on the right. You can assign names, view similar match recommendations, or create new people/pet profiles in bulk. The default `Pets` tag category functions identically to the `People` tag category for facial matching:
 
@@ -107,8 +107,8 @@ This script:
 5. Populates the database so that `Training/puppy.png` has a matched face and `New/cat.png` has an unmatched face.
 
 After running this script, start the servers pointing to `test_photo_index.db` to view or capture the UI states:
-- **GUI:** `python tagpup_gui.py test_photo_index.db`
-- **Tuner:** `python tagtuner.py test_photo_index.db`
+- **GUI:** `python tagpup_web.py --db test_photo_index --open tagpup`
+- **Tuner:** `python tagpup_web.py --db test_photo_index --open tuner`
 
 ---
 

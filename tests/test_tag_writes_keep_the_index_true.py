@@ -17,24 +17,22 @@ ExifTool is replaced by a stand-in that changes the file the way a real write do
 """
 import json
 import os
-import shutil
 import sys
-import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import db as tagpup_db
-import tagpup_server
-from index import PhotoIndex
-from metadata import extract_tags
-from tagpup_server import TagPupHTTPRequestHandler
-from tagpup.core.library import Library
-from tagpup.jobs import suggestions as suggestion_jobs
-from tagpup.services import tagging
+from handler_harness import Library  # noqa: E402
+
+from tagpup.core.fields import keyword_fields  # noqa: E402
+from tagpup.core.vocabulary import extract_tags  # noqa: E402
+from tagpup.files.keywords import write_keywords  # noqa: E402
+from tagpup.services import tagging  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
+from tagpup.store.photos import record_tags  # noqa: E402
 
 KEYWORDS = ["Beach", "Cross Country", "People/Rowan Thackeray"]
 HIERARCHICAL = ["People/Rowan Thackeray"]
@@ -95,25 +93,11 @@ def exiftool_that_writes():
 
 class IndexCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="tagpup_tag_writes_")
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.folder = os.path.join(self.tmp, "Meet Photos")
+        self.lib = Library(self, "tag_writes")
+        self.folder = os.path.join(self.lib.root, "Meet Photos")
         os.makedirs(self.folder)
-        self.db_path = os.path.join(self.tmp, "tag_writes.db")
-        index = PhotoIndex(db_path=self.db_path)
-        index.load()
-        index.close()
-
-        def forget_state():
-            # Only TagPup keeps a folder cache: TagTuner's was written by a copy of
-            # TagPup's rescan that nothing called.
-            tagpup_server.set_active_db_path(self.db_path)
-            TagPupHTTPRequestHandler.folder_cache.clear()
-            suggestion_jobs.forget(Library(self.db_path))
-            tagpup_server.set_active_db_path(None)
-            tagpup_server.invalidate_people_cache()
-        self.addCleanup(forget_state)
-        tagpup_server.invalidate_people_cache()
+        self.db_path = self.lib.db_path
+        self.library = self.lib.library
 
     def photo(self, name="IMG_0001.jpg", keywords=KEYWORDS, hierarchical=HIERARCHICAL):
         """A file on disk and its index row, as the indexer leaves them."""
@@ -151,25 +135,18 @@ class IndexCase(unittest.TestCase):
         self.assertAlmostEqual(row["mtime"], st.st_mtime, delta=0.05,
                                msg="the row kept the file's old mtime, so every scan re-reads it")
 
-    def call(self, handler_cls, module, method, body):
-        handler = handler_cls.__new__(handler_cls)
-        handler.db_path = self.db_path
-        sent = {}
-        handler.read_json_body = lambda: body
-        handler.send_json = lambda data: sent.setdefault("json", data)
-        handler.send_json_error = lambda code, message: sent.setdefault("error", (code, message))
-        handler.get_exiftool_path = lambda: "exiftool"
-        module.set_active_db_path(self.db_path)
-        getattr(handler, method)()
-        self.assertNotIn("error", sent, sent.get("error"))
-        return sent["json"]
+    def call(self, path, body):
+        """Ask one route as the page would; an error reply fails the test."""
+        status, reply = self.lib.post(path, body)
+        self.assertEqual(status, 200, reply)
+        return reply
 
 
 class TestARemovedTagStaysRemoved(IndexCase):
     def test_re_deriving_from_raw_metadata_does_not_bring_it_back(self):
         stored = self.photo()
         kept = ["Beach", "People/Rowan Thackeray"]
-        tagpup_server.record_tags_in_index(self.db_path, stored, kept, kept, HIERARCHICAL)
+        record_tags(self.db_path, stored, kept, kept, HIERARCHICAL)
 
         self.assertNotIn("Cross Country", extract_tags(self.row(stored)["raw"]),
                          "raw_metadata still carries the removed tag")
@@ -177,14 +154,13 @@ class TestARemovedTagStaysRemoved(IndexCase):
     def test_a_bulk_remove_survives_renaming_another_tag(self):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
-        with patch("exiftool_session.ExifToolSession", helper):
-            self.call(TagPupHTTPRequestHandler, tagpup_server, "handle_post_photos_bulk_tags",
+        with patch("tagpup.files.exiftool_session.ExifToolSession", helper):
+            self.call("/api/photos/bulk-tags",
                       {"paths": [stored], "add_tags": [], "remove_tags": ["Cross Country"]})
             self.assertNotIn("Cross Country", self.row(stored)["tags"])
 
             # Renaming "Beach" re-derives this photo's tags from its raw_metadata.
-            recorded = tagging.replace_tag(
-                Library(self.db_path), [stored], "Beach", "Places/Beach", "exiftool").changed
+            recorded = tagging.replace_tag(self.library, [stored], "Beach", "Places/Beach", "exiftool").changed
 
         tags = self.row(stored)["tags"]
         self.assertIn("Places/Beach", tags)
@@ -193,18 +169,18 @@ class TestARemovedTagStaysRemoved(IndexCase):
 
     def test_clearing_every_tag_leaves_no_keyword_field_behind(self):
         stored = self.photo()
-        tagpup_server.record_tags_in_index(self.db_path, stored, [], [], [])
+        record_tags(self.db_path, stored, [], [], [])
         self.assertEqual(extract_tags(self.row(stored)["raw"]), [])
 
     def test_the_writer_and_the_recorder_name_the_same_fields(self):
-        # One list, two consumers: whatever write_keyword_fields writes is what the
-        # index is told, so a field added to one cannot be missing from the other.
+        # One list, two consumers: whatever write_keywords writes is what the index is
+        # told, so a field added to one cannot be missing from the other.
         et = MagicMock()
-        tagpup_server.write_keyword_fields(et, "photo.jpg", ["Beach"])
+        write_keywords(et, "photo.jpg", ["Beach"])
         written = set(et.set_tags.call_args.kwargs["tags"])
         cleared = {arg[1:-1] for arg in et.execute.call_args.args
                    if arg.startswith("-") and arg.endswith("=")}
-        self.assertEqual(written | cleared, set(tagpup_server.keyword_fields(["Beach"], [])))
+        self.assertEqual(written | cleared, set(keyword_fields(["Beach"], [])))
         self.assertEqual(cleared, {"XMP:HierarchicalSubject"})
 
 
@@ -212,17 +188,15 @@ class TestTheRowKeepsTheFilesNewStat(IndexCase):
     def test_bulk_tagging(self):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
-        with patch("exiftool_session.ExifToolSession", helper):
-            self.call(TagPupHTTPRequestHandler, tagpup_server, "handle_post_photos_bulk_tags",
-                      {"paths": [stored], "add_tags": ["Relay"], "remove_tags": []})
+        with patch("tagpup.files.exiftool_session.ExifToolSession", helper):
+            self.call("/api/photos/bulk-tags", {"paths": [stored], "add_tags": ["Relay"], "remove_tags": []})
         self.assertRowMatchesTheFile(stored)
 
     def test_renaming_a_tag(self):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
-        with patch("exiftool_session.ExifToolSession", helper):
-            tagging.replace_tag(
-                Library(self.db_path), [stored], "Beach", "Places/Beach", "exiftool")
+        with patch("tagpup.files.exiftool_session.ExifToolSession", helper):
+            tagging.replace_tag(self.library, [stored], "Beach", "Places/Beach", "exiftool")
         self.assertRowMatchesTheFile(stored)
 
 
@@ -232,13 +206,13 @@ class TestBulkWritersTellTheIndex(IndexCase):
     def test_bulk_tags(self):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
-        with patch("exiftool_session.ExifToolSession", helper):
-            self.call(TagPupHTTPRequestHandler, tagpup_server, "handle_post_photos_bulk_tags",
+        with patch("tagpup.files.exiftool_session.ExifToolSession", helper):
+            self.call("/api/photos/bulk-tags",
                       {"paths": [stored], "add_tags": ["Relay"], "remove_tags": ["Cross Country"]})
 
         row = self.row(stored)
-        # A cold folder cache starts from the indexed tags; it used to start from
-        # nothing and write only the added tag, erasing the rest.
+        # A cold folder cache starts from the file; it used to start from nothing and
+        # write only the added tag, erasing the rest.
         self.assertEqual(sorted(row["tags"]), ["Beach", "People/Rowan Thackeray", "Relay"])
         self.assertNotIn("Cross Country", extract_tags(row["raw"]))
         self.assertRowMatchesTheFile(stored)
@@ -246,10 +220,9 @@ class TestBulkWritersTellTheIndex(IndexCase):
     def test_save_metadata_records_every_field_and_the_new_stat(self):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
-        with patch("exiftool_session.ExifToolSession", helper), \
+        with patch("tagpup.files.exiftool_session.ExifToolSession", helper), \
                 patch("tagpup.files.metadata.sync_title_to_filename", side_effect=lambda p, *rest: p):
-            self.call(TagPupHTTPRequestHandler, tagpup_server, "handle_post_photo_save_metadata",
-                      {"path": stored, "title": "", "tags": ["Beach"]})
+            self.call("/api/photo/save-metadata", {"path": stored, "title": "", "tags": ["Beach"]})
 
         row = self.row(stored)
         self.assertEqual(extract_tags(row["raw"]), ["Beach"])
@@ -257,14 +230,13 @@ class TestBulkWritersTellTheIndex(IndexCase):
 
     def test_no_tuner_handler_writes_keyword_fields_its_own_way(self):
         # The guard. Each of these built its own ExifTool parameters, and each went
-        # wrong in its own way; write_keyword_fields is the one writer.
-        with open(os.path.join(WORKSPACE_DIR, "scripts", "tuner_server.py"),
-                  encoding="utf-8") as f:
-            source = f.read()
-        for field in ('["XMP:Subject"]', '["IPTC:Keywords"]', '["XMP:HierarchicalSubject"]'):
-            self.assertFalse("params" + field in source,
-                             "tuner_server writes %s itself instead of through "
-                             "write_keyword_fields" % field)
+        # wrong in its own way; write_keywords is the one writer.
+        for relative in (os.path.join("tagpup", "web", "tuner_routes.py"), os.path.join("tagpup", "services", "faces.py")):
+            with open(os.path.join(WORKSPACE_DIR, relative), encoding="utf-8") as f:
+                source = f.read()
+            for field in ('["XMP:Subject"]', '["IPTC:Keywords"]', '["XMP:HierarchicalSubject"]'):
+                self.assertFalse("params" + field in source,
+                                 "%s writes %s itself instead of through write_keywords" % (relative, field))
 
 
 if __name__ == "__main__":

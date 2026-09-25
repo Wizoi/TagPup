@@ -5,7 +5,7 @@ window closed, and a question like "was that click slow on the server or in the
 browser" had nothing to answer it afterwards. Each program now also writes
 <data_dir>/logs/<program>.log, rotating at 5 MB and keeping five old files, and the
 servers log every request slower than a second and every request that failed
-(scripts/localserver.py).
+(tagpup.web.app).
 """
 import logging
 import logging.handlers

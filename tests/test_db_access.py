@@ -60,7 +60,7 @@ class TestNobodyConnectsDirectly(unittest.TestCase):
     def test_every_launcher_is_checked(self):
         """runner.py opened its own connection unseen, because the list skipped it."""
         checked = {os.path.relpath(p, WORKSPACE_DIR) for p in source_files()}
-        for launcher in ("runner.py", "tagpup_cli.py", "tagtuner.py", "tagpup_gui.py"):
+        for launcher in ("runner.py", "tagpup_cli.py", "tagpup_web.py"):
             self.assertIn(launcher, checked)
 
 

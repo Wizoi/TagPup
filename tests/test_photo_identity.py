@@ -141,8 +141,14 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
             return found
 
         self.assertEqual(["index"], minting_calls("tagpup_cli.py"))
-        for server in ("scripts/tagpup_server.py", "scripts/tuner_server.py"):
-            self.assertEqual([], minting_calls(server), server)
+        # The web layer and everything it calls: the routes, the services, the jobs.
+        readers = []
+        for folder in ("web", "services", "jobs"):
+            readers += ["tagpup/%s/%s" % (folder, name)
+                        for name in sorted(os.listdir(os.path.join(WORKSPACE_DIR, "tagpup", folder)))
+                        if name.endswith(".py")]
+        for reader in readers:
+            self.assertEqual([], minting_calls(reader), reader)
 
     def test_a_minted_identity_refreshes_the_change_stamps(self):
         """Writing the identity changes the file, so mtime and size must be re-read.

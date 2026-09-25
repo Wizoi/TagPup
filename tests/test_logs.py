@@ -9,10 +9,9 @@ import os
 import shutil
 import sys
 import tempfile
-import threading
+import subprocess
 import time
 import unittest
-import urllib.error
 import urllib.request
 from unittest import mock
 
@@ -21,8 +20,8 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import localserver  # noqa: E402
 from tagpup import logs as tagpup_logs  # noqa: E402
+from tagpup.core import processes  # noqa: E402
 from free_port import free_port  # noqa: E402
 
 
@@ -74,97 +73,60 @@ class EachProgramWritesItsOwnFile(InAHomeOfItsOwn):
         self.assertEqual((handler.maxBytes, handler.backupCount), (5 * 1024 * 1024, 5))
 
 
-class DroppedConnections(unittest.TestCase):
-    def test_a_browser_dropping_a_request_is_not_an_error(self):
-        # Thumbnails scrolled past are abandoned by the browser; each one is not a
-        # traceback in the log.
-        try:
-            raise ConnectionResetError("reset by peer")
-        except ConnectionResetError:
-            with self.assertNoLogs(tagpup_logs.REQUESTS, level="WARNING"):
-                localserver.ThreadedHTTPServer.handle_error(object(), None, ("127.0.0.1", 5))
-
-    def test_both_apps_time_their_requests(self):
-        import tagpup_server
-        import tuner_server
-        self.assertTrue(issubclass(tagpup_server.TagPupHTTPRequestHandler, localserver.RequestLog))
-        self.assertTrue(issubclass(tuner_server.TunerHTTPRequestHandler, localserver.RequestLog))
-
-
 class AServerLogsToItsFile(unittest.TestCase):
-    """A real TagTuner server, in a home of its own, writing a real log file."""
+    """The real server (tagpup_web.py), in a home of its own, writing a real log file:
+    what the pages' slow and failed requests go to (tagpup.web.app, tested through the
+    test client in tests/test_web_app.py)."""
 
     @classmethod
     def setUpClass(cls):
-        import tuner_server
-        from tagpup_server import create_library
-
-        cls.tuner_server = tuner_server
         cls.home = tempfile.mkdtemp(prefix="tagpup_logs_server_")
-        cls.environ = mock.patch.dict(os.environ, {"TAGPUP_HOME": cls.home})
-        cls.environ.start()
-        cls.log_path = tagpup_logs.to_file("tagtuner")
-        db_path = os.path.join(cls.home, "data", "test_logs.db")
-        create_library(db_path)
-        cls.port = free_port()
-        threading.Thread(target=tuner_server.start_server, daemon=True,
-                         kwargs={"port": cls.port, "db_path": db_path,
-                                 "gui_dir": os.path.join(WORKSPACE_DIR, "gui")}).start()
-        deadline = time.time() + 30
+        cls.tagpup_port, cls.tuner_port = free_port(), free_port()
+        cls.process = processes.start(
+            [sys.executable, os.path.join(WORKSPACE_DIR, "tagpup_web.py"), "--db", "test_logs",
+             "--tagpup-port", str(cls.tagpup_port), "--tuner-port", str(cls.tuner_port)],
+            env=dict(os.environ, TAGPUP_HOME=cls.home, TAGPUP_WEB_NO_WARMUP="1"),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.time() + 60
         while time.time() < deadline:
             try:
-                urllib.request.urlopen("http://127.0.0.1:%d/api/databases" % cls.port, timeout=5)
+                urllib.request.urlopen("http://127.0.0.1:%d/api/databases" % cls.tuner_port, timeout=5)
                 break
             except OSError:
+                if cls.process.poll() is not None:
+                    raise AssertionError("the server exited before it was ready") from None
                 time.sleep(0.1)
+        cls.log_path = os.path.join(cls.home, "data", "logs", "tagpup_web.log")
 
     @classmethod
     def tearDownClass(cls):
-        detach(cls.log_path)
-        cls.environ.stop()
+        cls.process.terminate()
+        try:
+            cls.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            cls.process.kill()
         shutil.rmtree(cls.home, ignore_errors=True)
         if os.path.exists(cls.home):
             print("\nnote: could not delete %s yet (held open by the test server)" % cls.home,
                   file=sys.stderr)
 
     def log_text(self, expected, seconds=5):
-        """The log's text once it holds `expected`; a failed request is logged after the
-        client has already seen the connection close."""
         deadline = time.time() + seconds
         while True:
-            for handler in file_handlers_for(self.log_path):
-                handler.flush()
-            with open(self.log_path, encoding="utf-8") as handle:
-                text = handle.read()
+            text = ""
+            if os.path.exists(self.log_path):
+                with open(self.log_path, encoding="utf-8") as handle:
+                    text = handle.read()
             if expected in text or time.time() > deadline:
                 return text
             time.sleep(0.05)
 
-    def test_a_slow_request_is_logged_with_its_time(self):
-        handler_class = self.tuner_server.TunerHTTPRequestHandler
-        with mock.patch.object(handler_class, "slow_request_seconds", 0):
-            urllib.request.urlopen("http://127.0.0.1:%d/api/databases?probe=slow" % self.port)
-            # The handler reads its threshold after the answer is sent, so the reply can
-            # arrive first. Undoing the patch then raced it; under the full suite the
-            # race was lost and nothing was logged.
-            text = self.log_text("probe=slow")
-        self.assertRegex(text, r"\[WARNING\] .* tagpup\.requests - slow: "
-                               r"GET /api/databases\?probe=slow HTTP/1\.1 took \d+\.\d\ds")
+    def test_the_server_writes_its_log_in_the_home(self):
+        self.assertIn("Serving", self.log_text("Serving"))
 
-    def test_a_quick_request_is_not(self):
-        urllib.request.urlopen("http://127.0.0.1:%d/api/databases?probe=quick" % self.port)
+    def test_a_quick_request_is_not_logged(self):
+        urllib.request.urlopen("http://127.0.0.1:%d/api/databases?probe=quick" % self.tagpup_port)
         self.assertNotIn("probe=quick", self.log_text("probe=quick", seconds=0.5))
-
-    def test_a_failed_request_is_logged_with_its_traceback(self):
-        handler_class = self.tuner_server.TunerHTTPRequestHandler
-        with mock.patch.object(handler_class, "do_GET",
-                               side_effect=RuntimeError("the handler broke")):
-            with self.assertRaises((urllib.error.URLError, ConnectionError, OSError)):
-                urllib.request.urlopen("http://127.0.0.1:%d/api/databases" % self.port)
-        text = self.log_text("the handler broke")
-        self.assertIn("a request from 127.0.0.1 failed", text)
-        self.assertIn("Traceback (most recent call last)", text)
-        self.assertIn("RuntimeError: the handler broke", text)
 
 
 if __name__ == "__main__":

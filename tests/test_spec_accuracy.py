@@ -20,21 +20,16 @@ import unittest
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 
-#: Each app: its old server's source, its spec, and its Flask app (tagpup.web). While
-#: the routes move from the one to the other (docs/ARCHITECTURE.md, phase 5), a route
-#: is implemented where either has it.
-APPS = (
-    ("tagpup", os.path.join(WORKSPACE_DIR, "scripts", "tagpup_server.py"),
-     os.path.join(WORKSPACE_DIR, "docs/SPEC_TAGPUP_GUI.md")),
-    ("tuner", os.path.join(WORKSPACE_DIR, "scripts", "tuner_server.py"),
-     os.path.join(WORKSPACE_DIR, "docs/SPEC_TAGTUNER.md")),
+#: Each app (tagpup.web.app.create_app) and its spec.
+SERVER_SPEC_PAIRS = (
+    ("tagpup", os.path.join(WORKSPACE_DIR, "docs/SPEC_TAGPUP_GUI.md")),
+    ("tuner", os.path.join(WORKSPACE_DIR, "docs/SPEC_TAGTUNER.md")),
 )
-SERVER_SPEC_PAIRS = tuple((server, spec) for _kind, server, spec in APPS)
 
 #: How a Flask route reads its request: the JSON body as `body`, the query as
 #: `request.args`.
 FLASK_BODY = re.compile(r'body\.get\(\s*"([^"]+)"')
-FLASK_QUERY = re.compile(r'request\.args\.get\(\s*"([^"]+)"')
+FLASK_QUERY = re.compile(r'(?:request\.args\.get|_int_arg)\(\s*"([^"]+)"')
 
 
 def flask_routes(kind):
@@ -71,33 +66,11 @@ SPEC_KEY = re.compile(r'"(\w+)"')
 SPEC_QUERY = re.compile(r'[?&](\w+)=')
 
 
-def implemented_routes(server_path):
-    """Map each dispatched route to the request parameters its handler reads."""
-    src = open(server_path, encoding="utf-8").read()
-    routes = dict(ROUTE_DISPATCH.findall(src))
-
-    # Split the class body into per-method sources.
-    chunks = re.split(r"\n    def (\w+)\(", src)
-    handlers = {chunks[i]: chunks[i + 1] for i in range(1, len(chunks), 2)}
-
+def implemented_routes(kind):
+    """Map each of the app's /api routes to the request parameters its view reads."""
     out = {}
-    for route, handler_name in routes.items():
-        body = handlers.get(handler_name, "")
-        # Follow one level of `self._helper(...)` calls. Handlers legitimately share
-        # argument parsing, and a guard that only looked at the handler's own body would
-        # report a parameter as undocumented purely because it was factored out.
-        for helper in set(re.findall(r"self\.(_\w+)\(", body)):
-            body += "\n" + handlers.get(helper, "")
-        out[route] = {
-            "handler": handler_name,
-            "body": set(BODY_PARAM.findall(body)),
-            "query": set(QUERY_PARAM.findall(body)),
-        }
-    kind = next(k for k, server, _spec in APPS if server == server_path)
     for route, found in flask_routes(kind).items():
-        entry = out.setdefault(route, {"handler": found["handler"], "body": set(), "query": set()})
-        entry["body"] |= found["body"]
-        entry["query"] |= found["query"]
+        out[route] = {"handler": found["handler"], "body": set(found["body"]), "query": set(found["query"])}
     return out
 
 

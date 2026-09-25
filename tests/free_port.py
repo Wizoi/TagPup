@@ -3,7 +3,7 @@
 Test servers used fixed ports (9089, 9955, ...), so two runs at once -- two worktrees,
 two agents, a run and a re-run -- bound the same port. On Windows both binds
 succeeded and each run's requests could reach the other's server, where a mocked
-folder picker was the real one and opened on the desktop. localserver now refuses a
+folder picker was the real one and opened on the desktop. tagpup.web.app.bind now refuses a
 port in use; this makes sure a test never asks for one.
 """
 import socket

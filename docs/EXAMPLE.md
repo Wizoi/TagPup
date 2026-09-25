@@ -21,7 +21,7 @@ Here is a quick reference table of the most common commands you will use in Tagp
 | **Preview Suggests** | `run.bat write suggestions.json` | Displays a table preview of tags proposed for writing. |
 | **Apply Tags (Live)** | `run.bat write suggestions.json -Live` | Appends flat/hierarchical tags and captions directly to photo files. |
 | **Semantic Search** | `run.bat search "your text query"` | Finds the top 10 visually closest matches to a natural language query. |
-| **Start TagTuner UI** | `python tagtuner.py` | Launches the local server and web browser client for manual face matching. |
+| **Start TagTuner UI** | `python tagpup_web.py --open tuner` | Launches the local server and web browser client for manual face matching. |
 | **Index Stats** | `run.bat stats` | Displays overall database metrics, top tags, and resolved people. |
 | **List Photos** | `run.bat list-index` | Prints list of all photos currently present in the index database. |
 
@@ -197,7 +197,7 @@ Start the interactive web interface in your browser to inspect metadata, tune ta
 
 ```cmd
 # Start TagTuner Web UI (Recommended: runs server inside the virtual environment)
-.venv\Scripts\python tagtuner.py
+.venv\Scripts\python tagpup_web.py --open tuner
 ```
 
 ---

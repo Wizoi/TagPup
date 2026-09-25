@@ -146,8 +146,8 @@ def main():
     conn.close()
     print("Database seeded with Training folder (puppy) and New folder (puppy2) successfully!")
     print("\nEnvironment is ready. To view/regenerate screenshots:")
-    print("  1. Start TagPup GUI:  python tagpup_gui.py test_photo_index.db")
-    print("  2. Start TagTuner:   python tagtuner.py test_photo_index.db")
+    print("  1. Start TagPup GUI:  python tagpup_web.py --db test_photo_index --open tagpup")
+    print("  2. Start TagTuner:   python tagpup_web.py --db test_photo_index --open tuner")
     print("  3. Navigate to http://localhost:8092/?path=data/test_photos/New and run suggestions.")
     print("  4. Navigate to http://localhost:8081/ and resolve face matching.")
 
