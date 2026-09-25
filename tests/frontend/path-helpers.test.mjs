@@ -21,7 +21,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { REPO_ROOT, APPS, loadApp, FakeServer, photoRecord, openFolder, pageModules } from "./harness.mjs";
-import { pathKey, samePath } from "../../web/common/paths.js";
+import { baseName, pathKey, samePath } from "../../web/common/paths.js";
 
 const PATHS_JS = path.join(REPO_ROOT, "web", "common", "paths.js");
 
@@ -128,6 +128,44 @@ for (const app of Object.keys(APPS)) {
     });
   });
 }
+
+describe("web/common/paths.js: baseName, the one last segment (#146)", () => {
+  // TagPup's baseName and TagTuner's basename differed at the edges: for null one
+  // gave '' and the other "null"; for "/" one gave '' and the other "/". A path with
+  // no last segment has none: '' for all of them, and the caller says what to show.
+  test("a photo's file name, either separator", () => {
+    assert.equal(baseName("D:\\Run\\a.jpg"), "a.jpg");
+    assert.equal(baseName("D:/Run/a.jpg"), "a.jpg");
+    assert.equal(baseName("a.jpg"), "a.jpg");
+  });
+
+  test("a folder's name, with or without a trailing separator", () => {
+    assert.equal(baseName("D:\\Run\\2019\\"), "2019");
+    assert.equal(baseName("D:/Run/2019/"), "2019");
+  });
+
+  test("a drive root is its drive", () => {
+    assert.equal(baseName("D:\\"), "D:");
+  });
+
+  test("nothing, and a bare separator, have no last segment", () => {
+    for (const p of [null, undefined, "", "/", "\\", "//"]) assert.equal(baseName(p), "", String(p));
+  });
+});
+
+describe("one baseName for both pages", () => {
+  for (const app of Object.keys(APPS)) {
+    test(`${app} declares no basename of its own`, () => {
+      const own = [];
+      for (const module of pageModules(path.join(REPO_ROOT, APPS[app].dir))) {
+        if (path.resolve(module.file) === path.resolve(PATHS_JS)) continue;
+        const source = fs.readFileSync(module.file, "utf8");
+        if (/function\s+base_?name\s*\(/i.test(source)) own.push(path.relative(REPO_ROOT, module.file));
+      }
+      assert.deepEqual(own, []);
+    });
+  }
+});
 
 describe("the pages agree on what the same path is", () => {
   test("the guard is not checking a rule nobody follows", () => {

@@ -1,8 +1,7 @@
 // Indexing folders and the folder picker.
 import { api } from './common/api.js';
-import { samePath } from './common/paths.js';
+import { baseName, samePath } from './common/paths.js';
 import { state } from './state.js';
-import { basename } from './shared.js';
 import { fetchPhotos, refreshSidebarQuietly } from './sidebar.js';
 
 // ---- Folder indexing ---------------------------------------------------
@@ -205,7 +204,7 @@ function loadSubfolders(parent) {
             if (data.own_images > 0 || !data.folders.length) {
                 state.pickerFolders.push({
                     path: data.parent,
-                    name: `${basename(data.parent)}  (this folder itself)`,
+                    name: `${baseName(data.parent) || data.parent}  (this folder itself)`,
                     images: data.own_images,
                     // Its own photos, counted the same way as its images. This
                     // said 0, so an indexed leaf folder was always offered as new.

@@ -1,5 +1,4 @@
-// What every feature uses: the address bar, the names the library knows, a path's last
-// segment.
+// What every feature uses: the address bar, the names the library knows.
 import { api } from './common/api.js';
 import { state } from './state.js';
 import { modeSelect, showMatchedToggle } from './elements.js';
@@ -11,12 +10,6 @@ import { modeSelect, showMatchedToggle } from './elements.js';
 // (web/common/paths.js) are for paths from anywhere else: the ?photo= in the URL,
 // or what the native Browse dialog returned (forward slashes). tests/frontend/
 // path-helpers.test.mjs fails on a separator conversion anywhere else.
-
-/** The last segment of a path: a photo's file name, or a folder's name. */
-export function basename(p) {
-    const parts = String(p).replace(/[\\/]+$/, '').split(/[\\/]/);
-    return parts[parts.length - 1] || p;
-}
 
 export function updateURLParams() {
     const params = new URLSearchParams(window.location.search);

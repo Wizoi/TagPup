@@ -2,6 +2,7 @@
 // forward, opening, rotating and deleting it, and editing when it was taken.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
+import { baseName } from './common/paths.js';
 import { photoAlreadyHas } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -15,7 +16,7 @@ import {
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import {
-    baseName, exifDateToIso, formatFriendlyDateSingle, getCurrentDateTimeIso,
+    exifDateToIso, formatFriendlyDateSingle, getCurrentDateTimeIso,
     getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
 import { namesAPerson, updateTagsDatalist } from './tags.js';

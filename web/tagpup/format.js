@@ -8,12 +8,6 @@ export function takenOf(photo) {
     return (photo && photo.taken) || null;
 }
 
-/** The last segment of a path: a photo's file name, or a folder as you know it. */
-export function baseName(p) {
-    if (!p) return '';
-    return String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
-}
-
 export function parseExifDateToLocalDate(rawStr) {
     const regex = /^(\d{4})[: -](\d{2})[: -](\d{2})\s+(\d{2}):(\d{2}):(\d{2})/;
     const match = String(rawStr).trim().match(regex);
