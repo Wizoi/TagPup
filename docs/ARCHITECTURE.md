@@ -411,5 +411,5 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 5.5. Models in the package, one composition root | done, 2026-09-24 (the shims it left for tests went in 6.5) |
 | 6. Pages | done, 2026-09-25 |
 | 6.5. No shims | done, 2026-09-25 |
-| 7. MCP | in progress, 2026-09-25 |
+| 7. MCP | done, 2026-09-25 |
 | 8. Sync | not started |
