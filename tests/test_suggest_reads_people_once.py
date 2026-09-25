@@ -46,6 +46,9 @@ class FakeTaxonomy:
     def find_person_path(self, name):
         return "People/" + name
 
+    def person_paths(self, name):
+        return ["People/" + name]
+
     def find_by_leaf(self, leaf):
         return None
 

@@ -379,7 +379,13 @@ class TagSuggester:
                                 # "pets" only, so anyone filed under People came back
                                 # as a bare leaf and was suggested -- and written --
                                 # in the one form the keywords must not hold.
-                                resolved_path = self.taxonomy.find_person_path(best_name) or best_name
+                                # A name filed twice is not resolved to either
+                                # path, and not offered at all: a guess names the
+                                # wrong person (docs/findings.md, #27).
+                                filed = self.taxonomy.person_paths(best_name)
+                                if len(filed) > 1:
+                                    continue
+                                resolved_path = filed[0] if filed else best_name
 
                                 # Boost or insert tag
                                 found = False
@@ -428,7 +434,10 @@ class TagSuggester:
                 if sim >= 0.23:
                     # Map a person's name back to the path they are filed under, under
                     # whichever root this library uses rather than an assumed one.
-                    resolved_tag = self.taxonomy.find_person_path(tag) or tag
+                    filed = self.taxonomy.person_paths(tag)
+                    if len(filed) > 1:
+                        continue   # filed twice: no guess (docs/findings.md, #27)
+                    resolved_tag = filed[0] if filed else tag
 
                     suggested_tags.append({
                         "tag": resolved_tag,
