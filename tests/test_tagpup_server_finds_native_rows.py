@@ -306,10 +306,12 @@ class TestTimeShiftKeepsTheRealPaths(HandlerCase):
         photo = self.make_file("IMG_0001.jpg")
         extractor = fake_extractor({"EXIF:Model": "Test Camera"})
         # ExifTool answers the shift's read with the photo's date, in the spelling it
-        # answers every path in.
+        # answers every path in, and keeps what the shift writes, as the file would.
+        held = {"EXIF:DateTimeOriginal": "2024:07:04 10:00:00"}
         session = MagicMock()
-        session.return_value.__enter__.return_value.get_tags.side_effect = lambda paths, tags=None: [
-            {"SourceFile": forward(p), "EXIF:DateTimeOriginal": "2024:07:04 10:00:00"} for p in paths]
+        et = session.return_value.__enter__.return_value
+        et.get_tags.side_effect = lambda paths, tags=None: [{"SourceFile": forward(p), **held} for p in paths]
+        et.set_tags.side_effect = lambda paths, tags=None, params=None: held.update(tags or {})
         # The route reads the cold folder and the service reads it back, both through
         # tagpup.files.
         with patch("tagpup.files.metadata.MetadataExtractor", extractor), \

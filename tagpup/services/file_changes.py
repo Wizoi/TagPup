@@ -156,7 +156,11 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
                 elif stop_at_first_error:
                     file_journal.withdraw(library.path, [r.id for r in rows[n + 1:]])
                     break
-            _read_back(et, library, wrote)
+            for row in _read_back(et, library, wrote):
+                # ExifTool said it wrote it, and it holds what it held (#276).
+                result.changed -= 1
+                written.pop(row.path, None)
+                result.fail(row.path, "ExifTool reported it written, but it holds what it held before")
             file_journal.finish(library.path, change_id)
         except BaseException:
             file_journal.release(library.path, change_id)
@@ -218,17 +222,23 @@ def _read_back(et, library, wrote):
     refused it for holding neither (docs/findings.md, #273). `wrote` is {file id: (row,
     its stat as recorded)}; the files are read in one read for them all. A file whose stat
     is not what was recorded was written by another program since, and is left as the
-    journal has it, for an undo to refuse. Never raises: the files are written either
-    way."""
+    journal has it, for an undo to refuse.
+
+    A file that holds what it held before, though ExifTool said it wrote it, changed
+    nothing: it is taken out of the change, its row still made to say what it holds,
+    and returned, so that the write does not report it changed (#276). Never raises:
+    the files are written either way. Returns the rows of the files that did not
+    change."""
+    unchanged = []
     if not wrote:
-        return
+        return unchanged
     written = list(wrote.values())
     try:
         held = field_values.read(et, [row.path for row, _stat in written],
                                  sorted({field for row, _stat in written for field in row.after}))
     except Exception as e:
         logger.warning("%s: could not read back %d file(s) written: %s", library.path, len(written), e)
-        return
+        return unchanged
     for row, stat in written:
         now = held.get(paths.key(row.path))
         if now is None or isinstance(now, Exception):
@@ -243,19 +253,29 @@ def _read_back(et, library, wrote):
         if stat is None or (current.st_mtime_ns, current.st_size) != (stat.st_mtime_ns, stat.st_size):
             continue
         differ = sorted(field for field in row.after if not fields.same_values(kept[field], row.after[field]))
+        same_as_before = fields.reads_same(kept, row.before) and not fields.reads_same(kept, row.after)
 
-        def work(conn, row=row, kept=kept):
+        def work(conn, row=row, kept=kept, same_as_before=same_as_before):
             photos.follow_fields(conn, row.path, kept)
-            file_journal.set_after(conn, row.id, kept)
+            if same_as_before:
+                file_journal.withdraw_in(conn, [row.id])
+            else:
+                file_journal.set_after(conn, row.id, kept)
 
         try:
             db.write_with_connection(library.path, work, label="%s: read back" % row.named())
         except Exception as e:
             logger.warning("%s: could not record what %s holds: %s", library.path, row.named(), e)
             continue
+        if same_as_before:
+            unchanged.append(row)
+            logger.warning("%s: %s holds what it held before its write; taken out of the change",
+                           library.path, row.named())
+            continue
         row.after = kept
         logger.warning("%s: %s does not hold %s quite as written; recorded as it holds it",
                        library.path, row.named(), ", ".join(differ))
+    return unchanged
 
 
 def _conflict(library, row, why):

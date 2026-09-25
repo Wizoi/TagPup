@@ -188,13 +188,17 @@ def withdraw(db_path, file_ids):
     file_ids = list(file_ids)
     if not file_ids:
         return
+    db.write_with_connection(db_path, lambda conn: withdraw_in(conn, file_ids),
+                             label="withdraw %d file(s)" % len(file_ids))
 
-    def work(conn):
-        for start in range(0, len(file_ids), CHUNK):
-            chunk = file_ids[start:start + CHUNK]
-            conn.execute("DELETE FROM change_files WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk)
 
-    db.write_with_connection(db_path, work, label="withdraw %d file(s)" % len(file_ids))
+def withdraw_in(conn, file_ids):
+    """withdraw, in the caller's transaction: a file whose write changed nothing is taken
+    out in the one that records its row (tagpup.services.file_changes)."""
+    file_ids = list(file_ids)
+    for start in range(0, len(file_ids), CHUNK):
+        chunk = file_ids[start:start + CHUNK]
+        conn.execute("DELETE FROM change_files WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk)
 
 
 def files_of(db_path, change_id):

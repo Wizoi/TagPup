@@ -28,9 +28,27 @@ BELL = chr(7)
 
 
 def fake_exiftool(fields):
-    """An ExifTool session whose file holds `fields`, recording every write."""
+    """An ExifTool session whose file holds `fields`, recording every write and keeping
+    it, as a file would: a journaled write that left the file as it was is not a change
+    (docs/findings.md, #276)."""
+    held = dict(fields)
     et = mock.MagicMock()
-    et.get_tags.return_value = [dict(fields)]
+    et.get_tags.side_effect = lambda paths, tags=None: [dict(held)]
+
+    def set_tags(paths, tags=None, params=None):
+        held.update(tags or {})
+        for param in params or []:
+            if param.startswith("-") and param.endswith("="):
+                held.pop(param[1:-1], None)
+
+    def execute(*args):
+        for arg in args:
+            if arg.startswith("-") and arg.endswith("="):
+                held.pop(arg[1:-1], None)
+        return ""
+
+    et.set_tags.side_effect = set_tags
+    et.execute.side_effect = execute
     session = mock.MagicMock()
     session.return_value.__enter__.return_value = et
     session.return_value.__exit__.return_value = False
