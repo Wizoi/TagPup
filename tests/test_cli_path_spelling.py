@@ -24,7 +24,7 @@ import db as tagpup_db
 import paths
 from index import PhotoIndex
 from tagpup_cli import cli, get_config, scan_for_images
-from embedder import output_dim
+from tagpup.ml.clip import output_dim
 
 
 def make_jpeg(path):
@@ -33,7 +33,7 @@ def make_jpeg(path):
 
 
 def expected_dim():
-    # The length the configured model makes, as the CLI checks it (embedder.output_dim).
+    # The length the configured model makes, as the CLI checks it (tagpup.ml.clip.output_dim).
     return output_dim(get_config().get("model", "name", fallback="ViT-B-32")) or 512
 
 
@@ -110,8 +110,8 @@ class CliDatabaseCase(unittest.TestCase):
 
 @unittest.skipUnless(paths.CASE_INSENSITIVE, "two case spellings are two files here")
 class TestIndexRecognisesAnotherSpelling(CliDatabaseCase):
-    @patch("embedder.ClipEmbedder._init_model")
-    @patch("embedder.ClipEmbedder.embed_image")
+    @patch("tagpup.ml.clip.ClipModel._init_model")
+    @patch("tagpup.ml.clip.ClipModel.embed_image")
     @patch("tagpup_cli.MetadataExtractor.batch_read")
     def test_a_folder_indexed_under_another_case_is_not_indexed_twice(
             self, batch_read, embed_image, _init_model):
@@ -142,8 +142,8 @@ class TestIndexLocksBesideTheLibrary(CliDatabaseCase):
     anywhere else locked somewhere else, and the two could write the same photo at once.
     """
 
-    @patch("embedder.ClipEmbedder._init_model")
-    @patch("embedder.ClipEmbedder.embed_image")
+    @patch("tagpup.ml.clip.ClipModel._init_model")
+    @patch("tagpup.ml.clip.ClipModel.embed_image")
     @patch("tagpup_cli.MetadataExtractor.batch_read")
     def test_the_locks_are_beside_the_library(self, batch_read, embed_image, _init_model):
         photo = os.path.join(self.tmp.name, "Harbour", "gulls.jpg")

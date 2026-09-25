@@ -5,9 +5,9 @@ server ran: photos indexed afterwards were never neighbours, and tags saved afte
 never counted, until a restart. Every other library went the other way and loaded its
 whole index again for every Suggest -- 1.3s on a 68,000-photo library, each click.
 
-Now each library has one embedder and one index (scripts/suggest_models.embedders, a
-PerLibrary), and a Suggest run reloads the index only when the photos table has
-changed since it was read.
+Now each library has one index, kept by the process's runtime (tagpup.runtime.Runtime.
+photo_index, a PerLibrary), and a Suggest run reloads the index only when the photos
+table has changed since it was read.
 """
 import os
 import shutil
@@ -17,15 +17,15 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-
-import suggest_models  # noqa: E402
-from index import PhotoIndex  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_face, add_vector  # noqa: E402
 
+from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
+from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
 
 
@@ -84,34 +84,37 @@ class IndexReloadsWhenChanged(unittest.TestCase):
         self.assertEqual(["Wren Halloway"], self.index.metadata[0]["people"])
 
 
-class OneEmbedderPerLibrary(unittest.TestCase):
+class OneIndexPerLibrary(unittest.TestCase):
     def setUp(self):
-        self.dir = tempfile.mkdtemp(prefix="library_embedder_")
+        self.dir = tempfile.mkdtemp(prefix="library_index_")
         self.db_path = os.path.join(self.dir, "lib.db")
         index = PhotoIndex(self.db_path)
         index.load()
         index.close()
         add_photo(self.db_path, "a.jpg")
         self.library = Library(self.db_path)
+        # No model is built: the index is all this asks for.
+        self.runtime = Runtime(tagpup_config.load(), clip=object(), faces=object())
 
     def tearDown(self):
-        held = suggest_models.embedders.of(self.library)
-        if held is not None:
-            held.photo_index.close()
-        suggest_models.embedders.forget(self.library)
+        self.runtime.photo_index(self.library).close()
+        self.runtime.forget(self.library)
         shutil.rmtree(self.dir, ignore_errors=True)
 
-    def test_the_second_run_reuses_the_first_runs_embedder(self):
-        first = suggest_models.library_embedder(self.library)
-        second = suggest_models.library_embedder(self.library)
+    def test_the_second_run_reuses_the_first_runs_index(self):
+        first = self.runtime.photo_index(self.library)
+        second = self.runtime.photo_index(self.library)
         self.assertIs(first, second)
 
     def test_a_run_after_indexing_sees_the_new_photos(self):
-        first = suggest_models.library_embedder(self.library)
-        self.assertEqual(1, len(first.photo_index.metadata))
+        first = self.runtime.photo_index(self.library)
+        self.assertEqual(1, len(first.metadata))
         add_photo(self.db_path, "b.jpg")
-        again = suggest_models.library_embedder(self.library)
-        self.assertEqual(2, len(again.photo_index.metadata))
+        again = self.runtime.photo_index(self.library)
+        self.assertEqual(2, len(again.metadata))
+
+    def test_its_vectors_are_the_runtimes_models(self):
+        self.assertEqual(self.runtime.model_key, self.runtime.photo_index(self.library).model)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,8 @@ from shipped_sources import LAUNCHERS, ROOT, python_sources  # noqa: E402
 
 #: What each layer may import from tagpup besides itself. Core is pure rules, so every
 #: layer may import it. Config is read where a program starts -- the entry points --
-#: and what it says is passed down. docs/ARCHITECTURE.md, "Layers".
+#: and what it says is passed down, through the runtime, the one place settings become
+#: objects (models, each library's photo index). docs/ARCHITECTURE.md, "Layers".
 MAY_IMPORT = {
     "core": set(),
     "config": set(),
@@ -33,8 +34,9 @@ MAY_IMPORT = {
     "ml": {"core", "files"},
     "services": {"core", "store", "files", "ml"},
     "jobs": {"core", "services"},
-    "web": {"core", "config", "logs", "services", "jobs"},
-    "cli": {"core", "config", "logs", "services", "jobs"},
+    "runtime": {"core", "config", "logs", "store", "files", "ml", "services", "jobs"},
+    "web": {"core", "config", "logs", "runtime", "services", "jobs"},
+    "cli": {"core", "config", "logs", "runtime", "services", "jobs"},
 }
 
 #: A line importing the package itself, not a module whose name starts with "tagpup".

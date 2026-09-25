@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import db  # noqa: E402
 import refresh_rows_from_files as refresh  # noqa: E402
-from index import PhotoIndex  # noqa: E402
+from tagpup.services.search import PhotoIndex  # noqa: E402
 
 
 class RefreshRowsFromFiles(unittest.TestCase):

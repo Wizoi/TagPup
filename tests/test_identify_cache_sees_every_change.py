@@ -22,7 +22,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-from index import PhotoIndex  # noqa: E402
+from tagpup.services.search import PhotoIndex  # noqa: E402
 
 from tagpup.store import faces as store_faces  # noqa: E402
 

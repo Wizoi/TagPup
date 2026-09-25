@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
-from faces import resolution_trace_path  # noqa: E402
+from tagpup.services.identities import resolution_trace_path  # noqa: E402
 
 
 class TraceFilePerLibrary(unittest.TestCase):

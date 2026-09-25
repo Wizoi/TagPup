@@ -29,7 +29,7 @@ import db as tagpup_db
 import paths
 from index import PhotoIndex
 from tagpup_cli import cli, get_config
-from embedder import output_dim
+from tagpup.ml.clip import output_dim
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_face  # noqa: E402
@@ -41,7 +41,7 @@ def make_jpeg(path, color="green"):
 
 
 def expected_dim():
-    # The length the configured model makes, as the CLI checks it (embedder.output_dim).
+    # The length the configured model makes, as the CLI checks it (tagpup.ml.clip.output_dim).
     return output_dim(get_config().get("model", "name", fallback="ViT-B-32")) or 512
 
 
@@ -129,9 +129,9 @@ class FaceDecisionCase(unittest.TestCase):
             return runner.invoke(cli, ["--test"] + args)
 
 
-@patch("tagpup_cli.FaceProcessor", FakeFaceProcessor)
-@patch("embedder.ClipEmbedder._init_model")
-@patch("embedder.ClipEmbedder.embed_image")
+@patch("tagpup.ml.faces.FaceModel", lambda **settings: FakeFaceProcessor())
+@patch("tagpup.ml.clip.ClipModel._init_model")
+@patch("tagpup.ml.clip.ClipModel.embed_image")
 @patch("tagpup_cli.MetadataExtractor.batch_read")
 class TestReindexingAChangedPhoto(FaceDecisionCase):
     def reindex(self, batch_read, embed_image):
@@ -188,13 +188,8 @@ class TestBuildOrUpdateWritesInPlace(FaceDecisionCase):
         self.assertEqual({box: row[0] for box, row in self.faces().items()}, ids)
 
 
-class FakeClusterer:
-    def cluster_and_resolve_identities(self, photo_index, taxonomy, max_iterations=5):
-        return {}
-
-
 class TestResetKeepsHandGivenNames(FaceDecisionCase):
-    @patch("tagpup_cli.FaceProcessor", FakeClusterer)
+    @patch("tagpup.services.identities.resolve", lambda photo_index, max_iterations=5: {})
     def test_cluster_faces_reset_clears_only_automatic_names(self):
         ids = self.seed()
         result = self.run_cli(["cluster-faces", "--reset"])

@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import db as tagpup_db  # noqa: E402
 import relink_renamed_photos  # noqa: E402
-from index import PhotoIndex  # noqa: E402
+from tagpup.services.search import PhotoIndex  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_face  # noqa: E402

@@ -17,7 +17,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
 import suggester  # noqa: E402
-from index import PhotoIndex  # noqa: E402
+from tagpup.services.search import PhotoIndex  # noqa: E402
 from suggester import TagSuggester  # noqa: E402
 
 ROWAN = [1.0, 0.0, 0.0]

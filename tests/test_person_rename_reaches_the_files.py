@@ -20,7 +20,7 @@ from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 import own_home  # noqa: E402
 import tuner_client  # noqa: E402
 from exiftool_session import ExifToolSession  # noqa: E402
-from index import PhotoIndex  # noqa: E402
+from tagpup.services.search import PhotoIndex  # noqa: E402
 
 from tagpup.store import db, people  # noqa: E402
 

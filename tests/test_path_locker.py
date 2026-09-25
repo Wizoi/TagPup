@@ -19,7 +19,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-from index import PathLocker
+from tagpup.store.locks import PathLocker
 
 
 class PathLockerTestBase(unittest.TestCase):

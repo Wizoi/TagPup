@@ -58,7 +58,7 @@ class TunerAPITestBase(unittest.TestCase):
     def setUpClass(cls):
         cls.home = own_home.for_class(cls)
         cls.TEST_DB = cls.home.library(cls.DB_NAME)
-        from index import PhotoIndex
+        from tagpup.services.search import PhotoIndex
 
         pi = PhotoIndex(db_path=cls.TEST_DB)
         pi.load()

@@ -14,7 +14,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from tagpup_cli import cli, get_config, get_exiftool_path
-from embedder import output_dim
+from tagpup.ml.clip import output_dim
 import exiftool
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
@@ -78,11 +78,11 @@ class TestFunctionalCLI(unittest.TestCase):
         # Clear environment variables
         os.environ.pop("TAGPUP_DB_PATH", None)
 
-    @patch('embedder.ClipEmbedder._init_model')
-    @patch('embedder.ClipEmbedder.embed_image')
-    @patch('embedder.ClipEmbedder.embed_text')
-    @patch('faces.FaceProcessor._init_models')
-    @patch('faces.FaceProcessor.detect_and_embed_faces')
+    @patch('tagpup.ml.clip.ClipModel._init_model')
+    @patch('tagpup.ml.clip.ClipModel.embed_image')
+    @patch('tagpup.ml.clip.ClipModel.embed_text')
+    @patch('tagpup.ml.faces.FaceModel._init_models')
+    @patch('tagpup.ml.faces.FaceModel.detect_and_embed_faces')
     def test_cli_end_to_end_workflow(self, mock_detect, mock_init_faces, mock_embed_text, mock_embed_image, mock_init_clip):
         # Mock ML models behavior to match database expected dimensionality
         config = get_config()

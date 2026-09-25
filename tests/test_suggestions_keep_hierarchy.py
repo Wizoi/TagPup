@@ -22,7 +22,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-from suggester import TagSuggester
+from tagpup.services.suggester import TagSuggester
 from taxonomy import TagTaxonomy
 
 
@@ -132,7 +132,7 @@ class TestItDoesNotRewritePhotos(unittest.TestCase):
     good reason -- and a suggestion resolver is not the place to start doing it."""
 
     def test_resolution_touches_suggestions_only(self):
-        source = os.path.join(WORKSPACE_DIR, "scripts", "suggester.py")
+        source = os.path.join(WORKSPACE_DIR, "tagpup", "services", "suggester.py")
         with open(source, encoding="utf-8") as f:
             text = f.read()
         start = text.index("def _with_taxonomy_paths")

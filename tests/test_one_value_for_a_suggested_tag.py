@@ -40,9 +40,15 @@ class OneValue(unittest.TestCase):
         # Where a tag's score decides, it is compared with the one value: TagPup's
         # routes and the model that offers, the writer, the CLI and the runner.
         for name in ("tagpup/web/tagpup_routes.py", "tagpup/core/suggesting.py", "tagpup/jobs/suggestions.py",
-                     "scripts/suggest_models.py", "scripts/writer.py", "tagpup_cli.py", "runner.py"):
+                     "scripts/writer.py", "tagpup_cli.py", "runner.py"):
             found = re.findall(r"score[\w\"'\].)]*\s*>=\s*0\.\d", source(name))
             self.assertEqual([], found, name)
+        # What a run offers (tagpup.services.suggester.SuggestionModel.offered). The
+        # suggester's own scoring beside it has values of its own, consensus's floor
+        # among them, which are not what a tag is offered from.
+        from tagpup.services.suggester import SuggestionModel
+        found = re.findall(r"score[\w\"'\].)]*\s*>=\s*0\.\d", inspect.getsource(SuggestionModel))
+        self.assertEqual([], found, "SuggestionModel")
 
 
 if __name__ == "__main__":

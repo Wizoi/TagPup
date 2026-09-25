@@ -157,8 +157,10 @@ class AnEmbedding(unittest.TestCase):
         # Rotated while Suggest embedded it: the rotation took the vector away, and the
         # vector from before the turn came back stamped as the file after it (#86).
         import torch
-        from embedder import ClipEmbedder
         from PIL import Image
+
+        from tagpup.ml.clip import ClipModel
+        from tagpup.services.search import PhotoEmbeddings
 
         lib = TempLibrary(self)
         photo = os.path.join(lib.photos, "turned.jpg")
@@ -166,8 +168,9 @@ class AnEmbedding(unittest.TestCase):
         opened = embeddings.stamp_of(photo)
         index = mock.Mock(conn=True, write_on_own_connection=lambda op, label: db.write_with_connection(
             lib.library.path, op, label=label))
-        embedder = ClipEmbedder(model_name="ViT-T", pretrained="tiny", photo_index=index)
-        embedder.device = "cpu"
+        embedder = ClipModel(model_name="ViT-T", pretrained="tiny", preserve_full_frame=True,
+                             max_aspect_ratio=1.4, force_image_size=None, device="cpu")
+        vectors = PhotoEmbeddings(embedder, index)
 
         def turned_while_embedding(image):
             with open(photo, "ab") as f:
@@ -179,10 +182,10 @@ class AnEmbedding(unittest.TestCase):
             embedder.preprocess = turned_while_embedding
 
         embedder._init_model = init_model
-        embedder.embed_image(photo, force_recompute=True)
+        vectors.of(photo, force_recompute=True)
         conn = db.connect(db.readonly_uri(lib.library.path), uri=True)
         try:
-            stored = embeddings.get(conn, photo, embedder.model_key)
+            stored = embeddings.get(conn, photo, vectors.model_key)
         finally:
             conn.close()
         self.assertEqual(opened, stored[:2])

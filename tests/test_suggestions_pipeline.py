@@ -16,32 +16,30 @@ Four things went wrong here, each quietly:
   photos left judged "what does this folder agree on" from those two.
 
 The runs are tagpup.jobs.suggestions'; what they run is the work TagPup's route hands
-them (work_for), with scripts/suggest_models' model replaced by a script. Names here
-are fictional.
+them (work_for), with the runtime's models (tagpup.runtime) and the suggester replaced
+by a script. Names here are fictional.
 """
 import os
 import shutil
 import sys
 import tempfile
-import types
 import unittest
 from unittest import mock
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS_DIR = os.path.join(WORKSPACE_DIR, "scripts")
-sys.path.insert(0, SCRIPTS_DIR)
-
-import suggest_models  # noqa: E402
-from suggester import TagSuggester as RealSuggester  # noqa: E402
+sys.path.insert(0, WORKSPACE_DIR)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shipped_sources import python_sources  # noqa: E402
 
+from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
+from tagpup.services import suggester as suggester_service  # noqa: E402
+from tagpup.services.suggester import TagSuggester as RealSuggester  # noqa: E402
 from tagpup.store import db, schema  # noqa: E402
-from tagpup.core.per_library import PerLibrary  # noqa: E402
 
 
 class _LibraryFixture(unittest.TestCase):
@@ -66,41 +64,32 @@ class _LibraryFixture(unittest.TestCase):
 
 
 class _FakeIndex:
-    def reload_if_changed(self):
-        return False
+    """A library's photo index with nothing in it, and no connection to keep vectors on."""
+    db_path = "no such library.db"
+    conn = None
 
 
-class _FakeEmbedder:
+class _FakeClip:
+    """CLIP, as the runtime's settings name it, that embeds everything alike."""
+
     def __init__(self):
-        self.photo_index = _FakeIndex()
+        self.settings = tagpup_config.embedder_settings()
 
     def embed_image(self, path):
         return [0.0]
 
 
-def _fake_modules(suggester_cls):
-    taxonomy = types.ModuleType("taxonomy")
+class _FakeTaxonomy:
+    paths = []
 
-    class TagTaxonomy:
-        paths = []
+    def __init__(self, db_path=None):
+        pass
 
-        def __init__(self, file_path=None):
-            pass
+    def load(self):
+        pass
 
-        def load(self):
-            pass
-
-        def people_roots(self):
-            return {"people", "family", "friends"}
-
-    taxonomy.TagTaxonomy = TagTaxonomy
-    suggester = types.ModuleType("suggester")
-    suggester.TagSuggester = suggester_cls
-    index = types.ModuleType("index")
-    index.PhotoIndex = object
-    embedder = types.ModuleType("embedder")
-    embedder.ClipEmbedder = object
-    return {"taxonomy": taxonomy, "suggester": suggester, "index": index, "embedder": embedder}
+    def people_roots(self):
+        return {"people", "family", "friends"}
 
 
 class _RunFixture(_LibraryFixture):
@@ -137,18 +126,17 @@ class _RunFixture(_LibraryFixture):
                 })
                 return RealSuggester.apply_folder_consensus(self, suggestions)
 
-        self.modules = _fake_modules(ScriptedSuggester)
-        # This library's embedder is the fake, made the first time it is asked for.
-        embedders = mock.patch.object(suggest_models, "embedders", PerLibrary(lambda library: _FakeEmbedder()))
-        embedders.start()
-        self.addCleanup(embedders.stop)
+        # The models are the runtime's fakes, and this library's index an empty one.
+        self.runtime = Runtime(tagpup_config.load(), clip=_FakeClip(), faces=object())
+        for patched in (mock.patch.object(self.runtime, "photo_index", lambda library: _FakeIndex()),
+                        mock.patch.object(suggester_service, "TagSuggester", ScriptedSuggester),
+                        mock.patch.object(suggester_service, "TagTaxonomy", _FakeTaxonomy)):
+            patched.start()
+            self.addCleanup(patched.stop)
 
     def run_folder(self, folder, photos):
         self.runs.statuses[folder] = {"status": "preparing", "completed": 0, "total": 0}
-        work = suggestion_jobs.work_for(self.library, lambda: photos)
-        with mock.patch.dict(sys.modules, self.modules), \
-                mock.patch.object(suggestion_jobs, "models", suggest_models.Models()):
-            self.runs.run(folder, work)
+        self.runs.run(folder, suggestion_jobs.work_for(self.library, lambda: photos, self.runtime))
         return self.runs.status(folder)
 
 
@@ -208,17 +196,20 @@ class CompletedMeansConsensusIsDone(_RunFixture):
 
 
 class WithoutAModelProvider(_LibraryFixture):
-    def test_a_run_says_nothing_is_installed(self):
-        """A server nobody wired the models into fails the run with a message, not a
-        NameError three frames down; an empty folder never needs the model."""
+    def test_a_run_says_it_has_no_models(self):
+        """An app made without a runtime fails the run with a message, not a NameError
+        three frames down; an empty folder never needs the model."""
         folder, photos = self._folder("2025-08 Sprints", 1)
-        with mock.patch.object(suggestion_jobs, "models", None):
-            self.runs.run(folder, suggestion_jobs.work_for(self.library, lambda: photos))
-            status = self.runs.status(folder)
-            self.assertEqual(status["status"], "error")
-            self.assertIn("suggest_models.install", status["message"])
-            self.runs.run(folder, suggestion_jobs.work_for(self.library, lambda: {}))
-            self.assertEqual(self.runs.status(folder)["message"], "No images found in this folder.")
+        self.runs.run(folder, suggestion_jobs.work_for(self.library, lambda: photos, None))
+        status = self.runs.status(folder)
+        self.assertEqual(status["status"], "error")
+        self.assertIn("without a runtime", status["message"])
+        self.runs.run(folder, suggestion_jobs.work_for(self.library, lambda: {}, None))
+        self.assertEqual(self.runs.status(folder)["message"], "No images found in this folder.")
+
+    def test_there_is_no_slot_to_fill(self):
+        """The models were a module-level slot a script filled (docs/findings.md, #112)."""
+        self.assertFalse(hasattr(suggestion_jobs, "models"))
 
 
 class OneFileOneOwner(unittest.TestCase):

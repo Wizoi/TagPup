@@ -121,37 +121,45 @@ class WhatClipIsAsked(unittest.TestCase):
     def test_nothing_else_writes_them(self):
         self.assertEqual([], sources_matching(r"[\"']a photo of",
                                               os.path.join("tagpup", "core", "suggesting.py")))
+        # The runtime reads config.ini's words once, for the suggester to merge with the
+        # tree's at the start of each run (tagpup.services.suggester.model_for_run).
+        runtime = os.path.join("tagpup", "runtime.py")
         for path in sources_matching(r"config\.candidate_tags\("):
+            if path == runtime:
+                continue
             for line in read(path).splitlines():
                 if re.search(r"config\.candidate_tags\(", line):
                     self.assertIn("zero_shot_words(", line, path)
+        import inspect
+
+        from tagpup.services import suggester
+        self.assertIn("zero_shot_words(configured_words,", inspect.getsource(suggester.model_for_run))
 
 
 class TheLengthOfAPhotosVector(unittest.TestCase):
-    """How long a model's vectors are is asked of open_clip, in the embedder: the CLI
-    guessed it from the model's name three times, 512 for anything not ViT-L or ViT-H,
-    and so cleared every vector on each index with ViT-bigG-14, whose are 1280."""
+    """How long a model's vectors are is asked of open_clip, in the model
+    (tagpup.ml.clip): the CLI guessed it from the model's name three times, 512 for
+    anything not ViT-L or ViT-H, and so cleared every vector on each index with
+    ViT-bigG-14, whose are 1280."""
 
     def test_is_the_models_own(self):
-        sys.path.insert(0, os.path.join(ROOT, "scripts"))
-        import embedder
-        self.assertEqual(1280, embedder.output_dim("ViT-bigG-14"))
-        self.assertEqual(1024, embedder.output_dim("ViT-H-14"))
-        self.assertEqual(512, embedder.output_dim("ViT-B-32"))
-        self.assertIsNone(embedder.output_dim("hf-hub:somebody/unknown-model"))
+        from tagpup.ml import clip
+        self.assertEqual(1280, clip.output_dim("ViT-bigG-14"))
+        self.assertEqual(1024, clip.output_dim("ViT-H-14"))
+        self.assertEqual(512, clip.output_dim("ViT-B-32"))
+        self.assertIsNone(clip.output_dim("hf-hub:somebody/unknown-model"))
 
     def test_the_library_is_compared_with_it(self):
-        sys.path.insert(0, os.path.join(ROOT, "scripts"))
-        import embedder
+        from tagpup.services import search
 
         class Index:
             def __init__(self, d):
                 self.index = type("Vectors", (), {"d": d})() if d else None
 
-        self.assertIsNone(embedder.stored_mismatch(Index(1280), "ViT-bigG-14"))
-        self.assertIsNone(embedder.stored_mismatch(Index(None), "ViT-bigG-14"))
-        self.assertIsNone(embedder.stored_mismatch(Index(7), "hf-hub:somebody/unknown-model"))
-        self.assertEqual((512, 1280), embedder.stored_mismatch(Index(512), "ViT-bigG-14"))
+        self.assertIsNone(search.stored_mismatch(Index(1280), "ViT-bigG-14"))
+        self.assertIsNone(search.stored_mismatch(Index(None), "ViT-bigG-14"))
+        self.assertIsNone(search.stored_mismatch(Index(7), "hf-hub:somebody/unknown-model"))
+        self.assertEqual((512, 1280), search.stored_mismatch(Index(512), "ViT-bigG-14"))
 
     def test_nobody_guesses_it_from_the_name(self):
         guess = r"[\"']ViT-[LH][\"']\s+in\b"
@@ -163,26 +171,34 @@ class TheLengthOfAPhotosVector(unittest.TestCase):
 
 
 class TheEmbeddersSettings(unittest.TestCase):
-    """The model a photo is embedded with is config.ini's (tagpup.config.embedder_settings):
-    the embedder had defaults of its own, ViT-B-32 among them, that nothing checked
-    against the config's."""
+    """The model a photo is embedded with is config.ini's (tagpup.config.embedder_settings),
+    made into a model by the runtime: the embedder had defaults of its own, ViT-B-32
+    among them, that nothing checked against the config's."""
 
-    def test_an_embedder_given_none_takes_the_configs(self):
-        sys.path.insert(0, os.path.join(ROOT, "scripts"))
-        from embedder import ClipEmbedder
+    def test_the_runtimes_model_is_the_configs(self):
+        from unittest import mock
 
         from tagpup import config
+        from tagpup.ml import clip
+        from tagpup.runtime import Runtime
+        from tagpup.services import search
         from tagpup.store import embeddings
-        self.assertEqual(embeddings.model_key(**config.embedder_settings()), ClipEmbedder().model_key)
+        with mock.patch.object(clip, "ClipModel") as model:
+            model.return_value.settings = config.embedder_settings()
+            runtime = Runtime(config.load())
+            self.assertEqual(embeddings.model_key(**config.embedder_settings()), runtime.model_key)
+            self.assertEqual(runtime.model_key, search.PhotoEmbeddings(runtime.clip).model_key)
+        model.assert_called_once_with(**config.embedder_settings())
 
     def test_it_has_no_model_of_its_own(self):
-        self.assertNotRegex(read(os.path.join("scripts", "embedder.py")), r"[\"'](ViT-|laion)|max_aspect_ratio:\s*float\s*=")
+        for module in (os.path.join("tagpup", "ml", "clip.py"), os.path.join("scripts", "embedder.py")):
+            self.assertNotRegex(read(module), r"[\"'](ViT-|laion)|max_aspect_ratio:\s*float\s*=", module)
 
     def test_a_setting_it_does_not_know_is_refused(self):
-        sys.path.insert(0, os.path.join(ROOT, "scripts"))
-        from embedder import ClipEmbedder
+        from tagpup import config
+        from tagpup.ml.clip import ClipModel
         with self.assertRaises(TypeError):
-            ClipEmbedder(model="ViT-T")
+            ClipModel(model="ViT-T", **config.embedder_settings())
 
 
 class ATestLibrarysName(unittest.TestCase):
@@ -221,7 +237,7 @@ class WhereALibraryIs(unittest.TestCase):
         sys.path.insert(0, os.path.join(ROOT, "scripts"))
         import inspect
 
-        from index import PhotoIndex
+        from tagpup.services.search import PhotoIndex
         self.assertIs(inspect.Parameter.empty, inspect.signature(PhotoIndex).parameters["db_path"].default)
 
 

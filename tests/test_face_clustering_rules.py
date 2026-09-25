@@ -28,7 +28,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-from index import PhotoIndex
+from tagpup.services.search import PhotoIndex
 from taxonomy import TagTaxonomy
 from faces import FaceProcessor, resolution_trace_path
 

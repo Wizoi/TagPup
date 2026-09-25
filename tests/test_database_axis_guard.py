@@ -73,14 +73,14 @@ class TestNoLibraryIsResolvedImplicitly(unittest.TestCase):
 
     def test_work_handed_to_a_job_is_handed_its_library(self):
         """What TagPup hands a suggestion run touches its per-library folder cache and
-        embedder; the run's thread gets the library from the closure, never from a
-        request (tagpup.jobs.suggestions.work_for)."""
+        photo index; the run's thread gets the library from the closure, never from a
+        request, and the models it is handed (tagpup.jobs.suggestions.work_for)."""
         import inspect
 
         from tagpup.jobs import suggestions as suggestion_jobs
         from tagpup.web import tagpup_routes
 
-        self.assertEqual(["library", "photos"], list(inspect.signature(suggestion_jobs.work_for).parameters))
+        self.assertEqual(["library", "photos", "models"], list(inspect.signature(suggestion_jobs.work_for).parameters))
         self.assertEqual(["library", "folder"], list(inspect.signature(tagpup_routes._folder_photos).parameters))
         self.assertEqual(["library"], list(inspect.signature(tagpup_routes._folder_indexer).parameters))
 
