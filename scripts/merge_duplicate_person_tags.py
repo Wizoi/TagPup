@@ -17,7 +17,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.services import person_tags  # noqa: E402
+from tagpup.services import maintenance, person_tags  # noqa: E402
+
+
+def reported(result):
+    """Print what was skipped and what failed; 1 when anything failed, else 0."""
+    lines = maintenance.skipped(result) + maintenance.failed(result)
+    if lines:
+        print()
+    for line in lines:
+        print(line)
+    return 1 if result.errors else 0
 
 
 def main(argv=None):
@@ -45,16 +55,21 @@ def main(argv=None):
         print("   %s" % os.path.basename(photo_path))
 
     if result.details["dry_run"]:
-        print("\nNothing was changed. Re-run with --apply to write it.")
-        return
+        print("\n%s" % maintenance.rehearsed(result))
+        print("Nothing was changed. Re-run with --apply to write it.")
+        return reported(result)
     if not result.attempted:
         print("\nNothing to merge.")
-        return
+        return 0
 
-    print("\nbacked up to %s" % result.details["backup"])
+    if result.refused:
+        raise SystemExit(result.refused)
+    print("\n%s" % maintenance.recorded(result, args.db))
     print("\nRemoved %d of %d planned duplicate taxonomy node(s)." % (result.changed, result.attempted))
-    print("duplicates remaining: %d" % result.details["remaining"]["duplicates"])
+    if "remaining" in result.details:
+        print("duplicates remaining: %d" % result.details["remaining"]["duplicates"])
+    return reported(result)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

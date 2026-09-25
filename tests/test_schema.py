@@ -98,7 +98,7 @@ class ANewLibrary(SchemaTestCase):
         self.assertEqual([m.name for m in schema.MIGRATIONS], applied)
         self.assertEqual(schema.LATEST, schema.version(conn))
         self.assertEqual({"photos", "faces", "face_crops", "embeddings", "photo_people", "suggestions", "tag_taxonomy",
-                          "tag_embeddings", "generations", "schema_version"}, tables(conn))
+                          "tag_embeddings", "generations", "schema_version", "changes", "change_rows"}, tables(conn))
 
     def test_has_the_document_id_index(self):
         # Only a library that gained the column by migration had it.

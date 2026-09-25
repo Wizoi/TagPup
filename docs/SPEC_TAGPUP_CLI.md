@@ -279,5 +279,14 @@ Runs self-tuning identity resolution to cluster face embeddings and assign names
 ### `compact [--apply]`
 Says how much of the library's file holds nothing: pages left free by deleted rows and dropped columns, which SQLite keeps until the file is rewritten. With `--apply`, backs the library up (`db.backup`, into `backups/`), then rewrites it without them (`VACUUM`, `db.compact`) and says the size before and after. The rewrite needs the file to itself; close the apps first. After phase 4's migrations photo_index holds about 1 GB free of 4 GB.
 
+### `history [--change ID] [--limit N] [--reveal]`
+The library's journal (`tagpup.services.journal`): the changes the maintenance scripts and the MCP server's write tools applied, newest first -- each one's id, operation, status (`applied`, `derived_pending`, `undone`, `pruned`), when it was made and undone, the schema version it was made at, and how many rows of each table it inserted, updated and deleted. `--change ID` shows that change alone with the keys (ids) of every row it wrote; with `--reveal` too, each column's value before and after, a BLOB by its size. Values can name people, so they are shown only when asked.
+
+### `undo ID [--apply]`
+Undoes change ID of the journal. Without `--apply` it rehearses: undoes the change and applies it again inside a transaction rolled back, and says whether that restored every row exactly. With `--apply` it writes the old values back, only where every row is still what the change left. Refused, with nothing written and exit status 1, when a row has changed since, when a newer change touched the same rows (named), or when the library's schema has moved on since the change was made.
+
+### `prune-journal [--days N] [--apply]`
+Says how many changes are older than N days (90 by default, `journal.RETENTION_DAYS`); with `--apply`, drops their values and keeps their summaries, and they can no longer be undone. Every apply of a maintenance operation prunes by the default as well.
+
 ### `export-tree OUTPUT`
 Writes the library's tag tree to OUTPUT as JSON (`{"paths": [...]}`): a copy to keep or read. The tree lives in the library; nothing reads this file back.

@@ -1,4 +1,4 @@
-"""The one scaffold every maintenance operation runs on: plan, back up, apply, report.
+"""The one scaffold every maintenance operation runs on: plan, rehearse, apply, report.
 
 The maintenance scripts in scripts/ each carried their own copy of the same steps --
 work out what would change, print it, and only with --apply back the library up, write
@@ -10,34 +10,39 @@ once, and a script and a tool call the same service.
 An operation hands `run` two functions:
 
 - `plan(library)` returns a Plan: how many writes it would make, the counts and ids a
-  report gives, what only a person may be shown (paths, names), and whatever the write
-  needs. It reads; it never writes.
-- `write(library, plan, result)` writes under the library's write lock and counts into
-  `result.changed` what the writes changed -- rowcounts, never the plan's sizes -- with
-  anything it left alone in `result.skipped`.
+  report gives, what only a person may be shown (paths, names), and whatever the edits
+  need. It reads; it never writes.
+- `edits(planned)` turns the plan into the rows it writes (tagpup.store.journal.Edit),
+  each carrying what the plan read of it.
 
 and, optionally, `remaining(library)`: counts re-read once the write is done, where the
 operation can re-read cheaply.
 
-A dry run returns the plan as a Result and changes nothing: `attempted` is what it would
-write, `changed` is 0, and no backup is taken. Applying backs the library up once
-(db.backup; CLAUDE.md: one backup per apply), unless the plan holds nothing to write.
+Applying records the edits as one change of the library's journal (phase 7.5) instead of
+copying the library first: applied only where every row is still what the plan read --
+otherwise the whole change is refused, naming the rows -- and undoable afterwards on the
+same terms (tagpup.services.journal). An edit marked skippable (a refresh's) whose row
+changed since is left out instead, and listed in the Result's `skipped`. A dry run is the rehearsal: the change applied and
+undone inside a transaction that is rolled back, which says whether the undo restored
+every row exactly. Nothing is written by it.
 
 The Result's details, in every operation:
 
     dry_run    True unless applied
-    backup     where the copy went, or None
+    change     the id of the change applied, or None
+    rehearsal  the dry run's: rows, exact, differences, derived_exact, refused
     counts     {what: how many}: the plan, safe to show anyone
     ids        {what: [id]}: photo, face or tag-node ids, safe to show anyone
     reveal     paths, names, captions: the library is photographs of real people, many
                of them minors, so a tool shows these only when asked (reveal=True)
     remaining  {what: how many} re-read after the write, where the operation offers it
+    pruned     changes whose values the journal's retention took away after the apply
 """
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from tagpup.core.result import Result
-from tagpup.store import db
+from tagpup.store import journal
 
 
 @dataclass
@@ -50,18 +55,19 @@ class Plan:
     reveal: Dict[str, Any] = field(default_factory=dict)
     #: Why nothing can be planned at all -- a library with no tag tree, say.
     refused: Optional[str] = None
-    #: Whatever `write` needs; never reported.
+    #: Whatever `edits` needs; never reported.
     work: Any = None
 
 
-def run(library, reason, plan, write, apply=False, remaining=None):
-    """Plan an operation on `library` and, with `apply`, back up and write it. Returns a
-    Result (see the module's docstring). `reason` names the backup:
-    <library>.before-<reason>-<time>.db."""
+def run(library, operation, plan, edits, apply=False, remaining=None, kinds=()):
+    """Plan an operation on `library`, and rehearse it, or with `apply` record and write
+    it as one change named `operation`. Returns a Result (see the module's docstring):
+    `changed` is the rows the change changed, read from the writes, not the plan's size.
+    With `kinds`, details["changed"] counts the edits of each kind (Edit.kind)."""
     planned = plan(library)
     result = Result(attempted=planned.size, details={
         "dry_run": not apply,
-        "backup": None,
+        "change": None,
         "counts": dict(planned.counts),
         "ids": dict(planned.ids),
         "reveal": dict(planned.reveal),
@@ -69,16 +75,75 @@ def run(library, reason, plan, write, apply=False, remaining=None):
     if planned.refused:
         result.refuse(planned.refused)
         return result
-    if not apply or not planned.size:
+    if not planned.size:
         return result
-    result.details["backup"] = db.backup(library.path, reason)
+    wanted = edits(planned)
+    summary = {"counts": dict(planned.counts)}
+    if not apply:
+        try:
+            rehearsal = journal.rehearse(library.path, operation, wanted, summary)
+        except Exception as e:
+            result.fail("the rehearsal", "%s: %s" % (type(e).__name__, e))
+            return result
+        result.details["rehearsal"] = rehearsal.as_dict()
+        for what, why in rehearsal.skipped:
+            result.skip(what, why)
+        if rehearsal.refused:
+            result.refuse(rehearsal.refused)
+        return result
     try:
-        write(library, planned, result)
+        applied = journal.apply(library.path, operation, wanted, summary)
+    except journal.Refusal as e:
+        result.refuse("Nothing was written: %s" % e)
+        return result
     except Exception as e:
-        # The backup is taken; say so, so nobody applies again for want of knowing (a
-        # second apply is a second backup, and the library keeps five).
         result.fail("the write", "%s: %s" % (type(e).__name__, e))
         return result
+    result.changed = applied.changed
+    result.details["change"] = applied.change_id
+    for what, why in applied.skipped:
+        result.skip(what, why)
+    if kinds:
+        result.details["changed"] = {kind: applied.by_kind.get(kind, 0) for kind in kinds}
+    if not applied.settled:
+        result.fail("the people and dates of the photos it touched",
+                    "not rebuilt yet; they are, the next time the library is opened")
+    result.details["pruned"] = journal.prune(library.path)[0]
     if remaining is not None:
         result.details["remaining"] = remaining(library)
     return result
+
+
+# ---- What the scripts print ------------------------------------------------------------
+
+def rehearsed(result):
+    """What a dry run's rehearsal found, in a line for a person."""
+    rehearsal = result.details.get("rehearsal")
+    if not rehearsal:
+        return "Nothing to rehearse."
+    if rehearsal["refused"]:
+        return "Applying now would be refused: %s" % rehearsal["refused"]
+    if rehearsal["exact"] and rehearsal["derived_exact"]:
+        return "Rehearsed: %d row(s) written and undone, and the undo restored every one exactly." % rehearsal["rows"]
+    return "Rehearsed: the undo did NOT restore every row exactly: %s" % "; ".join(
+        rehearsal["differences"] or ["the photos' people differ"])
+
+
+def recorded(result, db_path):
+    """Which change an apply was recorded as, and how to take it back, in a line."""
+    change = result.details.get("change")
+    if change is None:
+        return "Nothing was recorded: no change was written."
+    return ('Recorded as change %d; to undo it: tagpup_cli.py --db "%s" undo %d --apply'
+            % (change, db_path, change))
+
+
+def skipped(result):
+    """The rows left out, a line each, for a person; [] when none were."""
+    return ["Skipped %s: %s" % (what, why) for what, why in result.skipped]
+
+
+def failed(result):
+    """What failed, a line each, for a person; [] when nothing did. A script prints these
+    and exits non-zero."""
+    return ["FAILED: %s: %s" % (what, error) for what, error in result.errors]

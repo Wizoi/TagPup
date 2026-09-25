@@ -52,6 +52,7 @@ from tagpup import config as tagpup_config
 from tagpup.runtime import Runtime
 from tagpup.services import faces as face_records
 from tagpup.services import identities
+from tagpup.services import journal as library_journal
 from tagpup.services import tagging
 from tagpup.services.search import PhotoIndex, stored_mismatch
 from tagpup.services.suggester import TagSuggester
@@ -789,6 +790,105 @@ def compact(ctx, apply_: bool):
     except Exception as e:
         raise click.ClickException("Could not compact the library (is an app using it?): %s" % e) from e
     console.print(f"Compacted: {before / 1e6:,.0f} MB -> {after / 1e6:,.0f} MB.")
+
+
+def _existing_library(ctx):
+    """The Library the command names, which must be there."""
+    db_path = get_db_path(get_config(), ctx.obj.get("test", False), ctx.obj.get("db"))
+    if not os.path.exists(db_path):
+        raise click.ClickException("There is no library at %s." % db_path)
+    return Library(db_path)
+
+
+#: How `history` says what a change did to a row.
+DONE = {"insert": "inserted", "update": "updated", "delete": "deleted"}
+
+
+def _rows_line(rows):
+    """{table: {action: n}} as "face_crops: 3 deleted; faces: 3 deleted"."""
+    return "; ".join("%s: %s" % (table, ", ".join("%d %s" % (n, DONE[action]) for action, n in sorted(actions.items())))
+                     for table, actions in sorted(rows.items())) or "no rows"
+
+
+@cli.command()
+@click.option("--change", "change_id", type=int, default=None, help="One change, with the keys of every row it wrote.")
+@click.option("--limit", default=20, type=int, help="How many changes to list, newest first.")
+@click.option("--reveal", is_flag=True, help="With --change: each column's value before and after. Values can name people.")
+@click.pass_context
+def history(ctx, change_id, limit, reveal):
+    """The library's journal: the changes bulk operations applied, newest first, each
+    undoable with `undo` until it is pruned."""
+    library = _existing_library(ctx)
+    try:
+        found = library_journal.history(library, change_id, reveal, limit)
+    except Exception as e:
+        raise click.ClickException(str(e)) from e
+    if not found["changes"]:
+        console.print("The journal of %s is empty." % library.name)
+        return
+    for entry in found["changes"]:
+        console.print("%d  %s  %s  made %s%s  (schema %d)  %s" % (
+            entry["id"], entry["operation"], entry["status"], entry["created"],
+            ", undone %s" % entry["undone"] if entry["undone"] else "", entry["schema_version"],
+            _rows_line(entry["rows"])), markup=False, soft_wrap=True)
+    if change_id is not None:
+        entry = found["changes"][0]
+        for table, keys in sorted(entry.get("keys", {}).items()):
+            console.print("  %s: %s" % (table, ", ".join("/".join(str(k) for k in key) for key in keys)),
+                          markup=False)
+        for row in entry.get("values", []):
+            console.print("  %s %s %s: %s -> %s" % (row["action"], row["table"], "/".join(str(k) for k in row["key"]),
+                                                   row["old"], row["new"]), markup=False)
+    console.print("Changes stay undoable for %d days." % found["retention_days"])
+
+
+def _say_rehearsal(result):
+    rehearsal = result.details.get("rehearsal") or {}
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+    elif rehearsal:
+        exact = rehearsal["exact"] and rehearsal["derived_exact"]
+        console.print("Rehearsed: %d row(s); %s" % (
+            rehearsal["rows"], "every one came back exactly." if exact else
+            "NOT every row came back exactly: %s" % "; ".join(rehearsal["differences"])), markup=False,
+            soft_wrap=True)
+
+
+@cli.command()
+@click.argument("change_id", type=int)
+@click.option("--apply", "apply_", is_flag=True, help="Write the undo. Without it, only rehearses it.")
+@click.pass_context
+def undo(ctx, change_id, apply_):
+    """Undo change CHANGE_ID of the library's journal (`history` lists them): only where
+    every row is still what the change left, and no newer change touched the same rows.
+    A rehearsal unless --apply."""
+    library = _existing_library(ctx)
+    result = library_journal.undo(library, change_id, apply=apply_)
+    _say_rehearsal(result)
+    if result.refused:
+        raise SystemExit(1)
+    if not apply_:
+        console.print("Nothing changed. --apply undoes it.")
+        return
+    console.print("Undid change %d: %d row(s) written back." % (change_id, result.changed))
+    for what, error in result.errors:
+        console.print("[yellow]%s: %s[/yellow]" % (what, error))
+
+
+@cli.command("prune-journal")
+@click.option("--days", default=library_journal.RETENTION_DAYS, type=int, show_default=True,
+              help="Changes older than this lose their values and can no longer be undone.")
+@click.option("--apply", "apply_", is_flag=True, help="Prune. Without it, only says what would go.")
+@click.pass_context
+def prune_journal(ctx, days, apply_):
+    """Let old changes go: each keeps its summary, and loses the values an undo needs."""
+    library = _existing_library(ctx)
+    result = library_journal.prune(library, days, apply=apply_)
+    if not apply_:
+        console.print("%d change(s) older than %d days would be pruned (%d value(s)). --apply prunes them."
+                      % (result.attempted, days, result.details["values"]))
+        return
+    console.print("Pruned %d change(s), %d value(s)." % (result.changed, result.details["values"]))
 
 
 @cli.command()

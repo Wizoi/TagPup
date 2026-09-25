@@ -146,6 +146,7 @@ nothing of Flask's), and each mixed module splits along the layers (phase 5.5).
 | `generations` | infrastructure | `name`, `value` for photos, faces and taxonomy. Replaces `faces_generation` and `taxonomy_generation`. |
 | `schema_version` | infrastructure | Migrations applied in order, from `tagpup.store.schema`. |
 | `jobs` | infrastructure | id, kind, arguments, status, progress, message, created, finished. |
+| `changes`, `change_rows` | infrastructure | The journal (phase 7.5): each bulk edit, and what it found and left of each row, one row per changed column. |
 
 Each change ships as a migration with a dry run and a backup, and `tools/doctor.py` checks the library's invariants before and after.
 
@@ -195,7 +196,7 @@ Target: the full check in under a minute.
 | `tagpup_cli.py` | `tagpup/cli.py`; the file at the root stays as a launcher |
 | `tagpup_gui.py`, `tagtuner.py` | one launcher for the one server |
 | `runner.py` | `tagpup/desktop/runner.py`, over services |
-| maintenance scripts in `scripts/` | stay, each a thin entry point on one scaffold: dry run, backup, apply, report |
+| maintenance scripts in `scripts/` | stay, each a thin entry point on one scaffold: dry run (a rehearsal), apply (one change of the journal), report |
 | `measure_*`, `verify_workflow.py`, `generate_screenshots.py`, `prepare_test_environment.py` | `tools/`, sharing one sandbox module |
 | `gui/`, `gui_tagpup/` | `web/tuner/`, `web/tagpup/`, `web/common/` |
 
@@ -383,16 +384,17 @@ writes atomic; they find disagreement between the database and a file on the nex
 and resolve it per file. dpkg's per-item states and recovery at start are the model
 for files here.
 
-- [ ] **The journal** (a migration): `changes(id, operation, status, schema_version, created, applied, undone, summary)` -- status planned, applied, derived_pending, undone, failed, pruned -- and `change_rows(change_id, table_name, row_key, column_name, old, new)`, one row per changed column, the values stored as SQLite values (a BLOB as a BLOB). An inserted or deleted row records every column.
-- [ ] **Forward**, under the write lock in one transaction: read each row's current values, refuse the whole change if any differs from what the plan read, write, record, mark the change `derived_pending`, commit; then rebuild the derived data the change touched (the photos' people, generations) and mark it `applied`. A change left `derived_pending` by a crash is finished at start.
-- [ ] **Undo**: the same with old and new swapped. Refused when any row is not what the change left, when a newer applied change touched the same rows (named in the refusal), or when the schema has moved on since the change was made.
-- [ ] **The rehearsal**: a dry run applies the change and its undo inside a transaction that is rolled back, and says whether the undo restored every row exactly. Nothing is written; the real apply writes once.
-- [ ] **Keys never reused**: rows a journaled operation can delete (`faces`, `tag_taxonomy`, `photo_people`...) get keys SQLite never hands out again (AUTOINCREMENT), or an undo that re-inserts a deleted row could collide with -- or silently match -- a newer one. Cascades into journaled tables are either recorded or forbidden; a guard test holds it.
-- [ ] **The maintenance operations** (phase 7's scaffold) record a change instead of taking a backup; the MCP server and the CLI gain `history` and `undo` (a dry run by default). Merging photo_index's 98 duplicate person tags is the first journaled change *(owner, 2026-09-25)*.
-- [ ] **Retention**: how long a change stays undoable, and what pruning keeps (the summary stays; the values go; the change becomes `pruned`).
+- [x] **The journal** (a migration): `changes(id, operation, status, schema_version, created, applied, undone, summary)` -- status planned, applied, derived_pending, undone, failed, pruned -- and `change_rows(change_id, table_name, row_key, column_name, old, new)`, one row per changed column, the values stored as SQLite values (a BLOB as a BLOB). An inserted or deleted row records every column.
+- [x] **Forward**, under the write lock in one transaction: read each row's current values, refuse the whole change if any differs from what the plan read, write, record, mark the change `derived_pending`, commit; then rebuild the derived data the change touched (the photos' people, generations) and mark it `applied`. A change left `derived_pending` by a crash is finished at start. An operation whose rows do not depend on each other (the refresh) marks its edits skippable: a row saved in the app during the run is left out and reported, and the rest are written; merging and deduplicating stay all or nothing.
+- [x] **Undo**: the same with old and new swapped. Refused when any row is not what the change left, when a newer applied change touched the same rows (named in the refusal), or when the schema has moved on since the change was made.
+- [x] **The schema's constraints, checked by the journal**: it writes with foreign keys off, so before any write, forward or undo, every foreign key of a written row must resolve (counting rows the same write puts back) and no UNIQUE constraint may break -- both read from the schema; the refusal names the row and the column. An IntegrityError SQLite raises all the same is a refusal, the transaction rolled back.
+- [x] **The rehearsal**: a dry run applies the change and its undo inside a transaction that is rolled back, and says whether the undo restored every row exactly. Nothing is written; the real apply writes once.
+- [x] **Keys never reused**: rows a journaled operation can delete (`faces`, `tag_taxonomy`, `photo_people`...) get keys SQLite never hands out again (AUTOINCREMENT), or an undo that re-inserts a deleted row could collide with -- or silently match -- a newer one. Cascades into journaled tables are either recorded or forbidden; a guard test holds it.
+- [x] **The maintenance operations** (phase 7's scaffold) record a change instead of taking a backup; the MCP server and the CLI gain `history` and `undo` (a dry run by default). Merging photo_index's 98 duplicate person tags is the first journaled change *(owner, 2026-09-25)*.
+- [x] **Retention**: how long a change stays undoable, and what pruning keeps (the summary stays; the values go; the change becomes `pruned`). 90 days (`journal.RETENTION_DAYS`), pruned after every apply and on request (`prune-journal`, the MCP tool `prune_journal`).
 - [ ] **Migrations**: each in one transaction, with the checks it names run before it commits. One that only adds needs no backup; one that changes data records its rows like any change; only one that destroys information takes a full backup, taken under the write lock. Recorded in `changes` as well.
 - [ ] **Photo files** (the last stage): a bulk edit that writes files -- Add to all selected, Apply All, Shift Date Taken, Smart Rename, a person's rename -- records each file's fields before and after, commits that plan, marks a file `writing` before ExifTool runs and `done` in the same transaction that records the row (`record_tags_in_index`). At start, a file left `writing` is settled by what it holds: the before, redo it; the after, mark it done; neither, a conflict, reported and never overwritten. Undo rewrites a file only where it still holds what the edit wrote.
-- [ ] Tests that crash an operation between each of its steps and prove recovery; forward-then-undo restoring the touched tables exactly on rows shaped like the real ones; and rehearsals on copies of both real libraries.
+- [ ] Tests that crash an operation between each of its steps and prove recovery; forward-then-undo restoring the touched tables exactly on rows shaped like the real ones; and rehearsals on copies of both real libraries. Done for the database stages (`tests/test_journal.py`, `tests/test_journal_keys_and_cascades.py`, `tests/test_journal_through_the_scripts.py`; rehearsed on copies of both libraries); the photo-file stage and migrations to come.
 
 Exit: no bulk operation or data-changing migration takes a full copy of the library; each is recorded, rehearsed before it is applied and undoable after, and a crash at any step is settled at the next start.
 
@@ -417,13 +419,57 @@ Exit: `config.ini` is gone; every setting a library depends on is in the library
 
 ### Phase 8: Sync
 A job that keeps each library in step with its folders. Today a row changes only when an app writes the photo or someone indexes its folder again, so the library drifts: files added outside the apps are missing, a deleted folder leaves its rows and face work behind (#42 and #47 in findings.md), and a file edited elsewhere keeps a row describing what it used to hold. It needs photo ids (phase 4), which let a moved or renamed file keep its row, and its faces with it.
+- **Recurring jobs** *(owner, 2026-09-25)*: `tagpup.jobs.recurring`, a registry where each recurring operation declares its name, its period (daily, weekly, monthly, every N hours), whether it runs per library, and the service it calls -- the snapshots, sync, pruning the journal, compacting. A job's runs are recorded in its library (a `job_runs` table: job, started, finished, outcome, what it changed), so any TagPup process knows what is due and the apps can show when each last ran. One runner runs what is due: a missed period runs once, not once per period missed, and a lock per job and library keeps two processes from running the same job at once. It runs inside whatever TagPup process is up -- the web server checks periodically, the CLI and the MCP server when they start. No Windows Task Scheduler.
+- **Always on, from login** *(owner, 2026-09-25)*: one background process -- the web server and the recurring-jobs runner together -- started at login from a shortcut in the owner's Startup folder, hidden, so both apps answer and the jobs run whenever the owner is logged in. It refuses a second copy of itself (the server already answering), restarts after a crash through a small supervisor, and logs to `data/logs`; `TagPup.cmd` and `TagTuner.cmd` then open the browser on it. A Windows service was weighed and not chosen: it runs outside the login session, with no desktop, so the folder dialog, Open in Explorer and Open photo would do nothing, photos on network drives or under the profile may be out of its reach, and keeping a Python program alive as a service needs pywin32's service host or a wrapper. `scripts/startup.py install|uninstall` (a dry run unless `--apply`) makes or removes the shortcut, starts or stops the process, and says what it did; installing the app again repoints it at the new version. The models it keeps loaded (ViT-H-14 takes a few GB of GPU memory) are released after an idle period and loaded again by the next Suggest.
 - `tagpup.jobs.sync`: for each indexed folder, compare what is on disk with the rows, by path, size and modified time. Content identity (the DocumentID) links a file that moved.
 - What it finds, sorted: new files (indexed through the indexing job's queue), changed files (their rows re-read from the file, as `refresh_rows_from_files.py` does now), moved files (the row follows the file), and missing files.
 - A missing file is reported, never removed on its own: a folder on an unplugged drive looks the same as a deleted one. Removing rows stays the owner's choice, and the report says which folders are wholly gone.
 - It runs when a library opens and when asked, and may watch the indexed folders while an app runs. A scan that finds nothing costs one directory walk and no file reads.
 - Each run reports what it changed, not what it looked at, and leaves a record the apps can show ("last in step: ...").
+- **Snapshots of each library, as its backup** *(owner, 2026-09-25)*: three dailies, one weekly and one monthly, in `data/backups/<library>/daily|weekly|monthly`, apart from the one-off copies phase 7.5 mostly retires. A daily is taken when the newest is more than a day old; the weekly and the monthly are refreshed from that same copy when they are more than 7 or 30 days old, so the library is read once, not three times. Each is taken with the library held against writers (SQLite's backup restarts whenever another connection writes), written under a temporary name, checked (`PRAGMA quick_check`), and only then renamed into place; an old snapshot is removed only after its replacement has passed, so a failed night never leaves fewer good copies. A daily job in the recurring registry, so it is taken by whichever TagPup process is up, or by the background runner. A tool lists them (date, size, the journal's changes since) and restores one: a dry run by default, saying how many journaled changes since the snapshot would be lost, and snapshotting the current file first so a restore can itself be undone. Sync's report gives the disk the snapshots take (photo_index is about 1.4 GB, so about 7 GB for five).
 
 Exit: after files are added, edited, moved or deleted outside the apps, one sync brings the rows back in step. `tools/doctor.py` finds nothing it would change, except missing files it has reported.
+
+### Phase 9: Library views (planned for October 2026)
+The owner's idea *(2026-09-25)*: TagPup shows the whole library, not only the folder it
+has open -- by folder, by keyword, by person, by date -- as Windows Live Photo Gallery
+did, from the database, with the editing TagPup gives a folder today. It follows phase 8:
+a view of the rows is only as good as the rows are current.
+
+The design, to be settled before it starts:
+- **One grid, two kinds of source.** A source says which photos are shown: a folder on
+  disk (today's view: it walks the folder and reads what is new or changed), or a
+  library query -- a folder and its subfolders, a keyword and everything under it, a
+  person, a year or month (`photos.taken`). The grid, the details panel, the selection
+  and the bulk edits are the same components on photo ids; an edit does the same
+  whichever source showed the photo. Two grids drifting apart is the failure to avoid.
+- **The transition.** A navigator beside the grid: Folders (the library's tree, counts,
+  each marked on disk or gone), Keywords (the tag tree with counts), People, Dates. A
+  library folder opens its library view; where the disk holds files the library does
+  not, a banner says so and offers to index them. "Show in library" goes from a disk
+  view to the same folder's library view. The header always says which source is shown,
+  and the URL names it, so Back and a bookmark work.
+- **Staleness is shown, not hidden.** A library view checks the thumbnails on screen
+  cheaply (size and modified time, no ExifTool) and marks a photo changed on disk or
+  missing; a missing photo is shown and not editable.
+- **Edits and sync.** Every edit writes the file and records its new size and modified
+  time in the transaction that marks the file written (phase 7.5), so sync (phase 8)
+  never takes our own edit for an outside one. A file changed outside while an edit is
+  planned fails the edit's precondition: a conflict, reported for sync to settle per
+  file, never overwritten. The views show sync's state ("last in step: ...").
+- **What it needs underneath.** Keywords are JSON in `photos.tags`, so "everything under
+  Trips/" reads every row: a derived `photo_tags(photo_id, tag)` table, indexed and
+  rebuilt from `photos.tags` as `photo_people` is. Folder counts scan the same way
+  (findings #168): a derived folders table, or an index-friendly path range. Browsing
+  thousands of photos needs cached thumbnails (derived, keyed by photo and modified
+  time) and a grid that renders only what is on screen -- the Identify Faces work showed
+  what rebuilding tens of thousands of cards costs.
+
+Open questions for the owner: sources beyond folder, keyword, person and date (ratings,
+saved searches such as "Trips/ and a person, 2019"); bulk edits across folders from a
+library view (they go through the same journaled writes, so they can be undone); which
+of Photo Gallery's habits to keep (the date slider, the tag pane with counts, the info
+pane).
 
 ## After the re-architecture
 
@@ -452,6 +498,9 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 2026-09-25 | The MCP server names a library in every tool call; it has no library of its own (#100). Its reads are a read-only service, `tagpup.services.inspect`, since an entry point may not import `store`; its writes are the maintenance scripts' operations, moved into services the scripts call too. |
 | 2026-09-25 | Bulk edits and migrations are recorded in a journal in the library, per changed column, applied and undone only where the rows are what the change expects, and rehearsed by a dry run that applies and undoes inside a rolled-back transaction. SQLite's session extension was weighed and its semantics copied, not the library: it needs APSW, a second owner of the database beside `tagpup.store.db`. Full backups remain only for migrations that destroy information. |
 | 2026-09-25 | A library's settings live in the library and are changed from TagTuner's gear, through the journal; `config.ini` is retired *(owner)*. The data folder is fixed (`TAGPUP_HOME/data`), not a setting. Settings with consequences are locked behind a Change... that asks for each consequence to be acknowledged. |
+| 2026-09-25 | Each library keeps three daily, one weekly and one monthly snapshot, taken under the write lock, checked before an old one is removed, and restorable with the journal's changes since counted *(owner)*. |
+| 2026-09-25 | Recurring operations (snapshots, sync, pruning the journal, compacting) are registered in `tagpup.jobs.recurring` with their periods and run by one runner inside any TagPup process; their runs are recorded in the library. No Windows Task Scheduler *(owner)*. |
+| 2026-09-25 | The server and the jobs runner run as one process started at login from the Startup folder, installed and removed by `scripts/startup.py`; not a Windows service, which has no desktop for the folder dialog and Explorer and may not reach the owner's drives. Idle models are released *(owner asked for always-on; the login process is the recommendation)*. |
 | 2026-09-25 | Input rules have one owner, `tagpup.core.validation`: services refuse on them, the pages check early from the rules the server publishes as data, and shared cases hold any JavaScript twin to the Python rule. Output is escaped by building elements from text; `innerHTML` with a value is refused by a guard *(owner)*. |
 
 ## Progress
@@ -468,6 +517,7 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 6. Pages | done, 2026-09-25 |
 | 6.5. No shims | done, 2026-09-25 |
 | 7. MCP | done, 2026-09-25 |
-| 7.5. A journal for every bulk edit and migration | in progress, 2026-09-25 |
+| 7.5. A journal for every bulk edit and migration | in progress: the database journal done 2026-09-25; migrations and photo files next |
 | 7.6. Settings in the library, and a gear on each page | in progress, 2026-09-25 |
 | 8. Sync | not started |
+| 9. Library views | planned for October 2026 *(owner, 2026-09-25)*; design questions open |

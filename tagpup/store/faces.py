@@ -576,18 +576,6 @@ def delete(conn, face_ids):
                                          for chunk in _chunks(face_ids)))
 
 
-def delete_if_unchanged(conn, planned):
-    """Delete each face of `planned` -- (id, name, name_source, excluded) as a plan read
-    them -- only while it still carries what the plan saw: a name given in the app
-    between the plan and the write keeps its face. Returns rows deleted. The caller
-    commits."""
-    planned = list(planned)
-    photo_ids = _photos_of(conn, [row[0] for row in planned])
-    return _rebuilt(conn, photo_ids, sum(
-        conn.execute("DELETE FROM faces WHERE id = ? AND name IS ? AND name_source IS ? AND excluded IS ?",
-                     row).rowcount for row in planned))
-
-
 # ---- What verify_workflow reads --------------------------------------------------------
 
 def latest_unnamed_ids(conn, limit):
