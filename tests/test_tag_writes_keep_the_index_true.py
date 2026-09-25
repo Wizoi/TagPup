@@ -73,6 +73,10 @@ def exiftool_that_writes():
     def set_tags(files, tags=None, params=None):
         for p in files:
             fields(p).update({k: v for k, v in (tags or {}).items() if v not in ([], "")})
+            # A field cleared in the same command (docs/findings.md, #271).
+            for param in params or []:
+                if param.startswith("-") and param.endswith("="):
+                    fields(p).pop(param[1:-1], None)
             touch(p)
 
     def execute(*args):

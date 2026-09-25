@@ -20,9 +20,10 @@ could put back is. `changes.owner` names the process carrying a change out, so a
 another live process is writing is not taken for one a crash left (tagpup.services.
 file_changes.settle).
 
-A field change keeps `fields_before` and `fields_after` as JSON, {field: [texts]}; a
-rename keeps the file's old and new path, and its size and modified time, which a rename
-does not change, to know the file by wherever it is found. Reading and writing the files
+A field change keeps `fields_before` and `fields_after` as JSON, {field: [texts]}, and
+the file's stamp, [mtime, size], as it is marked writing, over which settling carries its
+vectors (migration 12); a rename keeps the file's old and new path, and its size and
+modified time, which a rename does not change, to know the file by wherever it is found. Reading and writing the files
 is tagpup.services.file_changes'; this is the rows.
 """
 import json
@@ -54,6 +55,8 @@ class FileRow:
     after: Dict[str, Any] = field(default_factory=dict)
     state: str = "planned"
     note: Optional[str] = None
+    #: (mtime, size) of the file just before its write, or None.
+    stamp: Optional[tuple] = None
 
     @property
     def is_rename(self):
@@ -123,12 +126,12 @@ def has_table(conn):
 
 
 def _row(found):
-    file_id, change_id, photo_id, path, new_path, before, after, state, note = found
+    file_id, change_id, photo_id, path, new_path, before, after, state, note, stamp = found
     return FileRow(file_id, change_id, photo_id, path, new_path, json.loads(before or "{}"),
-                   json.loads(after or "{}"), state, note)
+                   json.loads(after or "{}"), state, note, tuple(json.loads(stamp)) if stamp else None)
 
 
-_FILE_COLUMNS = "id, change_id, photo_id, path, new_path, fields_before, fields_after, state, note"
+_FILE_COLUMNS = "id, change_id, photo_id, path, new_path, fields_before, fields_after, state, note, stamp"
 
 
 def plan(db_path, operation, files, summary=None):
@@ -171,6 +174,16 @@ def set_after(conn, file_id, after):
     conn.execute("UPDATE change_files SET fields_after = ? WHERE id = ?", (json.dumps(after, sort_keys=True), file_id))
 
 
+def writing(db_path, file_id, stamp):
+    """Mark one file `writing`, with `stamp`, (mtime, size) of the file just before its
+    write: settling after a crash carries the photo's vectors over the write by it."""
+    def work(conn):
+        conn.execute("UPDATE change_files SET state = 'writing', note = NULL, stamp = ? WHERE id = ?",
+                     (json.dumps(list(stamp)) if stamp else None, file_id))
+
+    db.write_with_connection(db_path, work, label="file %d writing" % file_id)
+
+
 def mark(db_path, file_ids, state, note=None):
     """Mark files, in a transaction of their own: `writing`, before ExifTool runs."""
     file_ids = list(file_ids)
@@ -188,13 +201,17 @@ def withdraw(db_path, file_ids):
     file_ids = list(file_ids)
     if not file_ids:
         return
+    db.write_with_connection(db_path, lambda conn: withdraw_in(conn, file_ids),
+                             label="withdraw %d file(s)" % len(file_ids))
 
-    def work(conn):
-        for start in range(0, len(file_ids), CHUNK):
-            chunk = file_ids[start:start + CHUNK]
-            conn.execute("DELETE FROM change_files WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk)
 
-    db.write_with_connection(db_path, work, label="withdraw %d file(s)" % len(file_ids))
+def withdraw_in(conn, file_ids):
+    """withdraw, in the caller's transaction: a file whose write changed nothing is taken
+    out in the one that records its row (tagpup.services.file_changes)."""
+    file_ids = list(file_ids)
+    for start in range(0, len(file_ids), CHUNK):
+        chunk = file_ids[start:start + CHUNK]
+        conn.execute("DELETE FROM change_files WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk)
 
 
 def files_of(db_path, change_id):
@@ -284,6 +301,24 @@ def begin_undo(db_path, change_id):
                             " WHERE id = ? AND status = 'applied'", (_now(), owner(), change_id)).rowcount == 1
 
     return db.write_with_connection(db_path, work, label="begin undoing change %d" % change_id)
+
+
+def newer_overlapping(conn, change_id):
+    """(id, operation) of each change after `change_id`, not undone, that wrote a photo
+    file it wrote: the same photo, or the same file by its path -- one a rename left
+    under its new name included. An undo of `change_id` would take back part of a file
+    the newer change planned from, as an undo of rows would rows a newer change wrote
+    over (tagpup.store.journal). The caller's connection."""
+    if not has_table(conn):
+        return []
+    return conn.execute(
+        "SELECT DISTINCT c.id, c.operation FROM change_files mine"
+        " JOIN change_files theirs ON theirs.change_id > mine.change_id"
+        " AND (theirs.photo_id = mine.photo_id OR theirs.path = mine.path OR theirs.path = mine.new_path)"
+        " JOIN changes c ON c.id = theirs.change_id"
+        " WHERE mine.change_id = ? AND mine.state = 'done' AND theirs.state IN ('writing', 'done')"
+        " AND c.undone IS NULL AND c.status IN ('planned', 'applied')"
+        " ORDER BY c.id", (change_id,)).fetchall()
 
 
 def counts(conn, change_ids):

@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="common/gear.css">
     <link rel="stylesheet" href="common/tag-editor.css">
     <link rel="stylesheet" href="common/settings-dialog.css">
+    <link rel="stylesheet" href="common/history-dialog.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -47,12 +48,13 @@
                         <span class="switch-label">Show Matched Photos</span>
                     </label>
                 </div>
-                <!-- The gear (web/common/gear.js): the tag editor, the library's settings, and TagPup on this library. -->
+                <!-- The gear (web/common/gear.js): the tag editor, the library's settings, its history, and TagPup on this library. -->
                 <div class="control-group gear">
                     <button id="btn-gear" class="btn btn-secondary btn-sm" title="Tag editor, library settings, and TagPup on this library" aria-label="Tools" aria-controls="gear-menu">⚙️</button>
                     <div id="gear-menu" class="gear-menu hidden" role="menu" aria-label="Tools">
                         <button type="button" role="menuitem" data-action="tag-editor">Tag editor</button>
                         <button type="button" role="menuitem" data-action="library-settings" title="This library's settings: the CLIP model, face detection and ExifTool (Suggest's words and the rename format are in TagPup's gear)">Library settings</button>
+                        <button type="button" role="menuitem" data-action="library-history" title="This library's last changes, and Undo beside each that can be undone">History...</button>
                         <div class="gear-menu-separator" role="separator"></div>
                         <a role="menuitem" data-app="tagpup" target="_blank" rel="noopener" aria-disabled="true">Open in TagPup</a>
                     </div>

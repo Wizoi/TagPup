@@ -28,6 +28,9 @@ class SavingAPhoto(unittest.TestCase):
         self.holds = {"XMP:Subject": ["Beach"]}
         self.et = mock.MagicMock()
         self.et.get_tags.side_effect = lambda paths, tags=None: [dict(self.holds, SourceFile=paths[0])]
+        # A write is kept, as a file keeps it: the save is a journaled write, which reads
+        # back what it wrote (docs/findings.md, #266, #276).
+        self.et.set_tags.side_effect = lambda paths, tags=None, params=None: self.holds.update(tags or {})
         session = mock.MagicMock()
         session.return_value.__enter__.return_value = self.et
         session.return_value.__exit__.return_value = False
@@ -37,7 +40,7 @@ class SavingAPhoto(unittest.TestCase):
             self.addCleanup(patcher.stop)
         self.renamed_to = None
 
-    def rename(self, photo_path, title, exiftool, rename_format):
+    def rename(self, photo_path, title, exiftool, rename_format, *preserved):
         if not self.renamed_to:
             return photo_path
         os.rename(photo_path, self.renamed_to)

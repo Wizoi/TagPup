@@ -6,9 +6,9 @@ from tagpup.core import fields, paths, suggesting, validation, vocabulary
 from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, keywords, metadata
+from tagpup.files import exiftool_session, field_values, metadata, names
 from tagpup.services import file_changes
-from tagpup.store import embeddings, photos, taxonomy
+from tagpup.store import photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -21,38 +21,66 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     checked (tagpup.core.validation): one written by another program must not stop the
     photo being saved, least of all a save that removes it. A new one that may not be
     set refuses the save and nothing is written; the others go in in their one spelling,
-    as the tag tree holds them. The caption is held to its rules the same way. A rename moves the photo's index row -- embedding, faces and all -- rather
-    than leaving them behind; then the row gets what the file holds now. A failure
-    recording it is logged, not raised: the file is written either way.
+    as the tag tree holds them. The caption is held to its rules the same way.
+
+    The write is a change of photo files (tagpup.services.file_changes), which can be
+    undone: the photo's keyword, caption and date fields, before and after, committed
+    first, and the row told what the file holds as it is marked done. It was written
+    with ExifTool of its own and recorded nowhere (docs/findings.md, #266). A file
+    holding it all already is not written: `changed` is 0. A write that fails raises,
+    as it did, for the page to say so.
+
+    A rename moves the photo's index row -- embedding, faces and all -- rather than
+    leaving them behind; then the row gets what the file holds now. A failure recording
+    it is logged, not raised: the file is written either way.
 
     details: `new_path`, `renamed`, `tags` as written, `flat` and `hierarchical` as
-    written, and `index_warning` when the renamed photo's new name already had rows.
+    written, `change`, and `index_warning` when the renamed photo's new name already had
+    rows.
     """
     result = Result(attempted=1)
-    params = fields.caption_fields(title or "")
+    wanted = fields.caption_fields(title or "")
     if date_taken:
-        params.update(fields.date_taken_fields(date_taken))
+        wanted.update(fields.date_taken_fields(date_taken))
     people = taxonomy.people_paths(library.path)
+    photo_path = paths.stored(photo_path)
+    # One ExifTool session and one read before the write: the tags the file holds, the
+    # plan's before, and the name Smart Rename kept.
+    read = list(dict.fromkeys(SAVE_READ + tuple(wanted)))
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-        held = set(keywords.tags_in_file(et, photo_path))
+        now = field_values.read_one(et, photo_path, read)
+        held = set(_tags_held(now))
         problem = (validation.first_problem("tag", (t for t in tags if t not in held))
                    or _caption_problem(et, photo_path, title))
         if problem:
             result.refuse(problem)
             return result
         tags = [t if t in held else vocabulary.normalize(t) for t in tags]
-        before = embeddings.stamp_of(photo_path)
-        flat, hierarchical = keywords.write_keywords(
-            et, photo_path, vocabulary.resolve_people(tags, people), extra_params=params)
-    result.changed = 1
-
-    new_path = paths.stored(metadata.sync_title_to_filename(photo_path, title, exiftool_path, rename_format))
-    renamed = not paths.same(new_path, photo_path)
-    result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
-                          hierarchical=hierarchical, index_warning=None)
+        flat, hierarchical = fields.expand_tag_fields(vocabulary.resolve_people(tags, people))
+        after = dict(fields.keyword_fields(flat, hierarchical))
+        after.update(wanted)
+        written = file_changes.write_fields(library, "save photo", exiftool_path, [photo_path], list(after),
+                                            lambda _path, _held: file_changes.Plan(after=after),
+                                            summary={"photos": 1}, et=et, held={paths.key(photo_path): now},
+                                            read_back_also=fields.METADATA_FIELDS)
+        if not written.ok:
+            raise RuntimeError(written.message())
+        result.changed = written.changed
+        kept = now.get(names.PRESERVED_NAME) or [""]
+        new_path = paths.stored(metadata.sync_title_to_filename(photo_path, title, exiftool_path, rename_format,
+                                                                kept[0]))
+        renamed = not paths.same(new_path, photo_path)
+        result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
+                              hierarchical=hierarchical, index_warning=None, change=written.details["change"])
+        try:
+            # What the write's read back found; where nothing was written, or the file
+            # was renamed since (its SourceFile is its old name), a read now.
+            record = None if renamed else written.details["read_back"].get(paths.key(photo_path))
+            raw_meta = metadata.raw_metadata(et, new_path, record)
+        except Exception as e:
+            logger.warning("Could not read back %s: %s", new_path, e)
+            return result
     try:
-        with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-            raw_meta = metadata.raw_metadata(et, new_path)
         recorded_tags = vocabulary.extract_tags(raw_meta)
         skipped = photos.move_rows(library.path, {photo_path: new_path})[1] if renamed else []
         if skipped:
@@ -60,8 +88,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
                 "Renamed, but the index already has a photo at %s; its rows were left as they were."
                 % new_path)
         else:
-            photos.record_saved(library.path, new_path, recorded_tags, [title] if title else [], raw_meta,
-                                before=before)
+            # The journaled write carried its vectors over the write already.
+            photos.record_saved(library.path, new_path, recorded_tags, [title] if title else [], raw_meta)
     except Exception as e:
         logger.warning("Failed to update SQLite database metadata for %s: %s", new_path, e)
     return result
@@ -119,6 +147,11 @@ def _refused(attempted, problem):
 #: field it writes (tagpup.core.fields.keyword_fields), which the journal records before
 #: and after.
 KEYWORD_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + tuple(fields.keyword_fields([], []))))
+
+#: What a save reads of the file before it writes, beside the caption and date fields
+#: it writes: the fields its tags come from and every keyword field (KEYWORD_READ), and
+#: the name Smart Rename kept, by which a new caption renames it.
+SAVE_READ = KEYWORD_READ + (names.PRESERVED_NAME,)
 
 
 def _keywords_plan(tags):

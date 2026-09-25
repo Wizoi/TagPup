@@ -163,13 +163,14 @@ class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
     """The guard. Both bulk handlers wrote files without recording the result, and
     nothing in the app showed the difference, so a third one would be just as quiet."""
 
-    #: A keyword write, wherever it is made: the files layer's one writer.
-    WRITES = ("write_keywords(",)
+    #: A keyword write, wherever it is made: the files layer's writers, the journaled one
+    #: (tagpup.files.field_values) through which every service writes now.
+    WRITES = ("write_keywords(", "field_values.write(")
 
     #: The rule is that the index hears about it, not that any one helper is used:
     #: saving a single photo writes its own row as part of a larger update, and
     #: rewriting that to funnel through the helper would be churn for its own sake.
-    RECORDS = ("record_tags(", "record_saved(", "UPDATE photos", "INSERT OR REPLACE INTO photos")
+    RECORDS = ("record_tags(", "record_saved(", "_record(", "UPDATE photos", "INSERT OR REPLACE INTO photos")
 
     #: Where keywords are written: the routes (which must not), and the services, the
     #: CLI's `write` among them.
@@ -205,7 +206,7 @@ class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
         # The number falls as copies of the write become one service; what matters is
         # that the writes are among what it reads.
         sites = [where for where, _ in self.write_sites()]
-        self.assertTrue(any("tagging.py" in where for where in sites),
+        self.assertTrue(any("file_changes.py" in where for where in sites),
                         "the write sites moved; the guard above is checking nothing")
 
     def test_the_routes_write_no_keywords_themselves(self):

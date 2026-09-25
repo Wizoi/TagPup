@@ -9,7 +9,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from tagpup.core import renaming, vocabulary
+from tagpup.core import fields, renaming, vocabulary
 from tagpup.core.fields import METADATA_FIELDS
 from tagpup.core.renaming import sanitize_filename  # noqa: F401  (imported from here by older code)
 from tagpup.files.exiftool_session import ExifToolSession
@@ -41,6 +41,23 @@ def clean_metadata_value(val: Any) -> Any:
         except Exception:
             return str(val)
     return val
+
+
+def structured(meta):
+    """One ExifTool record as a photo's row keeps it, its raw_metadata: each value cleaned
+    (clean_metadata_value), under the name ExifTool gives it ("XMP:Subject") and again
+    under its bare name ("Subject"). The one shape: the indexer's read and the single
+    save's read back both record it, and differed while each made its own
+    (docs/findings.md, #251); a row without the bare names reads as never read
+    (tagpup.services.refresh_rows)."""
+    cleaned = {}
+    for k, v in meta.items():
+        # ExifTool returns keys like 'SourceFile', 'XMP:Subject', etc.
+        val_cleaned = clean_metadata_value(v)
+        cleaned[k] = val_cleaned
+        if ":" in k:
+            cleaned[k.split(":")[-1]] = val_cleaned
+    return cleaned
 
 
 class MetadataExtractor:
@@ -102,13 +119,7 @@ class MetadataExtractor:
 
     def _structure(self, path, meta, people):
         """Turn one ExifTool record into the shape the rest of the pipeline expects."""
-        cleaned = {}
-        for k, v in meta.items():
-            # ExifTool returns keys like 'SourceFile', 'XMP:Subject', etc.
-            val_cleaned = clean_metadata_value(v)
-            cleaned[k] = val_cleaned
-            if ":" in k:
-                cleaned[k.split(":")[-1]] = val_cleaned
+        cleaned = structured(meta)
 
         tags = vocabulary.extract_tags(cleaned)
 
@@ -262,20 +273,22 @@ def rotate_image_file(photo_path: str, direction: str, exiftool_path: Optional[s
 
 
 def sync_title_to_filename(photo_path: str, new_title: str, exiftool_path: str,
-                           rename_format: str) -> str:
+                           rename_format: str, preserved: Optional[str] = None) -> str:
     """If the photo has an XMP-xmpMM:PreservedFileName tag set, automatically syncs
     any changes to the title back into the filename structure, in `rename_format`
     (the library's renaming.format setting, tagpup.services.settings).
-    Returns the new path if renamed, or the original path if not renamed."""
+    Returns the new path if renamed, or the original path if not renamed. `preserved`
+    is the photo's PreservedFileName when the caller has read it ("" for none): then
+    ExifTool is not started to read it again."""
     if not os.path.exists(photo_path):
         return photo_path
 
     try:
-        with ExifToolSession(executable=exiftool_path) as et:
-            meta = et.get_tags([photo_path], tags=["XMP-xmpMM:PreservedFileName", "XMP:PreservedFileName"])
-            meta_dict = meta[0] if meta else {}
-
-        preserved = meta_dict.get("XMP-xmpMM:PreservedFileName") or meta_dict.get("XMP:PreservedFileName")
+        if preserved is None:
+            with ExifToolSession(executable=exiftool_path) as et:
+                meta = et.get_tags([photo_path], tags=["XMP-xmpMM:PreservedFileName", "XMP:PreservedFileName"])
+                meta_dict = meta[0] if meta else {}
+            preserved = meta_dict.get("XMP-xmpMM:PreservedFileName") or meta_dict.get("XMP:PreservedFileName")
         if not preserved:
             # Not renamed in this way, do nothing
             return photo_path
@@ -311,9 +324,14 @@ def sync_title_to_filename(photo_path: str, new_title: str, exiftool_path: str,
     return photo_path
 
 
-def raw_metadata(et, photo_path):
+def raw_metadata(et, photo_path, record=None):
     """A photo's metadata as a save records it in the index: every field the reader
-    reads, cleaned, under the names ExifTool gives them. Read in the session given."""
-    found = et.get_tags([photo_path], tags=METADATA_FIELDS)
-    meta = found[0] if found else {}
-    return {k: clean_metadata_value(v) for k, v in meta.items()}
+    reads, in the shape the indexer records it in (structured). Read in the session
+    given -- or taken from `record`, an ExifTool record of the photo read with more
+    fields than the reader asks (tagpup.services.file_changes' read back), of which
+    only those the scan reads (fields.scan_reads) are kept."""
+    if record is None:
+        found = et.get_tags([photo_path], tags=METADATA_FIELDS)
+        return structured(found[0] if found else {})
+    return structured({key: value for key, value in record.items()
+                       if key == "SourceFile" or fields.scan_reads(key)})

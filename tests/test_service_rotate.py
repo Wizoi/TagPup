@@ -21,7 +21,10 @@ class RotatingAPhoto(unittest.TestCase):
     def setUp(self):
         self.lib = TempLibrary(self)
         self.photo = self.lib.photo("beach.jpg")
-        self.lib.add_row(self.photo, mtime=1.0, size=1)
+        # The row describes its file: a rotation stamps only such a row (#249).
+        stat = os.stat(self.photo)
+        self.stamp = (stat.st_mtime, stat.st_size)
+        self.lib.add_row(self.photo, mtime=stat.st_mtime, size=stat.st_size)
         self.face = self.lib.add_face(self.photo, [0, 0, 10, 8])
 
     def rotate(self, oriented=False, fails=None):
@@ -71,6 +74,11 @@ class RotatingAPhoto(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual((result.attempted, result.changed), (1, 0))
         self.assertIn("the file now says 1", result.message())
+        self.assertEqual(self.lib.rows("SELECT mtime, size FROM photos"), [self.stamp])
+
+    def test_a_row_the_file_has_moved_on_from_is_not_stamped(self):
+        self.lib.execute("UPDATE photos SET mtime = 1.0, size = 1")
+        self.rotate()
         self.assertEqual(self.lib.rows("SELECT mtime, size FROM photos"), [(1.0, 1)])
 
 

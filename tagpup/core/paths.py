@@ -76,6 +76,17 @@ def same(a, b):
     return bool(a) and bool(b) and key(a) == key(b)
 
 
+def spelled_as(path):
+    """Is there a file named exactly `path` -- its name in this case -- in its folder? Two
+    spellings that differ only in case name one file on Windows (same), so only the
+    folder's listing says which one a rename left (docs/findings.md, #283)."""
+    folder, name = os.path.split(stored(path))
+    try:
+        return name in os.listdir(folder)
+    except OSError:
+        return False
+
+
 def is_under(path, folder):
     """Is `path` inside `folder` (at any depth)? A folder is not under itself."""
     if not path or not folder:

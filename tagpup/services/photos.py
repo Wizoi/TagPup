@@ -7,7 +7,7 @@ from tagpup.core import dates, fields, paths, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
 from tagpup.files import images, metadata, names, recycle_bin
 from tagpup.services import file_changes
-from tagpup.store import db, faces, photos, taxonomy
+from tagpup.store import db, embeddings, faces, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +88,7 @@ def scan_folder(library, folder, exiftool_path):
         except OSError:
             continue
         row = known.get(paths.key(file))
-        if (row and row["mtime"] is not None and row["size"] is not None
-                and abs(row["mtime"] - stat.st_mtime) < 0.1 and row["size"] == stat.st_size):
+        if row and photos.describes(row["mtime"], row["size"], (stat.st_mtime, stat.st_size)):
             found[paths.key(file)] = page_record(row["path"], row, stat.st_mtime, stat.st_size)
         else:
             to_read.append((file, stat.st_mtime, stat.st_size))
@@ -195,6 +194,23 @@ def face_crop(library, face_id):
     return crop
 
 
+def preserve_names(library, photo_paths, exiftool_path):
+    """Write each photo's current name into its XMP-xmpMM:PreservedFileName where it holds
+    none -- the name it had before Smart Rename first renamed it, which later renames
+    leave alone, and which relink_photos finds a renamed photo by -- as one change of
+    photo files, `smart rename: original names` (tagpup.services.file_changes), which
+    can be undone. A photo holding one already is skipped; one that cannot be read is
+    skipped too, as the rename leaves it be. A Result, as write_fields'."""
+    def plan_one(path, held):
+        if held.get(names.PRESERVED_NAME):
+            return file_changes.skip("keeps the name it had before it was first renamed")
+        return file_changes.Plan(after={names.PRESERVED_NAME: os.path.basename(path)})
+
+    return file_changes.write_fields(library, "smart rename: original names", exiftool_path, photo_paths,
+                                     [names.PRESERVED_NAME], plan_one, summary={"photos": len(photo_paths)},
+                                     unreadable="skip")
+
+
 def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     """Number photos in the order given and name each for it: "<grouping> - <index> -
     <caption>" in `rename_format`, the caption being the one on the photo. Smart Rename.
@@ -206,7 +222,9 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     done in the transaction that tells the index where they went -- their rows carry
     their embeddings and faces, names included, and one rename that did not tell it
     stranded 78 rows holding 234 faces. The change can be undone. A photo no longer on
-    disk keeps its number, unused.
+    disk keeps its number, unused. First each photo keeps the name it had before its
+    first rename (preserve_names), a change of its own; one whose name could not be
+    kept is an error, and nothing is renamed.
 
     details: `updated_paths`, old -> new for every photo, those already so named
     included; `renamed`, those whose name changed; `moved_aside`, the files moved out
@@ -226,7 +244,15 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
         return result
     grouping = validation.trim(grouping)
     width = len(str(len(photo_paths)))
-    captions = names.read_for_renaming(exiftool_path, [p for p in photo_paths if os.path.exists(p)])
+    present = [p for p in photo_paths if os.path.exists(p)]
+    captions = names.read_for_renaming(exiftool_path, present)
+    kept = preserve_names(library, [p for p in present if p in captions], exiftool_path)
+    if kept.errors:
+        # Nothing is renamed, as when this write raised: a photo renamed without the
+        # name it had is found again only by its identity.
+        for what, why in kept.errors:
+            result.fail(what, "the name it had before its first rename could not be kept: %s" % why)
+        return result
     renames = {}
     for index, old_path in enumerate(photo_paths, start=1):
         if old_path not in captions:
@@ -346,6 +372,8 @@ def rotate(library, photo_path, direction, exiftool_path):
     if refused:
         result.refuse(refused)
         return result
+    # The row is stamped only if it described the file just before the turn (#249).
+    before = embeddings.stamp_of(photo_path)
     try:
         width, height, oriented = images.shown_size(photo_path)
         orientation = metadata.rotate_image_file(photo_path, direction, exiftool_path)
@@ -358,7 +386,7 @@ def rotate(library, photo_path, direction, exiftool_path):
         faces.turn_boxes(library.path, photo_path, direction, width, height) if oriented else 0)
     # The embedder applies the Orientation, so the photo's vectors describe the turn
     # before; they go, and are computed again.
-    photos.record_file_stat(library.path, photo_path, looks_different=True)
+    photos.record_file_stat(library.path, photo_path, looks_different=True, before=before)
     stat = os.stat(photo_path)
     result.details.update(mtime=stat.st_mtime, size=stat.st_size)
     return result

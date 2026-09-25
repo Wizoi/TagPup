@@ -184,7 +184,7 @@ The journal: one row for each bulk edit applied to the library (`tagpup.store.jo
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | The change; `tagpup_cli.py undo <id>` and the MCP `undo` tool name it. |
-| `operation` | TEXT | NOT NULL | What made it: `merge_duplicate_person_tags`, `dedupe_faces`, `refresh_rows`, `relink_renamed_photos`, `backfill_document_ids`, `change settings`, `stamp settings from config.ini`, `stamp settings with the defaults`, or a migration, `migration 11: photo files in the journal`; and the changes of photo files (`change_files`): `add to all selected`, `apply all suggestions`, `time shift`, `smart rename`, `rename tag`, `remove tag`, `backfill_document_ids: mint`. |
+| `operation` | TEXT | NOT NULL | What made it: `merge_duplicate_person_tags`, `dedupe_faces`, `refresh_rows`, `relink_renamed_photos`, `backfill_document_ids`, `change settings`, `stamp settings from config.ini`, `stamp settings with the defaults`, or a migration, `migration 11: photo files in the journal`; and the changes of photo files (`change_files`): `add to all selected`, `apply all suggestions`, `save photo`, `write suggestions`, `time shift`, `smart rename: original names`, `smart rename`, `rename tag`, `remove tag`, `backfill_document_ids: mint`. |
 | `status` | TEXT | NOT NULL, one of `planned`, `applied`, `derived_pending`, `undone`, `failed`, `pruned` | Where it stands. `planned`: a change of photo files whose files are not all written yet -- or, with `undone` set, not all put back. `failed`: a change of photo files every file was taken out of again, so nothing was written. |
 | `schema_version` | INTEGER | NOT NULL | The migration the library was at when it was made; an undo at another is refused. A migration's change is at the version it made when it recorded rows, and at the one before when it did not, so that it is never undone. |
 | `created` | TEXT | NOT NULL | Local time it was made, `YYYY-MM-DD HH:MM:SS`. |
@@ -229,6 +229,7 @@ The photo files a change writes, one row each (`tagpup.store.file_journal`, `tag
 | `fields_after` | TEXT | NOT NULL | JSON: what it is to hold, in the same form. |
 | `state` | TEXT | NOT NULL, one of `planned`, `writing`, `done`, `conflict`, `undone` | Where the write of this file stands. |
 | `note` | TEXT | | Why a file is a conflict: changed outside since it was read, could not be read or written (ExifTool's error), not undone. |
+| `stamp` | TEXT | | JSON `[mtime, size]` of the file just before its write, recorded as it is marked `writing` (migration 12): settling a write a crash stopped carries the photo's vectors over it. NULL for a rename, and for a file not written yet. |
 
 ---
 

@@ -5,6 +5,8 @@ here so that everything recording a write -- the index as well as the file -- go
 the same lists: the index once recorded two of the keyword fields and not the third, and
 a removed tag came back from it.
 """
+import json
+import re
 
 # Define target fields mapped to keys we want to return
 # ExifTool output keys can be namespaced or bare (without prefix).
@@ -247,5 +249,72 @@ def same_values(a, b):
 
 
 def same_fields(held, wanted):
-    """Does a file holding `held` ({field: value}) hold every field of `wanted`?"""
+    """Does a file holding `held` ({field: value}) hold every field of `wanted`, text for
+    text? What a file is recorded as holding is decided by this; whether a file holds
+    what a write left is reads_same's question."""
     return all(same_values(held.get(field), value) for field, value in wanted.items())
+
+
+# ---- A value as a read of the file gives it ----------------------------------------------
+
+#: A text ExifTool answers as a JSON number, by the pattern its JSON writer goes by
+#: (EscapeJSON): "1.50" comes back 1.5, "1e5" 100000.0; "007" and a number of more than
+#: fifteen digits stay text.
+#: A text ExifTool answers as a JSON boolean, /^(true|false)$/i, by what the journal
+#: keeps of it.
+_JSON_BOOLEANS = {"true": str(True), "false": str(False)}
+
+_JSON_NUMBER = re.compile(r"-?(\d|[1-9]\d{1,14})(\.\d{1,16})?([eE][-+]?\d{1,3})?")
+
+
+#: The bytes IPTC keeps of a value of each field ExifTool writes or the scan reads (the
+#: IPTC-IIM limits ExifTool enforces): a longer value is cut.
+IPTC_LIMITS = {"IPTC:Keywords": 64, "IPTC:Caption-Abstract": 2000, "IPTC:ObjectName": 64,
+               "IPTC:Province-State": 32, "IPTC:Country-PrimaryLocationName": 64, "IPTC:City": 32}
+
+#: The character sets IPTC holds a text in: ExifTool's default, Latin (cp1252), where a
+#: letter it lacks is written "?", and UTF-8, in a file whose CodedCharacterSet says so.
+IPTC_CHARSETS = ("cp1252", "utf-8")
+
+
+def _as_read(key, text, charset):
+    limit = IPTC_LIMITS.get(key)
+    if limit is not None:
+        # Encoded as the file holds it and cut to what IPTC keeps; a letter cut in two
+        # is not read back.
+        text = text.encode(charset, errors="replace")[:limit].decode(charset, errors="ignore")
+    text = text.strip()
+    if _JSON_NUMBER.fullmatch(text):
+        # The reader parses ExifTool's JSON; the journal keeps str() of what it gives.
+        return str(json.loads(text))
+    if text.lower() in _JSON_BOOLEANS:
+        # Answered as a JSON boolean, kept as str() of it: "true" reads back "True".
+        return _JSON_BOOLEANS[text.lower()]
+    return text
+
+
+def as_read(field, value, charset=IPTC_CHARSETS[0]):
+    """What a read of a file gives for `value` written to `field`, as the journal keeps a
+    value (field_values), trimmed: IPTC cuts a keyword at 64 bytes and writes a letter
+    outside its `charset` as "?" (IPTC_LIMITS, IPTC_CHARSETS), and a text that looks like
+    a number, or is true or false in any case, is answered as one. A value written is not always read back as written;
+    comparing what was asked with what a read gives found a difference where there was
+    none (docs/findings.md, #264, #277)."""
+    key = read_key(field)
+    return [_as_read(key, text, charset) for text in field_values(value)]
+
+
+def same_read(field, a, b):
+    """Would two values of `field` read back the same from a file, in any order? Each is
+    taken through what a read gives (as_read), so a value read from a file and one about
+    to be written are compared alike; an IPTC field in either character set it may be
+    held in, both sides in the same one."""
+    charsets = IPTC_CHARSETS if read_key(field) in IPTC_LIMITS else IPTC_CHARSETS[:1]
+    return any(sorted(as_read(field, a, charset)) == sorted(as_read(field, b, charset)) for charset in charsets)
+
+
+def reads_same(held, wanted):
+    """Does a file holding `held` ({field: value}) hold every field of `wanted`, as a read
+    of it after writing `wanted` would give it? Whether a file already holds what a write
+    is to leave, still holds what a plan read, or holds what a write left."""
+    return all(same_read(field, held.get(field), value) for field, value in wanted.items())

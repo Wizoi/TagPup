@@ -69,9 +69,12 @@ class ChangingTags(unittest.TestCase):
         self.assertEqual(self.written(self.c), ["Relay"])
 
     def test_it_stops_at_the_first_photo_it_cannot_write(self):
+        keeps = self.et.set_tags.side_effect
+
         def set_tags(paths, tags=None, params=None):
             if paths == [self.b]:
                 raise RuntimeError("the file is locked")
+            keeps(paths, tags=tags, params=params)
         self.et.set_tags.side_effect = set_tags
         result = tagging.change_tags(self.lib.library, [self.a, self.b, self.c], ["Harbour"], [], "exiftool")
         self.assertEqual((result.changed, result.message()), (1, "the file is locked"))

@@ -29,9 +29,27 @@ PIPE = 'A tag cannot contain "|": other programs read it as a break between leve
 
 
 def fake_exiftool(holds):
-    """An ExifTool session whose file holds `holds`, and which records every write."""
+    """An ExifTool session whose file holds `holds`, and which records every write and
+    keeps it, as a file would: a journaled write reads back what it wrote, and one that
+    left the file as it was is not a change (docs/findings.md, #276)."""
+    held = {"XMP:Subject": list(holds)}
     et = MagicMock()
-    et.get_tags.return_value = [{"XMP:Subject": list(holds)}]
+    et.get_tags.side_effect = lambda paths, tags=None: [dict(held)]
+
+    def set_tags(paths, tags=None, params=None):
+        held.update(tags or {})
+        for param in params or []:
+            if param.startswith("-") and param.endswith("="):
+                held.pop(param[1:-1], None)
+
+    def execute(*args):
+        for arg in args:
+            if arg.startswith("-") and arg.endswith("="):
+                held.pop(arg[1:-1], None)
+        return ""
+
+    et.set_tags.side_effect = set_tags
+    et.execute.side_effect = execute
     session = MagicMock()
     session.return_value.__enter__.return_value = et
     session.return_value.__exit__.return_value = False

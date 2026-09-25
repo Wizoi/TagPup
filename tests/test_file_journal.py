@@ -79,8 +79,9 @@ class FilesCase(unittest.TestCase):
         self.folder = os.path.join(self.home.root, "Photos")
         os.makedirs(self.folder)
 
-    def make(self, name, tags=("Beach",), taken=None, caption=None, row=True):
-        """A JPEG holding `tags`, and its row as the indexer leaves it."""
+    def make(self, name, tags=("Beach",), taken=None, caption=None, row=True, preserved=None):
+        """A JPEG holding `tags`, and its row as the indexer leaves it; with `preserved`,
+        the name Smart Rename keeps of it, so that renaming it writes nothing first."""
         from PIL import Image
 
         path = os.path.join(self.folder, name)
@@ -90,6 +91,8 @@ class FilesCase(unittest.TestCase):
             values["EXIF:DateTimeOriginal"] = taken
         if caption:
             values["XMP:Description"] = caption
+        if preserved:
+            values["XMP-xmpMM:PreservedFileName"] = preserved
         write_outside(path, values)
         if row:
             raw = {"XMP:Subject": list(tags), "IPTC:Keywords": list(tags)}
@@ -340,8 +343,9 @@ class Conflicts(FilesCase):
 class Renames(FilesCase):
     def setUp(self):
         super().setUp()
-        self.a = self.make("IMG_0001.jpg", caption="Start")
-        self.b = self.make("IMG_0002.jpg", caption="Finish")
+        # Each keeps its name already: the crashes are the rename's, not that write's.
+        self.a = self.make("IMG_0001.jpg", caption="Start", preserved="IMG_0001.jpg")
+        self.b = self.make("IMG_0002.jpg", caption="Finish", preserved="IMG_0002.jpg")
         # Already holding the name the first is to take: moved aside.
         self.other = self.make("Regatta - 1 - Start.jpg", row=False)
         self.ids = (self.photo_id(self.a), self.photo_id(self.b))

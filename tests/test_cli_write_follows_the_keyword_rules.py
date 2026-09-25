@@ -11,12 +11,14 @@ import os
 import unittest
 from unittest import mock
 
+from tests import photo_rows
 from tests.handler_harness import Library
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
 from tagpup_cli import write_suggestions_file
 
 from tagpup.files.exiftool_session import ExifToolSession
+from tagpup.store import db
 
 
 @requires_exiftool
@@ -35,8 +37,14 @@ class CliWriteFollowsTheKeywordRules(unittest.TestCase):
                     (2, "People/Rowan Thackeray", "Rowan Thackeray", 1, 1)]:
             self.lib.execute("INSERT INTO tag_taxonomy (id, tag, name, parent_id, has_face)"
                              " VALUES (?, ?, ?, ?, ?)", row)
-        self.lib.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
-                         " VALUES (?, 1.0, 1, '[\"Places/Harbour\"]', '[]', '{}')", (self.photo,))
+        # The row as the indexer makes it, describing its file (docs/findings.md, #249).
+        conn = db.connect(self.lib.db_path)
+        try:
+            photo_rows.add_read(conn, self.photo, {"XMP:HierarchicalSubject": ["Places/Harbour"],
+                                                   "XMP:Subject": ["Places/Harbour"]})
+            conn.commit()
+        finally:
+            conn.close()
         self.suggestions = os.path.join(self.lib.root, "suggestions.json")
         with open(self.suggestions, "w", encoding="utf-8") as handle:
             json.dump([{"path": self.photo, "suggested_tags": [

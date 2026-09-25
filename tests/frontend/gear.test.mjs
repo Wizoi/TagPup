@@ -83,14 +83,14 @@ describe("TagPup's gear", () => {
     assert.ok(menu.classList.contains("hidden"), "the menu starts open");
   });
 
-  test("opens on a click, onto its items: the tag editor, the settings and TagTuner", async (t) => {
+  test("opens on a click, onto its items: the tag editor, the settings, the history and TagTuner", async (t) => {
     const { window, document } = await tagpup(t);
     const { button, menu } = gearOf(document);
     click(window, button);
     await flush(window);
     assert.ok(!menu.classList.contains("hidden"));
     assert.equal(button.getAttribute("aria-expanded"), "true");
-    assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Settings", "Open in TagTuner"]);
+    assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Settings", "History...", "Open in TagTuner"]);
     assert.equal(document.activeElement, items(menu)[0], "the focus is not on the first item");
   });
 
@@ -134,8 +134,8 @@ describe("TagPup's gear", () => {
     const event = key(window, document.activeElement, "ArrowDown");
     assert.equal(document.activeElement, items(menu)[1]);
     assert.ok(event.defaultPrevented);
-    key(window, document.activeElement, "ArrowDown");
-    key(window, document.activeElement, "ArrowDown");
+    // On past the last item, however many the gear holds.
+    for (let i = 1; i < items(menu).length; i++) key(window, document.activeElement, "ArrowDown");
     assert.equal(document.activeElement, items(menu)[0], "the focus does not wrap round");
   });
 
@@ -244,13 +244,13 @@ describe("TagPup's tag editor, as Manage Tags was", () => {
 });
 
 describe("TagTuner's gear", () => {
-  test("holds the tag editor, the library's settings, and TagPup", async (t) => {
+  test("holds the tag editor, the library's settings, its history, and TagPup", async (t) => {
     const { window, document } = await tuner(t);
     const { button, menu } = gearOf(document);
     assert.ok(button.closest(".app-header"), "the gear is not in the header");
     click(window, button);
     await flush(window);
-    assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Library settings", "Open in TagPup"]);
+    assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Library settings", "History...", "Open in TagPup"]);
     const settings = menu.querySelector('[data-action="library-settings"]');
     assert.equal(settings.getAttribute("aria-disabled"), null, "Library settings is still disabled");
     click(window, settings);

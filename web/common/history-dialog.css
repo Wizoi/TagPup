@@ -1,0 +1,128 @@
+/* The library's history (web/common/history-dialog.js). Its frame is its own: TagPup's
+   page styles no .modal, and TagTuner's .modal rules are the same as these. */
+
+.history-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(9, 13, 22, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.history-modal.hidden {
+    display: none !important;
+}
+
+.history-content {
+    display: flex;
+    flex-direction: column;
+    width: 640px;
+    max-width: 90vw;
+    max-height: 85vh;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    color: var(--text-primary);
+}
+
+.history-content .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.history-content .close-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.history-body {
+    padding: 12px 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.history-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.history-change {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.history-what {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.history-operation {
+    font-weight: 600;
+    flex: 1;
+}
+
+.history-id,
+.history-detail {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.history-detail {
+    display: flex;
+    gap: 12px;
+}
+
+.history-status-undone,
+.history-status-failed,
+.history-status-pruned {
+    font-style: italic;
+}
+
+.history-why {
+    font-size: 12px;
+    color: var(--text-muted, var(--text-secondary));
+}
+
+.history-note {
+    font-size: 12px;
+    color: var(--text-primary);
+}
+
+.history-note:empty {
+    display: none;
+}
+
+.history-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-color);
+}
+
+.history-status-line {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text-secondary);
+}

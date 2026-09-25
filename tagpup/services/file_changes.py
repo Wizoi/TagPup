@@ -49,7 +49,7 @@ from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, names
-from tagpup.store import db, embeddings, file_journal, photos, schema
+from tagpup.store import db, embeddings, file_journal, journal, photos, schema
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ def skip(why):
 # ---- Forward ---------------------------------------------------------------------------
 
 def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one, summary=None,
-                 unreadable="fail", stop_at_first_error=False):
+                 unreadable="fail", stop_at_first_error=False, et=None, held=None, read_back_also=()):
     """Write fields into many photos as one change named `operation` (see the module's
     docstring). `read` is the fields read from each file; `plan_one(path, held)` says
     what one file is to hold (a Plan) from what it holds, {field: [texts]}.
@@ -89,78 +89,104 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     holding what it is to hold already -- is not in the change, and its row is made to
     say what the file holds.
 
+    `et` is an ExifTool session the caller has open, used instead of one of this call's
+    own; `held`, {paths.key(path): {field: [texts]}}, what the caller read of each file
+    in it just now, is the plan's before, and the file is not read again before its
+    write. With `read_back_also`, the files written are read back for those fields too,
+    and details["read_back"] is {paths.key(path): ExifTool's record} of each: one save
+    was four ExifTool sessions and six reads, where it had been three and three (review
+    of pass/journal).
+
     A Result: `changed` the files written, errors the photos that failed and the
     conflicts. details: `change` (its id, or None when nothing was written), `written`
     {path: detail} of each photo written or already holding it, `conflicts` the photos,
     named by id, found changed outside since they were read.
     """
+    if et is None:
+        with exiftool_session.ExifToolSession(executable=exiftool_path) as session:
+            return _write_fields(session, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
+                                 unreadable, stop_at_first_error, held, read_back_also)
+    return _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
+                         unreadable, stop_at_first_error, held, read_back_also)
+
+
+def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
+                  stop_at_first_error, fresh, read_back_also):
     result = Result(attempted=len(photo_paths))
     written = result.details["written"] = {}
-    result.details.update(change=None, conflicts=[])
+    result.details.update(change=None, conflicts=[], read_back={})
     settle(library, exiftool_path)
     stored = [paths.stored(p) for p in photo_paths]
-    with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-        held = field_values.read(et, stored, read)
-        planned, followed = [], []
-        for path in stored:
-            now = held.get(paths.key(path))
-            if now is None or isinstance(now, Exception):
-                why = now or "ExifTool answered nothing for it"
-                if unreadable == "skip":
-                    result.skip(path, why)
-                    continue
-                result.fail(path, why)
-                if stop_at_first_error:
-                    break
+    held = fresh if fresh is not None else field_values.read(et, stored, read)
+    planned, followed = [], []
+    for path in stored:
+        now = held.get(paths.key(path))
+        if now is None or isinstance(now, Exception):
+            why = now or "ExifTool answered nothing for it"
+            if unreadable == "skip":
+                result.skip(path, why)
                 continue
-            try:
-                plan = plan_one(path, now)
-            except Exception as e:
-                result.fail(path, e)
-                if stop_at_first_error:
-                    break
-                continue
-            if plan.skip:
-                result.skip(path, plan.skip)
-                followed.append((path, now))
-                continue
-            after = {field: fields.field_values(value) for field, value in plan.after.items()}
-            before = {field: now.get(field, []) for field in after}
-            if fields.same_fields(before, after):
-                written[path] = plan.detail
-                followed.append((path, now))
-                continue
-            planned.append((path, before, after, plan.detail))
-        _follow(library, followed)
-        wrote = {}
-        if not planned:
-            return result
-        found = _rows_of(library, [path for path, _b, _a, _d in planned])
-        change_id, rows = file_journal.plan(library.path, operation, [
-            {"photo_id": (found.get(paths.key(path)) or (None,))[0], "path": path, "before": before, "after": after}
-            for path, before, after, _detail in planned], summary)
-        result.details["change"] = change_id
+            result.fail(path, why)
+            if stop_at_first_error:
+                break
+            continue
         try:
-            _reached("plan committed")
-            for n, row in enumerate(rows):
-                path, detail = planned[n][0], planned[n][3]
-                outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw",
-                                      wrote=wrote)
-                if outcome == "done":
-                    result.changed += 1
-                    written[path] = detail
-                    continue
-                result.fail(path, why)
-                if outcome == "conflict":
-                    result.details["conflicts"].append(row.named())
-                elif stop_at_first_error:
-                    file_journal.withdraw(library.path, [r.id for r in rows[n + 1:]])
-                    break
-            _read_back(et, library, wrote)
-            file_journal.finish(library.path, change_id)
-        except BaseException:
-            file_journal.release(library.path, change_id)
-            raise
+            plan = plan_one(path, now)
+        except Exception as e:
+            result.fail(path, e)
+            if stop_at_first_error:
+                break
+            continue
+        if plan.skip:
+            result.skip(path, plan.skip)
+            followed.append((path, now))
+            continue
+        after = {field: fields.field_values(value) for field, value in plan.after.items()}
+        before = {field: now.get(field, []) for field in after}
+        if fields.reads_same(before, after):
+            written[path] = plan.detail
+            followed.append((path, now))
+            continue
+        planned.append((path, before, after, plan.detail))
+    _follow(library, followed)
+    wrote = {}
+    if not planned:
+        return result
+    found = _rows_of(library, [path for path, _b, _a, _d in planned])
+    change_id, rows = file_journal.plan(library.path, operation, [
+        {"photo_id": (found.get(paths.key(path)) or (None,))[0], "path": path, "before": before, "after": after}
+        for path, before, after, _detail in planned], summary)
+    result.details["change"] = change_id
+    try:
+        _reached("plan committed")
+        for n, row in enumerate(rows):
+            path, detail = planned[n][0], planned[n][3]
+            # Read just now, in this session, by the caller: that is the check.
+            now = planned[n][1] if fresh is not None else None
+            outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw",
+                                  wrote=wrote, now=now)
+            if outcome == "done":
+                result.changed += 1
+                written[path] = detail
+                continue
+            result.fail(path, why)
+            if outcome == "conflict":
+                result.details["conflicts"].append(row.named())
+            elif stop_at_first_error:
+                file_journal.withdraw(library.path, [r.id for r in rows[n + 1:]])
+                break
+        for row in _read_back(et, library, wrote, read_back_also, result.details["read_back"]):
+            # ExifTool said it wrote it, and it holds what it held (#276).
+            result.changed -= 1
+            written.pop(row.path, None)
+            result.fail(row.path, "ExifTool reported it written, but it holds what it held before")
+        file_journal.finish(library.path, change_id)
+    except BaseException:
+        # The files recorded done so far are read back all the same: settling reads
+        # back only the files it writes (docs/findings.md, #286).
+        _read_back(et, library, wrote)
+        file_journal.release(library.path, change_id)
+        raise
     logger.info("%s: change %d, %s, wrote %d file(s)", library.path, change_id, operation, result.changed)
     return result
 
@@ -190,9 +216,10 @@ def _follow(library, followed):
         logger.warning("Could not record what %d file(s) hold: %s", len(followed), e)
 
 
-def _record(library, row, values, state, stamp=None, wrote=True):
-    """Record what a file holds now in its row, and mark it `state`, in one transaction.
-    Returns the file's stat, as recorded."""
+def _record(library, row, values, state, stamp=None, wrote=True, after=None):
+    """Record what a file holds now in its row, and mark it `state`, in one transaction;
+    with `after`, the journal's after too (file_journal.set_after). Returns the file's
+    stat, as recorded."""
     stat = None
     if wrote:
         try:
@@ -202,30 +229,39 @@ def _record(library, row, values, state, stamp=None, wrote=True):
 
     def work(conn):
         photos.follow_fields(conn, row.path, values, stat, stamp)
+        if after is not None:
+            file_journal.set_after(conn, row.id, after)
         file_journal.set_state(conn, row.id, state)
 
     db.write_with_connection(library.path, work, label="%s: %s" % (row.named(), state))
     return stat
 
 
-def _read_back(et, library, wrote):
+def _read_back(et, library, wrote, also=(), records=None):
     """Record what each file written holds, where ExifTool did not keep a value as it was
     written: IPTC:Keywords cut at 64 bytes, a letter outside Latin-1 as "?", "1.50" as
     1.5. The file was recorded done holding what was asked for, and undoing the change
     refused it for holding neither (docs/findings.md, #273). `wrote` is {file id: (row,
     its stat as recorded)}; the files are read in one read for them all. A file whose stat
     is not what was recorded was written by another program since, and is left as the
-    journal has it, for an undo to refuse. Never raises: the files are written either
-    way."""
+    journal has it, for an undo to refuse.
+
+    A file that holds what it held before, though ExifTool said it wrote it, changed
+    nothing: it is taken out of the change, its row still made to say what it holds,
+    and returned, so that the write does not report it changed (#276). With `also`,
+    those fields are read too, and `records` takes {paths.key(path): ExifTool's record}
+    of each file. Never raises: the files are written either way. Returns the rows of
+    the files that did not change."""
+    unchanged = []
     if not wrote:
-        return
+        return unchanged
     written = list(wrote.values())
     try:
         held = field_values.read(et, [row.path for row, _stat in written],
-                                 sorted({field for row, _stat in written for field in row.after}))
+                                 sorted({field for row, _stat in written for field in row.after}), also, records)
     except Exception as e:
         logger.warning("%s: could not read back %d file(s) written: %s", library.path, len(written), e)
-        return
+        return unchanged
     for row, stat in written:
         now = held.get(paths.key(row.path))
         if now is None or isinstance(now, Exception):
@@ -240,19 +276,29 @@ def _read_back(et, library, wrote):
         if stat is None or (current.st_mtime_ns, current.st_size) != (stat.st_mtime_ns, stat.st_size):
             continue
         differ = sorted(field for field in row.after if not fields.same_values(kept[field], row.after[field]))
+        same_as_before = fields.reads_same(kept, row.before) and not fields.reads_same(kept, row.after)
 
-        def work(conn, row=row, kept=kept):
+        def work(conn, row=row, kept=kept, same_as_before=same_as_before):
             photos.follow_fields(conn, row.path, kept)
-            file_journal.set_after(conn, row.id, kept)
+            if same_as_before:
+                file_journal.withdraw_in(conn, [row.id])
+            else:
+                file_journal.set_after(conn, row.id, kept)
 
         try:
             db.write_with_connection(library.path, work, label="%s: read back" % row.named())
         except Exception as e:
             logger.warning("%s: could not record what %s holds: %s", library.path, row.named(), e)
             continue
+        if same_as_before:
+            unchanged.append(row)
+            logger.warning("%s: %s holds what it held before its write; taken out of the change",
+                           library.path, row.named())
+            continue
         row.after = kept
         logger.warning("%s: %s does not hold %s quite as written; recorded as it holds it",
                        library.path, row.named(), ", ".join(differ))
+    return unchanged
 
 
 def _conflict(library, row, why):
@@ -260,27 +306,30 @@ def _conflict(library, row, why):
     return "conflict", "%s: %s" % (row.named(), why)
 
 
-def _carry(et, library, row, origin, target, finished, on_failure, wrote=None):
+def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, now=None):
     """Bring a file holding `origin` to `target`, and mark it `finished`: forward (before
     to after, done) and in an undo (after to before, undone). A file holding `target`
     already is recorded as it is; one holding neither is a conflict. A write that fails
     leaves a file holding `origin` withdrawn from its change (`on_failure="withdraw"`) or
-    a conflict. A file written goes in `wrote`, for _read_back. Returns (outcome, why):
-    `finished`, "conflict" or "failed"."""
-    try:
-        now = field_values.read_one(et, row.path, list(target))
-    except field_values.Unreadable as e:
-        return _conflict(library, row, "could not be read: %s" % e)
-    if fields.same_fields(now, target):
-        # Written already: by a run a crash stopped before it recorded the row.
-        _record(library, row, target, finished)
+    a conflict. A file written goes in `wrote`, for _read_back. `now` is what the file
+    holds when the caller has just read it in this session; otherwise it is read here.
+    Returns (outcome, why): `finished`, "conflict" or "failed"."""
+    if now is None:
+        try:
+            now = field_values.read_one(et, row.path, list(target))
+        except field_values.Unreadable as e:
+            return _conflict(library, row, "could not be read: %s" % e)
+    if fields.reads_same(now, target):
+        # Written already: by a run a crash stopped before it recorded the row, whose
+        # stamp from before the write was recorded with it (#265).
+        _record_held(library, row, now, target, finished, row.stamp)
         return finished, None
-    if not fields.same_fields(now, origin):
+    if not fields.reads_same(now, origin):
         return _conflict(library, row, "changed since it was read: it holds neither what the change found"
                                        " nor what it was to leave, and is not overwritten")
-    file_journal.mark(library.path, [row.id], "writing")
+    stamp = row.stamp = embeddings.stamp_of(row.path)
+    file_journal.writing(library.path, row.id, stamp)
     _reached("file writing")
-    stamp = embeddings.stamp_of(row.path)
     try:
         field_values.write(et, row.path, target)
     except Exception as e:
@@ -293,16 +342,29 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None):
     return finished, None
 
 
+def _record_held(library, row, now, target, finished, stamp=None):
+    """Record a file found holding `target` already, as it holds it: a value ExifTool does
+    not keep as written ("1.50" read as 1.5) is recorded as read, in the row and, going
+    forward, as the journal's after, as _read_back records a file just written. `stamp`
+    is the file's from just before a write of this change, when one was made."""
+    held = {field: now.get(field, []) for field in target}
+    after = None
+    if finished == "done" and not fields.same_fields(held, target):
+        after = held
+        row.after = held
+    _record(library, row, held, finished, stamp, after=after)
+
+
 def _after_failure(et, library, row, origin, target, finished, on_failure, error):
     """A write that raised: settled by what the file holds after it."""
     try:
         now = field_values.read_one(et, row.path, list(target))
     except field_values.Unreadable:
         now = None
-    if now is not None and fields.same_fields(now, target):
-        _record(library, row, target, finished)
+    if now is not None and fields.reads_same(now, target):
+        _record_held(library, row, now, target, finished, row.stamp)
         return finished, None
-    if now is not None and fields.same_fields(now, origin):
+    if now is not None and fields.reads_same(now, origin):
         if on_failure == "withdraw":
             file_journal.withdraw(library.path, [row.id])
             return "failed", error
@@ -422,6 +484,16 @@ def _settle_renames(library, rows, forward, redo):
 
     arrived, waiting, doubtful = [], [], set()
     for row in rows:
+        if paths.same(origin(row), target(row)):
+            # A rename of the case alone: both names are the one file, and the name the
+            # folder lists it by says which it has (#283).
+            if not _holds(origin(row), row):
+                _conflict(library, row, "not found under either name")
+            elif paths.spelled_as(target(row)):
+                arrived.append(row)
+            else:
+                waiting.append(row)
+            continue
         # Where it was first: a file there too at its new name is a copy, or in doubt.
         at_origin, at_target = _holds(origin(row), row), _holds(target(row), row)
         if at_origin and at_target:
@@ -570,12 +642,11 @@ def _undoable(library, change_id, exiftool_path):
     change = file_journal.change(library.path, change_id)
     if change is None:
         return None, "there is no change %d" % change_id, None
-    if change.status == "pruned":
-        return None, "change %d was pruned: what its files held is gone, so it cannot be undone" % change_id, None
-    if change.status == "planned":
-        return None, ("change %d is not finished; it is, the next time the library is opened" % change_id), None
-    if change.status != "applied":
-        return None, "change %d is %s" % (change_id, change.status), None
+    # The journal's one account of what may be undone: a newer change of the same files
+    # in the way among it (tagpup.store.journal.refusal).
+    reasons = journal.refusals(library.path, [change_id]).get(change_id)
+    if reasons:
+        return None, "; ".join(reasons), None
     done = [row for row in file_journal.files_of(library.path, change_id) if row.state == "done"]
     ready, refused = [], []
     renames = [row for row in done if row.is_rename]
@@ -602,7 +673,7 @@ def _undoable(library, change_id, exiftool_path):
             now = held.get(paths.key(row.path))
             if now is None or isinstance(now, Exception):
                 refused.append((row, "could not be read: %s" % now))
-            elif fields.same_fields(now, row.after):
+            elif fields.reads_same(now, row.after):
                 ready.append(row)
             else:
                 refused.append((row, "no longer holds what the change left"))

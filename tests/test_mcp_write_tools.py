@@ -10,9 +10,11 @@ why each test checks what it does: one printed what it planned as what it had re
 six wrote without a backup (docs/findings.md, #54), and a backfill reported 60 done and
 wrote nothing.
 
-Rows are seeded in plain SQL, as the indexer stores them. ExifTool is never run: the
-refresh test's rows are either fixable from the row alone or read with an ExifTool that
-is not there.
+Rows are seeded in plain SQL, as the indexer stores them: a row's raw_metadata is what a
+read records (tests/photo_rows.py), since one holding nothing was never read and the
+refresh reads its file (docs/findings.md, #250). ExifTool is never run: the refresh
+test's rows are either fixable from the row alone or read with an ExifTool that is not
+there.
 """
 import asyncio
 import json
@@ -24,6 +26,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 from face_rows import add_face, photo_id  # noqa: E402
 
 from mcp.shared.memory import create_connected_server_and_client_session  # noqa: E402
@@ -165,11 +168,13 @@ class WriteTools(unittest.TestCase):
         stamped = self.file("regatta_002.jpg")
         moved_on = self.file("regatta_003.jpg")
         stat = os.stat(stamped)
+        # As a read records it; the caption listed twice is the old extractor's.
+        raw = photo_rows.as_read(stamped, {"XMP:Description": caption})["raw_metadata"]
 
         def rows(conn):
             conn.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
-                         " VALUES (?, ?, ?, '[]', ?, '{}')",
-                         (stamped, stat.st_mtime, stat.st_size, json.dumps([caption, caption])))
+                         " VALUES (?, ?, ?, '[]', ?, ?)",
+                         (stamped, stat.st_mtime, stat.st_size, json.dumps([caption, caption]), json.dumps(raw)))
             conn.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
                          " VALUES (?, 0, 0, '[]', '[]', '{}')", (moved_on,))
             return photo_id(conn, stamped), photo_id(conn, moved_on)
@@ -238,9 +243,10 @@ class WriteTools(unittest.TestCase):
         with open(path, "wb") as handle:
             handle.write(b"x")
         stat = os.stat(path)
+        raw = photo_rows.as_read(path, {"XMP:Description": "a"})["raw_metadata"]
         self.seed(lambda conn: conn.execute(
-            "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, '[]', ?, '{}')",
-            (path, stat.st_mtime, stat.st_size, json.dumps(["a", "a"]))))
+            "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, '[]', ?, ?)",
+            (path, stat.st_mtime, stat.st_size, json.dumps(["a", "a"]), json.dumps(raw))))
         self.assertEqual(self.call("refresh_rows", folder=self.photos)["attempted"], 0)
         self.assertEqual(self.call("refresh_rows", folder=elsewhere)["attempted"], 1)
 

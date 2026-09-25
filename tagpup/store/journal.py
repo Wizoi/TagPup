@@ -787,33 +787,68 @@ def apply(db_path, operation, edits, summary=None):
             conn.close()
 
 
-def _undo_in(conn, change_id):
-    """Check change `change_id` may be undone, and write its inverse. Returns its rows.
-    The caller holds the transaction."""
+def _writes_files(conn, change_id):
+    return file_journal.has_table(conn) and conn.execute(
+        "SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone() is not None
+
+
+def refusal(conn, change_id):
+    """Why change `change_id` cannot be undone now, as the journal alone can say --
+    without reading a row's values or a photo file -- or [] when it may be tried. The
+    one account of it: an undo of rows (_undo_in) and of files
+    (tagpup.services.file_changes) are refused by it, and the history lists by it which
+    changes can be undone (tagpup.services.journal.undo_refusals).
+
+    No such change; pruned; not finished; not applied. A change of files: a newer change
+    not undone wrote one of its files (file_journal.newer_overlapping). A change of rows:
+    made at another schema version, or a newer change not undone wrote one of its rows.
+    The caller's connection."""
     row = conn.execute("SELECT operation, status, schema_version FROM changes WHERE id = ?",
                        (change_id,)).fetchone()
     if row is None:
-        raise Refusal(["there is no change %d" % change_id])
+        return ["there is no change %d" % change_id]
     _operation, status, version = row
-    if file_journal.has_table(conn) and conn.execute(
-            "SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone():
+    files = _writes_files(conn, change_id)
+    if status == "pruned":
+        return ["change %d was pruned: %s gone, so it cannot be undone"
+                % (change_id, "what its files held is" if files else "its values are")]
+    if status in ("derived_pending", "planned"):
+        return ["change %d is not finished; it is, the next time the library is opened" % change_id]
+    if status != "applied":
+        return ["change %d is %s" % (change_id, status)]
+    if files:
+        return ["change %d (%s), applied after it, wrote the same photo files: undo it first" % (other, name)
+                for other, name in file_journal.newer_overlapping(conn, change_id)]
+    current = schema.version(conn)
+    if version != current:
+        return ["change %d was made at schema %d and the library is at %d: its rows may not mean"
+                " what they did" % (change_id, version, current)]
+    return ["change %d (%s), applied after it, changed the same rows: undo it first" % (other, name)
+            for other, name in _newer_overlapping(conn, change_id)]
+
+
+def refusals(db_path, change_ids):
+    """{change id: refusal(...)} of each of `change_ids`, read on one connection. Reads
+    only; {} for a library without a journal."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not has_journal(conn):
+            return {}
+        return {change_id: refusal(conn, change_id) for change_id in change_ids}
+    finally:
+        conn.close()
+
+
+def _undo_in(conn, change_id):
+    """Check change `change_id` may be undone (refusal), and write its inverse. Returns
+    its rows. The caller holds the transaction."""
+    if _writes_files(conn, change_id):
         # Its rows follow its files: an undo rewrites the files, and they bring the rows.
         raise Refusal(["change %d wrote photo files: it is undone file by file"
                        " (tagpup.services.file_changes)" % change_id])
-    if status == "pruned":
-        raise Refusal(["change %d was pruned: its values are gone, so it cannot be undone" % change_id])
-    if status == "derived_pending":
-        raise Refusal(["change %d is not finished; it is, the next time the library is opened" % change_id])
-    if status != "applied":
-        raise Refusal(["change %d is %s" % (change_id, status)])
-    current = schema.version(conn)
-    if version != current:
-        raise Refusal(["change %d was made at schema %d and the library is at %d: its rows may not mean"
-                       " what they did" % (change_id, version, current)])
-    newer = _newer_overlapping(conn, change_id)
-    if newer:
-        raise Refusal(["change %d (%s), applied after it, changed the same rows: undo it first" % (other, name)
-                       for other, name in newer])
+    reasons = refusal(conn, change_id)
+    if reasons:
+        raise Refusal(reasons)
     changes = _load(conn, change_id)
     reasons = _not_as_left(conn, change_id, changes)
     inverse = [_inverse(change) for change in reversed(changes)]

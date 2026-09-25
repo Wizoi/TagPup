@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import VECTORS_WITH_PATHS, add_face, add_vector  # noqa: E402
 from handler_harness import Library  # noqa: E402
 
+from tagpup.core import fields  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
@@ -95,9 +96,28 @@ class HandlerCase(unittest.TestCase):
 
 
 def fake_exiftool(get_tags_result):
-    """ExifToolHelper stand-in: accepts every write, answers every read the same."""
+    """ExifToolHelper stand-in: answers every read with `get_tags_result`, over which it
+    keeps each write to a file, as the file would -- a journaled write that left the file
+    as it was is no change (docs/findings.md, #276). A read of several files at once gets
+    the answer as it is; it names no file, so each is read again alone."""
+    kept = {}
     et = MagicMock()
-    et.get_tags.return_value = get_tags_result
+
+    def get_tags(paths, tags=None):
+        written = kept.get(paths[0], {}) if len(paths) == 1 else {}
+        return [dict(found, **written) for found in get_tags_result]
+
+    def set_tags(paths, tags=None, params=None):
+        for path in paths:
+            # Answered under the group ExifTool reads it back in: XMP-xmpMM:x as XMP:x.
+            held = kept.setdefault(path, {})
+            held.update({fields.read_key(name): value for name, value in (tags or {}).items()})
+            held.update({fields.read_key(param[1:-1]): [] for param in params or []
+                         if param.startswith("-") and param.endswith("=")})
+
+    et.get_tags.side_effect = get_tags
+
+    et.set_tags.side_effect = set_tags
     helper = MagicMock()
     helper.return_value.__enter__.return_value = et
     helper.return_value.__exit__.return_value = False
@@ -174,7 +194,7 @@ class TestSavingACaptionThatRenamesThePhoto(HandlerCase):
         self.seed(photo, faces=["Rowan Thackeray", "Ada Marchetti"])
         renamed_to = os.path.join(self.folder, "Parade - 1 - Finish line.jpg")
 
-        def sync_title(photo_path, title, executable, rename_format):
+        def sync_title(photo_path, title, executable, rename_format, *preserved):
             os.rename(photo_path, renamed_to)
             # metadata joins onto whatever spelling it was given.
             return forward(renamed_to)
@@ -209,7 +229,7 @@ class TestSavingACaptionThatRenamesThePhoto(HandlerCase):
         self.seed(renamed_to, faces=["Ada Marchetti"], embedding=b"another-photo",
                   stat_from_disk=False)
 
-        def sync_title(photo_path, title, executable, rename_format):
+        def sync_title(photo_path, title, executable, rename_format, *preserved):
             os.rename(photo_path, renamed_to)
             return renamed_to
 
@@ -279,7 +299,8 @@ class TestSmartRenameNumbersByDateTaken(HandlerCase):
             for name, path in files.items()
         })
 
-        preserved = [{"XMP-xmpMM:PreservedFileName": "original.jpg"}]
+        # As ExifTool answers it: under XMP, not the group it is written in.
+        preserved = [{"XMP:PreservedFileName": "original.jpg"}]
         with patch("tagpup.files.exiftool_session.ExifToolSession", fake_exiftool(preserved)), \
                 patch("tagpup.files.metadata.MetadataExtractor", fake_extractor()):
             result = self.call("POST", "/api/folder/rename-photos", {
@@ -306,10 +327,12 @@ class TestTimeShiftKeepsTheRealPaths(HandlerCase):
         photo = self.make_file("IMG_0001.jpg")
         extractor = fake_extractor({"EXIF:Model": "Test Camera"})
         # ExifTool answers the shift's read with the photo's date, in the spelling it
-        # answers every path in.
+        # answers every path in, and keeps what the shift writes, as the file would.
+        held = {"EXIF:DateTimeOriginal": "2024:07:04 10:00:00"}
         session = MagicMock()
-        session.return_value.__enter__.return_value.get_tags.side_effect = lambda paths, tags=None: [
-            {"SourceFile": forward(p), "EXIF:DateTimeOriginal": "2024:07:04 10:00:00"} for p in paths]
+        et = session.return_value.__enter__.return_value
+        et.get_tags.side_effect = lambda paths, tags=None: [{"SourceFile": forward(p), **held} for p in paths]
+        et.set_tags.side_effect = lambda paths, tags=None, params=None: held.update(tags or {})
         # The route reads the cold folder and the service reads it back, both through
         # tagpup.files.
         with patch("tagpup.files.metadata.MetadataExtractor", extractor), \
