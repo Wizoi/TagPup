@@ -5,7 +5,7 @@ import { baseName, samePath } from './common/paths.js';
 import { state } from './state.js';
 import {
     emptyState, faceMatchingContent, listStats, modeSelect, panelContent, photoList,
-    photoSearch, showMatchedToggle, tagViewContent,
+    photoSearch, showMatchedToggle,
 } from './elements.js';
 import { UNKNOWN_YEAR } from './rules.js';
 import { updateURLParams } from './shared.js';
@@ -14,6 +14,7 @@ import { fetchPeopleWithCounts, selectPerson } from './people.js';
 import { postFolderAutoMatch, selectPhoto } from './faces-strip.js';
 
 const btnRefreshList = document.getElementById('btn-refresh-list');
+const tagViewContent = document.getElementById('tag-view-content');
 const sidebar = document.querySelector('.sidebar');
 const sidebarResizer = document.getElementById('sidebar-resizer');
 const showMatchedContainer = document.getElementById('show-matched-container');
