@@ -644,6 +644,19 @@ def folder_counts(conn):
     return counts
 
 
+def folders_held(conn):
+    """[(folder, photos the library holds directly in it)], the folder spelled as the
+    library stores it (tagpup.core.paths.stored), so it can be sent back to name the
+    folder. Spellings differing only in case are one folder, under the first seen."""
+    held, spelling = {}, {}
+    for (photo_path,) in conn.execute("SELECT path FROM photos"):
+        folder = os.path.dirname(photo_path)
+        key = paths.key(folder)
+        spelling.setdefault(key, folder)
+        held[key] = held.get(key, 0) + 1
+    return [(spelling[key], count) for key, count in held.items()]
+
+
 def rows_under(conn, folder):
     """(path, mtime, size, tags JSON, people JSON, captions JSON, raw_metadata JSON) of
     each photo under a folder, at any depth."""

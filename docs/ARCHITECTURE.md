@@ -478,7 +478,7 @@ pane).
 
 Behaviour changes queued behind the phases. They wait so that they land once, in the new code, rather than in both servers and again afterwards.
 
-- Remove Folder chooses from the library's indexed folders, not from the folders on disk (findings.md, #47). Each folder shows its photo count and whether it is still on disk, and one that is gone is the obvious one to pick. Removing takes the folder out of the library and never touches the files. The list comes from the same place as sync's report of missing folders (phase 8).
+- [x] Remove Folder chooses from the library's indexed folders, not from the folders on disk (findings.md, #47). Done: `GET /api/folder/indexed` (`tagpup.services.photos.indexed_folders`); sync's report of missing folders (phase 8) is to read the same list. Each folder shows its photo count and whether it is still on disk, and one that is gone is the obvious one to pick. Removing takes the folder out of the library and never touches the files. The list comes from the same place as sync's report of missing folders (phase 8).
 
 ## Decisions
 

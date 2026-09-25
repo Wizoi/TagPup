@@ -599,6 +599,14 @@ def folder_remove():
     return jsonify(dict(result.details, success=True))
 
 
+@routes.get("/api/folder/indexed")
+def folder_indexed():
+    """The folders this library holds photos in (tagpup.services.photos.indexed_folders):
+    what Remove Folder offers, a folder gone from disk included (#47)."""
+    library = state.require()
+    return jsonify({"folders": photo_actions.indexed_folders(library)})
+
+
 @routes.get("/api/folder/subfolders")
 def folder_subfolders():
     """The immediate subfolders of a folder, so a parent can be expanded. Indexing

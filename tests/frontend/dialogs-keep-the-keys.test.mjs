@@ -230,6 +230,11 @@ describe("TagTuner: the sidebar does not move behind a dialog", () => {
       open: (ctx) => click(ctx.window, ctx.document.getElementById("btn-add-folder")),
       close: "btn-folder-picker-cancel",
     },
+    "remove-folder-modal": {
+      view: folderView,
+      open: (ctx) => click(ctx.window, ctx.document.getElementById("btn-remove-folder")),
+      close: "btn-remove-folder-cancel",
+    },
     "new-person-modal": {
       view: folderView,
       open: async (ctx) => {

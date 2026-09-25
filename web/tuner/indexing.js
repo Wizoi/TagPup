@@ -30,6 +30,14 @@ const btnCloseFolderPicker = document.getElementById('btn-close-folder-picker');
 const btnFolderSelectAll = document.getElementById('btn-folder-select-all');
 const btnFolderSelectNone = document.getElementById('btn-folder-select-none');
 const folderPickerHideIndexed = document.getElementById('folder-picker-hide-indexed');
+const removeFolderModal = document.getElementById('remove-folder-modal');
+const removeFolderFilter = document.getElementById('remove-folder-filter');
+const removeFolderEmpty = document.getElementById('remove-folder-empty');
+const removeFolderList = document.getElementById('remove-folder-list');
+const removeFolderSelection = document.getElementById('remove-folder-selection');
+const btnRemoveFolderCancel = document.getElementById('btn-remove-folder-cancel');
+const btnRemoveFolderConfirm = document.getElementById('btn-remove-folder-confirm');
+const btnCloseRemoveFolder = document.getElementById('btn-close-remove-folder');
 
 // The buttons carry the state rather than just greying out. A disabled control
 // with no explanation reads as broken -- which is exactly how it was reported.
@@ -329,6 +337,109 @@ function queueSelectedFolders() {
     });
 }
 
+// ---- Remove Folder ------------------------------------------------------
+// It offers the folders the library holds (/api/folder/indexed), not the disk's: the
+// usual reason to remove a folder is that it is gone from disk, and the system dialog
+// could not pick one that is (#47). Each is sent back as the server spelled it.
+
+function openRemoveFolder() {
+    state.removeFolders = [];
+    state.removeFolderChosen = null;
+    removeFolderFilter.value = '';
+    removeFolderList.replaceChildren();
+    removeFolderList.classList.add('hidden');
+    removeFolderEmpty.textContent = "Reading the library's folders...";
+    removeFolderEmpty.classList.remove('hidden');
+    updateRemoveFolderUI();
+    removeFolderModal.classList.remove('hidden');
+
+    api.json('/api/folder/indexed')
+        .then(data => {
+            state.removeFolders = (data && data.folders) || [];
+            renderRemoveFolderList();
+        })
+        .catch(err => {
+            removeFolderEmpty.textContent = "Could not read the library's folders: " + err.message;
+        });
+}
+
+function closeRemoveFolder() {
+    removeFolderModal.classList.add('hidden');
+}
+
+function renderRemoveFolderList() {
+    const wanted = removeFolderFilter.value.trim().toLowerCase();
+    const shown = state.removeFolders.filter(f => !wanted || f.path.toLowerCase().includes(wanted));
+    removeFolderList.replaceChildren();
+    shown.forEach(folder => {
+        const row = document.createElement('label');
+        row.className = 'folder-picker-row' + (folder.on_disk ? '' : ' not-on-disk');
+
+        const choice = document.createElement('input');
+        choice.type = 'radio';
+        choice.name = 'remove-folder-choice';
+        choice.checked = folder.path === state.removeFolderChosen;
+        choice.addEventListener('change', () => {
+            state.removeFolderChosen = folder.path;
+            updateRemoveFolderUI();
+        });
+
+        const name = document.createElement('span');
+        name.className = 'folder-picker-name';
+        name.textContent = folder.path;
+        name.title = folder.path;
+
+        const meta = document.createElement('span');
+        meta.className = 'folder-picker-meta';
+        meta.textContent = `${folder.photos} photo(s)` + (folder.on_disk ? '' : ' \u2014 not on disk');
+
+        row.append(choice, name, meta);
+        removeFolderList.appendChild(row);
+    });
+    const none = !shown.length;
+    removeFolderEmpty.textContent = state.removeFolders.length
+        ? 'No folder matches that.' : 'This library holds no photos.';
+    removeFolderEmpty.classList.toggle('hidden', !none);
+    removeFolderList.classList.toggle('hidden', none);
+    updateRemoveFolderUI();
+}
+
+function updateRemoveFolderUI() {
+    const chosen = state.removeFolders.find(f => f.path === state.removeFolderChosen);
+    removeFolderSelection.textContent = chosen ? `${chosen.photos} photo(s) under it` : 'Nothing chosen';
+    btnRemoveFolderConfirm.disabled = !chosen;
+}
+
+function removeChosenFolder() {
+    const folderPath = state.removeFolderChosen;
+    if (!folderPath) return;
+    if (!confirm(
+        `Remove every photo under\n\n${folderPath}\n\nfrom this database?\n\n` +
+        `The photo files are NOT deleted, but any face work on them -- assigned ` +
+        `names and exclusions -- is discarded with the rows.`
+    )) return;
+    closeRemoveFolder();
+
+    btnRemoveFolder.disabled = true;
+    api.fetch('/api/folder/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder_path: folderPath })
+    })
+    .then(res => res.ok ? res.json() : res.json().then(e => { throw new Error(e.error || 'failed'); }))
+    .then(data => {
+        let msg = `Removed ${data.photos_removed} photo(s) and ${data.faces_removed} face(s).`;
+        if (data.manual_lost || data.excluded_lost) {
+            msg += `\n\nThat included ${data.manual_lost} manually assigned name(s) ` +
+                   `and ${data.excluded_lost} exclusion(s).`;
+        }
+        alert(msg);
+        fetchPhotos();
+    })
+    .catch(err => alert('Error removing folder: ' + err.message))
+    .finally(() => { btnRemoveFolder.disabled = false; });
+}
+
 // Its listeners, which main.js adds once the page has loaded.
 export function wireIndexing() {
     if (btnAddFolder) {
@@ -371,35 +482,9 @@ export function wireIndexing() {
         });
     }
 
-    if (btnRemoveFolder) {
-        btnRemoveFolder.addEventListener('click', () => {
-            pickFolder().then(folderPath => {
-                if (!folderPath) return;
-                if (!confirm(
-                    `Remove every photo under\n\n${folderPath}\n\nfrom this database?\n\n` +
-                    `The photo files are NOT deleted, but any face work on them -- assigned ` +
-                    `names and exclusions -- is discarded with the rows.`
-                )) return;
-
-                btnRemoveFolder.disabled = true;
-                api.fetch('/api/folder/remove', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ folder_path: folderPath })
-                })
-                .then(res => res.ok ? res.json() : res.json().then(e => { throw new Error(e.error || 'failed'); }))
-                .then(data => {
-                    let msg = `Removed ${data.photos_removed} photo(s) and ${data.faces_removed} face(s).`;
-                    if (data.manual_lost || data.excluded_lost) {
-                        msg += `\n\nThat included ${data.manual_lost} manually assigned name(s) ` +
-                               `and ${data.excluded_lost} exclusion(s).`;
-                    }
-                    alert(msg);
-                    fetchPhotos();
-                })
-                .catch(err => alert('Error removing folder: ' + err.message))
-                .finally(() => { btnRemoveFolder.disabled = false; });
-            });
-        });
-    }
+    if (btnRemoveFolder) btnRemoveFolder.addEventListener('click', openRemoveFolder);
+    if (btnCloseRemoveFolder) btnCloseRemoveFolder.addEventListener('click', closeRemoveFolder);
+    if (btnRemoveFolderCancel) btnRemoveFolderCancel.addEventListener('click', closeRemoveFolder);
+    if (btnRemoveFolderConfirm) btnRemoveFolderConfirm.addEventListener('click', removeChosenFolder);
+    if (removeFolderFilter) removeFolderFilter.addEventListener('input', renderRemoveFolderList);
 }
