@@ -30,7 +30,7 @@ DEFAULT_REASON = "not a person"
 IGNORED_CLUSTER = "ignored cluster"
 
 #: Why a face may be excluded: the four TagTuner's page offers (EXCLUDE_REASONS in
-#: gui/app.js, the first its default), and the one it sets itself when a cluster is
+#: web/tuner/main.js, the first its default), and the one it sets itself when a cluster is
 #: ignored. The page keeps a copy, which tests/test_rules_have_one_owner.py holds to
 #: this. The reason used to be free text, and collected "fuzzy" beside "bad crop"
 #: (docs/findings.md, #53, #74).

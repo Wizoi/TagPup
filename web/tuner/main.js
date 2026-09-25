@@ -1,176 +1,16 @@
-// app.js
-
-// Database Subfolder Routing Interceptor
-(function() {
-    const pathSegments = window.location.pathname.split('/');
-    let activeDbName = "";
-    const RESERVED = ["api", "gui", "gui_tagpup", "index.html", "style.css", "app.js", "favicon.ico"];
-    for (const segment of pathSegments) {
-        if (segment && !RESERVED.includes(segment) && !segment.includes('.')) {
-            activeDbName = segment;
-            break;
-        }
-    }
-    if (!activeDbName) {
-        // No library in the URL. The page asks the server which libraries there are
-        // and nothing else: every other route needs a library, and a page that asked
-        // anyway got a 404 for each and showed them as errors. Where to go is decided
-        // by the picker below, from what this browser remembers.
-        const originalFetch = window.fetch;
-        window.fetch = function(input, init) {
-            if (typeof input === 'string' && /^\/?api\//.test(input) && !/^\/?api\/databases(?:\/|\?|$)/.test(input)) {
-                return Promise.reject(new Error('No library is open'));
-            }
-            return originalFetch(input, init);
-        };
-    }
-    if (activeDbName) {
-        // Intercept fetch calls
-        const originalFetch = window.fetch;
-        window.fetch = function(input, init) {
-            if (typeof input === 'string' && input.startsWith('/api/')) {
-                input = '/' + activeDbName + input;
-            }
-            return originalFetch(input, init);
-        };
-
-        // Intercept image src assignments
-        const propDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
-        if (propDesc && propDesc.set) {
-            const originalSrcSetter = propDesc.set;
-            Object.defineProperty(HTMLImageElement.prototype, 'src', {
-                set: function(val) {
-                    if (typeof val === 'string') {
-                        const idx = val.indexOf('/api/');
-                        if (idx !== -1) {
-                            const prefix = '/' + activeDbName + '/api/';
-                            if (!val.includes(prefix)) {
-                                val = val.substring(0, idx) + '/' + activeDbName + val.substring(idx);
-                            }
-                        }
-                    }
-                    originalSrcSetter.call(this, val);
-                },
-                get: propDesc.get,
-                configurable: true,
-                enumerable: true
-            });
-        }
-    }
-})();
+// The TagTuner page. Every request goes through api.js, which puts the library
+// in front of it (web/common/api.js).
+import { api } from './common/api.js';
+import { initDatabaseSelector } from './common/library.js';
+import { pathKey, samePath } from './common/paths.js';
+import { leafOf, samePerson, tagProblem, nameProblem } from './common/vocabulary.js';
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Database selection logic
+    // Database selection logic: the picker and the library this browser remembers
+    // (web/common/library.js).
     const dbSelect = document.getElementById('db-select');
     const btnCreateDb = document.getElementById('btn-create-db');
-
-    // The library opened last, kept in this browser. The server used to keep it, in
-    // config.ini, and wrote that file whenever a library was chosen (docs/findings.md,
-    // #100); now a library is only ever reached by its URL, and this is where a bare
-    // URL learns which one.
-    const LIBRARY_KEY = 'tagpup.library';
-
-    function rememberedLibrary() {
-        try { return localStorage.getItem(LIBRARY_KEY); } catch (e) { return null; }
-    }
-
-    function rememberLibrary(name) {
-        try {
-            if (name) localStorage.setItem(LIBRARY_KEY, name);
-            else localStorage.removeItem(LIBRARY_KEY);
-        } catch (e) { /* a browser that keeps nothing: the picker asks each time */ }
-    }
-
-    function goToLibrary(name) {
-        window.location.href = '/' + name + '/' + window.location.search;
-    }
-
-    function initDatabaseSelector() {
-        if (!dbSelect) return;
-        
-        const pathSegments = window.location.pathname.split('/');
-        let activeDb = "";
-        const RESERVED = ["api", "gui", "gui_tagpup", "index.html", "style.css", "app.js", "favicon.ico"];
-        for (const segment of pathSegments) {
-            if (segment && !RESERVED.includes(segment) && !segment.includes('.')) {
-                activeDb = segment;
-                break;
-            }
-        }
-        
-        if (activeDb) rememberLibrary(activeDb);
-
-        fetch('api/databases')
-            .then(res => res.json())
-            .then(data => {
-                dbSelect.innerHTML = '';
-                if (!activeDb) {
-                    // Nothing in the URL: the library this browser opened last, if it
-                    // is still there; otherwise the picker, empty, asking for one.
-                    const remembered = rememberedLibrary();
-                    if (remembered && data.databases.includes(remembered)) {
-                        goToLibrary(remembered);
-                        return;
-                    }
-                    rememberLibrary(null);
-                    const ask = document.createElement('option');
-                    ask.value = '';
-                    ask.textContent = 'Choose a library\u2026';
-                    ask.disabled = true;
-                    ask.selected = true;
-                    dbSelect.appendChild(ask);
-                }
-
-                data.databases.forEach(db => {
-                    const option = document.createElement('option');
-                    option.value = db;
-                    option.textContent = db;
-                    if (db === activeDb) {
-                        option.selected = true;
-                    }
-                    dbSelect.appendChild(option);
-                });
-            })
-            .catch(err => console.error('Error fetching databases:', err));
-
-        dbSelect.addEventListener('change', () => {
-            goToLibrary(dbSelect.value);
-        });
-
-        if (btnCreateDb) {
-            btnCreateDb.addEventListener('click', () => {
-                const dbName = prompt('Enter a name for the new database (alphanumeric characters, e.g. "vacation_2026"):');
-                if (!dbName) return;
-                
-                let cleanName = dbName.trim();
-                if (!cleanName) return;
-                if (cleanName.endsWith('.db')) {
-                    cleanName = cleanName.substring(0, cleanName.length - 3);
-                }
-                
-                if (!/^[a-zA-Z0-9_\-]+$/.test(cleanName)) {
-                    alert('Invalid name. Only letters, numbers, underscores, and hyphens are allowed.');
-                    return;
-                }
-                
-                fetch('api/databases/create', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ db_name: cleanName })
-                })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.success) {
-                        window.location.href = '/' + cleanName + '/';
-                    } else {
-                        alert('Error creating database: ' + (data.error || 'Unknown error'));
-                    }
-                })
-                .catch(err => alert('Error creating database: ' + err));
-            });
-        }
-    }
-    initDatabaseSelector();
+    initDatabaseSelector(dbSelect, btnCreateDb);
 
     // DOM Elements
     const modeSelect = document.getElementById('tuner-mode');
@@ -554,7 +394,7 @@ ${summary}${note}`)) {
             modalMatchesList.innerHTML = '';
         }
 
-        fetch(`/api/face-matches-unmatched?id=${seedFaceId}`)
+        api.fetch(`/api/face-matches-unmatched?id=${seedFaceId}`)
             .then(res => {
                 if (!res.ok) throw new Error('Failed to fetch similar faces');
                 return res.json();
@@ -595,7 +435,7 @@ ${summary}${note}`)) {
             const imgWrapper = document.createElement('div');
             imgWrapper.className = 'modal-face-card-img-wrapper';
             const img = document.createElement('img');
-            img.src = `/api/face-crop?id=${match.id}`;
+            img.src = api.image(`/api/face-crop?id=${match.id}`);
             img.alt = 'Similar Face';
             img.loading = 'lazy';
             imgWrapper.appendChild(img);
@@ -724,7 +564,7 @@ ${summary}${note}`)) {
             btnModalSave.disabled = true;
             btnModalSave.textContent = 'Saving...';
 
-            fetch('/api/faces/match-bulk', {
+            api.fetch('/api/faces/match-bulk', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -895,7 +735,7 @@ ${summary}${note}`)) {
     // A freshly loaded page knows nothing about a job that started before it, nor
     // about anything queued behind it. Ask.
     function restoreIndexingState() {
-        fetch('/api/folder/index-active')
+        api.fetch('/api/folder/index-active')
             .then(res => res.ok ? res.json() : { active: [], queued: [] })
             .then(data => {
                 renderQueueSummary(data);
@@ -941,7 +781,7 @@ ${summary}${note}`)) {
         if (followQueueTimer) clearTimeout(followQueueTimer);
         followQueueTimer = setTimeout(() => {
             followQueueTimer = null;
-            fetch('/api/folder/index-active')
+            api.fetch('/api/folder/index-active')
                 .then(res => res.ok ? res.json() : { active: [], queued: [] })
                 .then(data => {
                     renderQueueSummary(data);
@@ -963,8 +803,7 @@ ${summary}${note}`)) {
     }
 
     function pickFolder() {
-        return fetch('/api/browse-folder')
-            .then(res => res.json())
+        return api.json('/api/browse-folder')
             .then(data => (data && data.path) ? data.path : null);
     }
 
@@ -973,8 +812,7 @@ ${summary}${note}`)) {
         if (!samePath(folderPath, lastFinishedFolder)) lastFinishedFolder = null;
 
         const query = () => {
-            fetch(`/api/folder/index-status?path=${encodeURIComponent(folderPath)}`)
-                .then(res => res.json())
+            api.json(`/api/folder/index-status?path=${encodeURIComponent(folderPath)}`)
                 .then(data => {
                     if (data.status === 'running') {
                         indexProgressContainer.classList.remove('hidden');
@@ -1035,7 +873,7 @@ ${summary}${note}`)) {
         folderPickerLoading.classList.remove('hidden');
         folderPickerParent.textContent = parent;
 
-        fetch(`/api/folder/subfolders?path=${encodeURIComponent(parent)}`)
+        api.fetch(`/api/folder/subfolders?path=${encodeURIComponent(parent)}`)
             .then(res => res.ok ? res.json() : res.json().then(e => { throw new Error(e.error || 'failed'); }))
             .then(data => {
                 folderPickerLoading.classList.add('hidden');
@@ -1086,82 +924,10 @@ ${summary}${note}`)) {
     // ------------------------------------------------------------------ paths --
     // Every photo and folder path the server sends is already in one spelling -- the
     // native absolute path, exactly as the database holds it -- so server paths can
-    // be compared with `===` and are never rewritten here. These helpers are for
-    // paths from anywhere else: the ?photo= in the URL, or what the native Browse
-    // dialog returned (forward slashes). tests/frontend/path-helpers.test.mjs fails
-    // on a separator conversion anywhere else in this file.
-
-    /**
-     * The one comparable form of a path. Separators are unified to backslashes,
-     * trailing ones dropped, and case folded -- what Windows' os.path.normcase does,
-     * and what the server's paths.key() does. Case-insensitive because the library
-     * lives on a Windows filesystem, where D:\Run and d:\run are the same folder.
-     */
-    function pathKey(p) {
-        if (!p) return '';
-        return String(p).trim().replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
-    }
-
-    /** Whether two spellings name the same file or folder. */
-    function samePath(a, b) {
-        if (!a || !b) return false;
-        return pathKey(a) === pathKey(b);
-    }
-
-    /**
-     * A person's name out of their tag: People/Rowan Thackeray -> Rowan Thackeray.
-     * The same as TagPup's (gui_tagpup/app.js). Identity is the leaf; the tag is a
-     * path. Converting by hand is how the two drift apart, so both pages use these.
-     */
-    function leafOf(tag) {
-        if (!tag) return '';
-        const text = String(tag);
-        return text.includes('/') ? text.split('/').pop().trim() : text.trim();
-    }
-
-    /** Do these two tags name the same person, however each is spelled? */
-    function samePerson(a, b) {
-        const left = leafOf(a).toLowerCase();
-        return Boolean(left) && left === leafOf(b).toLowerCase();
-    }
-
-    /**
-     * Why this cannot be set as a tag, or null if it can. The same as TagPup's, and
-     * the server's (problem_with_tag, tagpup/core/vocabulary.py): tests/tag_rules.json
-     * holds all three to one list. Asking here first keeps the typed text in front
-     * of whoever typed it.
-     */
-    function tagProblem(tag) {
-        return textProblem(tag, 'A tag', true);
-    }
-
-    /** The same for a person's name, which cannot hold a "/" either. */
-    function nameProblem(name) {
-        return textProblem(name, 'A name', false);
-    }
-
-    function textProblem(value, what, levels) {
-        // Controls first, as the server asks: the two languages disagree on whether
-        // some of them count as space.
-        const text = value == null ? '' : String(value);
-        if (/[\u0000-\u001F\u007F-\u009F\u2028\u2029\uFEFF]/.test(text)) {
-            return `${what} cannot contain a tab, a line break or another control character.`;
-        }
-        for (const mark of ['|', '\\']) {
-            if (text.includes(mark)) {
-                return `${what} cannot contain "${mark}": other programs read it as a break between levels.`
-                    + (levels ? ' Use "/" instead.' : '');
-            }
-        }
-        if (!text.trim()) return `${what} cannot be empty.`;
-        if (!levels && text.includes('/')) {
-            return 'A name cannot contain "/": it separates the levels of a tag.';
-        }
-        if (levels && /(?:^|\/)\s*(?:\/|$)/.test(text)) {
-            return `${what} cannot have an empty level, as in "A//B" or "A/".`;
-        }
-        return null;
-    }
+    // be compared with `===` and are never rewritten here. pathKey and samePath
+    // (web/common/paths.js) are for paths from anywhere else: the ?photo= in the URL,
+    // or what the native Browse dialog returned (forward slashes). tests/frontend/
+    // path-helpers.test.mjs fails on a separator conversion anywhere else.
 
     /** The last segment of a path: a photo's file name, or a folder's name. */
     function basename(p) {
@@ -1232,7 +998,7 @@ ${summary}${note}`)) {
         if (!folders.length) return;
 
         btnFolderPickerQueue.disabled = true;
-        fetch('/api/folder/index-start', {
+        api.fetch('/api/folder/index-start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ folder_paths: folders })
@@ -1288,12 +1054,11 @@ ${summary}${note}`)) {
         btnCancelQueue.addEventListener('click', () => {
             if (!confirm('Forget the folders that have not started yet?\n\n' +
                          'The folder being indexed now carries on.')) return;
-            fetch('/api/folder/index-cancel', {
+            api.json('/api/folder/index-cancel', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ all: true })
             })
-            .then(res => res.json())
             .then(() => followQueue())
             .catch(err => alert('Could not cancel the queue: ' + err.message));
         });
@@ -1310,7 +1075,7 @@ ${summary}${note}`)) {
                 )) return;
 
                 btnRemoveFolder.disabled = true;
-                fetch('/api/folder/remove', {
+                api.fetch('/api/folder/remove', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ folder_path: folderPath })
@@ -1460,7 +1225,7 @@ ${summary}${note}`)) {
         photoList.innerHTML = '';
         
         const showMatched = showMatchedToggle && showMatchedToggle.checked;
-        fetch(`/api/photos?mode=${mode}&show_matched=${showMatched}`, { signal: sidebarAbortController.signal })
+        api.fetch(`/api/photos?mode=${mode}&show_matched=${showMatched}`, { signal: sidebarAbortController.signal })
             .then(res => {
                 if (!res.ok) throw new Error('Network response was not ok');
                 return res.json();
@@ -1772,7 +1537,7 @@ ${summary}${note}`)) {
 
     // Fetch all unique known people for autocomplete
     function fetchKnownPeople() {
-        fetch('/api/people')
+        api.fetch('/api/people')
             .then(res => {
                 if (!res.ok) throw new Error('Failed to fetch people list');
                 return res.json();
@@ -1782,7 +1547,7 @@ ${summary}${note}`)) {
                 updatePeopleDatalist();
             })
             .catch(err => console.error('Error fetching people list:', err));
-        fetch('/api/people?include_hidden=1')
+        api.fetch('/api/people?include_hidden=1')
             .then(res => res.ok ? res.json() : [])
             .then(data => { everyKnownPerson = Array.isArray(data) ? data : []; })
             .catch(err => console.error('Error fetching people list:', err));
@@ -1848,7 +1613,7 @@ ${summary}${note}`)) {
         detailsAbortController = new AbortController();
 
         // Show loading state or request
-        fetch(`/api/photo-details?path=${encodeURIComponent(path)}`, { signal: detailsAbortController.signal })
+        api.fetch(`/api/photo-details?path=${encodeURIComponent(path)}`, { signal: detailsAbortController.signal })
             .then(res => {
                 if (!res.ok) throw new Error('Failed to load details');
                 return res.json();
@@ -1888,7 +1653,7 @@ ${summary}${note}`)) {
         panelContent.classList.remove('hidden');
 
         // Main original image (loaded as optimized preview size to speed up UI)
-        mainImage.src = `/api/photo-file?path=${encodeURIComponent(details.path)}&size=1024`;
+        mainImage.src = api.image(`/api/photo-file?path=${encodeURIComponent(details.path)}&size=1024`);
         mainImage.alt = details.filename;
 
         // Metadata details
@@ -1957,7 +1722,7 @@ ${summary}${note}`)) {
             cropContainer.className = 'face-crop-container';
 
             const cropImg = document.createElement('img');
-            cropImg.src = `/api/face-crop?id=${face.id}`;
+            cropImg.src = api.image(`/api/face-crop?id=${face.id}`);
             cropImg.alt = face.name ? face.name : 'Unmatched Face';
             cropContainer.appendChild(cropImg);
 
@@ -2103,7 +1868,7 @@ ${summary}${note}`)) {
 
                 // Fetch matches
                 suggestionsList.innerHTML = '<span style="font-size:11px;color:var(--text-muted);font-style:italic;">Loading matches...</span>';
-                fetch(`/api/face-matches?id=${face.id}`)
+                api.fetch(`/api/face-matches?id=${face.id}`)
                     .then(res => {
                         if (!res.ok) throw new Error('Failed to load matches');
                         return res.json();
@@ -2205,7 +1970,7 @@ ${summary}${note}`)) {
             }
         }
 
-        fetch('/api/face/match', {
+        api.fetch('/api/face/match', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -2241,7 +2006,7 @@ ${summary}${note}`)) {
 
     // POST face unmatch update
     function postUnmatch(faceId) {
-        fetch('/api/face/unmatch', {
+        api.fetch('/api/face/unmatch', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -2274,7 +2039,7 @@ ${summary}${note}`)) {
         const originalText = btnAutomatchAll.textContent;
         btnAutomatchAll.textContent = 'AutoMatching...';
 
-        fetch('/api/photo/automatch', {
+        api.fetch('/api/photo/automatch', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -2309,7 +2074,7 @@ ${summary}${note}`)) {
         btn.innerHTML = '⏳';
         btn.title = 'AutoMatching...';
 
-        fetch('/api/folder/automatch', {
+        api.fetch('/api/folder/automatch', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -2374,7 +2139,7 @@ ${summary}${note}`)) {
         const originalText = btnUnmatchAll.textContent;
         btnUnmatchAll.textContent = 'Unmatching...';
 
-        fetch('/api/photo/unmatch-all', {
+        api.fetch('/api/photo/unmatch-all', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -2431,7 +2196,7 @@ ${summary}${note}`)) {
             ? '/api/unmatched-faces/people'
             : '/api/people-with-counts';
 
-        fetch(apiPath, { signal: sidebarAbortController.signal })
+        api.fetch(apiPath, { signal: sidebarAbortController.signal })
             .then(res => {
                 if (!res.ok) throw new Error('Network response was not ok');
                 return res.json();
@@ -2728,7 +2493,7 @@ ${summary}${note}`)) {
         }
 
         loadingPersonName = name;
-        fetch(apiPath, { signal: detailsAbortController.signal })
+        api.fetch(apiPath, { signal: detailsAbortController.signal })
             .then(res => {
                 if (!res.ok) throw new Error('Failed to load faces');
                 return res.json();
@@ -2853,7 +2618,7 @@ ${summary}${note}`)) {
 
         let shown = false;
         const poll = () => {
-            fetch(`/api/unmatched-faces/build-status?name=${encodeURIComponent(name)}`)
+            api.fetch(`/api/unmatched-faces/build-status?name=${encodeURIComponent(name)}`)
                 .then(res => (res.ok ? res.json() : null))
                 .then(status => {
                     if (!status || !status.active || gridBuildTimer === null) return;
@@ -3485,7 +3250,7 @@ This photo also names ${face.other_names.join(', ')}. `
                 }
 
                 const img = document.createElement('img');
-                img.src = `/api/face-crop?id=${face.id}`;
+                img.src = api.image(`/api/face-crop?id=${face.id}`);
                 img.alt = `Face crop ${face.id}`;
                 img.loading = 'lazy';
                 item.appendChild(img);
@@ -3668,7 +3433,7 @@ This photo also names ${face.other_names.join(', ')}. `
         // The crop itself: what the matcher compares, and what you are being asked
         // to recognise. The panel promised it in its title and never showed it.
         if (matchingDetailCrop) {
-            matchingDetailCrop.src = `/api/face-crop?id=${face.id}`;
+            matchingDetailCrop.src = api.image(`/api/face-crop?id=${face.id}`);
         }
         if (matchingDetailCropSize && face.box && face.box.length === 4) {
             const w = Math.round(face.box[2] - face.box[0]);
@@ -3710,7 +3475,7 @@ This photo also names ${face.other_names.join(', ')}. `
         };
 
         // Load original preview
-        matchingDetailImg.src = `/api/photo-file?path=${encodeURIComponent(face.photo_path)}&size=512`;
+        matchingDetailImg.src = api.image(`/api/photo-file?path=${encodeURIComponent(face.photo_path)}&size=512`);
         // A cached image can already be complete, in which case the load event never
         // arrives and the box stays zero-sized -- with its 9999px shadow dimming the
         // whole preview behind it. Position it directly when there is nothing to wait for.
@@ -3723,7 +3488,7 @@ This photo also names ${face.other_names.join(', ')}. `
         matchingDetailPeople.innerHTML = '<span style="font-size:11px;color:var(--text-muted);font-style:italic;">Loading people...</span>';
         matchingDetailDiagnostics.innerHTML = '<span style="font-size:11px;color:var(--text-muted);font-style:italic;">Loading diagnostics...</span>';
 
-        fetch(`/api/photo-details?path=${encodeURIComponent(face.photo_path)}`, { signal })
+        api.fetch(`/api/photo-details?path=${encodeURIComponent(face.photo_path)}`, { signal })
             .then(res => {
                 if (!res.ok) throw new Error('Failed to load photo details');
                 return res.json();
@@ -3760,7 +3525,7 @@ This photo also names ${face.other_names.join(', ')}. `
                 matchingDetailPeople.innerHTML = '<span style="font-size:11px;color:#f87171;">Failed to load</span>';
             });
 
-        fetch(`/api/face-matches?id=${face.id}`, { signal })
+        api.fetch(`/api/face-matches?id=${face.id}`, { signal })
             .then(res => {
                 if (!res.ok) throw new Error('Failed to load matches');
                 return res.json();
@@ -3896,7 +3661,7 @@ This photo also names ${face.other_names.join(', ')}. `
             btnExcludeSelected.disabled = true;
             btnExcludeSelected.textContent = 'Excluding...';
         }
-        return fetch('/api/faces/exclude', {
+        return api.fetch('/api/faces/exclude', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ face_ids: faceIds, reason: (reason || '').trim() || EXCLUDE_REASONS[0] })
@@ -3931,7 +3696,7 @@ This photo also names ${face.other_names.join(', ')}. `
             btnRestoreSelected.disabled = true;
             btnRestoreSelected.textContent = 'Restoring...';
         }
-        fetch('/api/faces/restore', {
+        api.fetch('/api/faces/restore', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ face_ids: faceIds })
@@ -4157,7 +3922,7 @@ This photo also names ${face.other_names.join(', ')}. `
         const originalText = btnUnmatchSelected.textContent;
         btnUnmatchSelected.textContent = 'Unmatching...';
 
-        fetch('/api/faces/unmatch-bulk', {
+        api.fetch('/api/faces/unmatch-bulk', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -4344,7 +4109,7 @@ This photo also names ${face.other_names.join(', ')}. `
 
         // Returned so a caller assigning several people can wait for one before
         // starting the next; each success rebuilds the grid underneath them.
-        return fetch('/api/faces/match-bulk', {
+        return api.fetch('/api/faces/match-bulk', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -4459,7 +4224,7 @@ This photo also names ${face.other_names.join(', ')}. `
         const originalText = btnRenamePerson.textContent;
         btnRenamePerson.textContent = '✏️ Renaming...';
 
-        fetch('/api/person/rename', {
+        api.fetch('/api/person/rename', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -4683,8 +4448,7 @@ This photo also names ${face.other_names.join(', ')}. `
     function loadTags() {
         listStats.textContent = 'Loading tags...';
         photoList.innerHTML = '';
-        return fetch('/api/tags/list')
-            .then(res => res.json())
+        return api.json('/api/tags/list')
             .then(data => {
                 allTags = data.tags || [];
                 tagBuckets = data.buckets || {};
@@ -4812,8 +4576,7 @@ This photo also names ${face.other_names.join(', ')}. `
         setTagActionsEnabled(true);
         tagPhotoGrid.innerHTML = '';
 
-        fetch(`/api/tags/photos?tag=${encodeURIComponent(tag)}`)
-            .then(res => res.json())
+        api.json(`/api/tags/photos?tag=${encodeURIComponent(tag)}`)
             .then(data => {
                 if (activeTag !== tag) return;   // a slower reply for an older click
                 const photos = data.photos || [];
@@ -4843,7 +4606,7 @@ This photo also names ${face.other_names.join(', ')}. `
         card.title = photo.path;
 
         const img = document.createElement('img');
-        img.src = `/api/photo-file?path=${encodeURIComponent(photo.path)}&thumb=1`;
+        img.src = api.image(`/api/photo-file?path=${encodeURIComponent(photo.path)}&thumb=1`);
         img.alt = photo.filename;
         img.loading = 'lazy';
         card.appendChild(img);
@@ -4883,12 +4646,11 @@ This photo also names ${face.other_names.join(', ')}. `
         }
 
         const body = { from: activeTag, into: target || null, retire: Boolean(retire) };
-        fetch('/api/tags/merge', {
+        api.json('/api/tags/merge', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
         })
-        .then(res => res.json())
         .then(plan => {
             if (plan.error) throw new Error(plan.error);
             const lines = [
@@ -4910,11 +4672,11 @@ This photo also names ${face.other_names.join(', ')}. `
             lines.push('', 'This writes to the photo files and cannot be undone.');
             if (!confirm(lines.join('\n'))) return null;
 
-            return fetch('/api/tags/merge', {
+            return api.json('/api/tags/merge', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(Object.assign({}, body, { apply: true })),
-            }).then(res => res.json());
+            });
         })
         .then(result => {
             if (!result) return;

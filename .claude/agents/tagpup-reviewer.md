@@ -60,7 +60,8 @@ nothing, for three months. Look for:
 - anything persisted (JSON cache files, localStorage) whose key format the change
   alters: are old entries re-keyed or silently orphaned?
 The project owns these conversions in one place each (`tagpup/core/paths.py`,
-`taxonomy.find_person_path`, `leafOf`/`samePerson` in `gui_tagpup/app.js`). Any
+`taxonomy.find_person_path`, `leafOf`/`samePerson` in `web/common/vocabulary.js`,
+`pathKey`/`samePath` in `web/common/paths.js`, `/api/` URLs in `web/common/api.js`). Any
 conversion done by hand elsewhere is a finding.
 
 ### 2. SQL that silently misses, over-matches, or scans
@@ -120,7 +121,7 @@ function.
 ### 7. Project rules (CLAUDE.md)
 No `sqlite3.connect`; no hand conversion between names and tags; bulk writes call
 `record_tags_in_index()`; nothing placed below the startup block of
-`gui_tagpup/app.js`; no real names in tests, fixtures, comments or commit messages
+`web/tagpup/main.js`; no real names in tests, fixtures, comments or commit messages
 (the library is photographs of real people, many of them minors); bulk operations
 dry-run by default with `--apply`; new routes and schema documented.
 

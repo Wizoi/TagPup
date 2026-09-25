@@ -1,14 +1,31 @@
 /**
- * The URL database-prefix interceptor, in both web apps.
+ * The library in every request, in both web apps (web/common/api.js).
  *
  * Every request the pages make must carry the database segment from the URL, or the
  * server resolves it against the startup database instead. This is the client half of
  * the multi-database defect that made the folder-indexing and suggestion buttons hang;
- * it had no coverage at all.
+ * it had no coverage at all. The pages used to get it by replacing `fetch` and the
+ * image `src` setter; now each request is built by api.js, and these tests hold it to
+ * the same behaviour.
  */
-import { test, describe } from "node:test";
+import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, openFolder } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, openFolder, pageModules, APPS, REPO_ROOT } from "./harness.mjs";
+import path from "node:path";
+import { api, libraryIn } from "../../web/common/api.js";
+
+/** api.js read on a page at `url`, as the page reads it: location, at each call. */
+function onPage(url, server = new FakeServer()) {
+  globalThis.location = new URL(url);
+  server.install(globalThis);
+  return server;
+}
+
+const realFetch = globalThis.fetch;
+afterEach(() => {
+  delete globalThis.location;
+  globalThis.fetch = realFetch;
+});
 
 const baseRoutes = (server) =>
   server
@@ -59,30 +76,73 @@ for (const app of ["tagpup", "tagtuner"]) {
       }
     });
 
-    test("an already-prefixed request is left alone", async (t) => {
-      const server = baseRoutes(new FakeServer());
-      const { window } = await loadApp(app, { t,
-        url: "http://localhost:8090/kr-track/",
-        server,
-      });
-
-      await window.fetch("/kr-track/api/people");
-      const last = server.urls().at(-1);
-      assert.equal(last, "/kr-track/api/people");
-    });
-
-    test("non-API requests are not rewritten", async (t) => {
-      const server = baseRoutes(new FakeServer());
-      const { window } = await loadApp(app, { t,
-        url: "http://localhost:8090/kr-track/",
-        server,
-      });
-
-      await window.fetch("/style.css");
-      assert.equal(server.urls().at(-1), "/style.css");
+    test("no request and no /api/ image is made but through api.js", () => {
+      // What made the monkeypatches safe to delete: nothing left for them to catch.
+      const offenders = [];
+      for (const module of pageModules(path.join(REPO_ROOT, APPS[app].dir))) {
+        if (module.url.endsWith("/common/api.js")) continue;
+        module.body.split(/\r?\n/).forEach((line, i) => {
+          if (line.trimStart().startsWith("//") || line.trimStart().startsWith("*")) return;
+          if (/(?<!\bapi\.)\bfetch\(/.test(line) || /\.src\s*=\s*[`'"]\/?api\//.test(line)) {
+            offenders.push(`${module.url}:${i + 1}: ${line.trim()}`);
+          }
+        });
+      }
+      assert.deepEqual(offenders, []);
     });
   });
 }
+
+describe("api.js: the library from the page's URL", () => {
+  test("an API path is put under the page's library", () => {
+    onPage("http://localhost:8090/kr-track/?path=D%3A%5CRun");
+    assert.equal(api.url("/api/people"), "/kr-track/api/people");
+    assert.equal(api.url("api/databases"), "/kr-track/api/databases");
+    assert.equal(api.image("/api/face-crop?id=3"), "/kr-track/api/face-crop?id=3");
+  });
+
+  test("an already-prefixed request is left alone", async () => {
+    const server = onPage("http://localhost:8090/kr-track/");
+    assert.equal(api.url("/kr-track/api/people"), "/kr-track/api/people");
+    await api.fetch("/kr-track/api/people");
+    assert.equal(server.urls().at(-1), "/kr-track/api/people");
+  });
+
+  test("non-API requests are not rewritten", async () => {
+    const server = onPage("http://localhost:8090/kr-track/");
+    assert.equal(api.url("/style.css"), "/style.css");
+    await api.fetch("/style.css");
+    assert.equal(server.urls().at(-1), "/style.css");
+  });
+
+  test("the library is read at each call, and fetch looked up at each call", async () => {
+    const server = onPage("http://localhost:8090/kr-track/");
+    await api.fetch("/api/people");
+    const later = new FakeServer().on("/api/tags", ["Activity"]);
+    onPage("http://localhost:8090/photo_index/", later);
+    assert.deepEqual(await api.json("/api/tags"), ["Activity"]);
+    assert.deepEqual(server.urls(), ["/kr-track/api/people"]);
+    assert.deepEqual(later.urls(), ["/photo_index/api/tags"]);
+  });
+
+  test("with no library only the picker is asked", async () => {
+    const server = onPage("http://localhost:8090/");
+    await assert.rejects(api.fetch("/api/tags"), /No library is open/);
+    await assert.rejects(api.json("/api/people"), /No library is open/);
+    await api.json("/api/databases");
+    await api.fetch("/api/databases/create", { method: "POST" });
+    assert.deepEqual(server.urls(), ["/api/databases", "/api/databases/create"]);
+  });
+
+  test("routes and files are not a library's name", () => {
+    assert.equal(libraryIn("/kr-track/"), "kr-track");
+    assert.equal(libraryIn("/"), "");
+    assert.equal(libraryIn("/index.html"), "");
+    assert.equal(libraryIn("/api/"), "");
+    assert.equal(libraryIn("/common/api.js"), "");
+    assert.equal(libraryIn("/photo_index/main.js"), "photo_index");
+  });
+});
 
 describe("tagpup: image sources are routed too", () => {
   test("thumbnail src attributes carry the database prefix", async (t) => {

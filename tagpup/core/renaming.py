@@ -43,7 +43,7 @@ def problem_with_grouping(grouping):
     photo's number, and editing a caption later took the grouping's second half for
     the number and dropped the real one (docs/findings.md #29). A dash without spaces,
     as in "2019-06", separates nothing. The pages ask the same (groupingProblem in
-    gui_tagpup/app.js), held to tests/tag_rules.json.
+    web/tagpup/main.js), held to tests/tag_rules.json.
     """
     if SEPARATOR in str(grouping or ""):
         return ('A grouping cannot contain " - ": it separates the parts of a photo\'s name. '

@@ -4,7 +4,7 @@ metadata says -- its tags, the people it names, its captions.
 A tag is a path of segments -- Family/Immediate/Rowan Thackeray -- written with "/";
 "|" and "\\" are read as the same separator on the way in, as some tools write them. A
 person is the leaf of a tag under a people root. The pages take tags apart with
-leafOf / rootOf / samePerson (gui_tagpup/app.js), which split on "/" alone.
+leafOf / rootOf / samePerson (web/common/vocabulary.js), which split on "/" alone.
 
 Python took tags apart by hand in 55 places, not all alike: some trimmed segments, some
 dropped empty ones, a few read "|" as a separator and most did not. Reading every tag

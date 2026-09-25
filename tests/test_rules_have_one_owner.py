@@ -247,7 +247,7 @@ class WhyAFaceIsExcluded(unittest.TestCase):
     to the service's; the server and the page each spelled the default again."""
 
     def page(self):
-        return read(os.path.join("gui", "app.js"))
+        return read(os.path.join("web", "tuner", "main.js"))
 
     def test_the_page_offers_the_services_reasons(self):
         from tagpup.services import faces
@@ -279,7 +279,7 @@ class TheCameraOfATimeShift(unittest.TestCase):
     highlighted the photos by it, twice. The page keeps a copy, held here to the server's."""
 
     def page(self):
-        return read(os.path.join("gui_tagpup", "app.js"))
+        return read(os.path.join("web", "tagpup", "main.js"))
 
     def test_the_server_names_it(self):
         from tagpup.core import fields
@@ -349,7 +349,7 @@ class TheYearOfAPhotoWithNone(unittest.TestCase):
 
     def test_the_page_shows_it_as_the_server_does(self):
         from tagpup.core import dates
-        page = read(os.path.join("gui", "app.js"))
+        page = read(os.path.join("web", "tuner", "main.js"))
         self.assertIn("const UNKNOWN_YEAR = '%s';" % dates.UNKNOWN_YEAR, page)
         lines = [n for n, line in enumerate(page.splitlines(), 1)
                  if re.search(r"'%s'" % dates.UNKNOWN_YEAR, line) and "const UNKNOWN_YEAR" not in line]

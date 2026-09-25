@@ -16,15 +16,16 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, APPS } from "./harness.mjs";
+import { REPO_ROOT, APPS, pageSource } from "./harness.mjs";
 
 /** Ids created by the script itself rather than declared in the markup. */
 const DYNAMIC_IDS = new Set([]);
 
-function readApp(dir) {
+/** The page's markup, and every module it loads (harness.mjs, pageModules). */
+function readApp(name) {
   return {
-    js: fs.readFileSync(path.join(REPO_ROOT, dir, "app.js"), "utf8"),
-    html: fs.readFileSync(path.join(REPO_ROOT, dir, "index.html"), "utf8"),
+    js: pageSource(name),
+    html: fs.readFileSync(path.join(REPO_ROOT, APPS[name].dir, "index.html"), "utf8"),
   };
 }
 
@@ -44,7 +45,7 @@ function assignedIds(js) {
 for (const [name, app] of Object.entries(APPS)) {
   describe(`${name}: DOM contract`, () => {
     test("every element the script looks up exists in the page", () => {
-      const { js, html } = readApp(app.dir);
+      const { js, html } = readApp(name);
       const declared = declaredIds(html);
       const created = assignedIds(js);
 
@@ -55,7 +56,7 @@ for (const [name, app] of Object.entries(APPS)) {
       assert.deepEqual(
         dangling,
         [],
-        `${app.dir}/app.js looks up ${dangling.length} element(s) that ${app.dir}/index.html ` +
+        `${app.dir}'s modules look up ${dangling.length} element(s) that ${app.dir}/index.html ` +
           `does not define: ${dangling.join(", ")}. Either the markup was removed and the ` +
           `script was not, or the feature was never finished -- delete the dead lookup, or ` +
           `add the element.`
@@ -64,7 +65,7 @@ for (const [name, app] of Object.entries(APPS)) {
 
     test("the check is actually looking at something", () => {
       // A regex that stopped matching would make the guard above pass silently.
-      const { js, html } = readApp(app.dir);
+      const { js, html } = readApp(name);
       assert.ok(referencedIds(js).length > 20, "no getElementById calls parsed");
       assert.ok(declaredIds(html).size > 20, "no ids parsed from the markup");
     });
@@ -90,7 +91,7 @@ describe("retired concepts stay retired", () => {
     // from the people list. Once the pseudo-person was removed from that list none of
     // them could ever be true, so they were dead branches that read as live ones --
     // nine of them, each implying a mode the app no longer has.
-    const js = fs.readFileSync(path.join(REPO_ROOT, "gui", "app.js"), "utf8");
+    const js = fs.readFileSync(path.join(REPO_ROOT, "web", "tuner", "main.js"), "utf8");
     const comparisons = [...js.matchAll(/[!=]==\s*['"]Unmatched['"]/g)];
     assert.equal(
       comparisons.length,
@@ -108,7 +109,7 @@ describe("sidebar refreshes follow the selected mode", () => {
     // renders the people list unconditionally. Calling the latter after a background
     // job finished put the people list in the sidebar while the dropdown still said
     // "Folder Matches" -- the two disagreeing about what you were looking at.
-    const js = fs.readFileSync(path.join(REPO_ROOT, "gui", "app.js"), "utf8");
+    const js = fs.readFileSync(path.join(REPO_ROOT, "web", "tuner", "main.js"), "utf8");
     const direct = [...js.matchAll(/fetchPeopleWithCounts\(\s*true\s*\)/g)];
     assert.equal(
       direct.length,
@@ -123,7 +124,7 @@ describe("sidebar refreshes follow the selected mode", () => {
     // first 900 characters and broke when a third mode was added ahead of the branch
     // it was looking for -- a passing test turning red for the length of the code
     // above it teaches nothing.
-    const js = fs.readFileSync(path.join(REPO_ROOT, "gui", "app.js"), "utf8");
+    const js = fs.readFileSync(path.join(REPO_ROOT, "web", "tuner", "main.js"), "utf8");
     const start = js.indexOf("function fetchPhotos()");
     assert.ok(start > 0, "fetchPhotos is gone");
     const end = js.indexOf("\n    function ", start + 10);

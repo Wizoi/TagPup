@@ -105,14 +105,14 @@ class OneOwner(unittest.TestCase):
         self.assertEqual([], found)
 
     def test_the_page_asks_the_server_which_names_look_wrong(self):
-        with open(os.path.join(ROOT, "gui", "app.js"), encoding="utf-8") as f:
+        with open(os.path.join(ROOT, "web", "tuner", "main.js"), encoding="utf-8") as f:
             page = f.read()
         self.assertNotRegex(page, r"similarity\s*<\s*0\.\d")
         self.assertIn("possibly_wrong", page)
 
     def test_the_page_shows_the_bands_the_server_names(self):
         # Four sets of numbers decided Likely and Possible on the page; it keeps none.
-        with open(os.path.join(ROOT, "gui", "app.js"), encoding="utf-8") as f:
+        with open(os.path.join(ROOT, "web", "tuner", "main.js"), encoding="utf-8") as f:
             page = f.read()
         self.assertEqual([], re.findall(r"(?:similarity|sim|ranked)\s*>=\s*0\.\d+", page))
 

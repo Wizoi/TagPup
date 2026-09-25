@@ -1,63 +1,9 @@
-// app.js - Standalone TagPup GUI Logic
-
-// Database Subfolder Routing Interceptor
-(function() {
-    const pathSegments = window.location.pathname.split('/');
-    let activeDbName = "";
-    const RESERVED = ["api", "gui", "gui_tagpup", "index.html", "style.css", "app.js", "favicon.ico"];
-    for (const segment of pathSegments) {
-        if (segment && !RESERVED.includes(segment) && !segment.includes('.')) {
-            activeDbName = segment;
-            break;
-        }
-    }
-    if (!activeDbName) {
-        // No library in the URL. The page asks the server which libraries there are
-        // and nothing else: every other route needs a library, and a page that asked
-        // anyway got a 404 for each and showed them as errors. Where to go is decided
-        // by the picker below, from what this browser remembers.
-        const originalFetch = window.fetch;
-        window.fetch = function(input, init) {
-            if (typeof input === 'string' && /^\/?api\//.test(input) && !/^\/?api\/databases(?:\/|\?|$)/.test(input)) {
-                return Promise.reject(new Error('No library is open'));
-            }
-            return originalFetch(input, init);
-        };
-    }
-    if (activeDbName) {
-        // Intercept fetch calls
-        const originalFetch = window.fetch;
-        window.fetch = function(input, init) {
-            if (typeof input === 'string' && input.startsWith('/api/')) {
-                input = '/' + activeDbName + input;
-            }
-            return originalFetch(input, init);
-        };
-
-        // Intercept image src assignments
-        const propDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
-        if (propDesc && propDesc.set) {
-            const originalSrcSetter = propDesc.set;
-            Object.defineProperty(HTMLImageElement.prototype, 'src', {
-                set: function(val) {
-                    if (typeof val === 'string') {
-                        const idx = val.indexOf('/api/');
-                        if (idx !== -1) {
-                            const prefix = '/' + activeDbName + '/api/';
-                            if (!val.includes(prefix)) {
-                                val = val.substring(0, idx) + '/' + activeDbName + val.substring(idx);
-                            }
-                        }
-                    }
-                    originalSrcSetter.call(this, val);
-                },
-                get: propDesc.get,
-                configurable: true,
-                enumerable: true
-            });
-        }
-    }
-})();
+// The TagPup page. Every request goes through api.js, which puts the library
+// in front of it (web/common/api.js).
+import { api } from './common/api.js';
+import { initDatabaseSelector } from './common/library.js';
+import { pathKey, samePath } from './common/paths.js';
+import { leafOf, rootOf, samePerson, photoAlreadyHas, tagProblem, nameProblem } from './common/vocabulary.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     // Database selection logic
@@ -65,156 +11,46 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnCreateDb = document.getElementById('btn-create-db');
     const btnChangeDb = document.getElementById('btn-change-db');
 
-    // The library opened last, kept in this browser. The server used to keep it, in
-    // config.ini, and wrote that file whenever a library was chosen (docs/findings.md,
-    // #100); now a library is only ever reached by its URL, and this is where a bare
-    // URL learns which one.
-    const LIBRARY_KEY = 'tagpup.library';
+    // The picker and the library this browser remembers (web/common/library.js).
+    // Another dog park is another page. Ask about unsaved edits here, with Save on
+    // offer, rather than leave it to the browser's bare "Leave site?"; staying puts
+    // the list back on the dog park still open.
+    initDatabaseSelector(dbSelect, btnCreateDb, {
+        beforeLeaving: (go, stay) => leavePhotoThen(go, { onStay: stay }),
+    });
 
-    function rememberedLibrary() {
-        try { return localStorage.getItem(LIBRARY_KEY); } catch (e) { return null; }
-    }
-
-    function rememberLibrary(name) {
-        try {
-            if (name) localStorage.setItem(LIBRARY_KEY, name);
-            else localStorage.removeItem(LIBRARY_KEY);
-        } catch (e) { /* a browser that keeps nothing: the picker asks each time */ }
-    }
-
-    function goToLibrary(name) {
-        window.location.href = '/' + name + '/' + window.location.search;
-    }
-
-    function initDatabaseSelector() {
-        if (!dbSelect) return;
-        
-        const pathSegments = window.location.pathname.split('/');
-        let activeDb = "";
-        const RESERVED = ["api", "gui", "gui_tagpup", "index.html", "style.css", "app.js", "favicon.ico"];
-        for (const segment of pathSegments) {
-            if (segment && !RESERVED.includes(segment) && !segment.includes('.')) {
-                activeDb = segment;
-                break;
-            }
-        }
-        
-        if (activeDb) rememberLibrary(activeDb);
-
-        fetch('api/databases')
-            .then(res => res.json())
-            .then(data => {
-                dbSelect.innerHTML = '';
-                if (!activeDb) {
-                    // Nothing in the URL: the library this browser opened last, if it
-                    // is still there; otherwise the picker, empty, asking for one.
-                    const remembered = rememberedLibrary();
-                    if (remembered && data.databases.includes(remembered)) {
-                        goToLibrary(remembered);
-                        return;
-                    }
-                    rememberLibrary(null);
-                    const ask = document.createElement('option');
-                    ask.value = '';
-                    ask.textContent = 'Choose a library\u2026';
-                    ask.disabled = true;
-                    ask.selected = true;
-                    dbSelect.appendChild(ask);
-                }
-
-                data.databases.forEach(db => {
-                    const option = document.createElement('option');
-                    option.value = db;
-                    option.textContent = db;
-                    if (db === activeDb) {
-                        option.selected = true;
-                    }
-                    dbSelect.appendChild(option);
-                });
-            })
-            .catch(err => console.error('Error fetching databases:', err));
-
-        dbSelect.addEventListener('change', () => {
-            const selectedDb = dbSelect.value;
-            // Another dog park is another page. Ask about unsaved edits here, with
-            // Save on offer, rather than leave it to the browser's bare "Leave site?";
-            // staying puts the list back on the dog park still open.
-            leavePhotoThen(() => switchDogPark(selectedDb), {
-                onStay: () => { dbSelect.value = activeDb; },
-            });
-        });
-
-        function switchDogPark(selectedDb) {
-            goToLibrary(selectedDb);
-        }
-
-        if (btnChangeDb) {
-            btnChangeDb.addEventListener('click', () => {
-                const leaf = baseName(scannedFolder) || 'the open folder';
-                if (!confirm(
-                    `Switch to a different dog park?
+    if (btnChangeDb) {
+        btnChangeDb.addEventListener('click', () => {
+            const leaf = baseName(scannedFolder) || 'the open folder';
+            if (!confirm(
+                `Switch to a different dog park?
 
 ` +
-                    `${leaf} will be closed. Its photos belong to this dog park's index, ` +
-                    `and another one has its own people, tags and suggestions.`
-                )) return;
-                // Closing the folder clears it in place -- no unload for the browser
-                // to catch -- so unsaved edits are asked about first.
-                leavePhotoThen(closeFolderForDogPark);
-            });
-        }
-
-        function closeFolderForDogPark() {
-            scannedFolder = null;
-            folderPhotos = [];
-            folderSuggestions = {};
-            folderPathInput.value = '';
-            const url = new URL(window.location);
-            url.searchParams.delete('path');
-            window.history.replaceState({}, '', url);
-            updateCurrentFolderLabel();
-            // Close the photo too, and the list: both still showed the folder just
-            // closed, editable and clickable. Edits were settled before this ran.
-            openFolderView();
-            renderFileList();
-            updateListStats();
-            if (dbSelect) dbSelect.focus();
-        }
-
-        if (btnCreateDb) {
-            btnCreateDb.addEventListener('click', () => {
-                const dbName = prompt('Enter a name for the new database (alphanumeric characters, e.g. "vacation_2026"):');
-                if (!dbName) return;
-                
-                let cleanName = dbName.trim();
-                if (!cleanName) return;
-                if (cleanName.endsWith('.db')) {
-                    cleanName = cleanName.substring(0, cleanName.length - 3);
-                }
-                
-                if (!/^[a-zA-Z0-9_\-]+$/.test(cleanName)) {
-                    alert('Invalid name. Only letters, numbers, underscores, and hyphens are allowed.');
-                    return;
-                }
-                
-                fetch('api/databases/create', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ db_name: cleanName })
-                })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.success) {
-                        window.location.href = '/' + cleanName + '/';
-                    } else {
-                        alert('Error creating database: ' + (data.error || 'Unknown error'));
-                    }
-                })
-                .catch(err => alert('Error creating database: ' + err));
-            });
-        }
+                `${leaf} will be closed. Its photos belong to this dog park's index, ` +
+                `and another one has its own people, tags and suggestions.`
+            )) return;
+            // Closing the folder clears it in place -- no unload for the browser
+            // to catch -- so unsaved edits are asked about first.
+            leavePhotoThen(closeFolderForDogPark);
+        });
     }
-    initDatabaseSelector();
+
+    function closeFolderForDogPark() {
+        scannedFolder = null;
+        folderPhotos = [];
+        folderSuggestions = {};
+        folderPathInput.value = '';
+        const url = new URL(window.location);
+        url.searchParams.delete('path');
+        window.history.replaceState({}, '', url);
+        updateCurrentFolderLabel();
+        // Close the photo too, and the list: both still showed the folder just
+        // closed, editable and clickable. Edits were settled before this ran.
+        openFolderView();
+        renderFileList();
+        updateListStats();
+        if (dbSelect) dbSelect.focus();
+    }
 
     // DOM Elements
     const folderPathInput = document.getElementById('folder-path-input');
@@ -471,7 +307,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         setStatus('busy', `Undoing: ${entry.label}...`);
         const writes = entry.photos.map(snapshot =>
-            fetch('/api/photo/save-metadata', {
+            api.json('/api/photo/save-metadata', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -480,7 +316,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     tags: snapshot.tags,
                 })
             })
-            .then(res => res.json())
             .then(data => {
                 if (!data.success) throw new Error(data.error || 'failed');
                 const photo = folderPhotos.find(p => p.path === snapshot.path);
@@ -563,8 +398,7 @@ document.addEventListener('DOMContentLoaded', () => {
     folderPathInput.addEventListener('input', () => {
         const val = folderPathInput.value;
         if (!val) return;
-        fetch(`/api/autocomplete-folder?path=${encodeURIComponent(val)}`)
-            .then(res => res.json())
+        api.json(`/api/autocomplete-folder?path=${encodeURIComponent(val)}`)
             .then(data => {
                 const folderDatalist = document.getElementById('folder-datalist');
                 if (folderDatalist) {
@@ -740,7 +574,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     /** POST a photo's title and tags -- as they are now, unless given -- and check the reply. */
     async function postPhotoMetadata(photo, { title = photo.title, tags = photo.tags || [], ...extra } = {}) {
-        const res = await fetch('/api/photo/save-metadata', {
+        const res = await api.fetch('/api/photo/save-metadata', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: photo.path, title, tags, ...extra })
@@ -800,7 +634,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const tags = (photo.tags || []).slice();
         const added = [];
         for (const item of resolved) {
-            if (photoAlreadyHas({ tags }, item.tag)) continue;
+            if (photoAlreadyHas({ tags }, item.tag, isPersonTag)) continue;
             tags.push(item.tag);
             added.push(item);
         }
@@ -820,7 +654,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setStatus('busy', 'Saving...');
         let data;
         try {
-            const res = await fetch('/api/photo/save-metadata', {
+            const res = await api.fetch('/api/photo/save-metadata', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1075,7 +909,7 @@ document.addEventListener('DOMContentLoaded', () => {
         statusText.textContent = 'Smart renaming...';
         btnApplyRename.disabled = true;
 
-        fetch('/api/folder/rename-photos', {
+        api.fetch('/api/folder/rename-photos', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1200,8 +1034,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Dynamic Autocomplete loaders
     function fetchKnownTagsAndPeople() {
         loadTaxonomy().then(() => {
-            fetch('/api/tags')
-                .then(res => res.json())
+            api.json('/api/tags')
                 .then(data => {
                     knownTags = Array.isArray(data) ? data : [];   // see knownPeople below
                     updateTagsDatalist();
@@ -1209,8 +1042,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 })
                 .catch(err => console.error("Error loading tags taxonomy:", err));
 
-            fetch('/api/people')
-                .then(res => res.json())
+            api.json('/api/people')
                 .then(data => {
                     // A failed lookup answers {error: ...}. Taken as the list, it made
                     // isPersonTag throw, and with it every save that checks for a
@@ -1268,22 +1100,11 @@ document.addEventListener('DOMContentLoaded', () => {
     //   - a suggested "Activity/Cross Country" was written as "Cross Country",
     //     because the same line that reduced people to leaves reduced keywords too.
     //
-    // So the conversions live here and nowhere else. `tests/frontend/tag-vocabulary.
-    // test.mjs` fails on a raw `.split('/')` elsewhere in this file, the same way
-    // tests/test_db_access.py fails on a raw sqlite3.connect.
-
-    /** The last segment of a tag path: the name a person is known by. */
-    function leafOf(tag) {
-        if (!tag) return '';
-        const text = String(tag);
-        return text.includes('/') ? text.split('/').pop().trim() : text.trim();
-    }
-
-    /** The first segment of a tag path: the category it is filed under. */
-    function rootOf(tag) {
-        if (!tag) return '';
-        return String(tag).split('/')[0].trim();
-    }
+    // So the conversions live in one place: leafOf, rootOf, samePerson and
+    // photoAlreadyHas in web/common/vocabulary.js, with this page's own normalizeTag
+    // and ancestorsOf below. `tests/frontend/tag-vocabulary.test.mjs` fails on a raw
+    // `.split('/')` anywhere else, the same way tests/test_db_access.py fails on a raw
+    // sqlite3.connect.
 
     /**
      * The one spelling of a tag, as the server stores it: each level trimmed.
@@ -1300,52 +1121,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return parts.map((_part, i) => parts.slice(0, i + 1).join('/'));
     }
 
-    /** Do these two tags name the same person, however each is spelled? */
-    function samePerson(a, b) {
-        const left = leafOf(a).toLowerCase();
-        return Boolean(left) && left === leafOf(b).toLowerCase();
-    }
-
-    /**
-     * Why this cannot be set as a tag, or null if it can.
-     *
-     * The server refuses the same tags (problem_with_tag, tagpup/core/vocabulary.py),
-     * with the same words; tests/tag_rules.json holds both to one list. Asking here
-     * first only means nothing is created for a tag that will be refused, and the
-     * text stays where it was typed.
-     */
-    function tagProblem(tag) {
-        return textProblem(tag, 'A tag', true);
-    }
-
-    /** The same for a person's name or one level of a tag, which cannot hold a "/" either. */
-    function nameProblem(name) {
-        return textProblem(name, 'A name', false);
-    }
-
-    function textProblem(value, what, levels) {
-        // Controls first, as the server asks: the two languages disagree on whether
-        // some of them count as space.
-        const text = value == null ? '' : String(value);
-        if (/[\u0000-\u001F\u007F-\u009F\u2028\u2029\uFEFF]/.test(text)) {
-            return `${what} cannot contain a tab, a line break or another control character.`;
-        }
-        for (const mark of ['|', '\\']) {
-            if (text.includes(mark)) {
-                return `${what} cannot contain "${mark}": other programs read it as a break between levels.`
-                    + (levels ? ' Use "/" instead.' : '');
-            }
-        }
-        if (!text.trim()) return `${what} cannot be empty.`;
-        if (!levels && text.includes('/')) {
-            return 'A name cannot contain "/": it separates the levels of a tag.';
-        }
-        if (levels && /(?:^|\/)\s*(?:\/|$)/.test(text)) {
-            return `${what} cannot have an empty level, as in "A//B" or "A/".`;
-        }
-        return null;
-    }
-
     /**
      * Of two tags naming one person, the one to keep.
      *
@@ -1357,20 +1132,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!b) return a;
         if (a.includes('/') === b.includes('/')) return a;
         return a.includes('/') ? a : b;
-    }
-
-    /**
-     * Does this photo already carry this tag, or this same person under another name?
-     *
-     * A plain `tags.includes()` compared "Hazel Brookmire" against
-     * "People/Hazel Brookmire", found no match, and wrote the person in a second
-     * time. Identity is the leaf; the path is only where they are filed.
-     */
-    function photoAlreadyHas(photo, tag) {
-        const tags = (photo && photo.tags) || [];
-        if (tags.includes(tag)) return true;
-        if (!isPersonTag(tag)) return false;
-        return tags.some(t => isPersonTag(t) && samePerson(t, tag));
     }
 
     function updateTagsDatalist() {
@@ -1499,8 +1260,7 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Browsing...';
         
-        fetch('/api/browse-folder')
-            .then(res => res.json())
+        api.json('/api/browse-folder')
             .then(data => {
                 if (data.path) {
                     folderPathInput.value = data.path;
@@ -1538,27 +1298,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // ------------------------------------------------------------------ paths --
     // Every photo and folder path the server sends is already in one spelling -- the
     // native absolute path, exactly as the database holds it -- so server paths are
-    // compared with `===` and never rewritten here. These helpers are for the two
-    // cases that are not server paths: what somebody typed into the folder box, and
-    // what the native Browse dialog returned (forward slashes). tests/frontend/
-    // path-helpers.test.mjs fails on a separator conversion anywhere else.
-
-    /**
-     * The one comparable form of a path. Separators are unified to backslashes,
-     * trailing ones dropped, and case folded -- what Windows' os.path.normcase does,
-     * and what the server's paths.key() does. Case-insensitive because the library
-     * lives on a Windows filesystem, where D:\Run and d:\run are the same folder.
-     */
-    function pathKey(p) {
-        if (!p) return '';
-        return String(p).trim().replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
-    }
-
-    /** Whether two spellings name the same file or folder. */
-    function samePath(a, b) {
-        if (!a || !b) return false;
-        return pathKey(a) === pathKey(b);
-    }
+    // compared with `===` and never rewritten here. pathKey and samePath
+    // (web/common/paths.js) are for the two cases that are not server paths: what
+    // somebody typed into the folder box, and what the native Browse dialog returned
+    // (forward slashes). tests/frontend/path-helpers.test.mjs fails on a separator
+    // conversion anywhere else.
 
     /** Where a folder's scan is cached: one entry per folder, however it was typed. */
     function folderCacheKey(folder) {
@@ -1697,7 +1441,7 @@ document.addEventListener('DOMContentLoaded', () => {
         listStats.textContent = 'Scanning...';
         photoList.querySelectorAll('.photo-item-file').forEach(el => el.remove());
 
-        fetch(`/api/folder/scan?path=${encodeURIComponent(path)}&force=${forceRefresh}`, { signal: scanAbortController.signal })
+        api.fetch(`/api/folder/scan?path=${encodeURIComponent(path)}&force=${forceRefresh}`, { signal: scanAbortController.signal })
             .then(res => {
                 if (!res.ok) return res.json().then(e => { throw new Error(e.error || 'Scan failed') });
                 return res.json();
@@ -2060,7 +1804,7 @@ document.addEventListener('DOMContentLoaded', () => {
             else if (action === 'open') { if (pathUnderCursor) selectPhoto(pathUnderCursor); }
             else if (action === 'explorer') {
                 if (pathUnderCursor) {
-                    fetch('/api/photo/open-explorer', {
+                    api.fetch('/api/photo/open-explorer', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ path: pathUnderCursor })
@@ -2085,7 +1829,7 @@ document.addEventListener('DOMContentLoaded', () => {
         facesSection.classList.add('hidden');
         if (facesSummary) facesSummary.textContent = '';
 
-        fetch(`/api/photo-faces?path=${encodeURIComponent(photoPath)}`)
+        api.fetch(`/api/photo-faces?path=${encodeURIComponent(photoPath)}`)
             .then(res => res.ok ? res.json() : { faces: [] })
             .then(data => {
                 // A slower reply for a previously selected photo must not overwrite
@@ -2120,7 +1864,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     const img = document.createElement('img');
                     img.className = 'face-card-img';
-                    img.src = `/api/face-crop?id=${face.id}`;
+                    img.src = api.image(`/api/face-crop?id=${face.id}`);
                     img.alt = face.name || 'Unidentified face';
                     frame.appendChild(img);
 
@@ -2167,7 +1911,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     // empty, and clicking did nothing.
                     const namesSomebody = face.name || face.suggestion;
                     const alreadyTagged = namesSomebody
-                        && photoAlreadyHas(photoRecord, namesSomebody);
+                        && photoAlreadyHas(photoRecord, namesSomebody, isPersonTag);
 
                     if (namesSomebody && !alreadyTagged && !face.excluded) {
                         card.classList.add('face-card-actionable');
@@ -2294,12 +2038,11 @@ Click to add ${namesSomebody} to this photo.`;
                     
                     // Queued with every other write to a photo, so the tags it sends
                     // are the photo's tags when it runs, not a copy from before.
-                    queuePhotoWrite(() => fetch('/api/photo/save-metadata', {
+                    queuePhotoWrite(() => api.json('/api/photo/save-metadata', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ path: photo.path, title: newTitle, tags: photo.tags })
                     })
-                    .then(res => res.json())
                     .then(data => {
                         if (data.success) {
                             const oldPath = photo.path;
@@ -2614,7 +2357,7 @@ Click to add ${namesSomebody} to this photo.`;
                             // right only because photo.people happens to hold leaves,
                             // and would have offered everybody the moment it did not.
                             const alreadyAdded =
-                                photoAlreadyHas(photo, p.name)
+                                photoAlreadyHas(photo, p.name, isPersonTag)
                                 || photoPeople.some(n => samePerson(n, leaf));
                             if (!alreadyAdded) {
                                 noteSuggestion(suggPeopleCounts, leaf, photo.path, p.score);
@@ -2630,7 +2373,7 @@ Click to add ${namesSomebody} to this photo.`;
                             // photoAlreadyHas compares people by who they are, so a
                             // suggested "Kira Bao" counts as present on a photo tagged
                             // "People/Kira Bao". A plain keyword still matches exactly.
-                            if (photoAlreadyHas(photo, leaf)) return;
+                            if (photoAlreadyHas(photo, leaf, isPersonTag)) return;
                             if (isPerson) {
                                 const cleanLeaf = leafOf(leaf);
                                 if (photoPeople.some(n => samePerson(n, cleanLeaf))) return;
@@ -2728,12 +2471,11 @@ Click to add ${namesSomebody} to this photo.`;
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Applying tag...';
         
-        fetch('/api/photos/bulk-tags', {
+        api.json('/api/photos/bulk-tags', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ paths: targets, add_tags: [tag], remove_tags: [] })
         })
-        .then(res => res.json())
         .then(data => {
             if (data.success) {
                 // Update tags in cache
@@ -2789,12 +2531,11 @@ Click to add ${namesSomebody} to this photo.`;
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Removing tag...';
 
-        fetch('/api/photos/bulk-tags', {
+        api.json('/api/photos/bulk-tags', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ paths: selectedThumbnails, add_tags: [], remove_tags: tags })
         })
-        .then(res => res.json())
         .then(data => {
             if (data.success) {
                 // Update tags in cache
@@ -3248,12 +2989,11 @@ Click to add ${namesSomebody} to this photo.`;
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Opening photo...';
 
-        fetch('/api/photo/open', {
+        api.json('/api/photo/open', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path })
         })
-        .then(res => res.json())
         .then(data => {
             if (!data.success) throw new Error(data.error || 'could not open the photo');
             statusDot.className = 'status-indicator-dot';
@@ -3275,8 +3015,8 @@ Click to add ${namesSomebody} to this photo.`;
      * returned to later. Carrying the mtime makes a changed file a new URL.
      */
     function photoFileUrl(photo, size) {
-        return `/api/photo-file?path=${encodeURIComponent(photo.path)}&size=${size}`
-            + `&v=${encodeURIComponent(photo.mtime || 0)}`;
+        return api.image(`/api/photo-file?path=${encodeURIComponent(photo.path)}&size=${size}`
+            + `&v=${encodeURIComponent(photo.mtime || 0)}`);
     }
 
     function rotatePhoto(direction) {
@@ -3286,12 +3026,11 @@ Click to add ${namesSomebody} to this photo.`;
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Rotating...';
 
-        fetch('/api/photo/rotate', {
+        api.json('/api/photo/rotate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path, direction })
         })
-        .then(res => res.json())
         .then(data => {
             if (data.success) {
                 // The photo's new mtime is its images' new URL, here and in the grid.
@@ -3332,12 +3071,11 @@ Click to add ${namesSomebody} to this photo.`;
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Deleting...';
 
-        fetch('/api/photo/delete', {
+        api.json('/api/photo/delete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path })
         })
-        .then(res => res.json())
         .then(data => {
             if (data.success) {
                 // Remove photo from client folderPhotos array
@@ -3394,12 +3132,11 @@ Click to add ${namesSomebody} to this photo.`;
         btnSuggestTags.disabled = true;
         btnFolderAutoApply.disabled = true;
 
-        fetch('/api/folder/suggest-start', {
+        api.json('/api/folder/suggest-start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ folder_path: path })
         })
-        .then(res => res.json())
         .then(data => {
             if (data.success) {
                 suggestProgressContainer.classList.remove('hidden');
@@ -3430,8 +3167,7 @@ Click to add ${namesSomebody} to this photo.`;
         if (indexProgressTimer) clearInterval(indexProgressTimer);
 
         function queryProgress() {
-            fetch(`/api/folder/index-status?path=${encodeURIComponent(folderPath)}`)
-                .then(res => res.json())
+            api.json(`/api/folder/index-status?path=${encodeURIComponent(folderPath)}`)
                 .then(data => {
                     if (data.status === 'running') {
                         indexProgressContainer.classList.remove('hidden');
@@ -3482,8 +3218,7 @@ Click to add ${namesSomebody} to this photo.`;
         if (progressTimer) clearInterval(progressTimer);
 
         function queryProgress() {
-            fetch(`/api/folder/suggest-status?path=${encodeURIComponent(folderPath)}`)
-                .then(res => res.json())
+            api.json(`/api/folder/suggest-status?path=${encodeURIComponent(folderPath)}`)
                 .then(data => {
                     if (data.status === 'preparing' || data.status === 'running') {
                         suggestProgressContainer.classList.remove('hidden');
@@ -3584,7 +3319,7 @@ Click to add ${namesSomebody} to this photo.`;
         // already shown as one a few inches above.
         const photo = folderPhotos.find(p => p.path === photoPath);
         const outstanding = (list, key) =>
-            (list || []).filter(item => !photoAlreadyHas(photo, item[key]));
+            (list || []).filter(item => !photoAlreadyHas(photo, item[key], isPersonTag));
 
         const people = outstanding(sugg.people, 'name');
         const tags = outstanding(sugg.tags, 'tag');
@@ -3644,7 +3379,7 @@ Click to add ${namesSomebody} to this photo.`;
 
             // Say so rather than doing nothing. A click that silently no-ops reads as
             // a broken button, which is how this was reported.
-            if (photoAlreadyHas(photo, resolved)) {
+            if (photoAlreadyHas(photo, resolved, isPersonTag)) {
                 setStatus('ready', `${leafOf(resolved)} is already on this photo`);
                 return true;
             }
@@ -3703,7 +3438,7 @@ Click to add ${namesSomebody} to this photo.`;
             for (const item of wanted) {
                 const resolved = await resolveTagOrPerson(item.name, item.isPerson);
                 if (!resolved) continue;
-                if (photoAlreadyHas(photo, resolved)) continue;
+                if (photoAlreadyHas(photo, resolved, isPersonTag)) continue;
                 if (resolvedSuggestions.includes(resolved)) continue;
                 resolvedSuggestions.push(resolved);
             }
@@ -3761,12 +3496,11 @@ Click to add ${namesSomebody} to this photo.`;
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Adding people...';
 
-        fetch('/api/photos/bulk-tags', {
+        api.json('/api/photos/bulk-tags', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ paths: selectedThumbnails, add_tags: resolvedPeople, remove_tags: [] })
         })
-        .then(res => res.json())
         .then(data => {
             if (data.success) {
                 selectedThumbnails.forEach(path => {
@@ -3828,12 +3562,11 @@ Click to add ${namesSomebody} to this photo.`;
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Adding tags...';
 
-        fetch('/api/photos/bulk-tags', {
+        api.json('/api/photos/bulk-tags', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ paths: selectedThumbnails, add_tags: resolvedTags, remove_tags: [] })
         })
-        .then(res => res.json())
         .then(data => {
             if (data.success) {
                 selectedThumbnails.forEach(path => {
@@ -3892,7 +3625,7 @@ Click to add ${namesSomebody} to this photo.`;
         const before = snapshotPhotos(selectedThumbnails);
         setStatus('busy', `Applying suggestions to ${selectedThumbnails.length} photo(s)...`);
 
-        fetch('/api/folder/auto-apply', {
+        api.json('/api/folder/auto-apply', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
@@ -3905,7 +3638,6 @@ Click to add ${namesSomebody} to this photo.`;
                 threshold: 0.0 
             })
         })
-        .then(res => res.json())
         .then(data => {
             if (data.success) {
                 recordUndo({
@@ -3962,7 +3694,7 @@ Click to add ${namesSomebody} to this photo.`;
             if (sugg.people) {
                 for (let p of sugg.people) {
                     const leaf = leafOf(p.name);
-                    if (!photoAlreadyHas(photo, p.name)
+                    if (!photoAlreadyHas(photo, p.name, isPersonTag)
                         && !photoPeople.some(n => leafOf(n).toLowerCase() === leaf.toLowerCase())) {
                         hasSomethingToApply = true;
                         break;
@@ -4060,7 +3792,7 @@ Click to add ${namesSomebody} to this photo.`;
 
         setStatus('busy', `Shifting ${affected} photo(s) by ${minutes} minute(s)...`);
         
-        fetch('/api/folder/time-shift', {
+        api.json('/api/folder/time-shift', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -4069,7 +3801,6 @@ Click to add ${namesSomebody} to this photo.`;
                 shift_minutes: minutes
             })
         })
-        .then(res => res.json())
         .then(data => {
             if (data.success) {
                 if (data.updated_photos) {
@@ -4370,8 +4101,7 @@ Click to add ${namesSomebody} to this photo.`;
     }
 
     function loadTaxonomy() {
-        return fetch('/api/taxonomy/tree')
-            .then(res => res.json())
+        return api.json('/api/taxonomy/tree')
             .then(data => {
                 // An error reply is an object, not the list of nodes. Storing it
                 // raw made the next tag you typed throw a TypeError out of
@@ -4601,12 +4331,11 @@ Click to add ${namesSomebody} to this photo.`;
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Updating taxonomy...';
         
-        fetch('/api/taxonomy/update', {
+        api.json('/api/taxonomy/update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id, ...fields })
         })
-        .then(res => res.json())
         .then(data => {
             if (data.success) {
                 loadTaxonomy().then(() => {
@@ -4635,12 +4364,11 @@ Click to add ${namesSomebody} to this photo.`;
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Creating tag...';
         
-        fetch('/api/taxonomy/create', {
+        api.json('/api/taxonomy/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, parent_id: parentId, has_face: hasFace })
         })
-        .then(res => res.json())
         .then(data => {
             if (data.success) {
                 loadTaxonomy().then(() => {
@@ -4664,12 +4392,11 @@ Click to add ${namesSomebody} to this photo.`;
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Checking usage...';
         
-        fetch('/api/taxonomy/delete-check', {
+        api.json('/api/taxonomy/delete-check', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tag_id: id })
         })
-        .then(res => res.json())
         .then(async (data) => {
             if (!data.success) {
                 alert("Error checking tag usage: " + data.error);
@@ -4701,7 +4428,7 @@ Click to add ${namesSomebody} to this photo.`;
             statusDot.className = 'status-indicator-dot busy';
             statusText.textContent = 'Deleting tag...';
             
-            fetch('/api/taxonomy/delete-confirm', {
+            api.json('/api/taxonomy/delete-confirm', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -4710,7 +4437,6 @@ Click to add ${namesSomebody} to this photo.`;
                     target_tag: confirmResult.target_tag
                 })
             })
-            .then(res => res.json())
             .then(resData => {
                 if (resData.success) {
                     loadTaxonomy().then(() => {
@@ -4748,12 +4474,11 @@ Click to add ${namesSomebody} to this photo.`;
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = 'Renaming tag...';
         
-        fetch('/api/taxonomy/rename', {
+        api.json('/api/taxonomy/rename', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tag_id: tagId, new_name: newName })
         })
-        .then(res => res.json())
         .then(data => {
             if (data.success) {
                 // Some photos may not have been rewritten; they still carry the old tag.
@@ -4965,11 +4690,11 @@ Click to add ${namesSomebody} to this photo.`;
         const askWhereItGoes = (...args) => (prompt ? showPlacementModal(...args) : null);
         
         if (inputName.includes('/')) {
-            const created = await fetch('/api/taxonomy/create', {
+            const created = await api.json('/api/taxonomy/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: inputName })
-            }).then(res => res.json());
+            });
             if (created && created.success === false) {
                 alert("Error creating tag: " + created.error);
                 return null;
@@ -5011,7 +4736,7 @@ Click to add ${namesSomebody} to this photo.`;
             
             const peopleRootNames = peopleRoots.map(r => r.name);
             if (peopleRootNames.length === 0) {
-                await fetch('/api/taxonomy/create', {
+                await api.fetch('/api/taxonomy/create', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name: "People", has_face: 1 })
@@ -5020,7 +4745,7 @@ Click to add ${namesSomebody} to this photo.`;
                 return `People/${inputName}`;
             } else if (peopleRootNames.length === 1) {
                 const targetPath = `${peopleRootNames[0]}/${inputName}`;
-                await fetch('/api/taxonomy/create', {
+                await api.fetch('/api/taxonomy/create', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name: targetPath })
@@ -5036,7 +4761,7 @@ Click to add ${namesSomebody} to this photo.`;
                 );
                 if (!res) return null;
                 const targetPath = `${res.root}/${inputName}`;
-                await fetch('/api/taxonomy/create', {
+                await api.fetch('/api/taxonomy/create', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name: targetPath })
@@ -5069,11 +4794,11 @@ Click to add ${namesSomebody} to this photo.`;
             
             let targetPath;
             if (res.action === 'create_root') {
-                const rootRes = await fetch('/api/taxonomy/create', {
+                const rootRes = await api.json('/api/taxonomy/create', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name: res.name, has_face: res.hasFace ? 1 : 0 })
-                }).then(r => r.json());
+                });
                 
                 if (!rootRes.success) {
                     alert("Error creating root category: " + rootRes.error);
@@ -5084,7 +4809,7 @@ Click to add ${namesSomebody} to this photo.`;
                 targetPath = `${res.root}/${inputName}`;
             }
             
-            await fetch('/api/taxonomy/create', {
+            await api.fetch('/api/taxonomy/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: targetPath })

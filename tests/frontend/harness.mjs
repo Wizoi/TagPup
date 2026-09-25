@@ -1,10 +1,11 @@
 /**
  * Test harness for the TagPup and TagTuner web interfaces.
  *
- * Both apps are a single `DOMContentLoaded` closure with no exports, so nothing inside
- * them can be imported directly. Rather than refactor 6,400 lines of working UI code,
- * these tests load the real page into jsdom, stub the network, and drive the app the
- * way a user does -- through DOM events. What is under test is the shipped file.
+ * Each page is ES modules started from index.html (`<script type="module"
+ * src="main.js">`), whose main closure runs on `DOMContentLoaded`. These tests load
+ * the real page into jsdom, its modules as one script (below), stub the network, and
+ * drive the app the way a user does -- through DOM events. What is under test is the
+ * shipped files.
  *
  * The only dependency is jsdom; the runner is node's built-in `node --test`.
  */
@@ -17,9 +18,182 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(HERE, "..", "..");
 
 export const APPS = {
-  tagpup: { dir: "gui_tagpup", defaultDb: "photo_index" },
-  tagtuner: { dir: "gui", defaultDb: "photo_index" },
+  tagpup: { dir: "web/tagpup", defaultDb: "photo_index" },
+  tagtuner: { dir: "web/tuner", defaultDb: "photo_index" },
 };
+
+// ---- A page's modules, as one script ----------------------------------------------
+//
+// jsdom cannot load ES modules, a bundler is a build step this project does not have,
+// and modules run under node would keep their timers on node's clock, which closing a
+// page's window cannot stop (docs/ARCHITECTURE.md, phase 6, decided 2026-09-25). So a
+// page's modules are put in the order the browser runs them -- each module's imports
+// before it, in the order it names them -- with the import lines dropped and the
+// `export` words taken off, and evaluated in the page's window as one strict script.
+// The modules then share one scope, so a name may be declared by one of them only.
+
+/** Where the modules both pages share live: the server serves them at common/. */
+export const COMMON_DIR = path.join(REPO_ROOT, "web", "common");
+
+/** The page's own URL, which every module name is resolved against, as a browser does. */
+const PAGE_URL = "http://page/";
+
+/**
+ * `import ... from "./x.js";` or `import "./x.js";`, anywhere a statement starts, over
+ * as many lines as the braces take.
+ */
+const IMPORT = /^import\s+(?:([\w$\s{},*]+?)\s+from\s+)?(["'])([^"']+)\2\s*;?[ \t]*$/gm;
+
+/** A declaration at the top of a module: what it adds to the page's one scope. */
+const DECLARATION = /^(export\s+)?(?:(?:async\s+)?function\s*\*?\s*|class\s+|(?:const|let|var)\s+)([\w$]+)/gm;
+
+/** A top-level `const {a, b} = ...` or `let [a] = ...`: names the loader cannot read. */
+const DESTRUCTURING = /^(?:export\s+)?(?:const|let|var)\s*[{[]/m;
+
+/** Any other `export`: default, lists, re-exports, which one scope cannot honour. */
+const OTHER_EXPORT = /^export\s+(?!(?:async\s+)?function\b|class\b|const\b|let\b|var\b)/m;
+
+class PageModuleError extends Error {}
+
+/** The file a module URL names: the page's own folder, or web/common/ at common/. */
+function fileFor(url, pageDir, commonDir) {
+  const { pathname } = new URL(url);
+  const common = pathname.match(/^\/common\/([\w-]+\.js)$/);
+  if (common) return path.join(commonDir, common[1]);
+  const own = pathname.match(/^\/([\w-]+\.js)$/);
+  if (own) return path.join(pageDir, own[1]);
+  throw new PageModuleError(`${pathname} is not a module the server serves (a page's own, or common/)`);
+}
+
+/** The entry module index.html starts: `<script type="module" src="main.js">`. */
+export function entryModule(html) {
+  const tags = [...html.matchAll(/<script\b([^>]*)>/g)].map((m) => m[1]);
+  const modules = tags.filter((attrs) => /\btype=["']module["']/.test(attrs));
+  if (tags.length !== 1 || modules.length !== 1) {
+    throw new PageModuleError(
+      `index.html should start the page with one <script type="module" src="...">; it has ${tags.length} script tag(s), ${modules.length} a module`
+    );
+  }
+  const src = modules[0].match(/\bsrc=["']([^"']+)["']/);
+  if (!src) throw new PageModuleError("the page's module script names no src");
+  return src[1];
+}
+
+/** One module read and taken apart: what it imports, declares and exports. */
+function readModule(file, url) {
+  const source = fs.readFileSync(file, "utf8");
+  const imports = [];
+  for (const m of source.matchAll(IMPORT)) {
+    const [, clause, , specifier] = m;
+    if (!/^\.\.?\//.test(specifier)) {
+      throw new PageModuleError(`${url} imports ${specifier}: only relative imports are loaded`);
+    }
+    const names = [];
+    if (clause) {
+      const braces = clause.trim().match(/^\{([\s\S]*)\}$/);
+      if (!braces) {
+        throw new PageModuleError(`${url}: import ${clause.trim()} -- only named imports, { a, b }, can share one scope`);
+      }
+      for (const name of braces[1].split(",").map((s) => s.trim()).filter(Boolean)) {
+        if (!/^[\w$]+$/.test(name)) {
+          throw new PageModuleError(`${url}: import { ${name} } -- a renamed import cannot share one scope`);
+        }
+        names.push(name);
+      }
+    }
+    imports.push({ url: new URL(specifier, url).href, names });
+  }
+  if (DESTRUCTURING.test(source)) {
+    throw new PageModuleError(`${url} declares names by destructuring at its top; declare each by name`);
+  }
+  const other = source.match(OTHER_EXPORT);
+  if (other) throw new PageModuleError(`${url}: "${other[0]}..." -- only exported declarations can share one scope`);
+  const declared = [];
+  const exported = new Set();
+  for (const m of source.matchAll(DECLARATION)) {
+    declared.push(m[2]);
+    if (m[1]) exported.add(m[2]);
+  }
+  const body = source.replace(IMPORT, "").replace(/^export\s+/gm, "");
+  return { file, url, imports, declared, exported, body };
+}
+
+/**
+ * A page's modules in the order the browser runs them, each read and taken apart.
+ * `pageDir` is the page's folder; `commonDir` is what the server serves at common/.
+ */
+export function pageModules(pageDir, commonDir = COMMON_DIR) {
+  const html = fs.readFileSync(path.join(pageDir, "index.html"), "utf8");
+  const ordered = [];
+  const state = new Map(); // url -> "visiting" | module
+  const visit = (url, from) => {
+    const seen = state.get(url);
+    if (seen === "visiting") throw new PageModuleError(`${from} and ${url} import each other`);
+    if (seen) return seen;
+    state.set(url, "visiting");
+    const module = readModule(fileFor(url, pageDir, commonDir), url);
+    for (const dependency of module.imports) {
+      const target = visit(dependency.url, url);
+      for (const name of dependency.names) {
+        if (!target.exported.has(name)) {
+          throw new PageModuleError(`${url} imports ${name} from ${dependency.url}, which does not export it`);
+        }
+      }
+    }
+    state.set(url, module);
+    ordered.push(module);
+    return module;
+  };
+  visit(new URL(entryModule(html), PAGE_URL).href, "index.html");
+
+  const owner = new Map();
+  for (const module of ordered) {
+    for (const name of module.declared) {
+      if (owner.has(name)) {
+        throw new PageModuleError(
+          `${name} is declared in ${owner.get(name)} and again in ${module.url}; a page's modules share one scope in the tests, so a name is declared once per page`
+        );
+      }
+      owner.set(name, module.url);
+    }
+  }
+
+  // A module using another's name without importing it runs here, where the modules
+  // share one scope, and fails in a browser, where they do not.
+  for (const module of ordered) {
+    const imported = new Set(module.imports.flatMap((i) => i.names));
+    const code = codeOf(module.body);
+    for (const [name, where] of owner) {
+      if (where === module.url || imported.has(name)) continue;
+      // Not after a dot (a property) nor before a colon (an object's key).
+      if (new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}(?![\\w$]|\\s*:)`).test(code)) {
+        throw new PageModuleError(`${module.url} uses ${name} from ${where} without importing it; a browser would not find it`);
+      }
+    }
+  }
+  return ordered;
+}
+
+/** A module's code with its comments and quoted strings emptied: where names are used. */
+function codeOf(body) {
+  return body
+    .replace(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"/g, "''")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:\\])\/\/.*$/gm, "$1");
+}
+
+/** A page's modules as the one strict script the page's window evaluates. */
+export function pageScript(pageDir, commonDir = COMMON_DIR) {
+  const parts = pageModules(pageDir, commonDir).map(
+    (m) => `// ---- ${path.relative(REPO_ROOT, m.file).split(path.sep).join("/")}\n${m.body}`
+  );
+  return `"use strict";\n${parts.join("\n")}\n`;
+}
+
+/** Every line of a page's modules, for tests that read the page's source. */
+export function pageSource(appName) {
+  return pageModules(path.join(REPO_ROOT, APPS[appName].dir)).map((m) => m.body).join("\n");
+}
 
 /** A fetch stub that routes by URL substring and records every call. */
 export class FakeServer {
@@ -135,7 +309,7 @@ export async function loadApp(appName, { url, server = new FakeServer(), t, befo
 
   const appDir = path.join(REPO_ROOT, app.dir);
   const html = fs.readFileSync(path.join(appDir, "index.html"), "utf8");
-  const script = fs.readFileSync(path.join(appDir, "app.js"), "utf8");
+  const script = pageScript(appDir);
 
   // Silence expected console noise from the app; surface real jsdom errors.
   const virtualConsole = new VirtualConsole();
@@ -198,7 +372,8 @@ export async function loadApp(appName, { url, server = new FakeServer(), t, befo
 
   // Evaluate the app before the document finishes parsing when possible, so its
   // DOMContentLoaded listener runs exactly once -- dispatching a second event by
-  // hand would initialise the app twice and double every listener.
+  // hand would initialise the app twice and double every listener. A browser runs a
+  // page's modules at the same moment: after parsing, before DOMContentLoaded.
   if (window.document.readyState === "loading") {
     window.eval(script);
     await new Promise((resolve) =>

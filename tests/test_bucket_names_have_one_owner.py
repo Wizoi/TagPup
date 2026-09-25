@@ -18,7 +18,7 @@ class NobodyIsCalledABucket(unittest.TestCase):
         self.assertIsNone(vocabulary.problem_with_name("Excluded Ferris"))
 
     def test_the_page_names_them_as_the_server_does(self):
-        with open(os.path.join(ROOT, "gui", "app.js"), encoding="utf-8") as f:
+        with open(os.path.join(ROOT, "web", "tuner", "main.js"), encoding="utf-8") as f:
             page = f.read()
         found = re.search(r"const BUCKET = Object\.freeze\(\{(.*?)\}\)", page)
         self.assertIsNotNone(found, "the page's copy of the bucket names moved")
@@ -26,7 +26,7 @@ class NobodyIsCalledABucket(unittest.TestCase):
         self.assertEqual({key.upper(): name for key, name in vocabulary.BUCKETS.items()}, copy)
 
     def test_the_page_spells_them_nowhere_else(self):
-        with open(os.path.join(ROOT, "gui", "app.js"), encoding="utf-8") as f:
+        with open(os.path.join(ROOT, "web", "tuner", "main.js"), encoding="utf-8") as f:
             lines = f.read().splitlines()
         spelled = [n for n, line in enumerate(lines, 1)
                    if re.search(r"'(Unknown Faces|Ungrouped|Excluded)'", line) and "const BUCKET" not in line]

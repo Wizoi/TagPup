@@ -6,6 +6,7 @@ ports, and the requests log. Each was a copy in each of the two old servers.
 """
 import os
 import sys
+import tempfile
 import unittest
 
 from werkzeug.test import Client
@@ -63,15 +64,63 @@ class TheLibraryAUrlNames(unittest.TestCase):
 
 class ThePage(unittest.TestCase):
     def test_each_app_serves_its_own_page_uncached(self):
-        for kind, folder in (("tagpup", "gui_tagpup"), ("tuner", "gui")):
+        for kind, folder in (("tagpup", os.path.join("web", "tagpup")), ("tuner", os.path.join("web", "tuner"))):
             app, _home = web_client.app_for(self, kind)
             reply = app.test_client().get("/library/")
             self.assertEqual(200, reply.status_code, kind)
             with open(os.path.join(tagpup_config.CODE_ROOT, folder, "index.html"), "rb") as handle:
                 self.assertEqual(handle.read(), reply.data, kind)
             self.assertIn("no-store", reply.headers["Cache-Control"])
-            self.assertEqual(200, app.test_client().get("/library/app.js").status_code)
+            self.assertEqual(200, app.test_client().get("/library/main.js").status_code)
+            for name in ("api", "library", "paths", "vocabulary"):
+                self.assertEqual(200, app.test_client().get("/library/common/%s.js" % name).status_code, name)
             self.assertEqual(200, app.test_client().get("/library/style.css").status_code)
+
+
+class ThePagesModules(unittest.TestCase):
+    """A page is ES modules: its own beside index.html, and the shared ones in
+    web/common/, which every page imports as common/<name>.js relative to itself."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory(prefix="tagpup_code_")
+        self.addCleanup(folder.cleanup)
+        self.root = folder.name
+        self.page = os.path.join(self.root, "web", "tagpup")
+        os.makedirs(self.page)
+        os.makedirs(os.path.join(self.root, "web", "common"))
+        for folder, name, text in ((self.page, "index.html", "<html></html>"),
+                                   (self.page, "main.js", "import './common/api.js';"),
+                                   (os.path.join(self.root, "web", "common"), "api.js", "export const api = {};"),
+                                   (self.root, "secret.js", "not a page's")):
+            with open(os.path.join(folder, name), "w", encoding="utf-8") as handle:
+                handle.write(text)
+        self.app, _home = web_client.app_for(self, "tagpup", pages=self.page)
+        self.client = self.app.test_client()
+
+    def test_a_pages_module_is_served_as_a_script_uncached(self):
+        for url, text in (("/library/main.js", b"import './common/api.js';"),
+                          ("/library/common/api.js", b"export const api = {};")):
+            reply = self.client.get(url)
+            self.assertEqual(200, reply.status_code, url)
+            self.assertEqual(text, reply.data, url)
+            self.assertEqual("application/javascript", reply.mimetype, url)
+            self.assertIn("no-store", reply.headers["Cache-Control"], url)
+
+    def test_a_module_that_is_not_there_is_not_found(self):
+        self.assertEqual(404, self.client.get("/library/missing.js").status_code)
+        self.assertEqual(404, self.client.get("/library/common/main.js").status_code)
+
+    def test_nothing_outside_the_folders_is_reached(self):
+        for url in ("/library/..%2Fsecret.js", "/library/common/..%2F..%2Fsecret.js",
+                    "/library/main.backup.js", "/library/common/%2E%2E.js"):
+            self.assertEqual(404, self.client.get(url).status_code, url)
+
+    def test_a_page_opened_without_a_library_still_finds_the_shared_modules(self):
+        # At / the page imports /common/api.js: `common` names no library (tagpup.core.library.ROUTES).
+        app, _home = web_client.app_for(self, "tagpup", startup=None, pages=self.page)
+        reply = app.test_client().get("/common/api.js")
+        self.assertEqual(200, reply.status_code)
+        self.assertEqual(b"export const api = {};", reply.data)
 
 
 class OnlyThisMachine(unittest.TestCase):
@@ -98,7 +147,7 @@ class OneProcessTwoPorts(unittest.TestCase):
         tagpup, _home = web_client.app_for(self, "tagpup")
         tuner, _home2 = web_client.app_for(self, "tuner")
         both = Client(web.by_port({8090: tagpup, 8080: tuner}))
-        for port, folder in ((8090, "gui_tagpup"), (8080, "gui")):
+        for port, folder in ((8090, os.path.join("web", "tagpup")), (8080, os.path.join("web", "tuner"))):
             reply = both.get("/library/", environ_overrides={"SERVER_PORT": str(port)})
             self.assertEqual(200, reply.status_code, port)
             with open(os.path.join(tagpup_config.CODE_ROOT, folder, "index.html"), "rb") as handle:

@@ -143,7 +143,7 @@ describe("zooming the photo", () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
     const { REPO_ROOT } = await import("./harness.mjs");
-    const css = fs.readFileSync(path.join(REPO_ROOT, "gui_tagpup", "style.css"), "utf8");
+    const css = fs.readFileSync(path.join(REPO_ROOT, "web", "tagpup", "style.css"), "utf8");
     assert.match(css, /#main-image\s*\{[^}]*cursor:\s*zoom-in/);
     assert.match(css, /\.image-zoom-overlay\s*\{[^}]*cursor:\s*zoom-out/);
   });

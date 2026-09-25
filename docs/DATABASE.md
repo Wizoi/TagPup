@@ -293,7 +293,7 @@ flowchart TD
 
     subgraph Web App [TagTuner Interface]
         D["tagtuner.py (Python Server)"]
-        E["gui/app.js (Web UI)"]
+        E["web/tuner/main.js (Web UI)"]
     end
 
     subgraph DB [SQLite Database: photo_index.db]

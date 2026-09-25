@@ -12,19 +12,18 @@
  * turned backslashes into forward slashes, one also dropped a trailing separator,
  * the folder cache did neither, and the job-folder checks used `!==`. Each was right
  * for the case in front of it and wrong for some other one. These tests hold the
- * rule in the same shape as the tag vocabulary: the conversion lives in one helper
- * per page, and a separator conversion anywhere else fails here.
+ * rule in the same shape as the tag vocabulary: the conversion lives in one helper,
+ * web/common/paths.js's pathKey, which both pages import, and a separator conversion
+ * anywhere else in either page's modules fails here.
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, loadApp, FakeServer, photoRecord, openFolder } from "./harness.mjs";
+import { REPO_ROOT, APPS, loadApp, FakeServer, photoRecord, openFolder, pageModules } from "./harness.mjs";
+import { pathKey, samePath } from "../../web/common/paths.js";
 
-const PAGES = {
-  "gui_tagpup/app.js": path.join(REPO_ROOT, "gui_tagpup", "app.js"),
-  "gui/app.js": path.join(REPO_ROOT, "gui", "app.js"),
-};
+const PATHS_JS = path.join(REPO_ROOT, "web", "common", "paths.js");
 
 /** The helpers allowed to convert separators, by the name they are declared with. */
 const HELPERS = ["pathKey"];
@@ -48,7 +47,7 @@ const CONVERSIONS = [
 
 function functionSource(source, name) {
   const lines = source.split(/\r?\n/);
-  const start = lines.findIndex((l) => new RegExp(`^\\s*function\\s+${name}\\s*\\(`).test(l));
+  const start = lines.findIndex((l) => new RegExp(`^\\s*(?:export\\s+)?function\\s+${name}\\s*\\(`).test(l));
   assert.ok(start >= 0, `function ${name} is gone`);
   const indent = lines[start].match(/^\s*/)[0];
   const end = lines.findIndex((l, i) => i > start && l === `${indent}}`);
@@ -56,39 +55,32 @@ function functionSource(source, name) {
   return lines.slice(start, end + 1).join("\n");
 }
 
-/** Evaluate the page's own pathKey and samePath, exactly as shipped. */
-function helpersOf(file) {
-  const source = fs.readFileSync(PAGES[file], "utf8");
-  const body = functionSource(source, "pathKey") + "\n" + functionSource(source, "samePath");
-  return new Function(`${body}\nreturn { pathKey, samePath };`)();
-}
-
 function inHelper(lines, lineIndex) {
   for (let i = lineIndex; i >= 0 && i > lineIndex - 12; i--) {
-    const declared = lines[i].match(/^\s*function\s+(\w+)\s*\(/);
+    const declared = lines[i].match(/^\s*(?:export\s+)?function\s+(\w+)\s*\(/);
     if (declared) return HELPERS.includes(declared[1]);
   }
   return false;
 }
 
-function offendersIn(file) {
-  const lines = fs.readFileSync(PAGES[file], "utf8").split(/\r?\n/);
+/** Separator conversions outside pathKey in the page's modules, the shared ones included. */
+function offendersIn(app) {
   const offenders = [];
-  lines.forEach((line, i) => {
-    const trimmed = line.trimStart();
-    if (trimmed.startsWith("//") || trimmed.startsWith("*")) return;
-    if (!CONVERSIONS.some((re) => re.test(line))) return;
-    if (line.includes(TAG_MARKER)) return;
-    if (inHelper(lines, i)) return;
-    offenders.push(`${file}:${i + 1}: ${line.trim()}`);
-  });
+  for (const module of pageModules(path.join(REPO_ROOT, APPS[app].dir))) {
+    const lines = fs.readFileSync(module.file, "utf8").split(/\r?\n/);
+    lines.forEach((line, i) => {
+      const trimmed = line.trimStart();
+      if (trimmed.startsWith("//") || trimmed.startsWith("*")) return;
+      if (!CONVERSIONS.some((re) => re.test(line))) return;
+      if (line.includes(TAG_MARKER)) return;
+      if (inHelper(lines, i)) return;
+      offenders.push(`${path.relative(REPO_ROOT, module.file)}:${i + 1}: ${line.trim()}`);
+    });
+  }
   return offenders;
 }
 
-for (const file of Object.keys(PAGES)) {
-  describe(`${file}: pathKey and samePath`, () => {
-    const { pathKey, samePath } = helpersOf(file);
-
+describe("web/common/paths.js: pathKey and samePath", () => {
     test("slash direction, case and a trailing separator do not make a new path", () => {
       assert.ok(samePath("D:/Pictures/Run/", "d:\\pictures\\run"));
       assert.equal(pathKey("D:/Pictures/Run/"), "d:\\pictures\\run");
@@ -114,11 +106,12 @@ for (const file of Object.keys(PAGES)) {
     test("surrounding whitespace from a typed path is ignored", () => {
       assert.ok(samePath("  D:\\Run  ", "d:/run"));
     });
-  });
+});
 
-  describe(`${file}: separators are converted in one place`, () => {
+for (const app of Object.keys(APPS)) {
+  describe(`${app}: separators are converted in one place`, () => {
     test("nothing outside pathKey converts a path's separators", () => {
-      const offenders = offendersIn(file);
+      const offenders = offendersIn(app);
       assert.deepEqual(
         offenders,
         [],
@@ -128,24 +121,23 @@ for (const file of Object.keys(PAGES)) {
       );
     });
 
-    test("the guard is not checking a rule nobody follows", () => {
-      // pathKey itself converts, so the patterns must see it -- if they did not,
-      // the check above would pass on anything.
-      const source = functionSource(fs.readFileSync(PAGES[file], "utf8"), "pathKey");
-      assert.ok(
-        source.split("\n").some((l) => CONVERSIONS.some((re) => re.test(l))),
-        "the conversion patterns no longer match pathKey's own conversion"
-      );
+    test("the page's modules include the one that converts", () => {
+      // The check above is worthless if the page does not load paths.js.
+      const files = pageModules(path.join(REPO_ROOT, APPS[app].dir)).map((m) => m.file);
+      assert.ok(files.includes(PATHS_JS), "the page does not import web/common/paths.js");
     });
   });
 }
 
-describe("the two pages agree on what the same path is", () => {
-  test("pathKey is identical in both", () => {
-    const [a, b] = Object.values(PAGES).map((p) =>
-      functionSource(fs.readFileSync(p, "utf8"), "pathKey").replace(/\s+/g, " ")
+describe("the pages agree on what the same path is", () => {
+  test("the guard is not checking a rule nobody follows", () => {
+    // pathKey itself converts, so the patterns must see it -- if they did not, the
+    // check above would pass on anything.
+    const source = functionSource(fs.readFileSync(PATHS_JS, "utf8"), "pathKey");
+    assert.ok(
+      source.split("\n").some((l) => CONVERSIONS.some((re) => re.test(l))),
+      "the conversion patterns no longer match pathKey's own conversion"
     );
-    assert.equal(a, b, "the two pages' pathKey have drifted apart");
   });
 });
 

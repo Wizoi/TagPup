@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { REPO_ROOT, loadApp, FakeServer, click, closeAllApps } from "./harness.mjs";
 
-const SOURCE = fs.readFileSync(path.join(REPO_ROOT, "gui", "app.js"), "utf8");
+const SOURCE = fs.readFileSync(path.join(REPO_ROOT, "web", "tuner", "main.js"), "utf8");
 
 function block(startMarker, length = 1400) {
   const at = SOURCE.indexOf(startMarker);

@@ -8,7 +8,7 @@ A test is affected when it imports a changed module, directly or through modules
 import it -- by package name (tagpup.store.db) or by the old names in scripts/ (db), as
 the tests do -- or when its source names a changed file, as the tests that read the
 specs, the pages or config.ini do. Any Python change brings the lint test in. A change
-to the pages (gui/, gui_tagpup/) or to tests/frontend/ also calls for the frontend
+to the pages (web/) or to tests/frontend/ also calls for the frontend
 suite, which this prints the command for.
 
 The full suite still runs before each commit and each merge: what a test reaches
@@ -24,7 +24,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from tagpup.core import processes  # noqa: E402
-FRONTEND = ("gui/", "gui_tagpup/", "tests/frontend/")
+FRONTEND = ("web/", "tests/frontend/")
 
 
 def changed_files(since):

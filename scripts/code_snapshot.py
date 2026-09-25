@@ -10,7 +10,7 @@ import shutil
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: Folders the servers import from or serve.
-FOLDERS = ("scripts", "tagpup", "gui", "gui_tagpup")
+FOLDERS = ("scripts", "tagpup", "web")
 
 #: The programs people start, at the top of the repository.
 LAUNCHERS = ("tagpup_web.py", "tagpup_cli.py", "runner.py")
