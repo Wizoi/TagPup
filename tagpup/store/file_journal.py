@@ -303,6 +303,24 @@ def begin_undo(db_path, change_id):
     return db.write_with_connection(db_path, work, label="begin undoing change %d" % change_id)
 
 
+def newer_overlapping(conn, change_id):
+    """(id, operation) of each change after `change_id`, not undone, that wrote a photo
+    file it wrote: the same photo, or the same file by its path -- one a rename left
+    under its new name included. An undo of `change_id` would take back part of a file
+    the newer change planned from, as an undo of rows would rows a newer change wrote
+    over (tagpup.store.journal). The caller's connection."""
+    if not has_table(conn):
+        return []
+    return conn.execute(
+        "SELECT DISTINCT c.id, c.operation FROM change_files mine"
+        " JOIN change_files theirs ON theirs.change_id > mine.change_id"
+        " AND (theirs.photo_id = mine.photo_id OR theirs.path = mine.path OR theirs.path = mine.new_path)"
+        " JOIN changes c ON c.id = theirs.change_id"
+        " WHERE mine.change_id = ? AND mine.state = 'done' AND theirs.state IN ('writing', 'done')"
+        " AND c.undone IS NULL AND c.status IN ('planned', 'applied')"
+        " ORDER BY c.id", (change_id,)).fetchall()
+
+
 def counts(conn, change_ids):
     """{change id: {state: files}} of `change_ids`. The caller's connection."""
     found = {}

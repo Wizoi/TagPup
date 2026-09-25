@@ -49,7 +49,7 @@ from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, names
-from tagpup.store import db, embeddings, file_journal, photos, schema
+from tagpup.store import db, embeddings, file_journal, journal, photos, schema
 
 logger = logging.getLogger(__name__)
 
@@ -620,12 +620,11 @@ def _undoable(library, change_id, exiftool_path):
     change = file_journal.change(library.path, change_id)
     if change is None:
         return None, "there is no change %d" % change_id, None
-    if change.status == "pruned":
-        return None, "change %d was pruned: what its files held is gone, so it cannot be undone" % change_id, None
-    if change.status == "planned":
-        return None, ("change %d is not finished; it is, the next time the library is opened" % change_id), None
-    if change.status != "applied":
-        return None, "change %d is %s" % (change_id, change.status), None
+    # The journal's one account of what may be undone: a newer change of the same files
+    # in the way among it (tagpup.store.journal.refusal).
+    reasons = journal.refusals(library.path, [change_id]).get(change_id)
+    if reasons:
+        return None, "; ".join(reasons), None
     done = [row for row in file_journal.files_of(library.path, change_id) if row.state == "done"]
     ready, refused = [], []
     renames = [row for row in done if row.is_rename]
