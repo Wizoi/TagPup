@@ -12,8 +12,9 @@ whose mtime or size changed:
 * a tag write on a row the index had never read (one Suggest made, path only) recorded
   the keywords as its whole raw_metadata and stamped it with the file's mtime and size
   (#247), so the scan trusted a row with no Date Taken. A read always records each field
-  under its bare name as well (`Subject` beside `XMP:Subject`); a row holding none is
-  "never read".
+  under its bare name as well (`Subject` beside `XMP:Subject`), and the file's
+  SourceFile; a row holding none -- or nothing at all, one a caption write or a rotation
+  stamped (#250) -- is "never read".
 
 This finds rows where the file on disk disagrees with the row -- mtime or size
 differ, the stored text shows UTF-8-read-as-cp1252, the tags re-derived from
@@ -66,12 +67,14 @@ def is_garbled(stored_json):
 def never_read(raw_json):
     """Does a row's raw_metadata hold only what writes recorded, never a read of its file?
     ExifTool's fields are recorded by a read under both names, `XMP:Subject` and
-    `Subject`; the writes record only the first."""
+    `Subject`, beside the file's `SourceFile`; the writes record only the first. A row
+    holding nothing was never read either: the one Suggest makes holds `{}`, and a write
+    that recorded no field of it (a caption, a rotation) stamped it all the same (#250)."""
     try:
         keys = json.loads(raw_json or "{}")
     except Exception:
         return False
-    return bool(keys) and all(":" in key for key in keys)
+    return all(":" in key for key in keys)
 
 
 def why_stale(row):
