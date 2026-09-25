@@ -194,7 +194,7 @@ class TestSavingACaptionThatRenamesThePhoto(HandlerCase):
         self.seed(photo, faces=["Rowan Thackeray", "Ada Marchetti"])
         renamed_to = os.path.join(self.folder, "Parade - 1 - Finish line.jpg")
 
-        def sync_title(photo_path, title, executable, rename_format):
+        def sync_title(photo_path, title, executable, rename_format, *preserved):
             os.rename(photo_path, renamed_to)
             # metadata joins onto whatever spelling it was given.
             return forward(renamed_to)
@@ -229,7 +229,7 @@ class TestSavingACaptionThatRenamesThePhoto(HandlerCase):
         self.seed(renamed_to, faces=["Ada Marchetti"], embedding=b"another-photo",
                   stat_from_disk=False)
 
-        def sync_title(photo_path, title, executable, rename_format):
+        def sync_title(photo_path, title, executable, rename_format, *preserved):
             os.rename(photo_path, renamed_to)
             return renamed_to
 

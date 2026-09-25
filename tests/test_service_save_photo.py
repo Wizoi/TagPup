@@ -40,7 +40,7 @@ class SavingAPhoto(unittest.TestCase):
             self.addCleanup(patcher.stop)
         self.renamed_to = None
 
-    def rename(self, photo_path, title, exiftool, rename_format):
+    def rename(self, photo_path, title, exiftool, rename_format, *preserved):
         if not self.renamed_to:
             return photo_path
         os.rename(photo_path, self.renamed_to)

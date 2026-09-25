@@ -34,13 +34,16 @@ def _held(row, wanted):
     return {field: fields.field_values(row.get(fields.read_key(field))) for field in wanted}
 
 
-def read(et, photo_paths, wanted):
+def read(et, photo_paths, wanted, also=(), records=None):
     """{paths.key(path): {field: its values}} of each photo in `photo_paths`, for the
     fields in `wanted`; an Unreadable in place of the fields of a photo that could not be
     read. Read in batches; a batch ExifTool refuses is read again a photo at a time, so
-    one bad file does not cost the others."""
+    one bad file does not cost the others. `also` are fields asked as well, answered only
+    in `records`, when given: {paths.key(path): ExifTool's record} of each photo read."""
     wanted = list(dict.fromkeys(wanted))
-    asked = wanted + [MIME_TYPE]
+    asked = list(dict.fromkeys(wanted + list(also) + [MIME_TYPE]))
+    if records is None:
+        records = {}
     found = {}
     photo_paths = list(photo_paths)
     for start in range(0, len(photo_paths), READ_BATCH):
@@ -56,6 +59,7 @@ def read(et, photo_paths, wanted):
                     continue
                 try:
                     found[paths.key(source)] = _held(row, wanted)
+                    records[paths.key(source)] = row
                 except Unreadable as e:
                     found[paths.key(source)] = e
             missed = [p for p in batch if paths.key(p) not in found]
@@ -65,6 +69,7 @@ def read(et, photo_paths, wanted):
             try:
                 rows = et.get_tags([one], tags=asked)
                 found[paths.key(one)] = _held(rows[0] if rows else {}, wanted)
+                records[paths.key(one)] = rows[0] if rows else {}
             except Exception as e:
                 found[paths.key(one)] = e if isinstance(e, Unreadable) else Unreadable(str(e))
     return found

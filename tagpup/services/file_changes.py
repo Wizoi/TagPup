@@ -78,7 +78,7 @@ def skip(why):
 # ---- Forward ---------------------------------------------------------------------------
 
 def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one, summary=None,
-                 unreadable="fail", stop_at_first_error=False):
+                 unreadable="fail", stop_at_first_error=False, et=None, held=None, read_back_also=()):
     """Write fields into many photos as one change named `operation` (see the module's
     docstring). `read` is the fields read from each file; `plan_one(path, held)` says
     what one file is to hold (a Plan) from what it holds, {field: [texts]}.
@@ -89,85 +89,104 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     holding what it is to hold already -- is not in the change, and its row is made to
     say what the file holds.
 
+    `et` is an ExifTool session the caller has open, used instead of one of this call's
+    own; `held`, {paths.key(path): {field: [texts]}}, what the caller read of each file
+    in it just now, is the plan's before, and the file is not read again before its
+    write. With `read_back_also`, the files written are read back for those fields too,
+    and details["read_back"] is {paths.key(path): ExifTool's record} of each: one save
+    was four ExifTool sessions and six reads, where it had been three and three (review
+    of pass/journal).
+
     A Result: `changed` the files written, errors the photos that failed and the
     conflicts. details: `change` (its id, or None when nothing was written), `written`
     {path: detail} of each photo written or already holding it, `conflicts` the photos,
     named by id, found changed outside since they were read.
     """
+    if et is None:
+        with exiftool_session.ExifToolSession(executable=exiftool_path) as session:
+            return _write_fields(session, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
+                                 unreadable, stop_at_first_error, held, read_back_also)
+    return _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
+                         unreadable, stop_at_first_error, held, read_back_also)
+
+
+def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
+                  stop_at_first_error, fresh, read_back_also):
     result = Result(attempted=len(photo_paths))
     written = result.details["written"] = {}
-    result.details.update(change=None, conflicts=[])
+    result.details.update(change=None, conflicts=[], read_back={})
     settle(library, exiftool_path)
     stored = [paths.stored(p) for p in photo_paths]
-    with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-        held = field_values.read(et, stored, read)
-        planned, followed = [], []
-        for path in stored:
-            now = held.get(paths.key(path))
-            if now is None or isinstance(now, Exception):
-                why = now or "ExifTool answered nothing for it"
-                if unreadable == "skip":
-                    result.skip(path, why)
-                    continue
-                result.fail(path, why)
-                if stop_at_first_error:
-                    break
+    held = fresh if fresh is not None else field_values.read(et, stored, read)
+    planned, followed = [], []
+    for path in stored:
+        now = held.get(paths.key(path))
+        if now is None or isinstance(now, Exception):
+            why = now or "ExifTool answered nothing for it"
+            if unreadable == "skip":
+                result.skip(path, why)
                 continue
-            try:
-                plan = plan_one(path, now)
-            except Exception as e:
-                result.fail(path, e)
-                if stop_at_first_error:
-                    break
-                continue
-            if plan.skip:
-                result.skip(path, plan.skip)
-                followed.append((path, now))
-                continue
-            after = {field: fields.field_values(value) for field, value in plan.after.items()}
-            before = {field: now.get(field, []) for field in after}
-            if fields.reads_same(before, after):
-                written[path] = plan.detail
-                followed.append((path, now))
-                continue
-            planned.append((path, before, after, plan.detail))
-        _follow(library, followed)
-        wrote = {}
-        if not planned:
-            return result
-        found = _rows_of(library, [path for path, _b, _a, _d in planned])
-        change_id, rows = file_journal.plan(library.path, operation, [
-            {"photo_id": (found.get(paths.key(path)) or (None,))[0], "path": path, "before": before, "after": after}
-            for path, before, after, _detail in planned], summary)
-        result.details["change"] = change_id
+            result.fail(path, why)
+            if stop_at_first_error:
+                break
+            continue
         try:
-            _reached("plan committed")
-            for n, row in enumerate(rows):
-                path, detail = planned[n][0], planned[n][3]
-                outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw",
-                                      wrote=wrote)
-                if outcome == "done":
-                    result.changed += 1
-                    written[path] = detail
-                    continue
-                result.fail(path, why)
-                if outcome == "conflict":
-                    result.details["conflicts"].append(row.named())
-                elif stop_at_first_error:
-                    file_journal.withdraw(library.path, [r.id for r in rows[n + 1:]])
-                    break
-            for row in _read_back(et, library, wrote):
-                # ExifTool said it wrote it, and it holds what it held (#276).
-                result.changed -= 1
-                written.pop(row.path, None)
-                result.fail(row.path, "ExifTool reported it written, but it holds what it held before")
-            file_journal.finish(library.path, change_id)
-        except BaseException:
-            # The files recorded done so far are read back all the same: settling reads
-            # back only the files it writes (docs/findings.md, #286).
-            _read_back(et, library, wrote)
-            file_journal.release(library.path, change_id)
-            raise
+            plan = plan_one(path, now)
+        except Exception as e:
+            result.fail(path, e)
+            if stop_at_first_error:
+                break
+            continue
+        if plan.skip:
+            result.skip(path, plan.skip)
+            followed.append((path, now))
+            continue
+        after = {field: fields.field_values(value) for field, value in plan.after.items()}
+        before = {field: now.get(field, []) for field in after}
+        if fields.reads_same(before, after):
+            written[path] = plan.detail
+            followed.append((path, now))
+            continue
+        planned.append((path, before, after, plan.detail))
+    _follow(library, followed)
+    wrote = {}
+    if not planned:
+        return result
+    found = _rows_of(library, [path for path, _b, _a, _d in planned])
+    change_id, rows = file_journal.plan(library.path, operation, [
+        {"photo_id": (found.get(paths.key(path)) or (None,))[0], "path": path, "before": before, "after": after}
+        for path, before, after, _detail in planned], summary)
+    result.details["change"] = change_id
+    try:
+        _reached("plan committed")
+        for n, row in enumerate(rows):
+            path, detail = planned[n][0], planned[n][3]
+            # Read just now, in this session, by the caller: that is the check.
+            now = planned[n][1] if fresh is not None else None
+            outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw",
+                                  wrote=wrote, now=now)
+            if outcome == "done":
+                result.changed += 1
+                written[path] = detail
+                continue
+            result.fail(path, why)
+            if outcome == "conflict":
+                result.details["conflicts"].append(row.named())
+            elif stop_at_first_error:
+                file_journal.withdraw(library.path, [r.id for r in rows[n + 1:]])
+                break
+        for row in _read_back(et, library, wrote, read_back_also, result.details["read_back"]):
+            # ExifTool said it wrote it, and it holds what it held (#276).
+            result.changed -= 1
+            written.pop(row.path, None)
+            result.fail(row.path, "ExifTool reported it written, but it holds what it held before")
+        file_journal.finish(library.path, change_id)
+    except BaseException:
+        # The files recorded done so far are read back all the same: settling reads
+        # back only the files it writes (docs/findings.md, #286).
+        _read_back(et, library, wrote)
+        file_journal.release(library.path, change_id)
+        raise
     logger.info("%s: change %d, %s, wrote %d file(s)", library.path, change_id, operation, result.changed)
     return result
 
@@ -218,7 +237,7 @@ def _record(library, row, values, state, stamp=None, wrote=True, after=None):
     return stat
 
 
-def _read_back(et, library, wrote):
+def _read_back(et, library, wrote, also=(), records=None):
     """Record what each file written holds, where ExifTool did not keep a value as it was
     written: IPTC:Keywords cut at 64 bytes, a letter outside Latin-1 as "?", "1.50" as
     1.5. The file was recorded done holding what was asked for, and undoing the change
@@ -229,16 +248,17 @@ def _read_back(et, library, wrote):
 
     A file that holds what it held before, though ExifTool said it wrote it, changed
     nothing: it is taken out of the change, its row still made to say what it holds,
-    and returned, so that the write does not report it changed (#276). Never raises:
-    the files are written either way. Returns the rows of the files that did not
-    change."""
+    and returned, so that the write does not report it changed (#276). With `also`,
+    those fields are read too, and `records` takes {paths.key(path): ExifTool's record}
+    of each file. Never raises: the files are written either way. Returns the rows of
+    the files that did not change."""
     unchanged = []
     if not wrote:
         return unchanged
     written = list(wrote.values())
     try:
         held = field_values.read(et, [row.path for row, _stat in written],
-                                 sorted({field for row, _stat in written for field in row.after}))
+                                 sorted({field for row, _stat in written for field in row.after}), also, records)
     except Exception as e:
         logger.warning("%s: could not read back %d file(s) written: %s", library.path, len(written), e)
         return unchanged
@@ -286,17 +306,19 @@ def _conflict(library, row, why):
     return "conflict", "%s: %s" % (row.named(), why)
 
 
-def _carry(et, library, row, origin, target, finished, on_failure, wrote=None):
+def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, now=None):
     """Bring a file holding `origin` to `target`, and mark it `finished`: forward (before
     to after, done) and in an undo (after to before, undone). A file holding `target`
     already is recorded as it is; one holding neither is a conflict. A write that fails
     leaves a file holding `origin` withdrawn from its change (`on_failure="withdraw"`) or
-    a conflict. A file written goes in `wrote`, for _read_back. Returns (outcome, why):
-    `finished`, "conflict" or "failed"."""
-    try:
-        now = field_values.read_one(et, row.path, list(target))
-    except field_values.Unreadable as e:
-        return _conflict(library, row, "could not be read: %s" % e)
+    a conflict. A file written goes in `wrote`, for _read_back. `now` is what the file
+    holds when the caller has just read it in this session; otherwise it is read here.
+    Returns (outcome, why): `finished`, "conflict" or "failed"."""
+    if now is None:
+        try:
+            now = field_values.read_one(et, row.path, list(target))
+        except field_values.Unreadable as e:
+            return _conflict(library, row, "could not be read: %s" % e)
     if fields.reads_same(now, target):
         # Written already: by a run a crash stopped before it recorded the row, whose
         # stamp from before the write was recorded with it (#265).
