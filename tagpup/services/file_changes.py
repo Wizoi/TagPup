@@ -460,6 +460,16 @@ def _settle_renames(library, rows, forward, redo):
 
     arrived, waiting, doubtful = [], [], set()
     for row in rows:
+        if paths.same(origin(row), target(row)):
+            # A rename of the case alone: both names are the one file, and the name the
+            # folder lists it by says which it has (#283).
+            if not _holds(origin(row), row):
+                _conflict(library, row, "not found under either name")
+            elif paths.spelled_as(target(row)):
+                arrived.append(row)
+            else:
+                waiting.append(row)
+            continue
         # Where it was first: a file there too at its new name is a copy, or in doubt.
         at_origin, at_target = _holds(origin(row), row), _holds(target(row), row)
         if at_origin and at_target:
