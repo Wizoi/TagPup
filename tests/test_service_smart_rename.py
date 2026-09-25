@@ -1,7 +1,9 @@
 """tagpup.services.photos.smart_rename: Smart Rename.
 
-What each photo's caption is, and whether a preserved name is written, is stood in for
-(tagpup.files.names.read_for_renaming); the renames on disk and the index rows are real.
+What each photo's caption is is stood in for (tagpup.files.names.read_for_renaming), and
+so is the write of the name each had before its first rename (photos.preserve_names,
+journaled; tests/test_single_save_and_smart_rename_are_journaled.py runs it); the renames
+on disk and the index rows are real.
 """
 import os
 import sys
@@ -11,6 +13,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from service_fixture import TempLibrary  # noqa: E402
 
+from tagpup.core.result import Result  # noqa: E402
 from tagpup.services import photos  # noqa: E402
 
 FORMAT = "{grouping} - {index} - {caption}"
@@ -22,7 +25,8 @@ class SmartRenaming(unittest.TestCase):
 
     def rename(self, paths, captions, grouping="Regatta"):
         with mock.patch("tagpup.files.names.read_for_renaming",
-                        side_effect=lambda exiftool, present: {p: captions.get(p, "") for p in present}):
+                        side_effect=lambda exiftool, present: {p: captions.get(p, "") for p in present}), \
+                mock.patch.object(photos, "preserve_names", return_value=Result()):
             return photos.smart_rename(self.lib.library, paths, grouping, FORMAT, "exiftool")
 
     def names(self):

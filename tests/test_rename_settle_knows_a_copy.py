@@ -30,7 +30,8 @@ ASIDE = "Regatta - 1 - Start_conflict_1.jpg"
 class RenameCase(FilesCase):
     def setUp(self):
         super().setUp()
-        self.a = self.make("IMG_0001.jpg", caption="Start")
+        # It keeps its name already: the crash is the rename's, not that write's.
+        self.a = self.make("IMG_0001.jpg", caption="Start", preserved="IMG_0001.jpg")
         self.copy = os.path.join(self.folder, NEW_NAME)
         self.photo = self.photo_id(self.a)
 

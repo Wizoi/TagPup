@@ -11,6 +11,9 @@ from tagpup.files import exiftool_session
 
 logger = logging.getLogger(__name__)
 
+#: Where a photo keeps the name it had before Smart Rename first renamed it.
+PRESERVED_NAME = "XMP-xmpMM:PreservedFileName"
+
 #: What Smart Rename reads from each photo: the name it had before it was first renamed,
 #: and its caption.
 RENAME_FIELDS = ["XMP-xmpMM:PreservedFileName", "XMP:PreservedFileName",
@@ -49,20 +52,15 @@ def caption_for_name(meta):
 
 
 def read_for_renaming(exiftool_path, photo_paths):
-    """{path: caption} for each photo, in one ExifTool session.
-
-    A photo with no PreservedFileName has its current name written there first: the
-    name it had before Smart Rename first renamed it, which later renames leave alone.
-    """
+    """{path: caption} for each photo, in one ExifTool session. Reads only: the name a
+    photo had before its first rename is written into PRESERVED_NAME by the caller, as
+    a change of photo files (tagpup.services.photos.preserve_names); it was written here,
+    and recorded nowhere (docs/findings.md, #266)."""
     captions = {}
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
         for path in photo_paths:
             meta = et.get_tags([path], tags=RENAME_FIELDS)
-            meta = meta[0] if meta else {}
-            if not preserved_name(meta):
-                et.set_tags([path], tags={"XMP-xmpMM:PreservedFileName": os.path.basename(path)},
-                            params=["-overwrite_original"])
-            captions[path] = caption_for_name(meta)
+            captions[path] = caption_for_name(meta[0] if meta else {})
     return captions
 
 

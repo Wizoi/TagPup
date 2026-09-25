@@ -115,9 +115,12 @@ class Tagging(PhotoCase):
     def reading_only_what_is_asked(self, fields):
         """ExifTool as it answers: only the fields asked for."""
         _session, et = self.exiftool()
+        held = dict(fields)
         et.get_tags.return_value = None
         et.get_tags.side_effect = lambda files, tags=None: [
-            {key: value for key, value in fields.items() if tags is None or key in tags}]
+            {key: value for key, value in held.items() if tags is None or key in tags}]
+        # And keeps what is written, as a file does.
+        et.set_tags.side_effect = lambda files, tags=None, params=None: held.update(tags or {})
         return et
 
     def save(self, caption):

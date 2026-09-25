@@ -37,15 +37,15 @@ def fake_exiftool(holds):
     et.get_tags.side_effect = lambda paths, tags=None: [dict(held)]
 
     def set_tags(paths, tags=None, params=None):
-        if "XMP:Subject" in (tags or {}):
-            value = tags["XMP:Subject"]
-            held["XMP:Subject"] = list(value) if isinstance(value, list) else [value]
-        elif "-XMP:Subject=" in (params or []):
-            held["XMP:Subject"] = []
+        held.update(tags or {})
+        for param in params or []:
+            if param.startswith("-") and param.endswith("="):
+                held.pop(param[1:-1], None)
 
     def execute(*args):
-        if "-XMP:Subject=" in args:
-            held["XMP:Subject"] = []
+        for arg in args:
+            if arg.startswith("-") and arg.endswith("="):
+                held.pop(arg[1:-1], None)
         return ""
 
     et.set_tags.side_effect = set_tags
