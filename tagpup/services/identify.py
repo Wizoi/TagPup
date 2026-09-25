@@ -245,19 +245,58 @@ class UnnamedFaces:
         self.gone = gone if gone is not None else np.zeros(len(ids), dtype=bool)
 
     @classmethod
-    def of(cls, rows):
-        """From (id, embedding bytes) rows."""
-        ids, vecs = [], []
+    def of(cls, rows, count=None):
+        """From (id, embedding bytes) rows, taken once and in order; `count` is how many
+        there are, as counted before they were read.
+
+        The float16 matrix is made to size and filled a slice at a time, so neither the
+        rows nor a float32 copy of them are ever held whole. Built from a list of the rows
+        through np.vstack and astype, a rebuild held about 1.15 GB of photo_index's
+        190,000 faces at its peak, beside the pool it replaced. A row whose embedding is
+        missing, or not as long as the first, is left out."""
+        if count is None:
+            rows = list(rows)
+            count = len(rows)
+        ids = np.zeros(count, dtype=np.int64)
+        matrix = None
+        largest = 0.0
+        filled = 0
+        buffer, waiting = None, []
+
+        def flush():
+            nonlocal matrix, ids, filled, largest
+            if not waiting:
+                return
+            part = buffer[:len(waiting)]
+            largest = max(largest, float(np.max(np.linalg.norm(part, axis=1))))
+            end = filled + len(waiting)
+            if end > len(ids):   # more rows than counted: grow, rarely
+                ids = np.concatenate([ids, np.zeros(end - len(ids), dtype=np.int64)])
+                matrix = np.concatenate([matrix, np.zeros((end - len(matrix), matrix.shape[1]), dtype=np.float16)])
+            ids[filled:end] = waiting
+            matrix[filled:end] = part
+            filled = end
+            waiting.clear()
+
         for face_id, blob in rows:
             if not blob:
                 continue
-            ids.append(face_id)
-            vecs.append(np.frombuffer(blob, dtype=np.float32))
-        if not vecs:
+            vector = np.frombuffer(blob, dtype=np.float32)
+            if matrix is None:
+                matrix = np.zeros((max(count, 1), len(vector)), dtype=np.float16)
+                buffer = np.empty((cls.SLICE, len(vector)), dtype=np.float32)
+            elif len(vector) != matrix.shape[1]:
+                continue
+            buffer[len(waiting)] = vector
+            waiting.append(face_id)
+            if len(waiting) == cls.SLICE:
+                flush()
+        if matrix is None:
             return cls(np.zeros(0, dtype=np.int64), np.zeros((0, 0), dtype=np.float16), 0.0)
-        matrix = np.vstack(vecs)
-        largest = float(np.max(np.linalg.norm(matrix, axis=1)))
-        return cls(np.asarray(ids, dtype=np.int64), matrix.astype(np.float16), largest)
+        flush()
+        if filled < len(ids):   # fewer than counted: rows without an embedding
+            ids, matrix = ids[:filled].copy(), matrix[:filled].copy()
+        return cls(ids, matrix, largest)
 
     def without(self, face_ids):
         """The same faces less `face_ids`: those named or excluded since. The matrix is
@@ -287,11 +326,13 @@ def unnamed_faces(library):
     the same connection, so the faces are stamped with a state no newer than theirs."""
     conn = _reading(library)
     try:
+        # One read transaction: the fingerprint, the count and the rows see one state.
+        db.begin(conn)
         stamp = faces.fingerprint(conn)
-        rows = faces.unnamed_embeddings(conn)
+        count = faces.count_unnamed(conn)
+        return stamp, UnnamedFaces.of(faces.unnamed_embeddings(conn), count)
     finally:
         conn.close()
-    return stamp, UnnamedFaces.of(rows)
 
 
 def unnamed_like(library, face_id, unnamed=None):

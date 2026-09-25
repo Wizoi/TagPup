@@ -439,11 +439,17 @@ def unnamed_for_matching(conn):
         " FROM faces f" + PHOTO + " WHERE f.name IS NULL AND f.excluded = 0").fetchall()
 
 
+def count_unnamed(conn):
+    """How many nameless faces are in play. idx_faces_identify answers it without the rows."""
+    return conn.execute("SELECT COUNT(*) FROM faces WHERE name IS NULL AND excluded = 0").fetchone()[0]
+
+
 def unnamed_embeddings(conn):
     """(id, embedding) of every nameless face in play, by id: New Person's pool
-    (tagpup.services.identify.unnamed_faces). idx_faces_identify finds them."""
+    (tagpup.services.identify.unnamed_faces). idx_faces_identify finds them. A cursor,
+    not a list: the caller takes them a row at a time, never all 390 MB at once."""
     return conn.execute("SELECT id, embedding FROM faces WHERE name IS NULL AND excluded = 0"
-                        " ORDER BY id").fetchall()
+                        " ORDER BY id")
 
 
 def unnamed_among(conn, face_ids):

@@ -19,6 +19,8 @@ import face_rows  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 
+from tagpup.jobs import identify as identify_jobs  # noqa: E402
+from tagpup.services import identify  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 ROUTE = "/library/api/face-matches-unmatched"
@@ -110,6 +112,56 @@ class NewPerson(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(["close", "new", "just over"], self.labels(self.open_new_person()))
+
+
+class BuildingThePool(unittest.TestCase):
+    """The pool is filled a slice at a time from the rows as they are read, not stacked
+    from a list of them: it holds what stacking held."""
+
+    def rows(self):
+        rng = np.random.default_rng(7)
+        found = [(n * 3 + 1, rng.standard_normal(8).astype(np.float32).tobytes()) for n in range(11)]
+        found.insert(4, (100, None))   # a face without an embedding
+        found.insert(7, (101, b""))
+        return found
+
+    def stacked(self, rows):
+        kept = [(face_id, np.frombuffer(blob, dtype=np.float32)) for face_id, blob in rows if blob]
+        matrix = np.vstack([v for _, v in kept])
+        return [f for f, _ in kept], matrix.astype(np.float16), float(np.max(np.linalg.norm(matrix, axis=1)))
+
+    def check(self, pool, rows):
+        ids, matrix, largest = self.stacked(rows)
+        self.assertEqual(ids, pool.ids.tolist())
+        self.assertEqual(np.float16, pool.matrix.dtype)
+        np.testing.assert_array_equal(matrix, pool.matrix)
+        self.assertAlmostEqual(largest, pool.largest_norm, places=5)
+
+    def test_slice_by_slice_is_what_stacking_gave(self):
+        rows = self.rows()
+        with mock.patch.object(identify.UnnamedFaces, "SLICE", 3):
+            for count in (len(rows), len(rows) - 2, 5, None):   # as counted, fewer, more
+                with self.subTest(count=count):
+                    self.check(identify.UnnamedFaces.of(iter(rows) if count else rows, count), rows)
+
+    def test_no_embeddings_is_an_empty_pool(self):
+        pool = identify.UnnamedFaces.of(iter([(1, None)]), 1)
+        self.assertEqual(0, len(pool.ids))
+        self.assertEqual([], pool.near(np.ones(8, dtype=np.float32), lambda likeness, slack: likeness > -9))
+
+    def test_a_stale_pool_is_let_go_before_the_next_is_read(self):
+        cache = identify_jobs.GridCache()
+        cache.put("unnamed_faces", "an older state", "the stale pool")
+        held = []
+
+        def read(library):
+            held.append(cache.entry("unnamed_faces"))
+            return "now", "the new pool"
+
+        with mock.patch.object(identify, "fingerprint", return_value="now"), \
+                mock.patch.object(identify, "unnamed_faces", side_effect=read):
+            self.assertEqual("the new pool", identify_jobs.unnamed_faces(object(), cache))
+        self.assertEqual([None], held)
 
 
 if __name__ == "__main__":

@@ -107,6 +107,11 @@ class GridCache:
         with self._lock:
             self._entries.clear()
 
+    def drop(self, key):
+        """Let go of one entry, before what replaces it is read."""
+        with self._lock:
+            self._entries.pop(key, None)
+
     def forget_faces(self, face_ids, expected_fingerprint, fingerprint_after):
         """Take faces out of the cached grids instead of discarding them.
 
@@ -274,6 +279,8 @@ def unnamed_faces(library, cache):
     cached = cache.get("unnamed_faces", identify.fingerprint(library))
     if cached is not None:
         return cached
+    # The stale pool goes first: holding it through the read was another 185 MB.
+    cache.drop("unnamed_faces")
     stamp, value = identify.unnamed_faces(library)
     cache.put("unnamed_faces", stamp, value)
     return value
