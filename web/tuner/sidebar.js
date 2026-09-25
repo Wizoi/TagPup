@@ -1,5 +1,6 @@
 // The mode, the sidebar's lists and the photo list (Folder Matches).
 import { api } from './common/api.js';
+import { dialogOpen } from './common/dialog.js';
 import { samePath } from './common/paths.js';
 import { state } from './state.js';
 import {
@@ -234,7 +235,7 @@ function renderPhotoList() {
             if (totalUnmatched > 0) {
                 const btnFolderAutomatch = document.createElement('button');
                 btnFolderAutomatch.className = 'btn-folder-automatch';
-                btnFolderAutomatch.innerHTML = '🤖';
+                btnFolderAutomatch.textContent = '🤖';
                 btnFolderAutomatch.title = 'AutoMatch all photos in this folder';
                 btnFolderAutomatch.addEventListener('click', (e) => {
                     e.stopPropagation();
@@ -477,6 +478,8 @@ export function wireSidebar() {
 
     // Keyboard navigation (Up/Down arrow keys) through visible sidebar entries
     document.addEventListener('keydown', (e) => {
+        // Not the page's while a dialog is open over it (web/common/dialog.js).
+        if (dialogOpen()) return;
         // Only trigger arrow navigation if we are not focused on input fields
         if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'SELECT') {
             return;

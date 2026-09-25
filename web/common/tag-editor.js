@@ -17,15 +17,8 @@
  *               and/or photos were rewritten, so what the page shows of them is old.
  */
 import { api } from './api.js';
+import { buildElement, replaceContent } from './dom.js';
 import { nameProblem, tagProblem } from './vocabulary.js';
-
-/**
- * Keys the pages act on -- TagPup steps its photos on the arrows, TagTuner moves its
- * sidebar on ArrowUp and ArrowDown -- and the editor does not, beyond what the browser
- * does with them in a field or on a button. While it is open they go no further.
- */
-const PAGE_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-                           'Home', 'End', 'PageUp', 'PageDown', 'Enter', ' ']);
 
 /** The page's hooks and the editor's elements, once wireTagEditor has run. */
 const tagEditor = {
@@ -139,14 +132,9 @@ function buildTagEditor() {
         e.stopPropagation();
         closeTagEditor();
     });
-    // Captured at the window, before any page's listener, and whatever has the focus:
-    // a click on the dialog's background leaves it on the body, not in the dialog.
-    // Stopped, not prevented, so a field still moves its caret and a button still
-    // presses; Escape is not one of them, and closes the editor as before.
-    window.addEventListener('keydown', (e) => {
-        if (!PAGE_KEYS.has(e.key) || !tagEditorShowing()) return;
-        e.stopPropagation();
-    }, true);
+    // The pages' own keys -- TagPup's arrows, TagTuner's sidebar -- are left alone
+    // while the editor is open, wherever its focus is: the pages ask dialogOpen()
+    // (web/common/dialog.js), which the open editor answers.
 
     tagEditor.overlay = overlay;
     tagEditor.search = search;
@@ -172,11 +160,6 @@ export function openTagEditor() {
     tagEditor.search.focus();
     // A page that keeps the tree has it already; otherwise it is read now.
     if (!tagEditor.hooks.nodes) reloadTree().then(renderTaxonomyTree);
-}
-
-/** Is the editor, or its removal check, in front of the page? */
-function tagEditorShowing() {
-    return tagEditor.conflictOpen || Boolean(tagEditor.overlay && tagEditor.overlay.classList.contains('active'));
 }
 
 export function closeTagEditor() {
@@ -221,7 +204,10 @@ export function renderTaxonomyTree() {
     const filteredRoots = roots.filter(matchesSearch);
 
     if (filteredRoots.length === 0) {
-        container.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 20px;">No tags match your search or taxonomy is empty.</div>';
+        replaceContent(container, buildElement('div', {
+            style: 'color: var(--text-muted); text-align: center; padding: 20px;',
+            text: 'No tags match your search or taxonomy is empty.',
+        }));
         return;
     }
 

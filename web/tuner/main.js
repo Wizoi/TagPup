@@ -2,6 +2,7 @@
 // its state in state.js; every request goes through api.js, which puts the library
 // in front of it (web/common/api.js).
 import { initDatabaseSelector } from './common/library.js';
+import { loadRules } from './common/validate.js';
 import { state } from './state.js';
 import { modeSelect, showMatchedToggle } from './elements.js';
 import { upper } from './hooks.js';
@@ -20,6 +21,8 @@ import { restoreIndexingState, wireIndexing } from './indexing.js';
 import { wireTunerGear } from './gear.js';
 
 document.addEventListener('DOMContentLoaded', () => {
+    // What may be set, as the server says (web/common/validate.js): once.
+    loadRules();
     // What the features call above themselves (hooks.js).
     Object.assign(upper, { selectPhoto, fetchPeopleWithCounts, selectPerson, refreshSidebarQuietly });
 

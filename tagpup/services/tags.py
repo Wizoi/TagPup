@@ -10,7 +10,7 @@ through _retag and _rename_in_place.
 import logging
 import os
 
-from tagpup.core import vocabulary
+from tagpup.core import validation, vocabulary
 from tagpup.core.result import NotFound, Result
 from tagpup.services import tagging
 from tagpup.store import db, people, photos, taxonomy
@@ -44,10 +44,7 @@ def create(library, name, parent_id=None, has_face=0):
     """
     result = Result(attempted=1)
     name = (name or "").strip()
-    if not name:
-        result.refuse("Tag name cannot be empty")
-        return result
-    problem = vocabulary.problem_with_tag(name)
+    problem = validation.problem("tag", name)
     if problem:
         result.refuse(problem)
         return result
@@ -123,10 +120,11 @@ def delete(library, node_id, action, target, exiftool_path):
     carrying = photos.carrying(library.path, old)
     new = None
     if action == "move" and carrying:
-        new = vocabulary.normalize(target or "")
-        if not new:
-            result.refuse("Target tag path is required for move action")
+        problem = validation.problem("tag", target)
+        if problem:
+            result.refuse(problem)
             return result
+        new = vocabulary.normalize(target)
         if _under(new, old):
             result.refuse("A tag cannot be moved under itself.")
             return result
@@ -150,7 +148,7 @@ def rename(library, node_id, new_name, exiftool_path):
     new_name = (new_name or "").strip()
     # A node's own name is one level. A "/" in it gave the node a path deeper than its
     # parent's by two levels, with no node between, and a name that was a path.
-    problem = vocabulary.problem_with_name(new_name)
+    problem = validation.problem("name", new_name)
     if problem:
         result.refuse(problem)
         return result
@@ -200,7 +198,7 @@ def merge(library, source, target, exiftool_path, retire=False, apply=False):
     if not target and not retire:
         result.refuse("Missing the tag to merge into")
         return result
-    problem = target and vocabulary.problem_with_tag(target)
+    problem = target and validation.problem("tag", target)
     if problem:
         result.refuse(problem)
         return result
@@ -254,18 +252,19 @@ def rename_person(library, old_name, new_name, exiftool_path):
     """
     result = Result(attempted=1)
     old_name, new_name = str(old_name or "").strip(), str(new_name or "").strip()
-    if not old_name or not new_name:
+    if not old_name:
         result.refuse("Missing old_name or new_name")
         return result
     result.details.update(photos_affected=0, photos_rewritten=0, faces_renamed=0)
     if old_name == new_name:
         return result
-    if UNMATCHED in (old_name, new_name):
-        result.refuse("Cannot rename to/from '%s'" % UNMATCHED)
-        return result
-    problem = vocabulary.problem_with_name(new_name)
+    # The new name is held to a name's rules, which refuse "Unmatched" as well.
+    problem = validation.problem("name", new_name)
     if problem:
         result.refuse(problem)
+        return result
+    if old_name == UNMATCHED:
+        result.refuse("Cannot rename to/from '%s'" % UNMATCHED)
         return result
     if not os.path.exists(library.path):
         raise NotFound("Database not found")

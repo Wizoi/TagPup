@@ -7,7 +7,7 @@ import re
 import sys
 import unittest
 
-from tagpup.core import vocabulary
+from tagpup.core import validation, vocabulary
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tests"))
@@ -17,8 +17,8 @@ from shipped_sources import page_source  # noqa: E402
 class NobodyIsCalledABucket(unittest.TestCase):
     def test_a_bucket_name_is_refused_whatever_the_case(self):
         for name in ("Excluded", "ungrouped", "Unknown Faces", " UNMATCHED "):
-            self.assertIsNotNone(vocabulary.problem_with_name(name), name)
-        self.assertIsNone(vocabulary.problem_with_name("Excluded Ferris"))
+            self.assertIsNotNone(validation.problem("name", name), name)
+        self.assertIsNone(validation.problem("name", "Excluded Ferris"))
 
     def test_the_page_names_them_as_the_server_does(self):
         page = page_source("tuner")

@@ -22,7 +22,7 @@ import urllib.parse
 from flask import Blueprint, jsonify, request
 
 from tagpup import config as tagpup_config
-from tagpup.core import fields, paths, renaming, suggesting, vocabulary
+from tagpup.core import fields, paths, suggesting, vocabulary
 from tagpup.core.result import NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
@@ -278,6 +278,8 @@ def folder_auto_apply():
     additions = {path: suggesting.offered_tags(entry, threshold) for path, entry in suggestions.items()}
     try:
         result = tagging_actions.add_tags(library, additions, tagpup_config.exiftool_path())
+        if result.refused:
+            return responses.error(400, result.refused)
         _records_written(library, result)
         if not result.ok:
             raise RuntimeError(result.message())
@@ -318,6 +320,8 @@ def folder_time_shift():
         return jsonify({"success": True, "message": "No photos matched the camera model"})
     try:
         result = photo_actions.shift_date_taken(library, targets, shift_minutes, tagpup_config.exiftool_path())
+        if result.refused:
+            return responses.error(400, result.refused)
         if not result.ok:
             raise RuntimeError(result.message())
         for meta in result.details["records"]:
@@ -347,9 +351,6 @@ def folder_rename_photos():
         return responses.error(400, "Invalid folder path")
     if not photo_paths:
         return responses.error(400, "No photos selected for renaming")
-    problem = renaming.problem_with_grouping(grouping)
-    if problem:
-        return responses.error(400, problem)
     cache = folders.of(library)
     try:
         # In the order they were taken, by the Date Taken in the folder's cached scan; a
@@ -370,6 +371,8 @@ def folder_rename_photos():
         result = photo_actions.smart_rename(
             library, sorted(photo_paths, key=taken), grouping, tagpup_config.rename_format(),
             tagpup_config.exiftool_path())
+        if result.refused:
+            return responses.error(400, result.refused)
         if not result.ok:
             return responses.error(500, result.message())
         # Their saved suggestions are kept by the photo's id, and went with the rows.
@@ -561,14 +564,12 @@ def photos_bulk_tags():
     remove_tags = body.get("remove_tags", [])
     if not photo_paths:
         return responses.error(400, "Missing paths list")
-    # What is added, not what is removed: taking a bad tag off must stay possible.
-    problem = vocabulary.problem_with_tags(add_tags)
-    if problem:
-        return responses.error(400, problem)
-    add_tags = [vocabulary.normalize(t) for t in add_tags]
     try:
+        # What is added is checked, not what is removed (tagpup.services.tagging).
         result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
                                              tagpup_config.exiftool_path())
+        if result.refused:
+            return responses.error(400, result.refused)
         _records_written(library, result)
         if not result.ok:
             raise RuntimeError(result.message())

@@ -400,19 +400,29 @@ describe("The keys stay with what is in front of the page", () => {
   });
 
   test("TagTuner's open editor keeps its sidebar's keys from the page", async (t) => {
-    const { window, document } = await tuner(t);
-    const reached = [];
-    document.addEventListener("keydown", (e) => reached.push(e.key));
+    // The sidebar asks web/common/dialog.js whether a dialog is open before it moves.
+    const server = new FakeServer().on("/api/photos", [
+      { path: "D:/Library/2020/a.jpg", filename: "a.jpg", folder: "D:/Library/2020", year: "2020", unmatched_count: 1 },
+      { path: "D:/Library/2020/b.jpg", filename: "b.jpg", folder: "D:/Library/2020", year: "2020", unmatched_count: 1 },
+    ]);
+    const { window, document } = await tuner(t, server);
+    click(window, document.querySelector("#photo-list .folder-header"));   // the folder, opened
+    const active = () => document.querySelector("#photo-list .photo-item.active")?.textContent || null;
+    const before = active();
     click(window, gearOf(document).button);
     click(window, document.querySelector('#gear-menu [data-action="tag-editor"]'));
     await flush(window, 4);
     const treeButton = document.querySelector("#taxonomy-modal .taxonomy-node-actions button");
-    treeButton.focus();
-    for (const name of ["ArrowUp", "ArrowDown", "Home", "End", "Enter", " "]) key(window, treeButton, name);
-    assert.deepEqual(reached, [], "the page heard the editor's keys");
+    for (const target of [treeButton, document.body]) {
+      if (target !== document.body) target.focus();
+      for (const name of ["ArrowUp", "ArrowDown"]) key(window, target, name);
+    }
+    await flush(window, 4);
+    assert.equal(active(), before, "the sidebar moved behind the editor");
     key(window, treeButton, "Escape");
-    key(window, document.activeElement, "ArrowDown");
-    assert.deepEqual(reached, ["ArrowDown"], "the page does not hear its keys once the editor is closed");
+    key(window, document.body, "ArrowDown");
+    await flush(window, 4);
+    assert.notEqual(active(), before, "the sidebar does not move once the editor is closed");
   });
 });
 

@@ -10,7 +10,6 @@ Names only: no connection is opened here. It takes the path as given, so every
 file name it derives is spelled exactly as before.
 """
 import os
-import re
 
 
 class Library:
@@ -144,14 +143,7 @@ def file_name_for(name):
 #: reaches the route (docs/findings.md, #73). Whatever the case, as file names are.
 #: `common` is where a page opened without a library finds the shared modules
 #: (/common/api.js); gui and gui_tagpup were the pages' folders before web/, kept so
-#: that no library takes a name an old bookmark or link still reaches for.
+#: that no library takes a name an old bookmark or link still reaches for. The
+#: "library name" kind of tagpup.core.validation refuses them.
 ROUTES = frozenset({"api", "common", "gui", "gui_tagpup"})
 
-
-def problem_with_new_name(file_name):
-    """Why a library cannot be created under this file name, or None if it can."""
-    if not re.match(r"^[a-zA-Z0-9_\-]+\.db$", file_name):
-        return "Invalid characters in database name"
-    if picker_name(file_name).lower() in ROUTES:
-        return "'%s' is the name of one of the app's own pages; choose another" % picker_name(file_name)
-    return None

@@ -1,5 +1,6 @@
 // TagPup's page: Smart Rename and Shift Date Taken.
 import { api } from './common/api.js';
+import { ruleProblem } from './common/validate.js';
 import { samePath } from './common/paths.js';
 import { state } from './state.js';
 import {
@@ -15,19 +16,13 @@ import { renderThumbnails } from './grid.js';
 import { updateSelectedThumbnailsCount } from './selection.js';
 
 /**
- * Why a Smart Rename grouping cannot be used, or null if it can.
- *
+ * Why a Smart Rename grouping cannot be used, or null if it can: the server's rule
+ * (the "grouping" kind of tagpup/core/validation.py), which Smart Rename refuses by.
  * " - " separates the parts of a photo's name, and editing a caption later finds
- * the photo's number by splitting the name there: a grouping holding one
- * ("2019-06 - Summer Camp") lost its photos their numbers. The server refuses it
- * too (tagpup/core/renaming.py), held to the same cases (tests/tag_rules.json).
+ * the photo's number by splitting the name there.
  */
 export function groupingProblem(grouping) {
-    if (String(grouping || '').includes(' - ')) {
-        return 'A grouping cannot contain " - ": it separates the parts of a photo\'s name. '
-            + 'A dash without spaces, as in 2019-06, is fine.';
-    }
-    return null;
+    return ruleProblem('grouping', grouping);
 }
 
 export function wireRenameAndTimeShift() {
@@ -48,10 +43,6 @@ export function wireRenameAndTimeShift() {
 
     btnApplyRename.addEventListener('click', () => {
         const grouping = renameGroupingInput.value.trim();
-        if (!grouping) {
-            flagField(renameGroupingInput, 'Enter a grouping name to rename by');
-            return;
-        }
         const groupingRefused = groupingProblem(grouping);
         if (groupingRefused) {
             flagField(renameGroupingInput, groupingRefused);

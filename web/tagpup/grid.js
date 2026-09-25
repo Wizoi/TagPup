@@ -1,6 +1,7 @@
 // TagPup's page: the folder view's thumbnails, their size, selecting them, and the
 // right-click menu.
 import { api } from './common/api.js';
+import { buildElement, replaceContent } from './common/dom.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
@@ -143,7 +144,10 @@ export function renderThumbnails() {
     const filtered = visiblePhotos();
 
     if (filtered.length === 0) {
-        thumbnailsGrid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 40px;">No photos found matching filter.</div>';
+        replaceContent(thumbnailsGrid, buildElement('div', {
+            style: 'grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 40px;',
+            text: 'No photos found matching filter.',
+        }));
         return;
     }
 
@@ -310,7 +314,7 @@ export function renderThumbnails() {
         const btnDetail = document.createElement('button');
         btnDetail.className = 'btn-thumbnail-detail';
         btnDetail.title = 'View details and edit metadata';
-        btnDetail.innerHTML = '🔍';
+        btnDetail.textContent = '🔍';
         btnDetail.addEventListener('click', (e) => {
             e.stopPropagation();
             selectPhoto(photo.path);

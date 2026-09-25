@@ -1,5 +1,6 @@
 // TagPup's page: what the selected photos hold, and tagging them all at once.
 import { api } from './common/api.js';
+import { buildElement, replaceContent } from './common/dom.js';
 import { leafOf, photoAlreadyHas, samePerson, tagProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -93,7 +94,7 @@ export function updateSelectedThumbnailsCount() {
         selectionPeopleList.innerHTML = '';
         const peopleKeys = Object.keys(peopleCounts).sort();
         if (peopleKeys.length === 0) {
-            selectionPeopleList.innerHTML = '<span style="color: var(--text-muted); font-size: 12px; padding: 4px 0;">None</span>';
+            replaceContent(selectionPeopleList, noneChip());
         } else {
             peopleKeys.forEach(p => {
                 const { count, tags: spellings } = peopleCounts[p];
@@ -138,7 +139,7 @@ export function updateSelectedThumbnailsCount() {
         selectionTagsList.innerHTML = '';
         const tagKeys = Object.keys(tagCounts).sort();
         if (tagKeys.length === 0) {
-            selectionTagsList.innerHTML = '<span style="color: var(--text-muted); font-size: 12px; padding: 4px 0;">None</span>';
+            replaceContent(selectionTagsList, noneChip());
         } else {
             tagKeys.forEach(t => {
                 const count = tagCounts[t];
@@ -267,7 +268,7 @@ export function renderSuggestionChips(container, counts, isPerson) {
     container.innerHTML = '';
     const keys = Object.keys(counts).sort();
     if (keys.length === 0) {
-        container.innerHTML = '<span style="color: var(--text-muted); font-size: 12px; padding: 4px 0;">None</span>';
+        replaceContent(container, noneChip());
         return;
     }
     keys.forEach(name => {
@@ -534,4 +535,10 @@ export async function bulkAddTagsToSelection() {
         statusText.textContent = 'Error';
         alert("Error bulk adding tags: " + err.message);
     });
+}
+
+
+/** What a selection's list shows when it holds nothing. */
+function noneChip() {
+    return buildElement('span', { style: 'color: var(--text-muted); font-size: 12px; padding: 4px 0;', text: 'None' });
 }

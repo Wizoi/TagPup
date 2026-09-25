@@ -11,8 +11,8 @@ What every app does alike is here: refuse a request from anywhere but this machi
 (tagpup.web.security), name the library the URL names (tagpup.web.libraries), serve
 its page's files, and log every request slower than a second and every one that
 failed, with its traceback, to the requests log (tagpup.logs). Each app's routes are
-its own blueprint; what both serve alike -- the picker, the tag tree, and where each
-app is -- is a blueprint each registers.
+its own blueprint; what both serve alike -- the picker, the tag tree, the rules of what
+may be set, and where each app is -- is a blueprint each registers.
 """
 import logging
 import os
@@ -26,7 +26,7 @@ from flask import Blueprint, Flask, Response, abort, current_app, g, jsonify, re
 
 from tagpup import config as tagpup_config
 from tagpup.logs import REQUESTS
-from tagpup.web import libraries, security, tagpup_routes, taxonomy_routes, tuner_routes
+from tagpup.web import libraries, rules_routes, security, tagpup_routes, taxonomy_routes, tuner_routes
 
 logger = logging.getLogger(__name__)
 requests_log = logging.getLogger(REQUESTS)
@@ -86,6 +86,7 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None):
     app.after_request(_log_slow)
     app.teardown_request(_log_failure)
     app.register_blueprint(libraries.picker)
+    app.register_blueprint(rules_routes.routes)
     app.register_blueprint(taxonomy_routes.routes)
     app.register_blueprint(apps)
     app.register_blueprint(ROUTES[kind])

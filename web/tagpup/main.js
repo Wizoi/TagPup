@@ -2,6 +2,7 @@
 // Every request goes through api.js, which puts the library in front of it
 // (web/common/api.js).
 import { initDatabaseSelector } from './common/library.js';
+import { loadRules } from './common/validate.js';
 import { upper } from './hooks.js';
 import {
     btnAddPerson, btnAddTag, btnApplyAllSingleSugg, btnApplyTimeshift, btnBrowseFolder,
@@ -51,6 +52,8 @@ Object.assign(upper, {
 });
 
 document.addEventListener('DOMContentLoaded', () => {
+    // What may be set, as the server says (web/common/validate.js): once.
+    loadRules();
     // The picker and the library this browser remembers (web/common/library.js).
     // Another dog park is another page. Ask about unsaved edits here, with Save on
     // offer, rather than leave it to the browser's bare "Leave site?"; staying puts
