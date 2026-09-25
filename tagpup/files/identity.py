@@ -107,6 +107,20 @@ def _write_forcing_minor_errors(et, path, minted):
                      path, e)
 
 
+def write_document_id(et, path, value):
+    """Write `value` into a photo as its identity, or take its identity away when `value`
+    is empty: the file journal's write, forward and in an undo. A refusal is retried
+    telling ExifTool the objection is minor, checking the keywords survived
+    (_write_forcing_minor_errors). Raises when neither write is made."""
+    try:
+        if value:
+            et.set_tags([path], tags={DOCUMENT_ID_FIELD: value}, params=["-overwrite_original"])
+        else:
+            et.execute("-%s=" % DOCUMENT_ID_FIELD, "-overwrite_original", path)
+    except Exception:
+        _write_forcing_minor_errors(et, path, value or "")
+
+
 def ensure_document_id(et, path, metadata=None):
     """Return this photo's identity, writing one into the file if it has none.
 

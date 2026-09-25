@@ -139,7 +139,7 @@ run.bat write suggestions.json -Live -MinScore 0.60
   - Appends flat tags to `XMP:Subject` and `IPTC:Keywords` (including C# XPKeywords).
   - Appends hierarchical paths to `XMP:HierarchicalSubject`.
   - Generates tags-based captions and writes them to Description/XPComment fields.
-  - ExifTool preserves original files by renaming them with a `_original` suffix.
+  - Records the write as one change; `run.bat undo <change>` shows what undoing it would put back, and `--apply` does.
 
 ---
 

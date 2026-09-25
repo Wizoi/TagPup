@@ -5,8 +5,9 @@ import os
 
 from tagpup.core import dates, fields, paths, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
-from tagpup.files import images, metadata, names, recycle_bin, times
-from tagpup.store import db, embeddings, faces, photos, taxonomy
+from tagpup.files import images, metadata, names, recycle_bin
+from tagpup.services import file_changes
+from tagpup.store import db, faces, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -200,15 +201,17 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
 
     Each photo stays in its own folder. A file already holding one of the new names is
     moved aside to "<name>_conflict_<n>". The files are renamed all together or not at
-    all (tagpup.files.names.rename_all), and then the index is told where they went --
-    their rows carry their embeddings and faces, names included, and one rename that
-    did not tell it stranded 78 rows holding 234 faces. A photo no longer on disk keeps
-    its number, unused.
+    all (tagpup.files.names.rename_all), as one change of photo files (tagpup.services.
+    file_changes): the renames and moves aside planned and committed first, and marked
+    done in the transaction that tells the index where they went -- their rows carry
+    their embeddings and faces, names included, and one rename that did not tell it
+    stranded 78 rows holding 234 faces. The change can be undone. A photo no longer on
+    disk keeps its number, unused.
 
     details: `updated_paths`, old -> new for every photo, those already so named
     included; `renamed`, those whose name changed; `moved_aside`, the files moved out
     of the way; `index_rows_moved`; `index_skipped`, the (old, new) pairs whose new name
-    already had rows in the index, left as they were.
+    already had rows in the index, left as they were; `change`.
 
     Refused, and nothing renamed, for a grouping that may not be used
     (tagpup.core.validation). The grouping is used trimmed as the rules trim it
@@ -232,58 +235,72 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
         renames[old_path] = os.path.join(os.path.dirname(old_path), base + os.path.splitext(old_path)[1])
 
     try:
-        done, moved_aside = names.rename_all(renames)
+        # The rows move in the transaction that marks the files done, the files moved
+        # aside and renamed into their names in one call, so each frees its name for the
+        # next within it.
+        outcome = file_changes.rename(library, "smart rename", renames, names.aside_for(renames),
+                                      exiftool_path, summary={"photos": len(renames)})
     except names.RenameFailed as failure:
         result.fail("smart rename", failure.message())
         return result
 
-    renamed = {old: new for old, new in done.items() if old != new}
+    renamed = {old: new for old, new in outcome.done.items() if old != new}
     result.changed = len(renamed)
-    result.details.update(updated_paths=done, renamed=renamed, moved_aside=moved_aside,
-                          index_rows_moved=0, index_skipped=[])
-    if renamed or moved_aside:
-        try:
-            # One call, so the files moved aside free their names for the photos
-            # renamed into them within the same transaction.
-            moved, skipped = photos.move_rows(library.path, {**moved_aside, **renamed})
-            result.details.update(index_rows_moved=moved, index_skipped=skipped)
-            logger.info("Renamed %d photo(s); moved %d index row(s).", len(renamed), moved)
-        except Exception as e:
-            # The files are renamed either way; a stranded row is recoverable with
-            # scripts/relink_renamed_photos.py.
-            logger.error("Renamed %d photo(s) but could not move their index rows: %s",
-                         len(renamed), e)
+    result.details.update(updated_paths=outcome.done, renamed=renamed, moved_aside=outcome.moved_aside,
+                          index_rows_moved=outcome.moved, index_skipped=outcome.skipped or [],
+                          change=outcome.change_id)
+    for old_path, new_path in outcome.skipped or []:
+        logger.warning("Renamed %s to %s, but the index already has rows for the new "
+                       "name; left both as they were.", old_path, new_path)
+    logger.info("Renamed %d photo(s); moved %d index row(s).", len(renamed), outcome.moved)
     return result
 
 
 def shift_date_taken(library, photo_paths, minutes, exiftool_path):
     """Move Date Taken in each photo by `minutes`, and tell the index. Time Shift.
 
-    `changed` is ExifTool's own count of the files it wrote: a photo it could not
-    write is not counted, where this used to answer with the number it had tried. The
-    index rows get the new Date Taken, which orders photos and picks the era a face is
-    compared against, and each file's new mtime and size, without which the next scan
-    distrusts them.
+    One change of photo files (tagpup.services.file_changes): every photo's dates read,
+    each moved by the minutes (tagpup.core.dates.shifted), the plan committed, then each
+    file written and its row recorded as it is marked done -- its new Date Taken, which
+    orders photos and picks the era a face is compared against, and its new mtime and
+    size, without which the next scan distrusts it. The change can be undone.
 
-    details: `records`, each photo as read back afterwards. Refused, and nothing
-    written, for a shift that is not a whole number of minutes (tagpup.core.validation).
+    `changed` is the files written: a photo that could not be read, or holds no date to
+    move, is skipped; one that could not be written, or changed outside between the plan
+    and its write, is an error. details: `records`, each photo as read back afterwards;
+    `change`. Refused, and nothing written, for a shift that is not a whole number of
+    minutes (tagpup.core.validation).
     """
-    result = Result(attempted=len(photo_paths))
     problem = validation.problem("time shift", minutes)
     if problem:
+        result = Result(attempted=len(photo_paths))
         result.refuse(problem)
         return result
-    before = {photo_path: embeddings.stamp_of(photo_path) for photo_path in photo_paths}
+
+    def plan_one(_path, held):
+        after = {}
+        # Each date the photo holds is moved by the same minutes; one it does not hold is
+        # not made.
+        for field in dates.SHIFTED_FIELDS:
+            values = held.get(field) or []
+            moved = dates.shifted(values[0], minutes) if len(values) == 1 else None
+            if moved is not None:
+                after[field] = [moved]
+        return file_changes.Plan(after=after) if after else file_changes.skip("holds no Date Taken to move")
+
     try:
-        result.changed = times.shift_date_taken(exiftool_path, photo_paths, minutes)
+        result = file_changes.write_fields(library, "time shift", exiftool_path, photo_paths, dates.SHIFTED_FIELDS,
+                                           plan_one, summary={"photos": len(photo_paths), "minutes": minutes},
+                                           unreadable="skip")
     except Exception as e:
+        result = Result(attempted=len(photo_paths))
         result.fail("time shift", e)
         return result
-    # Only reading: minting a DocumentID here would write the files a second time.
-    records = metadata.MetadataExtractor(exiftool_path=exiftool_path, mint_identities=False).batch_read(
-        photo_paths, people=taxonomy.people_vocabulary(library.path))
-    photos.record_reads(library.path, records, label="time shift", before=before)
-    result.details["records"] = records
+    result.details.pop("written", None)
+    # Only reading, for the page: minting a DocumentID here would write the files again.
+    result.details["records"] = metadata.MetadataExtractor(exiftool_path=exiftool_path, mint_identities=False
+                                                           ).batch_read(photo_paths,
+                                                                        people=taxonomy.people_vocabulary(library.path))
     return result
 
 

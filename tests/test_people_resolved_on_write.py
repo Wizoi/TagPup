@@ -184,8 +184,12 @@ class TestEveryWriteSiteResolvesPeople(unittest.TestCase):
         for name in sorted(os.listdir(os.path.join(WORKSPACE_DIR, "tagpup", "services")))
         if name.endswith(".py")]
 
+    #: The keyword writers, and where each takes the tags: write_keywords writes them,
+    #: _keywords_plan plans a journaled write of them (tagpup.services.tagging).
+    WRITERS = {"write_keywords": 2, "_keywords_plan": 0}
+
     def writes(self):
-        """(where, the call, the function it is in) of every write_keywords call in
+        """(where, the call, the function it is in) of every call of a WRITERS in
         SOURCES."""
         for relative in self.SOURCES:
             source_path = os.path.join(WORKSPACE_DIR, relative)
@@ -194,7 +198,7 @@ class TestEveryWriteSiteResolvesPeople(unittest.TestCase):
             for function in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
                 for node in ast.walk(function):
                     if isinstance(node, ast.Call) and (
-                            getattr(node.func, "id", None) or getattr(node.func, "attr", None)) == "write_keywords":
+                            getattr(node.func, "id", None) or getattr(node.func, "attr", None)) in self.WRITERS:
                         yield "%s:%d" % (relative, node.lineno), node, function
 
     @staticmethod
@@ -215,7 +219,9 @@ class TestEveryWriteSiteResolvesPeople(unittest.TestCase):
     def test_no_call_to_write_keywords_skips_resolution(self):
         offenders = []
         for where, call, function in self.writes():
-            tags = call.args[2] if len(call.args) > 2 else None
+            called = getattr(call.func, "id", None) or getattr(call.func, "attr", None)
+            at = self.WRITERS[called]
+            tags = call.args[at] if len(call.args) > at else None
             if not self._resolves(tags, function):
                 offenders.append(where)
         self.assertEqual(

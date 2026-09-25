@@ -282,7 +282,9 @@ def build():
     def undo(library: str, change: int, apply: bool = False) -> dict[str, Any]:
         def act():
             found = find_library(library)
-            return written(library_journal.undo(found, change, apply=apply), found)
+            # A change of photo files is undone file by file, through the library's ExifTool.
+            exiftool = runtimes.exiftool(found, runtimes.peek_settings(found))
+            return written(library_journal.undo(found, change, apply=apply, exiftool_path=exiftool), found)
         return _answer(act)
 
     @write_tool("Prune the library's journal: the changes older than `days` (%d unless given) keep their "

@@ -170,6 +170,8 @@ What Suggest offered each photo (`tagpup/store/suggestions.py`), read by TagPup'
 ### 10. `schema_version` Table
 The migrations applied to this library, one row each, in order (`tagpup.store.schema`). `schema.ensure()` applies the ones missing wherever a library is opened: by PhotoIndex, TagTuner's start-up, the desktop runner, the tag tree, and each request that names a library. Migration 1 makes the tables of 2026-09; each one after is a step forward. A library older than those tables -- missing a column such as `faces.excluded` -- is refused (`schema.TooOld`), not converted: every library in use was already that shape, and the conversions retired on 2026-09-24.
 
+Each migration declares its kind (ARCHITECTURE.md, phase 7.5) and runs in one transaction with the checks it names, rolled back when one fails (`schema.CheckFailed`). An additive one takes no backup and may change no row that was there; a data-changing one records every row it changes in the journal, as a change named `migration N: name`; a destructive one -- dropping a column or a table, rebuilding a table, losing information -- takes one full backup first. Every run is a row of `changes`, whatever its kind.
+
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `version` | INTEGER | PRIMARY KEY | The migration's number. |
@@ -182,13 +184,14 @@ The journal: one row for each bulk edit applied to the library (`tagpup.store.jo
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | The change; `tagpup_cli.py undo <id>` and the MCP `undo` tool name it. |
-| `operation` | TEXT | NOT NULL | What made it: `merge_duplicate_person_tags`, `dedupe_faces`, `refresh_rows`, `change settings`, `stamp settings from config.ini`, `stamp settings with the defaults`. |
-| `status` | TEXT | NOT NULL, one of `planned`, `applied`, `derived_pending`, `undone`, `failed`, `pruned` | Where it stands. `planned` and `failed` are for the photo-file stage of phase 7.5. |
-| `schema_version` | INTEGER | NOT NULL | The migration the library was at when it was made; an undo at another is refused. |
+| `operation` | TEXT | NOT NULL | What made it: `merge_duplicate_person_tags`, `dedupe_faces`, `refresh_rows`, `relink_renamed_photos`, `backfill_document_ids`, `change settings`, `stamp settings from config.ini`, `stamp settings with the defaults`, or a migration, `migration 11: photo files in the journal`; and the changes of photo files (`change_files`): `add to all selected`, `apply all suggestions`, `time shift`, `smart rename`, `rename tag`, `remove tag`, `backfill_document_ids: mint`. |
+| `status` | TEXT | NOT NULL, one of `planned`, `applied`, `derived_pending`, `undone`, `failed`, `pruned` | Where it stands. `planned`: a change of photo files whose files are not all written yet -- or, with `undone` set, not all put back. `failed`: a change of photo files every file was taken out of again, so nothing was written. |
+| `schema_version` | INTEGER | NOT NULL | The migration the library was at when it was made; an undo at another is refused. A migration's change is at the version it made when it recorded rows, and at the one before when it did not, so that it is never undone. |
 | `created` | TEXT | NOT NULL | Local time it was made, `YYYY-MM-DD HH:MM:SS`. |
 | `applied` | TEXT | | When it was applied. |
 | `undone` | TEXT | | When it was undone; NULL while it stands. |
-| `summary` | TEXT | | JSON: the operation's counts and the rows it wrote per table. Never names; kept when the change is pruned. |
+| `summary` | TEXT | | JSON: the operation's counts and the rows it wrote per table -- or, for a change of photo files, how many files ended in each state. Never names; kept when the change is pruned. |
+| `owner` | TEXT | | The process carrying a change of photo files out, `<host>:<pid>`, while it does (migration 11); NULL once it is finished, or when an error stopped it. A change owned by a process still running is not settled by another. |
 
 ### 12. `change_rows` Table
 What each change found and left, one row per changed column (`tagpup.store.journal`). An update records the columns it changed; an inserted or deleted row records every column. A delete records what it takes with it as deletes of their own: a face's crop, a photo's faces, vectors and suggestions (`journal.CASCADES`); a photo's people are derived and rebuilt instead, and a tag node with nodes under it is refused. Rows are keyed only by ids SQLite never hands out again (AUTOINCREMENT), so putting a deleted row back cannot meet a newer one.
@@ -211,6 +214,21 @@ The library's settings (`tagpup.store.settings`, `tagpup.services.settings`, mig
 | :--- | :--- | :--- | :--- |
 | `key` | TEXT | PRIMARY KEY, NOT NULL | The setting, `<section>.<key>` as config.ini named it: `model.name`, `faces.min_face_size`, `candidates.tags`, `renaming.format`, `paths.exiftool` ... A name, not an id: a row put back under it is that setting again (`journal.NAMED`). |
 | `value` | TEXT | NOT NULL | Its value as text, as the validator reads it (`true`/`false`, `0.85`, `0.6, 0.7, 0.7`). An empty `paths.exiftool` is the machine's ExifTool; an empty `model.force_image_size` the model's own size. |
+
+### 14. `change_files` Table
+The photo files a change writes, one row each (`tagpup.store.file_journal`, `tagpup.services.file_changes`, migration 11; ARCHITECTURE.md, phase 7.5). A batch of file writes cannot be one transaction, so each file carries its own state, as dpkg's packages do: the plan -- every file's fields before and after -- is committed first, `planned`; a file is marked `writing` before ExifTool writes it and `done` in the transaction that records its row (`photos.follow_fields`, or `photos.move_rows_in` for a rename), and the change is `applied` once every file is done or a conflict. A file found holding neither what the plan read nor what it was to hold is a `conflict`: reported, never overwritten. The first time a process reads a library's settings (`tagpup.runtime.library_settings`), and before each change of photo files, a file a crash left `writing` or `planned` is settled by what it holds: the before, written again; the after, marked done and its row recorded; neither, a conflict. An undo writes each file still holding its after back to its before through the same states, `undone`, and refuses, by photo id, a file that does not. Pruning deletes a change's files with its `change_rows`.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | The file of the change, in the order planned. |
+| `change_id` | INTEGER | NOT NULL, → `changes.id`, INDEXED | The change. |
+| `photo_id` | INTEGER | | The photo's row when the plan was made, which reports name the file by; NULL for a file without one (one moved aside by Smart Rename). |
+| `path` | TEXT | NOT NULL | The file, as stored; for a rename, its name before. |
+| `new_path` | TEXT | | A rename's name after; NULL for a change of fields. |
+| `fields_before` | TEXT | NOT NULL | JSON: what the file held of each field the change writes, `{"XMP:Subject": ["Beach"], ...}`, a field it did not hold `[]`. For a rename, the file's `size` and `mtime_ns`, which renaming does not change and which find it under either name. Can name people. |
+| `fields_after` | TEXT | NOT NULL | JSON: what it is to hold, in the same form. |
+| `state` | TEXT | NOT NULL, one of `planned`, `writing`, `done`, `conflict`, `undone` | Where the write of this file stands. |
+| `note` | TEXT | | Why a file is a conflict: changed outside since it was read, could not be read or written (ExifTool's error), not undone. |
 
 ---
 

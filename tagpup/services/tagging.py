@@ -7,7 +7,8 @@ from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, keywords, metadata
-from tagpup.store import db, embeddings, photos, taxonomy
+from tagpup.services import file_changes
+from tagpup.store import embeddings, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,8 @@ def change_tags(library, photo_paths, add, remove, exiftool_path):
     if problem:
         return _refused(len(photo_paths), problem)
     add = [vocabulary.normalize(tag) for tag in add]
-    return _change_each(library, [(path, add, remove) for path in photo_paths], exiftool_path)
+    return _change_each(library, [(path, add, remove) for path in photo_paths], exiftool_path,
+                        "add to all selected")
 
 
 def add_tags(library, additions, exiftool_path):
@@ -102,7 +104,7 @@ def add_tags(library, additions, exiftool_path):
     if problem:
         return _refused(len(additions), problem)
     return _change_each(library, [(path, tags, ()) for path, tags in additions.items() if tags],
-                        exiftool_path)
+                        exiftool_path, "apply all suggestions")
 
 
 def _refused(attempted, problem):
@@ -113,39 +115,52 @@ def _refused(attempted, problem):
     return result
 
 
-def _change_each(library, plan, exiftool_path):
-    """Write each photo in `plan` -- (path, tags to add, tags to take off) -- in one
-    ExifTool session.
+#: What a keyword write reads of each file: the fields its tags come from, and every
+#: field it writes (tagpup.core.fields.keyword_fields), which the journal records before
+#: and after.
+KEYWORD_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + tuple(fields.keyword_fields([], []))))
+
+
+def _keywords_plan(tags):
+    """The Plan of a file whose tags are to be `tags`: every keyword field, and the tags
+    and their two forms as written (details["written"])."""
+    flat, hierarchical = fields.expand_tag_fields(tags)
+    return file_changes.Plan(after=fields.keyword_fields(flat, hierarchical), detail=(tags, flat, hierarchical))
+
+
+def _tags_held(held):
+    return vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS})
+
+
+def _change_each(library, plan, exiftool_path, operation):
+    """Write each photo in `plan` -- (path, tags to add, tags to take off) -- as one change
+    of photo files (tagpup.services.file_changes): planned from what every file holds,
+    committed, then written a file at a time, each recorded in its row as it is marked
+    done. The change can be undone.
 
     Each write replaces the photo's whole keyword set, so it starts from what the file
     holds now -- never from a cache that may be cold or an index that may never have
     seen the photo. People are written as the tags they are filed under, and the index
-    is told what was written.
+    is told what was written. A file changed outside between the plan and its write is
+    a conflict, reported and not overwritten.
 
     Stops at the first photo that cannot be read or written, which is the error; the
     photos before it keep their changes. details: `written`, path -> (tags, flat,
-    hierarchical) for each photo written.
+    hierarchical) for each photo written, and `change`.
     """
-    result = Result(attempted=len(plan))
-    written = result.details["written"] = {}
     people = taxonomy.people_paths(library.path)
-    with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-        for path, add, remove in plan:
-            path = paths.stored(path)
-            try:
-                tags = set(keywords.tags_in_file(et, path))
-                tags.update(add)
-                tags.difference_update(remove)
-                new_tags = vocabulary.resolve_people(list(tags), people)
-                before = embeddings.stamp_of(path)
-                flat, hierarchical = keywords.write_keywords(et, path, new_tags)
-                photos.record_tags(library.path, path, new_tags, flat, hierarchical, before=before)
-            except Exception as err:
-                result.fail(path, err)
-                break
-            written[path] = (new_tags, flat, hierarchical)
-            result.changed += 1
-    return result
+    wanted = {paths.key(path): (add, remove) for path, add, remove in plan}
+
+    def plan_one(path, held):
+        add, remove = wanted[paths.key(path)]
+        # In the file's order, what is added after: a set's order changed from run to
+        # run, and a file holding every tag already was written again for its order.
+        tags = [tag for tag in dict.fromkeys(list(_tags_held(held)) + list(add)) if tag not in set(remove)]
+        return _keywords_plan(vocabulary.resolve_people(tags, people))
+
+    return file_changes.write_fields(library, operation, exiftool_path, [path for path, _a, _r in plan],
+                                     KEYWORD_READ, plan_one, summary={"photos": len(plan)},
+                                     stop_at_first_error=True)
 
 
 def replace_tag(library, photo_paths, old, new, exiftool_path):
@@ -165,40 +180,24 @@ def replace_tag(library, photo_paths, old, new, exiftool_path):
     #30). A photo whose file does not carry the tag is left alone, and its row, which
     said it did, is made to say what the file holds.
 
-    attempted: the photos the index has a row for. changed: the rows rewritten. A photo
-    not carrying the tag is skipped; one that could not be read or written is an error.
+    attempted: the photos the index has a row for. changed: the files rewritten, as one
+    change of photo files (tagpup.services.file_changes), which can be undone. A photo not
+    carrying the tag is skipped; one that could not be read or written, or that changed
+    outside between the plan and its write, is an error.
     """
     rows = photos.read_tags(library.path, photo_paths)
-    result = Result(attempted=len(rows))
     people = taxonomy.people_paths(library.path)
-    with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-        for path, indexed_tags, raw_meta in rows:
-            try:
-                current_tags = keywords.tags_in_file(et, path)
-            except Exception as err:
-                logger.error("Could not read the keywords of %s: %s", path, err)
-                result.fail(path, err)
-                continue
-            new_tags, changed = vocabulary.retag(current_tags, old, new)
-            if not changed:
-                result.skip(path, "does not carry the tag")
-                if set(current_tags) != set(indexed_tags):
-                    photos.record_tags(library.path, path, current_tags)
-                continue
-            try:
-                before = embeddings.stamp_of(path)
-                flat, hierarchical = keywords.write_keywords(
-                    et, path, vocabulary.resolve_people(new_tags, people))
-                # The tags column holds the view extract_tags derives from the file's
-                # fields, as it did before; derived here from exactly the fields just
-                # written.
-                updated = vocabulary.extract_tags(fields.record_keyword_fields(raw_meta, flat, hierarchical))
-                if photos.record_tags(library.path, path, updated, flat, hierarchical, before=before):
-                    result.changed += 1
-            except Exception as err:
-                logger.error("Failed to update metadata on disk/db for %s: %s", path, err)
-                result.fail(path, err)
-    return result
+
+    def plan_one(path, held):
+        new_tags, changed = vocabulary.retag(_tags_held(held), old, new)
+        if not changed:
+            # Its row is made to say what the file holds (file_changes.write_fields).
+            return file_changes.skip("does not carry the tag")
+        return _keywords_plan(vocabulary.resolve_people(new_tags, people))
+
+    operation = "rename tag" if new else "remove tag"
+    return file_changes.write_fields(library, operation, exiftool_path, [path for path, _t, _r in rows],
+                                     KEYWORD_READ, plan_one, summary={"photos": len(rows)})
 
 
 def suggestion_writes(library, suggestions, min_score=suggesting.OFFER_A_TAG):
@@ -224,19 +223,28 @@ def suggestion_writes(library, suggestions, min_score=suggesting.OFFER_A_TAG):
     return writes, missing
 
 
+#: What the CLI's `write` reads of each file: the keyword fields, and every field a
+#: caption is written to (tagpup.core.fields.caption_fields).
+SUGGESTION_READ = tuple(dict.fromkeys(KEYWORD_READ + tuple(fields.caption_fields(""))))
+
+
 def write_suggestions(library, writes, exiftool_path, nobackup=False):
-    """Write each (path, tags, caption) of `writes` (suggestion_writes') in one ExifTool
-    session, and tell the index what was written.
+    """Write each (path, tags, caption) of `writes` (suggestion_writes') as one change of
+    photo files (tagpup.services.file_changes), which can be undone, each file's row told
+    what it holds as it is marked done.
 
-    The caption first, so the stat recorded with the keywords is the file's final one.
-    The tags are added to what the file holds, through the one keyword writer: whole
-    paths only, people filed where the library's tree files them. The writer had its
-    own ExifTool code that also wrote every path's parts as loose keywords, wrote people
-    bare, and never told the index.
+    The tags are added to what the file holds, in the file's order, as Add to all
+    selected adds them: whole paths only, people filed where the library's tree files
+    them. The caption, when there is one, is written to every caption field. A file
+    already holding both is left alone. The writer had its own ExifTool code that also
+    wrote every path's parts as loose keywords, wrote people bare, and never told the
+    index; then its writes were recorded nowhere, and undone only from the _original
+    copies ExifTool left beside each file (docs/findings.md, #266). Those are not made
+    any more: the journal is the way back, and `nobackup` is kept for callers that pass
+    it.
 
-    A photo that cannot be written is an error, and the next is tried; ExifTool that
-    cannot be started raises. changed: the photos written. `nobackup` has ExifTool
-    overwrite each file rather than keep an _original beside it.
+    A photo that cannot be read or written is an error, and the next is tried; ExifTool
+    that cannot be started raises. changed: the files written. details: `change`.
 
     A tag or a caption that may not be set refuses the whole run before anything is
     written (tagpup.core.validation).
@@ -247,30 +255,24 @@ def write_suggestions(library, writes, exiftool_path, nobackup=False):
     if problem:
         result.refuse(problem)
         return result
-    params = ["-overwrite_original"] if nobackup else None
     # Who a bare name means, read once for the run, not once per photo.
     people = taxonomy.people_paths(library.path)
-    with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-        for path, tags, caption in writes:
-            try:
-                # The file's stamp before this write, over which its CLIP vectors are
-                # carried (tagpup.store.embeddings).
-                before = embeddings.stamp_of(path)
-                if caption:
-                    et.set_tags([path], tags=fields.caption_fields(caption), params=params)
-                    db.write_with_connection(
-                        library.path, lambda conn: photos.set_captions(conn, path, [caption]),
-                        label="caption for %s" % path)
-                if tags:
-                    current = keywords.tags_in_file(et, path)
-                    merged = current + [t for t in tags if t not in current]
-                    flat, hierarchical = keywords.write_keywords(
-                        et, path, vocabulary.resolve_people(merged, people))
-                    photos.record_tags(library.path, path, flat, flat, hierarchical, before=before)
-                elif caption:
-                    photos.record_file_stat(library.path, path, before=before)
-            except Exception as err:
-                result.fail(path, err)
-                continue
-            result.changed += 1
-    return result
+    # A photo named twice in the file is written once, with the tags of both.
+    wanted = {}
+    for path, tags, caption in writes:
+        _path, held_tags, held_caption = wanted.get(paths.key(path), (path, [], ""))
+        wanted[paths.key(path)] = (_path, list(dict.fromkeys(held_tags + list(tags))), caption or held_caption)
+
+    def plan_one(path, held):
+        _path, tags, caption = wanted[paths.key(path)]
+        after = {}
+        if tags:
+            merged = list(dict.fromkeys(list(_tags_held(held)) + tags))
+            after.update(_keywords_plan(vocabulary.resolve_people(merged, people)).after)
+        if caption:
+            after.update(fields.caption_fields(caption))
+        return file_changes.Plan(after=after, detail=(tags, caption))
+
+    return file_changes.write_fields(library, "write suggestions", exiftool_path,
+                                     [path for path, _tags, _caption in wanted.values()], SUGGESTION_READ,
+                                     plan_one, summary={"photos": len(wanted)})

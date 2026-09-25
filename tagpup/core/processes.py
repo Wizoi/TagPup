@@ -78,3 +78,49 @@ def is_alive(pid):
         return False
     except Exception:
         return True
+
+
+#: Windows: OpenProcess's right to read a process's times, and the exit code of one
+#: still running.
+_QUERY_LIMITED_INFORMATION = 0x1000
+_STILL_ACTIVE = 259
+
+
+def started(pid):
+    """When process `pid` started, as a whole number that two processes given the same id
+    one after the other do not share: Windows reuses an id soon after its process ends.
+    None when there is no such process running, or its start cannot be read."""
+    try:
+        if os.name == "nt":
+            return _started_on_windows(int(pid))
+        with open("/proc/%d/stat" % int(pid), encoding="ascii", errors="replace") as handle:
+            # The 22nd field, after the name in parentheses (which may hold spaces).
+            return int(handle.read().rpartition(")")[2].split()[19])
+    except Exception:
+        return None
+
+
+def _started_on_windows(pid):
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.GetProcessTimes.argtypes = (wintypes.HANDLE,) + (ctypes.POINTER(wintypes.FILETIME),) * 4
+    kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel32.OpenProcess(_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
+    try:
+        code = wintypes.DWORD()
+        # A process that has ended but whose handle another still holds is not running.
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value != _STILL_ACTIVE:
+            return None
+        times = [wintypes.FILETIME() for _ in range(4)]
+        if not kernel32.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+            return None
+        return (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+    finally:
+        kernel32.CloseHandle(handle)

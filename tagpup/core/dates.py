@@ -7,6 +7,7 @@ that, so dropping it changed nothing; taking XMP:CreateDate everywhere moved sev
 photos whose only date it is from after the dated ones to their place among them.
 tests/test_dates.py fails the build on a list of these fields anywhere else.
 """
+import datetime
 import re
 from pathlib import PurePath
 
@@ -15,6 +16,10 @@ DATE_TAKEN_FIELDS = (
     "EXIF:DateTimeOriginal", "DateTimeOriginal", "XMP:DateTimeOriginal",
     "EXIF:CreateDate", "CreateDate", "XMP:CreateDate",
 )
+
+#: The fields a time shift moves, where a photo holds them: each of DATE_TAKEN_FIELDS
+#: under its group, as a write names it.
+SHIFTED_FIELDS = tuple(field for field in DATE_TAKEN_FIELDS if ":" in field)
 
 #: Years outside this range are not taken to be years: a four-digit run in a file name
 #: is as often a counter (IMG_0001) as a date.
@@ -27,6 +32,24 @@ UNKNOWN_YEAR = "Unknown"
 
 _YEAR_AT_START = re.compile(r"^(\d{4})")
 _FOUR_DIGITS = re.compile(r"\d{4}")
+
+#: An EXIF date and time, and whatever follows the seconds: a fraction, a time zone.
+_EXIF_TIME = re.compile(r"^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})(.*)$")
+
+
+def shifted(value, minutes):
+    """An EXIF date and time ("2024:07:04 10:00:00") moved by `minutes`, whatever follows
+    the seconds kept as it was; None for a value that is not one, which a shift leaves
+    alone as ExifTool's own shift did."""
+    found = _EXIF_TIME.match(str(value).strip()) if value is not None else None
+    if not found:
+        return None
+    try:
+        when = datetime.datetime(*(int(part) for part in found.groups()[:6]))
+        moved = when + datetime.timedelta(minutes=minutes)
+    except (ValueError, OverflowError):
+        return None
+    return moved.strftime("%Y:%m:%d %H:%M:%S") + found.group(7)
 
 
 def shown_year(year):

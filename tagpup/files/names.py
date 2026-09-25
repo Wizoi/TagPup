@@ -82,33 +82,48 @@ class RenameFailed(Exception):
         return "Could not rename: %s. Every photo was put back under its old name." % self.cause
 
 
-def rename_all(renames):
+def aside_for(renames):
+    """{a file outside `renames` that holds one of the new names: where it is to be
+    moved aside}, "<name>_conflict_<n>" beside it. Worked out before anything is renamed,
+    so the file journal can record the moves aside with the renames
+    (tagpup.services.file_changes)."""
+    selected_keys = {paths.key(p) for p in renames}
+    target_keys = {paths.key(p) for p in renames.values()}
+    aside, taken = {}, set()
+    for target_path in renames.values():
+        if os.path.exists(target_path) and paths.key(target_path) not in selected_keys:
+            dir_name = os.path.dirname(target_path)
+            base, ext = os.path.splitext(os.path.basename(target_path))
+            counter = 1
+            safe_path = os.path.join(dir_name, f"{base}_conflict_{counter}{ext}")
+            while (os.path.exists(safe_path) or paths.key(safe_path) in target_keys
+                   or paths.key(safe_path) in taken):
+                counter += 1
+                safe_path = os.path.join(dir_name, f"{base}_conflict_{counter}{ext}")
+            aside[target_path] = safe_path
+            taken.add(paths.key(safe_path))
+    return aside
+
+
+def rename_all(renames, aside=None):
     """Rename every photo in `renames` (old path -> new path), or none of them.
 
     Returns (done, moved_aside): old path -> new path for every photo, those whose name
     did not change included; and the files outside `renames` that already held one of
     the new names, each moved aside to "<name>_conflict_<n>" first -- its index row has
     to follow it, or the photo renamed into its place finds the name taken in the index.
+    `aside` is those moves when the caller worked them out already (aside_for); {} moves
+    nothing aside.
 
     The renames go in two passes through temporary names, so a run shuffling numbered
     names among themselves never lands on a name not yet vacated. If one fails, every
     photo is put back, through temporary names again (a photo already renamed may hold
     the old name of one still waiting), and RenameFailed says whether any could not be.
     """
-    selected_keys = {paths.key(p) for p in renames}
-    target_keys = {paths.key(p) for p in renames.values()}
     moved_aside = {}
-    for old_path, target_path in renames.items():
-        if os.path.exists(target_path) and paths.key(target_path) not in selected_keys:
-            dir_name = os.path.dirname(target_path)
-            base, ext = os.path.splitext(os.path.basename(target_path))
-            counter = 1
-            safe_path = os.path.join(dir_name, f"{base}_conflict_{counter}{ext}")
-            while os.path.exists(safe_path) or paths.key(safe_path) in target_keys:
-                counter += 1
-                safe_path = os.path.join(dir_name, f"{base}_conflict_{counter}{ext}")
-            os.rename(target_path, safe_path)
-            moved_aside[target_path] = safe_path
+    for target_path, safe_path in (aside_for(renames) if aside is None else aside).items():
+        os.rename(target_path, safe_path)
+        moved_aside[target_path] = safe_path
 
     def temporary_name(path):
         return os.path.join(os.path.dirname(path), "tmp_rename_%s_%s%s" % (

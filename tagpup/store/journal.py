@@ -53,7 +53,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from tagpup.store import db, people, schema
+from tagpup.store import db, file_journal, people, schema
 from tagpup.store import photos as store_photos
 
 logger = logging.getLogger(__name__)
@@ -731,6 +731,29 @@ def _forward(conn, operation, changes, summary):
     return change_id
 
 
+def record(conn, operation, changes, summary=None, schema_version=None):
+    """Record rows the caller has already written as an applied change, without writing
+    them: a migration's (tagpup.store.schema), which its own SQL wrote and the runner's
+    watch saw. `changes` are RowChanges of tables in KEYS, in the order they were written
+    -- an insert's `new` and a delete's `old` the whole row, an update's the columns it
+    changed -- and may be none: the change then only says the operation ran.
+    `schema_version` is the version its rows belong to (the library's, without); an undo
+    at another is refused. `summary` is kept with it, counts and never names. The caller
+    holds the transaction and commits. Returns the change's id."""
+    for change in changes:
+        if change.table not in KEYS:
+            raise ValueError("%s is not a table a change records" % change.table)
+    rows = collections.Counter(change.table for change in changes)
+    now = _now()
+    change_id = conn.execute(
+        "INSERT INTO changes (operation, status, schema_version, created, applied, summary)"
+        " VALUES (?, 'applied', ?, ?, ?, ?)",
+        (operation, schema.version(conn) if schema_version is None else schema_version, now, now,
+         json.dumps(dict(summary or {}, rows=dict(rows)), sort_keys=True))).lastrowid
+    _record(conn, change_id, changes)
+    return change_id
+
+
 def apply(db_path, operation, edits, summary=None):
     """Apply `edits` to the library at `db_path` as one change named `operation`, with
     `summary` (counts, never names) kept with it. Refusal, with nothing written, when a
@@ -772,6 +795,11 @@ def _undo_in(conn, change_id):
     if row is None:
         raise Refusal(["there is no change %d" % change_id])
     _operation, status, version = row
+    if file_journal.has_table(conn) and conn.execute(
+            "SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone():
+        # Its rows follow its files: an undo rewrites the files, and they bring the rows.
+        raise Refusal(["change %d wrote photo files: it is undone file by file"
+                       " (tagpup.services.file_changes)" % change_id])
     if status == "pruned":
         raise Refusal(["change %d was pruned: its values are gone, so it cannot be undone" % change_id])
     if status == "derived_pending":
@@ -1002,8 +1030,9 @@ def operation(db_path, change_id):
 
 def history(db_path, limit=20, change_id=None, values=False):
     """The library's changes, newest first (or change `change_id` alone): id, operation,
-    status, schema version, when made, applied and undone, its summary, and how many rows
-    of each table it inserted, updated and deleted. One change also lists its row keys,
+    status, schema version, when made, applied and undone, its summary, how many rows
+    of each table it inserted, updated and deleted, and how many photo files it planned
+    in each state (tagpup.store.file_journal). One change also lists its row keys,
     and with `values` each column's old and new value (a BLOB by its size): these can
     hold names. [] for a library without a journal."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
@@ -1019,9 +1048,11 @@ def history(db_path, limit=20, change_id=None, values=False):
         for cid, operation, status, version, created, applied, undone, summary in found:
             entries.append({"id": cid, "operation": operation, "status": status, "schema_version": version,
                             "created": created, "applied": applied, "undone": undone,
-                            "summary": json.loads(summary) if summary else {}, "rows": {}})
+                            "summary": json.loads(summary) if summary else {}, "rows": {}, "files": {}})
         by_id = {entry["id"]: entry for entry in entries}
         ids = list(by_id)
+        for cid, states in file_journal.counts(conn, ids).items():
+            by_id[cid]["files"] = states
         for start in range(0, len(ids), CHUNK):
             chunk = ids[start:start + CHUNK]
             for cid, table, action, count in conn.execute(
@@ -1096,6 +1127,7 @@ def prune(db_path, days=RETENTION_DAYS, now=None):
             chunk = ids[start:start + CHUNK]
             marks = ",".join("?" * len(chunk))
             deleted += conn.execute("DELETE FROM change_rows WHERE change_id IN (%s)" % marks, chunk).rowcount
+            deleted += file_journal.prune(conn, chunk)
             conn.execute("UPDATE changes SET status = 'pruned' WHERE id IN (%s)" % marks, chunk)
         return len(ids), deleted
 

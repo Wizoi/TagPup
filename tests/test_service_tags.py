@@ -344,16 +344,27 @@ class AnIndexBehindItsFiles(unittest.TestCase):
         # b's file lost the tag to another program; its row still says it has it.
         files = {self.carries: ["Activity/Rowing"], self.stale: []}
 
+        class Files:
+            """ExifTool over `files`: each photo's keywords, read and written."""
+
+            def get_tags(self, photo_paths, tags=None):
+                return [{"SourceFile": p, "XMP:Subject": list(files[p])} for p in photo_paths]
+
+            def set_tags(self, photo_paths, tags=None, params=None):
+                if "XMP:Subject" in tags:
+                    files[photo_paths[0]] = list(tags["XMP:Subject"])
+
+            def execute(self, *args):
+                if "-XMP:Subject=" in args:
+                    files[args[-1]] = []
+
         @contextlib.contextmanager
         def session(**_options):
-            yield object()
+            yield Files()
 
-        for patcher in (mock.patch("tagpup.files.exiftool_session.ExifToolSession", session),
-                        mock.patch("tagpup.files.keywords.tags_in_file", lambda et, p: files[p]),
-                        mock.patch("tagpup.files.keywords.write_keywords",
-                                   lambda et, p, t: files.__setitem__(p, list(t)) or (t, t))):
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch("tagpup.files.exiftool_session.ExifToolSession", session)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_a_delete_takes_the_tag_out_of_the_tree(self):
         result = tags.delete(self.lib.library, self.node, "remove", None, "exiftool")

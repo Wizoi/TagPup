@@ -98,7 +98,8 @@ class ANewLibrary(SchemaTestCase):
         self.assertEqual([m.name for m in schema.MIGRATIONS], applied)
         self.assertEqual(schema.LATEST, schema.version(conn))
         self.assertEqual({"photos", "faces", "face_crops", "embeddings", "photo_people", "suggestions", "tag_taxonomy",
-                          "tag_embeddings", "generations", "schema_version", "changes", "change_rows", "settings"},
+                          "tag_embeddings", "generations", "schema_version", "changes", "change_rows", "settings",
+                          "change_files"},
                          tables(conn))
 
     def test_has_the_document_id_index(self):
@@ -162,11 +163,13 @@ class AnUnmigratedLibrary(SchemaTestCase):
         self.assertEqual(("Wren Halloway", 0), conn.execute("SELECT name, excluded FROM faces").fetchone())
 
     def test_is_copied_once_before_it_is_migrated(self):
-        # However many pending migrations rewrite data, one copy from before the first
-        # holds the library as it was for all of them: a second was another 3 GB of
-        # photo_index, and another of the five kept (#76).
-        another = schema.Migration(schema.LATEST + 1, "another rewrite", lambda conn: None, changes_data=True)
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS + (another,)):
+        # However many pending migrations destroy something, one copy from before the
+        # first holds the library as it was for all of them: a second was another 3 GB
+        # of photo_index, and another of the five kept (#76).
+        another = schema.Migration(schema.LATEST + 1, "another rewrite", lambda conn: None, schema.DESTRUCTIVE,
+                                   "a test's", (), schema.STANDARD)
+        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS + (another,)), \
+                mock.patch.object(schema, "LATEST", another.version):
             schema.ensure(self.db_path)
         self.assertEqual(1, len(os.listdir(os.path.join(self.dir, "backups"))))
 

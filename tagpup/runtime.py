@@ -29,7 +29,7 @@ import logging
 import threading
 
 from tagpup import config as tagpup_config
-from tagpup.services import search
+from tagpup.services import file_changes, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester as suggestions
 from tagpup.store import embeddings as store_embeddings
@@ -40,8 +40,15 @@ logger = logging.getLogger(__name__)
 def library_settings(library):
     """The library's settings (tagpup.services.settings.LibrarySettings), a library
     holding none stamped first: from the home's config.ini if it has one, else with the
-    defaults."""
-    return library_settings_service.of(library, tagpup_config.config_ini)
+    defaults.
+
+    The first time this process reads them, a change of photo files a crash left half
+    done is settled, with the ExifTool they name (tagpup.services.file_changes.settle_once):
+    the changes of rows are settled when the library is first opened (schema.ensure), but
+    files need ExifTool, which only the library's settings say where to find."""
+    settings = library_settings_service.of(library, tagpup_config.config_ini)
+    file_changes.settle_once(library, tagpup_config.exiftool_path(settings.exiftool))
+    return settings
 
 
 def peek_settings(library):

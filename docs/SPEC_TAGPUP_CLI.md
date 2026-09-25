@@ -40,7 +40,7 @@ The tool is built as a modular Python application with script wrappers. It relie
 - **`tagpup/services/identities.py` (Identity Clustering)**: Performs density-based clustering (**DBSCAN**) of a library's faces to resolve and assign names to visual identities based on co-occurrence tagging patterns, by the rules in `tagpup/core/clustering.py`.
 - **`tagpup/store/taxonomy.py` (Hierarchical Tag Taxonomy)**: Builds and updates a tree of all known hierarchical paths (e.g. `Family/Immediate/John Doe`). Resolves leaf tags to their ancestors.
 - **`tagpup/services/suggester.py` (Tag Suggestion Engine)**: Scores tags using cosine similarity of nearest visual neighbors and boosts matched tags if specific face embeddings are recognized in the target image. It is given its models.
-- **`tagpup/services/tagging.py` (`suggestion_writes`, `write_suggestions`)**: What `write` writes -- the tags at or above the score, and the caption made from them (`tagpup/core/suggesting.py`) -- written back to photos using ExifTool, and recorded in the index. Creates default `_original` backup files. The CLI reads the suggestions file, shows the preview and asks for confirmation.
+- **`tagpup/services/tagging.py` (`suggestion_writes`, `write_suggestions`)**: What `write` writes -- the tags at or above the score, and the caption made from them (`tagpup/core/suggesting.py`) -- written back to photos using ExifTool as one change of photo files (`tagpup/services/file_changes.py`), each file recorded in the index as it is written; `undo <change>` puts the files back. No `_original` copies are made. The CLI reads the suggestions file, shows the preview and asks for confirmation.
 
 ---
 
@@ -231,7 +231,7 @@ Writes suggested tags and descriptions back to photo file metadata using ExifToo
 - **Options**:
   - `-Live`: Write tags to files for real (actually modifies image files on disk).
   - `-MinScore FLOAT`: Write tags at or above this score (default: `0.60`, `tagpup.core.suggesting.OFFER_A_TAG`, the value TagPup shows a tag from).
-  - `--nobackup`: Avoid creating backup copies (`_original` files) during write operations.
+  - `--nobackup`: Kept for scripts that pass it; a write makes no `_original` copies. It is recorded as one change, which `undo` reverses.
 
 #### 4. `search`
 Semantic natural language query against indexed visual vectors.

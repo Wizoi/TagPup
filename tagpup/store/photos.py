@@ -177,59 +177,146 @@ def move_rows(db_path, renames):
     transaction, by id, through a placeholder, so a shuffle never collides with itself
     on the way.
     """
-    def rows_at(cursor, table, column, id_column, path):
-        where, params = paths.sql_equals(column, path)
-        return [r[0] for r in cursor.execute(
-            "SELECT %s FROM %s WHERE %s" % (id_column, table, where), params)]
-
-    def move(conn):
-        cursor = conn.cursor()
-        plan = dict(renames)
-        skipped = []
-        # Settle what moves first: skipping one rename can make another's
-        # destination occupied, so repeat until nothing changes.
-        changed = True
-        while changed:
-            changed = False
-            leaving = {paths.key(old) for old in plan}
-            arriving = set()
-            for old_path, new_path in list(plan.items()):
-                new_key = paths.key(new_path)
-                clash = new_key in arriving
-                if not clash and not paths.same(old_path, new_path) and new_key not in leaving:
-                    clash = bool(rows_at(cursor, "photos", "path", "id", new_path))
-                if clash:
-                    skipped.append((old_path, new_path))
-                    del plan[old_path]
-                    changed = True
-                    break
-                arriving.add(new_key)
-
-        staged = []
-        for n, (old_path, new_path) in enumerate(plan.items()):
-            # Its faces and vectors point at the row by id, and go with it.
-            photo_ids = rows_at(cursor, "photos", "path", "id", old_path)
-            # "<" cannot appear in a Windows file name, and this never outlives
-            # the transaction.
-            placeholder = "<moving %d>" % n
-            cursor.executemany("UPDATE photos SET path = ? WHERE id = ?",
-                               [(placeholder, photo_id) for photo_id in photo_ids])
-            staged.append((paths.stored(new_path), photo_ids))
-
-        moved = 0
-        for new_stored, photo_ids in staged:
-            for photo_id in photo_ids:
-                cursor.execute("UPDATE photos SET path = ? WHERE id = ?", (new_stored, photo_id))
-                moved += cursor.rowcount
-            date_photos(conn, photo_ids)   # a year may be in the new name
-        return moved, skipped
-
     moved, skipped = db.write_with_connection(
-        db_path, move, label="index rows for %d renamed photo(s)" % len(renames))
+        db_path, lambda conn: move_rows_in(conn, renames), label="index rows for %d renamed photo(s)" % len(renames))
     for old_path, new_path in skipped:
         logger.warning("Renamed %s to %s, but the index already has rows for the new "
                        "name; left both as they were.", old_path, new_path)
     return moved, skipped
+
+
+def _ids_at(cursor, path):
+    where, params = paths.sql_equals("path", path)
+    return [r[0] for r in cursor.execute("SELECT id FROM photos WHERE " + where, params)]
+
+
+def move_rows_in(conn, renames):
+    """move_rows on the caller's connection, in the caller's transaction: the file journal
+    marks a rename done in the transaction that moves its row. Returns (moved, skipped)."""
+    cursor = conn.cursor()
+    plan = dict(renames)
+    skipped = []
+    # Settle what moves first: skipping one rename can make another's
+    # destination occupied, so repeat until nothing changes.
+    changed = True
+    while changed:
+        changed = False
+        leaving = {paths.key(old) for old in plan}
+        arriving = set()
+        for old_path, new_path in list(plan.items()):
+            new_key = paths.key(new_path)
+            clash = new_key in arriving
+            if not clash and not paths.same(old_path, new_path) and new_key not in leaving:
+                clash = bool(_ids_at(cursor, new_path))
+            if clash:
+                skipped.append((old_path, new_path))
+                del plan[old_path]
+                changed = True
+                break
+            arriving.add(new_key)
+
+    staged = []
+    for n, (old_path, new_path) in enumerate(plan.items()):
+        # Its faces and vectors point at the row by id, and go with it.
+        photo_ids = _ids_at(cursor, old_path)
+        # "<" cannot appear in a Windows file name, and this never outlives
+        # the transaction.
+        placeholder = "<moving %d>" % n
+        cursor.executemany("UPDATE photos SET path = ? WHERE id = ?",
+                           [(placeholder, photo_id) for photo_id in photo_ids])
+        staged.append((paths.stored(new_path), photo_ids))
+
+    moved = 0
+    for new_stored, photo_ids in staged:
+        for photo_id in photo_ids:
+            cursor.execute("UPDATE photos SET path = ? WHERE id = ?", (new_stored, photo_id))
+            moved += cursor.rowcount
+        date_photos(conn, photo_ids)   # a year may be in the new name
+    return moved, skipped
+
+
+def rows_of(conn, photo_paths):
+    """{paths.key(path): (id, path as stored, document_id)} of each photo in
+    `photo_paths` the library has a row for. One indexed lookup a photo."""
+    found = {}
+    for photo_path in photo_paths:
+        where, params = paths.sql_equals("path", photo_path)
+        row = conn.execute("SELECT id, path, document_id FROM photos WHERE " + where + " LIMIT 1",
+                           params).fetchone()
+        if row:
+            found[paths.key(photo_path)] = tuple(row)
+    return found
+
+
+def follow_fields(conn, photo_path, written, stat=None, before=None):
+    """Make a photo's row say what the file journal just left in its file: `written` is
+    {field: value} of the fields written, forward, again after a crash, or back in an
+    undo (tagpup.services.file_changes). The caller commits, in the transaction that marks
+    the file done.
+
+    As record_tags does for a keyword write, and for every field: raw_metadata takes each
+    field the scan reads (fields.scan_reads; under its bare name too, where the scan
+    stored one), a cleared field taken out; the tags are derived again when a keyword
+    field was written, the captions when a caption field was, document_id follows the
+    identity. With `stat`, the file's new mtime and size, its vectors carried over
+    `before`, its stamp just before the write (_stamp). Without it -- a file read and not
+    written -- the stamp stays, so the scan still reads what the row does not say. The
+    photo's people and dates are rebuilt. Returns the photo's id, or None without a row.
+
+    Only the fields written are recorded, so a row never read from its file -- one
+    Suggest made -- is not stamped (_was_read), as record_tags does not stamp one: it
+    would claim to match a file whose other fields, its Date Taken first, it never held.
+    Its vectors still follow the file's new stamp."""
+    where, params = paths.sql_equals("path", photo_path)
+    row = conn.execute("SELECT id, raw_metadata, mtime, size FROM photos WHERE " + where + " LIMIT 1",
+                       params).fetchone()
+    if row is None:
+        return None
+    photo_id, raw_json, row_mtime, row_size = row
+    try:
+        raw = json.loads(raw_json) if raw_json else {}
+    except (TypeError, ValueError):
+        raw = {}
+    keywords = captions = False
+    identity = None
+    for field, value in written.items():
+        key = fields.read_key(field)
+        texts = fields.field_values(value)
+        if fields.scan_reads(key):
+            bare = key.split(":", 1)[1]
+            for name in (key, bare):
+                if name != key and name not in raw:
+                    continue
+                if not texts:
+                    raw.pop(name, None)
+                elif key in fields.LIST_FIELDS or len(texts) > 1:
+                    raw[name] = list(texts)
+                else:
+                    raw[name] = texts[0]
+        keywords = keywords or key in vocabulary.KEYWORD_FIELDS + vocabulary.HIERARCHY_FIELDS
+        captions = captions or key in vocabulary.CAPTION_FIELDS
+        if key.endswith(":DocumentID"):
+            identity = (texts[0] if texts else None,)
+    columns, values = ["raw_metadata"], [json.dumps(raw)]
+    if keywords:
+        columns.append("tags")
+        values.append(json.dumps(vocabulary.extract_tags(raw)))
+    if captions:
+        columns.append("captions")
+        values.append(json.dumps(vocabulary.extract_captions(raw)))
+    if identity is not None:
+        columns.append("document_id")
+        values.append(identity[0])
+    if stat is not None and _was_read(row_mtime, row_size):
+        columns += ["mtime", "size"]
+        values += [stat.st_mtime, stat.st_size]
+    conn.execute("UPDATE photos SET %s WHERE id = ?" % ", ".join("%s = ?" % c for c in columns),
+                 values + [photo_id])
+    if stat is not None:
+        embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
+    people.rebuild(conn, [photo_id])
+    date_photos(conn, [photo_id])
+    return photo_id
 
 
 def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None, before=None):

@@ -12,12 +12,20 @@ refused, not converted: the code that converted older libraries -- missing colum
 'Non Person' names, is_people -- ran on every open for months, had nothing left to
 convert, and retired on 2026-09-24.
 
+Each migration says what it is (ADDITIVE, DATA or DESTRUCTIVE) and names the checks it
+must pass; it runs in one transaction, and a failed check rolls it back (CheckFailed).
+What it takes first follows from its kind: nothing for one that adds, its rows recorded
+in the journal for one that changes data, one full backup for one that destroys. Every
+run is recorded in `changes` as "migration N: name" (docs/ARCHITECTURE.md, phase 7.5).
+A table is rebuilt only through `rebuild_table`, SQLite's twelve steps.
+
 `ensure` is called wherever a library is opened, including each request that names
 one. After the first time in a process it costs a stat.
 """
 import collections
 import logging
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -27,9 +35,28 @@ from tagpup.store import db
 
 logger = logging.getLogger(__name__)
 
-#: One step. `changes_data` says whether it rewrites what people decided or what files
-#: hold, which is worth a backup first; making a table, an index or a trigger is not.
-Migration = collections.namedtuple("Migration", "version name apply changes_data")
+#: What a migration is, which decides what it takes before it runs and what it leaves
+#: in the journal (docs/ARCHITECTURE.md, phase 7.5):
+#:
+#: - ADDITIVE adds tables, columns, indexes or triggers, and may fill a column it adds
+#:   from the row's own values. Nothing that was there changes: the runner watches every
+#:   row while it runs and refuses one that did. No backup.
+#: - DATA rewrites or moves values in rows of the tables the journal keys (journal.KEYS).
+#:   Every row it changes is recorded as a change of the journal, which an undo puts back
+#:   while no newer change has touched those rows and no later migration has run. An undo
+#:   puts the values back and leaves the version where it is, so the values it replaces
+#:   must be ones the code at its version still reads; if not, it is DESTRUCTIVE.
+#: - DESTRUCTIVE drops a column or a table, rebuilds a table -- whose rows cannot be
+#:   recorded one by one -- or loses information. One full backup first, taken under the
+#:   write lock; that copy is the only way back.
+ADDITIVE, DATA, DESTRUCTIVE = "additive", "data-changing", "destructive"
+KINDS = (ADDITIVE, DATA, DESTRUCTIVE)
+
+#: One step: its number and name, the function that makes it, its kind and why it is
+#: that kind (one line), the tables it writes or reshapes (`touches`, which the checks
+#: look at), and the checks that must pass before it commits. Every field is required:
+#: a migration that does not say what it is cannot be declared.
+Migration = collections.namedtuple("Migration", "version name apply kind why touches checks")
 
 
 def _columns(conn, table):
@@ -509,17 +536,496 @@ def _settings(conn):
     conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)")
 
 
+def _change_files(conn):
+    """Photo files in the journal: `change_files`, one row for each file a bulk edit
+    writes, and `changes.owner`, the process carrying a change out (tagpup.store.
+    file_journal; docs/ARCHITECTURE.md, phase 7.5). A batch of file writes cannot be one
+    transaction, so each file carries its own state -- planned, writing, done, conflict,
+    undone -- with the fields it held before and is to hold after, and a file a crash
+    left `writing` is settled by what it holds (tagpup.services.file_changes). Only adds,
+    so it needs no backup.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS change_files ("
+                 " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                 " change_id INTEGER NOT NULL REFERENCES changes(id),"
+                 " photo_id INTEGER,"
+                 " path TEXT NOT NULL,"
+                 " new_path TEXT,"
+                 " fields_before TEXT NOT NULL,"
+                 " fields_after TEXT NOT NULL,"
+                 " state TEXT NOT NULL CHECK (state IN ('planned', 'writing', 'done', 'conflict', 'undone')),"
+                 " note TEXT)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_change_files_change ON change_files(change_id)")
+    if "owner" not in _columns(conn, "changes"):
+        conn.execute("ALTER TABLE changes ADD COLUMN owner TEXT")
+
+
+# ---- What a migration holds true before it commits ----------------------------------------
+
+#: The runner's own tables: it writes them as it records each migration.
+RUNNER_TABLES = ("schema_version", "changes", "change_rows")
+
+#: Tables any migration may change and nothing records: the counters its triggers move
+#: (tagpup.store.generations) and each photo's people, derived and rebuilt
+#: (journal.DERIVED, which a test holds to this).
+UNWATCHED = ("generations", "photo_people")
+
+
+class CheckFailed(RuntimeError):
+    """A check a migration names, or one its kind implies, found something wrong before it
+    committed. Everything it did is rolled back. `check` is the check's name, `problems`
+    what it found: tables, counts and keys, never values."""
+
+    def __init__(self, check, problems, migration=None):
+        self.check, self.problems, self.migration = check, list(problems), migration
+        super().__init__(self._text())
+
+    def _text(self):
+        shown = "; ".join(self.problems[:5])
+        if len(self.problems) > 5:
+            shown += "; and %d more" % (len(self.problems) - 5)
+        where = ("Migration %d (%s) was not applied" % (self.migration.version, self.migration.name)
+                 if self.migration else "Nothing was changed")
+        return "%s: its check %r failed: %s" % (where, self.check, shown)
+
+    def of(self, migration):
+        """This failure, naming the migration it stopped."""
+        self.migration = migration
+        self.args = (self._text(),)
+        return self
+
+
+def _tables_now(conn):
+    return [name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            if not name.startswith("sqlite_")]
+
+
+def _quoted(name):
+    return '"%s"' % name.replace('"', '""')
+
+
+def _literal(text):
+    return "'%s'" % text.replace("'", "''")
+
+
+def _count(conn, table):
+    return conn.execute("SELECT COUNT(*) FROM %s" % _quoted(table)).fetchone()[0]
+
+
+def _require(check, problems):
+    if problems:
+        raise CheckFailed(check, problems)
+
+
+class Check:
+    """One thing a migration holds true. `before` reads, in the migration's transaction,
+    what `after` compares with; `after` returns what is wrong, [] when nothing is."""
+    name = ""
+
+    def before(self, conn, migration):
+        return None
+
+    def after(self, conn, migration, state):
+        return []
+
+
+class RowsKept(Check):
+    """The tables named -- without names, every table the library had but those in `but`
+    and those the migration drops -- have as many rows after as before.
+
+    Without names, an additive migration's are only the tables it touches: the runner's
+    watch refuses one that changed a row anywhere else, and counting every table, twice,
+    took 26 s on the owner's library under the write lock, most of it face_crops
+    (docs/findings.md, #272)."""
+
+    def __init__(self, *tables, but=()):
+        self.tables, self.but = tables, tuple(but)
+        self.name = "rows kept" + (" in " + ", ".join(tables) if tables else "")
+
+    def before(self, conn, migration):
+        present = set(_tables_now(conn))
+        tables = self.tables
+        if not tables:
+            among = migration.touches if migration.kind == ADDITIVE else present
+            tables = sorted(t for t in among if t not in RUNNER_TABLES and t not in self.but)
+        return {table: _count(conn, table) for table in tables if table in present}
+
+    def after(self, conn, migration, state):
+        present = set(_tables_now(conn))
+        problems = []
+        for table, was in state.items():
+            if table not in present:
+                if self.tables:
+                    problems.append("%s is gone" % table)
+                continue
+            now = _count(conn, table)
+            if now != was:
+                problems.append("%s had %d row(s) and has %d" % (table, was, now))
+        return problems
+
+
+class RowsNotFewer(RowsKept):
+    """The tables named have no fewer rows after than before: a migration that may add
+    rows to them (a photo row for a file only a face named) and must lose none."""
+
+    def __init__(self, *tables):
+        super().__init__(*tables)
+        self.name = "no rows lost in " + ", ".join(tables)
+
+    def after(self, conn, migration, state):
+        present = set(_tables_now(conn))
+        problems = []
+        for table, was in state.items():
+            now = _count(conn, table) if table in present else 0
+            if now < was:
+                problems.append("%s had %d row(s) and has %d" % (table, was, now))
+        return problems
+
+
+def _violations(conn, tables):
+    """Counter of (table, parent) -> rows of `tables`, and of every table naming one of
+    them, whose foreign key names a row that is not there (PRAGMA foreign_key_check)."""
+    present = set(_tables_now(conn))
+    named = {t for t in tables if t in present}
+    checked = set(named)
+    for table in present:
+        if any(row[2] in named for row in conn.execute("PRAGMA foreign_key_list(%s)" % _quoted(table))):
+            checked.add(table)
+    found = collections.Counter()
+    for table in sorted(checked):
+        for row in conn.execute("PRAGMA foreign_key_check(%s)" % _quoted(table)):
+            found[(row[0], row[2])] += 1
+    return found
+
+
+def _worse(before, after):
+    return ["%d row(s) of %s name a row of %s that is not there" % (after[key] - before.get(key, 0), key[0], key[1])
+            for key in sorted(after) if after[key] > before.get(key, 0)]
+
+
+class ForeignKeys(Check):
+    """PRAGMA foreign_key_check on the tables the migration touches and every table naming
+    one of them: no row names a row that is not there, but those that already did. The
+    runner writes with foreign keys off, so SQLite would not say."""
+    name = "foreign keys"
+
+    def before(self, conn, migration):
+        return _violations(conn, migration.touches)
+
+    def after(self, conn, migration, state):
+        return _worse(state, _violations(conn, migration.touches))
+
+
+class Integrity(Check):
+    """PRAGMA quick_check on each table the migration touches: its pages, its rows and
+    their constraints."""
+    name = "integrity"
+
+    def after(self, conn, migration, state):
+        present = set(_tables_now(conn))
+        problems = []
+        for table in migration.touches:
+            if table in present:
+                found = [row[0] for row in conn.execute("PRAGMA quick_check(%s)" % _quoted(table))]
+                if found != ["ok"]:
+                    problems += ["%s: %s" % (table, text) for text in found[:5]]
+        return problems
+
+
+class CropsMoved(Check):
+    """Migration 3: every face that held a crop has one in face_crops after."""
+    name = "every crop moved"
+
+    def before(self, conn, migration):
+        if "crop_image" not in _columns(conn, "faces"):
+            return None
+        return conn.execute("SELECT COUNT(*) FROM faces WHERE crop_image IS NOT NULL").fetchone()[0]
+
+    def after(self, conn, migration, state):
+        if state is None:
+            return []
+        moved = conn.execute("SELECT COUNT(*) FROM faces f JOIN face_crops c ON c.face_id = f.id").fetchone()[0]
+        return [] if moved >= state else ["%d face(s) held a crop and %d have one" % (state, moved)]
+
+
+#: Every migration names these two, and a count of rows; a test holds it to them.
+STANDARD = (ForeignKeys(), Integrity())
+
+
+def rebuild_table(conn, table, definition, copy=None, drop=(), then=()):
+    """Rebuild `table` as `definition` declares it -- what goes between the parentheses of
+    its CREATE TABLE -- by the twelve steps SQLite's documentation gives for a change
+    ALTER TABLE cannot make (sqlite.org/lang_altertable.html, "otheralter"). The one way a
+    migration rebuilds a table; `tests/test_migrations.py` holds every other to it.
+
+    The runner has done steps 1 and 2 -- foreign keys off, which only takes effect outside
+    a transaction, then the transaction -- and this refuses a connection that has not:
+    dropping the table with foreign keys on would first delete every row naming it.
+    `copy` maps each column of the new table to the expression that fills it from the old
+    (default: every column both have, by name). The indexes and triggers of the table,
+    and the triggers and views elsewhere that name it, are made again as they were but
+    those named in `drop`; `then` are statements run after, such as new indexes. Its
+    AUTOINCREMENT counter is kept, which dropping the table would reset to the highest id
+    left (#80). Step 10, foreign_key_check, runs here: a row naming one that is not there,
+    and did not before, refuses the rebuild (CheckFailed), as does a row not copied. The
+    caller commits (step 11). Returns the rows copied."""
+    # 1, 2. Foreign keys off, outside the transaction; then the transaction.
+    if conn.execute("PRAGMA foreign_keys").fetchone()[0]:
+        raise RuntimeError("Rebuilding %s with foreign keys on would delete every row naming it first;"
+                           " nothing was changed" % table)
+    if not conn.in_transaction:
+        raise RuntimeError("Rebuilding %s outside a transaction could leave it half made; nothing was changed"
+                           % table)
+    # 3. What goes with the table: its indexes and triggers, and every trigger or view
+    # elsewhere naming it, which would stop the rename at step 7 while the table is gone.
+    naming = re.compile("(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(table), re.IGNORECASE)
+    own, elsewhere = [], []
+    for kind, name, owner, sql in conn.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master"
+            " WHERE type IN ('index', 'trigger', 'view') AND sql IS NOT NULL").fetchall():
+        if owner == table and kind != "view":
+            own.append((kind, name, sql))
+        elif kind != "index" and naming.search(sql):
+            elsewhere.append((kind, name, sql))
+    violations = _violations(conn, [table])
+    counters = conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'").fetchone()
+    counter = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = ?", (table,)).fetchone() if counters else None
+    rows = _count(conn, table)
+    # 4. The new table.
+    new = "tagpup_rebuilt_%s" % table
+    conn.execute("CREATE TABLE %s (%s)" % (_quoted(new), definition))
+    # 5. Its rows.
+    old_columns = _columns(conn, table)
+    copy = dict(copy) if copy else {c: _quoted(c) for c in _columns(conn, new) if c in old_columns}
+    conn.execute("INSERT INTO %s (%s) SELECT %s FROM %s" % (
+        _quoted(new), ", ".join(_quoted(c) for c in copy), ", ".join(copy.values()), _quoted(table)))
+    copied = _count(conn, new)
+    if copied != rows:
+        raise CheckFailed("rows kept in %s" % table, ["%d of %d row(s) copied" % (copied, rows)])
+    # 6. The old table, and what names it elsewhere.
+    for kind, name, _sql in elsewhere:
+        conn.execute("DROP %s %s" % (kind.upper(), _quoted(name)))
+    conn.execute("DROP TABLE %s" % _quoted(table))
+    # 7. The new one in its place.
+    conn.execute("ALTER TABLE %s RENAME TO %s" % (_quoted(new), _quoted(table)))
+    # 8, 9. Its indexes and triggers, and the triggers and views elsewhere, again.
+    for _kind, name, sql in own + elsewhere:
+        if name not in drop:
+            conn.execute(sql)
+    for statement in then:
+        conn.execute(statement)
+    if counter:
+        if conn.execute("SELECT 1 FROM sqlite_sequence WHERE name = ?", (table,)).fetchone():
+            conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?", (counter[0], table))
+        else:
+            conn.execute("INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)", (table, counter[0]))
+    # 10. foreign_key_check, before the caller commits.
+    _require("foreign keys", _worse(violations, _violations(conn, [table])))
+    return copied
+
+
+def _same(a, b):
+    """Equal as SQLite stores them: 1 is not 1.0, nor b'1' '1' (journal._same)."""
+    return type(a) is type(b) and a == b
+
+
+class _Watch:
+    """Every row of every table the library has, as a migration changes it: TEMP triggers
+    on each, which the connection alone sees and which go with the transaction if it is
+    rolled back. What SQLite's session extension records, which is reachable from Python
+    only through APSW (tagpup.store.journal)."""
+
+    TABLE = "tagpup_migration_watch"
+
+    def __init__(self, conn):
+        self.conn = conn
+        self.columns = {t: _columns(conn, t) for t in _tables_now(conn)
+                        if t not in RUNNER_TABLES and t not in UNWATCHED}
+        conn.execute("CREATE TEMP TABLE %s (seq INTEGER PRIMARY KEY, action TEXT NOT NULL, tbl TEXT NOT NULL,"
+                     " rid INTEGER, col TEXT, old, new)" % self.TABLE)
+        self.triggers = []
+        for number, table in enumerate(sorted(self.columns)):
+            self._install(number, table, self.columns[table])
+
+    def _install(self, number, table, columns):
+        into = "INSERT INTO %s (action, tbl, rid, col, old, new)" % self.TABLE
+        name = _literal(table)
+        update = ["%s SELECT 'rekey', %s, OLD.rowid, NULL, NULL, NULL WHERE OLD.rowid IS NOT NEW.rowid;"
+                  % (into, name)]
+        delete = []
+        for column in columns:
+            q = _quoted(column)
+            update.append("%s SELECT 'update', %s, OLD.rowid, %s, OLD.%s, NEW.%s"
+                          " WHERE OLD.%s IS NOT NEW.%s OR typeof(OLD.%s) != typeof(NEW.%s);"
+                          % (into, name, _literal(column), q, q, q, q, q, q))
+            delete.append("%s VALUES ('delete', %s, OLD.rowid, %s, OLD.%s, NULL);" % (into, name, _literal(column), q))
+        insert = ["%s VALUES ('insert', %s, NEW.rowid, NULL, NULL, NULL);" % (into, name)]
+        for event, body in (("INSERT", insert), ("UPDATE", update), ("DELETE", delete)):
+            trigger = "tagpup_watch_%d_%s" % (number, event.lower())
+            self.conn.execute("CREATE TEMP TRIGGER %s AFTER %s ON main.%s BEGIN %s END"
+                              % (trigger, event, _quoted(table), " ".join(body)))
+            self.triggers.append(trigger)
+
+    def finish(self):
+        """([(table, rowid, before, after)] of every row not what it was, in the order it
+        was first written, and the tables a row of which moved to another rowid). `before`
+        is None for a row the migration made, `after` for one it deleted; an update's
+        `before` holds the columns it changed, a deleted row's every column. The triggers
+        and their table go."""
+        rows, order, moved = {}, [], set()
+        for action, table, rid, column, old in self.conn.execute(
+                "SELECT action, tbl, rid, col, old FROM temp.%s ORDER BY seq" % self.TABLE):
+            if action == "rekey":
+                moved.add(table)
+                continue
+            entry = rows.get((table, rid))
+            if entry is None:
+                entry = rows[(table, rid)] = (action, {})
+                order.append((table, rid))
+            if action != "insert":
+                entry[1].setdefault(column, old)
+        for trigger in self.triggers:
+            self.conn.execute("DROP TRIGGER IF EXISTS temp.%s" % trigger)
+        self.conn.execute("DROP TABLE temp.%s" % self.TABLE)
+
+        present = set(_tables_now(self.conn))
+        by_table = collections.defaultdict(list)
+        for table, rid in order:
+            by_table[table].append(rid)
+        now = {}
+        for table, rids in by_table.items():
+            if table not in present:
+                continue
+            columns = _columns(self.conn, table)
+            for start in range(0, len(rids), 500):
+                chunk = rids[start:start + 500]
+                for row in self.conn.execute("SELECT rowid, %s FROM %s WHERE rowid IN (%s)" % (
+                        ", ".join(_quoted(c) for c in columns), _quoted(table), ",".join("?" * len(chunk))), chunk):
+                    now[(table, row[0])] = dict(zip(columns, row[1:]))
+        seen = []
+        for table, rid in order:
+            first, before = rows[(table, rid)]
+            after = now.get((table, rid))
+            if first == "insert":
+                if after is not None:
+                    seen.append((table, rid, None, after))
+            elif after is None:
+                seen.append((table, rid, before, None))
+            else:
+                changed = {c: v for c, v in before.items() if c in after and not _same(v, after[c])}
+                if changed:
+                    seen.append((table, rid, changed, after))
+        return seen, sorted(moved)
+
+
+def _shape(conn):
+    return {table: _columns(conn, table) for table in _tables_now(conn)}
+
+
+def _dropped(conn, shape):
+    """What of `shape` -- tables and their columns -- the library no longer has."""
+    now = _shape(conn)
+    problems = []
+    for table, columns in sorted(shape.items()):
+        if table not in now:
+            problems.append("%s is gone" % table)
+        else:
+            problems += ["%s.%s is gone" % (table, c) for c in columns if c not in now[table]]
+    return problems
+
+
+def _tally(seen, moved):
+    """'<table>: n inserted, n updated, n deleted' of each table rows of which changed."""
+    counts = collections.defaultdict(collections.Counter)
+    for table, _rid, before, after in seen:
+        counts[table]["inserted" if before is None else "deleted" if after is None else "updated"] += 1
+    problems = ["%s: %s" % (table, ", ".join("%d %s" % (n, what) for what, n in sorted(c.items())))
+                for table, c in sorted(counts.items())]
+    return problems + ["%s: a row moved to another rowid" % table for table in moved]
+
+
+def _journal_rows(conn, seen, moved, made):
+    """(the journal's RowChanges for `seen`, and what of it the journal cannot record).
+    Every row of a table the migration made (`made`) is an insert."""
+    from tagpup.store import journal   # the journal imports this module
+    changes, unrecorded = [], collections.Counter()
+    for table in moved:
+        unrecorded["%s (a row moved to another rowid)" % table] += 1
+    for table, _rid, before, after in seen:
+        keys = journal.KEYS.get(table)
+        if keys is None:
+            unrecorded[table] += 1
+        elif before is None:
+            changes.append(journal.RowChange("insert", table, tuple(after[k] for k in keys), None, dict(after)))
+        elif after is None:
+            changes.append(journal.RowChange("delete", table, tuple(before[k] for k in keys), dict(before), None))
+        elif set(keys) & set(before):
+            unrecorded["%s (a row's key changed)" % table] += 1
+        else:
+            changes.append(journal.RowChange("update", table, tuple(after[k] for k in keys), dict(before),
+                                             {c: after[c] for c in before}))
+    for table in sorted(made):
+        if table in RUNNER_TABLES or table in UNWATCHED:
+            continue
+        columns = _columns(conn, table)
+        rows = conn.execute("SELECT %s FROM %s" % (", ".join(_quoted(c) for c in columns), _quoted(table))).fetchall()
+        keys = journal.KEYS.get(table)
+        if keys is None:
+            if rows:
+                unrecorded[table] += len(rows)
+            continue
+        for row in rows:
+            row = dict(zip(columns, row))
+            changes.append(journal.RowChange("insert", table, tuple(row[k] for k in keys), None, row))
+    return changes, ["%d row(s) of %s, which the journal does not record: declare it destructive" % (n, table)
+                     for table, n in sorted(unrecorded.items())]
+
+
 MIGRATIONS = (
-    Migration(1, "the tables as of 2026-09", _tables, changes_data=False),
-    Migration(2, "one generations table", _generations, changes_data=False),
-    Migration(3, "face crops in their own table", _face_crops, changes_data=True),
-    Migration(4, "photos by id", _photo_ids, changes_data=True),
-    Migration(5, "one embeddings table", _embeddings, changes_data=True),
-    Migration(6, "each photo's people in photo_people", _photo_people, changes_data=True),
-    Migration(7, "suggestions by photo", _suggestions, changes_data=True),
-    Migration(8, "when each photo was taken", _dates, changes_data=False),
-    Migration(9, "a journal of changes", _journal, changes_data=False),
-    Migration(10, "the library's settings", _settings, changes_data=False),
+    Migration(1, "the tables as of 2026-09", _tables, ADDITIVE,
+              "makes the tables and indexes a library lacks, IF NOT EXISTS; an older library is refused, not converted",
+              ("photos", "faces", "embedding_cache", "tag_taxonomy", "tag_embeddings"),
+              (RowsKept(),) + STANDARD),
+    Migration(2, "one generations table", _generations, DESTRUCTIVE,
+              "drops faces_generation and taxonomy_generation and their triggers, once their counts are carried over",
+              ("generations",),
+              (RowsKept(),) + STANDARD),
+    Migration(3, "face crops in their own table", _face_crops, DESTRUCTIVE,
+              "drops faces.crop_image once each crop is copied to face_crops: a dropped column is not recorded row by row",
+              ("faces", "face_crops"),
+              (RowsKept(but=("face_crops",)), CropsMoved()) + STANDARD),
+    Migration(4, "photos by id", _photo_ids, DESTRUCTIVE,
+              "rebuilds photos and faces, faces naming their photo by id, which cannot be recorded row by row",
+              ("photos", "faces"),
+              (RowsKept(but=("photos",)), RowsNotFewer("photos")) + STANDARD),
+    Migration(5, "one embeddings table", _embeddings, DESTRUCTIVE,
+              "drops embedding_cache and photos.embedding, leaving out vectors no model names and those of photos gone",
+              ("embeddings", "photos"),
+              (RowsKept(),) + STANDARD),
+    Migration(6, "each photo's people in photo_people", _photo_people, DESTRUCTIVE,
+              "drops photos.people for rows the rule rebuilds: a name the list held that nothing else gives is lost",
+              ("photo_people", "photos"),
+              (RowsKept(),) + STANDARD),
+    Migration(7, "suggestions by photo", _suggestions, DATA,
+              "takes a file's saved suggestions in as rows, with a photo row for a file on disk that had none",
+              ("photos", "suggestions"),
+              (RowsKept(but=("photos", "suggestions")), RowsNotFewer("photos")) + STANDARD),
+    Migration(8, "when each photo was taken", _dates, ADDITIVE,
+              "adds photos.taken and photos.year, filled from each row's own metadata and path; nothing else changes",
+              ("photos",),
+              (RowsKept(),) + STANDARD),
+    Migration(9, "a journal of changes", _journal, ADDITIVE,
+              "adds the journal's tables, changes and change_rows, empty",
+              ("changes", "change_rows"),
+              (RowsKept(),) + STANDARD),
+    Migration(10, "the library's settings", _settings, ADDITIVE,
+              "adds the settings table, empty",
+              ("settings",),
+              (RowsKept(),) + STANDARD),
+    Migration(11, "photo files in the journal", _change_files, ADDITIVE,
+              "adds the change_files table, empty, and the column changes.owner, NULL in every row",
+              ("change_files", "changes"),
+              (RowsKept(),) + STANDARD),
 )
 
 LATEST = MIGRATIONS[-1].version
@@ -566,8 +1072,9 @@ def ensure(db_path):
 
     Returns the names of the migrations applied: none, usually. Each runs in a
     transaction of its own, under the library's write lock, so two programs opening
-    the same library at once apply it once. One that rewrites data is preceded by a
-    backup, unless the library has no tables yet. A library this process has already
+    the same library at once apply it once, and a check it names that fails rolls it
+    back (CheckFailed). What each takes first follows from its kind (ADDITIVE, DATA,
+    DESTRUCTIVE); each is recorded in the journal. A library this process has already
     found current costs a stat and no connection.
 
     The first time a process opens a library, a change of the journal that a crash left
@@ -623,41 +1130,139 @@ def _ensure(db_path):
         if version(conn) >= LATEST:
             _drop_legacy_counters(db_path, conn)
             return []
-        applied = []
         with db.lock_for(db_path):
             conn.execute("BEGIN IMMEDIATE")
-            conn.execute("CREATE TABLE IF NOT EXISTS schema_version ("
-                         " version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)")
-            conn.commit()
-            # One copy, from before the first migration that rewrites data: it holds the
-            # library as it was for every one after it too.
-            backed_up = False
-            for migration in MIGRATIONS:
-                if version(conn) >= migration.version:
-                    continue
-                if migration.changes_data and not backed_up and _has_rows(conn):
-                    logger.info("Backed up to %s", db.backup(db_path, "migration-%d" % migration.version))
-                    backed_up = True
-                conn.execute("BEGIN IMMEDIATE")
-                try:
-                    # Again inside the transaction: another process may have got here first.
-                    if version(conn) >= migration.version:
-                        conn.rollback()
-                        continue
-                    migration.apply(conn)
-                    conn.execute("INSERT INTO schema_version (version, name, applied_at) VALUES (?, ?, ?)",
-                                 (migration.version, migration.name, time.strftime("%Y-%m-%d %H:%M:%S")))
-                    conn.commit()
-                except BaseException:
-                    conn.rollback()
-                    raise
-                logger.info("%s: migration %d, %s", db_path, migration.version, migration.name)
-                applied.append(migration.name)
-        return applied
+            try:
+                # A library with no tables yet is being made, not migrated: nothing to back
+                # up, watch or record.
+                made = not [t for t in _tables_now(conn) if t != "schema_version"]
+                conn.execute("CREATE TABLE IF NOT EXISTS schema_version ("
+                             " version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)")
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+            run = _Run(db_path, conn, made)
+            return [migration.name for migration in MIGRATIONS if run.migrate(migration)]
     finally:
         conn.close()
 
 
+class _Run:
+    """One pass of the runner over a library, under its write lock: the backup it has
+    taken, if any -- one, from before the first migration that needs it, holds the
+    library for every one after it too -- and the migrations that ran before the journal
+    existed to record them, recorded once it does (migration 9)."""
+
+    def __init__(self, db_path, conn, made):
+        self.db_path, self.conn, self.made = db_path, conn, made
+        self.backup = None
+        self.backed_up = False
+        self.unrecorded = []
+
+    def migrate(self, migration):
+        """Apply `migration` if the library has not had it. True when it was applied."""
+        conn = self.conn
+        if version(conn) >= migration.version:
+            return False
+        started = time.time()
+        # The first of SQLite's twelve steps: foreign keys off, which only takes effect
+        # outside a transaction. Dropping a table with them on deletes every row naming it.
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            # Again inside the transaction: another process may have got here first.
+            if version(conn) >= migration.version:
+                conn.rollback()
+                return False
+            from tagpup.store import journal   # the journal imports this module
+            journaled = migration.kind == DATA and not self.made and journal.has_journal(conn)
+            summary = {"kind": migration.kind}
+            if migration.kind == DESTRUCTIVE or (migration.kind == DATA and not journaled):
+                # A change of data the journal cannot hold yet (a library from before
+                # migration 9) is backed up like one that destroys.
+                summary["backup"] = self._backup(migration)
+            checks, rows = self._apply(migration, journaled)
+            summary["checks"] = checks
+            conn.execute("INSERT INTO schema_version (version, name, applied_at) VALUES (?, ?, ?)",
+                         (migration.version, migration.name, time.strftime("%Y-%m-%d %H:%M:%S")))
+            self._record(journal, migration, summary, rows)
+            conn.commit()
+        except CheckFailed as e:
+            conn.rollback()
+            raise e.of(migration) from None
+        except BaseException:
+            conn.rollback()
+            raise
+        logger.info("%s: migration %d, %s (%s), %.1fs", self.db_path, migration.version, migration.name,
+                    migration.kind, time.time() - started)
+        return True
+
+    def _backup(self, migration):
+        """The file name of the one backup of this run, taken now if it has not been: with
+        this connection holding the write lock, so the copy is the library as the
+        migration finds it. None for a library with nothing in it to lose."""
+        if not self.backed_up and _has_rows(self.conn):
+            self.backup = db.backup(self.db_path, "migration-%d" % migration.version)
+            logger.info("Backed up to %s", self.backup)
+        self.backed_up = True
+        return os.path.basename(self.backup) if self.backup else None
+
+    def _apply(self, migration, journaled):
+        """Run `migration` and its checks, in the transaction. Returns (the names of the
+        checks it passed, the journal's rows of what it changed if it is journaled)."""
+        conn = self.conn
+        states = [check.before(conn, migration) for check in migration.checks]
+        shape = _shape(conn) if migration.kind != DESTRUCTIVE else None
+        watching = journaled or (migration.kind == ADDITIVE and not self.made)
+        watch = _Watch(conn) if watching else None
+        try:
+            migration.apply(conn)
+        except sqlite3.OperationalError as e:
+            # A watched column dropped or renamed: the watch's triggers name it.
+            if watch and "tagpup_watch_" in str(e):
+                raise CheckFailed("nothing dropped", ["it altered a column the runner watches: %s" % e]) from None
+            raise
+        seen, moved = watch.finish() if watch else ([], [])
+        passed, rows = [], []
+        if shape is not None:
+            _require("nothing dropped", _dropped(conn, shape))
+            passed.append("nothing dropped")
+        if migration.kind == ADDITIVE and watch:
+            _require("nothing that was there changed", _tally(seen, moved))
+            passed.append("nothing that was there changed")
+        if journaled:
+            made = set(_tables_now(conn)) - set(shape)
+            rows, unrecorded = _journal_rows(conn, seen, moved, made)
+            _require("every change recorded", unrecorded)
+            passed.append("every change recorded")
+        for check, state in zip(migration.checks, states):
+            _require(check.name, check.after(conn, migration, state))
+            passed.append(check.name)
+        return passed, rows
+
+    def _record(self, journal, migration, summary, rows):
+        """Record the migration as a change of the journal, and any that ran before the
+        journal existed. A change with rows belongs to the version it made, and an undo
+        puts them back while the library is at it; one without is recorded at the version
+        before, so the journal refuses to undo it: a schema is not undone."""
+        if self.made:
+            return
+        self.unrecorded.append((migration, summary, rows))
+        if not journal.has_journal(self.conn):
+            return
+        for done, done_summary, done_rows in self.unrecorded:
+            journal.record(self.conn, "migration %d: %s" % (done.version, done.name), done_rows, done_summary,
+                           schema_version=done.version if done_rows else done.version - 1)
+        self.unrecorded = []
+
+
 def _has_rows(conn):
-    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    return "photos" in tables and conn.execute("SELECT 1 FROM photos LIMIT 1").fetchone() is not None
+    """Has the library anything a backup would keep: a row in any table but the record of
+    its migrations and the counters? Not only photos: a tree or a journal is worth one."""
+    for table in _tables_now(conn):
+        if table in ("schema_version", "generations"):
+            continue
+        if conn.execute("SELECT 1 FROM %s LIMIT 1" % _quoted(table)).fetchone():
+            return True
+    return False

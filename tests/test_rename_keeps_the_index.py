@@ -208,8 +208,14 @@ class TestTheRoutesActuallyDoIt(unittest.TestCase):
         from tagpup.services import photos
         from tagpup.web import tagpup_routes
 
+        from tagpup.services import file_changes
+
         self.assertIn("smart_rename(", inspect.getsource(tagpup_routes.folder_rename_photos))
-        self.assertIn("photos.move_rows(", inspect.getsource(photos.smart_rename),
+        # As a change of photo files, whose renames are marked done in the transaction
+        # that moves their rows (phase 7.5).
+        self.assertIn("file_changes.rename(", inspect.getsource(photos.smart_rename),
+                      "renaming no longer goes through the journal of photo files")
+        self.assertIn("photos.move_rows_in(", inspect.getsource(file_changes._record_renames),
                       "renaming no longer moves the photo's index rows")
 
     def test_saving_a_renamed_photo_moves_its_rows(self):
