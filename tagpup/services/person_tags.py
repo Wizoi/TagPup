@@ -20,7 +20,7 @@ scripts/merge_duplicate_person_tags.py and the MCP server's tool both call
 """
 from tagpup.core import vocabulary
 from tagpup.services import maintenance
-from tagpup.store import db
+from tagpup.store import db, journal
 from tagpup.store import photos as store_photos
 from tagpup.store import taxonomy as store_taxonomy
 
@@ -76,7 +76,7 @@ def _plan(library):
              "affected_photos": [photo_id for photo_id, _path in affected]},
         reveal={"duplicates": [(tag, duplicates[tag]) for tag in bare],
                 "affected_photos": [photo_path for _id, photo_path in affected]},
-        work=bare)
+        work=[(node_ids[tag], tag) for tag in bare])
 
 
 def remove_nodes(library, tags):
@@ -88,8 +88,9 @@ def remove_nodes(library, tags):
     return db.write_with_connection(library.path, delete, label="merge duplicate person tags")
 
 
-def _write(library, planned, result):
-    result.changed = remove_nodes(library, planned.work)
+def _edits(planned):
+    """Each bare node, by id, while it still spells the tag the plan found."""
+    return [journal.delete("tag_taxonomy", (node_id,), {"tag": tag}) for node_id, tag in planned.work]
 
 
 def _remaining(library):
@@ -104,6 +105,7 @@ def merge_duplicate_person_tags(library, apply=False):
     """Plan, and with `apply` make, the removal of every bare tag in `library`'s tree that
     duplicates a People path naming the same person. Photos are counted, not changed. A
     Result, on the maintenance scaffold: `changed` is tree nodes removed; refused when
-    the library has no tree."""
-    return maintenance.run(library, "merge-person-tags", _plan, _write, apply=apply,
+    the library has no tree, and when a node is not what the plan read or has nodes
+    under it. Applied as one change of the journal, undoable."""
+    return maintenance.run(library, "merge_duplicate_person_tags", _plan, _edits, apply=apply,
                            remaining=_remaining)

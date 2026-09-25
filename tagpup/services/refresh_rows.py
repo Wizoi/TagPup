@@ -31,7 +31,7 @@ from tagpup.core import paths
 from tagpup.core.vocabulary import extract_people, extract_tags, people_in_photo
 from tagpup.files.metadata import MetadataExtractor
 from tagpup.services import maintenance
-from tagpup.store import db
+from tagpup.store import db, journal
 from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
 from tagpup.store import taxonomy as store_taxonomy
@@ -122,13 +122,15 @@ def people_checker(conn):
     return missing
 
 
-def find_stale(conn, folder=None, seen=None, ids=None):
+def find_stale(conn, folder=None, seen=None, ids=None, found=None):
     """(rows whose file must be re-read, {path: captions} fixable from the row alone),
     each by the path as stored, of the library open on `conn`.
 
     `seen`, if given, is filled with each stale row's (mtime, size) as found here --
-    before any file is read. It is what the write checks the row still has. `ids`, if
-    given, is filled with the id of each row either kind names.
+    before any file is read. `found`, if given, with each named row's columns as found
+    here: {"mtime", "size", "tags", "captions", "raw_metadata"}, what the write checks
+    the row still has. `ids`, if given, is filled with the id of each row either kind
+    names.
     """
     stale, captions_only = {}, {}
     missing_people = people_checker(conn)
@@ -140,12 +142,17 @@ def find_stale(conn, folder=None, seen=None, ids=None):
             stale[row[0]] = reasons   # re-reading the file fixes its captions too
             if seen is not None:
                 seen[row[0]] = (row[1], row[2])
+            if found is not None:
+                found[row[0]] = {"mtime": row[1], "size": row[2], "tags": row[3], "captions": row[4],
+                                 "raw_metadata": row[5]}
             if ids is not None:
                 ids[row[0]] = row[7]
             continue
         fixed = distinct_captions(row[4])
         if fixed is not None:
             captions_only[row[0]] = fixed
+            if found is not None:
+                found[row[0]] = {"captions": row[4]}
             if ids is not None:
                 ids[row[0]] = row[7]
     return stale, captions_only
@@ -176,10 +183,11 @@ def read_files(conn, photo_paths, exiftool_path, progress=None):
     return records
 
 
-def differences(conn, path, record):
+def differences(conn, path, record, stored=None):
     """(the fields where `record`, read from the file, differs from the row stored under
-    `path`, the row's captions, the row's (mtime, size))."""
-    tags, people, captions, raw_json, mtime, size, doc_id = store_photos.row_as_recorded(conn, path)
+    `path`, the row's captions, the row's (mtime, size)). `stored` is the row as
+    store.photos.row_as_recorded gives it, when it has been read already."""
+    tags, people, captions, raw_json, mtime, size, doc_id = stored or store_photos.row_as_recorded(conn, path)
     changed = []
     if sorted(json.loads(tags or "[]")) != sorted(record["tags"]):
         changed.append("tags")
@@ -198,10 +206,11 @@ def differences(conn, path, record):
 
 def _planner(exiftool_path, folder, examples, progress):
     def plan(library):
-        records, to_write, fields, unreadable, shown, seen, ids = {}, [], Counter(), [], [], {}, {}
+        records, to_write, fields, unreadable, shown, ids = {}, [], Counter(), [], [], {}
+        found, identities = {}, {}
         conn = db.connect(db.readonly_uri(library.path), uri=True)
         try:
-            stale, captions_only = find_stale(conn, folder, seen, ids)
+            stale, captions_only = find_stale(conn, folder, ids=ids, found=found)
             reasons = dict(Counter(r for rs in stale.values() for r in rs).most_common())
             if progress is not None:
                 progress("found", {"stale": len(stale), "reasons": reasons,
@@ -213,9 +222,11 @@ def _planner(exiftool_path, folder, examples, progress):
                 if record is None or not record.get("raw_metadata"):
                     unreadable.append(path)
                     continue
-                changed, old_captions, _now = differences(conn, path, record)
+                stored = store_photos.row_as_recorded(conn, path)
+                changed, old_captions, _now = differences(conn, path, record, stored)
                 if changed:
                     to_write.append(path)
+                    identities[path] = stored[6]
                     fields.update(changed)
                     if "captions" in changed and len(shown) < examples:
                         shown.append((path, old_captions, record["captions"]))
@@ -230,50 +241,52 @@ def _planner(exiftool_path, folder, examples, progress):
                  "captions_only": [ids[p] for p in sorted(captions_only)],
                  "unreadable": [ids[p] for p in unreadable]},
             reveal={"examples": shown},
-            work=(records, to_write, captions_only, seen, ids))
+            work=(records, to_write, captions_only, found, identities, ids))
     return plan
 
 
-def _write(library, planned, result):
-    """Both kinds of fix in one transaction.
+def _edits(planned):
+    """Both kinds of fix, as one change.
 
-    `seen` is each row's (mtime, size) as the plan found it, before the files were read.
-    A row only takes the file's contents if it still has them: one the app saved while
-    this run was reading already describes something newer, and writing the older read
-    over it would take the save back. Such a row is skipped.
+    Each row is written only while it still has what the plan found before the files were
+    read (`found`): one the app saved while this run was reading already describes
+    something newer, and writing the older read over it would take the save back. That
+    row is skipped (the edits are skippable) and reported, and the rest are written: the
+    rows do not depend on each other, and refusing the whole change for one save threw
+    away minutes of reading, on a library in use perhaps every time. The next run reads
+    the skipped row again. The DocumentID is recorded only where the row has none, as the
+    indexer does.
     """
-    records, to_write, captions_only, seen, ids = planned.work
-
-    def store(conn):
-        from_files, left = 0, []
-        for path in to_write:
-            changed = store_photos.record_refreshed(conn, path, records[path], seen.get(path))
-            from_files += changed
-            if not changed:
-                left.append(path)
-        captions = 0
-        for path, fixed in captions_only.items():
-            captions += store_photos.set_captions(conn, path, fixed)
-        return from_files, captions, left
-
-    from_files, captions, left = db.write_with_connection(library.path, store,
-                                                          label="refresh rows from files")
-    result.changed = from_files + captions
-    result.details["changed"] = {"from_files": from_files, "captions": captions}
-    for path in left:
-        result.skip("photo %d" % ids[path], "changed after this run read its file")
+    records, to_write, captions_only, found, identities, ids = planned.work
+    edits = []
+    for path in to_write:
+        record, before = records[path], found[path]
+        values = {"tags": json.dumps(record["tags"]), "captions": json.dumps(record["captions"]),
+                  "raw_metadata": json.dumps(record["raw_metadata"]),
+                  "mtime": record["mtime"], "size": record["size"]}
+        expect = dict(before)
+        if identities.get(path) is None and record.get("document_id"):
+            values["document_id"] = record["document_id"]
+            expect["document_id"] = None
+        edits.append(journal.update("photos", (ids[path],), expect, values, kind="from_files", skippable=True))
+    for path, fixed in captions_only.items():
+        edits.append(journal.update("photos", (ids[path],), {"captions": found[path]["captions"]},
+                                    {"captions": json.dumps(fixed)}, kind="captions", skippable=True))
+    return edits
 
 
 def refresh_rows(library, exiftool_path, apply=False, folder=None, examples=5, progress=None):
     """Plan, and with `apply` make, the refresh of every row of `library` (or of those
     under `folder`) that no longer describes its file, reading the files with ExifTool at
     `exiftool_path`. A Result, on the maintenance scaffold: `changed` is rows changed,
-    from their files (details["changed"]["from_files"]) and captions alone ("captions").
+    from their files (details["changed"]["from_files"]) and captions alone ("captions"). Applied
+    as one change of the journal, undoable, of the rows written; a row changed after this
+    run read it is left as it is and listed in `skipped`.
 
     `examples` caps the captions shown under details["reveal"]["examples"]. `progress`,
     if given, is called progress(stage, counts): "found" once the rows are sorted, with
     counts of what was found, then "read" after each batch of files, with "done" and
     "total".
     """
-    return maintenance.run(library, "refresh", _planner(exiftool_path, folder, examples, progress),
-                           _write, apply=apply)
+    return maintenance.run(library, "refresh_rows", _planner(exiftool_path, folder, examples, progress),
+                           _edits, apply=apply, kinds=("from_files", "captions"))

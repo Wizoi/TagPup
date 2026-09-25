@@ -566,26 +566,6 @@ def row_as_recorded(conn, stored_path):
                         " p.document_id FROM photos p WHERE p.path = ?", (stored_path,)).fetchone()
 
 
-def record_refreshed(conn, stored_path, record, seen=None):
-    """Record what was read from a photo's file: tags, captions, raw_metadata, mtime,
-    size, and its document_id where the row has none, and rebuild its people from them.
-    With `seen` (mtime, size), only while the row still has them: a row the app saved
-    since describes something newer. Returns rows changed. The caller commits."""
-    guard, guard_params = "", ()
-    if seen is not None:
-        guard, guard_params = " AND mtime IS ? AND size IS ?", tuple(seen)
-    changed = conn.execute(
-        "UPDATE photos SET tags = ?, captions = ?, raw_metadata = ?, mtime = ?, size = ?,"
-        " document_id = COALESCE(document_id, ?) WHERE path = ?" + guard,
-        (json.dumps(record["tags"]), json.dumps(record["captions"]), json.dumps(record["raw_metadata"]),
-         record["mtime"], record["size"], record.get("document_id"), stored_path) + guard_params).rowcount
-    if changed:
-        refreshed = [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE path = ?", (stored_path,))]
-        people.rebuild(conn, refreshed)
-        date_photos(conn, refreshed)
-    return changed
-
-
 # ---- What relink_renamed_photos reads ---------------------------------------------------
 
 def all_paths(conn):

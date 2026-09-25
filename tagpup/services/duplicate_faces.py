@@ -22,7 +22,7 @@ import collections
 
 from tagpup.core import paths
 from tagpup.services import maintenance
-from tagpup.store import db
+from tagpup.store import db, journal
 from tagpup.store import faces as store_faces
 
 
@@ -118,14 +118,12 @@ def remove(library, face_ids):
                                     label="remove %d duplicate face row(s)" % len(face_ids))
 
 
-def _write(library, planned, result):
-    def delete(conn):
-        return store_faces.delete_if_unchanged(conn, planned.work)
-
-    # Only the copies still as the plan saw them: the library is copied between the plan
-    # and this write, and the app may name or exclude one meanwhile.
-    result.changed = db.write_with_connection(library.path, delete,
-                                              label="remove %d duplicate face row(s)" % len(planned.work))
+def _edits(planned):
+    """Each copy, by id, while it still carries what the plan saw: the app may name or
+    exclude one between the plan and the write, and then the change is refused. Its crop
+    goes with it, recorded (tagpup.store.journal.CASCADES)."""
+    return [journal.delete("faces", (face_id,), {"name": name, "name_source": source, "excluded": excluded})
+            for face_id, name, source, excluded in planned.work]
 
 
 def _remaining(library):
@@ -137,5 +135,6 @@ def dedupe_faces(library, apply=False):
     """Plan, and with `apply` make, the removal of every face row in `library` that
     copies another (same photo, same box) and knows no more than the copy kept. Faces
     whose copies disagree about a name, or a name and an exclusion, are counted and left
-    alone. A Result, on the maintenance scaffold: `changed` is face rows deleted."""
-    return maintenance.run(library, "dedupe-faces", _plan, _write, apply=apply, remaining=_remaining)
+    alone. A Result, on the maintenance scaffold: `changed` is face rows deleted.
+    Applied as one change of the journal, undoable."""
+    return maintenance.run(library, "dedupe_faces", _plan, _edits, apply=apply, remaining=_remaining)

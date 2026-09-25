@@ -176,6 +176,34 @@ The migrations applied to this library, one row each, in order (`tagpup.store.sc
 | `name` | TEXT | NOT NULL | What it did. |
 | `applied_at` | TEXT | NOT NULL | Local time it was applied, `YYYY-MM-DD HH:MM:SS`. |
 
+### 11. `changes` Table
+The journal: one row for each bulk edit applied to the library (`tagpup.store.journal`, migration 9; ARCHITECTURE.md, phase 7.5). A maintenance operation (`tagpup.services.maintenance`) records what it changed here instead of copying the whole library first. A change is applied under the write lock in one transaction, only where every row is still what its plan read, and marked `derived_pending`; the derived data it touched (each photo's people and dates) is then rebuilt and it is marked `applied`. A change a crash left `derived_pending` is finished the first time a process opens the library (`journal.settle`, from `schema.ensure`). An undo is the same with old and new swapped, refused when a row is not what the change left, when a newer change touched the same rows, or when `schema_version` has moved on. After `journal.RETENTION_DAYS` (90) pruning deletes a change's `change_rows` and keeps this row, `pruned`.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | The change; `tagpup_cli.py undo <id>` and the MCP `undo` tool name it. |
+| `operation` | TEXT | NOT NULL | What made it: `merge_duplicate_person_tags`, `dedupe_faces`, `refresh_rows`. |
+| `status` | TEXT | NOT NULL, one of `planned`, `applied`, `derived_pending`, `undone`, `failed`, `pruned` | Where it stands. `planned` and `failed` are for the photo-file stage of phase 7.5. |
+| `schema_version` | INTEGER | NOT NULL | The migration the library was at when it was made; an undo at another is refused. |
+| `created` | TEXT | NOT NULL | Local time it was made, `YYYY-MM-DD HH:MM:SS`. |
+| `applied` | TEXT | | When it was applied. |
+| `undone` | TEXT | | When it was undone; NULL while it stands. |
+| `summary` | TEXT | | JSON: the operation's counts and the rows it wrote per table. Never names; kept when the change is pruned. |
+
+### 12. `change_rows` Table
+What each change found and left, one row per changed column (`tagpup.store.journal`). An update records the columns it changed; an inserted or deleted row records every column. A delete records what it takes with it as deletes of their own: a face's crop, a photo's faces, vectors and suggestions (`journal.CASCADES`); a photo's people are derived and rebuilt instead, and a tag node with nodes under it is refused. Rows are keyed only by ids SQLite never hands out again (AUTOINCREMENT), so putting a deleted row back cannot meet a newer one.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | INTEGER | PRIMARY KEY | The order the rows were written in; an undo reverses it. |
+| `change_id` | INTEGER | NOT NULL, → `changes.id`, INDEXED | The change. |
+| `action` | TEXT | NOT NULL, `insert`, `update` or `delete` | What was done to the row: tells an insert from an update whose old values were NULL. |
+| `table_name` | TEXT | NOT NULL, INDEXED (with `row_key`) | The table: `photos`, `faces`, `tag_taxonomy`, `face_crops`, `embeddings` or `suggestions` (`journal.KEYS`). |
+| `row_key` | TEXT | NOT NULL | The row's key as a JSON list, `[123]` or `[123, "<model>"]`. |
+| `column_name` | TEXT | NOT NULL | The column. |
+| `old` | (none) | | The value before, as SQLite stored it: an integer, a real, text or a BLOB. No declared type, so nothing is converted. NULL for an insert. |
+| `new` | (none) | | The value after; NULL for a delete. |
+
 ---
 
 ## Entity-Relationship (ER) Diagram

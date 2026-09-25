@@ -9,9 +9,11 @@ people, many of them minors. An error says what went wrong without the paths or 
 an exception can carry, unless the call revealed them anyway.
 
 The write tools are the maintenance scripts' operations, the same services the scripts
-call. Each is a dry run unless called with apply=true; applying backs the library up
-once, which the service does -- a tool takes no backup of its own. A refused Result is
-an answer, not an error: nothing was written, and it says why.
+call. Each is a dry run unless called with apply=true: the dry run rehearses the change
+-- applies and undoes it inside a transaction rolled back -- and applying records it as
+one change of the library's journal, which `history` lists and `undo` takes back (a dry
+run too, unless applied). No tool copies the library. A refused Result is an answer, not
+an error: nothing was written, and it says why.
 
 Logging goes to data/logs/tagpup_mcp.log (tagpup.logs), never stdout: over stdio,
 stdout carries the protocol and nothing else.
@@ -29,6 +31,7 @@ from tagpup.core import library as libraries
 from tagpup.core.library import Library
 from tagpup.core.result import NotFound, Refused
 from tagpup.services import duplicate_faces, inspect, person_tags, refresh_rows
+from tagpup.services import journal as library_journal
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +39,11 @@ logger = logging.getLogger(__name__)
 INSTRUCTIONS = (
     "Questions about a TagPup photo library: what it holds, photos by folder, tag or "
     "person, a photo's row against its file, the faces in a photo, the consistency checks "
-    "tools/doctor.py runs, rows whose file is gone, and the plan of a query; and three "
+    "tools/doctor.py runs, rows whose file is gone, and the plan of a query; three "
     "maintenance operations (refresh_rows, merge_duplicate_person_tags, dedupe_faces), each "
-    "a dry run unless called with apply=true, which backs the library up first. Call "
+    "a rehearsal unless called with apply=true, which records it as one change of the "
+    "library's journal; and the journal itself: `history`, `undo` (a rehearsal unless "
+    "applied) and `prune_journal`. Call "
     "`libraries` first; every other tool names one of them. Answers give counts and ids. "
     "Paths, names and tags -- tags name people -- are given only with reveal=true: the "
     "library is photographs of real people, many of them minors. Ask for them only when "
@@ -54,17 +59,20 @@ WRITES = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHin
 REVEAL = " Names, paths and tags only with reveal=true."
 
 #: How a write tool's description ends: what `apply` does.
-APPLY = (" The default is a dry run, which changes nothing and takes no backup; apply=true "
-         "backs the library up once (into its backups folder) and then writes. `changed` is "
-         "what the write changed, read from the database, not what was planned.")
+APPLY = (" The default is a dry run: it rehearses the change -- applies it and undoes it inside a "
+         "transaction rolled back -- and `rehearsal` says whether the undo restored every row "
+         "exactly; nothing is written. apply=true writes it as one change of the library's journal, "
+         "only where every row is still what the plan read (else it is refused, naming the rows), "
+         "and `change` is its id, which `undo` takes back. `changed` is what the write changed, read "
+         "from the database, not what was planned.")
 
 
 def written(result, library, reveal=False, limit=inspect.LIMIT):
     """A maintenance Result as a tool's answer: what it changed, attempted, skipped and
     failed, whether it was refused and why, and its details' counts, ids (each list up to
-    `limit`), backup and remaining. What the details keep for a person to see -- paths,
-    names, captions -- and where the backup went only with `reveal`; without it, the
-    backup is named by its file alone, and the library's path in a refusal by its name."""
+    `limit`), the change it was recorded as, the rehearsal of a dry run, and remaining.
+    What the details keep for a person to see -- paths, names, captions -- only with
+    `reveal`; without it, the library's path in a refusal is given by its name."""
     details = result.details
     answer = {"ok": result.ok, "dry_run": details.get("dry_run", True), "refused": result.refused,
               "attempted": result.attempted, "changed": result.changed,
@@ -76,8 +84,9 @@ def written(result, library, reveal=False, limit=inspect.LIMIT):
             answer.setdefault("ids_not_listed", {})[what] = len(ids) - limit
     if "changed" in details:
         answer["changed_by_kind"] = details["changed"]
-    backup = details.get("backup")
-    answer["backup"] = backup if reveal or not backup else os.path.basename(backup)
+    answer["change"] = details.get("change")
+    if "rehearsal" in details:
+        answer["rehearsal"] = details["rehearsal"]
     if reveal:
         answer["reveal"] = details.get("reveal", {})
     elif answer["refused"]:
@@ -238,6 +247,45 @@ def build():
             found = find_library(library)
             return written(duplicate_faces.dedupe_faces(found, apply=apply), found, reveal, limit)
         return _answer(act, reveal)
+
+    @tool("The library's journal: every change a maintenance operation applied, newest first (up to "
+          "`limit`), each with its id, operation, status (applied, derived_pending, undone, pruned), "
+          "the schema version it was made at, when it was made, applied and undone, its summary "
+          "(counts), and how many rows of each table it inserted, updated and deleted. With `change`, "
+          "that change alone and the keys (ids) of every row it wrote; with reveal=true too, each "
+          "column's value before and after (a BLOB by its size), which can name people. Changes stay "
+          "undoable for %d days; then pruning keeps the summary and drops the values."
+          % library_journal.RETENTION_DAYS)
+    def history(library: str, change: Optional[int] = None, reveal: bool = False,
+                limit: int = 20) -> dict[str, Any]:
+        return _answer(lambda: library_journal.history(find_library(library), change, reveal, limit), reveal)
+
+    @write_tool("Undo a change of the library's journal, by its id (`history` lists them). The default "
+                "is a dry run: it rehearses the undo -- undoes the change and applies it again inside a "
+                "transaction rolled back -- and says whether that restored every row exactly. "
+                "apply=true writes it back, only where every row is still what the change left; it is "
+                "refused, naming what stands in the way, when a row has changed since, when a newer "
+                "change touched the same rows, or when the schema has moved on. `changed` is the rows "
+                "written back. An open TagPup or TagTuner page shows what it held until it is reloaded. "
+                "Answers name tables, row ids and columns, never values.")
+    def undo(library: str, change: int, apply: bool = False) -> dict[str, Any]:
+        def act():
+            found = find_library(library)
+            return written(library_journal.undo(found, change, apply=apply), found)
+        return _answer(act)
+
+    @write_tool("Prune the library's journal: the changes older than `days` (%d unless given) keep their "
+                "summary and lose their values, and can no longer be undone. The default is a dry run "
+                "saying how many changes and values it would take away; apply=true does it."
+                % library_journal.RETENTION_DAYS)
+    def prune_journal(library: str, days: int = library_journal.RETENTION_DAYS,
+                      apply: bool = False) -> dict[str, Any]:
+        def act():
+            found = find_library(library)
+            result = library_journal.prune(found, days, apply=apply)
+            return {"ok": result.ok, "dry_run": not apply, "changes": result.attempted,
+                    "pruned": result.changed, "values": result.details["values"], "days": days}
+        return _answer(act)
 
     return server
 

@@ -16,7 +16,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.services import duplicate_faces  # noqa: E402
+from tagpup.services import duplicate_faces, maintenance  # noqa: E402
+
+
+def reported(result):
+    """Print what was skipped and what failed; 1 when anything failed, else 0."""
+    lines = maintenance.skipped(result) + maintenance.failed(result)
+    if lines:
+        print()
+    for line in lines:
+        print(line)
+    return 1 if result.errors else 0
 
 
 def main(argv=None):
@@ -44,18 +54,23 @@ def main(argv=None):
         print("   %-50s %s" % (os.path.basename(str(photo_path))[:50], " vs ".join(names)))
 
     if result.details["dry_run"]:
-        print("\nNothing was changed. Re-run with --apply to write it.")
-        return
+        print("\n%s" % maintenance.rehearsed(result))
+        print("Nothing was changed. Re-run with --apply to write it.")
+        return reported(result)
     if not result.attempted:
         print("\nNothing to remove.")
-        return
+        return 0
 
-    print("\nbacked up to %s" % result.details["backup"])
+    if result.refused:
+        raise SystemExit(result.refused)
+    print("\n%s" % maintenance.recorded(result, args.db))
     print("\nremoved %d row(s)." % result.changed)
-    remaining = result.details["remaining"]
-    print("duplicates remaining: %d; disagreements remaining: %d"
-          % (remaining["redundant"], remaining["disputed"]))
+    remaining = result.details.get("remaining")
+    if remaining is not None:
+        print("duplicates remaining: %d; disagreements remaining: %d"
+              % (remaining["redundant"], remaining["disputed"]))
+    return reported(result)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

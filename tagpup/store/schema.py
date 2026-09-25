@@ -461,6 +461,39 @@ def _dates(conn):
     photos.date_photos(conn)
 
 
+def _journal(conn):
+    """The journal: `changes` and `change_rows` (tagpup.store.journal; docs/ARCHITECTURE.md,
+    phase 7.5). Every bulk edit is recorded as what it found and what it left, one row per
+    changed column, so it can be undone where the rows are still what it left, and
+    rehearsed before it is applied. A bulk operation copied the whole library first
+    instead (db.backup: 1.4 GB for photo_index, five kept) and could be undone only by
+    restoring that copy over everything done since.
+
+    `old` and `new` are declared with no type: a column without one keeps each value as
+    it was given -- an integer, a real, text or a BLOB -- where any declared type would
+    convert some of them. `action` and the row's `id` are the plan's additions: the
+    first tells an inserted row from an updated one whose old values were NULL, the
+    second is the order the rows were written in, which an undo reverses. Only adds
+    tables, so it needs no backup and works from migration 7 or 8 alike.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS changes ("
+                 " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                 " operation TEXT NOT NULL,"
+                 " status TEXT NOT NULL CHECK (status IN"
+                 " ('planned', 'applied', 'derived_pending', 'undone', 'failed', 'pruned')),"
+                 " schema_version INTEGER NOT NULL,"
+                 " created TEXT NOT NULL, applied TEXT, undone TEXT, summary TEXT)")
+    conn.execute("CREATE TABLE IF NOT EXISTS change_rows ("
+                 " id INTEGER PRIMARY KEY,"
+                 " change_id INTEGER NOT NULL REFERENCES changes(id),"
+                 " action TEXT NOT NULL CHECK (action IN ('insert', 'update', 'delete')),"
+                 " table_name TEXT NOT NULL, row_key TEXT NOT NULL, column_name TEXT NOT NULL,"
+                 " old, new)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_change_rows_change ON change_rows(change_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_change_rows_row ON change_rows(table_name, row_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_changes_status ON changes(status)")
+
+
 MIGRATIONS = (
     Migration(1, "the tables as of 2026-09", _tables, changes_data=False),
     Migration(2, "one generations table", _generations, changes_data=False),
@@ -470,6 +503,7 @@ MIGRATIONS = (
     Migration(6, "each photo's people in photo_people", _photo_people, changes_data=True),
     Migration(7, "suggestions by photo", _suggestions, changes_data=True),
     Migration(8, "when each photo was taken", _dates, changes_data=False),
+    Migration(9, "a journal of changes", _journal, changes_data=False),
 )
 
 LATEST = MIGRATIONS[-1].version
@@ -519,6 +553,9 @@ def ensure(db_path):
     the same library at once apply it once. One that rewrites data is preceded by a
     backup, unless the library has no tables yet. A library this process has already
     found current costs a stat and no connection.
+
+    The first time a process opens a library, a change of the journal that a crash left
+    `derived_pending` is finished (tagpup.store.journal.settle).
     """
     key = db._key(db_path)
     identity = _identity(db_path)
@@ -526,6 +563,8 @@ def ensure(db_path):
         if identity is not None and _current.get(key) == identity:
             return []
     applied = _ensure(db_path)
+    from tagpup.store import journal   # the journal imports this module
+    journal.settle_once(db_path)
     with _current_guard:
         _current[key] = _identity(db_path)
     return applied

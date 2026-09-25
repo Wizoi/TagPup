@@ -216,17 +216,27 @@ only itself; it once cost 500 files their metadata.
 
 ## Maintenance scripts
 
-All of these are dry-run by default and take `--apply` to write, and back the database
-up first through `db.backup()`: SQLite's backup API, into `backups/` beside the library
-(`data/backups/` for the libraries in `data/`). Each library keeps its newest five
-(`db.KEEP_BACKUPS`); making a sixth deletes the oldest.
+All of these are dry-run by default and take `--apply` to write.
 
 Three of them are thin entry points on one scaffold, `tagpup.services.maintenance`: the
-operation plans (reads only), and with `--apply` the scaffold backs the library up once
-and writes, and returns a `Result` whose `changed` is what the write changed, read from
-the database, not what was planned. The MCP server (`tagpup.mcp`) calls the same
-services as write tools, a dry run unless called with `apply=true`, showing paths and
-names only with `reveal=true`.
+operation plans (reads only), and its dry run rehearses the change -- applies and undoes
+it inside a transaction that is rolled back, and says whether the undo restored every
+row exactly. With `--apply` the scaffold records the change in the library's journal
+(`tagpup.store.journal`; the `changes` and `change_rows` tables, DATABASE.md) instead of
+copying the library: applied only where every row is still what the plan read, else
+refused whole, naming the rows. It returns a `Result` whose `changed` is what the write
+changed, read from the database, not what was planned, and whose `details["change"]`
+is the change's id. `tagpup_cli.py history` lists the changes, `undo <id>` rehearses
+taking one back and `undo <id> --apply` does, and `prune-journal` lets changes older than
+90 days go. The MCP server (`tagpup.mcp`) calls the same services as write tools, and
+has `history`, `undo` and `prune_journal` too, each a dry run unless called with
+`apply=true`, showing paths and names only with `reveal=true`.
+
+The two scripts not on the scaffold still back the database up first through
+`db.backup()`: SQLite's backup API, into `backups/` beside the library
+(`data/backups/` for the libraries in `data/`). Each library keeps its newest five
+(`db.KEEP_BACKUPS`); making a sixth deletes the oldest. `tests/test_bulk_scripts_back_up.py`
+lists every place that may still copy a whole library, and why.
 
 | script | what it does |
 | --- | --- |
