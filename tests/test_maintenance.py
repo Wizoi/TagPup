@@ -319,18 +319,19 @@ class RefreshRows(refresh_fixture.RefreshRowsFromFiles):
         result = self.refresh()
         self.assertEqual(before, self.rows())
         self.assertEqual([], self.backups())
-        self.assertEqual((4, True, True), (result.details["rehearsal"]["rows"], result.details["rehearsal"]["exact"],
+        self.assertEqual((5, True, True), (result.details["rehearsal"]["rows"], result.details["rehearsal"]["exact"],
                                            result.details["rehearsal"]["derived_exact"]))
-        self.assertEqual(self.ids("garbled", "stale_keywords", "stale_stat"), sorted(result.details["ids"]["to_write"]))
+        self.assertEqual(self.ids("garbled", "stale_keywords", "stale_stat", "never_read"),
+                         sorted(result.details["ids"]["to_write"]))
         self.assertEqual(self.ids("twice"), result.details["ids"]["captions_only"])
-        self.assertEqual((4, 0), (result.attempted, result.changed))
+        self.assertEqual((5, 0), (result.attempted, result.changed))
 
     def test_an_apply_records_a_change_and_counts_rows_changed(self):
         result = self.refresh(apply=True)
         self.assertEqual([], self.backups())
         self.assertIsInstance(result.details["change"], int)
-        self.assertEqual((4, 4), (result.attempted, result.changed))
-        self.assertEqual({"from_files": 3, "captions": 1}, result.details["changed"])
+        self.assertEqual((5, 5), (result.attempted, result.changed))
+        self.assertEqual({"from_files": 4, "captions": 1}, result.details["changed"])
         self.assertEqual([], result.skipped)
 
     def test_the_librarys_people_are_read_once_a_run_not_once_a_photo(self):
@@ -340,7 +341,7 @@ class RefreshRows(refresh_fixture.RefreshRowsFromFiles):
         from tagpup.store import taxonomy
         with mock.patch.object(taxonomy, "people_vocabulary", wraps=taxonomy.people_vocabulary) as read:
             self.run_script()
-        self.assertEqual(3, len(self.read), "the fixture has three files to read")
+        self.assertEqual(4, len(self.read), "the fixture has four files to read")
         self.assertLessEqual(read.call_count, 2)
 
     def test_a_row_saved_after_the_read_is_skipped_by_id_and_the_rest_written(self):
@@ -357,10 +358,10 @@ class RefreshRows(refresh_fixture.RefreshRowsFromFiles):
         self.fake_batch_read = read_then_the_app_saves
         before = self.rows()
         result = self.refresh(apply=True)
-        # The saved row is skipped, by id, and keeps its save; the other three are written
+        # The saved row is skipped, by id, and keeps its save; the other four are written
         # (the whole change was refused, and a second run read every file again). A
         # second run reads the skipped one again.
-        self.assertEqual((4, 3, None), (result.attempted, result.changed, result.refused))
+        self.assertEqual((5, 4, None), (result.attempted, result.changed, result.refused))
         self.assertEqual([("photos %d" % self.ids("stale_stat")[0], "not what the plan read: mtime changed")],
                          result.skipped)
         self.assertEqual(2000000.0, self.rows()[self.files["stale_stat"]][3], "the app's save is kept")

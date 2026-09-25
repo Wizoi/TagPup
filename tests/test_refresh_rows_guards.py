@@ -57,12 +57,12 @@ class RefreshGuards(base.RefreshRowsFromFiles):
         self.assertIn("Skipped photos %d: not what the plan read: mtime, tags changed" % saved, out)
         self.assertIn("left for the next run: 1", out)
         # The rest were written, and recorded as one change without the skipped row.
-        self.assertIn("rows changed from their files: 2", out)
+        self.assertIn("rows changed from their files: 3", out)
         self.assertIn("rows with repeated captions removed: 1", out)
         self.assertNotEqual(before[self.files["garbled"]], rows[self.files["garbled"]])
         change = int(re.search(r"Recorded as change (\d+)", out).group(1))
         keys = journal.history(self.db, change_id=change)[0]["keys"]["photos"]
-        self.assertEqual(sorted([self.photo_id(self.files[n])] for n in ("garbled", "stale_stat", "twice")),
+        self.assertEqual(sorted([self.photo_id(self.files[n])] for n in ("garbled", "stale_stat", "twice", "never_read")),
                          sorted(keys))
         # And it is undone like any change: the saved row keeps its save.
         journal.undo(self.db, change)
