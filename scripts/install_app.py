@@ -238,6 +238,16 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
         return name, []
 
     copy_code(folder, REPO_ROOT, launchers=True)
+    # Checked where current.txt will send the launchers, by the version's name, before
+    # it moves: ae726d6 copied the code elsewhere under a variable that still said
+    # "the version's folder", a version without its programs became current, and
+    # every launcher failed.
+    version = os.path.join(destination, "versions", name)
+    missing = [script for script, _args in LAUNCHERS.values()
+               if not os.path.isfile(os.path.join(version, script))]
+    if missing:
+        raise RuntimeError("the new version %s lacks %s; the launchers still start %s"
+                           % (version, ", ".join(sorted(set(missing))), previous))
     with open(os.path.join(folder, "VERSION.txt"), "w", encoding="utf-8") as handle:
         handle.write("%s\nfrom %s\n" % (name, REPO_ROOT))
     for launcher, (script, args) in LAUNCHERS.items():

@@ -114,6 +114,17 @@ class InstallingANewCommitAtStart(InstallCase):
         self.assertEqual(first, install_app.read_current(self.dest))
 
 
+class AVersionWithoutItsProgramsIsNeverCurrent(InstallCase):
+    def test_the_launchers_keep_the_version_they_had(self):
+        from unittest import mock
+        first = self.install(name="20260925-115722-0dd8402")[0]
+        # The copy lands somewhere else, leaving the version's folder empty.
+        with mock.patch.object(install_app, "copy_code", side_effect=lambda dest, *a, **k: os.makedirs(dest)):
+            with self.assertRaises(RuntimeError):
+                self.install()
+        self.assertEqual(first, install_app.read_current(self.dest))
+
+
 class Shortcuts(InstallCase):
     """A .cmd cannot be pinned to the taskbar or given an icon; a shortcut can."""
 
