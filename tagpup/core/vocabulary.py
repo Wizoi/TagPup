@@ -166,14 +166,31 @@ def _values(meta, fields):
     return found
 
 
+#: IPTC's copy of a photo's keywords, under both names a read records it by.
+IPTC_KEYWORD_FIELDS = ("IPTC:Keywords", "Keywords")
+
+
+def _iptc_cuts(meta):
+    """The keywords IPTC holds only as its cut of one another field holds whole: IPTC
+    keeps 64 bytes of a keyword (tagpup.core.fields.as_read), XMP all of it."""
+    from tagpup.core import fields   # the one account of what IPTC keeps
+    others = _values(meta, tuple(f for f in KEYWORD_FIELDS + HIERARCHY_FIELDS if f not in IPTC_KEYWORD_FIELDS))
+    whole = set(others)
+    return {kept for kept in _values(meta, IPTC_KEYWORD_FIELDS)
+            if kept not in whole and any(fields.same_read("IPTC:Keywords", [kept], [other]) for other in whole)}
+
+
 def extract_tags(meta):
     """A photo's tags: every keyword once, in order.
 
     A flat keyword that is only a level of a hierarchical one on the same photo
     ("Family" beside "Family/Immediate/Cora Ingersoll") is left out: it is the path
-    written again in pieces, not a tag of its own.
+    written again in pieces, not a tag of its own. So is IPTC's cut of a keyword the
+    photo holds whole: it was read as a tag of its own, and every later keyword write
+    wrote it into every field (docs/findings.md, #278).
     """
-    tags = list(dict.fromkeys(t for t in _values(meta, KEYWORD_FIELDS + HIERARCHY_FIELDS) if t))
+    cuts = _iptc_cuts(meta)
+    tags = list(dict.fromkeys(t for t in _values(meta, KEYWORD_FIELDS + HIERARCHY_FIELDS) if t and t not in cuts))
     levels = {part for tag in tags if "/" in tag for part in segments(tag)}
     return [tag for tag in tags if "/" in tag or tag not in levels]
 
