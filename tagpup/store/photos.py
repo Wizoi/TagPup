@@ -256,18 +256,23 @@ def follow_fields(conn, photo_path, written, stat=None, before=None):
 
     As record_tags does for a keyword write, and for every field: raw_metadata takes each
     field the scan reads (fields.scan_reads; under its bare name too, where the scan
-    stored one), a cleared
-    field taken out; the tags are derived again when a keyword field was written, the
-    captions when a caption field was, document_id follows the identity. With `stat`, the
-    file's new mtime and size, its vectors carried over `before`, its stamp just before
-    the write (_stamp). Without it -- a file read and not written -- the stamp stays, so
-    the scan still reads what the row does not say. The photo's people and dates are
-    rebuilt. Returns the photo's id, or None without a row."""
+    stored one), a cleared field taken out; the tags are derived again when a keyword
+    field was written, the captions when a caption field was, document_id follows the
+    identity. With `stat`, the file's new mtime and size, its vectors carried over
+    `before`, its stamp just before the write (_stamp). Without it -- a file read and not
+    written -- the stamp stays, so the scan still reads what the row does not say. The
+    photo's people and dates are rebuilt. Returns the photo's id, or None without a row.
+
+    Only the fields written are recorded, so a row never read from its file -- one
+    Suggest made -- is not stamped (_was_read), as record_tags does not stamp one: it
+    would claim to match a file whose other fields, its Date Taken first, it never held.
+    Its vectors still follow the file's new stamp."""
     where, params = paths.sql_equals("path", photo_path)
-    row = conn.execute("SELECT id, raw_metadata FROM photos WHERE " + where + " LIMIT 1", params).fetchone()
+    row = conn.execute("SELECT id, raw_metadata, mtime, size FROM photos WHERE " + where + " LIMIT 1",
+                       params).fetchone()
     if row is None:
         return None
-    photo_id, raw_json = row
+    photo_id, raw_json, row_mtime, row_size = row
     try:
         raw = json.loads(raw_json) if raw_json else {}
     except (TypeError, ValueError):
@@ -302,7 +307,7 @@ def follow_fields(conn, photo_path, written, stat=None, before=None):
     if identity is not None:
         columns.append("document_id")
         values.append(identity[0])
-    if stat is not None:
+    if stat is not None and _was_read(row_mtime, row_size):
         columns += ["mtime", "size"]
         values += [stat.st_mtime, stat.st_size]
     conn.execute("UPDATE photos SET %s WHERE id = ?" % ", ".join("%s = ?" % c for c in columns),
