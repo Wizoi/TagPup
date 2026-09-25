@@ -309,7 +309,29 @@ through a script that fills a module slot (findings #112). See "The layers, revi
 Exit: no module in `scripts/` holds a model, SQL or a rule; the package imports no script; the web apps and the CLI get every model from a `Runtime`.
 
 ### Phase 6: Pages
-- `web/common/api.js` first, removing the monkeypatches; then the shared modules; then each page split by feature.
+Each page is one `app.js` of about 5,000 lines: one closure holding 130 to 160 variables
+and 90 to 130 functions, started on `DOMContentLoaded`. Thirteen helpers are written in
+both (`pathKey`, `samePath`, `leafOf`, `samePerson`, the picker's library memory, the tag
+and name checks), and the tests that hold them to one rule cut them out of each page's
+source text. Every request reaches the right library only because `fetch` and
+`HTMLImageElement.src` are monkeypatched to put the library in front of `/api/`.
+
+How the pages are tested decides how they are split. jsdom cannot load ES modules; a
+bundler is a build step, which this project does not have; and running the modules
+under node with jsdom's globals would put their timers on node's clock, which closing a
+page's window cannot stop -- the harness closes windows precisely so that polling ends.
+So the harness loads a page's modules the way the browser orders them and evaluates them
+in the page's window as one script, with `import` lines dropped and `export` words
+removed. A page's modules then share one scope in the tests, so a name is declared once
+per page; the loader refuses a second. The shared modules in `web/common/` hold no DOM
+state and are also imported directly by node tests.
+
+- [ ] The folders: `gui_tagpup/` becomes `web/tagpup/`, `gui/` becomes `web/tuner/`, and `web/common/` holds the shared modules. The factory serves a page's `index.html`, `style.css` and `*.js`, and `web/common/*.js` at `common/`, uncached and as `application/javascript`; `common` is a reserved library name. Each page loads `main.js` as a module, imported relative to the page (`./common/api.js`), so every request carries the library. What names the old folders follows: the snapshot, the installer, the tests, the documents.
+- [ ] The harness loads a page as modules (above); each `app.js` becomes `main.js`, unchanged inside, and all 528 page tests pass under it before anything else moves.
+- [ ] `web/common/api.js`: the library from the page's URL, `api.url(path)`, `api.json(path, options)` and `api.image(path)`. Every request goes through it, and the two monkeypatches go. `database-routing.test.mjs` holds the same behaviour through it.
+- [ ] The shared modules, each helper written once: `paths.js` (`pathKey`, `samePath`), `vocabulary.js` (`leafOf`, `rootOf`, `samePerson`, `photoAlreadyHas`, the tag, name and text checks), `library.js` (the picker and the library the browser remembers), `unsaved.js`, `dialogs.js`, `status.js`. The tests that cut helpers out of source text import these instead.
+- [ ] Each page split by feature -- TagPup: folder list, photo details, tagging, suggestions, tag tree, rename and time shift; TagTuner: photos, faces strip, Identify grid, Review People, indexing and the folder picker -- with the page's state in one store object instead of a closure's variables.
+- [ ] Guards: no page module over about 1,000 lines; no function declared in both pages' modules (it belongs in `web/common/`); the copies of server rules a page keeps (`tests/test_rules_have_one_owner.py`) are pinned in the module that holds them.
 
 Exit: no page file over about 1,000 lines, and the two pages share every common helper.
 
@@ -354,6 +376,8 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 2026-09-24 | The web layer is two Flask apps from one factory (`tagpup.web.app.create_app`), one per page, served by one Waitress process that hands each request to the app for the port it arrived on. The pages ask for the same paths (/api/people, /api/photo-file, eight in all) and mean different things by them; one app would ask which port at every such route. The sockets are bound by us with SO_EXCLUSIVEADDRUSE, since Waitress's own SO_REUSEADDR lets a second server bind a port a live one holds on Windows. |
 | 2026-09-24 | One composition root, `tagpup.runtime`, and the layers kept as they are. Letting `ml` read `config`, merging the infrastructure layers, and ports-and-adapters throughout were weighed and rejected ("The layers, revisited"). A service that uses a model is given it. |
 | 2026-09-24 | `PerLibrary` lives in `core`: a locked map keyed by library that web, jobs and the runtime all use. |
+| 2026-09-25 | The page tests load a page's ES modules into jsdom as one script, in import order, with `import` lines dropped and `export` words removed; a page's modules may not declare a name twice. jsdom cannot load modules, a bundler is a build step, and modules run under node would keep their timers on node's clock, which closing the page's window cannot stop. |
+| 2026-09-25 | The pages move to `web/tagpup/` and `web/tuner/`, sharing `web/common/`, imported relative to the page so every request carries its library. |
 
 ## Progress
 
@@ -366,6 +390,6 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 4.5. One owner for each rule | done, 2026-09-24 |
 | 5. One server | done, 2026-09-24 |
 | 5.5. Models in the package, one composition root | done, 2026-09-24 (shims for tests remain: findings #139) |
-| 6. Pages | not started |
+| 6. Pages | in progress, 2026-09-25 |
 | 7. MCP | not started |
 | 8. Sync | not started |
