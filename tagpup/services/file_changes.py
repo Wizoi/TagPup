@@ -163,6 +163,9 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
                 result.fail(row.path, "ExifTool reported it written, but it holds what it held before")
             file_journal.finish(library.path, change_id)
         except BaseException:
+            # The files recorded done so far are read back all the same: settling reads
+            # back only the files it writes (docs/findings.md, #286).
+            _read_back(et, library, wrote)
             file_journal.release(library.path, change_id)
             raise
     logger.info("%s: change %d, %s, wrote %d file(s)", library.path, change_id, operation, result.changed)
