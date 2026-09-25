@@ -11,8 +11,14 @@ library is photographs of real people, many of them minors.
 A stamp of a library's settings (tagpup.services.settings.STAMPS) is never undone: it
 is the library's first settings, and undone the library held none -- the next read
 stamped it again, from config.ini if one was still there.
+
+A change of photo files (tagpup.services.file_changes) is undone file by file, and its
+rows follow: a file that no longer holds what the change left is refused, named, and the
+rest are put back. Its rehearsal reads every file and writes none. Undoing one needs the
+library's ExifTool, which the caller names.
 """
 from tagpup.core.result import NotFound, Result
+from tagpup.services import file_changes
 from tagpup.services import settings as library_settings
 from tagpup.store import journal
 
@@ -30,11 +36,14 @@ def history(library, change_id=None, reveal=False, limit=20):
     return {"changes": entries, "retention_days": RETENTION_DAYS}
 
 
-def rehearse(library, change_id):
+def rehearse(library, change_id, exiftool_path=None):
     """Undo change `change_id` and apply it again inside a transaction rolled back. A
     Result: `attempted` is the rows the undo would write; details["rehearsal"] says
     whether the round trip restored every row exactly. Refused when the undo would be,
-    and for a stamp of the library's settings (NOT_UNDONE), which undo() refuses too."""
+    and for a stamp of the library's settings (NOT_UNDONE), which undo() refuses too.
+    A change of photo files is rehearsed by reading them (file_changes.rehearse_undo)."""
+    if file_changes.writes_files(library, change_id):
+        return file_changes.rehearse_undo(library, change_id, exiftool_path)
     result = Result(details={"dry_run": True, "change": change_id})
     if journal.operation(library.path, change_id) in library_settings.STAMPS:
         result.refuse(library_settings.NOT_UNDONE)
@@ -47,11 +56,15 @@ def rehearse(library, change_id):
     return result
 
 
-def undo(library, change_id, apply=False):
+def undo(library, change_id, apply=False, exiftool_path=None):
     """Undo change `change_id`: a rehearsal unless `apply`. Applied, a Result whose
     `changed` is the rows the undo wrote back; refused, naming the rows, the newer change
     or the schema in the way, with nothing written -- and when the rehearsal, which runs
-    first, finds the round trip does not restore every row exactly."""
+    first, finds the round trip does not restore every row exactly. A change of photo
+    files puts back every file still holding what it left, `changed` counting them, and
+    names the rest in its errors (file_changes.undo)."""
+    if file_changes.writes_files(library, change_id):
+        return file_changes.undo(library, change_id, exiftool_path, apply=apply)
     rehearsal = rehearse(library, change_id)
     if not apply or rehearsal.refused:
         return rehearsal

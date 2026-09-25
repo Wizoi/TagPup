@@ -44,10 +44,9 @@ FULL_COPIES = {
     os.path.join("tagpup", "store", "schema.py"): "a migration that rewrites data",
     # `index --reset` deletes the library; `compact` rewrites the whole file.
     "tagpup_cli.py": "a library deleted or rewritten whole",
-    # Writes photo files, not rows: phase 7.5's last stage records each file instead.
-    os.path.join("scripts", "backfill_document_ids.py"): "photo files, until their stage",
-    # Re-points rows; not yet on the maintenance scaffold (docs/findings.md).
-    os.path.join("scripts", "relink_renamed_photos.py"): "not yet on the scaffold",
+    # backfill_document_ids and relink_renamed_photos copied it too, until phase 7.5's
+    # photo-file stage (docs/findings.md, #193): each records changes of the journal now,
+    # the photo files it writes among them (tagpup.services.file_changes).
 }
 
 

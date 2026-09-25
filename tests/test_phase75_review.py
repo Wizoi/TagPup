@@ -245,10 +245,16 @@ class SkippableEdits(JournalLibrary):
 
     def test_only_the_refresh_skips(self):
         # Merging and deduplicating stay all or nothing: their rows depend on each other.
+        # Recording an identity a file holds, and re-pointing a dead row at its renamed
+        # file, are each one row's own business, as a refresh's rows are (phase 7.5).
         services = os.path.join(WORKSPACE_DIR, "tagpup", "services")
-        using = sorted(name for name in os.listdir(services) if name.endswith(".py")
-                       and "skippable=True" in open(os.path.join(services, name), encoding="utf-8").read())
-        self.assertEqual(["refresh_rows.py"], using)
+        using = []
+        for name in sorted(os.listdir(services)):
+            if name.endswith(".py"):
+                with open(os.path.join(services, name), encoding="utf-8") as handle:
+                    if "skippable=True" in handle.read():
+                        using.append(name)
+        self.assertEqual(["document_ids.py", "refresh_rows.py", "relink_photos.py"], using)
 
 
 class ScriptsReportErrors(JournalLibrary):

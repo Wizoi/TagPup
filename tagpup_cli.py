@@ -815,6 +815,13 @@ def _rows_line(rows):
                      for table, actions in sorted(rows.items())) or "no rows"
 
 
+def _files_line(files):
+    """{state: n} of a change's photo files as "photo files: 3 done, 1 conflict"."""
+    if not files:
+        return ""
+    return "photo files: %s" % ", ".join("%d %s" % (n, state) for state, n in sorted(files.items()))
+
+
 @cli.command()
 @click.option("--change", "change_id", type=int, default=None, help="One change, with the keys of every row it wrote.")
 @click.option("--limit", default=20, type=int, help="How many changes to list, newest first.")
@@ -832,10 +839,11 @@ def history(ctx, change_id, limit, reveal):
         console.print("The journal of %s is empty." % library.name)
         return
     for entry in found["changes"]:
-        console.print("%d  %s  %s  made %s%s  (schema %d)  %s" % (
+        console.print("%d  %s  %s  made %s%s  (schema %d)  %s%s" % (
             entry["id"], entry["operation"], entry["status"], entry["created"],
             ", undone %s" % entry["undone"] if entry["undone"] else "", entry["schema_version"],
-            _rows_line(entry["rows"])), markup=False, soft_wrap=True)
+            _rows_line(entry["rows"]) if entry["rows"] or not entry.get("files") else "",
+            _files_line(entry.get("files"))), markup=False, soft_wrap=True)
     if change_id is not None:
         entry = found["changes"][0]
         for table, keys in sorted(entry.get("keys", {}).items()):
@@ -851,6 +859,11 @@ def _say_rehearsal(result):
     rehearsal = result.details.get("rehearsal") or {}
     if result.refused:
         console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+    elif rehearsal and result.details.get("files"):
+        # A change of photo files: each read, none written.
+        console.print("Rehearsed: %d photo file(s) would be put back%s" % (
+            rehearsal["rows"], "." if rehearsal["exact"] else "; these would be refused, and left as they are: %s"
+            % "; ".join(rehearsal["differences"])), markup=False, soft_wrap=True)
     elif rehearsal:
         exact = rehearsal["exact"] and rehearsal["derived_exact"]
         console.print("Rehearsed: %d row(s); %s" % (
@@ -868,14 +881,16 @@ def undo(ctx, change_id, apply_):
     every row is still what the change left, and no newer change touched the same rows.
     A rehearsal unless --apply."""
     library = _existing_library(ctx)
-    result = library_journal.undo(library, change_id, apply=apply_)
+    result = library_journal.undo(library, change_id, apply=apply_,
+                                  exiftool_path=get_exiftool_path(library.path, read_only=True))
     _say_rehearsal(result)
     if result.refused:
         raise SystemExit(1)
     if not apply_:
         console.print("Nothing changed. --apply undoes it.")
         return
-    console.print("Undid change %d: %d row(s) written back." % (change_id, result.changed))
+    console.print("Undid change %d: %d %s written back." % (
+        change_id, result.changed, "file(s)" if result.details.get("files") else "row(s)"))
     for what, error in result.errors:
         console.print("[yellow]%s: %s[/yellow]" % (what, error))
 

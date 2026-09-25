@@ -191,3 +191,47 @@ def record_date_taken(raw_meta, date_taken):
         if field in METADATA_FIELDS:
             raw_meta[field] = value
     return raw_meta
+
+
+# ---- A field's value, as the file journal holds and compares it ------------------------
+
+#: The fields whose value is a list: a keyword field holds several, and ExifTool answers
+#: one of them alone as a bare value.
+LIST_FIELDS = ("XMP:Subject", "IPTC:Keywords", "XMP:HierarchicalSubject",
+               "XMP:PersonInImage", "XMP:RegionName")
+
+
+def read_key(field):
+    """The key ExifTool answers `field` under when it reads with -G (group family 0):
+    "XMP-xmpMM:DocumentID" is written under its own group and answered as
+    "XMP:DocumentID"; "XMP:Subject" is both."""
+    group, _, name = str(field).partition(":")
+    return "%s:%s" % (group.split("-", 1)[0], name) if name else field
+
+
+def field_values(value):
+    """A field's value as the journal keeps it: a list of texts, in the file's order,
+    blanks and empties left out. A field the file does not hold is []."""
+    if value is None:
+        return []
+    items = value if isinstance(value, (list, tuple)) else [value]
+    found = []
+    for item in items:
+        if item is None or isinstance(item, (bytes, dict)):
+            continue
+        text = str(item)
+        if text.strip():
+            found.append(text)
+    return found
+
+
+def same_values(a, b):
+    """Do two values of one field say the same, as a reader of the file sees it: the
+    same texts, trimmed, in any order? A keyword field's order is not a fact about the
+    photo."""
+    return sorted(t.strip() for t in field_values(a)) == sorted(t.strip() for t in field_values(b))
+
+
+def same_fields(held, wanted):
+    """Does a file holding `held` ({field: value}) hold every field of `wanted`?"""
+    return all(same_values(held.get(field), value) for field, value in wanted.items())

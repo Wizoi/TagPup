@@ -142,7 +142,7 @@ class Renaming(PhotoCase):
         self.assertTrue(os.path.exists(self.photo))
 
     def test_a_time_shift_is_whole_minutes(self):
-        with mock.patch("tagpup.files.times.shift_date_taken") as shift:
+        with mock.patch("tagpup.services.file_changes.write_fields") as shift:
             result = photos.shift_date_taken(self.lib.library, [self.photo], "ninety", "exiftool")
         self.assertEqual(result.refused, "A time shift is a whole number of minutes.")
         shift.assert_not_called()

@@ -305,13 +305,15 @@ class TestTimeShiftKeepsTheRealPaths(HandlerCase):
     def test_a_cold_folder_is_walked_and_returned_in_its_own_case(self):
         photo = self.make_file("IMG_0001.jpg")
         extractor = fake_extractor({"EXIF:Model": "Test Camera"})
-        # ExifTool answers a write with a summary line, which the shift counts.
+        # ExifTool answers the shift's read with the photo's date, in the spelling it
+        # answers every path in.
         session = MagicMock()
-        session.return_value.__enter__.return_value.execute.return_value = "    1 image files updated"
+        session.return_value.__enter__.return_value.get_tags.side_effect = lambda paths, tags=None: [
+            {"SourceFile": forward(p), "EXIF:DateTimeOriginal": "2024:07:04 10:00:00"} for p in paths]
         # The route reads the cold folder and the service reads it back, both through
         # tagpup.files.
         with patch("tagpup.files.metadata.MetadataExtractor", extractor), \
-                patch("tagpup.files.times.ExifToolSession", session):
+                patch("tagpup.files.exiftool_session.ExifToolSession", session):
             result = self.call("POST", "/api/folder/time-shift", {
                 "folder_path": forward(self.folder), "camera_model": "All Cameras",
                 "shift_minutes": 30})

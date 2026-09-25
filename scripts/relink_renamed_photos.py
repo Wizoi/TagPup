@@ -1,26 +1,18 @@
 """Point index rows at photos that were renamed under them.
 
-Renaming a photo outside TagPup leaves its index row behind: the row still names the
-old file, which no longer exists, so the photo looks unindexed while its row looks
-dead. Both halves are wrong, and the row is the valuable half -- it carries the
-photo's embedding and its faces, including the names somebody assigned by hand.
-
-Deleting those rows is the obvious move and the expensive one. In this library 78
-dead rows in kr-track hold 234 faces, 88 of them named: an afternoon of identifying
-people, thrown away to tidy up a path.
-
-They can be re-pointed instead, because TagPup's renamer records where a file came
-from in `XMP-xmpMM:PreservedFileName`. Matching that against the stem of each dead
-row's filename reconnects the row to the file:
+Renaming a photo outside TagPup leaves its index row behind, with the photo's embedding
+and its faces -- names given by hand among them. A dead row is matched to the renamed
+file beside it by the identity indexing recorded (the DocumentID), else by the name
+TagPup's renamer preserved (`XMP-xmpMM:PreservedFileName`):
 
     row:  .../2Z6A5820.jpg          (no such file)
     file: .../Meet - 01.jpg         PreservedFileName = 2Z6A5820.CR3
     ->    the row now names Meet - 01.jpg, with its faces and embedding intact
 
-Extensions are ignored on both sides: the preserved name is usually the RAW original
-(.CR3) while the indexed file was the JPEG derived from it.
-
-Run with --apply to write. Without it, nothing is changed and the plan is printed.
+What it finds and re-points is tagpup.services.relink_photos, on the maintenance
+scaffold: without --apply the change is rehearsed and nothing is written; with it, the
+rows are re-pointed as one change of the library's journal, which `tagpup_cli.py undo`
+takes back. No copy of the library is taken.
 """
 import argparse
 import os
@@ -29,231 +21,84 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
-from tagpup.files import images  # noqa: E402
-from tagpup.store import db as tagpup_db  # noqa: E402
-from tagpup import config as tagpup_config  # noqa: E402
-from tagpup.core import paths as photo_paths  # noqa: E402  -- not `paths`: the walks below use that name
-from tagpup.store import faces as store_faces  # noqa: E402
-from tagpup.store import photos as store_photos  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import maintenance, relink_photos  # noqa: E402
 
-
-
-
-def stem_of(path):
-    return os.path.splitext(os.path.basename(str(path)))[0].strip().lower()
-
-
-def dead_rows(conn):
-    """Index rows whose file is not on disk, keyed by the folder they claim."""
-    return [path for path in store_photos.all_paths(conn) if path and not os.path.exists(path)]
-
-
-def identities(folder, exiftool_path=None):
-    """Every photo in a folder, keyed by its DocumentID.
-
-    The better of the two signals, and the one that survives what the other does not:
-    a move between folders, a rename by a tool that knows nothing about TagPup, a
-    filename that collides with another photo's original. PreservedFileName only ever
-    worked for renames TagPup itself performed.
-    """
-    from tagpup.files.exiftool_session import ExifToolSession
-
-    paths = []
-    for root, _dirs, files in os.walk(folder):
-        for name in sorted(files):
-            if images.is_photo(name):
-                paths.append(os.path.join(root, name))
-
-    by_id = {}
-    if not paths:
-        return by_id
-
-    with ExifToolSession(executable=exiftool_path) as et:
-        for i in range(0, len(paths), 100):
-            batch = paths[i:i + 100]
-            try:
-                results = et.get_tags(batch, tags=["XMP-xmpMM:DocumentID"])
-            except Exception:
-                results = []
-                for one in batch:
-                    try:
-                        results.extend(et.get_tags([one], tags=["XMP-xmpMM:DocumentID"]))
-                    except Exception:
-                        continue
-            for row in results:
-                doc_id = row.get("XMP:DocumentID") or row.get("XMP-xmpMM:DocumentID")
-                source = row.get("SourceFile")
-                if not doc_id or not source:
-                    continue
-                key = str(doc_id).strip()
-                # Two files claiming one identity is a copy, not a rename; neither can
-                # be matched to a row without guessing which.
-                # Stored form: this is what a row is re-pointed at, and ExifTool
-                # answers with forward slashes.
-                by_id[key] = None if key in by_id else photo_paths.stored(source)
-
-    return {k: v for k, v in by_id.items() if v}
-
-
-def preserved_names(folder, exiftool_path=None):
-    """Every photo under a folder, keyed by (its folder's key, the stem it was renamed from).
-
-    Keyed by folder as well as stem: a rename never moves a file, and camera names
-    repeat -- a library holds many IMG_0421s -- so a dead row may only be matched to
-    a renamed file beside it. Keyed by stem alone, the last folder searched won, and
-    a row's named faces could be re-pointed at a stranger's photo in another folder.
-    """
-    from tagpup.files.exiftool_session import ExifToolSession
-
-    paths = []
-    for root, _dirs, files in os.walk(folder):
-        for name in sorted(files):
-            if images.is_photo(name):
-                paths.append(os.path.join(root, name))
-
-    by_original = {}
-    if not paths:
-        return by_original
-
-    with ExifToolSession(executable=exiftool_path) as et:
-        for i in range(0, len(paths), 100):
-            batch = paths[i:i + 100]
-            try:
-                results = et.get_tags(batch, tags=["XMP-xmpMM:PreservedFileName"])
-            except Exception:
-                results = []
-                for one in batch:
-                    try:
-                        results.extend(
-                            et.get_tags([one], tags=["XMP-xmpMM:PreservedFileName"]))
-                    except Exception:
-                        continue
-            for row in results:
-                original = row.get("XMP:PreservedFileName")
-                source = row.get("SourceFile")
-                if not original or not source:
-                    continue
-                key = (photo_paths.key(os.path.dirname(photo_paths.stored(source))),
-                       stem_of(original))
-                # Two files claiming one original cannot be told apart; leave both.
-                by_original[key] = None if key in by_original else photo_paths.stored(source)
-
-    return {k: v for k, v in by_original.items() if v}
-
-
-def merge_unambiguous(into, found):
-    """Add `found` to `into`, dropping any key two different files claim.
-
-    Folders are walked recursively, so one file can turn up from two walks -- that
-    is the same claim twice. Two different files claiming one key is a copy, not a
-    rename, and neither can be matched without guessing.
-    """
-    for key, path in found.items():
-        if key in into and (into[key] is None or not photo_paths.same(into[key], path)):
-            into[key] = None
-        else:
-            into[key] = path
+# The pieces, by the names older code and tests use.
+stem_of = relink_photos.stem_of
+dead_rows = relink_photos.dead_rows
+identities = relink_photos.identities
+preserved_names = relink_photos.preserved_names
+merge_unambiguous = relink_photos.merge_unambiguous
 
 
 def plan_for(db_path, exiftool_path=None):
-    """Which dead rows can be re-pointed, and to what."""
-    conn = tagpup_db.connect(tagpup_db.readonly_uri(db_path), uri=True)
-    dead = dead_rows(conn)
-
-    folders = sorted({os.path.dirname(p) for p in dead if os.path.isdir(os.path.dirname(p))})
-    lookup = {}
-    by_identity = {}
-    for folder in folders:
-        merge_unambiguous(lookup, preserved_names(folder, exiftool_path))
-        merge_unambiguous(by_identity, identities(folder, exiftool_path))
-
-    # A dead row's own identity, where indexing recorded one.
-    row_identity = store_photos.identities(conn)
-    live = {photo_paths.key(path) for path in store_photos.all_paths(conn) if path and os.path.exists(path)}
-
-    moves, unmatched = [], []
-    claimed = set()
-    for old in dead:
-        # Identity first: it survives a move and a rename by any tool. The preserved
-        # filename is the fallback, and only ever worked for TagPup's own renames.
-        new = (by_identity.get(row_identity.get(old, ""))
-               or lookup.get((photo_paths.key(os.path.dirname(old)), stem_of(old))))
-        if not new:
-            unmatched.append(old)
-            continue
-        key = photo_paths.key(new)
-        # Never point two rows at one file, and never collide with a row already there.
-        if key in live or key in claimed:
-            unmatched.append(old)
-            continue
-        claimed.add(key)
-        faces, named = store_faces.counts_on(conn, old)
-        moves.append({"from": old, "to": new, "faces": faces, "named": named})
-
-    conn.close()
-    return moves, unmatched
+    """Which dead rows can be re-pointed, and to what (relink_photos.plan_for)."""
+    return relink_photos.plan_for(Library(db_path), exiftool_path)
 
 
 def apply_moves(db_path, moves):
-    """Re-point each row, and its faces, at the renamed file. Returns (moved, skipped).
-
-    Through move_photo_rows, as Smart Rename does: it checks what the new name holds
-    first and leaves the row where it is if anything is there. This re-pointed with
-    WHERE path = ? and never looked, so a photo already browsed under its new name --
-    its faces saved there -- got a second set, which is how 233 duplicate faces were
-    made. `moved` counts rows changed, not rows planned.
-    """
-    from tagpup.store.photos import move_rows
-
-    return move_rows(db_path, {move["from"]: move["to"] for move in moves})
+    """Re-point each row, and its faces, at the renamed file, as one change of the
+    journal. Returns (moved, skipped): rows changed, not rows planned, and the pairs whose
+    new name already had rows, left where they were."""
+    return relink_photos.apply_moves(Library(db_path), moves)
 
 
-def main():
+def reported(result):
+    """Print what was skipped and what failed; 1 when anything failed, else 0."""
+    lines = maintenance.skipped(result) + maintenance.failed(result)
+    if lines:
+        print()
+    for line in lines:
+        print(line)
+    return 1 if result.errors else 0
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", default=tagpup_config.library_path("kr-track.db"))
+    parser.add_argument("--db", required=True, help="the library file to work on (#100: no default)")
     parser.add_argument("--exiftool", default=None)
     parser.add_argument("--apply", action="store_true",
                         help="write the changes; without this nothing is modified")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    moves, unmatched = plan_for(args.db, args.exiftool)
+    result = relink_photos.relink(Library(args.db), args.exiftool, apply=args.apply)
+    counts, reveal = result.details["counts"], result.details["reveal"]
 
     print("%s\n" % args.db)
-    print("rows that can be re-pointed: %d" % len(moves))
-    print("   faces they carry: %d (%d named)"
-          % (sum(m["faces"] for m in moves), sum(m["named"] for m in moves)))
-    for move in moves[:4]:
+    print("rows that can be re-pointed: %d" % counts.get("relinkable", 0))
+    print("   faces they carry: %d (%d named)" % (counts.get("faces", 0), counts.get("named", 0)))
+    for move in reveal.get("moves", [])[:4]:
         print("   %-28s -> %-46s (%d faces, %d named)"
-              % (os.path.basename(move["from"]), os.path.basename(move["to"])[:46],
-                 move["faces"], move["named"]))
-    if len(moves) > 4:
-        print("   ... and %d more" % (len(moves) - 4))
-
-    print("\ndead rows with no renamed file to match: %d" % len(unmatched))
-    for path in unmatched[:5]:
+              % (os.path.basename(move["from"]), os.path.basename(move["to"])[:46], move["faces"], move["named"]))
+    if len(reveal.get("moves", [])) > 4:
+        print("   ... and %d more" % (len(reveal["moves"]) - 4))
+    if counts.get("occupied"):
+        print("left where they are, the new name already has rows (look at these by hand): %d"
+              % counts["occupied"])
+        for old, new in reveal["occupied"][:10]:
+            print("   %s -> %s" % (os.path.basename(old), os.path.basename(new)))
+    print("\ndead rows with no renamed file to match: %d" % counts.get("unmatched", 0))
+    for path in reveal.get("unmatched", [])[:5]:
         print("   %s" % os.path.basename(path))
 
-    if not args.apply:
-        print("\nNothing was changed. Re-run with --apply to write it.")
-        return
-    if not moves:
+    if result.details["dry_run"]:
+        print("\n%s" % maintenance.rehearsed(result))
+        print("Nothing was changed. Re-run with --apply to write it.")
+        return reported(result)
+    if not result.attempted:
         print("\nNothing to re-point.")
-        return
-
-    print("\nbacked up to %s" % tagpup_db.backup(args.db, "relink"))
-
-    moved, skipped = apply_moves(args.db, moves)
-    print("\nre-pointed %d of %d planned row(s), with their faces." % (moved, len(moves)))
-    if skipped:
-        print("left %d where they were: the new name already has rows (look at these by hand):"
-              % len(skipped))
-        for old, new in skipped[:10]:
-            print("   %s -> %s" % (os.path.basename(old), os.path.basename(new)))
-
-    remaining, still_unmatched = plan_for(args.db, args.exiftool)
-    print("rows still re-pointable: %d; dead rows remaining: %d"
-          % (len(remaining), len(still_unmatched)))
+        return 0
+    if result.refused:
+        raise SystemExit(result.refused)
+    print("\n%s" % maintenance.recorded(result, args.db))
+    print("\nre-pointed %d of %d planned row(s), with their faces." % (result.changed, result.attempted))
+    remaining = result.details.get("remaining")
+    if remaining is not None:
+        print("rows still re-pointable: %d; dead rows remaining: %d"
+              % (remaining["relinkable"], remaining["unmatched"]))
+    return reported(result)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
