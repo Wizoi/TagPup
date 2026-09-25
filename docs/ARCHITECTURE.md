@@ -83,6 +83,7 @@ Guard tests, each of which fails the build. The ones marked *exists* are in plac
 - Tags taken apart only by `tagpup.core.vocabulary`. *Exists:* `tests/test_vocabulary.py`.
 - SQL only inside `tagpup.store`. *Exists:* `tests/test_sql_single_owner.py`.
 - `config.ini` read, and path settings resolved, only by `tagpup.config`; inside `tagpup/`, only it finds folders from `__file__`. *Exists:* `tests/test_config_single_owner.py`.
+- A model (CLIP, the face models) built only by `tagpup.runtime`, and what it is made of only in its own `tagpup.ml` module. *Exists:* `tests/test_models_single_owner.py`.
 - ExifTool and `Image.open` only inside `tagpup.files`.
 - Entry points import services and jobs, never store, files or ml directly.
 - Every POST route returns a `Result`.
@@ -178,11 +179,11 @@ Target: the full check in under a minute.
 | `scripts/identity.py` | `tagpup/files/identity.py` |
 | `scripts/metadata.py` | `tagpup/files/metadata.py` (reading), `tagpup/core/vocabulary.py` (tags, people, captions), `tagpup/store/taxonomy.py` and `tagpup/store/faces.py` (the library's people, face names) |
 | keyword writing in `tagpup_server.py` | `tagpup/files/keywords.py`, `tagpup/core/vocabulary.py` |
-| `scripts/index.py` (`PhotoIndex`, `PathLocker`) | `tagpup/store/` (`schema`, `photos`, `faces`, `locks`), `tagpup/ml/vector_index.py`, `tagpup/services/search.py` (a library's index, loaded from the store) |
+| `scripts/index.py` (`PhotoIndex`, `PathLocker`) | `tagpup/store/` (`schema`, `photos`, `faces`, `locks`), `tagpup/ml/vector_index.py`, `tagpup/services/search.py` (a library's index, loaded from the store), `tagpup/services/faces.py` (the faces detection finds, recorded) |
 | `scripts/taxonomy.py` | `tagpup/store/taxonomy.py`, `tagpup/core/vocabulary.py` |
 | `scripts/faces.py` | `tagpup/ml/faces.py` (detection and embeddings), `tagpup/services/identities.py` (resolving who is who across a library), `tagpup/core/clustering.py` (the rules) |
-| `scripts/suggester.py` | `tagpup/core/suggesting.py` (the rules), `tagpup/services/suggester.py` (`TagSuggester`, given its models) |
-| `scripts/embedder.py` | `tagpup/ml/clip.py` (the model); the embedding cache is `tagpup/store/embeddings.py`'s |
+| `scripts/suggester.py` | `tagpup/core/suggesting.py` (the rules, the caption made from tags), `tagpup/services/suggester.py` (`TagSuggester`, given its models; what a run calls) |
+| `scripts/embedder.py` | `tagpup/ml/clip.py` (the model); the embedding cache is `tagpup/store/embeddings.py`'s, read and written by `tagpup/services/search.py` (`PhotoEmbeddings`); squaring a picture is `tagpup/files/images.py`'s |
 | `scripts/suggest_models.py` | `tagpup/runtime.py` |
 | `scripts/writer.py` | `tagpup/services/tagging.py` |
 | `scripts/tagpup_server.py`, `scripts/tuner_server.py` | `tagpup/web/` (routes), `tagpup/services/` |
@@ -295,15 +296,15 @@ Done 2026-09-24. Suggest's models still live in `scripts/` and reach the runs th
 Suggest's models and the resolution of who is who still live in `scripts/` (embedder,
 faces, index, suggester: 2,150 lines) because each spans layers, and they reach the web
 through a script that fills a module slot (findings #112). See "The layers, revisited".
-- [ ] `tagpup.core.per_library.PerLibrary`; `tagpup.web.state` imports it from there.
-- [ ] `tagpup.ml.clip`: CLIP from the settings it is given. It embeds an image or a text and nothing else; the embedding cache is `tagpup.store.embeddings`', read and written by the service that asks.
-- [ ] `tagpup.ml.faces`: detection and face embeddings, from the settings it is given.
-- [ ] `tagpup.services.search`: a library's vector index loaded from the store (`PhotoIndex.load`, `search`, `reload_if_changed`). `PathLocker` goes to `tagpup.store.locks`.
-- [ ] `tagpup.services.identities`: resolving who is who across a library (`FaceProcessor.cluster_and_resolve_identities`) over `tagpup.core.clustering`'s rules.
-- [ ] `tagpup.services.suggester`: `TagSuggester`, given its models.
-- [ ] `tagpup.runtime`: the composition root. `tagpup_web.py`, `tagpup_cli.py` and the measurement tools build one; `tagpup.jobs.suggestions` takes its models from its constructor; `scripts/suggest_models.py` goes.
-- [ ] Shims at the old names in `scripts/` while anything imports them; the tests move to the package names.
-- [ ] Guards: `tests/test_layers.py` knows `runtime`; nothing but `tagpup.runtime` builds a model.
+- [x] `tagpup.core.per_library.PerLibrary`; `tagpup.web.state` imports it from there.
+- [x] `tagpup.ml.clip`: CLIP from the settings it is given. It embeds an image or a text and nothing else; the embedding cache is `tagpup.store.embeddings`', read and written by the service that asks (`tagpup.services.search.PhotoEmbeddings`).
+- [x] `tagpup.ml.faces`: detection and face embeddings, from the settings it is given.
+- [x] `tagpup.services.search`: a library's vector index loaded from the store (`PhotoIndex.load`, `search`, `reload_if_changed`). `PathLocker` goes to `tagpup.store.locks`; PhotoIndex's face wrappers go, their callers using `tagpup.store.faces` and `tagpup.services.faces`.
+- [x] `tagpup.services.identities`: resolving who is who across a library (`FaceProcessor.cluster_and_resolve_identities`) over `tagpup.core.clustering`'s rules.
+- [x] `tagpup.services.suggester`: `TagSuggester`, given its models.
+- [x] `tagpup.runtime`: the composition root. `tagpup_web.py`, `tagpup_cli.py` and `prepare_test_environment.py` build one (the measurement tools and `verify_workflow.py` start `tagpup_web.py`, which does); `tagpup.jobs.suggestions` is handed its models with each run's work (`work_for(library, photos, models)`); `scripts/suggest_models.py` goes.
+- [x] Shims at the old names in `scripts/` while anything imports them; the tests move to the package names. Nothing that ships imports them; they stay for the tests that are not a rename away (the behaviour anchors among them).
+- [x] Guards: `tests/test_layers.py` knows `runtime`; nothing but `tagpup.runtime` builds a model.
 
 Exit: no module in `scripts/` holds a model, SQL or a rule; the package imports no script; the web apps and the CLI get every model from a `Runtime`.
 
@@ -364,7 +365,7 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 4. Data model | done, 2026-09-24 |
 | 4.5. One owner for each rule | done, 2026-09-24 |
 | 5. One server | done, 2026-09-24 |
-| 5.5. Models in the package, one composition root | not started |
+| 5.5. Models in the package, one composition root | done, 2026-09-24 (shims for tests remain: findings #139) |
 | 6. Pages | not started |
 | 7. MCP | not started |
 | 8. Sync | not started |
