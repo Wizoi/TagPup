@@ -47,40 +47,61 @@ def _dated_paths(conn, photo_paths):
     date_photos(conn, ids)
 
 
-def _stamp(conn, photo_path, mtime, size, looks_different=False, before=None):
+def _was_read(row_mtime, row_size):
+    """Was a row ever read from its file? Only such a row may be stamped with what a
+    write of the app's own left on part of the file -- its keywords, a caption, its
+    Orientation -- as describing the file.
+
+    Suggest makes a row for a photo the index never read (ensure_row): the path alone,
+    mtime and size empty, so the scan and the refresh read the file. A tag write stamped
+    it, and the row -- the keyword fields and nothing else, no Date Taken -- was trusted
+    from then on (docs/findings.md). Left unstamped, it is read at the next scan.
+    """
+    return row_mtime is not None and row_size is not None
+
+
+def _stamp(conn, photo_path, mtime, size, looks_different=False, before=None, whole=False):
     """Record the stamp a write of the app's own left on a photo's file, and bring its
     vectors with it (tagpup.store.embeddings): carried forward from `before`, the
     file's stamp just before the write (embeddings.stamp_of), when only metadata
     changed; taken away when the photo `looks_different` -- a rotation, whose
     Orientation the embedder applies. Without `before` they stay as they are, and a
-    vector the write left behind is computed again. Returns the photo's id, or None
-    without a row. The caller commits."""
+    vector the write left behind is computed again.
+
+    The row is stamped only where it was read from the file before (_was_read), or
+    where the caller records the `whole` file as read back after the write; otherwise
+    its mtime and size stay empty, and the next scan reads the file. Returns (the
+    photo's id, whether the row was stamped), or (None, False) without a row. The
+    caller commits."""
     where, params = paths.sql_equals("path", photo_path)
     row = conn.execute("SELECT id, mtime, size FROM photos WHERE " + where + " LIMIT 1", params).fetchone()
     if row is None:
-        return None
+        return None, False
     photo_id = row[0]
-    conn.execute("UPDATE photos SET mtime = ?, size = ? WHERE id = ?", (mtime, size, photo_id))
+    stamped = whole or _was_read(row[1], row[2])
+    if stamped:
+        conn.execute("UPDATE photos SET mtime = ?, size = ? WHERE id = ?", (mtime, size, photo_id))
     if looks_different:
         conn.execute("DELETE FROM embeddings WHERE photo_id = ?", (photo_id,))
     else:
         embeddings.restamp(conn, photo_id, before, (mtime, size))
-    return photo_id
+    return photo_id, stamped
 
 
 def record_file_stat(db_path, photo_path, looks_different=False, before=None):
-    """Record a photo's current mtime and size in its index row. Returns rows changed.
+    """Record a photo's current mtime and size in its index row. Returns rows stamped.
 
     For a write that changes the file but not what the index describes: a caption, or
     a rotation, which changes only the Orientation tag -- and so how the photo looks to
     the embedder, `looks_different`, which takes its vectors away. `before` is the
     file's stamp just before the write (_stamp). Left stale, the folder scan would
-    distrust the row and re-read the photo with ExifTool on every scan.
+    distrust the row and re-read the photo with ExifTool on every scan. A row never read
+    from its file is left unstamped (_was_read).
     """
     stat = os.stat(photo_path)
 
     def store(conn):
-        return 0 if _stamp(conn, photo_path, stat.st_mtime, stat.st_size, looks_different, before) is None else 1
+        return 1 if _stamp(conn, photo_path, stat.st_mtime, stat.st_size, looks_different, before)[1] else 0
 
     return db.write_with_connection(
         db_path, store, label="file stat for %s" % os.path.basename(photo_path))
@@ -122,7 +143,7 @@ def record_reads(db_path, records, label="photos read back", before=None):
                 continue
             if before and entry["path"] in before:
                 _stamp(conn, entry["path"], entry.get("mtime", 0.0), entry.get("size", 0),
-                       before=before[entry["path"]])
+                       before=before[entry["path"]], whole=True)
             where, where_params = paths.sql_equals("path", entry["path"])
             written = conn.execute(
                 "UPDATE photos SET raw_metadata = ?, mtime = ?, size = ? WHERE " + where,
@@ -229,6 +250,10 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None, before=
     them every photo tagged in bulk was re-read with ExifTool on every scan after.
     `before` is the file's stamp just before the write, over which its vectors are
     carried (_stamp); without it, as when nothing was written, they are left alone.
+
+    Only the keyword fields are recorded, so a row never read from its file -- one
+    Suggest made -- is not stamped (_was_read): it would claim to match a file whose
+    other fields, its Date Taken first, it never held.
     """
     if flat is None and hierarchical is None:
         flat, hierarchical = fields.expand_tag_fields(tags)
@@ -240,11 +265,11 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None, before=
 
     def store(conn):
         cursor = conn.cursor()
-        cursor.execute("SELECT id, raw_metadata FROM photos WHERE " + where, where_params)
+        cursor.execute("SELECT id, raw_metadata, mtime, size FROM photos WHERE " + where, where_params)
         row = cursor.fetchone()
         if not row:
             return False   # never indexed; adding it here would be an index, not an edit
-        photo_id, raw_json = row
+        photo_id, raw_json, row_mtime, row_size = row
 
         try:
             raw_meta = json.loads(raw_json) if raw_json else {}
@@ -252,12 +277,13 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None, before=
             raw_meta = {}
         fields.record_keyword_fields(raw_meta, flat or [], hierarchical or [])
 
-        if stat is None:
+        if stat is None or not _was_read(row_mtime, row_size):
             cursor.execute("UPDATE photos SET tags = ?, raw_metadata = ? WHERE id = ?",
                            (json.dumps(tags), json.dumps(raw_meta), photo_id))
         else:
             cursor.execute("UPDATE photos SET tags = ?, raw_metadata = ?, mtime = ?, size = ? WHERE id = ?",
                            (json.dumps(tags), json.dumps(raw_meta), stat.st_mtime, stat.st_size, photo_id))
+        if stat is not None:
             embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
         changed = cursor.rowcount > 0
         people.rebuild(conn, [photo_id])
@@ -364,7 +390,8 @@ def record_saved(db_path, photo_path, tags, captions, raw_meta, before=None):
     where, where_params = paths.sql_equals("path", photo_path)
 
     def update_row(conn):
-        photo_id = _stamp(conn, photo_path, stat.st_mtime, stat.st_size, before=before)
+        # The save read the file back whole (raw_meta): the row describes it now.
+        photo_id = _stamp(conn, photo_path, stat.st_mtime, stat.st_size, before=before, whole=True)[0]
         changed = conn.execute(
             "UPDATE photos SET tags = ?, captions = ?, raw_metadata = ? WHERE " + where,
             (json.dumps(tags), json.dumps(captions), json.dumps(raw_meta)) + where_params).rowcount
@@ -602,7 +629,8 @@ def without_identity(conn):
 
 def record_identity(conn, photo_path, document_id, stat=None):
     """Record a photo's document_id; with `stat`, the mtime and size the file has now it
-    was written to. Returns rows changed. The caller commits."""
+    was written to, where the row was read from the file (_was_read). Returns rows
+    changed. The caller commits."""
     where, params = paths.sql_equals("path", photo_path)
     if stat is not None:
         # Nobody kept the file's stamp from before the identity was written, so its
