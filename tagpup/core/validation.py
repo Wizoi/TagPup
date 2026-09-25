@@ -1,7 +1,8 @@
 """What may be set: every kind of input TagPup is handed, and the rules each is held to.
 
 A tag, a person's name, a caption, a library's name, a Smart Rename grouping, a folder,
-a time shift and each setting a library holds are each a kind here, with its rules.
+a time shift, why a face is excluded, which way a photo turns and each setting a library
+holds are each a kind here, with its rules.
 The checks were written twice -- once in Python where a value is written, once in the
 page that asks first -- and the library-name rule was a pattern the page repeated
 without the reserved names. Now the rules are data: patterns, forbidden text, lengths,
@@ -63,6 +64,22 @@ FULL_PATH = "(?:[A-Za-z]:[/%s]|[/%s]{2}[^/%s]|/)[%ss%sS]*" % (BS * 2, BS * 2, BS
 
 #: What a library's name may hold: it is a file name and the first part of its URL.
 LIBRARY_NAME = "[A-Za-z0-9_-]+"
+
+#: Why a face is excluded when no reason is given (tagpup.services.faces.exclude).
+DEFAULT_EXCLUSION_REASON = "not a person"
+
+#: Why the faces of a cluster TagTuner's page was told to ignore are excluded.
+IGNORED_CLUSTER = "ignored cluster"
+
+#: Why a face may be excluded: the four TagTuner's page offers (EXCLUDE_REASONS in
+#: web/tuner/main.js, the first its default), and the one it sets itself when a cluster is
+#: ignored. The page keeps a copy, which tests/test_rules_have_one_owner.py holds to
+#: this. The reason used to be free text, and collected "fuzzy" beside "bad crop"
+#: (docs/findings.md, #53, #74). A kind since #224, as the turn of a photo is.
+EXCLUSION_REASONS = (DEFAULT_EXCLUSION_REASON, "stranger", "bad crop", "duplicate", IGNORED_CLUSTER)
+
+#: The ways Rotate turns a photo, a quarter each (tagpup.services.photos.rotate).
+ROTATE_DIRECTIONS = ("left", "right")
 
 #: The longest caption IPTC keeps: Caption-Abstract holds 2,000 bytes.
 CAPTION_BYTES = 2000
@@ -164,6 +181,17 @@ KINDS = {
     # Shift Date Taken: minutes, later or earlier.
     "time shift": {"rules": [
         {"rule": "integer", "message": "A time shift is a whole number of minutes."},
+    ]},
+    # Why a face is taken out of identity work, as the service is given it: trimmed and
+    # lower case, none being the default (tagpup.services.faces.exclude).
+    "exclusion reason": {"rules": [
+        {"rule": "one_of", "choices": list(EXCLUSION_REASONS),
+         "message": "'{value}' is not a reason to exclude a face: use one of %s." % ", ".join(EXCLUSION_REASONS)},
+    ]},
+    # Rotate Left, Rotate Right. Anything else was once taken for a right turn.
+    "rotate direction": {"rules": [
+        {"rule": "one_of", "choices": list(ROTATE_DIRECTIONS),
+         "message": "Direction must be 'left' or 'right'"},
     ]},
 }
 
@@ -369,6 +397,7 @@ CHECKS = {
     "number": lambda rule, value: _number(value) is None,
     "boolean": lambda rule, value: not isinstance(value, bool) and trim(_text(value)).lower() not in _BOOLEANS,
     "range": _fails_range,
+    "one_of": lambda rule, value: _text(value) not in rule["choices"],
 }
 
 

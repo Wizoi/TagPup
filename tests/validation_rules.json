@@ -1,5 +1,5 @@
 {
- "version": "5c70a78e7273",
+ "version": "11e857c80d04",
  "blank": "\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
  "kinds": {
   "tag": {
@@ -141,6 +141,33 @@
     {
      "rule": "integer",
      "message": "A time shift is a whole number of minutes."
+    }
+   ]
+  },
+  "exclusion reason": {
+   "rules": [
+    {
+     "rule": "one_of",
+     "choices": [
+      "not a person",
+      "stranger",
+      "bad crop",
+      "duplicate",
+      "ignored cluster"
+     ],
+     "message": "'{value}' is not a reason to exclude a face: use one of not a person, stranger, bad crop, duplicate, ignored cluster."
+    }
+   ]
+  },
+  "rotate direction": {
+   "rules": [
+    {
+     "rule": "one_of",
+     "choices": [
+      "left",
+      "right"
+     ],
+     "message": "Direction must be 'left' or 'right'"
     }
    ]
   },

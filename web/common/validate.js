@@ -141,6 +141,7 @@ const CHECKS = {
         const number = asNumber(value);
         return number === null || !(rule.min <= number && number <= rule.max);
     },
+    one_of: (rule, value) => !rule.choices.includes(asText(value)),
 };
 
 function items(rule, value) {

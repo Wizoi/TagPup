@@ -472,13 +472,13 @@ def photo_rotate():
     direction = body.get("direction")
     if not photo_path or not os.path.exists(photo_path):
         return responses.error(400, "Invalid file path")
-    # Reject anything but an explicit direction rather than silently treating an
-    # unrecognised value as a right turn.
-    if direction not in ("left", "right"):
-        return responses.error(400, "Direction must be 'left' or 'right'")
     photo_path = paths.stored(photo_path)
     try:
+        # Anything but an explicit direction is refused by the service, with the
+        # "rotate direction" kind's message, rather than taken for a right turn.
         result = photo_actions.rotate(library, photo_path, direction, state.exiftool(library))
+        if result.refused:
+            return responses.error(400, result.refused)
         if not result.ok:
             logger.error("Error rotating image %s: %s", photo_path, result.message())
             return responses.error(500, result.message())
