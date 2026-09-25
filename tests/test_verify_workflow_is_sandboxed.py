@@ -20,10 +20,15 @@ import tagpup_server  # noqa: E402
 import tuner_server  # noqa: E402
 import verify_workflow  # noqa: E402
 from index import PhotoIndex  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import own_home  # noqa: E402
 
 
 class VerifyWorkflowIsSandboxed(unittest.TestCase):
     def setUp(self):
+        # verify_workflow copies the library into the data folder as
+        # test_verify_workflow.db: the checkout's, until this had a home of its own.
+        self.home = own_home.for_test(self, "tagpup_verify_")
         self.tmp = tempfile.mkdtemp(prefix="verify_sandbox_")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.source = os.path.join(self.tmp, "library.db")
