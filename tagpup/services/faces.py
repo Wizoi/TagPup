@@ -383,3 +383,144 @@ def _unit(embedding):
     vec = np.frombuffer(embedding, dtype=np.float32)
     norm = np.linalg.norm(vec)
     return vec / norm if norm > 0 else None
+
+
+# ---- The faces detection finds ---------------------------------------------------------
+#
+# What indexing and Suggest record of the faces a face model found in a photo
+# (tagpup.ml.faces), and the named faces a new one is compared with. PhotoIndex held a
+# wrapper for each (docs/ARCHITECTURE.md, phase 5.5).
+
+def _insert_detected(conn, photo_path, face, name=None):
+    faces.insert(conn, photo_path, face.get("box", []),
+                 np.array(face["embedding"], dtype=np.float32).tobytes(),
+                 name=name, crop=face.get("crop_image"), prob=face.get("prob"))
+
+
+def record_detected(db_path, photo_path, detected):
+    """Record the faces found in a photo only when it has none yet. Returns rows inserted.
+
+    Never deletes: replace_detected clears the photo's rows first, which would discard
+    manual names and exclusions. This is for callers that detected faces as a side
+    effect of doing something else (the suggester) and want to keep the work without
+    disturbing anything already recorded.
+
+    On a connection of its own: callers run inside worker pools, and sharing one sqlite
+    connection across threads is how "objects created in a thread" errors and lock
+    contention start. Raised on inside the write, not swallowed: its retry waits out a
+    locked database, and returning 0 before the retry saw the error lost a photo's faces
+    for good.
+    """
+    if not detected:
+        return 0
+
+    def insert(conn):
+        if faces.count_for_photo(conn, photo_path) > 0:
+            return 0  # already recorded; leave it alone
+        inserted = 0
+        for face in detected:
+            if face.get("embedding") is None:
+                continue
+            _insert_detected(conn, photo_path, face)
+            inserted += 1
+        return inserted
+
+    try:
+        return db.write_with_connection(
+            db_path, insert, label="recording faces for %s" % os.path.basename(photo_path))
+    except Exception as e:
+        # Only once the retries are spent. Losing the faces for a photo is not a
+        # warning-shaped event: they are gone until it is indexed again.
+        logger.error(
+            "Detected faces for %s were NOT saved (%s). Re-index this folder to "
+            "recover them.", photo_path, e
+        )
+        return 0
+
+
+def replace_detected(conn, photo_path, detected):
+    """Replace a photo's faces with freshly detected ones, and commit.
+
+    This discards any names, manual overrides, exclusions and cached crops on the
+    existing rows: it is for explicit re-detection. Logged, not raised. Without a
+    connection, nothing.
+    """
+    if conn is None:
+        return
+    try:
+        faces.remove_for_photo(conn, photo_path)
+        for face in detected:
+            _insert_detected(conn, photo_path, face, name=face.get("name"))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error saving faces for {photo_path}: {e}")
+        conn.rollback()
+
+
+def record_batch(conn, batch, overwrite=False):
+    """Record the faces found in a batch of photos ({path: faces}) in one transaction.
+
+    By default a photo that already has face rows is left alone. Those rows carry
+    assigned names, manual overrides, exclusions and cached crops, and re-detection
+    produces none of that -- so replacing them silently discards curation. Re-indexing
+    a folder used to do exactly that, which mattered little while only tagged photos
+    were indexed and matters a great deal now that every photo is.
+
+    Pass overwrite=True to force re-detection, accepting the loss. Without a connection,
+    nothing.
+    """
+    if conn is None or not batch:
+        return
+    try:
+        db.begin(conn)
+        for photo_path, detected in batch.items():
+            if not overwrite and faces.count_for_photo(conn, photo_path) > 0:
+                continue
+            faces.remove_for_photo(conn, photo_path)
+            for face in detected:
+                _insert_detected(conn, photo_path, face, name=face.get("name"))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error saving faces batch to SQLite: {e}")
+        conn.rollback()
+        raise e
+
+
+def clear_automatic_names(conn):
+    """Clear the names clustering gave to faces, and commit; the store rebuilds the
+    people of the photos they were in. Returns the number of faces whose name was cleared.
+
+    Names given by hand (name_source = 'manual') are left alone: they are the person's
+    decisions and the anchors clustering starts from. Clearing their name while leaving
+    name_source = 'manual' turned every one of them into a binding "this is nobody".
+    Without a connection, 0.
+    """
+    if conn is None:
+        return 0
+    try:
+        cleared = faces.clear_automatic_names(conn)
+        conn.commit()
+        return cleared
+    except Exception as e:
+        logger.error(f"Error resetting face assignments in database: {e}")
+        conn.rollback()
+        raise e
+
+
+def known_faces(db_path):
+    """Every named face that is not excluded, as tagpup.core.clustering.KnownFaces: what a
+    face is compared with to say who it is. It was each person's mean face, with no
+    years (docs/findings.md, #71).
+
+    Reads only the named faces, and of each photo only its Date Taken fields. Reading
+    every face and its crop is 225,000 rows and ten seconds on a cold cache, and the
+    suggester did it twice for every photo.
+    """
+    conn = db.connect(db_path, timeout=30.0)
+    try:
+        rows = faces.named_for_known(conn)
+    finally:
+        conn.close()
+    return clustering.KnownFaces.of(
+        (name, np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path)
+        for name, emb_bytes, photo_path, year in rows)

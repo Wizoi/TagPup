@@ -84,3 +84,13 @@ def year_in_name(path):
 def photo_year(raw_metadata, path=None):
     """The year a photo was taken: its Date Taken if it has one, else a year in its name."""
     return year_taken(raw_metadata) or year_in_name(path)
+
+
+def record_year(meta):
+    """The year a photo was taken, from a record of it: the record's "year", as the
+    library records it (photos.year) and the reader gives it; else, for a record without
+    one or a raw_metadata dict itself, photo_year. What the suggester's time decay and
+    clustering's years go by."""
+    if "year" in meta:
+        return meta["year"]
+    return photo_year(meta.get("raw_metadata", meta), meta.get("path"))

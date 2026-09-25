@@ -84,12 +84,8 @@ def sync_title_to_filename(photo_path: str, new_title: str, exiftool_path: str) 
 
 
 def parse_year_from_metadata(meta: Dict[str, Any]) -> Optional[int]:
-    """The year a photo was taken: the record's "year", as the library records it
-    (photos.year) and the reader gives it; else, for a record without one or a
-    raw_metadata dict itself, tagpup.core.dates.photo_year."""
-    if "year" in meta:
-        return meta["year"]
-    return dates.photo_year(meta.get("raw_metadata", meta), meta.get("path"))
+    """The year a photo was taken, from a record of it (tagpup.core.dates.record_year)."""
+    return dates.record_year(meta)
 
 
 def build_photo_ui_record(path: str, meta: Dict[str, Any], mtime: float = 0.0, size: int = 0) -> Dict[str, Any]:
