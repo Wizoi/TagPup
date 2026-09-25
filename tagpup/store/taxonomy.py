@@ -328,6 +328,13 @@ def tags(conn):
     return [tag for (tag,) in conn.execute("SELECT tag FROM tag_taxonomy") if tag]
 
 
+def node_ids(conn):
+    """{tag: id} of every node; none without a tree."""
+    if not tree_exists(conn):
+        return {}
+    return {tag: node_id for node_id, tag in conn.execute("SELECT id, tag FROM tag_taxonomy") if tag}
+
+
 def remove_node(conn, tag):
     """Take one node out of the tree, and nothing under it. Returns nodes removed. The
     caller commits."""

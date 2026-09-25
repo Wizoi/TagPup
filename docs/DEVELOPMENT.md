@@ -221,10 +221,19 @@ up first through `db.backup()`: SQLite's backup API, into `backups/` beside the 
 (`data/backups/` for the libraries in `data/`). Each library keeps its newest five
 (`db.KEEP_BACKUPS`); making a sixth deletes the oldest.
 
+Three of them are thin entry points on one scaffold, `tagpup.services.maintenance`: the
+operation plans (reads only), and with `--apply` the scaffold backs the library up once
+and writes, and returns a `Result` whose `changed` is what the write changed, read from
+the database, not what was planned. The MCP server (`tagpup.mcp`) calls the same
+services as write tools, a dry run unless called with `apply=true`, showing paths and
+names only with `reveal=true`.
+
 | script | what it does |
 | --- | --- |
 | `scripts/verify_workflow.py` | End-to-end pass over both apps against a throwaway copy of a database. |
-| `scripts/merge_duplicate_person_tags.py` | Removes a bare person tag where a `People/<name>` already names them. |
+| `scripts/refresh_rows_from_files.py` | Re-reads the photos whose rows no longer describe their files, and fixes rows that list a caption twice. `tagpup.services.refresh_rows`; MCP tool `refresh_rows`. Planning reads the files, so a dry run is slow. |
+| `scripts/merge_duplicate_person_tags.py` | Removes a bare person tag where a `People/<name>` already names them. `tagpup.services.person_tags`; MCP tool `merge_duplicate_person_tags`. |
+| `scripts/dedupe_faces.py` | Removes face rows that copy another face of the same photo and know no more than it; disputed copies are left for a person. `tagpup.services.duplicate_faces`; MCP tool `dedupe_faces`. |
 | `scripts/backfill_document_ids.py` | Gives already-indexed photos the identity new ones get. Resumable. |
 | `scripts/relink_renamed_photos.py` | Re-points index rows at photos renamed under them, by identity then `PreservedFileName`. |
 

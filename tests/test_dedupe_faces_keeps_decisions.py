@@ -1,5 +1,7 @@
 """dedupe_faces keeps the copy a person decided about, and never drops an exclusion.
 
+Of tagpup.services.duplicate_faces, which scripts/dedupe_faces.py runs.
+
 Two copies of one face -- same photo, same box -- are merged by keeping the copy that
 "knows something". A name counted for more than anything else, so a name clustering
 gave outranked a person's own decision: an excluded passer-by, or a face marked
@@ -12,11 +14,11 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
-from tagpup.store import db as tagpup_db  # noqa: E402
-import dedupe_faces  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import duplicate_faces  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_face  # noqa: E402
@@ -54,8 +56,8 @@ class DedupeKeepsDecisions(unittest.TestCase):
             conn.close()
 
     def plan(self):
-        redundant, disputed = dedupe_faces.plan_for(self.db)
-        return {row[0] for row in redundant}, disputed
+        result = duplicate_faces.dedupe_faces(Library(self.db))
+        return set(result.details["ids"]["redundant"]), result.details["ids"]["disputed"]
 
     def test_an_exclusion_is_not_dropped_for_an_auto_named_copy(self):
         self.face(name="Rowan Thackeray")

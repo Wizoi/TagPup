@@ -548,9 +548,10 @@ def set_captions(conn, photo_path, captions):
 # ---- What refresh_rows_from_files reads and writes --------------------------------------
 
 def rows_to_check(conn, folder=None):
-    """(path, mtime, size, tags JSON, captions JSON, raw_metadata JSON, people JSON) of
-    every photo, or of those under `folder`: what is compared with the files."""
-    query = "SELECT p.path, p.mtime, p.size, p.tags, p.captions, p.raw_metadata, " + PEOPLE_JSON + " FROM photos p"
+    """(path, mtime, size, tags JSON, captions JSON, raw_metadata JSON, people JSON, id)
+    of every photo, or of those under `folder`: what is compared with the files."""
+    query = ("SELECT p.path, p.mtime, p.size, p.tags, p.captions, p.raw_metadata, " + PEOPLE_JSON
+             + ", p.id FROM photos p")
     params = ()
     if folder:
         where, params = paths.sql_under("path", folder)
@@ -598,12 +599,13 @@ def identities(conn):
         "SELECT path, document_id FROM photos WHERE document_id IS NOT NULL") if path and doc_id}
 
 
-def tags_by_path(conn):
-    """(path as stored, tags) of each photo; a row whose tags cannot be read is left out."""
+def tags_by_photo(conn):
+    """(id, path as stored, tags) of each photo; a row whose tags cannot be read is left
+    out."""
     found = []
-    for path, tags_json in conn.execute("SELECT path, tags FROM photos"):
+    for photo_id, path, tags_json in conn.execute("SELECT id, path, tags FROM photos"):
         try:
-            found.append((path, json.loads(tags_json or "[]")))
+            found.append((photo_id, path, json.loads(tags_json or "[]")))
         except (TypeError, ValueError):
             continue
     return found

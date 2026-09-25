@@ -1,4 +1,8 @@
-"""scripts/refresh_rows_from_files.py records what stale rows' files actually hold."""
+"""scripts/refresh_rows_from_files.py records what stale rows' files actually hold.
+
+End to end, through the script: what it prints is what it printed before its work
+moved into tagpup.services.refresh_rows. The backup goes beside the test's library.
+"""
 import contextlib
 import io
 import json
@@ -14,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from tagpup.store import db  # noqa: E402
 import refresh_rows_from_files as refresh  # noqa: E402
+from tagpup.services import refresh_rows  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 
 
@@ -81,7 +86,6 @@ class RefreshRowsFromFiles(unittest.TestCase):
         self.read = []
         with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
                         side_effect=self.fake_batch_read), \
-                mock.patch.object(refresh.tagpup_db, "backup", return_value="(skipped in test)"), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             refresh.main(["--db", self.db, *extra])
         return out.getvalue()
@@ -115,7 +119,7 @@ class RefreshRowsFromFiles(unittest.TestCase):
         # each caption field twice); what matters is that the garbling is gone.
         captions = rows[self.files["garbled"]][1]
         self.assertIn("Parade in Münster", captions)
-        self.assertFalse(any(refresh.MOJIBAKE.search(c) for c in captions))
+        self.assertFalse(any(refresh_rows.MOJIBAKE.search(c) for c in captions))
         self.assertNotIn("Beach", rows[self.files["stale_keywords"]][2]["IPTC:Keywords"])
         self.assertEqual(rows[self.files["stale_stat"]][3], os.stat(self.files["stale_stat"]).st_mtime)
         # And a second run finds nothing left to do.
