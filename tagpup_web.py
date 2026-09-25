@@ -26,6 +26,7 @@ from tagpup import config as tagpup_config  # noqa: E402
 from tagpup import logs  # noqa: E402
 from tagpup.core import library as libraries  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 
@@ -109,15 +110,12 @@ def main(argv=None):
             logger.info("No library at %s; making one.", db_path)
             library_actions.create(db_path)
         startup = Library(db_path)
-    apps = {ports[kind]: web.create_app(kind, startup=startup) for kind in ("tagpup", "tuner")}
-
-    # Suggest's models still live in scripts/ (suggester, embedder, faces, index), which
-    # the package may not import, so the entry point hands them to the suggestion runs
-    # and warms them on a thread of its own -- the models, never a library (#99).
-    import suggest_models
-    suggest_models.install()
+    # The process's models, from the settings, given to both apps; warmed on a thread of
+    # their own -- the models, never a library (#99).
+    runtime = Runtime(tagpup_config.load)   # read again where a run needs a setting
+    apps = {ports[kind]: web.create_app(kind, startup=startup, runtime=runtime) for kind in ("tagpup", "tuner")}
     if not os.environ.get("TAGPUP_WEB_NO_WARMUP"):
-        suggest_models.warm_up_in_background()
+        runtime.warm_up_in_background()
     ready = None
     if args.open != "none":
         def ready():

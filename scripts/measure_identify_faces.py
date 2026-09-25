@@ -104,8 +104,8 @@ def build_sandbox(source_db, sandbox):
 
 def start_sandbox_server(sandbox, db_path, port):
     """The server under test, as its own process, running the snapshotted code: its
-    tagpup_web.py, which is what installs Suggest's models and warms them, as the apps
-    people start get. A launcher written here once served the apps bare."""
+    tagpup_web.py, which builds the process's runtime -- Suggest's models -- and warms
+    them, as the apps people start get. A launcher written here once served the apps bare."""
     process = processes.start(
         [sys.executable, os.path.join(sandbox, "tagpup_web.py"), "--db", db_path,
          "--tuner-port", str(port), "--tagpup-port", str(free_port())],

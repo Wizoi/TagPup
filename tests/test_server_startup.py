@@ -26,7 +26,7 @@ class TestServerStartup(unittest.TestCase):
         proc = processes.start(
             [sys.executable, os.path.join(PROJECT_ROOT, "tagpup_web.py"),
              "--tagpup-port", str(tagpup_port), "--tuner-port", str(tuner_port)],
-            env=dict(os.environ, TAGPUP_HOME=home.root),
+            env=dict(os.environ, TAGPUP_HOME=home.root, TAGPUP_NO_MODEL_WEIGHTS="1"),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT)
         try:
             deadline = time.time() + 60
@@ -58,7 +58,7 @@ class TestServerStartup(unittest.TestCase):
     def test_tag_embedding_cache(self):
         # Add scripts directory to path to import index
         sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
-        from index import PhotoIndex
+        from tagpup.services.search import PhotoIndex
 
         test_db = own_home.for_test(self).library("test_tag_emb_cache.db")
 

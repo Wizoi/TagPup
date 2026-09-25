@@ -3,7 +3,7 @@
 What a server keeps for each library it serves is a `PerLibrary`
 (tagpup.core.per_library), imported here so a route module needs one import.
 """
-from flask import g
+from flask import current_app, g
 
 from tagpup.core.per_library import PerLibrary  # noqa: F401  (the routes' import)
 
@@ -21,3 +21,8 @@ def require():
     if library is None:
         abort(404, description="No library: choose one first")
     return library
+
+
+def runtime():
+    """The process's models (tagpup.runtime.Runtime) the app was made with, or None."""
+    return current_app.config.get("RUNTIME")

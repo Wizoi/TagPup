@@ -244,7 +244,7 @@ def folder_suggest_start():
     if not folder or not os.path.isdir(folder):
         return responses.error(400, "Invalid folder path")
     folder = paths.stored(folder)
-    work = suggestion_jobs.work_for(library, lambda: _folder_photos(library, folder))
+    work = suggestion_jobs.work_for(library, lambda: _folder_photos(library, folder), state.runtime())
     return jsonify({"success": True, "status": suggestion_jobs.runs_for(library).start(folder, work)})
 
 

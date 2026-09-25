@@ -20,10 +20,17 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
-import faces  # noqa: E402
-import suggester  # noqa: E402
-from index import PhotoIndex  # noqa: E402
-from suggester import TagSuggester  # noqa: E402
+import _root  # noqa: E402,F401
+from tagpup import config as tagpup_config  # noqa: E402
+from tagpup.core import clustering  # noqa: E402
+from tagpup.ml import clip as clip_model  # noqa: E402
+from tagpup.ml import faces as face_model  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
+from tagpup.services import search  # noqa: E402
+from tagpup.services import faces as face_records  # noqa: E402
+from tagpup.services.search import PhotoIndex  # noqa: E402
+from tagpup.services.suggester import TagSuggester  # noqa: E402
+from tagpup.store import faces as store_faces  # noqa: E402
 
 
 def unit(vector):
@@ -48,28 +55,13 @@ class FakeTaxonomy:
         return {"people"}
 
 
-class CountingIndex:
-    """The two ways of learning who is known, counted."""
+class Index:
+    """A library with no neighbours and no faces on file."""
     conn = None
-
-    def __init__(self):
-        self.all_faces_reads = 0
-        self.known_reads = 0
-
-    def get_all_faces(self):
-        self.all_faces_reads += 1
-        return [{"name": "Rowan Thackeray", "embedding": unit([1, 0, 0])}]
-
-    def known_faces(self):
-        from tagpup.core import clustering
-        self.known_reads += 1
-        return clustering.KnownFaces.of([("Rowan Thackeray", unit([1, 0, 0]), None, r"D:\Pictures\Before\a.jpg")])
+    db_path = "no such library.db"
 
     def search(self, embedding, k=15):
         return []
-
-    def save_faces_if_absent(self, photo_path, detected):
-        return 0
 
 
 class FakeFaceProcessor:
@@ -78,20 +70,20 @@ class FakeFaceProcessor:
 
 
 class ReadsPeopleOncePerRun(unittest.TestCase):
-    def setUp(self):
-        self._saved = suggester._global_face_processor
-        suggester._global_face_processor = FakeFaceProcessor()
-
-    def tearDown(self):
-        suggester._global_face_processor = self._saved
-
     def test_three_photos_read_the_people_once_and_never_the_whole_table(self):
-        index = CountingIndex()
-        run = TagSuggester(index, FakeTaxonomy())
-        results = [run.suggest_for_photo(r"D:\Pictures\Run\%02d.jpg" % n, [1.0, 0.0, 0.0])
-                   for n in range(3)]
-        self.assertEqual(index.all_faces_reads, 0)
-        self.assertEqual(index.known_reads, 1)
+        known_reads = []
+
+        def known_faces(db_path):
+            known_reads.append(db_path)
+            return clustering.KnownFaces.of([("Rowan Thackeray", unit([1, 0, 0]), None, r"D:\Pictures\Before\a.jpg")])
+
+        run = TagSuggester(Index(), FakeTaxonomy(), faces=FakeFaceProcessor())
+        with mock.patch.object(face_records, "known_faces", side_effect=known_faces), \
+                mock.patch.object(face_records, "record_detected", return_value=0), \
+                mock.patch.object(store_faces, "for_clustering", side_effect=AssertionError("read every face")):
+            results = [run.suggest_for_photo(r"D:\Pictures\Run\%02d.jpg" % n, [1.0, 0.0, 0.0])
+                       for n in range(3)]
+        self.assertEqual(len(known_reads), 1)
         # And the matching still works: each photo's face is Rowan.
         for result in results:
             self.assertIn("People/Rowan Thackeray", [t["tag"] for t in result["suggested_tags"]])
@@ -124,7 +116,7 @@ class KnownFacesFromTheLibrary(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def test_named_faces_only_excluded_left_out(self):
-        known = self.index.known_faces()
+        known = face_records.known_faces(self.db)
         self.assertEqual(sorted(known.names()), ["Imogen Vale", "Rowan Thackeray"])
         # Rowan's closest face to each of their two named ones is itself; the excluded
         # face is not among them.
@@ -134,40 +126,42 @@ class KnownFacesFromTheLibrary(unittest.TestCase):
 
 class FaceModelsLoadOnce(unittest.TestCase):
     def test_warm_up_actually_loads_the_models(self):
-        import embedder
-        import suggest_models
         loaded = []
 
-        class Processor:
-            def _init_models(self):
+        class Faces:
+            def load(self):
                 loaded.append(True)
 
-        saved = suggester._global_face_processor
-        suggester._global_face_processor = None
-        try:
-            with mock.patch.object(faces, "FaceProcessor", Processor), \
-                    mock.patch.object(embedder, "ClipEmbedder", mock.Mock()):
-                suggest_models.warm_up()
-        finally:
-            suggester._global_face_processor = saved
+        Runtime(tagpup_config.load(), clip=mock.Mock(), faces=Faces()).warm_up()
         self.assertEqual(loaded, [True])
+
+    def test_warm_up_builds_each_model_once_from_the_settings(self):
+        settings = tagpup_config.load()
+        with mock.patch.object(clip_model, "ClipModel") as clip, \
+                mock.patch.object(face_model, "FaceModel") as faces:
+            runtime = Runtime(settings)
+            runtime.warm_up()
+            runtime.warm_up()
+        clip.assert_called_once_with(**tagpup_config.embedder_settings(settings))
+        faces.assert_called_once_with(**tagpup_config.face_settings(settings))
+        self.assertEqual(2, clip.return_value.load.call_count)
+        self.assertEqual(2, faces.return_value.load.call_count)
 
     def test_warm_up_opens_no_library(self):
         """The warm-up made a PhotoIndex on the startup library and kept it open until
         the process ended; a thread starting after the file had gone made an empty
         library in its place (docs/findings.md, #99). The models are the process's."""
-        import embedder
-        import index
-        import suggest_models
-
-        with mock.patch.object(embedder, "ClipEmbedder", mock.Mock()) as clip, \
-                mock.patch.object(index, "PhotoIndex", side_effect=AssertionError("a library was opened")), \
-                mock.patch.object(faces, "FaceProcessor", mock.Mock()):
-            suggest_models.warm_up()
-        clip.assert_called_once_with()
+        opened = []
+        with mock.patch.object(search, "PhotoIndex", side_effect=lambda *a, **k: opened.append(a)), \
+                self.assertNoLogs("tagpup.runtime", level="ERROR"):
+            Runtime(tagpup_config.load(), clip=mock.Mock(), faces=mock.Mock()).warm_up()
+        # The warm-up catches what a model raises, and logs it: a patch that raised was
+        # swallowed there, so the library it opened is counted instead.
+        self.assertEqual([], opened)
 
     def test_four_workers_arriving_together_load_the_models_once(self):
-        processor = faces.FaceProcessor(device="cpu")
+        processor = face_model.FaceModel(min_face_size=20, confidence_threshold=0.85,
+                                         mtcnn_thresholds=[0.6, 0.7, 0.7], device="cpu")
         loads = []
 
         def slow_load():

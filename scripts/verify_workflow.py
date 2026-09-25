@@ -107,7 +107,7 @@ def indexers_running():
 
 def start_servers(work_db):
     """The one server (tagpup_web.py) on this run's ports, as a process of its own, on
-    the working copy. It installs Suggest's models, which the apps served bare lacked."""
+    the working copy. It builds the runtime, Suggest's models, which the apps served bare lacked."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return processes.start([sys.executable, os.path.join(root, "tagpup_web.py"), "--db", os.path.abspath(work_db),
                             "--tuner-port", str(TUNER_PORT), "--tagpup-port", str(TAGPUP_PORT)])

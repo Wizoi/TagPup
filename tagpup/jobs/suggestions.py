@@ -7,8 +7,10 @@ this process until background jobs have a home of their own (docs/ARCHITECTURE.m
 with saved suggestions and no run here says "completed", with them.
 
 TagPup held all of this on its request handler; the run is here now. What it runs -- the
-folder's photos, and the model that suggests for each -- is handed to it (`work`), since
-the suggester and the CLIP model have not moved into the package yet.
+folder's photos, and the model that suggests for each -- is handed to it (`work`): the
+models are the process's, built by tagpup.runtime and given to each run by the route
+that starts it. A module-level slot the web launcher filled held them before
+(docs/findings.md, #112).
 
 A run goes "preparing" -> "running" -> "completed", or "error". Nothing but a start
 changes a folder that is preparing or running, and a start leaves one alone.
@@ -32,21 +34,15 @@ WORKERS = min(4, os.cpu_count() or 1)
 _runs = {}
 _runs_lock = threading.Lock()
 
-#: How a run gets its model: something with `begin(library)`, which readies the
-#: suggester and the CLIP model for one library and returns the model a run calls
-#: (`suggest`, `offered`, `consensus`, `model_key`; see SuggestionRuns.start). None
-#: until an entry point installs one. The suggester, the CLIP embedder and PhotoIndex
-#: still live in scripts/, which nothing in the package may import (tests/test_layers.py),
-#: so the launcher hands them in: scripts/suggest_models.install(). Without one, a run
-#: over a folder with photos fails with a message saying so, rather than a NameError.
-models = None
 
-
-def work_for(library, photos):
+def work_for(library, photos, models):
     """What a run over one folder of `library` runs (SuggestionRuns.start): `photos()`,
     the folder's photos as {key: metadata with "path"}, and the model `models` readies
-    for the library. Everything the run's thread needs is handed to it here; it never
-    asks which library a request was for (docs/findings.md, #44)."""
+    for the library -- something with `begin(library)` (tagpup.runtime.Runtime), which
+    returns what a run calls (`suggest`, `offered`, `consensus`, `model_key`; see
+    SuggestionRuns.start). Everything the run's thread needs is handed to it here; it
+    never asks which library a request was for (docs/findings.md, #44). Without models,
+    a run over a folder with photos fails with a message saying so."""
 
     class Work:
         def photos(self):
@@ -54,8 +50,8 @@ def work_for(library, photos):
 
         def begin(self):
             if models is None:
-                raise RuntimeError("Suggest has no model: nothing has installed "
-                                   "tagpup.jobs.suggestions.models (scripts/suggest_models.install)")
+                raise RuntimeError("Suggest has no model: this app was made without a runtime "
+                                   "(tagpup.web.app.create_app(runtime=...))")
             return models.begin(library)
 
     return Work()

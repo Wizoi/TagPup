@@ -89,8 +89,8 @@ def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
 
 
 def start_server(sandbox, db_path, port):
-    """The TagPup server as its own process: the sandbox's tagpup_web.py, which installs
-    Suggest's models and warms them as the apps people start get, logging to the
+    """The TagPup server as its own process: the sandbox's tagpup_web.py, which builds
+    the runtime -- Suggest's models -- and warms them as the apps people start get, logging to the
     sandbox's data/logs (tagpup.logs)."""
     log_path = os.path.join(sandbox, "data", "logs", "tagpup_web.log")
     # Its home is the sandbox, whatever TAGPUP_HOME this was run with.

@@ -50,15 +50,18 @@ SLOW_REQUEST_SECONDS = 1.0
 THREADS = 16
 
 
-def create_app(kind, startup=None, pages=None):
+def create_app(kind, startup=None, pages=None, runtime=None):
     """The Flask app for `kind` ("tagpup" or "tuner"): its page from `pages` (the
-    page's folder, by default the one beside the package) and, until #100, `startup`,
-    the Library a request naming none is served."""
+    page's folder, by default the one beside the package), `startup`, the Library a
+    request naming none is served, and `runtime`, the process's models
+    (tagpup.runtime.Runtime), which the routes take from app.config["RUNTIME"]. An app
+    made without one answers everything but Suggest."""
     if kind not in PAGES:
         raise ValueError("no such app: %r" % (kind,))
     app = Flask("tagpup.web." + kind, static_folder=None)
     app.config["APP_KIND"] = kind
     app.config["STARTUP_LIBRARY"] = startup
+    app.config["RUNTIME"] = runtime
     app.config["PAGES"] = pages or os.path.join(tagpup_config.CODE_ROOT, PAGES[kind])
     app.json.sort_keys = False
 

@@ -85,7 +85,7 @@ class AServerLogsToItsFile(unittest.TestCase):
         cls.process = processes.start(
             [sys.executable, os.path.join(WORKSPACE_DIR, "tagpup_web.py"), "--db", "test_logs",
              "--tagpup-port", str(cls.tagpup_port), "--tuner-port", str(cls.tuner_port)],
-            env=dict(os.environ, TAGPUP_HOME=cls.home, TAGPUP_WEB_NO_WARMUP="1"),
+            env=dict(os.environ, TAGPUP_HOME=cls.home, TAGPUP_WEB_NO_WARMUP="1", TAGPUP_NO_MODEL_WEIGHTS="1"),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.time() + 60
         while time.time() < deadline:

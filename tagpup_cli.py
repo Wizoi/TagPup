@@ -48,15 +48,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scr
 
 # Load components
 from metadata import MetadataExtractor
-from embedder import ClipEmbedder, stored_mismatch
-from index import PhotoIndex
 from taxonomy import TagTaxonomy
-from suggester import TagSuggester
 from writer import MetadataWriter
-from faces import FaceProcessor
 import paths
 import db as tagpup_db
 from tagpup import config as tagpup_config
+from tagpup.runtime import Runtime
+from tagpup.services import faces as face_records
+from tagpup.services import identities
+from tagpup.services.search import PhotoIndex, stored_mismatch
+from tagpup.services.suggester import TagSuggester
+from tagpup.store.locks import PathLocker
 from tagpup.store import faces as store_faces
 from tagpup.store import taxonomy as store_taxonomy
 from tagpup.core import suggesting
@@ -67,6 +69,15 @@ from tagpup.core.library import Library
 def get_config():
     """The settings, config.ini over the defaults (tagpup.config)."""
     return tagpup_config.load()
+
+def get_runtime(config):
+    """The models a command runs, from the settings (tagpup.runtime): each is built the
+    first time the command asks for it, and loaded the first time it is used."""
+    return Runtime(config)
+
+def library_index(runtime, db_path):
+    """The library's photos, with their vectors under the runtime's CLIP model."""
+    return PhotoIndex(db_path=db_path, model=runtime.model_key)
 
 def get_exiftool_path(config) -> str:
     """The configured ExifTool if it exists, else one on PATH (tagpup.config)."""
@@ -124,8 +135,8 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     """Phase 1: Scan and index a tagged photo library."""
     config = get_config()
     exiftool_path = get_exiftool_path(config)
-    embedder_settings = tagpup_config.embedder_settings(config)
-    model_name = embedder_settings["model_name"]
+    runtime = get_runtime(config)
+    model_name = runtime.embedder_settings["model_name"]
 
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
@@ -144,10 +155,10 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
                 console.print(f"[bold red]Failed to delete {db_path}: {e}[/bold red]")
 
     # Setup / Load components
-    photo_index = PhotoIndex(db_path=db_path)
+    photo_index = library_index(runtime, db_path)
     photo_index.load()
 
-    # The library's vectors against the length this model makes (embedder.stored_mismatch).
+    # The library's vectors against the length this model makes (tagpup.services.search.stored_mismatch).
     mismatch = stored_mismatch(photo_index, model_name)
     if mismatch:
         console.print(f"[yellow]Warning: Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Clearing cached photo embeddings to reindex with the new model...[/yellow]")
@@ -159,7 +170,7 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     taxonomy = TagTaxonomy(db_path)
     taxonomy.load()
 
-    embedder = ClipEmbedder(photo_index=photo_index, **embedder_settings)
+    embeddings = runtime.embeddings(photo_index)
 
     console.print(f"[bold cyan]Scanning directory:[/bold cyan] {directory}")
     all_images = scan_for_images(directory)
@@ -256,9 +267,8 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
 
     # Per-photo write locks, shared with every other indexer of the libraries in this
     # folder, wherever each was started from.
-    from index import PathLocker
     locker = PathLocker(lock_dir=Library(db_path).locks)
-    face_processor = FaceProcessor() if not skip_faces else None
+    face_processor = runtime.faces if not skip_faces else None
     
     try:
         # Generate Embeddings with incremental saving (batches of 100) to protect against halts/crashes
@@ -281,7 +291,7 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
                 continue
                 
             try:
-                emb = embedder.embed_image(path, force_recompute=force_reembed)
+                emb = embeddings.of(path, force_recompute=force_reembed)
                 
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved)
                 if face_processor:
@@ -310,7 +320,7 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
                     if batch_faces:
                         # --force-reembed means redo the work; without it the
                         # existing face rows, and the curation on them, are kept.
-                        photo_index.save_faces_batch(batch_faces, overwrite=force_reembed)
+                        face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed)
                         batch_faces.clear()
                     
                     taxonomy.save()
@@ -332,7 +342,7 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
             
             # Save the remaining face embeddings
             if batch_faces:
-                photo_index.save_faces_batch(batch_faces, overwrite=force_reembed)
+                face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed)
                 batch_faces.clear()
             
             taxonomy.save()
@@ -380,8 +390,8 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
 def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
     """Phase 2: Suggest tags for untagged photos."""
     config = get_config()
-    embedder_settings = tagpup_config.embedder_settings(config)
-    model_name = embedder_settings["model_name"]
+    runtime = get_runtime(config)
+    model_name = runtime.embedder_settings["model_name"]
 
     # Load Index & Taxonomy
     test_mode = ctx.obj.get("test", False)
@@ -390,13 +400,13 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(config, test_mode, cli_db)
 
-    photo_index = PhotoIndex(db_path=db_path)
+    photo_index = library_index(runtime, db_path)
     if not photo_index.load():
         console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
         return
     
     try:
-        # The library's vectors against the length this model makes (embedder.stored_mismatch).
+        # The library's vectors against the length this model makes (tagpup.services.search.stored_mismatch).
         mismatch = stored_mismatch(photo_index, model_name)
         if mismatch:
             console.print(f"[bold red]Error:[/bold red] Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Please run 'index' first to rebuild the index using the new model.")
@@ -408,8 +418,9 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
         # config.ini's words and the tree's, but no one's name (tagpup.core.suggesting).
         candidate_tags = suggesting.zero_shot_words(tagpup_config.candidate_tags(config), taxonomy.paths, taxonomy.people_roots())
 
-        embedder = ClipEmbedder(photo_index=photo_index, **embedder_settings)
-        suggester = TagSuggester(photo_index, taxonomy, embedder=embedder, candidate_tags=candidate_tags)
+        embeddings = runtime.embeddings(photo_index)
+        suggester = TagSuggester(photo_index, taxonomy, embedder=runtime.clip, candidate_tags=candidate_tags,
+                                 faces=runtime.faces)
 
         # Scan untagged photos
         console.print(f"[bold cyan]Scanning directory for untagged photos:[/bold cyan] {directory}")
@@ -440,7 +451,7 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
         
         for path in tqdm(all_images, desc="Generating suggestions"):
             try:
-                emb = embedder.embed_image(path)
+                emb = embeddings.of(path)
                 meta = metadata_map.get(path)
                 sugg = suggester.suggest_for_photo(path, emb, k=k, min_sim=min_sim, target_metadata=meta)
                 suggestions_output.append(sugg)
@@ -553,29 +564,28 @@ def write(ctx, suggestions_file: str, live: bool, min_score: float, nobackup: bo
 def search(ctx, query: str, k: int):
     """Semantic text search across indexed library."""
     config = get_config()
-    embedder_settings = tagpup_config.embedder_settings(config)
-    model_name = embedder_settings["model_name"]
+    runtime = get_runtime(config)
+    model_name = runtime.embedder_settings["model_name"]
 
     # Load Index
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(config, test_mode, cli_db)
-    photo_index = PhotoIndex(db_path=db_path)
+    photo_index = library_index(runtime, db_path)
     if not photo_index.load():
         console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
         return
         
     try:
-        # The library's vectors against the length this model makes (embedder.stored_mismatch).
+        # The library's vectors against the length this model makes (tagpup.services.search.stored_mismatch).
         mismatch = stored_mismatch(photo_index, model_name)
         if mismatch:
             console.print(f"[bold red]Error:[/bold red] Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Please run 'index' first to rebuild the index using the new model.")
             return
 
         # Embed text query
-        embedder = ClipEmbedder(photo_index=photo_index, **embedder_settings)
         console.print(f"Embedding query: '[bold yellow]{query}[/bold yellow]'")
-        query_vector = embedder.embed_text(query)
+        query_vector = runtime.clip.embed_text(query)
 
         # Perform search
         results = photo_index.search(query_vector, k=k)
@@ -603,12 +613,13 @@ def search(ctx, query: str, k: int):
 def stats(ctx):
     """Index statistics (tag counts, people, coverage)."""
     config = get_config()
+    runtime = get_runtime(config)
     
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(config, test_mode, cli_db)
 
-    photo_index = PhotoIndex(db_path=db_path)
+    photo_index = library_index(runtime, db_path)
     if not photo_index.load():
         console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
         return
@@ -742,12 +753,13 @@ def inspect(ctx, photo_path: str):
 def list_index(ctx, folder):
     """List all photos currently stored in the index, optionally filtered by folder."""
     config = get_config()
+    runtime = get_runtime(config)
     
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(config, test_mode, cli_db)
 
-    photo_index = PhotoIndex(db_path=db_path)
+    photo_index = library_index(runtime, db_path)
     if not photo_index.load():
         console.print("[bold red]Error:[/bold red] No photo index found.")
         return
@@ -796,12 +808,13 @@ def remove(ctx, path, folder):
         return
 
     config = get_config()
+    runtime = get_runtime(config)
     
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(config, test_mode, cli_db)
 
-    photo_index = PhotoIndex(db_path=db_path)
+    photo_index = library_index(runtime, db_path)
     if not photo_index.load():
         console.print("[bold red]Error:[/bold red] No photo index found.")
         return
@@ -845,11 +858,12 @@ def remove(ctx, path, folder):
 def index_faces(ctx, directory: str, force: bool):
     """Scan photos and extract/index face embeddings into the database."""
     config = get_config()
+    runtime = get_runtime(config)
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(config, test_mode, cli_db)
 
-    photo_index = PhotoIndex(db_path=db_path)
+    photo_index = library_index(runtime, db_path)
     if not photo_index.load():
         console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
         return
@@ -884,13 +898,13 @@ def index_faces(ctx, directory: str, force: bool):
             return
 
         console.print(f"Extracting face embeddings for [bold yellow]{len(to_process)}[/bold yellow] photo(s)...")
-        processor = FaceProcessor()
+        processor = runtime.faces
         
         from tqdm import tqdm
         count_faces = 0
         for path in tqdm(to_process, desc="Detecting and embedding faces"):
             faces = processor.detect_and_embed_faces(path)
-            photo_index.save_faces_for_path(path, faces)
+            face_records.replace_detected(photo_index.conn, path, faces)
             count_faces += len(faces)
 
         console.print(f"[bold green]Successfully indexed {count_faces} faces across {len(to_process)} photos.[/bold green]")
@@ -905,28 +919,25 @@ def index_faces(ctx, directory: str, force: bool):
 def cluster_faces(ctx, reset: bool, max_iterations: int):
     """Run self-tuning identity resolution to cluster and name faces using photo tags."""
     config = get_config()
+    runtime = get_runtime(config)
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(config, test_mode, cli_db)
 
-    photo_index = PhotoIndex(db_path=db_path)
+    photo_index = library_index(runtime, db_path)
     if not photo_index.load():
         console.print("[bold red]Error:[/bold red] No photo index found.")
         return
 
     if reset:
         try:
-            cleared = photo_index.reset_face_assignments()
+            cleared = face_records.clear_automatic_names(photo_index.conn)
             console.print(f"[bold yellow]Cleared {cleared} automatically assigned face name(s); names given by hand are kept.[/bold yellow]")
         except Exception as e:
             console.print(f"[bold red]Failed to reset face assignments: {e}[/bold red]")
 
-    taxonomy = TagTaxonomy(db_path)
-    taxonomy.load()
-
     try:
-        processor = FaceProcessor()
-        resolved_stats = processor.cluster_and_resolve_identities(photo_index, taxonomy, max_iterations=max_iterations)
+        resolved_stats = identities.resolve(photo_index, max_iterations=max_iterations)
         
         if not resolved_stats:
             console.print("[yellow]No faces were resolved to identities. Try tagging photos with people names first.[/yellow]")

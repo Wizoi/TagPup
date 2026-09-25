@@ -105,7 +105,7 @@ class TheInstalledAppRuns(InstallCase):
         self.install()
         port, other = free_port(), free_port()
         # As a restart: the launcher's --open would open a tab, and a restart never does.
-        env = dict(os.environ, TAGPUP_WEB_RELOADED="1")
+        env = dict(os.environ, TAGPUP_WEB_RELOADED="1", TAGPUP_NO_MODEL_WEIGHTS="1")
         env.pop("TAGPUP_HOME", None)   # the launcher sets it
         process = processes.start(["cmd", "/c", os.path.join(self.dest, "TagTuner.cmd"),
                                     "--db", "installed", "--tuner-port", str(port),
