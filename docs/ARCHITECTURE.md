@@ -300,6 +300,7 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 2026-09-23 | `Result` lives in `core`, not in a layer of its own: it is a plain value every layer passes along, so it needs no place in the import rules. |
 | 2026-09-24 | A service that reads returns what it read, not a `Result`, and raises `NotFound` (a route's 404) or `Refused` (400), which live beside `Result` in `tagpup.core.result`. |
 | 2026-09-24 | Opening a photo, showing it in Explorer and the folder dialog stay web routes, not services: they act on the desktop of the machine the server runs on, and write nothing. |
+| 2026-09-24 | The web layer is two Flask apps from one factory (`tagpup.web.app.create_app`), one per page, served by one Waitress process that hands each request to the app for the port it arrived on. The pages ask for the same paths (/api/people, /api/photo-file, eight in all) and mean different things by them; one app would ask which port at every such route. The sockets are bound by us with SO_EXCLUSIVEADDRUSE, since Waitress's own SO_REUSEADDR lets a second server bind a port a live one holds on Windows. |
 
 ## Progress
 
@@ -310,7 +311,7 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 3. Store | done, 2026-09-24 |
 | 4. Data model | done, 2026-09-24 |
 | 4.5. One owner for each rule | done, 2026-09-24 |
-| 5. One server | not started |
+| 5. One server | in progress, 2026-09-24: the skeleton (tagpup.web, tagpup_web.py) is in; the routes and the old servers' tests are moving |
 | 6. Pages | not started |
 | 7. MCP | not started |
 | 8. Sync | not started |

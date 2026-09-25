@@ -20,16 +20,45 @@ import unittest
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 
-SERVER_SPEC_PAIRS = (
-    (
-        os.path.join(WORKSPACE_DIR, "scripts", "tagpup_server.py"),
-        os.path.join(WORKSPACE_DIR, "docs/SPEC_TAGPUP_GUI.md"),
-    ),
-    (
-        os.path.join(WORKSPACE_DIR, "scripts", "tuner_server.py"),
-        os.path.join(WORKSPACE_DIR, "docs/SPEC_TAGTUNER.md"),
-    ),
+#: Each app: its old server's source, its spec, and its Flask app (tagpup.web). While
+#: the routes move from the one to the other (docs/ARCHITECTURE.md, phase 5), a route
+#: is implemented where either has it.
+APPS = (
+    ("tagpup", os.path.join(WORKSPACE_DIR, "scripts", "tagpup_server.py"),
+     os.path.join(WORKSPACE_DIR, "docs/SPEC_TAGPUP_GUI.md")),
+    ("tuner", os.path.join(WORKSPACE_DIR, "scripts", "tuner_server.py"),
+     os.path.join(WORKSPACE_DIR, "docs/SPEC_TAGTUNER.md")),
 )
+SERVER_SPEC_PAIRS = tuple((server, spec) for _kind, server, spec in APPS)
+
+#: How a Flask route reads its request: the JSON body as `body`, the query as
+#: `request.args`.
+FLASK_BODY = re.compile(r'body\.get\(\s*"([^"]+)"')
+FLASK_QUERY = re.compile(r'request\.args\.get\(\s*"([^"]+)"')
+
+
+def flask_routes(kind):
+    """Each /api route of the Flask app for `kind`, with the parameters its view reads,
+    following one level of the module's own helpers as implemented_routes does."""
+    import inspect
+
+    from tagpup.web import app as web
+
+    app = web.create_app(kind)
+    out = {}
+    for rule in app.url_map.iter_rules():
+        if not rule.rule.startswith("/api/"):
+            continue
+        view = app.view_functions[rule.endpoint]
+        source = inspect.getsource(view)
+        module = inspect.getmodule(view)
+        for helper in set(re.findall(r"\b(_\w+)\(", source)):
+            found = getattr(module, helper, None)
+            if inspect.isfunction(found):
+                source += "\n" + inspect.getsource(found)
+        out[rule.rule] = {"handler": view.__name__, "body": set(FLASK_BODY.findall(source)),
+                          "query": set(FLASK_QUERY.findall(source))}
+    return out
 
 ROUTE_DISPATCH = re.compile(r'path == "(/api/[^"]+)":\s*\n\s*self\.(\w+)\(')
 BODY_PARAM = re.compile(r'data\.get\(\s*"([^"]+)"')
@@ -64,6 +93,11 @@ def implemented_routes(server_path):
             "body": set(BODY_PARAM.findall(body)),
             "query": set(QUERY_PARAM.findall(body)),
         }
+    kind = next(k for k, server, _spec in APPS if server == server_path)
+    for route, found in flask_routes(kind).items():
+        entry = out.setdefault(route, {"handler": found["handler"], "body": set(), "query": set()})
+        entry["body"] |= found["body"]
+        entry["query"] |= found["query"]
     return out
 
 
