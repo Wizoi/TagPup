@@ -27,8 +27,8 @@ per file. dpkg's per-item states, and its recovery at start, are the model here:
    writing nothing.
 
 A rename is a file operation too (Smart Rename): its before and after are the file's
-path, and the file is known by its size and modified time, which renaming does not
-change. The renames of one edit go together (tagpup.files.names.rename_all), marked
+path, and the file is known by its size, modified time and file id, which renaming does
+not change and a copy does not share. The renames of one edit go together (tagpup.files.names.rename_all), marked
 `writing` together, and done together in the transaction that moves their rows.
 
 Files are named by their photo's id in what is reported, never by path: a Smart Rename
@@ -269,16 +269,28 @@ class Renamed:
 
 def _fingerprint(path):
     """What a file is known by wherever a rename left it: its size and modified time,
-    which renaming does not change. None when there is no file."""
+    which renaming does not change, and its file id (st_ino: NTFS's file index), which
+    renaming on one volume keeps too and a copy never shares. A copy keeps the size and
+    modified time -- Explorer's, robocopy's, shutil.copy2's -- and was taken for the
+    file (docs/findings.md, #269). None when there is no file; no file id where the
+    volume gives none."""
     try:
         stat = os.stat(path)
     except OSError:
         return None
-    return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+    found = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+    if stat.st_ino:
+        found["ino"] = stat.st_ino
+    return found
 
 
 def _holds(path, row):
-    return path is not None and _fingerprint(path) == row.before
+    """Is the file at `path` the one `row` renames: all the plan knew it by? A plan
+    written before file ids were recorded knows it by size and modified time alone."""
+    if path is None or not row.before:
+        return False
+    now = _fingerprint(path)
+    return now is not None and all(now.get(key) == value for key, value in row.before.items())
 
 
 def rename(library, operation, renames, aside, exiftool_path=None, summary=None):
@@ -339,7 +351,9 @@ def _record_renames(library, rows, state, forward):
 def _settle_renames(library, rows, forward, redo):
     """Settle renames by where each file is: at its new name (the old, undoing), recorded;
     at its old name, renamed again with `redo`, else taken out of the change (or, undoing,
-    a conflict); nowhere, a conflict."""
+    a conflict); nowhere, a conflict. Under both names -- a copy in the way that the plan
+    cannot tell from it -- a conflict, the files left as they are, and so is the move
+    aside of the file in its way, which was only to make room for it (#269)."""
     finished = "done" if forward else "undone"
 
     def origin(row):
@@ -348,14 +362,29 @@ def _settle_renames(library, rows, forward, redo):
     def target(row):
         return row.new_path if forward else row.path
 
-    arrived, waiting = [], []
+    arrived, waiting, doubtful = [], [], set()
     for row in rows:
-        if _holds(target(row), row):
-            arrived.append(row)
-        elif _holds(origin(row), row):
+        # Where it was first: a file there too at its new name is a copy, or in doubt.
+        at_origin, at_target = _holds(origin(row), row), _holds(target(row), row)
+        if at_origin and at_target:
+            _conflict(library, row, "found under both names, one of them a copy it cannot be told from;"
+                                    " neither is renamed")
+            doubtful.add(paths.key(target(row)))
+        elif at_origin:
             waiting.append(row)
+        elif at_target:
+            arrived.append(row)
         else:
             _conflict(library, row, "not found under either name")
+    # A move aside of the file in the way of one left where it is.
+    making_room = [row for row in waiting if paths.key(origin(row)) in doubtful]
+    if making_room:
+        waiting = [row for row in waiting if row not in making_room]
+        if forward:
+            file_journal.withdraw(library.path, [row.id for row in making_room])
+        else:
+            for row in making_room:
+                _conflict(library, row, "left where it is: the file to take its place was found under both names")
     if waiting and redo:
         # Only onto a name that is free, or that another of these is leaving.
         ready = list(waiting)
