@@ -73,8 +73,10 @@ def get_exiftool_path(config) -> str:
     return tagpup_config.exiftool_path(config)
 
 def get_db_path(config, test_mode=False, cli_db=None):
-    """The library the command works on: --db (a name in the data folder, or a path),
-    else TAGPUP_DB_PATH, else the configured library -- its test_ twin in test mode.
+    """The library the command works on: --db (a name in the data folder, or a path;
+    a name's test_ twin in test mode), else TAGPUP_DB_PATH, which the indexing service
+    sets for the indexer it runs. There is no default: a command that indexes, writes
+    or resets a library says which one (docs/findings.md, #100).
 
     The tag tree is in the library. It had a JSON file of its own, named one way here
     and another in the servers (docs/findings.md, #13), and the name decided which
@@ -84,14 +86,13 @@ def get_db_path(config, test_mode=False, cli_db=None):
         db_name = cli_db if cli_db.endswith(".db") else (cli_db + ".db")
         if os.path.isabs(db_name) or "/" in db_name.replace("\\", "/"):  # not a path: is --db a name or a location
             return db_name
-        return os.path.join(tagpup_config.data_dir(config), db_name)
+        return os.path.join(tagpup_config.data_dir(config), libraries.for_mode(db_name, test_mode))
 
     env_db = os.environ.get("TAGPUP_DB_PATH")
     if env_db:
         return env_db
 
-    return os.path.join(tagpup_config.data_dir(config),
-                        libraries.for_mode(tagpup_config.default_db(config), test_mode))
+    raise click.UsageError("Say which library: --db <name or path> (a file in the data folder, or a path)")
 
 def scan_for_images(dir_path: str) -> List[str]:
     """Recursively scan directory for image files, in the form the index stores.
@@ -104,7 +105,7 @@ def scan_for_images(dir_path: str) -> List[str]:
     return image_files.photos_under(dir_path)
 
 @click.group()
-@click.option("--db", type=str, help="Specify active database name or path (e.g. 'my_photos.db' or absolute path).")
+@click.option("--db", type=str, help="The library to work on: a name in the data folder (e.g. 'my_photos') or a path. Required.")
 @click.option("--test", is_flag=True, help="Use test database paths to avoid cluttering production index.")
 @click.pass_context
 def cli(ctx, db, test):

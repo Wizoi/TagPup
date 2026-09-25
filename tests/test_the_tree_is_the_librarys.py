@@ -35,10 +35,19 @@ class TheCliTestModeKeepsToItsLibrary(unittest.TestCase):
 
     def test_test_mode_works_on_the_test_library(self):
         self.assertEqual("test_photo_index.db",
-                         os.path.basename(tagpup_cli.get_db_path(self.config, test_mode=True)))
+                         os.path.basename(tagpup_cli.get_db_path(self.config, test_mode=True, cli_db="photo_index")))
+
+    def test_a_command_says_which_library_it_works_on(self):
+        # There is no library the CLI opens unasked (docs/findings.md, #100): one it
+        # picked on its own was indexed, written and reset by mistake.
+        import click
+        with self.assertRaises(click.UsageError):
+            tagpup_cli.get_db_path(self.config)
+        with self.assertRaises(click.UsageError):
+            tagpup_cli.get_db_path(self.config, test_mode=True)
 
     def test_a_tree_saved_in_test_mode_stays_out_of_the_real_library(self):
-        test_library = tagpup_cli.get_db_path(self.config, test_mode=True)
+        test_library = tagpup_cli.get_db_path(self.config, test_mode=True, cli_db="photo_index")
         schema.ensure(test_library)
         tree = taxonomy.TagTaxonomy(test_library)
         tree.load()
