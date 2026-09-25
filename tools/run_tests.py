@@ -24,13 +24,15 @@ import os
 import re
 import shutil
 import subprocess
-from tagpup.core import processes
 import sys
 import tempfile
 import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from tagpup.core import processes  # noqa: E402
 TESTS = os.path.join(ROOT, "tests")
 DURATIONS = os.path.join(TESTS, ".durations.json")
 

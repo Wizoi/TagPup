@@ -5,9 +5,9 @@ import time
 import threading
 import logging
 import subprocess
-from tagpup.core import processes
 
 import _root  # noqa: F401
+from tagpup.core import processes
 
 logger = logging.getLogger("reloader")
 

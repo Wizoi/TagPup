@@ -18,10 +18,12 @@ test left, is not an import.
 import argparse
 import ast
 import os
-from tagpup.core import processes
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from tagpup.core import processes  # noqa: E402
 FRONTEND = ("gui/", "gui_tagpup/", "tests/frontend/")
 
 

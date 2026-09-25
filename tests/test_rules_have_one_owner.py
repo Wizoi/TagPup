@@ -210,9 +210,9 @@ class WhereALibraryIs(unittest.TestCase):
     both servers and the bulk scripts named theirs as data/<name>.db, which is the
     working directory's data folder -- a library of its own wherever they were started."""
 
-    def test_the_configured_library(self):
+    def test_a_library_is_named_in_the_data_folder(self):
         from tagpup import config
-        self.assertEqual(config.library_path(config.default_db()), config.default_library())
+        self.assertEqual(os.path.join(config.data_dir(), "family.db"), config.library_path("family.db"))
 
     def test_nobody_spells_it_from_the_working_directory(self):
         self.assertEqual([], sources_matching(r"[\"']data/[^\"']*\.db[\"']|os\.path\.join\(\s*[\"']data[\"']"))

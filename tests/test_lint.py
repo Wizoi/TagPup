@@ -19,11 +19,13 @@ It also found two `read_json_body` methods on one class, where the later one sil
 replaced a version that returned `{}` for an empty body.
 """
 import os
-from tagpup.core import processes
 import sys
 import unittest
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, WORKSPACE_DIR)
+
+from tagpup.core import processes  # noqa: E402
 
 
 class TestNothingTheLinterObjectsTo(unittest.TestCase):

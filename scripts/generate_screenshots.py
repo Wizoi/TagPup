@@ -9,6 +9,8 @@ from playwright.sync_api import sync_playwright
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
+
+import _root  # noqa: E402,F401
 from tagpup.core import processes  # noqa: E402
 
 # Import environment prep to seed test DB
