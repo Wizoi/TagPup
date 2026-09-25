@@ -48,7 +48,7 @@ This automatically sets up a Python virtual environment (`.venv`), upgrades pip,
 ### Step 2: Configure ExifTool
 Ensure ExifTool is installed on your machine.
 - Default expected path: `%USERPROFILE%\AppData\Local\Programs\ExifTool\exiftool.exe`
-- If you have ExifTool installed elsewhere, open the `config.ini` setup made from [config.example.ini](config.example.ini) and change the `exiftool` path:
+- If you have ExifTool installed elsewhere, open the `config.ini` setup made from [config.example.ini](../config.example.ini) and change the `exiftool` path:
   ```ini
   [paths]
   exiftool = C:\Path\To\Your\exiftool.exe
