@@ -126,7 +126,7 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
                 continue
             after = {field: fields.field_values(value) for field, value in plan.after.items()}
             before = {field: now.get(field, []) for field in after}
-            if fields.same_fields(before, after):
+            if fields.reads_same(before, after):
                 written[path] = plan.detail
                 followed.append((path, now))
                 continue
@@ -190,9 +190,10 @@ def _follow(library, followed):
         logger.warning("Could not record what %d file(s) hold: %s", len(followed), e)
 
 
-def _record(library, row, values, state, stamp=None, wrote=True):
-    """Record what a file holds now in its row, and mark it `state`, in one transaction.
-    Returns the file's stat, as recorded."""
+def _record(library, row, values, state, stamp=None, wrote=True, after=None):
+    """Record what a file holds now in its row, and mark it `state`, in one transaction;
+    with `after`, the journal's after too (file_journal.set_after). Returns the file's
+    stat, as recorded."""
     stat = None
     if wrote:
         try:
@@ -202,6 +203,8 @@ def _record(library, row, values, state, stamp=None, wrote=True):
 
     def work(conn):
         photos.follow_fields(conn, row.path, values, stat, stamp)
+        if after is not None:
+            file_journal.set_after(conn, row.id, after)
         file_journal.set_state(conn, row.id, state)
 
     db.write_with_connection(library.path, work, label="%s: %s" % (row.named(), state))
@@ -271,11 +274,11 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None):
         now = field_values.read_one(et, row.path, list(target))
     except field_values.Unreadable as e:
         return _conflict(library, row, "could not be read: %s" % e)
-    if fields.same_fields(now, target):
+    if fields.reads_same(now, target):
         # Written already: by a run a crash stopped before it recorded the row.
-        _record(library, row, target, finished)
+        _record_held(library, row, now, target, finished)
         return finished, None
-    if not fields.same_fields(now, origin):
+    if not fields.reads_same(now, origin):
         return _conflict(library, row, "changed since it was read: it holds neither what the change found"
                                        " nor what it was to leave, and is not overwritten")
     file_journal.mark(library.path, [row.id], "writing")
@@ -293,16 +296,28 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None):
     return finished, None
 
 
+def _record_held(library, row, now, target, finished):
+    """Record a file found holding `target` already, as it holds it: a value ExifTool does
+    not keep as written ("1.50" read as 1.5) is recorded as read, in the row and, going
+    forward, as the journal's after, as _read_back records a file just written."""
+    held = {field: now.get(field, []) for field in target}
+    after = None
+    if finished == "done" and not fields.same_fields(held, target):
+        after = held
+        row.after = held
+    _record(library, row, held, finished, after=after)
+
+
 def _after_failure(et, library, row, origin, target, finished, on_failure, error):
     """A write that raised: settled by what the file holds after it."""
     try:
         now = field_values.read_one(et, row.path, list(target))
     except field_values.Unreadable:
         now = None
-    if now is not None and fields.same_fields(now, target):
-        _record(library, row, target, finished)
+    if now is not None and fields.reads_same(now, target):
+        _record_held(library, row, now, target, finished)
         return finished, None
-    if now is not None and fields.same_fields(now, origin):
+    if now is not None and fields.reads_same(now, origin):
         if on_failure == "withdraw":
             file_journal.withdraw(library.path, [row.id])
             return "failed", error
@@ -602,7 +617,7 @@ def _undoable(library, change_id, exiftool_path):
             now = held.get(paths.key(row.path))
             if now is None or isinstance(now, Exception):
                 refused.append((row, "could not be read: %s" % now))
-            elif fields.same_fields(now, row.after):
+            elif fields.reads_same(now, row.after):
                 ready.append(row)
             else:
                 refused.append((row, "no longer holds what the change left"))
