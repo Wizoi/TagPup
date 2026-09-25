@@ -362,6 +362,37 @@ An MCP server, `tagpup.mcp`, so that Claude works with a library through the sam
 
 Exit: every check in `tools/doctor.py`, and each question asked of the library while settling a finding, is one tool call. Every tool calls a service, and each has a test.
 
+### Phase 7.5: A journal for every bulk edit and migration
+Every explicit bulk operation copies the whole library first (`db.backup`: 1.4 GB for
+photo_index, and five kept), and cannot be undone except by restoring that copy over
+everything done since. A photo file written in a batch has no record at all of what it
+held before. The owner asked for something lighter that keeps the durability
+*(2026-09-25)*: each change recorded as what it found and what it left, applied only
+where the rows are still what the plan saw, undoable on the same terms, and rehearsed
+before it is applied.
+
+What others do (researched 2026-09-25): SQLite's session extension records changesets
+of old and new column values and inverts them, with conflict handling that is exactly
+these preconditions -- but it is reachable from Python only through APSW, a second
+SQLite library beside `tagpup.store.db`, so its semantics are copied, not the library.
+Photo managers (darktable, digiKam, Lightroom, Immich) do not make a batch of file
+writes atomic; they find disagreement between the database and a file on the next pass
+and resolve it per file. dpkg's per-item states and recovery at start are the model
+for files here.
+
+- [ ] **The journal** (a migration): `changes(id, operation, status, schema_version, created, applied, undone, summary)` -- status planned, applied, derived_pending, undone, failed, pruned -- and `change_rows(change_id, table_name, row_key, column_name, old, new)`, one row per changed column, the values stored as SQLite values (a BLOB as a BLOB). An inserted or deleted row records every column.
+- [ ] **Forward**, under the write lock in one transaction: read each row's current values, refuse the whole change if any differs from what the plan read, write, record, mark the change `derived_pending`, commit; then rebuild the derived data the change touched (the photos' people, generations) and mark it `applied`. A change left `derived_pending` by a crash is finished at start.
+- [ ] **Undo**: the same with old and new swapped. Refused when any row is not what the change left, when a newer applied change touched the same rows (named in the refusal), or when the schema has moved on since the change was made.
+- [ ] **The rehearsal**: a dry run applies the change and its undo inside a transaction that is rolled back, and says whether the undo restored every row exactly. Nothing is written; the real apply writes once.
+- [ ] **Keys never reused**: rows a journaled operation can delete (`faces`, `tag_taxonomy`, `photo_people`...) get keys SQLite never hands out again (AUTOINCREMENT), or an undo that re-inserts a deleted row could collide with -- or silently match -- a newer one. Cascades into journaled tables are either recorded or forbidden; a guard test holds it.
+- [ ] **The maintenance operations** (phase 7's scaffold) record a change instead of taking a backup; the MCP server and the CLI gain `history` and `undo` (a dry run by default). Merging photo_index's 98 duplicate person tags is the first journaled change *(owner, 2026-09-25)*.
+- [ ] **Retention**: how long a change stays undoable, and what pruning keeps (the summary stays; the values go; the change becomes `pruned`).
+- [ ] **Migrations**: each in one transaction, with the checks it names run before it commits. One that only adds needs no backup; one that changes data records its rows like any change; only one that destroys information takes a full backup, taken under the write lock. Recorded in `changes` as well.
+- [ ] **Photo files** (the last stage): a bulk edit that writes files -- Add to all selected, Apply All, Shift Date Taken, Smart Rename, a person's rename -- records each file's fields before and after, commits that plan, marks a file `writing` before ExifTool runs and `done` in the same transaction that records the row (`record_tags_in_index`). At start, a file left `writing` is settled by what it holds: the before, redo it; the after, mark it done; neither, a conflict, reported and never overwritten. Undo rewrites a file only where it still holds what the edit wrote.
+- [ ] Tests that crash an operation between each of its steps and prove recovery; forward-then-undo restoring the touched tables exactly on rows shaped like the real ones; and rehearsals on copies of both real libraries.
+
+Exit: no bulk operation or data-changing migration takes a full copy of the library; each is recorded, rehearsed before it is applied and undoable after, and a crash at any step is settled at the next start.
+
 ### Phase 8: Sync
 A job that keeps each library in step with its folders. Today a row changes only when an app writes the photo or someone indexes its folder again, so the library drifts: files added outside the apps are missing, a deleted folder leaves its rows and face work behind (#42 and #47 in findings.md), and a file edited elsewhere keeps a row describing what it used to hold. It needs photo ids (phase 4), which let a moved or renamed file keep its row, and its faces with it.
 - `tagpup.jobs.sync`: for each indexed folder, compare what is on disk with the rows, by path, size and modified time. Content identity (the DocumentID) links a file that moved.
@@ -397,6 +428,7 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 2026-09-25 | The page tests load a page's ES modules into jsdom as one script, in import order, each module in a function of its own handed its imports (first as one shared scope; two splits hit its false positives, so each module got its scope). jsdom cannot load modules, a bundler is a build step, and modules run under node would keep their timers on node's clock, which closing the page's window cannot stop. |
 | 2026-09-25 | The pages move to `web/tagpup/` and `web/tuner/`, sharing `web/common/`, imported relative to the page so every request carries its library. |
 | 2026-09-25 | The MCP server names a library in every tool call; it has no library of its own (#100). Its reads are a read-only service, `tagpup.services.inspect`, since an entry point may not import `store`; its writes are the maintenance scripts' operations, moved into services the scripts call too. |
+| 2026-09-25 | Bulk edits and migrations are recorded in a journal in the library, per changed column, applied and undone only where the rows are what the change expects, and rehearsed by a dry run that applies and undoes inside a rolled-back transaction. SQLite's session extension was weighed and its semantics copied, not the library: it needs APSW, a second owner of the database beside `tagpup.store.db`. Full backups remain only for migrations that destroy information. |
 
 ## Progress
 
@@ -412,4 +444,5 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 6. Pages | done, 2026-09-25 |
 | 6.5. No shims | done, 2026-09-25 |
 | 7. MCP | done, 2026-09-25 |
+| 7.5. A journal for every bulk edit and migration | in progress, 2026-09-25 |
 | 8. Sync | not started |
