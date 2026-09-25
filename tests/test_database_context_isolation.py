@@ -1,118 +1,87 @@
-"""Regression tests for database context propagation into background worker threads.
+"""Background work started by a request stays with the library the request named.
 
-The per-database registries (the folder cache among them) resolve through
-a thread-local set during request handling. Worker threads spawned by a request do not
-inherit that thread-local, and the class-level fallback points at the *startup* database.
-Any worker that reads or writes an isolated registry must therefore re-bind the active
-database, or it silently operates on the wrong one.
+The per-database registries (the folder cache among them) resolved through a
+thread-local set during request handling. Worker threads spawned by a request did not
+inherit that thread-local, and the class-level fallback pointed at the *startup*
+database. Any worker that read or wrote an isolated registry had to re-bind the active
+database, or it silently operated on the wrong one (docs/findings.md, #44). A
+background job is handed its Library now (tagpup.web.state), and these check the
+handing over.
 
-These tests drive the servers through a NON-DEFAULT database prefix, which is the only
-configuration where the thread-local and the class-level fallback disagree. Existing
-coverage in test_multiple_databases.py exercises the startup database only, where the
-two happen to agree and these defects are invisible.
+These drive the app through a NON-DEFAULT library prefix, which is the only
+configuration where the old thread-local and the class-level fallback disagreed.
+test_multiple_databases.py exercises the startup library only, where the two happened
+to agree and these defects were invisible. No server, no port, no sleep: the queue's
+worker is run on this thread, and the suggestion run too.
 """
+import json
 import os
 import sys
-import json
-import time
-import shutil
 import tempfile
-import threading
 import unittest
-import urllib.parse
-import urllib.request
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
-
-from tagpup_server import (
-    start_server as start_tagpup_server,
-    set_active_db_path,
-)
-import paths
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from free_port import free_port  # noqa: E402
-import own_home  # noqa: E402
+
+import web_client  # noqa: E402
 from face_rows import add_face, add_people  # noqa: E402
+
+from tagpup.core import paths  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db as tagpup_store_db  # noqa: E402
 from tagpup.store import schema  # noqa: E402
 
 
-def _post(port, path, body):
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{port}{path}",
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.loads(r.read().decode("utf-8"))
-
-
-def _get(port, path):
-    with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=15) as r:
-        return json.loads(r.read().decode("utf-8"))
-
-
-def _poll_until(port, path, terminal, timeout=30.0, interval=0.1):
-    """Poll a status endpoint until it reports one of `terminal`. Returns the last payload."""
-    deadline = time.time() + timeout
-    data = {}
-    while time.time() < deadline:
-        data = _get(port, path)
-        if data.get("status") in terminal:
-            return data
-        time.sleep(interval)
-    return data
+def mock_indexer():
+    """A subprocess stand-in for the CLI indexer, which reports and succeeds."""
+    proc = MagicMock()
+    proc.returncode = 0
+    proc.stdout.readline.side_effect = [
+        "Scanning directory...\n",
+        "Indexing photos:  50%\n",
+        "Indexing photos: 100%\n",
+        "",
+    ]
+    return proc
 
 
 class TestWorkerThreadDatabaseBinding(unittest.TestCase):
-    """The startup DB and the DB addressed in the URL are deliberately different."""
+    """The startup library and the library addressed in the URL are deliberately
+    different."""
 
-    TEST_PORT = free_port()
-    # Server boots on this database...
-    STARTUP_NAME = "test_ctx_startup.db"   # in a home of the class's own
-    # ...but every request below is addressed to this one via the URL prefix.
-    OTHER_DB_URL_NAME = "ctx_other"
+    STARTUP_NAME = "test_ctx_startup.db"   # in a home of the test's own
+    OTHER_URL_NAME = "ctx_other"
     OTHER_NAME = "test_ctx_other.db"
 
-    @classmethod
-    def setUpClass(cls):
-        # Its own port: subclasses inherit the attribute, and a port
-        # already held by the last class's server is refused.
-        cls.TEST_PORT = free_port()
-        home = own_home.for_class(cls, "tagpup_ctx_")
-        cls.STARTUP_DB = home.library(cls.STARTUP_NAME)
-        cls.OTHER_DB = home.library(cls.OTHER_NAME)
-        from index import PhotoIndex
-
-        for db in (cls.STARTUP_DB, cls.OTHER_DB):
-            pi = PhotoIndex(db_path=db)
-            pi.load()
-            pi.close()
-
-        cls.server_thread = threading.Thread(
-            target=start_tagpup_server,
-            kwargs={
-                "port": cls.TEST_PORT,
-                "db_path": cls.STARTUP_DB,
-                "gui_dir": os.path.join(WORKSPACE_DIR, "gui_tagpup"),
-            },
-            daemon=True,
-        )
-        cls.server_thread.start()
-        time.sleep(1.0)  # wait for bind
-
-    @classmethod
-    def tearDownClass(cls):
-        set_active_db_path(None)
-
     def setUp(self):
-        self.tmpdir = tempfile.mkdtemp(prefix="tagpup_ctx_")
-        self.addCleanup(shutil.rmtree, self.tmpdir, True)
-        self.addCleanup(set_active_db_path, None)
+        self.app, home = web_client.app_for(self, "tagpup", startup=self.STARTUP_NAME)
+        self.client = self.app.test_client()
+        self.STARTUP_DB = home.library(self.STARTUP_NAME)
+        self.OTHER_DB = home.library(self.OTHER_NAME)
+        library_actions.create(self.OTHER_DB)
+        self.tmpdir = tempfile.mkdtemp(prefix="tagpup_ctx_", dir=home.root)
+        for library in (Library(self.STARTUP_DB), Library(self.OTHER_DB)):
+            self.addCleanup(indexing_jobs.forget, library)
+            self.addCleanup(suggestion_jobs.forget, library)
+
+    def startup_name(self):
+        name = os.path.splitext(os.path.basename(self.STARTUP_DB))[0]
+        return name[5:] if name.startswith("test_") else name
+
+    def post(self, path, body):
+        reply = self.client.post(path, json=body)
+        self.assertEqual(200, reply.status_code, reply.data)
+        return reply.get_json()
+
+    def get(self, path, query=None):
+        reply = self.client.get(path, query_string=query)
+        self.assertEqual(200, reply.status_code, reply.data)
+        return reply.get_json()
 
     def test_startup_and_addressed_databases_actually_differ(self):
         """Guard the premise: if these ever coincide, the tests below prove nothing.
@@ -120,16 +89,11 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
         Proven by round-tripping distinct rows through each database, since the URL
         prefix -- not config.ini -- is what decides which one a request reads.
         """
-        import sqlite3
-
-        startup_name = os.path.splitext(os.path.basename(self.STARTUP_DB))[0]
-        if startup_name.startswith("test_"):
-            startup_name = startup_name[5:]
-        self.assertNotEqual(startup_name, self.OTHER_DB_URL_NAME)
+        self.assertNotEqual(self.startup_name(), self.OTHER_URL_NAME)
 
         # /api/people is sourced from resolved face names, so seed the faces table.
         for db, person in ((self.STARTUP_DB, "StartupOnly"), (self.OTHER_DB, "OtherOnly")):
-            conn = sqlite3.connect(db)
+            conn = tagpup_store_db.connect(db)
             conn.execute("DELETE FROM photos")
             conn.execute("DELETE FROM faces")
             conn.execute(
@@ -141,12 +105,21 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
             conn.commit()
             conn.close()
 
-        startup_people = _get(self.TEST_PORT, f"/{startup_name}/api/people")
-        other_people = _get(self.TEST_PORT, f"/{self.OTHER_DB_URL_NAME}/api/people")
+        startup_people = self.get(f"/{self.startup_name()}/api/people")
+        other_people = self.get(f"/{self.OTHER_URL_NAME}/api/people")
         self.assertIn("StartupOnly", startup_people)
         self.assertIn("OtherOnly", other_people)
         self.assertNotIn("OtherOnly", startup_people)
         self.assertNotIn("StartupOnly", other_people)
+
+    def index_the_folder(self, mock_popen):
+        """Queue the folder under the other library and run its worker here."""
+        queue = indexing_jobs.queue_for(Library(self.OTHER_DB))
+        with patch.object(indexing_jobs.IndexQueue, "_ensure_runner"):
+            res = self.post(f"/{self.OTHER_URL_NAME}/api/folder/index-start", {"folder_path": self.tmpdir})
+        self.assertTrue(res["success"])
+        queue.run_pending()
+        return queue
 
     @patch("subprocess.Popen")
     def test_index_worker_reports_completion_under_non_default_database(self, mock_popen):
@@ -156,29 +129,9 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
         raised KeyError before its try block, and died without ever spawning the indexer,
         leaving the UI polling 'running' forever.
         """
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout.readline.side_effect = [
-            "Scanning directory...\n",
-            "Indexing photos:  50%\n",
-            "Indexing photos: 100%\n",
-            "",
-        ]
-        mock_popen.return_value = mock_proc
-
-        res = _post(
-            self.TEST_PORT,
-            f"/{self.OTHER_DB_URL_NAME}/api/folder/index-start",
-            {"folder_path": self.tmpdir},
-        )
-        self.assertTrue(res["success"])
-
-        q = urllib.parse.quote(self.tmpdir)
-        data = _poll_until(
-            self.TEST_PORT,
-            f"/{self.OTHER_DB_URL_NAME}/api/folder/index-status?path={q}",
-            terminal=("completed", "failed"),
-        )
+        mock_popen.return_value = mock_indexer()
+        self.index_the_folder(mock_popen)
+        data = self.get(f"/{self.OTHER_URL_NAME}/api/folder/index-status", {"path": self.tmpdir})
         self.assertEqual(data.get("status"), "completed", f"worker never completed: {data}")
         self.assertEqual(data.get("percent"), 100)
         # The indexer subprocess must actually have been launched.
@@ -187,28 +140,10 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
     @patch("subprocess.Popen")
     def test_index_worker_status_does_not_leak_into_startup_database(self, mock_popen):
         """Work started under one database must not appear under another."""
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout.readline.side_effect = ["done\n", ""]
-        mock_popen.return_value = mock_proc
-
-        _post(
-            self.TEST_PORT,
-            f"/{self.OTHER_DB_URL_NAME}/api/folder/index-start",
-            {"folder_path": self.tmpdir},
-        )
-        q = urllib.parse.quote(self.tmpdir)
-        _poll_until(
-            self.TEST_PORT,
-            f"/{self.OTHER_DB_URL_NAME}/api/folder/index-status?path={q}",
-            terminal=("completed", "failed"),
-        )
-
+        mock_popen.return_value = mock_indexer()
+        self.index_the_folder(mock_popen)
         # The startup database must report the untouched default for this folder.
-        startup_name = os.path.splitext(os.path.basename(self.STARTUP_DB))[0]
-        if startup_name.startswith("test_"):
-            startup_name = startup_name[5:]
-        other = _get(self.TEST_PORT, f"/{startup_name}/api/folder/index-status?path={q}")
+        other = self.get(f"/{self.startup_name()}/api/folder/index-status", {"path": self.tmpdir})
         self.assertEqual(other.get("message"), "Ready")
 
     def test_suggest_worker_surfaces_failure_under_non_default_database(self):
@@ -218,53 +153,33 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
         wrong registry, so the failure was never recorded and the UI polled 'preparing'
         indefinitely. An empty folder reaches that branch without loading CLIP.
         """
-        res = _post(
-            self.TEST_PORT,
-            f"/{self.OTHER_DB_URL_NAME}/api/folder/suggest-start",
-            {"folder_path": self.tmpdir},
-        )
-        self.assertTrue(res["success"])
+        def run_here(runs, folder, work):
+            runs.run(folder, work)
+            return "running"
 
-        q = urllib.parse.quote(self.tmpdir)
-        data = _poll_until(
-            self.TEST_PORT,
-            f"/{self.OTHER_DB_URL_NAME}/api/folder/suggest-status?path={q}",
-            terminal=("error", "completed"),
-        )
-        self.assertEqual(
-            data.get("status"),
-            "error",
-            f"suggest worker never reported terminal status (stuck at {data.get('status')!r})",
-        )
+        with patch.object(suggestion_jobs.SuggestionRuns, "start", run_here):
+            res = self.post(f"/{self.OTHER_URL_NAME}/api/folder/suggest-start", {"folder_path": self.tmpdir})
+        self.assertTrue(res["success"])
+        data = self.get(f"/{self.OTHER_URL_NAME}/api/folder/suggest-status", {"path": self.tmpdir})
+        self.assertEqual(data.get("status"), "error",
+                         f"suggest worker never reported terminal status (stuck at {data.get('status')!r})")
+        self.assertEqual(self.get(f"/{self.startup_name()}/api/folder/suggest-status",
+                                  {"path": self.tmpdir}).get("status"), "idle")
 
     def test_index_worker_survives_missing_status_entry(self):
         """The worker must not die if a folder's status is gone when it gets to it.
 
         The folder is queued through the route under the non-default library, and so
         must land in that library's queue."""
-        from tagpup.core.library import Library
-        from tagpup.jobs import indexing as indexing_jobs
-
-        folder = self.tmpdir
         queue = indexing_jobs.queue_for(Library(self.OTHER_DB))
         with patch("subprocess.Popen") as mock_popen:
-            mock_proc = MagicMock()
-            mock_proc.returncode = 0
-            mock_proc.stdout.readline.side_effect = ["done\n", ""]
-            mock_popen.return_value = mock_proc
-
+            mock_popen.return_value = mock_indexer()
             with patch.object(indexing_jobs.IndexQueue, "_ensure_runner"):
-                _post(self.TEST_PORT, f"/{self.OTHER_DB_URL_NAME}/api/folder/index-start",
-                      {"folder_path": folder})
-            self.assertEqual([job["folder"] for job in queue.pending()], [paths.stored(folder)])
+                self.post(f"/{self.OTHER_URL_NAME}/api/folder/index-start", {"folder_path": self.tmpdir})
+            self.assertEqual([job["folder"] for job in queue.pending()], [paths.stored(self.tmpdir)])
             queue._statuses.clear()
-
-            t = threading.Thread(target=queue.run_pending, daemon=True)
-            t.start()
-            t.join(timeout=20)
-            self.assertFalse(t.is_alive(), "worker thread hung")
-
-        self.assertEqual(queue.status(folder).get("status"), "completed")
+            queue.run_pending()
+        self.assertEqual(queue.status(self.tmpdir).get("status"), "completed")
 
 
 class TestSuggestionsCachePerDatabase(unittest.TestCase):
@@ -277,6 +192,8 @@ class TestSuggestionsCachePerDatabase(unittest.TestCase):
     """
 
     def file_of(self, name):
+        import shutil
+
         folder = tempfile.mkdtemp(prefix="sugg_file_")
         self.addCleanup(shutil.rmtree, folder, True)
         conn = tagpup_store_db.connect(os.path.join(folder, name))

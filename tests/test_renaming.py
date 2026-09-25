@@ -35,8 +35,7 @@ class SmartRenameRefusesIt(unittest.TestCase):
         photo = os.path.join(lib.photos, "IMG_0007.jpg")
         with open(photo, "wb") as handle:
             handle.write(b"not really a photo")
-        handler = lib.handler("exiftool")
-        status, reply = handler.call("handle_post_folder_rename_photos", {
+        status, reply = lib.post("/api/folder/rename-photos", {
             "folder_path": lib.photos, "photo_paths": [photo],
             "grouping": "2019-06 - Summer Camp"})
 

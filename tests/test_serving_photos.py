@@ -1,4 +1,4 @@
-"""GET /api/photo-file, as each app serves it (localserver.serve_photo_file).
+"""GET /api/photo-file, as each app serves it (tagpup.web.responses.photo).
 
 The two apps share the code and differ on purpose in two ways. TagPup turns a photo
 upright and lets the browser keep it for a day. TagTuner draws face boxes over its
@@ -13,34 +13,8 @@ import unittest
 
 from PIL import Image
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-
-from tagpup_server import TagPupHTTPRequestHandler  # noqa: E402
-from tuner_server import TunerHTTPRequestHandler  # noqa: E402
-
-
-def handler_of(server_class):
-    """A request handler of `server_class` with no socket, that keeps what it sends."""
-    class Handler(server_class):
-        def __init__(self):  # noqa: D107 -- no socket, on purpose
-            self.status = None
-            self.sent = {}
-            self.error = None
-            self.wfile = io.BytesIO()
-
-        def send_response(self, code, message=None):
-            self.status = code
-
-        def send_header(self, name, value):
-            self.sent[name] = value
-
-        def end_headers(self):
-            pass
-
-        def send_error(self, code, message=None, explain=None):
-            self.status, self.error = code, message
-
-    return Handler()
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import web_client  # noqa: E402
 
 
 class ServingAPhoto(unittest.TestCase):
@@ -52,52 +26,54 @@ class ServingAPhoto(unittest.TestCase):
         exif = Image.Exif()
         exif[0x0112] = 6
         Image.new("RGB", (60, 30)).save(self.photo, exif=exif)
+        self.clients = {}
 
-    def get(self, server_class, path, size=None):
-        handler = handler_of(server_class)
-        query = {"path": [path]}
+    def get(self, kind, path, size=None):
+        if kind not in self.clients:
+            app, _home = web_client.app_for(self, kind)
+            self.clients[kind] = app.test_client()
+        query = {"path": path}
         if size is not None:
-            query["size"] = [size]
-        handler.handle_serve_photo_file(query)
-        return handler
+            query["size"] = size
+        return self.clients[kind].get("/library/api/photo-file", query_string=query)
 
-    def shown_size(self, handler):
-        with Image.open(io.BytesIO(handler.wfile.getvalue())) as img:
+    def shown_size(self, reply):
+        with Image.open(io.BytesIO(reply.data)) as img:
             return img.size
 
     def test_tagpup_serves_it_upright_and_lets_the_browser_keep_it(self):
-        handler = self.get(TagPupHTTPRequestHandler, self.photo, "100")
-        self.assertEqual((handler.status, self.shown_size(handler)), (200, (30, 60)))
-        self.assertEqual(handler.sent["Cache-Control"], "max-age=86400")
+        reply = self.get("tagpup", self.photo, "100")
+        self.assertEqual((reply.status_code, self.shown_size(reply)), (200, (30, 60)))
+        self.assertEqual(reply.headers["Cache-Control"], "max-age=86400")
 
     def test_tagtuner_serves_it_as_stored_and_keeps_nothing(self):
-        handler = self.get(TunerHTTPRequestHandler, self.photo, "100")
-        self.assertEqual((handler.status, self.shown_size(handler)), (200, (60, 30)))
-        self.assertNotIn("Cache-Control", handler.sent)
+        reply = self.get("tuner", self.photo, "100")
+        self.assertEqual((reply.status_code, self.shown_size(reply)), (200, (60, 30)))
+        self.assertNotIn("Cache-Control", reply.headers)
 
     def test_the_file_itself_without_a_size(self):
-        for server_class in (TagPupHTTPRequestHandler, TunerHTTPRequestHandler):
-            handler = self.get(server_class, self.photo)
+        for kind in ("tagpup", "tuner"):
+            reply = self.get(kind, self.photo)
             with open(self.photo, "rb") as f:
-                self.assertEqual(handler.wfile.getvalue(), f.read())
-            self.assertEqual(handler.sent["Content-Type"], "image/jpeg")
-            self.assertEqual(handler.sent["Content-Length"], str(os.path.getsize(self.photo)))
+                self.assertEqual(reply.data, f.read(), kind)
+            self.assertEqual(reply.headers["Content-Type"], "image/jpeg", kind)
+            self.assertEqual(reply.headers["Content-Length"], str(os.path.getsize(self.photo)), kind)
 
     def test_a_size_that_is_not_a_number_gets_the_file_itself(self):
-        handler = self.get(TagPupHTTPRequestHandler, self.photo, "big")
+        reply = self.get("tagpup", self.photo, "big")
         with open(self.photo, "rb") as f:
-            self.assertEqual(handler.wfile.getvalue(), f.read())
+            self.assertEqual(reply.data, f.read())
 
     def test_what_is_refused_and_what_is_not_found(self):
         secret = os.path.join(self.dir, "secret.txt")
         with open(secret, "w") as f:
             f.write("private")
-        for server_class in (TagPupHTTPRequestHandler, TunerHTTPRequestHandler):
-            self.assertEqual(self.get(server_class, secret).status, 400)
-            self.assertEqual(self.get(server_class, os.path.join(self.dir, "ghost.jpg")).status, 404)
-            handler = handler_of(server_class)
-            handler.handle_serve_photo_file({})
-            self.assertEqual((handler.status, handler.error), (400, "Missing 'path' parameter"))
+        for kind in ("tagpup", "tuner"):
+            self.assertEqual(self.get(kind, secret).status_code, 400, kind)
+            self.assertEqual(self.get(kind, os.path.join(self.dir, "ghost.jpg")).status_code, 404, kind)
+            reply = self.clients[kind].get("/library/api/photo-file")
+            self.assertEqual(reply.status_code, 400, kind)
+            self.assertIn(b"Missing &#39;path&#39; parameter", reply.data, kind)
 
 
 if __name__ == "__main__":

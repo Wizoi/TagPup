@@ -14,31 +14,23 @@ import time
 import shutil
 import sqlite3
 import tempfile
-import threading
 import unittest
-import urllib.error
 import urllib.parse
-import urllib.request
 
 import numpy as np
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
-
-from tuner_server import (
-    start_server as start_tuner_server,
-    set_active_db_path,
-    TunerHTTPRequestHandler,
-)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from free_port import free_port  # noqa: E402
 import own_home  # noqa: E402
 import face_rows  # noqa: E402
+import tuner_client  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.web import tuner_routes  # noqa: E402
 
 FACE_DIM = 512
 
@@ -57,14 +49,13 @@ def blend(a, b, weight):
 
 
 class TunerAPITestBase(unittest.TestCase):
-    TEST_PORT = free_port()
+    """The TagTuner app over one library per class, through Flask's test client
+    (tests/tuner_client.py): no server, no port, no sleeps."""
+
     DB_NAME = "test_tuner_api.db"   # in a home of the class's own
 
     @classmethod
     def setUpClass(cls):
-        # Its own port: subclasses inherit the attribute, and a port
-        # already held by the last class's server is refused.
-        cls.TEST_PORT = free_port()
         cls.home = own_home.for_class(cls)
         cls.TEST_DB = cls.home.library(cls.DB_NAME)
         from index import PhotoIndex
@@ -72,31 +63,16 @@ class TunerAPITestBase(unittest.TestCase):
         pi = PhotoIndex(db_path=cls.TEST_DB)
         pi.load()
         pi.close()
-
-        cls.server_thread = threading.Thread(
-            target=start_tuner_server,
-            kwargs={
-                "port": cls.TEST_PORT,
-                "db_path": cls.TEST_DB,
-                "gui_dir": os.path.join(WORKSPACE_DIR, "gui"),
-            },
-            daemon=True,
-        )
-        cls.server_thread.start()
-        time.sleep(1.0)
-
-    @classmethod
-    def tearDownClass(cls):
-        set_active_db_path(None)
+        cls.app = tuner_client.app_on(cls.TEST_DB)
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="tagtuner_api_")
         self.addCleanup(shutil.rmtree, self.tmpdir, True)
-        self.addCleanup(set_active_db_path, None)
-        # Writes are rejected with 409 while clustering runs, so make sure no earlier
-        # test has left a background clustering pass holding the lock.
-        self.wait_for_clustering_to_finish()
-        self.clear_index_status()
+        # What the server keeps of the library outlives the rows: a cached grid, the
+        # clustering flag or the index queue an earlier test left would be served to
+        # this one.
+        tuner_client.forget(self.TEST_DB)
+        self.requests = tuner_client.Requests(self.app)
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM photos")
@@ -129,55 +105,20 @@ class TunerAPITestBase(unittest.TestCase):
                 self.fail("the index queue was still busy after %ss" % timeout)
             time.sleep(0.05)
 
-    def wait_for_clustering_to_finish(self, timeout=30.0):
-        set_active_db_path(self.TEST_DB)
-        try:
-            deadline = time.time() + timeout
-            while time.time() < deadline:
-                if not TunerHTTPRequestHandler.clustering_in_progress:
-                    return True
-                time.sleep(0.05)
-            TunerHTTPRequestHandler.clustering_in_progress = False
-            return False
-        finally:
-            set_active_db_path(None)
-
     # ---------- helpers ----------
 
     def post(self, path, body):
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.TEST_PORT}{path}",
-            data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=60) as r:
-                return r.status, json.loads(r.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            return e.code, e.read().decode("utf-8", errors="replace")
+        return self.requests.post(path, body)
 
     def get(self, path):
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{self.TEST_PORT}{path}", timeout=60
-        ) as r:
-            return json.loads(r.read().decode("utf-8"))
+        return self.requests.get(path)
 
     def get_with_status(self, path):
         """Like get(), but keeps the status so a refusal can be asserted on."""
-        try:
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:{self.TEST_PORT}{path}", timeout=60
-            ) as r:
-                return r.status, json.loads(r.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            return e.code, e.read().decode("utf-8", errors="replace")
+        return self.requests.get_with_status(path)
 
     def get_raw(self, path):
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{self.TEST_PORT}{path}", timeout=60
-        ) as r:
-            return r.status, r.headers.get("Content-Type"), r.read()
+        return self.requests.get_raw(path)
 
     def make_photo_file(self, filename, size=(120, 90)):
         from PIL import Image
@@ -258,9 +199,8 @@ class TestPhotoDetails(TunerAPITestBase):
         self.assertIsNone(data["faces"][0].get("name"))
 
     def test_rejects_missing_path(self):
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.get("/api/photo-details")
-        self.assertEqual(ctx.exception.code, 400)
+        status, _ = self.get_with_status("/api/photo-details")
+        self.assertEqual(status, 400)
 
     def test_unknown_photo_returns_empty_face_list(self):
         ghost = os.path.join(self.tmpdir, "ghost.jpg")
@@ -296,15 +236,13 @@ class TestPhotoFile(TunerAPITestBase):
         txt = os.path.join(self.tmpdir, "secret.txt")
         with open(txt, "w") as f:
             f.write("sensitive")
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.get_raw(f"/api/photo-file?path={urllib.parse.quote(txt)}")
-        self.assertIn(ctx.exception.code, (400, 403, 404))
+        status, _, _ = self.get_raw(f"/api/photo-file?path={urllib.parse.quote(txt)}")
+        self.assertIn(status, (400, 403, 404))
 
     def test_rejects_missing_file(self):
         ghost = os.path.join(self.tmpdir, "ghost.jpg")
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.get_raw(f"/api/photo-file?path={urllib.parse.quote(ghost)}")
-        self.assertEqual(ctx.exception.code, 404)
+        status, _, _ = self.get_raw(f"/api/photo-file?path={urllib.parse.quote(ghost)}")
+        self.assertEqual(status, 404)
 
 
 class TestFaceCrop(TunerAPITestBase):
@@ -333,14 +271,12 @@ class TestFaceCrop(TunerAPITestBase):
         self.assertTrue(row[0], "crop was not cached back into the faces table")
 
     def test_rejects_unknown_face(self):
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.get_raw("/api/face-crop?id=999999")
-        self.assertEqual(ctx.exception.code, 404)
+        status, _, _ = self.get_raw("/api/face-crop?id=999999")
+        self.assertEqual(status, 404)
 
     def test_rejects_non_numeric_id(self):
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.get_raw("/api/face-crop?id=abc")
-        self.assertEqual(ctx.exception.code, 400)
+        status, _, _ = self.get_raw("/api/face-crop?id=abc")
+        self.assertEqual(status, 400)
 
 
 class TestFaceMatches(TunerAPITestBase):
@@ -378,9 +314,8 @@ class TestFaceMatches(TunerAPITestBase):
         self.assertEqual(self.get(f"/api/face-matches?id={query_id}"), [])
 
     def test_rejects_unknown_face(self):
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.get("/api/face-matches?id=999999")
-        self.assertEqual(ctx.exception.code, 404)
+        status, _ = self.get_with_status("/api/face-matches?id=999999")
+        self.assertEqual(status, 404)
 
 
 class TestFaceMatchesUnmatched(TunerAPITestBase):
@@ -417,9 +352,8 @@ class TestFaceMatchesUnmatched(TunerAPITestBase):
             self.assertGreaterEqual(r["similarity"], 0.8)
 
     def test_rejects_unknown_face(self):
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.get("/api/face-matches-unmatched?id=999999")
-        self.assertEqual(ctx.exception.code, 404)
+        status, _ = self.get_with_status("/api/face-matches-unmatched?id=999999")
+        self.assertEqual(status, 404)
 
 
 class TestUnmatch(TunerAPITestBase):
@@ -657,9 +591,8 @@ class TestUnmatchedFacesQueue(TunerAPITestBase):
         self.assertEqual(self.get("/api/unmatched-faces/people"), [])
 
     def test_person_matches_requires_a_name(self):
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.get("/api/unmatched-faces/person-matches")
-        self.assertEqual(ctx.exception.code, 400)
+        status, _ = self.get_with_status("/api/unmatched-faces/person-matches")
+        self.assertEqual(status, 400)
 
     def test_person_matches_returns_unmatched_candidates_for_a_name(self):
         photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
@@ -807,16 +740,13 @@ class TestClusteringLock(TunerAPITestBase):
         photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
         face_id = self.add_face(photo, unit_vector(99), name="Jane Doe")
 
-        set_active_db_path(self.TEST_DB)
-        TunerHTTPRequestHandler.clustering_in_progress = True
-        set_active_db_path(None)
+        being_clustered = tuner_routes.clustering.of(Library(self.TEST_DB))
+        being_clustered.set()
         try:
             status, _ = self.post("/api/face/unmatch", {"face_id": face_id})
             self.assertEqual(status, 409)
         finally:
-            set_active_db_path(self.TEST_DB)
-            TunerHTTPRequestHandler.clustering_in_progress = False
-            set_active_db_path(None)
+            being_clustered.clear()
 
 
 class TestFolderQueue(TunerAPITestBase):
@@ -991,7 +921,7 @@ class TestQueueRunner(TestFolderQueue):
             seen.append(folder)
             return Result(changed=1)
 
-        with patch.object(TunerHTTPRequestHandler, "folder_indexer", return_value=index):
+        with patch.object(tuner_routes, "folder_indexer", return_value=index):
             self.post_start(folders, block_runner=False)
             self.wait_until_idle()
         self.assertEqual(seen, folders)
@@ -1453,7 +1383,7 @@ class TestFolderSpellingsReachingTheIndexer(TestFolderQueue):
             seen.append(self.get("/api/folder/index-active"))
             return Result(changed=1)
 
-        with patch.object(TunerHTTPRequestHandler, "folder_indexer", return_value=look):
+        with patch.object(tuner_routes, "folder_indexer", return_value=look):
             status, body = self.post_start([forward_slashes(f) for f in folders])
         self.assertEqual(status, 200, body)
         self.assertEqual(body["queued"], folders)

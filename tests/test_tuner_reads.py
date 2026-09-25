@@ -1,51 +1,27 @@
 """What TagTuner's read routes answer, called in-process against a scratch library.
 
-The reads moved into tagpup.store in phase 3. These pin what they answer, and the two
-things wrong with them found on the way (docs/findings.md, #49 and #50).
+The reads moved into tagpup.store in phase 3, and into tagpup.services.identify and
+people in phase 5. These pin what they answer, and the two things wrong with them found
+on the way (docs/findings.md, #49 and #50).
 """
-import io
 import json
 import os
 import shutil
 import sys
 import tempfile
 import unittest
+import urllib.parse
 
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from index import PhotoIndex  # noqa: E402
-from tuner_server import TunerHTTPRequestHandler  # noqa: E402
+from face_rows import add_people  # noqa: E402
+import tuner_client  # noqa: E402
 
 from tagpup.store import db  # noqa: E402
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from face_rows import add_people  # noqa: E402
-
-
-class Handler(TunerHTTPRequestHandler):
-    """A TagTuner handler with no socket, which keeps what it would have sent."""
-
-    def __init__(self, db_path):  # noqa: D107 - no socket to set up
-        self.db_path = db_path
-        self.wfile = io.BytesIO()
-        self.code = None
-
-    def send_response(self, code, message=None):
-        self.code = code
-
-    def send_header(self, keyword, value):
-        pass
-
-    def end_headers(self):
-        pass
-
-    def send_error(self, code, message=None, explain=None):
-        self.code = code
-
-    def answer(self):
-        return json.loads(self.wfile.getvalue().decode("utf-8"))
 
 
 def vector(*values):
@@ -61,12 +37,13 @@ class TunerReads(unittest.TestCase):
         index = PhotoIndex(self.db_path)
         index.load()
         index.close()
-        TunerHTTPRequestHandler.identify_cache.clear()
+        tuner_client.forget(self.db_path)
+        self.addCleanup(tuner_client.forget, self.db_path)
+        self.requests = tuner_client.Requests(tuner_client.app_on(self.db_path))
         self.conn = db.connect(self.db_path)
         self.addCleanup(self.conn.close)
 
     def tearDown(self):
-        TunerHTTPRequestHandler.identify_cache.clear()
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def photo(self, name, people=(), tags=(), mtime=1.0):
@@ -91,25 +68,23 @@ class TunerReads(unittest.TestCase):
                           " VALUES (?, ?, ?, ?)", (tag, tag.split("/")[-1], has_face, hidden))
         self.conn.commit()
 
-    def get(self, method, *args):
-        handler = Handler(self.db_path)
-        getattr(handler, method)(*args)
-        return handler
-
 
 class PersonFaces(TunerReads):
+    def person_faces(self, name):
+        return self.requests.get("/api/person-faces?name=" + urllib.parse.quote(name))
+
     def test_unmatched_is_not_a_pseudo_person_that_counts_what_it_cannot_show(self):
         # The list stopped offering an "Unmatched" pseudo-person. The branch that served
         # it counted excluded faces and paged without them (docs/findings.md, #49).
         self.face(self.photo("a.jpg"), excluded=1)
-        answer = self.get("handle_get_person_faces", {"name": ["Unmatched"]}).answer()
+        answer = self.person_faces("Unmatched")
         self.assertEqual((0, [], False), (answer["total_count"], answer["faces"], answer["has_more"]))
 
     def test_a_person_s_faces_come_with_their_count(self):
         path = self.photo("a.jpg")
         self.face(path, name="Wren Halloway", embedding=vector(1, 0))
         self.face(self.photo("b.jpg"), name="Wren Halloway", embedding=vector(1, 0.1))
-        answer = self.get("handle_get_person_faces", {"name": ["Wren Halloway"]}).answer()
+        answer = self.person_faces("Wren Halloway")
         self.assertEqual(2, answer["total_count"])
         self.assertEqual(2, len(answer["faces"]))
         self.assertFalse(answer["has_more"])
@@ -117,7 +92,7 @@ class PersonFaces(TunerReads):
 
 class TheIdentifyQueue(TunerReads):
     def groups(self):
-        return {group["name"] for group in self.get("handle_get_unmatched_faces_people").answer()}
+        return {group["name"] for group in self.requests.get("/api/unmatched-faces/people")}
 
     def test_follows_the_people_saved_on_its_photos(self):
         # The queue groups nameless faces by the people their photo's row lists. A tag
@@ -153,7 +128,7 @@ class PeopleWithCounts(TunerReads):
 
         db.connect = counting
         try:
-            answer = self.get("handle_get_people_with_counts").answer()
+            answer = self.requests.get("/api/people-with-counts")
         finally:
             db.connect = connect
         self.assertEqual(4, len(answer))
@@ -166,7 +141,7 @@ class PeopleWithCounts(TunerReads):
         self.face(self.photo("a.jpg"), name="Wren Halloway")
         self.face(self.photo("b.jpg"), name="Ansel Ditmore")
         self.face(self.photo("c.jpg"), name="Ansel Ditmore")
-        answer = self.get("handle_get_people_with_counts").answer()
+        answer = self.requests.get("/api/people-with-counts")
         self.assertEqual([{"name": "Ansel Ditmore", "count": 2}], answer)
 
 

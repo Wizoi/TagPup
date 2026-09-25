@@ -6,48 +6,33 @@ files ("target already exists; leave the tree alone"). The files kept the old pa
 the next scan of those folders brought the old name straight back. And whatever the
 files did, the reply was a bare "success".
 """
-import io
 import json
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
-import db as tagpup_db
-from exiftool_session import ExifToolSession
-from index import PhotoIndex
-from tuner_server import TunerHTTPRequestHandler
+import own_home  # noqa: E402
+import tuner_client  # noqa: E402
+from exiftool_session import ExifToolSession  # noqa: E402
+from index import PhotoIndex  # noqa: E402
 
-from tagpup.store import people
+from tagpup.store import db, people  # noqa: E402
 
 OLD, NEW = "Rowan Thackeray", "Rowan Thackeray-Vale"
-
-
-class Handler(TunerHTTPRequestHandler):
-    def __init__(self, db_path, body):  # noqa: D107 -- no socket, on purpose
-        self.db_path = db_path
-        self.body = body
-        self.reply = None
-        self.wfile = io.BytesIO()
-
-    def read_json_body(self):
-        return self.body
-
-    def get_exiftool_path(self):
-        return EXIFTOOL
-
-    def send_json(self, data):
-        self.reply = data
-
-    def send_error(self, code, message=None):
-        self.reply = {"status": code, "error": message}
 
 
 @requires_exiftool
 class PersonRenameReachesTheFiles(unittest.TestCase):
     def setUp(self):
+        # The route finds ExifTool through the settings, so the test has settings of
+        # its own, never the checkout's.
+        own_home.for_test(self)
         self.dir = tempfile.mkdtemp(prefix="person_rename_")
         self.db_path = os.path.join(self.dir, "lib.db")
         index = PhotoIndex(self.db_path)
@@ -56,12 +41,13 @@ class PersonRenameReachesTheFiles(unittest.TestCase):
         self.execute("INSERT INTO tag_taxonomy (id, tag, name, parent_id, has_face) VALUES"
                      " (1, 'People', 'People', NULL, 1),"
                      " (2, 'People/%s', '%s', 1, 1)" % (OLD, OLD))
+        self.requests = tuner_client.Requests(tuner_client.app_on(self.db_path))
 
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def execute(self, sql, params=()):
-        conn = tagpup_db.connect(self.db_path)
+        conn = db.connect(self.db_path)
         try:
             conn.execute(sql, params)
             conn.commit()
@@ -69,7 +55,7 @@ class PersonRenameReachesTheFiles(unittest.TestCase):
             conn.close()
 
     def rows(self, sql, params=()):
-        conn = tagpup_db.connect(self.db_path)
+        conn = db.connect(self.db_path)
         try:
             return conn.execute(sql, params).fetchall()
         finally:
@@ -93,7 +79,7 @@ class PersonRenameReachesTheFiles(unittest.TestCase):
         self.execute("INSERT INTO faces (photo_id, box, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[0,0,1,1]', ?, 'manual')",
                      (path, OLD))
         # Its people as the store keeps them: the keyword and the face both name OLD.
-        conn = tagpup_db.connect(self.db_path)
+        conn = db.connect(self.db_path)
         try:
             people.rebuild(conn)
             conn.commit()
@@ -108,9 +94,9 @@ class PersonRenameReachesTheFiles(unittest.TestCase):
         return value if isinstance(value, list) else [value]
 
     def rename(self):
-        handler = Handler(self.db_path, {"old_name": OLD, "new_name": NEW})
-        handler.handle_post_person_rename()
-        return handler.reply
+        status, reply = self.requests.post("/api/person/rename", {"old_name": OLD, "new_name": NEW})
+        self.assertEqual(200, status, reply)
+        return reply
 
     def test_renaming_into_an_existing_person_rewrites_the_files(self):
         self.execute("INSERT INTO tag_taxonomy (id, tag, name, parent_id, has_face)"

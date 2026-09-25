@@ -14,7 +14,9 @@ scripts/relink_renamed_photos.py, which exists because of this bug.
 Then the move itself looked rows up with forward slashes while the index holds native
 paths, so on Windows it matched nothing and reported success. The rows here are seeded
 the way the indexer writes them (os.path.abspath), never through the code under test.
+The mover is tagpup.store.photos.move_rows.
 """
+import inspect
 import json
 import os
 import sys
@@ -22,11 +24,10 @@ import unittest
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-import db as tagpup_db
-import tagpup_server
+from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup.store import schema  # noqa: E402
+from tagpup.store.photos import move_rows  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import FACES_WITH_PATHS, VECTORS_WITH_PATHS, add_face, add_vector  # noqa: E402
@@ -76,7 +77,7 @@ class RenameCase(unittest.TestCase):
             conn.close()
 
     def move(self, mapping):
-        return tagpup_server.move_photo_rows(self.db_path, mapping)
+        return move_rows(self.db_path, mapping)
 
     def photos(self):
         conn = tagpup_db.connect(self.db_path)
@@ -198,33 +199,25 @@ class TestADestinationThatIsTaken(RenameCase):
         self.assertEqual((moved, skipped), (1, []))
 
 
-class TestTheHandlersActuallyDoIt(unittest.TestCase):
+class TestTheRoutesActuallyDoIt(unittest.TestCase):
     """The guard. The rename handler renamed files and cleared a cache; that it also
     had to move the rows was not obvious from reading it, and will not be next time."""
 
-    def body_of(self, name):
-        source = os.path.join(WORKSPACE_DIR, "scripts", "tagpup_server.py")
-        with open(source, encoding="utf-8") as f:
-            text = f.read()
-        start = text.index("def " + name)
-        end = text.index("\n    def ", start + 10)
-        return text[start:end]
-
-    def test_the_rename_handler_moves_photo_and_face_rows(self):
+    def test_the_rename_route_moves_photo_and_face_rows(self):
         # Through the service, which moves them.
-        import inspect
         from tagpup.services import photos
+        from tagpup.web import tagpup_routes
 
-        self.assertIn("smart_rename(", self.body_of("handle_post_folder_rename_photos"))
+        self.assertIn("smart_rename(", inspect.getsource(tagpup_routes.folder_rename_photos))
         self.assertIn("photos.move_rows(", inspect.getsource(photos.smart_rename),
                       "renaming no longer moves the photo's index rows")
 
     def test_saving_a_renamed_photo_moves_its_rows(self):
         # Through the service, which moves them.
-        import inspect
         from tagpup.services import tagging
+        from tagpup.web import tagpup_routes
 
-        self.assertIn("save_photo(", self.body_of("handle_post_photo_save_metadata"))
+        self.assertIn("save_photo(", inspect.getsource(tagpup_routes.photo_save_metadata))
         self.assertIn("photos.move_rows(", inspect.getsource(tagging.save_photo),
                       "a caption rename no longer moves the photo's index rows")
 

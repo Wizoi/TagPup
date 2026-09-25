@@ -1,10 +1,10 @@
 """Identify Faces' cache notices a rename or a reassignment, not only a new name.
 
-The queue and the match lists are cached against a fingerprint of the faces table:
-how many faces, how many named, the highest id, how many excluded. Renaming a person
-changes none of those, and neither does moving a face from one person to another --
-so after either, the screen went on showing the old names until something else
-happened to move a count.
+The queue and the match lists are cached against a fingerprint of the faces table
+(tagpup.store.faces.fingerprint): how many faces, how many named, the highest id, how
+many excluded. Renaming a person changes none of those, and neither does moving a face
+from one person to another -- so after either, the screen went on showing the old
+names until something else happened to move a count.
 
 The database now keeps a generation counter that triggers bump on every change that
 matters, whoever makes it: TagTuner, TagPup, the CLI or a script. Caching a face's
@@ -22,8 +22,9 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-import tuner_server  # noqa: E402
 from index import PhotoIndex  # noqa: E402
+
+from tagpup.store import faces as store_faces  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_face  # noqa: E402
@@ -48,7 +49,7 @@ class IdentifyCacheSeesEveryChange(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def fingerprint(self):
-        return tuner_server.TunerHTTPRequestHandler.faces_fingerprint(None, self.conn)
+        return store_faces.fingerprint(self.conn)
 
     def changes(self, sql, *params):
         before = self.fingerprint()

@@ -14,7 +14,7 @@ import unittest
 
 from tests.handler_harness import Library
 
-from tagpup_server import paths, set_active_db_path
+from tagpup.core import paths
 
 SAVED_FOLDER = r"D:\Library\2019\Harbour"
 NEW_FOLDER = r"D:\Library\2020\Meadow"
@@ -57,16 +57,13 @@ class TestASecondLibrary(unittest.TestCase):
         self.other.save_suggestions({BOAT: offered("Harbour")})
 
     def test_its_saved_run_is_offered(self):
-        handler = self.other.handler(None)
-        status, reply = handler.call("handle_get_folder_suggest_status", None,
-                                     {"path": [SAVED_FOLDER]})
+        status, reply = self.other.get("/api/folder/suggest-status", {"path": SAVED_FOLDER})
         self.assertEqual(status, 200)
         self.assertEqual(reply.get("status"), "completed")
         self.assertIn(BOAT, reply.get("suggestions", {}))
 
     def test_a_run_there_keeps_the_folders_saved_before(self):
         # A run in this session, on another folder, saves as it goes.
-        set_active_db_path(self.other.db_path)
         runs = self.other.suggestion_runs()
         runs.run(NEW_FOLDER, Work(FIELD))
         self.assertEqual(runs.status(NEW_FOLDER)["status"], "completed")
@@ -77,25 +74,19 @@ class TestASecondLibrary(unittest.TestCase):
     def test_a_run_in_progress_is_not_replaced_by_the_saved_copy(self):
         # A folder something is working on reports that run, not the saved one's
         # "completed".
-        set_active_db_path(self.other.db_path)
         live = {"status": "running", "completed": 0, "total": 5}
         self.other.suggestion_runs().statuses[paths.key(SAVED_FOLDER)] = live
 
-        handler = self.other.handler(None)
-        status, reply = handler.call("handle_get_folder_suggest_status", None,
-                                     {"path": [SAVED_FOLDER]})
+        status, reply = self.other.get("/api/folder/suggest-status", {"path": SAVED_FOLDER})
         self.assertEqual(status, 200)
         self.assertEqual(reply.get("status"), "running")
         self.assertEqual(reply.get("total"), 5)
         self.assertIn(BOAT, reply.get("suggestions", {}))
-        set_active_db_path(self.other.db_path)
         self.assertIs(self.other.suggestion_runs().statuses[paths.key(SAVED_FOLDER)], live)
         self.assertEqual(live, {"status": "running", "completed": 0, "total": 5})
 
     def test_the_startup_library_does_not_see_the_other_librarys_folders(self):
-        handler = self.startup.handler(None)
-        status, reply = handler.call("handle_get_folder_suggest_status", None,
-                                     {"path": [SAVED_FOLDER]})
+        status, reply = self.startup.get("/api/folder/suggest-status", {"path": SAVED_FOLDER})
         self.assertEqual(status, 200)
         self.assertEqual(reply.get("status"), "idle")
 

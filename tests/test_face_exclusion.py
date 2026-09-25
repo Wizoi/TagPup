@@ -9,14 +9,10 @@ cannot survive re-clustering. This is the column-based replacement.
 import os
 import sys
 import json
-import time
 import shutil
 import sqlite3
 import tempfile
-import threading
 import unittest
-import urllib.error
-import urllib.request
 
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -26,50 +22,36 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 from index import PhotoIndex
 from taxonomy import TagTaxonomy
 from faces import FaceProcessor
-from tuner_server import start_server as start_tuner_server, set_active_db_path
 from tests.test_face_clustering_rules import identity_vector, near
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from free_port import free_port  # noqa: E402
 import own_home  # noqa: E402
+import tuner_client  # noqa: E402
 from face_rows import add_face, people_of  # noqa: E402
 
 from tagpup.store import people as store_people  # noqa: E402
 
 
 class ExclusionTestBase(unittest.TestCase):
-    TEST_PORT = free_port()
+    """The TagTuner app over one library per class, through Flask's test client
+    (tests/tuner_client.py)."""
+
     DB_NAME = "test_face_exclusion.db"   # in a home of the class's own
 
     @classmethod
     def setUpClass(cls):
-        # Its own port: subclasses inherit the attribute, and a port
-        # already held by the last class's server is refused.
-        cls.TEST_PORT = free_port()
         cls.home = own_home.for_class(cls)
         cls.TEST_DB = cls.home.library(cls.DB_NAME)
         pi = PhotoIndex(db_path=cls.TEST_DB)
         pi.load()
         pi.close()
-        cls.server_thread = threading.Thread(
-            target=start_tuner_server,
-            kwargs={
-                "port": cls.TEST_PORT,
-                "db_path": cls.TEST_DB,
-                "gui_dir": os.path.join(WORKSPACE_DIR, "gui"),
-            },
-            daemon=True,
-        )
-        cls.server_thread.start()
-        time.sleep(1.0)
-
-    @classmethod
-    def tearDownClass(cls):
-        set_active_db_path(None)
+        cls.app = tuner_client.app_on(cls.TEST_DB)
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="tagpup_excl_")
         self.addCleanup(shutil.rmtree, self.tmpdir, True)
-        self.addCleanup(set_active_db_path, None)
+        # A cached grid or matrix from an earlier test describes rows this one deletes.
+        tuner_client.forget(self.TEST_DB)
+        self.requests = tuner_client.Requests(self.app)
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM photos")
@@ -79,23 +61,10 @@ class ExclusionTestBase(unittest.TestCase):
     # ---------- helpers ----------
 
     def post(self, path, body):
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.TEST_PORT}{path}",
-            data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                return r.status, json.loads(r.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            return e.code, e.read().decode("utf-8", errors="replace")
+        return self.requests.post(path, body)
 
     def get(self, path):
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{self.TEST_PORT}{path}", timeout=30
-        ) as r:
-            return json.loads(r.read().decode("utf-8"))
+        return self.requests.get(path)
 
     def add_photo(self, name, people=()):
         """A photo whose keywords name `people`, its people rebuilt from them."""

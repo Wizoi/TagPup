@@ -1,27 +1,34 @@
+"""Selecting and creating libraries, and reading each through its URL, in a TAGPUP_HOME
+of the test's own.
+
+These wrote the checkout's config.ini -- the one the app somebody is using reads --
+and put it back afterwards, so a run stopped in between left that app pointing at a
+test library. They also made their libraries in the checkout's data folder.
+
+The code folder is one of the test's own as well, holding settings of its own, so
+that "nothing was written beside the code" is checked without reading the checkout.
+The apps are asked through Flask's test client: no server, no port, no sleep.
+"""
 import gc
 import os
 import sys
-import json
-import sqlite3
 import tempfile
-import urllib.request
-import urllib.error
-import threading
-import time
 import unittest
 from unittest import mock
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
-
-from tuner_server import start_server, TunerHTTPRequestHandler
-from tagpup import config as tagpup_config  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from free_port import free_port  # noqa: E402
-from face_rows import add_face, add_people  # noqa: E402
+
 import own_home  # noqa: E402
+import web_client  # noqa: E402
+from face_rows import add_face, add_people  # noqa: E402
+
+from tagpup import config as tagpup_config  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
 
 
 def file_bytes(path):
@@ -32,109 +39,44 @@ def file_bytes(path):
 
 
 class TestMultipleDatabases(unittest.TestCase):
-    """Selecting and creating libraries, in a TAGPUP_HOME of the test's own.
-
-    These wrote the checkout's config.ini -- the one the app somebody is using reads --
-    and put it back afterwards, so a run stopped in between left that app pointing at a
-    test library. They also made their libraries in the checkout's data folder.
-
-    The code folder is one of the test's own as well, holding settings of its own, so
-    that "nothing was written beside the code" is checked without reading the checkout.
-    """
-    TEST_PORT = free_port()
-    server_thread = None
-
-    @classmethod
-    def setUpClass(cls):
-        # Its own port: subclasses inherit the attribute, and a port
-        # already held by the last class's server is refused.
-        cls.TEST_PORT = free_port()
-        home = own_home.for_class(cls, "tagpup_multiple_db_")
-        cls.home = home.root
-        cls.data_dir = home.data
-        code_folder = tempfile.mkdtemp(prefix="tagpup_code_folder_")
-        cls.addClassCleanup(own_home.remove, code_folder)
-        tagpup_config.write_file({"paths": {"default_db": "the_code_folders.db"}},
-                                 folder=code_folder)
-        cls.code_config = tagpup_config.config_path(code_folder)
-        cls.code_config_bytes = file_bytes(cls.code_config)
-        code_root = mock.patch.object(tagpup_config, "CODE_ROOT", code_folder)
-        code_root.start()
-        cls.addClassCleanup(code_root.stop)
-        cls.TEST_DB_PATH = os.path.join(cls.data_dir, "test_multiple_db_startup.db")
-
-        # Ensure startup db file is created before server starts to avoid migration warning
-        from index import PhotoIndex
-        pi = PhotoIndex(db_path=cls.TEST_DB_PATH)
-        pi.load()
-        pi.close()
-
-        # Start the tuner server once
-        cls.server_thread = threading.Thread(
-            target=start_server,
-            kwargs={"port": cls.TEST_PORT, "db_path": cls.TEST_DB_PATH, "gui_dir": os.path.join(WORKSPACE_DIR, "gui")},
-            daemon=True
-        )
-        cls.server_thread.start()
-        time.sleep(1.0) # wait for bind
+    """The picker, as TagTuner's app serves it; the routes are the same blueprint in
+    both apps (tagpup.web.libraries)."""
 
     def setUp(self):
-        # Ensure startup db file is clean
-        if os.path.exists(self.TEST_DB_PATH):
-            try:
-                os.remove(self.TEST_DB_PATH)
-            except Exception:
-                pass
-        
-        # Initialize the database on disk
-        from index import PhotoIndex
-        pi = PhotoIndex(db_path=self.TEST_DB_PATH)
-        pi.load()
-        pi.close()
-        
-        # Ensure test database files we create in tests are also cleaned up
-        for name in ["test_created_db_1.db", "test_created_db_2.db"]:
-            p = os.path.join(self.data_dir, name)
-            if os.path.exists(p):
-                try:
-                    os.remove(p)
-                except Exception:
-                    pass
-            # Also taxonomy json
-            t = p.replace(".db", "_taxonomy.json")
-            if os.path.exists(t):
-                try:
-                    os.remove(t)
-                except Exception:
-                    pass
+        self.app, home = web_client.app_for(self, "tuner", startup="test_multiple_db_startup.db")
+        self.client = self.app.test_client()
+        self.data_dir = home.data
+        self.TEST_DB_PATH = home.library("test_multiple_db_startup.db")
+        code_folder = tempfile.mkdtemp(prefix="tagpup_code_folder_")
+        self.addCleanup(own_home.remove, code_folder)
+        tagpup_config.write_file({"paths": {"default_db": "the_code_folders.db"}}, folder=code_folder)
+        self.code_config = tagpup_config.config_path(code_folder)
+        self.code_config_bytes = file_bytes(self.code_config)
+        code_root = mock.patch.object(tagpup_config, "CODE_ROOT", code_folder)
+        code_root.start()
+        self.addCleanup(code_root.stop)
 
-    def tearDown(self):
-        from tuner_server import set_active_db_path
-        set_active_db_path(None)
-        self.setUp()
+    def get(self, path):
+        reply = self.client.get(path)
+        self.assertEqual(200, reply.status_code, reply.data)
+        return reply.get_json()
+
+    def post(self, path, body):
+        reply = self.client.post(path, json=body)
+        self.assertEqual(200, reply.status_code, reply.data)
+        return reply.get_json()
 
     def test_database_api_endpoints(self):
         # 1. GET /api/databases - the startup library is selected, and offered: it was
         # hidden from the list by name while the tests kept theirs in the checkout (#14)
-        url = f"http://127.0.0.1:{self.TEST_PORT}/api/databases"
-        response = urllib.request.urlopen(url)
-        data = json.loads(response.read().decode('utf-8'))
-        
+        data = self.get("/api/databases")
         self.assertIn("databases", data)
         self.assertIn("selected", data)
         self.assertIn("multiple_db_startup", data["databases"])
         self.assertTrue(data["selected"])
 
         # 2. POST /api/databases/create - create a new database (without .db suffix in request)
-        new_db_clean_name = "created_db_1"
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.TEST_PORT}/api/databases/create",
-            data=json.dumps({"db_name": new_db_clean_name}).encode('utf-8'),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        response = urllib.request.urlopen(req)
-        create_res = json.loads(response.read().decode('utf-8'))
+        create_res = self.post("/api/databases/create", {"db_name": "created_db_1"})
         self.assertTrue(create_res["success"])
         # Server stores it as test_created_db_1.db, but returns created_db_1
         self.assertEqual(create_res["db_name"], "created_db_1")
@@ -142,39 +84,27 @@ class TestMultipleDatabases(unittest.TestCase):
         # Verify it was created on disk in data folder with test_ prefix because the server runs in test mode
         expected_fs_path = os.path.join(self.data_dir, "test_created_db_1.db")
         self.assertTrue(os.path.exists(expected_fs_path), f"File {expected_fs_path} should be created on disk")
-        
+
         # Verify schema exists by connecting to it
-        conn = sqlite3.connect(expected_fs_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = [r[0] for r in cursor.fetchall()]
+        conn = tagpup_db.connect(tagpup_db.readonly_uri(expected_fs_path), uri=True)
+        tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
         conn.close()
         self.assertIn("photos", tables)
         self.assertIn("faces", tables)
         self.assertIn("tag_taxonomy", tables)
 
         # 3. GET /api/databases again - new DB should now be listed without .db extension
-        response = urllib.request.urlopen(url)
-        data = json.loads(response.read().decode('utf-8'))
+        data = self.get("/api/databases")
         self.assertIn("created_db_1", data["databases"])
         # And it should be selected because create sets it as default
         self.assertEqual(data["selected"], "created_db_1")
 
         # 4. POST /api/databases/select - select database back to startup (without .db suffix in request)
-        req_select = urllib.request.Request(
-            f"http://127.0.0.1:{self.TEST_PORT}/api/databases/select",
-            data=json.dumps({"db_name": "multiple_db_startup"}).encode('utf-8'),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        response = urllib.request.urlopen(req_select)
-        select_res = json.loads(response.read().decode('utf-8'))
+        select_res = self.post("/api/databases/select", {"db_name": "multiple_db_startup"})
         self.assertTrue(select_res["success"])
 
         # Verify selected changed
-        response = urllib.request.urlopen(url)
-        data = json.loads(response.read().decode('utf-8'))
-        self.assertEqual(data["selected"], "multiple_db_startup")
+        self.assertEqual(self.get("/api/databases")["selected"], "multiple_db_startup")
 
         # Remembered in this test's home, and only there.
         self.assertEqual(tagpup_config.read_file().get("paths", "default_db"),
@@ -193,10 +123,7 @@ class TestMultipleDatabases(unittest.TestCase):
         was_enabled = gc.isenabled()
         gc.disable()
         try:
-            urllib.request.urlopen(urllib.request.Request(
-                f"http://127.0.0.1:{self.TEST_PORT}/api/databases/create",
-                data=json.dumps({"db_name": "created_db_1"}).encode("utf-8"),
-                headers={"Content-Type": "application/json"}, method="POST"))
+            self.post("/api/databases/create", {"db_name": "created_db_1"})
             created = os.path.join(self.data_dir, "test_created_db_1.db")
             self.assertTrue(os.path.exists(created))
             try:
@@ -210,19 +137,13 @@ class TestMultipleDatabases(unittest.TestCase):
     def test_prefix_routing_and_isolation(self):
         # Create two database files
         for name in ["created_db_1", "created_db_2"]:
-            req = urllib.request.Request(
-                f"http://127.0.0.1:{self.TEST_PORT}/api/databases/create",
-                data=json.dumps({"db_name": name}).encode('utf-8'),
-                headers={"Content-Type": "application/json"},
-                method="POST"
-            )
-            urllib.request.urlopen(req)
+            self.post("/api/databases/create", {"db_name": name})
 
-        # Insert different dummy people records in each database directly via SQLite
+        # Insert different dummy people records in each database directly
         db1_path = os.path.join(self.data_dir, "test_created_db_1.db")
         db2_path = os.path.join(self.data_dir, "test_created_db_2.db")
 
-        conn1 = sqlite3.connect(db1_path)
+        conn1 = tagpup_db.connect(db1_path)
         conn1.execute("INSERT INTO photos (path, mtime, size) VALUES (?, ?, ?)",
                       ("C:/photo1.jpg", 1.0, 100))
         add_people(conn1, "C:/photo1.jpg", ["Alice"])
@@ -230,7 +151,7 @@ class TestMultipleDatabases(unittest.TestCase):
         conn1.commit()
         conn1.close()
 
-        conn2 = sqlite3.connect(db2_path)
+        conn2 = tagpup_db.connect(db2_path)
         conn2.execute("INSERT INTO photos (path, mtime, size) VALUES (?, ?, ?)",
                       ("C:/photo2.jpg", 2.0, 200))
         add_people(conn2, "C:/photo2.jpg", ["Bob"])
@@ -239,66 +160,26 @@ class TestMultipleDatabases(unittest.TestCase):
         conn2.close()
 
         # Query people using database-specific prefix routing subfolders (without .db extension):
-        # DB 1
-        url_db1 = f"http://127.0.0.1:{self.TEST_PORT}/created_db_1/api/people"
-        response_db1 = urllib.request.urlopen(url_db1)
-        people_db1 = json.loads(response_db1.read().decode('utf-8'))
-        self.assertEqual(people_db1, ["Alice"])
+        self.assertEqual(self.get("/created_db_1/api/people"), ["Alice"])
+        self.assertEqual(self.get("/created_db_2/api/people"), ["Bob"])
 
-        # DB 2
-        url_db2 = f"http://127.0.0.1:{self.TEST_PORT}/created_db_2/api/people"
-        response_db2 = urllib.request.urlopen(url_db2)
-        people_db2 = json.loads(response_db2.read().decode('utf-8'))
-        self.assertEqual(people_db2, ["Bob"])
+        # Caches isolation check: each library's server state is its own, filed by
+        # the library rather than by a thread-local set by hand (tagpup.web.state).
+        from tagpup.web.state import PerLibrary
 
-        # Caches Isolation check - the Identify Faces cache
-        from tuner_server import set_active_db_path
-
-        set_active_db_path(db1_path)
-        TunerHTTPRequestHandler.identify_cache["shared_key"] = "value_1"
-
-        set_active_db_path(db2_path)
-        TunerHTTPRequestHandler.identify_cache["shared_key"] = "value_2"
-
-        # Verify they are isolated
-        set_active_db_path(db1_path)
-        self.assertEqual(TunerHTTPRequestHandler.identify_cache["shared_key"], "value_1")
-
-        set_active_db_path(db2_path)
-        self.assertEqual(TunerHTTPRequestHandler.identify_cache["shared_key"], "value_2")
+        held = PerLibrary(lambda library: {})
+        held.of(Library(db1_path))["shared_key"] = "value_1"
+        held.of(Library(db2_path))["shared_key"] = "value_2"
+        self.assertEqual(held.of(Library(db1_path))["shared_key"], "value_1")
+        self.assertEqual(held.of(Library(db2_path))["shared_key"], "value_2")
 
 
 class TestFolderIndexingAPI(unittest.TestCase):
-    TEST_PORT = free_port()
-    DB_NAME = "test_index_api.db"   # in a home of the class's own
-    server_thread = None
-
-    @classmethod
-    def setUpClass(cls):
-        # Its own port: subclasses inherit the attribute, and a port
-        # already held by the last class's server is refused.
-        cls.TEST_PORT = free_port()
-        cls.TEST_DB_PATH = own_home.for_class(cls, "tagpup_index_api_").library(cls.DB_NAME)
-        # Create DB file
-        from index import PhotoIndex
-        pi = PhotoIndex(db_path=cls.TEST_DB_PATH)
-        pi.load()
-        pi.close()
-
-        cls.server_thread = threading.Thread(
-            target=start_server, # we can use tuner_server or import tagpup_server
-            kwargs={"port": cls.TEST_PORT, "db_path": cls.TEST_DB_PATH, "gui_dir": os.path.join(WORKSPACE_DIR, "gui_tagpup")},
-            daemon=True
-        )
-        # Actually import tagpup_server's start_server to test the right server class
-        from tagpup_server import start_server as start_tagpup_server
-        cls.server_thread = threading.Thread(
-            target=start_tagpup_server,
-            kwargs={"port": cls.TEST_PORT, "db_path": cls.TEST_DB_PATH, "gui_dir": os.path.join(WORKSPACE_DIR, "gui_tagpup")},
-            daemon=True
-        )
-        cls.server_thread.start()
-        time.sleep(1.0)
+    def setUp(self):
+        self.app, home = web_client.app_for(self, "tagpup", startup="test_index_api.db")
+        self.client = self.app.test_client()
+        self.library = Library(home.library("test_index_api.db"))
+        self.addCleanup(indexing_jobs.forget, self.library)
 
     @patch("subprocess.Popen")
     def test_folder_indexing_flow(self, mock_popen):
@@ -313,31 +194,22 @@ class TestFolderIndexingAPI(unittest.TestCase):
         ]
         mock_popen.return_value = mock_proc
 
-        # 1. Trigger indexing via POST /api/folder/index-start
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.TEST_PORT}/api/folder/index-start",
-            data=json.dumps({"folder_path": WORKSPACE_DIR}).encode('utf-8'),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        response = urllib.request.urlopen(req)
-        res = json.loads(response.read().decode('utf-8'))
+        # 1. Trigger indexing via POST /api/folder/index-start; the queue's worker runs
+        # on this thread rather than one of its own, so nothing has to be waited for.
+        with patch.object(indexing_jobs.IndexQueue, "_ensure_runner"):
+            reply = self.client.post("/api/folder/index-start", json={"folder_path": WORKSPACE_DIR})
+        res = reply.get_json()
         self.assertTrue(res["success"])
         self.assertEqual(res["status"], "running")
+        self.assertEqual(self.client.get("/api/folder/index-status",
+                                         query_string={"path": WORKSPACE_DIR}).get_json()["status"], "queued")
+        indexing_jobs.queue_for(self.library).run_pending()
 
-        # 2. Poll progress via GET /api/folder/index-status
-        status = "running"
-        for _ in range(30):
-            time.sleep(0.1)
-            url = f"http://127.0.0.1:{self.TEST_PORT}/api/folder/index-status?path={urllib.parse.quote(WORKSPACE_DIR)}"
-            response = urllib.request.urlopen(url)
-            status_data = json.loads(response.read().decode('utf-8'))
-            status = status_data.get("status")
-            if status in ("completed", "failed"):
-                self.assertEqual(status, "completed")
-                self.assertEqual(status_data["percent"], 100)
-                break
-        self.assertEqual(status, "completed")
+        # 2. Its progress via GET /api/folder/index-status
+        status_data = self.client.get("/api/folder/index-status", query_string={"path": WORKSPACE_DIR}).get_json()
+        self.assertEqual(status_data.get("status"), "completed")
+        self.assertEqual(status_data["percent"], 100)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,8 +4,8 @@
 the two pages ask for the same paths -- /api/people, /api/photo-file, /api/databases
 and five more -- and mean different things by them; one app would have to ask which
 port a request came in on at every such route. Instead `by_port` asks once, and hands
-the request to the app for its port: TagPup's 8090, TagTuner's 8080, as they always
-were *(decided 2026-09-24; docs/ARCHITECTURE.md, "Runtime")*.
+the request to the app for its port -- the ports they always had (tagpup_web.PORTS)
+-- *(decided 2026-09-24; docs/ARCHITECTURE.md, "Runtime")*.
 
 What every app does alike is here: refuse a request from anywhere but this machine
 (tagpup.web.security), name the library the URL names (tagpup.web.libraries), serve
@@ -65,6 +65,7 @@ def create_app(kind, startup=None, pages=None):
     app.before_request(security.guard)
     app.before_request(libraries.attach_library)
     app.before_request(_start_clock)
+    app.after_request(_never_cache_json)
     app.after_request(_log_slow)
     app.teardown_request(_log_failure)
     app.register_blueprint(libraries.picker)
@@ -91,6 +92,14 @@ def _page_routes(app):
 
 def _start_clock():
     g.request_started = time.perf_counter()
+
+
+def _never_cache_json(response):
+    """A JSON reply is never kept by the browser, as both old servers sent them: a page
+    that kept an old answer argued with its server."""
+    if response.mimetype == "application/json":
+        response.headers.update(NO_CACHE)
+    return response
 
 
 def _as_sent():

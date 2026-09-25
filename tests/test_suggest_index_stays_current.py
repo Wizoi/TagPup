@@ -5,8 +5,9 @@ server ran: photos indexed afterwards were never neighbours, and tags saved afte
 never counted, until a restart. Every other library went the other way and loaded its
 whole index again for every Suggest -- 1.3s on a 68,000-photo library, each click.
 
-Now each library has one embedder and one index, and a Suggest run reloads the index
-only when the photos table has changed since it was read.
+Now each library has one embedder and one index (scripts/suggest_models.embedders, a
+PerLibrary), and a Suggest run reloads the index only when the photos table has
+changed since it was read.
 """
 import os
 import shutil
@@ -18,12 +19,14 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
-import db as tagpup_db  # noqa: E402
+import suggest_models  # noqa: E402
 from index import PhotoIndex  # noqa: E402
-from tagpup_server import TagPupHTTPRequestHandler, set_active_db_path  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_face, add_vector  # noqa: E402
+
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
 
 
 def add_photo(db_path, name):
@@ -89,28 +92,25 @@ class OneEmbedderPerLibrary(unittest.TestCase):
         index.load()
         index.close()
         add_photo(self.db_path, "a.jpg")
-        self.kwargs = {"model_name": "ViT-B-32", "pretrained": "laion2b_s34b_b79k"}
-        set_active_db_path(self.db_path)
+        self.library = Library(self.db_path)
 
     def tearDown(self):
-        set_active_db_path(self.db_path)
-        embedder = TagPupHTTPRequestHandler.shared_embedder
-        if embedder is not None:
-            embedder.photo_index.close()
-        TagPupHTTPRequestHandler.shared_embedder = None
-        set_active_db_path(None)
+        held = suggest_models.embedders.of(self.library)
+        if held is not None:
+            held.photo_index.close()
+        suggest_models.embedders.forget(self.library)
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def test_the_second_run_reuses_the_first_runs_embedder(self):
-        first = TagPupHTTPRequestHandler.library_embedder(self.db_path, self.kwargs)
-        second = TagPupHTTPRequestHandler.library_embedder(self.db_path, self.kwargs)
+        first = suggest_models.library_embedder(self.library)
+        second = suggest_models.library_embedder(self.library)
         self.assertIs(first, second)
 
     def test_a_run_after_indexing_sees_the_new_photos(self):
-        first = TagPupHTTPRequestHandler.library_embedder(self.db_path, self.kwargs)
+        first = suggest_models.library_embedder(self.library)
         self.assertEqual(1, len(first.photo_index.metadata))
         add_photo(self.db_path, "b.jpg")
-        again = TagPupHTTPRequestHandler.library_embedder(self.db_path, self.kwargs)
+        again = suggest_models.library_embedder(self.library)
         self.assertEqual(2, len(again.photo_index.metadata))
 
 

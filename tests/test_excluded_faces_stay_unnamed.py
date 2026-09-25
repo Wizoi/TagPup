@@ -28,14 +28,11 @@ from tests.test_face_exclusion import ExclusionTestBase  # noqa: E402
 from tests.test_face_clustering_rules import identity_vector, near  # noqa: E402
 
 import db as tagpup_db  # noqa: E402
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from free_port import free_port  # noqa: E402
 
 NAMED = "Rowan Thackeray"
 
 
 class ExcludedFaceBase(ExclusionTestBase):
-    TEST_PORT = free_port()
     DB_NAME = "test_excluded_faces_stay_unnamed.db"   # in a home of the class's own
 
     def exclude(self, *face_ids):

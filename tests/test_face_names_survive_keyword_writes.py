@@ -17,14 +17,14 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
-import db  # noqa: E402
-import tagpup_server  # noqa: E402
 from index import PhotoIndex  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_face, people_of  # noqa: E402
 
-from tagpup.store import people  # noqa: E402
+from tagpup.store import db, people  # noqa: E402
+from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
+from tagpup.store.photos import record_tags  # noqa: E402
 
 
 class FaceNamesSurviveKeywordWrites(unittest.TestCase):
@@ -48,10 +48,10 @@ class FaceNamesSurviveKeywordWrites(unittest.TestCase):
         people.rebuild(index.conn)
         index.conn.commit()
         index.close()
-        tagpup_server.invalidate_people_cache()
+        store_taxonomy.forget_people_paths()
 
     def tearDown(self):
-        tagpup_server.invalidate_people_cache()
+        store_taxonomy.forget_people_paths()
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def listed(self):
@@ -62,8 +62,7 @@ class FaceNamesSurviveKeywordWrites(unittest.TestCase):
             conn.close()
 
     def test_a_bulk_keyword_write_keeps_a_face_named_person(self):
-        self.assertTrue(tagpup_server.record_tags_in_index(
-            self.db, self.photo, ["Activity/Running", "Event/Classic"]))
+        self.assertTrue(record_tags(self.db, self.photo, ["Activity/Running", "Event/Classic"]))
         self.assertEqual(self.listed(), ["Rowan Thackeray"])
 
     def test_re_indexing_the_photo_keeps_a_face_named_person(self):

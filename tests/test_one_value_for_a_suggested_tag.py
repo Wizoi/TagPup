@@ -37,8 +37,10 @@ class OneValue(unittest.TestCase):
         self.assertIn('insert(0, "%.2f" % suggesting.OFFER_A_TAG)', source("runner.py"))
 
     def test_no_score_is_compared_with_a_number_of_its_own(self):
-        # Where a tag's score decides, it is compared with the one value.
-        for name in ("scripts/tagpup_server.py", "scripts/writer.py", "tagpup_cli.py", "runner.py"):
+        # Where a tag's score decides, it is compared with the one value: TagPup's
+        # routes and the model that offers, the writer, the CLI and the runner.
+        for name in ("tagpup/web/tagpup_routes.py", "tagpup/core/suggesting.py", "tagpup/jobs/suggestions.py",
+                     "scripts/suggest_models.py", "scripts/writer.py", "tagpup_cli.py", "runner.py"):
             found = re.findall(r"score[\w\"'\].)]*\s*>=\s*0\.\d", source(name))
             self.assertEqual([], found, name)
 

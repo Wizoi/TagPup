@@ -19,9 +19,8 @@ from unittest import mock
 from tests.handler_harness import Library
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
-import tagpup_server
-from exiftool_session import ExifToolSession
-from metadata import ROTATED_ORIENTATION, rotate_image_file
+from tagpup.files.exiftool_session import ExifToolSession
+from tagpup.files.metadata import ROTATED_ORIENTATION, rotate_image_file
 from tagpup.store import db
 from tests.face_rows import add_face
 
@@ -200,14 +199,11 @@ class TestTheRotateRoute(unittest.TestCase):
              json.dumps(["Beach"]), "{}"))
         self.face = face_in(self.lib, os.path.abspath(self.photo), [0, 0, 10, 8], name="Rowan Thackeray")
         self.lib.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (self.face, b"crop"))
-        self.handler = self.lib.handler(EXIFTOOL)
-        status, _ = self.handler.call("handle_get_folder_scan", None,
-                                      {"path": [self.lib.photos]})
+        status, _ = self.lib.get("/api/folder/scan", {"path": self.lib.photos})
         self.assertEqual(status, 200)
 
     def rotate(self, direction):
-        return self.handler.call("handle_post_photo_rotate",
-                                 {"path": self.photo, "direction": direction})
+        return self.lib.post("/api/photo/rotate", {"path": self.photo, "direction": direction})
 
     def test_the_index_row_records_the_new_file(self):
         self.assertEqual(self.rotate("left")[0], 200)
@@ -218,7 +214,7 @@ class TestTheRotateRoute(unittest.TestCase):
 
     def test_the_folder_cache_records_the_new_file(self):
         self.assertEqual(self.rotate("right")[0], 200)
-        entries = tagpup_server.TagPupHTTPRequestHandler.cached_photo_entries(self.photo)
+        entries = self.lib.folders().entries_for(self.photo)
         self.assertEqual(len(entries), 1)
         stat = os.stat(self.photo)
         self.assertEqual(entries[0][1]["size"], stat.st_size)
@@ -251,8 +247,7 @@ class TestTheRotateRoute(unittest.TestCase):
             face_before = img.convert("RGB").crop(box)
 
         for direction, angle in (("left", 90), ("right", 270), ("right", 270)):
-            status, reply = self.handler.call("handle_post_photo_rotate",
-                                              {"path": tiff, "direction": direction})
+            status, reply = self.lib.post("/api/photo/rotate", {"path": tiff, "direction": direction})
             self.assertEqual(status, 200, reply)
             new_box, crop = self.lib.rows("SELECT box, (SELECT jpeg FROM face_crops c WHERE c.face_id = faces.id) FROM faces WHERE id = ?", (face,))[0]
             new_box = json.loads(new_box)

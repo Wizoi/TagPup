@@ -26,12 +26,8 @@ import shutil
 import sqlite3
 import sys
 import tempfile
-import threading
-import time
 import unittest
-import urllib.error
 import urllib.parse
-import urllib.request
 
 import numpy as np
 
@@ -39,14 +35,14 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-import tuner_server
 from index import PhotoIndex
-from tuner_server import start_server as start_tuner_server, set_active_db_path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from free_port import free_port  # noqa: E402
 import own_home  # noqa: E402
+import tuner_client  # noqa: E402
 from face_rows import add_face  # noqa: E402
 
+from tagpup.jobs import identify as identify_jobs  # noqa: E402
+from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
 
 
@@ -137,63 +133,35 @@ def unit_vector(seed):
 
 
 class MatchingTestBase(unittest.TestCase):
-    """A running tuner server over a throwaway database."""
+    """The TagTuner app over a throwaway library, through Flask's test client
+    (tests/tuner_client.py)."""
 
-    TEST_PORT = free_port()
     DB_NAME = "test_identify_hot_paths.db"   # in a home of the class's own
 
     @classmethod
     def setUpClass(cls):
-        # Its own port: subclasses inherit the attribute, and a port
-        # already held by the last class's server is refused.
-        cls.TEST_PORT = free_port()
         cls.home = own_home.for_class(cls)
         cls.TEST_DB = cls.home.library(cls.DB_NAME)
         pi = PhotoIndex(db_path=cls.TEST_DB)
         pi.load()
         pi.close()
-        cls.server_thread = threading.Thread(
-            target=start_tuner_server,
-            kwargs={
-                "port": cls.TEST_PORT,
-                "db_path": cls.TEST_DB,
-                "gui_dir": os.path.join(WORKSPACE_DIR, "gui"),
-            },
-            daemon=True,
-        )
-        cls.server_thread.start()
-        time.sleep(1.0)
-
-    @classmethod
-    def tearDownClass(cls):
-        set_active_db_path(None)
+        cls.app = tuner_client.app_on(cls.TEST_DB)
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="tagpup_hot_")
         self.addCleanup(shutil.rmtree, self.tmpdir, True)
-        self.addCleanup(set_active_db_path, None)
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM photos")
         conn.commit()
         conn.close()
-        # The identify cache is process-wide and outlives the rows it describes, so a
-        # payload left by the last test can be served to this one.
-        for key in list(tuner_server.TunerHTTPRequestHandler.identify_cache.keys()):
-            tuner_server.TunerHTTPRequestHandler.identify_cache.pop(key, None)
+        # The identify cache lives as long as the process and outlives the rows it
+        # describes, so a payload left by the last test can be served to this one.
+        tuner_client.forget(self.TEST_DB)
+        self.requests = tuner_client.Requests(self.app)
 
     def post(self, path, body):
-        req = urllib.request.Request(
-            "http://127.0.0.1:%d%s" % (self.TEST_PORT, path),
-            data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                return r.status, json.loads(r.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            return e.code, e.read().decode("utf-8", errors="replace")
+        return self.requests.post(path, body)
 
     def add_photo(self, name, people=()):
         """A photo whose keywords name `people`, its people rebuilt from them."""
@@ -253,11 +221,7 @@ class TestTheQueueDoesNotReadEmbeddings(MatchingTestBase):
         return fid
 
     def queue(self):
-        with urllib.request.urlopen(
-            "http://127.0.0.1:%d/api/unmatched-faces/people" % self.TEST_PORT,
-            timeout=30,
-        ) as r:
-            return json.loads(r.read().decode("utf-8"))
+        return self.requests.get("/api/unmatched-faces/people")
 
     def test_the_queue_opens_when_a_face_has_an_unreadable_embedding(self):
         photo = self.add_photo("IMG_4242.jpg")
@@ -376,11 +340,7 @@ class TestTheSharedNamedFaceMatrix(MatchingTestBase):
     """
 
     def matches_for(self, face_id):
-        with urllib.request.urlopen(
-            "http://127.0.0.1:%d/api/face-matches?id=%d" % (self.TEST_PORT, face_id),
-            timeout=30,
-        ) as r:
-            return json.loads(r.read().decode("utf-8"))
+        return self.requests.get("/api/face-matches?id=%d" % face_id)
 
     def test_a_face_is_not_a_suggestion_for_itself(self):
         """Otherwise every named face resembles itself at 100%, which says nothing."""
@@ -450,10 +410,7 @@ class TestRemovingFacesKeepsTheGridWarm(MatchingTestBase):
     """
 
     def matches(self, name):
-        url = "http://127.0.0.1:%d/api/unmatched-faces/person-matches?name=%s" % (
-            self.TEST_PORT, urllib.parse.quote(name))
-        with urllib.request.urlopen(url, timeout=60) as r:
-            return json.loads(r.read().decode("utf-8"))
+        return self.requests.get("/api/unmatched-faces/person-matches?name=%s" % urllib.parse.quote(name))
 
     def a_grid_of(self, count, tag=None):
         """`count` nameless faces that all resemble each other, so they cluster."""
@@ -497,21 +454,19 @@ class TestRemovingFacesKeepsTheGridWarm(MatchingTestBase):
 
     def test_the_cached_grid_is_kept_rather_than_thrown_away(self):
         """The point of the exercise: the payload survives the write."""
-        import tuner_server
-
         ids = self.a_grid_of(6)
         self.matches("Unknown Faces")
 
-        cache = tuner_server.TunerHTTPRequestHandler.identify_cache
+        cache = tuner_client.grid_cache(self.TEST_DB)
         key = "matches:Unknown Faces"
         self.assertIn(key, cache.keys(), "the grid was never cached to begin with")
-        stamp_before = cache.get(key)["fingerprint"]
+        stamp_before = cache.entry(key)["fingerprint"]
 
         status, _body = self.post(
             "/api/faces/exclude", {"face_ids": ids[:1], "reason": "not a person"})
         self.assertEqual(200, status)
 
-        entry = cache.get(key)
+        entry = cache.entry(key)
         self.assertIsNotNone(
             entry, "excluding a face threw the whole cached grid away")
         self.assertNotEqual(
@@ -570,7 +525,6 @@ class TestTheCappedTailRule(unittest.TestCase):
     """
 
     def setUp(self):
-        self.handler = object.__new__(tuner_server.TunerHTTPRequestHandler)
         self.conn = sqlite3.connect(":memory:")
         self.conn.execute(
             "CREATE TABLE faces (id INTEGER PRIMARY KEY, name TEXT,"
@@ -580,14 +534,11 @@ class TestTheCappedTailRule(unittest.TestCase):
             [(i,) for i in range(1, 1200)])
         self.conn.commit()
         self.addCleanup(self.conn.close)
-
-        cache = tuner_server.TunerHTTPRequestHandler.identify_cache
-        for key in list(cache.keys()):
-            cache.pop(key, None)
-        self.cache = cache
+        self.cache = identify_jobs.GridCache()
 
     def forget(self, ids):
-        """Remove faces the way a real request does: write first, then update the cache.
+        """Remove faces the way a real request does: write first, then update the cache
+        with the fingerprints either side of the write.
 
         The pre-write fingerprint is what decides whether a cached entry can be carried
         forward, so a test that never moves the table is not testing anything.
@@ -597,33 +548,30 @@ class TestTheCappedTailRule(unittest.TestCase):
             "UPDATE faces SET excluded = 1 WHERE id IN (%s)" % ",".join("?" * len(ids)),
             list(ids))
         self.conn.commit()
-        self.handler.identify_cache_forget_faces(self.conn, list(ids), before)
+        self.cache.forget_faces(list(ids), before, self.fingerprint())
 
     def fingerprint(self):
         """The table state the cached grid was built against."""
-        return self.handler.faces_fingerprint(self.conn)
+        return store_faces.fingerprint(self.conn)
 
     def cache_a_grid(self, clustered_ids, shown_unclustered_ids, unclustered_total):
         faces = [{"id": i, "cluster_id": 0} for i in clustered_ids]
         faces += [{"id": i, "cluster_id": -1} for i in shown_unclustered_ids]
-        self.cache["matches:Unknown Faces"] = {
-            "fingerprint": self.fingerprint(),
-            "value": {
-                "faces": faces,
-                "total_count": len(faces),
-                "unclustered_total": unclustered_total,
-                "unclustered_shown": len(shown_unclustered_ids),
-                "has_more": unclustered_total > len(shown_unclustered_ids),
-            },
-        }
+        self.cache.put("matches:Unknown Faces", self.fingerprint(), {
+            "faces": faces,
+            "total_count": len(faces),
+            "unclustered_total": unclustered_total,
+            "unclustered_shown": len(shown_unclustered_ids),
+            "has_more": unclustered_total > len(shown_unclustered_ids),
+        })
 
     def entry(self):
-        return self.cache.get("matches:Unknown Faces")
+        return self.cache.entry("matches:Unknown Faces")
 
     def test_ignoring_a_cluster_keeps_a_capped_grid(self):
         """The headline case. A cluster removal never touches the unclustered tail."""
         clustered = list(range(1, 11))
-        shown = list(range(11, 11 + tuner_server.UNCLUSTERED_LIMIT))
+        shown = list(range(11, 11 + identify_jobs.UNCLUSTERED_LIMIT))
         self.cache_a_grid(clustered, shown, unclustered_total=78411)
 
         self.forget(clustered)
@@ -638,7 +586,7 @@ class TestTheCappedTailRule(unittest.TestCase):
             "the entry kept its old stamp, so it would be rebuilt anyway")
 
     def test_thinning_the_tail_a_little_keeps_the_grid(self):
-        shown = list(range(11, 11 + tuner_server.UNCLUSTERED_LIMIT))
+        shown = list(range(11, 11 + identify_jobs.UNCLUSTERED_LIMIT))
         self.cache_a_grid([1, 2], shown, unclustered_total=78411)
 
         self.forget(shown[:5])
@@ -646,18 +594,18 @@ class TestTheCappedTailRule(unittest.TestCase):
         entry = self.entry()
         self.assertIsNotNone(entry, "removing five faces rebuilt the whole grid")
         self.assertEqual(
-            tuner_server.UNCLUSTERED_LIMIT - 5, entry["value"]["unclustered_shown"])
+            identify_jobs.UNCLUSTERED_LIMIT - 5, entry["value"]["unclustered_shown"])
         self.assertEqual(78410 - 4, entry["value"]["unclustered_total"])
         self.assertTrue(
             entry["value"]["has_more"], "the tail behind the cap was forgotten")
 
     def test_wearing_the_tail_down_rebuilds_so_the_next_faces_come_forward(self):
         """Otherwise the grid shrinks towards empty while faces still need a name."""
-        shown = list(range(11, 11 + tuner_server.UNCLUSTERED_LIMIT))
+        shown = list(range(11, 11 + identify_jobs.UNCLUSTERED_LIMIT))
         self.cache_a_grid([1, 2], shown, unclustered_total=78411)
 
         # Down past half the cap.
-        self.forget(shown[:tuner_server.UNCLUSTERED_LIMIT // 2 + 1])
+        self.forget(shown[:identify_jobs.UNCLUSTERED_LIMIT // 2 + 1])
 
         self.assertIsNone(
             self.entry(),
@@ -678,16 +626,14 @@ class TestTheCappedTailRule(unittest.TestCase):
 
     def test_another_persons_untouched_grid_is_re_stamped_not_discarded(self):
         """One person's edit should not cost everybody else their grid."""
-        self.cache["matches:Rhiannon Vail"] = {
-            "fingerprint": self.fingerprint(),
-            "value": {"faces": [{"id": 900, "cluster_id": 0}], "total_count": 1,
-                      "unclustered_total": 0, "unclustered_shown": 0, "has_more": False},
-        }
+        self.cache.put("matches:Rhiannon Vail", self.fingerprint(), {
+            "faces": [{"id": 900, "cluster_id": 0}], "total_count": 1,
+            "unclustered_total": 0, "unclustered_shown": 0, "has_more": False})
         self.cache_a_grid([1, 2], [], unclustered_total=0)
 
         self.forget([1, 2])
 
-        other = self.cache.get("matches:Rhiannon Vail")
+        other = self.cache.entry("matches:Rhiannon Vail")
         self.assertIsNotNone(other, "an unrelated person's grid was discarded")
         self.assertEqual(1, other["value"]["total_count"])
         self.assertEqual(
@@ -715,7 +661,6 @@ class TestAGroupOfOneIsNotAGroup(unittest.TestCase):
     """
 
     def setUp(self):
-        self.handler = object.__new__(tuner_server.TunerHTTPRequestHandler)
         self.conn = sqlite3.connect(":memory:")
         self.conn.execute(
             "CREATE TABLE faces (id INTEGER PRIMARY KEY, name TEXT,"
@@ -725,13 +670,11 @@ class TestAGroupOfOneIsNotAGroup(unittest.TestCase):
             [(i,) for i in range(1, 1200)])
         self.conn.commit()
         self.addCleanup(self.conn.close)
-        cache = tuner_server.TunerHTTPRequestHandler.identify_cache
-        for key in list(cache.keys()):
-            cache.pop(key, None)
-        self.cache = cache
+        self.cache = identify_jobs.GridCache()
 
     def forget(self, ids):
-        """Remove faces the way a real request does: write first, then update the cache.
+        """Remove faces the way a real request does: write first, then update the cache
+        with the fingerprints either side of the write.
 
         The pre-write fingerprint is what decides whether a cached entry can be carried
         forward, so a test that never moves the table is not testing anything.
@@ -741,26 +684,23 @@ class TestAGroupOfOneIsNotAGroup(unittest.TestCase):
             "UPDATE faces SET excluded = 1 WHERE id IN (%s)" % ",".join("?" * len(ids)),
             list(ids))
         self.conn.commit()
-        self.handler.identify_cache_forget_faces(self.conn, list(ids), before)
+        self.cache.forget_faces(list(ids), before, self.fingerprint())
 
     def fingerprint(self):
         """The table state the cached grid was built against."""
-        return self.handler.faces_fingerprint(self.conn)
+        return store_faces.fingerprint(self.conn)
 
     def cache_a_grid(self, faces, unclustered_total=0):
-        self.cache["matches:Unknown Faces"] = {
-            "fingerprint": self.fingerprint(),
-            "value": {
-                "faces": faces,
-                "total_count": len(faces),
-                "unclustered_total": unclustered_total,
-                "unclustered_shown": sum(1 for f in faces if f["cluster_id"] == -1),
-                "has_more": False,
-            },
-        }
+        self.cache.put("matches:Unknown Faces", self.fingerprint(), {
+            "faces": faces,
+            "total_count": len(faces),
+            "unclustered_total": unclustered_total,
+            "unclustered_shown": sum(1 for f in faces if f["cluster_id"] == -1),
+            "has_more": False,
+        })
 
     def faces_now(self):
-        return self.cache.get("matches:Unknown Faces")["value"]
+        return self.cache.entry("matches:Unknown Faces")["value"]
 
     def test_the_last_face_of_a_cluster_joins_the_unclustered_pile(self):
         self.cache_a_grid([
@@ -869,7 +809,6 @@ class TestSomethingElseChangedThePoolInBetween(unittest.TestCase):
     """
 
     def setUp(self):
-        self.handler = object.__new__(tuner_server.TunerHTTPRequestHandler)
         self.conn = sqlite3.connect(":memory:")
         self.conn.execute(
             "CREATE TABLE faces (id INTEGER PRIMARY KEY, name TEXT,"
@@ -879,38 +818,34 @@ class TestSomethingElseChangedThePoolInBetween(unittest.TestCase):
             [(i,) for i in range(1, 40)])
         self.conn.commit()
         self.addCleanup(self.conn.close)
-
-        cache = tuner_server.TunerHTTPRequestHandler.identify_cache
-        for key in list(cache.keys()):
-            cache.pop(key, None)
-        self.cache = cache
+        self.cache = identify_jobs.GridCache()
 
         # A grid, cached against the table as it stands.
-        self.cache["matches:Unknown Faces"] = {
-            "fingerprint": self.handler.faces_fingerprint(self.conn),
-            "value": {
-                "faces": [
-                    {"id": 1, "cluster_id": 3, "cluster_name": "Cluster 1", "similarity": 0.9},
-                    {"id": 2, "cluster_id": 3, "cluster_name": "Cluster 1", "similarity": 0.9},
-                    {"id": 3, "cluster_id": 3, "cluster_name": "Cluster 1", "similarity": 0.9},
-                    {"id": 30, "cluster_id": -1, "cluster_name": "Unclustered", "similarity": 0.0},
-                ],
-                "total_count": 4,
-                "unclustered_total": 1,
-                "unclustered_shown": 1,
-                "has_more": False,
-            },
-        }
+        self.cache.put("matches:Unknown Faces", self.fingerprint(), {
+            "faces": [
+                {"id": 1, "cluster_id": 3, "cluster_name": "Cluster 1", "similarity": 0.9},
+                {"id": 2, "cluster_id": 3, "cluster_name": "Cluster 1", "similarity": 0.9},
+                {"id": 3, "cluster_id": 3, "cluster_name": "Cluster 1", "similarity": 0.9},
+                {"id": 30, "cluster_id": -1, "cluster_name": "Unclustered", "similarity": 0.0},
+            ],
+            "total_count": 4,
+            "unclustered_total": 1,
+            "unclustered_shown": 1,
+            "has_more": False,
+        })
+
+    def fingerprint(self):
+        return store_faces.fingerprint(self.conn)
 
     def entry(self):
-        return self.cache.get("matches:Unknown Faces")
+        return self.cache.entry("matches:Unknown Faces")
 
     def remove_a_face_now(self, face_id):
         """An ordinary exclude, using whatever the table looks like at this moment."""
-        before = self.handler.faces_fingerprint(self.conn)
+        before = self.fingerprint()
         self.conn.execute("UPDATE faces SET excluded = 1 WHERE id = ?", (face_id,))
         self.conn.commit()
-        self.handler.identify_cache_forget_faces(self.conn, [face_id], before)
+        self.cache.forget_faces([face_id], before, self.fingerprint())
 
     def test_a_removal_on_its_own_carries_the_grid_forward(self):
         """The baseline the rest of this class is measured against."""
@@ -919,7 +854,7 @@ class TestSomethingElseChangedThePoolInBetween(unittest.TestCase):
         entry = self.entry()
         self.assertIsNotNone(entry)
         self.assertEqual(3, entry["value"]["total_count"])
-        self.assertEqual(self.handler.faces_fingerprint(self.conn), entry["fingerprint"])
+        self.assertEqual(self.fingerprint(), entry["fingerprint"])
 
     def test_a_folder_removed_in_between_leaves_the_grid_to_rebuild(self):
         # Somebody removes a folder: its photos go, and their faces with them.
@@ -931,7 +866,7 @@ class TestSomethingElseChangedThePoolInBetween(unittest.TestCase):
         entry = self.entry()
         if entry is not None:
             self.assertNotEqual(
-                self.handler.faces_fingerprint(self.conn), entry["fingerprint"],
+                self.fingerprint(), entry["fingerprint"],
                 "a grid built before a folder was removed was re-stamped as current,"
                 " so it will be served with cards for photos that no longer exist",
             )
@@ -948,7 +883,7 @@ class TestSomethingElseChangedThePoolInBetween(unittest.TestCase):
         entry = self.entry()
         if entry is not None:
             self.assertNotEqual(
-                self.handler.faces_fingerprint(self.conn), entry["fingerprint"],
+                self.fingerprint(), entry["fingerprint"],
                 "a grid built before twenty faces were indexed was re-stamped as"
                 " current, so clusters those faces would have joined stay split",
             )
@@ -965,6 +900,6 @@ class TestSomethingElseChangedThePoolInBetween(unittest.TestCase):
         entry = self.entry()
         if entry is not None:
             self.assertNotEqual(
-                self.handler.faces_fingerprint(self.conn), entry["fingerprint"],
+                self.fingerprint(), entry["fingerprint"],
                 "a grid built before the pool changed underneath it was revived",
             )

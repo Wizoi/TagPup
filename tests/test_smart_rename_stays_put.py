@@ -17,13 +17,15 @@ from test_tagpup_server_finds_native_rows import (  # noqa: E402
 
 class SmartRenameStaysPut(HandlerCase):
     def rename(self, files):
-        with patch("exiftool_session.ExifToolSession", fake_exiftool([{}])), \
-                patch("metadata.MetadataExtractor", fake_extractor()):
-            return self.call("handle_post_folder_rename_photos", {
+        with patch("tagpup.files.exiftool_session.ExifToolSession", fake_exiftool([{}])), \
+                patch("tagpup.files.metadata.MetadataExtractor", fake_extractor()):
+            status, reply = self.lib.post("/api/folder/rename-photos", {
                 "folder_path": forward(self.folder),
                 "photo_paths": [forward(p) for p in files],
                 "grouping": "Regatta",
             })
+        self.assertEqual(status, 200, reply)
+        return reply
 
     def everything_in(self, folder):
         return sorted(os.path.relpath(os.path.join(root, f), folder)

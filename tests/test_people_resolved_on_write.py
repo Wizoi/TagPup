@@ -1,4 +1,4 @@
-"""No server write path can put a bare person name into a photo's keywords.
+"""No write path can put a bare person name into a photo's keywords.
 
 A person's name reaches this program as a leaf from half a dozen directions: the faces
 table, CLIP suggestions, neighbour propagation, a name typed into a box. Each of those
@@ -7,9 +7,10 @@ beside "People/Hazel Brookmire" -- one of them always got missed. Folder auto-ap
 outlived three separate fixes, because it writes on the server, from a suggestion list
 computed before any of the UI-side resolution ran.
 
-So resolution moved to the write boundary, which is the one place every keyword write
-funnels through, and this holds it there. The last test is the guard: a new call to
-write_keyword_fields that forgets db_path fails here rather than in someone's library.
+So resolution moved to the write boundary: every keyword write resolves people through
+tagpup.core.vocabulary.resolve_people, over what the library's tree says
+(tagpup.store.taxonomy.people_paths). The last class is the guard: a new keyword write
+that forgets fails here rather than in someone's library.
 """
 import ast
 import os
@@ -18,10 +19,10 @@ import unittest
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-import db as tagpup_db
-import tagpup_server
+from tagpup.core import vocabulary  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
+from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 
 
 def make_db(path):
@@ -45,6 +46,12 @@ def make_db(path):
     conn.close()
 
 
+def resolve_people_tags(tags, db_path):
+    """What every writer does: the people of `tags` filed where the library at
+    `db_path` files them."""
+    return vocabulary.resolve_people(tags, store_taxonomy.people_paths(db_path))
+
+
 class PeopleResolutionCase(unittest.TestCase):
     def setUp(self):
         import tempfile
@@ -52,10 +59,10 @@ class PeopleResolutionCase(unittest.TestCase):
         os.close(fd)
         os.remove(self.db_path)
         make_db(self.db_path)
-        tagpup_server.invalidate_people_cache()
+        store_taxonomy.forget_people_paths()
 
         def cleanup():
-            tagpup_server.invalidate_people_cache()
+            store_taxonomy.forget_people_paths()
             for suffix in ("", "-wal", "-shm"):
                 target = self.db_path + suffix
                 if os.path.exists(target):
@@ -66,7 +73,7 @@ class PeopleResolutionCase(unittest.TestCase):
         self.addCleanup(cleanup)
 
     def resolve(self, tags):
-        return tagpup_server.resolve_people_tags(tags, self.db_path)
+        return resolve_people_tags(tags, self.db_path)
 
 
 class TestAPersonIsResolvedOnTheWayOut(PeopleResolutionCase):
@@ -126,13 +133,13 @@ class TestEverythingElseIsLeftAlone(PeopleResolutionCase):
 
     def test_no_database_means_no_change_rather_than_a_failure(self):
         self.assertEqual(
-            tagpup_server.resolve_people_tags(["Hazel Brookmire"], None),
+            resolve_people_tags(["Hazel Brookmire"], None),
             ["Hazel Brookmire"],
         )
 
     def test_a_missing_database_does_not_stop_the_write(self):
         self.assertEqual(
-            tagpup_server.resolve_people_tags(["Hazel Brookmire"], "no/such.db"),
+            resolve_people_tags(["Hazel Brookmire"], "no/such.db"),
             ["Hazel Brookmire"],
         )
 
@@ -150,8 +157,9 @@ class TestTheCacheDoesNotGoStale(PeopleResolutionCase):
         conn.close()
 
         # Without invalidation this still returns the bare name, which is the whole
-        # reason the taxonomy handlers call invalidate_people_cache after saving.
-        tagpup_server.invalidate_people_cache(self.db_path)
+        # reason the tree's edits forget the cache after saving; a table without the
+        # generation triggers, as this hand-made one is, has nothing else to say so.
+        store_taxonomy.forget_people_paths(self.db_path)
         self.assertEqual(self.resolve(["Bethan Tamsin"]), ["People/Bethan Tamsin"])
 
     def test_the_second_call_does_not_reread_the_database(self):
@@ -165,39 +173,63 @@ class TestTheCacheDoesNotGoStale(PeopleResolutionCase):
         )
 
 
-class TestEveryWriteSitePassesTheDatabase(unittest.TestCase):
-    """The guard. Resolution at the boundary only works if the boundary is told where
-    the taxonomy lives, and a new call site that forgets is invisible until a library
-    has bare names in it again."""
+class TestEveryWriteSiteResolvesPeople(unittest.TestCase):
+    """The guard. Resolution at the boundary only works if every keyword write goes
+    through it, and a new call site that forgets is invisible until a library has bare
+    names in it again."""
 
-    def test_no_call_to_write_keyword_fields_omits_db_path(self):
-        source_path = os.path.join(WORKSPACE_DIR, "scripts", "tagpup_server.py")
-        with open(source_path, encoding="utf-8") as f:
-            tree = ast.parse(f.read(), filename=source_path)
+    #: Where keywords are written: the services, and the CLI's writer.
+    SOURCES = [os.path.join("scripts", "writer.py")] + [
+        os.path.join("tagpup", "services", name)
+        for name in sorted(os.listdir(os.path.join(WORKSPACE_DIR, "tagpup", "services")))
+        if name.endswith(".py")]
 
+    def writes(self):
+        """(where, the call, the function it is in) of every write_keywords call in
+        SOURCES."""
+        for relative in self.SOURCES:
+            source_path = os.path.join(WORKSPACE_DIR, relative)
+            with open(source_path, encoding="utf-8") as f:
+                tree = ast.parse(f.read(), filename=source_path)
+            for function in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
+                for node in ast.walk(function):
+                    if isinstance(node, ast.Call) and (
+                            getattr(node.func, "id", None) or getattr(node.func, "attr", None)) == "write_keywords":
+                        yield "%s:%d" % (relative, node.lineno), node, function
+
+    @staticmethod
+    def _resolves(expression, function):
+        """Is `expression`, the tags handed to a write, a resolve_people call -- or a
+        name the function assigned one to?"""
+        def is_resolution(node):
+            return isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "resolve_people"
+
+        if is_resolution(expression):
+            return True
+        if isinstance(expression, ast.Name):
+            return any(isinstance(node, ast.Assign) and is_resolution(node.value)
+                       and any(isinstance(t, ast.Name) and t.id == expression.id for t in node.targets)
+                       for node in ast.walk(function))
+        return False
+
+    def test_no_call_to_write_keywords_skips_resolution(self):
         offenders = []
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            name = getattr(func, "id", None) or getattr(func, "attr", None)
-            if name != "write_keyword_fields":
-                continue
-            if not any(kw.arg == "db_path" for kw in node.keywords):
-                offenders.append("tagpup_server.py:%d" % node.lineno)
-
+        for where, call, function in self.writes():
+            tags = call.args[2] if len(call.args) > 2 else None
+            if not self._resolves(tags, function):
+                offenders.append(where)
         self.assertEqual(
             offenders, [],
-            "these write keywords without telling the writer where the taxonomy is, "
-            "so a person named by a bare leaf is written as a bare leaf: "
+            "these write keywords without resolving people to the tags they are filed "
+            "under, so a person named by a bare leaf is written as a bare leaf: "
             + ", ".join(offenders)
         )
 
-    def test_the_writer_still_takes_a_db_path(self):
-        # The check above is worthless if the parameter has been renamed away.
-        import inspect
-        params = inspect.signature(tagpup_server.write_keyword_fields).parameters
-        self.assertIn("db_path", params)
+    def test_the_guard_sees_the_writers(self):
+        # The check above is worthless if the writes moved away from what it reads.
+        found = [where for where, _call, _function in self.writes()]
+        self.assertTrue(any("tagging.py" in where for where in found), found)
+        self.assertTrue(any("writer.py" in where for where in found), found)
 
 
 if __name__ == "__main__":

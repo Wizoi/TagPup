@@ -10,30 +10,25 @@ Each test therefore asserts on BOTH sides of the write:
   * the keywords actually present in the JPEG on disk, read back through ExifTool.
 
 Tests that mutate photo files are skipped when ExifTool is unavailable, so the pure
-database behaviours still run in a bare environment.
+database behaviours still run in a bare environment. The app is asked through Flask's
+test client: no server, no port, no sleep.
 """
+import json
 import os
 import sys
-import json
-import time
-import shutil
-import sqlite3
 import tempfile
-import threading
 import unittest
-import urllib.parse
-import urllib.request
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
-
-from tagpup_server import start_server as start_tagpup_server, set_active_db_path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from free_port import free_port  # noqa: E402
+
 import own_home  # noqa: E402
 from face_rows import add_face, add_people, people_of  # noqa: E402
+from handler_harness import Library  # noqa: E402
 
+from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
 
 #: Where the machine has ExifTool; the checkout's settings are not read.
 EXIFTOOL = own_home.installed_exiftool()
@@ -41,73 +36,22 @@ requires_exiftool = unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
 
 
 class TaxonomyTestBase(unittest.TestCase):
-    """Boots one TagPup server against a scratch database, reset between tests."""
-
-    TEST_PORT = free_port()
-    DB_NAME = "test_taxonomy_lifecycle.db"   # in a home of the class's own
-
-    @classmethod
-    def setUpClass(cls):
-        # Its own port: subclasses inherit the attribute, and a port
-        # already held by the last class's server is refused.
-        cls.TEST_PORT = free_port()
-        cls.home = own_home.for_class(cls)
-        cls.TEST_DB = cls.home.library(cls.DB_NAME)
-        from index import PhotoIndex
-
-        pi = PhotoIndex(db_path=cls.TEST_DB)
-        pi.load()
-        pi.close()
-
-        cls.server_thread = threading.Thread(
-            target=start_tagpup_server,
-            kwargs={
-                "port": cls.TEST_PORT,
-                "db_path": cls.TEST_DB,
-                "gui_dir": os.path.join(WORKSPACE_DIR, "gui_tagpup"),
-            },
-            daemon=True,
-        )
-        cls.server_thread.start()
-        time.sleep(1.0)
-
-    @classmethod
-    def tearDownClass(cls):
-        set_active_db_path(None)
+    """The TagPup app on a scratch library, made afresh for each test."""
 
     def setUp(self):
-        self.tmpdir = tempfile.mkdtemp(prefix="tagpup_tax_")
-        self.addCleanup(shutil.rmtree, self.tmpdir, True)
-        self.addCleanup(set_active_db_path, None)
-        conn = sqlite3.connect(self.TEST_DB)
-        conn.execute("DELETE FROM tag_taxonomy")
-        conn.execute("DELETE FROM photos")
-        # A rename reaches every face of the person, so one left by an earlier test,
-        # or an earlier run whose database could not be removed, is renamed too.
-        conn.execute("DELETE FROM faces")
-        conn.commit()
-        conn.close()
+        self.lib = Library(self, "taxonomy_lifecycle")
+        self.TEST_DB = self.lib.db_path
+        self.tmpdir = tempfile.mkdtemp(prefix="tagpup_tax_", dir=self.lib.root)
 
     # ---------- helpers ----------
 
     def post(self, path, body):
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.TEST_PORT}{path}",
-            data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                return r.status, json.loads(r.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            return e.code, json.loads(e.read().decode("utf-8"))
+        return self.lib.post(path, body)
 
-    def get(self, path):
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{self.TEST_PORT}{path}", timeout=30
-        ) as r:
-            return json.loads(r.read().decode("utf-8"))
+    def get(self, path, query=None):
+        status, reply = self.lib.get(path, query)
+        self.assertEqual(status, 200, reply)
+        return reply
 
     def create_tag(self, name, parent_id=None, has_face=0):
         """Create a tag through the route. `has_face` flags a new root as holding faces:
@@ -121,21 +65,13 @@ class TaxonomyTestBase(unittest.TestCase):
         return body["id"], body["tag"]
 
     def taxonomy_rows(self):
-        conn = sqlite3.connect(self.TEST_DB)
-        rows = conn.execute(
-            "SELECT tag, name, has_face, hidden_from_autocomplete FROM tag_taxonomy"
-        ).fetchall()
-        conn.close()
+        rows = self.lib.rows("SELECT tag, name, has_face, hidden_from_autocomplete FROM tag_taxonomy")
         return {r[0]: {"name": r[1], "has_face": r[2], "hidden": r[3]} for r in rows}
 
     def tag_id(self, tag_path):
-        conn = sqlite3.connect(self.TEST_DB)
-        row = conn.execute(
-            "SELECT id FROM tag_taxonomy WHERE tag = ?", (tag_path,)
-        ).fetchone()
-        conn.close()
-        self.assertIsNotNone(row, f"tag {tag_path!r} not in taxonomy")
-        return row[0]
+        rows = self.lib.rows("SELECT id FROM tag_taxonomy WHERE tag = ?", (tag_path,))
+        self.assertTrue(rows, f"tag {tag_path!r} not in taxonomy")
+        return rows[0][0]
 
     def make_photo(self, filename, tags):
         """Create a real JPEG on disk with `tags` written into its keywords, plus a DB row."""
@@ -154,9 +90,7 @@ class TaxonomyTestBase(unittest.TestCase):
         hierarchical = sorted(set(hierarchical))
 
         if EXIFTOOL:
-            import exiftool
-
-            with exiftool.ExifToolHelper(executable=EXIFTOOL) as et:
+            with ExifToolSession(executable=EXIFTOOL) as et:
                 et.set_tags(
                     [path],
                     tags={
@@ -168,8 +102,7 @@ class TaxonomyTestBase(unittest.TestCase):
                 )
 
         raw_meta = {"XMP:Subject": flat, "XMP:HierarchicalSubject": hierarchical}
-        conn = sqlite3.connect(self.TEST_DB)
-        conn.execute(
+        self.lib.execute(
             "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)"
             " VALUES (?, ?, ?, ?, ?, ?)",
             (
@@ -181,23 +114,15 @@ class TaxonomyTestBase(unittest.TestCase):
                 json.dumps(raw_meta),
             ),
         )
-        conn.commit()
-        conn.close()
         return path
 
     def db_tags(self, photo_path):
-        conn = sqlite3.connect(self.TEST_DB)
-        row = conn.execute(
-            "SELECT tags FROM photos WHERE path = ?", (photo_path,)
-        ).fetchone()
-        conn.close()
-        return json.loads(row[0]) if row and row[0] else []
+        rows = self.lib.rows("SELECT tags FROM photos WHERE path = ?", (photo_path,))
+        return json.loads(rows[0][0]) if rows and rows[0][0] else []
 
     def disk_keywords(self, photo_path):
         """Read hierarchical + flat keywords back out of the actual file."""
-        import exiftool
-
-        with exiftool.ExifToolHelper(executable=EXIFTOOL) as et:
+        with ExifToolSession(executable=EXIFTOOL) as et:
             meta = et.get_metadata([photo_path])[0]
         out = set()
         for key in ("XMP:Subject", "IPTC:Keywords", "XMP:HierarchicalSubject"):
@@ -539,7 +464,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
         person_id, _ = self.create_tag("Jane Doe", parent_id=people_id)
         photo = self.make_photo("a.jpg", ["People/Jane Doe"])
 
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = tagpup_db.connect(self.TEST_DB)
         conn.execute(
             "INSERT INTO faces (photo_id, box, embedding, name) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, ?)",
             (photo, b"", "Jane Doe"),
@@ -553,7 +478,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
         )
         self.assertEqual(status, 200, body)
 
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = tagpup_db.connect(self.TEST_DB)
         face_names = {r[0] for r in conn.execute("SELECT name FROM faces").fetchall()}
         people = people_of(conn, photo)
         conn.close()
@@ -566,16 +491,15 @@ class TestTaxonomyRename(TaxonomyTestBase):
         another case and this one did not, so the two renames of one person disagreed."""
         people_id, _ = self.create_tag("People", has_face=1)
         person_id, _ = self.create_tag("Jane Doe", parent_id=people_id)
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = tagpup_db.connect(self.TEST_DB)
         add_face(conn, "D:/case.jpg", box="[]", embedding=b"", name="jane doe")
         conn.commit()
         conn.close()
 
         status, body = self.post("/api/taxonomy/rename", {"tag_id": person_id, "new_name": "Jane Smith"})
         self.assertEqual(status, 200, body)
-        conn = sqlite3.connect(self.TEST_DB)
-        names = [r[0] for r in conn.execute("SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = 'D:/case.jpg')")]
-        conn.close()
+        names = [r[0] for r in self.lib.rows(
+            "SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = 'D:/case.jpg')")]
         self.assertEqual(names, ["Jane Smith"])
 
     def test_renaming_a_keyword_tag_does_not_touch_faces(self):
@@ -584,7 +508,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
         child_id, _ = self.create_tag("Hiking", parent_id=parent_id)
         photo = self.make_photo("a.jpg", ["Activity/Hiking"])
 
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = tagpup_db.connect(self.TEST_DB)
         conn.execute(
             "INSERT INTO faces (photo_id, box, embedding, name) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, ?)",
             (photo, b"", "Hiking"),
@@ -594,9 +518,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
 
         self.post("/api/taxonomy/rename", {"tag_id": child_id, "new_name": "Trekking"})
 
-        conn = sqlite3.connect(self.TEST_DB)
-        face_names = {r[0] for r in conn.execute("SELECT name FROM faces").fetchall()}
-        conn.close()
+        face_names = {r[0] for r in self.lib.rows("SELECT name FROM faces")}
         self.assertIn("Hiking", face_names, "a keyword rename leaked into the faces table")
 
     def test_rejects_unknown_tag(self):
@@ -612,11 +534,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
 
 
 class TestTaxonomyTree(TaxonomyTestBase):
-    def test_tree_reports_hierarchy_and_flags(self):
-        root_id, _ = self.create_tag("People", has_face=1)
-        self.create_tag("Jane Doe", parent_id=root_id)
-        self.post("/api/taxonomy/update", {"id": root_id, "hidden_from_autocomplete": 1})
-
+    def walk(self):
         tree = self.get("/api/taxonomy/tree")
         nodes = tree if isinstance(tree, list) else tree.get("tree", tree.get("nodes", []))
         flat = {}
@@ -627,6 +545,14 @@ class TestTaxonomyTree(TaxonomyTestBase):
                 walk(node.get("children", []) or [])
 
         walk(nodes)
+        return flat
+
+    def test_tree_reports_hierarchy_and_flags(self):
+        root_id, _ = self.create_tag("People", has_face=1)
+        self.create_tag("Jane Doe", parent_id=root_id)
+        self.post("/api/taxonomy/update", {"id": root_id, "hidden_from_autocomplete": 1})
+
+        flat = self.walk()
         self.assertIn("People", flat)
         self.assertEqual(flat["People"].get("has_face"), 1)
         self.assertEqual(flat["People"].get("hidden_from_autocomplete"), 1)
@@ -638,16 +564,7 @@ class TestTaxonomyTree(TaxonomyTestBase):
         self.make_photo("a.jpg", ["Activity/Hiking"])
         self.make_photo("b.jpg", ["Activity/Hiking"])
 
-        tree = self.get("/api/taxonomy/tree")
-        nodes = tree if isinstance(tree, list) else tree.get("tree", tree.get("nodes", []))
-        flat = {}
-
-        def walk(items):
-            for node in items:
-                flat[node.get("tag")] = node
-                walk(node.get("children", []) or [])
-
-        walk(nodes)
+        flat = self.walk()
         self.assertEqual(flat["Activity/Hiking"].get("usage_count"), 2)
         # Usage rolls up: a photo tagged with the child also counts toward the parent.
         self.assertEqual(flat["Activity"].get("usage_count"), 2)

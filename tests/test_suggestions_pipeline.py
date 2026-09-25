@@ -15,8 +15,9 @@ Four things went wrong here, each quietly:
 - Consensus looked only at the photos of this run, so resuming a folder with two
   photos left judged "what does this folder agree on" from those two.
 
-The runs are tagpup.jobs.suggestions'; what they run is TagPup's suggestion_work, with
-the model replaced by a script. Names here are fictional.
+The runs are tagpup.jobs.suggestions'; what they run is the work TagPup's route hands
+them (work_for), with scripts/suggest_models' model replaced by a script. Names here
+are fictional.
 """
 import os
 import shutil
@@ -30,17 +31,17 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS_DIR = os.path.join(WORKSPACE_DIR, "scripts")
 sys.path.insert(0, SCRIPTS_DIR)
 
-import paths  # noqa: E402
-import tagpup_server  # noqa: E402
+import suggest_models  # noqa: E402
 from suggester import TagSuggester as RealSuggester  # noqa: E402
-from tagpup_server import TagPupHTTPRequestHandler as Handler  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shipped_sources import python_sources  # noqa: E402
 
+from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.store import db, schema  # noqa: E402
+from tagpup.web.state import PerLibrary  # noqa: E402
 
 
 class _LibraryFixture(unittest.TestCase):
@@ -48,14 +49,11 @@ class _LibraryFixture(unittest.TestCase):
         self.dir = tempfile.mkdtemp(prefix="sugg_pipeline_")
         self.db = os.path.join(self.dir, "library.db")
         schema.ensure(self.db)
-        self.runs = suggestion_jobs.runs_for(Library(self.db))
+        self.library = Library(self.db)
+        self.runs = suggestion_jobs.runs_for(self.library)
 
     def tearDown(self):
-        suggestion_jobs.forget(Library(self.db))
-        tagpup_server.set_active_db_path(self.db)
-        Handler.folder_cache.clear()
-        Handler.shared_embedder = None
-        tagpup_server.set_active_db_path(None)
+        suggestion_jobs.forget(self.library)
         shutil.rmtree(self.dir, ignore_errors=True)
         self.assertFalse(os.path.exists(self.dir), f"left behind: {self.dir}")
 
@@ -140,15 +138,17 @@ class _RunFixture(_LibraryFixture):
                 return RealSuggester.apply_folder_consensus(self, suggestions)
 
         self.modules = _fake_modules(ScriptedSuggester)
-        tagpup_server.set_active_db_path(self.db)
-        Handler.shared_embedder = _FakeEmbedder()
+        # This library's embedder is the fake, made the first time it is asked for.
+        embedders = mock.patch.object(suggest_models, "embedders", PerLibrary(lambda library: _FakeEmbedder()))
+        embedders.start()
+        self.addCleanup(embedders.stop)
 
     def run_folder(self, folder, photos):
-        tagpup_server.set_active_db_path(self.db)
-        Handler.folder_cache[folder] = photos
         self.runs.statuses[folder] = {"status": "preparing", "completed": 0, "total": 0}
-        with mock.patch.dict(sys.modules, self.modules):
-            self.runs.run(folder, Handler.suggestion_work(folder, self.db))
+        work = suggestion_jobs.work_for(self.library, lambda: photos)
+        with mock.patch.dict(sys.modules, self.modules), \
+                mock.patch.object(suggestion_jobs, "models", suggest_models.Models()):
+            self.runs.run(folder, work)
         return self.runs.status(folder)
 
 
@@ -205,6 +205,20 @@ class CompletedMeansConsensusIsDone(_RunFixture):
         for p in sorted(photos)[:2]:
             score = status["suggestions"][paths.stored(p)]["tags"][0]["score"]
             self.assertAlmostEqual(score, round(0.7 * 1.25, 2), places=2)
+
+
+class WithoutAModelProvider(_LibraryFixture):
+    def test_a_run_says_nothing_is_installed(self):
+        """A server nobody wired the models into fails the run with a message, not a
+        NameError three frames down; an empty folder never needs the model."""
+        folder, photos = self._folder("2025-08 Sprints", 1)
+        with mock.patch.object(suggestion_jobs, "models", None):
+            self.runs.run(folder, suggestion_jobs.work_for(self.library, lambda: photos))
+            status = self.runs.status(folder)
+            self.assertEqual(status["status"], "error")
+            self.assertIn("suggest_models.install", status["message"])
+            self.runs.run(folder, suggestion_jobs.work_for(self.library, lambda: {}))
+            self.assertEqual(self.runs.status(folder)["message"], "No images found in this folder.")
 
 
 class OneFileOneOwner(unittest.TestCase):

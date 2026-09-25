@@ -192,8 +192,7 @@ class TestKeywordsKeepTheirLevels(unittest.TestCase):
     """The levels are the keyword. Its fragments are not keywords."""
 
     def fields(self, tags):
-        sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
-        from tagpup_server import expand_tag_fields
+        from tagpup.core.fields import expand_tag_fields
         return expand_tag_fields(tags)
 
     def test_a_deep_tag_is_written_whole(self):

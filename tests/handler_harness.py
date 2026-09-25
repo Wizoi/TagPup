@@ -1,53 +1,77 @@
-"""Call a TagPup server handler directly, against a scratch library.
+"""A scratch library, and the TagPup app serving it through Flask's test client.
 
-No server, no port: a handler instance is made without a socket and given a request
-body, and what it would have sent is kept. Several test modules run at once in this
-repository, and a fixed port is something they would fight over.
+No server, no port, no sleeps: the app is made for the library and asked through the
+client, and what it answered is returned (docs/ARCHITECTURE.md, phase 5). Several test
+modules run at once in this repository, and a fixed port is something they would fight
+over. This drove the old server's handler methods without a socket; the routes are
+Flask views now, and a test asks them by URL.
 """
 import os
-import shutil
 import sys
-import tempfile
-import time
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import db as tagpup_db  # noqa: E402
-import tagpup_server  # noqa: E402
-from index import PhotoIndex  # noqa: E402
-from tagpup_server import TagPupHTTPRequestHandler, set_active_db_path, get_active_db_path  # noqa: E402
+import own_home  # noqa: E402
 
 from tagpup.core.library import Library as PathLibrary  # noqa: E402
+from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
+from tagpup.store import schema  # noqa: E402
+from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
+from tagpup.web import app as web  # noqa: E402
+from tagpup.web import tagpup_routes  # noqa: E402
 
 
 class Library:
-    """A scratch library: a folder of photos and a database, removed afterwards.
+    """A scratch library: a folder of photos and a database in a home of the test's
+    own, and the TagPup app started on it. Removed afterwards.
 
-    The tables are made the way the app makes them (PhotoIndex). This harness wrote its
-    own, and its tag tree lacked a column every library has, so code reading that
-    column failed here and nowhere else.
+    The tables are made the way the app makes them (tagpup.store.schema, which a
+    request opening a library runs), and nothing else: this harness wrote its own, and
+    its tag tree lacked a column every library has, so code reading that column failed
+    here and nowhere else. The tree is not seeded either: tests file their own people,
+    with the ids they choose.
     """
 
     def __init__(self, testcase, name="library"):
-        self.root = tempfile.mkdtemp(prefix="tagpup_harness_")
+        self.home = own_home.for_test(testcase, "tagpup_harness_")
+        self.root = self.home.root
         self.photos = os.path.join(self.root, "Photos")
         os.makedirs(self.photos)
-        self.db_path = os.path.join(self.root, name + ".db")
-        index = PhotoIndex(db_path=self.db_path)
-        index.load()
-        index.close()
-        tagpup_server.invalidate_people_cache()
-        set_active_db_path(self.db_path)
-        self.registry_key = get_active_db_path()
-        set_active_db_path(None)
+        self.db_path = self.home.library(name + ".db")
+        schema.ensure(self.db_path)
+        self.library = PathLibrary(self.db_path)
+        self.app = web.create_app("tagpup", startup=self.library)
+        self.app.testing = True
+        self.client = self.app.test_client()
+        store_taxonomy.forget_people_paths()
         testcase.addCleanup(self.close)
+
+    # ---- Asking the app ------------------------------------------------------------------
+
+    def get(self, path, query=None):
+        """GET a route of this library's app; returns (status, the JSON it answered)."""
+        reply = self.client.get(path, query_string=query)
+        return reply.status_code, reply.get_json()
+
+    def post(self, path, body):
+        """POST a JSON body to a route; returns (status, the JSON it answered)."""
+        reply = self.client.post(path, json=body)
+        return reply.status_code, reply.get_json()
+
+    # ---- What the server keeps for it --------------------------------------------------------
+
+    def folders(self):
+        """This library's folder cache (tagpup.web.tagpup_routes.folders)."""
+        return tagpup_routes.folders.of(self.library)
 
     def suggestion_runs(self):
         """This library's suggestion runs (tagpup.jobs.suggestions)."""
-        return suggestion_jobs.runs_for(PathLibrary(self.db_path))
+        return suggestion_jobs.runs_for(self.library)
 
     def save_suggestions(self, found):
         """Keep {photo: entry} as what Suggest offered each photo, in this library
@@ -63,17 +87,14 @@ class Library:
             conn.close()
 
     def close(self):
-        tagpup_server.invalidate_people_cache()
-        TagPupHTTPRequestHandler._db_folder_cache_registry.pop(self.registry_key, None)
-        suggestion_jobs.forget(PathLibrary(self.db_path))
-        set_active_db_path(None)
-        # Windows can hold a file a moment after ExifTool has let go of it.
-        for _attempt in range(20):
-            shutil.rmtree(self.root, ignore_errors=True)
-            if not os.path.exists(self.root):
-                return
-            time.sleep(0.25)
-        raise AssertionError("Could not remove %s" % self.root)
+        """Forget what the process kept for this library, and let the home go."""
+        store_taxonomy.forget_people_paths()
+        tagpup_routes.folders.forget(self.library)
+        suggestion_jobs.forget(self.library)
+        indexing_jobs.forget(self.library)
+        self.home.close()
+
+    # ---- The rows ------------------------------------------------------------------------
 
     def rows(self, sql, params=()):
         conn = tagpup_db.connect(self.db_path)
@@ -90,37 +111,3 @@ class Library:
             return cursor.lastrowid
         finally:
             conn.close()
-
-    def handler(self, exiftool):
-        return FakeHandler(self.db_path, exiftool)
-
-
-class FakeHandler(TagPupHTTPRequestHandler):
-    """A handler with no socket: the body is given, the reply is kept."""
-
-    def __init__(self, db_path, exiftool):  # noqa: D107 -- no socket, on purpose
-        self.db_path = db_path
-        self._exiftool = exiftool
-        self.body = None
-        self.reply = None
-        self.status = None
-        set_active_db_path(db_path)
-
-    def get_exiftool_path(self):
-        return self._exiftool
-
-    def read_json_body(self):
-        return self.body
-
-    def send_json(self, data):
-        self.status, self.reply = 200, data
-
-    def send_json_error(self, status, message):
-        self.status, self.reply = status, {"error": message}
-
-    def call(self, method, body=None, *args):
-        """Run a handler method; returns (status, reply)."""
-        self.body = body
-        set_active_db_path(self.db_path)
-        getattr(self, method)(*args)
-        return self.status, self.reply

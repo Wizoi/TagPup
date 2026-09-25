@@ -8,7 +8,6 @@ new stamp, so the grid never showed them. Now both are read inside one write
 transaction, and a write from elsewhere waits until it is over -- and then moves the
 fingerprint, as it should.
 """
-import io
 import os
 import shutil
 import sqlite3
@@ -18,38 +17,17 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-
-import db as tagpup_db  # noqa: E402
-import tuner_server  # noqa: E402
-from index import PhotoIndex  # noqa: E402
-from tagpup.store import faces as store_faces  # noqa: E402
-from tuner_server import TunerHTTPRequestHandler  # noqa: E402
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from index import PhotoIndex  # noqa: E402
 from face_rows import add_face  # noqa: E402
+import tuner_client  # noqa: E402
+
+from tagpup.store import db  # noqa: E402
+from tagpup.store import faces as store_faces  # noqa: E402
 
 PHOTO = r"D:\Pictures\Regatta\start.jpg"
 KEY = "matches:Unknown Faces"
-
-
-class Handler(TunerHTTPRequestHandler):
-    def __init__(self, db_path, body):  # noqa: D107 -- no socket, on purpose
-        self.db_path = db_path
-        self.body = body
-        self.reply = None
-        self.wfile = io.BytesIO()
-
-    def read_json_body(self):
-        return self.body
-
-    def send_json(self, data):
-        self.reply = data
-
-    def send_error(self, code, message=None):
-        self.reply = {"status": code, "error": message}
-
-    def send_json_error(self, code, message):
-        self.reply = {"status": code, "error": message}
 
 
 class IdentifyCacheKeepsOthersWrites(unittest.TestCase):
@@ -60,29 +38,26 @@ class IdentifyCacheKeepsOthersWrites(unittest.TestCase):
         index = PhotoIndex(self.db)
         index.load()
         index.close()
-        conn = tagpup_db.connect(self.db)
+        conn = db.connect(self.db)
         conn.execute("INSERT INTO photos (path) VALUES (?)", (PHOTO,))
         self.faces = [add_face(conn, PHOTO, box="[1,2,3,4]") for _ in range(3)]
         conn.commit()
         conn.close()
-        tuner_server.set_active_db_path(self.db)
-        self.addCleanup(tuner_server.set_active_db_path, None)
-        TunerHTTPRequestHandler.identify_cache.clear()
-        self.addCleanup(TunerHTTPRequestHandler.identify_cache.clear)
+        tuner_client.forget(self.db)
+        self.addCleanup(tuner_client.forget, self.db)
+        self.cache = tuner_client.grid_cache(self.db)
+        self.requests = tuner_client.Requests(tuner_client.app_on(self.db))
 
     def fingerprint(self):
-        conn = tagpup_db.connect(self.db)
+        conn = db.connect(self.db)
         try:
-            return TunerHTTPRequestHandler.faces_fingerprint(None, conn)
+            return store_faces.fingerprint(conn)
         finally:
             conn.close()
 
     def test_a_face_indexed_during_an_exclude_is_not_counted_into_the_grid(self):
-        TunerHTTPRequestHandler.identify_cache[KEY] = {
-            "fingerprint": self.fingerprint(),
-            "value": {"faces": [{"id": f} for f in self.faces], "total_count": 3},
-        }
-        handler = Handler(self.db, {"face_ids": [self.faces[0]], "reason": "stranger"})
+        self.cache.put(KEY, self.fingerprint(),
+                       {"faces": [{"id": f} for f in self.faces], "total_count": 3})
         pending = []
         real = store_faces.fingerprint
 
@@ -103,17 +78,18 @@ class IdentifyCacheKeepsOthersWrites(unittest.TestCase):
             return value
 
         with mock.patch.object(store_faces, "fingerprint", side_effect=fingerprint):
-            handler.handle_post_faces_exclude()
+            status, body = self.requests.post("/api/faces/exclude",
+                                              {"face_ids": [self.faces[0]], "reason": "stranger"})
         self.assertEqual(["waiting"], pending, "the other write was not held off")
-        self.assertEqual(200, getattr(handler, "status", 200))
+        self.assertEqual(200, status, body)
         if pending == ["waiting"]:
             # Held off until the exclude committed; it lands now.
-            conn = tagpup_db.connect(self.db)
+            conn = db.connect(self.db)
             add_face(conn, PHOTO, box="[5,6,7,8]")
             conn.commit()
             conn.close()
 
-        entry = TunerHTTPRequestHandler.identify_cache.get(KEY)
+        entry = self.cache.entry(KEY)
         self.assertTrue(entry is None or entry["fingerprint"] != self.fingerprint(),
                         "the grid was stamped as including a face it has never seen")
 

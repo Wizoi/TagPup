@@ -6,31 +6,20 @@ as though new, and was preselected. The folder itself had no count at all, so an
 indexed leaf folder was always offered as new. In photo_index.db 72 folders held their
 indexed photos only below them.
 """
-import io
 import os
 import shutil
 import sys
 import tempfile
 import unittest
+import urllib.parse
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import db as tagpup_db  # noqa: E402
 from index import PhotoIndex  # noqa: E402
-from tuner_server import TunerHTTPRequestHandler  # noqa: E402
+import tuner_client  # noqa: E402
 
-
-class Handler(TunerHTTPRequestHandler):
-    def __init__(self, db_path):  # noqa: D107 -- no socket, on purpose
-        self.db_path = db_path
-        self.reply = None
-        self.wfile = io.BytesIO()
-
-    def send_json(self, data):
-        self.reply = data
-
-    def send_json_error(self, code, message):
-        self.reply = {"status": code, "error": message}
+from tagpup.store import db  # noqa: E402
 
 
 class FolderPickerCountsAlike(unittest.TestCase):
@@ -50,15 +39,14 @@ class FolderPickerCountsAlike(unittest.TestCase):
         index = PhotoIndex(self.db)
         index.load()
         index.close()
-        conn = tagpup_db.connect(self.db)
+        conn = db.connect(self.db)
         conn.executemany("INSERT INTO photos (path) VALUES (?)", [(p,) for p in photos])
         conn.commit()
         conn.close()
+        self.requests = tuner_client.Requests(tuner_client.app_on(self.db))
 
     def listing(self):
-        handler = Handler(self.db)
-        handler.handle_get_folder_subfolders({"path": [self.parent]})
-        return handler.reply
+        return self.requests.get("/api/folder/subfolders?path=" + urllib.parse.quote(self.parent))
 
     def test_a_folder_of_subfolders_counts_the_photos_below_it(self):
         season = next(f for f in self.listing()["folders"] if f["name"] == "Season")

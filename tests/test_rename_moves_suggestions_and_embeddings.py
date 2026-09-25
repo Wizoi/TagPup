@@ -19,12 +19,10 @@ from face_rows import VECTORS_WITH_PATHS  # noqa: E402
 from test_tagpup_server_finds_native_rows import (  # noqa: E402
     HandlerCase, fake_exiftool, fake_extractor, forward)
 
-import db as tagpup_db  # noqa: E402
-from tagpup_server import set_active_db_path  # noqa: E402
-
-from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup.store import suggestions as saved_suggestions  # noqa: E402
+from tagpup.store.photos import move_rows  # noqa: E402
 
 
 class RenameMovesSuggestionsAndEmbeddings(HandlerCase):
@@ -43,12 +41,11 @@ class RenameMovesSuggestionsAndEmbeddings(HandlerCase):
             conn.commit()
         finally:
             conn.close()
-        self.addCleanup(suggestion_jobs.forget, Library(self.db_path))
 
     def rename(self):
-        with patch("exiftool_session.ExifToolSession", fake_exiftool([{}])), \
-                patch("metadata.MetadataExtractor", fake_extractor()):
-            return self.call("handle_post_folder_rename_photos", {
+        with patch("tagpup.files.exiftool_session.ExifToolSession", fake_exiftool([{}])), \
+                patch("tagpup.files.metadata.MetadataExtractor", fake_extractor()):
+            return self.call("POST", "/api/folder/rename-photos", {
                 "folder_path": forward(self.folder),
                 "photo_paths": [forward(p) for p in self.files],
                 "grouping": "Regatta",
@@ -56,8 +53,7 @@ class RenameMovesSuggestionsAndEmbeddings(HandlerCase):
 
     def test_the_saved_suggestions_follow_the_photos(self):
         renamed = self.rename()["updated_paths"]
-        set_active_db_path(self.db_path)
-        saved = suggestion_jobs.runs_for(Library(self.db_path)).suggestions(forward(self.folder)) or {}
+        saved = suggestion_jobs.runs_for(self.lib.library).suggestions(forward(self.folder)) or {}
         self.assertEqual(sorted(os.path.abspath(p) for p in renamed.values()), sorted(saved),
                          "suggestions are still filed under the old names")
         for path, entry in saved.items():
@@ -72,7 +68,6 @@ class RenameMovesSuggestionsAndEmbeddings(HandlerCase):
 
     def test_two_photos_swapping_names_swap_their_embeddings(self):
         # path is the photos table's unique key, so a swap has to pass through placeholders.
-        import tagpup_server
         a, b = (os.path.abspath(p) for p in self.files)
         conn = tagpup_db.connect(self.db_path)
         conn.execute("UPDATE embeddings SET vector = x'aa'"
@@ -80,7 +75,7 @@ class RenameMovesSuggestionsAndEmbeddings(HandlerCase):
         conn.commit()
         conn.close()
 
-        tagpup_server.move_photo_rows(self.db_path, {a: b, b: a})
+        move_rows(self.db_path, {a: b, b: a})
 
         conn = tagpup_db.connect(self.db_path)
         try:

@@ -17,7 +17,7 @@ LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 def hostname_of(authority):
     """The host out of a `host[:port]` authority, brackets and all handled.
 
-    `[::1]:8080` -> `::1`, `localhost:8080` -> `localhost`. Returns it lowercased,
+    `[::1]:8000` -> `::1`, `localhost:8000` -> `localhost`. Returns it lowercased,
     since hostnames are not case-sensitive and the allow-list is written in lower case.
     """
     authority = (authority or "").strip()

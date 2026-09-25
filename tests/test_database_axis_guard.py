@@ -3,178 +3,105 @@
 Two complementary nets against the class of defect where code resolves "the current
 database" implicitly and silently picks the wrong one:
 
-  1. A structural guard (AST) asserting every background worker that is handed a
-     `db_path` re-binds it, since a new thread does not inherit the request's
-     thread-local and falls back to the *startup* database.
+  1. A structural guard (AST) asserting that the web layer and the jobs resolve no
+     library implicitly: no thread-local, no "active database" set by hand. The old
+     servers kept one, and every background worker had to re-bind it, since a new
+     thread does not inherit the request's thread-local and fell back to the
+     *startup* database. A Library is handed to whatever needs one now
+     (tagpup.web.state; docs/ARCHITECTURE.md, "Context is explicit").
   2. Behavioural checks that reads through a URL database prefix never observe another
-     database's rows, run against both servers.
+     database's rows, run against both apps.
 
 The structural guard is deliberately mechanical: it fires on a newly added worker
 before anyone has to reproduce a hung progress bar to discover the problem.
 """
-import os
-import sys
 import ast
 import json
-import time
-import sqlite3
-import threading
+import os
+import sys
 import unittest
-import urllib.request
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from free_port import free_port  # noqa: E402
+import web_client  # noqa: E402
 from face_rows import add_face, add_people  # noqa: E402
-import own_home  # noqa: E402
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-SCRIPTS_DIR = os.path.join(WORKSPACE_DIR, "scripts")
-SERVER_MODULES = (
-    os.path.join(SCRIPTS_DIR, "tagpup_server.py"),
-    os.path.join(SCRIPTS_DIR, "tuner_server.py"),
-)
+from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
 
-
-def _target_name(node):
-    """Resolve the `target=` argument of a threading.Thread(...) call to a bare name."""
-    for kw in node.keywords:
-        if kw.arg != "target":
-            continue
-        val = kw.value
-        if isinstance(val, ast.Name):
-            return val.id
-        if isinstance(val, ast.Attribute):
-            return val.attr
-    return None
+#: Where a request's library is turned into background work: the web layer and the jobs.
+GUARDED = ("web", "jobs")
 
 
-def _thread_target_names(tree):
-    names = set()
+def _sources():
+    for folder in GUARDED:
+        root = os.path.join(WORKSPACE_DIR, "tagpup", folder)
+        for name in sorted(os.listdir(root)):
+            if name.endswith(".py"):
+                yield os.path.join("tagpup", folder, name), os.path.join(root, name)
+
+
+def _implicit_library(tree):
+    """Where `tree` resolves a library implicitly: a thread-local, or the old servers'
+    set_active_db_path / get_active_db_path."""
+    found = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        is_thread = (isinstance(func, ast.Attribute) and func.attr == "Thread") or (
-            isinstance(func, ast.Name) and func.id == "Thread"
-        )
-        if is_thread:
-            name = _target_name(node)
-            if name:
-                names.add(name)
-    return names
-
-
-def _function_defs(tree):
-    defs = {}
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            defs.setdefault(node.name, []).append(node)
-    return defs
-
-
-def _calls_set_active_db_path(fn_node):
-    """True if the function's OWN body binds the database.
-
-    Nested helpers are skipped deliberately: a binding inside an inner function runs
-    only when that helper is called, which does not protect the outer worker's own
-    registry access. Counting it would mask exactly the defect this guard exists for.
-    """
-    def walk_own_body(node):
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-                continue
-            yield child
-            yield from walk_own_body(child)
-
-    for node in walk_own_body(fn_node):
         if isinstance(node, ast.Call):
             func = node.func
-            if isinstance(func, ast.Name) and func.id == "set_active_db_path":
-                return True
-            if isinstance(func, ast.Attribute) and func.attr == "set_active_db_path":
-                return True
-    return False
+            name = getattr(func, "attr", None) or getattr(func, "id", None)
+            if name in ("set_active_db_path", "get_active_db_path"):
+                found.append("%d: %s()" % (node.lineno, name))
+            elif name == "local" and getattr(func, "value", None) is not None \
+                    and getattr(func.value, "id", None) == "threading":
+                found.append("%d: threading.local()" % node.lineno)
+    return found
 
 
-def _takes_db_path(fn_node):
-    args = [a.arg for a in fn_node.args.args] + [a.arg for a in fn_node.args.kwonlyargs]
-    return "db_path" in args
-
-
-class TestWorkersBindTheirDatabase(unittest.TestCase):
-    """Any worker thread handed a db_path must re-bind it before touching shared state."""
-
-    def test_every_db_aware_thread_target_binds_the_database(self):
+class TestNoLibraryIsResolvedImplicitly(unittest.TestCase):
+    def test_the_web_layer_and_the_jobs_name_their_library(self):
         offenders = []
         checked = 0
+        for relative, path in _sources():
+            with open(path, encoding="utf-8") as f:
+                tree = ast.parse(f.read(), filename=path)
+            checked += 1
+            offenders += ["%s:%s" % (relative, where) for where in _implicit_library(tree)]
+        self.assertGreater(checked, 5, "the guard found nothing to check")
+        self.assertEqual(offenders, [], "a library is resolved implicitly here:\n  " + "\n  ".join(offenders))
 
-        for module_path in SERVER_MODULES:
-            with open(module_path, encoding="utf-8") as f:
-                tree = ast.parse(f.read(), filename=module_path)
+    def test_work_handed_to_a_job_is_handed_its_library(self):
+        """What TagPup hands a suggestion run touches its per-library folder cache and
+        embedder; the run's thread gets the library from the closure, never from a
+        request (tagpup.jobs.suggestions.work_for)."""
+        import inspect
 
-            targets = _thread_target_names(tree)
-            defs = _function_defs(tree)
+        from tagpup.jobs import suggestions as suggestion_jobs
+        from tagpup.web import tagpup_routes
 
-            for name in sorted(targets):
-                for fn in defs.get(name, []):
-                    if not _takes_db_path(fn):
-                        # Workers with no db_path legitimately run on the startup DB.
-                        continue
-                    checked += 1
-                    if not _calls_set_active_db_path(fn):
-                        offenders.append(
-                            f"{os.path.basename(module_path)}:{fn.lineno} {name}() "
-                            f"receives db_path but never calls set_active_db_path()"
-                        )
+        self.assertEqual(["library", "photos"], list(inspect.signature(suggestion_jobs.work_for).parameters))
+        self.assertEqual(["library", "folder"], list(inspect.signature(tagpup_routes._folder_photos).parameters))
+        self.assertEqual(["library"], list(inspect.signature(tagpup_routes._folder_indexer).parameters))
 
-        self.assertEqual(
-            offenders,
-            [],
-            "background workers would resolve the wrong database:\n  "
-            + "\n  ".join(offenders),
-        )
-
-    def test_work_handed_to_a_job_binds_the_database(self):
-        """The runs moved to tagpup.jobs, whose threads no request set up; what TagPup
-        hands a suggestion run touches its per-database folder cache and embedder, so
-        each part that runs on the job's thread binds the library itself."""
-        with open(SERVER_MODULES[0], encoding="utf-8") as f:
-            tree = ast.parse(f.read())
-        work = _function_defs(tree)["suggestion_work"][0]
-        parts = {node.name: node for node in ast.walk(work)
-                 if isinstance(node, ast.FunctionDef) and node.name in ("photos", "begin")}
-        self.assertEqual(sorted(parts), ["begin", "photos"], "has the pattern moved?")
-        self.assertEqual([name for name, fn in sorted(parts.items())
-                          if not _calls_set_active_db_path(fn)], [])
-
-    def test_guard_detects_a_missing_binding(self):
+    def test_guard_detects_an_implicit_library(self):
         """The guard must actually fail on offending code, not pass vacuously."""
         source = (
             "import threading\n"
-            "def worker(folder, db_path):\n"
-            "    registry[folder] = 1\n"
-            "threading.Thread(target=worker, args=(f, db)).start()\n"
-        )
-        tree = ast.parse(source)
-        targets = _thread_target_names(tree)
-        self.assertIn("worker", targets)
-        fn = _function_defs(tree)["worker"][0]
-        self.assertTrue(_takes_db_path(fn))
-        self.assertFalse(_calls_set_active_db_path(fn))
-
-    def test_guard_accepts_a_correct_binding(self):
-        source = (
-            "import threading\n"
+            "_thread_local = threading.local()\n"
             "def worker(folder, db_path):\n"
             "    set_active_db_path(db_path)\n"
             "    registry[folder] = 1\n"
-            "threading.Thread(target=worker, args=(f, db)).start()\n"
         )
-        tree = ast.parse(source)
-        fn = _function_defs(tree)["worker"][0]
-        self.assertTrue(_calls_set_active_db_path(fn))
+        found = _implicit_library(ast.parse(source))
+        self.assertEqual(["2: threading.local()", "4: set_active_db_path()"], found)
+
+    def test_guard_accepts_explicit_context(self):
+        source = (
+            "def index(library, folder):\n"
+            "    folders.of(library).pop(folder)\n"
+        )
+        self.assertEqual([], _implicit_library(ast.parse(source)))
 
 
 class TestSuggestionsCacheIsScopedPerDatabase(unittest.TestCase):
@@ -202,40 +129,21 @@ class TestSuggestionsCacheIsScopedPerDatabase(unittest.TestCase):
 class CrossDatabaseReadIsolationMixin:
     """Reads through a URL prefix must never surface another database's rows."""
 
-    SERVER_START = None   # set by subclass
-    GUI_DIR = None
-    TEST_PORT = None
-    STARTUP_NAME = None   # file names, in a home of the class's own
+    KIND = None   # set by subclass
+    STARTUP_NAME = None   # file names, in a home of the test's own
     OTHER_NAME = None
     OTHER_URL_NAME = None
     READ_ENDPOINTS = ()
 
-    @classmethod
-    def _boot(cls):
-        from index import PhotoIndex
-
-        home = own_home.for_class(cls, "tagpup_axis_")
-        cls.STARTUP_DB = home.library(cls.STARTUP_NAME)
-        cls.OTHER_DB = home.library(cls.OTHER_NAME)
-        for db in (cls.STARTUP_DB, cls.OTHER_DB):
-            pi = PhotoIndex(db_path=db)
-            pi.load()
-            pi.close()
-
-        cls.server_thread = threading.Thread(
-            target=cls.SERVER_START,
-            kwargs={
-                "port": cls.TEST_PORT,
-                "db_path": cls.STARTUP_DB,
-                "gui_dir": os.path.join(WORKSPACE_DIR, cls.GUI_DIR),
-            },
-            daemon=True,
-        )
-        cls.server_thread.start()
-        time.sleep(1.0)
+    def setUp(self):
+        self.app, home = web_client.app_for(self, self.KIND, startup=self.STARTUP_NAME)
+        self.client = self.app.test_client()
+        self.STARTUP_DB = home.library(self.STARTUP_NAME)
+        self.OTHER_DB = home.library(self.OTHER_NAME)
+        library_actions.create(self.OTHER_DB)
 
     def _seed(self, db, marker):
-        conn = sqlite3.connect(db)
+        conn = tagpup_db.connect(db)
         conn.execute("DELETE FROM photos")
         conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM tag_taxonomy")
@@ -265,20 +173,20 @@ class CrossDatabaseReadIsolationMixin:
         return name[5:] if name.startswith("test_") else name
 
     def _body(self, url):
-        with urllib.request.urlopen(url, timeout=30) as r:
-            return r.read().decode("utf-8")
+        reply = self.client.get(url)
+        self.assertEqual(200, reply.status_code, url)
+        return reply.get_data(as_text=True)
 
     def test_prefixed_reads_never_leak_across_databases(self):
         self._seed(self.STARTUP_DB, "StartupMarker")
         self._seed(self.OTHER_DB, "OtherMarker")
 
         startup_name = self._startup_url_name()
-        base = f"http://127.0.0.1:{self.TEST_PORT}"
 
         for endpoint in self.READ_ENDPOINTS:
             with self.subTest(endpoint=endpoint):
-                startup_body = self._body(f"{base}/{startup_name}{endpoint}")
-                other_body = self._body(f"{base}/{self.OTHER_URL_NAME}{endpoint}")
+                startup_body = self._body(f"/{startup_name}{endpoint}")
+                other_body = self._body(f"/{self.OTHER_URL_NAME}{endpoint}")
 
                 self.assertNotIn(
                     "OtherMarker",
@@ -293,47 +201,19 @@ class CrossDatabaseReadIsolationMixin:
 
 
 class TestTagPupCrossDatabaseReads(CrossDatabaseReadIsolationMixin, unittest.TestCase):
-    TEST_PORT = free_port()
-    GUI_DIR = "gui_tagpup"
+    KIND = "tagpup"
     STARTUP_NAME = "test_axis_tagpup_startup.db"
     OTHER_NAME = "test_axis_tagpup_other.db"
     OTHER_URL_NAME = "axis_tagpup_other"
     READ_ENDPOINTS = ("/api/people", "/api/tags", "/api/taxonomy/tree")
 
-    @classmethod
-    def setUpClass(cls):
-        from tagpup_server import start_server
-
-        cls.SERVER_START = staticmethod(start_server).__func__
-        cls._boot()
-
-    @classmethod
-    def tearDownClass(cls):
-        from tagpup_server import set_active_db_path
-
-        set_active_db_path(None)
-
 
 class TestTunerCrossDatabaseReads(CrossDatabaseReadIsolationMixin, unittest.TestCase):
-    TEST_PORT = free_port()
-    GUI_DIR = "gui"
+    KIND = "tuner"
     STARTUP_NAME = "test_axis_tuner_startup.db"
     OTHER_NAME = "test_axis_tuner_other.db"
     OTHER_URL_NAME = "axis_tuner_other"
     READ_ENDPOINTS = ("/api/people", "/api/people-with-counts")
-
-    @classmethod
-    def setUpClass(cls):
-        from tuner_server import start_server
-
-        cls.SERVER_START = staticmethod(start_server).__func__
-        cls._boot()
-
-    @classmethod
-    def tearDownClass(cls):
-        from tuner_server import set_active_db_path
-
-        set_active_db_path(None)
 
 
 if __name__ == "__main__":

@@ -1,108 +1,49 @@
-"""Behavioural tests for the TagPup GUI server's photo and folder endpoints.
+"""Behavioural tests for the TagPup app's photo and folder endpoints.
 
 `test_stability.py` covers the TagTuner server in depth; the TagPup server -- which owns
 folder scanning, metadata writes, bulk tagging and suggestion application -- had almost
 no coverage. Every endpoint here mutates either the SQLite index or the user's photo
 files, so assertions check the observable result, not just the HTTP status.
 
-Tests that touch photo files are skipped when ExifTool is unavailable.
+Tests that touch photo files are skipped when ExifTool is unavailable. The app is asked
+through Flask's test client: no server, no port, no sleep.
 """
+import json
 import os
 import sys
-import json
-import time
-import shutil
-import sqlite3
 import tempfile
-import threading
 import unittest
-import urllib.parse
-import urllib.request
+from unittest.mock import MagicMock, patch
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
-
-from tagpup_server import (
-    start_server as start_tagpup_server,
-    TagPupHTTPRequestHandler,
-    set_active_db_path,
-)
-from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from free_port import free_port  # noqa: E402
-import own_home  # noqa: E402
+
+from handler_harness import Library  # noqa: E402
+from test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool  # noqa: E402
+
+from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.store import db as tagpup_store_db  # noqa: E402
 from tagpup.store import suggestions as saved_suggestions  # noqa: E402
 
 
 class TagPupAPITestBase(unittest.TestCase):
-    TEST_PORT = free_port()
-    DB_NAME = "test_tagpup_api.db"   # in a home of the class's own
-
-    @classmethod
-    def setUpClass(cls):
-        # Its own port: subclasses inherit the attribute, and a port
-        # already held by the last class's server is refused.
-        cls.TEST_PORT = free_port()
-        cls.home = own_home.for_class(cls)
-        cls.TEST_DB = cls.home.library(cls.DB_NAME)
-        from index import PhotoIndex
-
-        pi = PhotoIndex(db_path=cls.TEST_DB)
-        pi.load()
-        pi.close()
-
-        cls.server_thread = threading.Thread(
-            target=start_tagpup_server,
-            kwargs={
-                "port": cls.TEST_PORT,
-                "db_path": cls.TEST_DB,
-                "gui_dir": os.path.join(WORKSPACE_DIR, "gui_tagpup"),
-            },
-            daemon=True,
-        )
-        cls.server_thread.start()
-        time.sleep(1.0)
-
-    @classmethod
-    def tearDownClass(cls):
-        set_active_db_path(None)
-
     def setUp(self):
-        self.tmpdir = tempfile.mkdtemp(prefix="tagpup_api_")
-        self.addCleanup(shutil.rmtree, self.tmpdir, True)
-        self.addCleanup(set_active_db_path, None)
-        conn = sqlite3.connect(self.TEST_DB)
-        conn.execute("DELETE FROM photos")
-        conn.execute("DELETE FROM faces")
-        conn.execute("DELETE FROM tag_taxonomy")
-        conn.commit()
-        conn.close()
-        set_active_db_path(self.TEST_DB)
-        TagPupHTTPRequestHandler.folder_cache.clear()
-        set_active_db_path(None)
+        self.lib = Library(self, "tagpup_api")
+        self.TEST_DB = self.lib.db_path
+        self.tmpdir = tempfile.mkdtemp(prefix="tagpup_api_", dir=self.lib.root)
 
     # ---------- helpers ----------
 
     def post(self, path, body):
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.TEST_PORT}{path}",
-            data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=60) as r:
-                return r.status, json.loads(r.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            return e.code, json.loads(e.read().decode("utf-8"))
+        return self.lib.post(path, body)
 
-    def get(self, path):
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{self.TEST_PORT}{path}", timeout=60
-        ) as r:
-            return json.loads(r.read().decode("utf-8"))
+    def get(self, path, query=None):
+        """The JSON a GET answers; a failed request raises with its status."""
+        reply = self.lib.client.get(path, query_string=query)
+        if reply.status_code != 200:
+            raise Failed(reply.status_code)
+        return reply.get_json()
 
     def make_photo(self, filename, tags=(), title=None):
         from PIL import Image
@@ -120,8 +61,6 @@ class TagPupAPITestBase(unittest.TestCase):
         hierarchical = sorted(set(hierarchical))
 
         if EXIFTOOL and (flat or title):
-            import exiftool
-
             params = {
                 "XMP:Subject": flat,
                 "IPTC:Keywords": flat,
@@ -129,12 +68,11 @@ class TagPupAPITestBase(unittest.TestCase):
             }
             if title:
                 params["XMP:Description"] = title
-            with exiftool.ExifToolHelper(executable=EXIFTOOL) as et:
+            with ExifToolSession(executable=EXIFTOOL) as et:
                 et.set_tags([path], tags=params, params=["-overwrite_original"])
 
         raw_meta = {"XMP:Subject": flat, "XMP:HierarchicalSubject": hierarchical}
-        conn = sqlite3.connect(self.TEST_DB)
-        conn.execute(
+        self.lib.execute(
             "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)"
             " VALUES (?, ?, ?, ?, ?, ?)",
             (
@@ -146,14 +84,10 @@ class TagPupAPITestBase(unittest.TestCase):
                 json.dumps(raw_meta),
             ),
         )
-        conn.commit()
-        conn.close()
         return path
 
     def disk_keywords(self, photo_path):
-        import exiftool
-
-        with exiftool.ExifToolHelper(executable=EXIFTOOL) as et:
+        with ExifToolSession(executable=EXIFTOOL) as et:
             meta = et.get_metadata([photo_path])[0]
         out = set()
         for key in ("XMP:Subject", "IPTC:Keywords", "XMP:HierarchicalSubject"):
@@ -164,19 +98,26 @@ class TagPupAPITestBase(unittest.TestCase):
         return out
 
     def disk_field(self, photo_path, field):
-        import exiftool
-
-        with exiftool.ExifToolHelper(executable=EXIFTOOL) as et:
+        with ExifToolSession(executable=EXIFTOOL) as et:
             return et.get_metadata([photo_path])[0].get(field)
 
 
+class Failed(Exception):
+    """A GET that was not answered 200: `code` is the status."""
+
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
 class TestFolderScan(TagPupAPITestBase):
+    def scan(self):
+        return self.get("/api/folder/scan", {"path": self.tmpdir, "force": "true"})
+
     def test_scan_lists_images_with_metadata(self):
         self.make_photo("a.jpg", ["Activity/Hiking"])
         self.make_photo("b.jpg", [])
-        data = self.get(
-            f"/api/folder/scan?path={urllib.parse.quote(self.tmpdir)}&force=true"
-        )
+        data = self.scan()
         self.assertEqual(len(data), 2)
         by_name = {rec["filename"]: rec for rec in data}
         self.assertIn("a.jpg", by_name)
@@ -189,26 +130,20 @@ class TestFolderScan(TagPupAPITestBase):
         self.make_photo("a.jpg", [])
         with open(os.path.join(self.tmpdir, "notes.txt"), "w") as f:
             f.write("not an image")
-        data = self.get(
-            f"/api/folder/scan?path={urllib.parse.quote(self.tmpdir)}&force=true"
-        )
-        self.assertEqual([r["filename"] for r in data], ["a.jpg"])
+        self.assertEqual([r["filename"] for r in self.scan()], ["a.jpg"])
 
     def test_scan_of_empty_folder_returns_empty_list(self):
-        data = self.get(
-            f"/api/folder/scan?path={urllib.parse.quote(self.tmpdir)}&force=true"
-        )
-        self.assertEqual(data, [])
+        self.assertEqual(self.scan(), [])
 
     def test_scan_rejects_missing_path(self):
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
+        with self.assertRaises(Failed) as ctx:
             self.get("/api/folder/scan")
         self.assertEqual(ctx.exception.code, 400)
 
     def test_scan_rejects_nonexistent_folder(self):
         bogus = os.path.join(self.tmpdir, "does_not_exist")
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.get(f"/api/folder/scan?path={urllib.parse.quote(bogus)}&force=true")
+        with self.assertRaises(Failed) as ctx:
+            self.get("/api/folder/scan", {"path": bogus, "force": "true"})
         self.assertEqual(ctx.exception.code, 400)
 
 
@@ -290,10 +225,8 @@ class TestSaveMetadata(TagPupAPITestBase):
 
 class TestBulkTags(TagPupAPITestBase):
     def _scan(self):
-        """Populate folder_cache the way the UI does before bulk operations."""
-        return self.get(
-            f"/api/folder/scan?path={urllib.parse.quote(self.tmpdir)}&force=true"
-        )
+        """Populate the folder cache the way the UI does before bulk operations."""
+        return self.get("/api/folder/scan", {"path": self.tmpdir, "force": "true"})
 
     @requires_exiftool
     def test_adds_tag_across_selection(self):
@@ -338,10 +271,10 @@ class TestBulkTags(TagPupAPITestBase):
         """Same guarantee when the folder was never scanned in this session.
 
         The cache is cleared on restart and by taxonomy edits, so a bulk write must
-        fall back to the indexed tags rather than starting from an empty set.
+        start from what the file holds rather than from an empty set.
         """
         photo = self.make_photo("a.jpg", ["Holidays/Christmas"])
-        # Deliberately do NOT scan: folder_cache stays cold.
+        # Deliberately do NOT scan: the folder cache stays cold.
 
         self.post(
             "/api/photos/bulk-tags", {"paths": [photo], "add_tags": ["Trips/Texas"]}
@@ -381,7 +314,7 @@ class TestFolderAutoApply(TagPupAPITestBase):
     @requires_exiftool
     def test_applies_suggestions_above_threshold(self):
         photo = self.make_photo("a.jpg", [])
-        self.get(f"/api/folder/scan?path={urllib.parse.quote(self.tmpdir)}&force=true")
+        self.get("/api/folder/scan", {"path": self.tmpdir, "force": "true"})
         self._seed_suggestions(photo, [("Trips/Texas", 0.9)])
 
         status, body = self.post(
@@ -393,7 +326,7 @@ class TestFolderAutoApply(TagPupAPITestBase):
     @requires_exiftool
     def test_skips_suggestions_below_threshold(self):
         photo = self.make_photo("a.jpg", [])
-        self.get(f"/api/folder/scan?path={urllib.parse.quote(self.tmpdir)}&force=true")
+        self.get("/api/folder/scan", {"path": self.tmpdir, "force": "true"})
         self._seed_suggestions(photo, [("Trips/Texas", 0.30)])
 
         self.post("/api/folder/auto-apply", {"folder_path": self.tmpdir, "threshold": 0.75})
@@ -403,7 +336,7 @@ class TestFolderAutoApply(TagPupAPITestBase):
     def test_auto_apply_preserves_existing_tags(self):
         """Applying a suggestion must add to the photo's keywords, not replace them."""
         photo = self.make_photo("a.jpg", ["Holidays/Christmas"])
-        self.get(f"/api/folder/scan?path={urllib.parse.quote(self.tmpdir)}&force=true")
+        self.get("/api/folder/scan", {"path": self.tmpdir, "force": "true"})
         self._seed_suggestions(photo, [("Trips/Texas", 0.9)])
 
         self.post("/api/folder/auto-apply", {"folder_path": self.tmpdir, "threshold": 0.75})
@@ -427,14 +360,11 @@ class TestFolderAutoApply(TagPupAPITestBase):
 
 class TestAutocompleteEndpoints(TagPupAPITestBase):
     def _add_tag(self, tag, has_face=0, hidden=0):
-        conn = sqlite3.connect(self.TEST_DB)
-        conn.execute(
+        self.lib.execute(
             "INSERT OR REPLACE INTO tag_taxonomy (tag, parent_id, name, has_face, hidden_from_autocomplete)"
             " VALUES (?, NULL, ?, ?, ?)",
             (tag, tag.split("/")[-1], has_face, hidden),
         )
-        conn.commit()
-        conn.close()
 
     def test_tags_endpoint_lists_visible_tags(self):
         self._add_tag("Activity")
@@ -452,13 +382,10 @@ class TestAutocompleteEndpoints(TagPupAPITestBase):
 
     def test_people_endpoint_lists_resolved_face_names(self):
         photo = self.make_photo("a.jpg", [])
-        conn = sqlite3.connect(self.TEST_DB)
-        conn.execute(
+        self.lib.execute(
             "INSERT INTO faces (photo_id, box, embedding, name) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?)",
             (photo, "[]", b"", "Jane Doe"),
         )
-        conn.commit()
-        conn.close()
         self.assertIn("Jane Doe", self.get("/api/people"))
 
 
@@ -487,30 +414,25 @@ class TestPhotoRotate(TagPupAPITestBase):
         self.assertEqual(status, 400)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestAutocompleteFolder(TagPupAPITestBase):
     def test_returns_nothing_when_the_path_parameter_is_absent_or_blank(self):
-        # parse_qs drops blank values, so both spellings take the "no path" branch.
+        # A blank value and no value both take the "no path" branch.
         self.assertEqual(self.get("/api/autocomplete-folder"), [])
-        self.assertEqual(self.get("/api/autocomplete-folder?path="), [])
+        self.assertEqual(self.get("/api/autocomplete-folder", {"path": ""}), [])
 
     def test_lists_drives_for_a_whitespace_path(self):
-        drives = self.get("/api/autocomplete-folder?path=%20")
+        drives = self.get("/api/autocomplete-folder", {"path": " "})
         self.assertTrue(drives, "no drives offered")
         self.assertTrue(all(d.endswith((":\\", ":/")) for d in drives), drives)
 
     def test_expands_a_bare_drive_letter(self):
-        self.assertEqual(self.get("/api/autocomplete-folder?path=C"), ["C:\\"])
-        self.assertEqual(self.get("/api/autocomplete-folder?path=C:"), ["C:\\"])
+        self.assertEqual(self.get("/api/autocomplete-folder", {"path": "C"}), ["C:\\"])
+        self.assertEqual(self.get("/api/autocomplete-folder", {"path": "C:"}), ["C:\\"])
 
     def test_suggests_child_folders_of_a_typed_path(self):
         os.makedirs(os.path.join(self.tmpdir, "Alpha"))
         os.makedirs(os.path.join(self.tmpdir, "Beta"))
-        typed = self.tmpdir + os.sep
-        results = self.get(f"/api/autocomplete-folder?path={urllib.parse.quote(typed)}")
+        results = self.get("/api/autocomplete-folder", {"path": self.tmpdir + os.sep})
         joined = " ".join(results)
         self.assertIn("Alpha", joined)
         self.assertIn("Beta", joined)
@@ -518,8 +440,7 @@ class TestAutocompleteFolder(TagPupAPITestBase):
     def test_filters_suggestions_by_typed_prefix(self):
         os.makedirs(os.path.join(self.tmpdir, "Alpha"))
         os.makedirs(os.path.join(self.tmpdir, "Beta"))
-        typed = os.path.join(self.tmpdir, "Al")
-        results = self.get(f"/api/autocomplete-folder?path={urllib.parse.quote(typed)}")
+        results = self.get("/api/autocomplete-folder", {"path": os.path.join(self.tmpdir, "Al")})
         joined = " ".join(results)
         self.assertIn("Alpha", joined)
         self.assertNotIn("Beta", joined)
@@ -527,8 +448,7 @@ class TestAutocompleteFolder(TagPupAPITestBase):
     def test_does_not_suggest_files(self):
         os.makedirs(os.path.join(self.tmpdir, "Alpha"))
         self.make_photo("photo.jpg", [])
-        typed = self.tmpdir + os.sep
-        results = self.get(f"/api/autocomplete-folder?path={urllib.parse.quote(typed)}")
+        results = self.get("/api/autocomplete-folder", {"path": self.tmpdir + os.sep})
         self.assertNotIn("photo.jpg", " ".join(results))
 
 
@@ -542,8 +462,6 @@ class TestOpenExplorer(TagPupAPITestBase):
         CreateProcess -- no shell, so nothing in it is interpreted -- built from a
         path that must exist, and a Windows path cannot contain a quote.
         """
-        from unittest.mock import patch
-
         photo = self.make_photo("a b.jpg", [])
         with patch("subprocess.Popen") as mock_popen:
             status, body = self.post("/api/photo/open-explorer", {"path": photo})
@@ -570,8 +488,6 @@ class TestBrowseFolder(TagPupAPITestBase):
     """The native picker runs in an isolated subprocess; only that boundary is mocked."""
 
     def test_returns_the_folder_chosen_in_the_dialog(self):
-        from unittest.mock import patch, MagicMock
-
         result = MagicMock()
         result.stdout = self.tmpdir + "\n"
         result.stderr = ""
@@ -586,8 +502,6 @@ class TestBrowseFolder(TagPupAPITestBase):
         self.assertEqual(cmd[1], "-c", "picker must run in an isolated interpreter")
 
     def test_cancelled_dialog_returns_an_empty_path(self):
-        from unittest.mock import patch, MagicMock
-
         result = MagicMock()
         result.stdout = "\n"
         result.stderr = ""
@@ -595,10 +509,8 @@ class TestBrowseFolder(TagPupAPITestBase):
             self.assertEqual(self.get("/api/browse-folder")["path"], "")
 
     def test_picker_failure_is_reported_not_swallowed(self):
-        from unittest.mock import patch
-
         with patch("subprocess.run", side_effect=OSError("no display")):
-            with self.assertRaises(urllib.error.HTTPError) as ctx:
+            with self.assertRaises(Failed) as ctx:
                 self.get("/api/browse-folder")
         self.assertEqual(ctx.exception.code, 500)
 
@@ -612,27 +524,26 @@ class TestPhotoFaces(TagPupAPITestBase):
         rng = np.random.default_rng(seed)
         vec = rng.standard_normal(512).astype("float32")
         vec = vec / np.linalg.norm(vec)
-        conn = sqlite3.connect(self.TEST_DB)
-        cur = conn.execute(
+        return self.lib.execute(
             "INSERT INTO faces (photo_id, box, embedding, name, prob, excluded, excluded_reason)"
             " VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, 0.99, ?, ?)",
             (photo, json.dumps(list(box)), vec.tobytes(), name, excluded, reason),
         )
-        fid = cur.lastrowid
-        conn.commit()
-        conn.close()
-        return fid
+
+    def faces_of(self, photo):
+        return self.get("/api/photo-faces", {"path": photo})
 
     def test_reports_no_faces_for_an_unknown_photo(self):
-        body = self.get(f"/api/photo-faces?path={urllib.parse.quote('D:/nope.jpg')}")
+        body = self.faces_of("D:/nope.jpg")
         self.assertEqual(body["faces"], [])
+        self.assertEqual((body["total"], body["unmatched"]), (0, 0))
 
     def test_lists_the_faces_on_a_photo(self):
         photo = self.make_photo("a.jpg", [])
         a = self.add_face(photo, 1, name="Jane Doe")
         b = self.add_face(photo, 2, box=(60, 0, 110, 50))
 
-        body = self.get(f"/api/photo-faces?path={urllib.parse.quote(photo)}")
+        body = self.faces_of(photo)
         self.assertEqual(body["total"], 2)
         self.assertEqual({f["id"] for f in body["faces"]}, {a, b})
         self.assertEqual(body["unmatched"], 1)
@@ -645,18 +556,16 @@ class TestPhotoFaces(TagPupAPITestBase):
         target = self.make_photo("target.jpg", [])
         face = self.add_face(target, 10)  # same seed: identical embedding
 
-        body = self.get(f"/api/photo-faces?path={urllib.parse.quote(target)}")
+        body = self.faces_of(target)
         entry = next(f for f in body["faces"] if f["id"] == face)
         self.assertEqual(entry["suggestion"], "Jane Doe")
         self.assertGreater(entry["similarity"], 0.9)
 
     def face_at(self, photo, vec, name=None):
-        conn = sqlite3.connect(self.TEST_DB)
-        cur = conn.execute("INSERT INTO faces (photo_id, box, embedding, name, prob, excluded)"
-                           " VALUES ((SELECT id FROM photos WHERE path = ?), '[0, 0, 50, 50]', ?, ?, 0.99, 0)", (photo, vec.tobytes(), name))
-        conn.commit()
-        conn.close()
-        return cur.lastrowid
+        return self.lib.execute(
+            "INSERT INTO faces (photo_id, box, embedding, name, prob, excluded)"
+            " VALUES ((SELECT id FROM photos WHERE path = ?), '[0, 0, 50, 50]', ?, ?, 0.99, 0)",
+            (photo, vec.tobytes(), name))
 
     def test_a_face_only_as_alike_as_strangers_are_is_offered_nobody(self):
         """0.6 alike is below the floor every screen offers a name from: two strangers in
@@ -671,7 +580,7 @@ class TestPhotoFaces(TagPupAPITestBase):
         photo = self.make_photo("target.jpg", [])
         face = self.face_at(photo, target)
 
-        body = self.get(f"/api/photo-faces?path={urllib.parse.quote(photo)}")
+        body = self.faces_of(photo)
         entry = next(f for f in body["faces"] if f["id"] == face)
         self.assertLess(0.6, clustering.OFFER_A_NAME)
         self.assertIsNone(entry["suggestion"])
@@ -679,14 +588,13 @@ class TestPhotoFaces(TagPupAPITestBase):
     def test_a_named_face_carries_no_suggestion(self):
         photo = self.make_photo("a.jpg", [])
         self.add_face(photo, 1, name="Jane Doe")
-        body = self.get(f"/api/photo-faces?path={urllib.parse.quote(photo)}")
-        self.assertIsNone(body["faces"][0]["suggestion"])
+        self.assertIsNone(self.faces_of(photo)["faces"][0]["suggestion"])
 
     def test_excluded_faces_are_reported_but_not_counted_as_unidentified(self):
         photo = self.make_photo("a.jpg", [])
         self.add_face(photo, 1, excluded=1, reason="stranger")
 
-        body = self.get(f"/api/photo-faces?path={urllib.parse.quote(photo)}")
+        body = self.faces_of(photo)
         self.assertEqual(body["total"], 1)
         self.assertEqual(body["unmatched"], 0, "an excluded face counted as work to do")
         self.assertTrue(body["faces"][0]["excluded"])
@@ -699,19 +607,17 @@ class TestPhotoFaces(TagPupAPITestBase):
         target = self.make_photo("target.jpg", [])
         self.add_face(target, 20)
 
-        body = self.get(f"/api/photo-faces?path={urllib.parse.quote(target)}")
-        self.assertIsNone(body["faces"][0]["suggestion"])
+        self.assertIsNone(self.faces_of(target)["faces"][0]["suggestion"])
 
     def test_named_faces_are_listed_before_unidentified_ones(self):
         photo = self.make_photo("a.jpg", [])
         self.add_face(photo, 2, box=(60, 0, 110, 50))
         self.add_face(photo, 1, name="Jane Doe")
 
-        body = self.get(f"/api/photo-faces?path={urllib.parse.quote(photo)}")
-        self.assertIsNotNone(body["faces"][0]["name"], "unidentified face sorted first")
+        self.assertIsNotNone(self.faces_of(photo)["faces"][0]["name"], "unidentified face sorted first")
 
     def test_rejects_a_missing_path(self):
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
+        with self.assertRaises(Failed) as ctx:
             self.get("/api/photo-faces")
         self.assertEqual(ctx.exception.code, 400)
 
@@ -725,49 +631,26 @@ class TestTagPupFaceCrop(TagPupAPITestBase):
         rng = np.random.default_rng(1)
         vec = (rng.standard_normal(512).astype("float32"))
         vec = vec / np.linalg.norm(vec)
-        conn = sqlite3.connect(self.TEST_DB)
-        cur = conn.execute(
+        face_id = self.lib.execute(
             "INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, NULL, 0.9)",
             (photo, json.dumps([0, 0, 20, 20]), vec.tobytes()),
         )
-        face_id = cur.lastrowid
-        conn.commit()
-        conn.close()
 
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.TEST_PORT}/api/face-crop?id={face_id}"
-        )
-        with urllib.request.urlopen(req, timeout=30) as r:
-            self.assertEqual(r.status, 200)
-            self.assertTrue(r.headers.get("Content-Type").startswith("image/"))
-            self.assertGreater(len(r.read()), 0)
+        reply = self.lib.client.get("/api/face-crop", query_string={"id": face_id})
+        self.assertEqual(reply.status_code, 200)
+        self.assertTrue(reply.headers.get("Content-Type").startswith("image/"))
+        self.assertGreater(len(reply.data), 0)
 
-        conn = sqlite3.connect(self.TEST_DB)
-        cached = conn.execute(
+        cached = self.lib.rows(
             "SELECT (SELECT jpeg FROM face_crops c WHERE c.face_id = faces.id) FROM faces WHERE id = ?", (face_id,)
-        ).fetchone()[0]
-        conn.close()
+        )[0][0]
         self.assertTrue(cached, "crop was not cached back into the row")
 
     def test_rejects_an_unknown_face(self):
-        status, _ = 0, None
-        try:
-            urllib.request.urlopen(
-                f"http://127.0.0.1:{self.TEST_PORT}/api/face-crop?id=999999", timeout=30
-            )
-        except urllib.error.HTTPError as e:
-            status = e.code
-        self.assertEqual(status, 404)
+        self.assertEqual(self.lib.client.get("/api/face-crop", query_string={"id": 999999}).status_code, 404)
 
     def test_rejects_a_non_numeric_id(self):
-        status = 0
-        try:
-            urllib.request.urlopen(
-                f"http://127.0.0.1:{self.TEST_PORT}/api/face-crop?id=abc", timeout=30
-            )
-        except urllib.error.HTTPError as e:
-            status = e.code
-        self.assertEqual(status, 400)
+        self.assertEqual(self.lib.client.get("/api/face-crop", query_string={"id": "abc"}).status_code, 400)
 
 
 class TestIndexerNoiseFiltering(unittest.TestCase):
@@ -895,3 +778,7 @@ class TestIndexerProgressText(unittest.TestCase):
         out = self.summarize("Generating embeddings:  45%|####  | 22/49 [00:30<00:40]")
         self.assertIsNotNone(re.search(r"(\d+)%", out))
         self.assertEqual(re.search(r"(\d+)%", out).group(1), "45")
+
+
+if __name__ == "__main__":
+    unittest.main()

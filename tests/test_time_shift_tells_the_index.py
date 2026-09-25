@@ -6,7 +6,7 @@ picks the era a face is compared against -- and the old mtime and size, so the n
 scan distrusted every one of them. And it answered "success" with the number of
 photos it had tried, even when ExifTool wrote none of them.
 
-TagPup and TagTuner each had their own copy. TagTuner's is gone, and TagPup's handler
+TagPup and TagTuner each had their own copy. TagTuner's is gone, and TagPup's route
 calls the service, tagpup.services.photos.shift_date_taken.
 """
 import inspect
@@ -17,9 +17,7 @@ import unittest
 from tests.handler_harness import Library
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
-import tagpup_server
-import tuner_server
-from exiftool_session import ExifToolSession
+from tagpup.files.exiftool_session import ExifToolSession
 
 TAKEN = "2024:07:04 10:00:00"
 SHIFTED = "2024:07:04 10:30:00"
@@ -55,11 +53,10 @@ class TimeShiftTellsTheIndex(unittest.TestCase):
                 (path, json.dumps({"EXIF:DateTimeOriginal": TAKEN, "EXIF:Model": "Harbour Cam"})))
 
     def shift(self):
-        handler = self.lib.handler(EXIFTOOL)
-        handler.body = {"folder_path": self.lib.photos, "camera_model": "All Cameras",
-                        "shift_minutes": 30}
-        handler.handle_post_folder_time_shift()
-        return handler.reply
+        status, reply = self.lib.post("/api/folder/time-shift", {
+            "folder_path": self.lib.photos, "camera_model": "All Cameras", "shift_minutes": 30})
+        self.assertEqual(status, 200, reply)
+        return reply
 
     def test_it_reports_the_photos_it_changed_not_the_ones_it_tried(self):
         reply = self.shift()
@@ -77,18 +74,21 @@ class TimeShiftTellsTheIndex(unittest.TestCase):
             self.assertEqual((stat.st_mtime, stat.st_size), (mtime, size), path)
 
 
-class TheHandlerUsesTheSharedShift(unittest.TestCase):
+class TheRouteUsesTheSharedShift(unittest.TestCase):
     # TagTuner had a copy of this route too; its page never called it, and it is gone.
     def test_it_shifts_through_the_service(self):
-        handler = tagpup_server.TagPupHTTPRequestHandler
-        source = inspect.getsource(handler.handle_post_folder_time_shift)
+        from tagpup.web import tagpup_routes
+
+        source = inspect.getsource(tagpup_routes.folder_time_shift)
         self.assertIn("shift_date_taken(", source)
         self.assertNotIn("DateTimeOriginal", source,
-                         "the handler shifts files itself instead of through the service")
+                         "the route shifts files itself instead of through the service")
 
     def test_tagtuner_has_no_copy(self):
-        self.assertFalse(hasattr(tuner_server.TunerHTTPRequestHandler,
-                                 "handle_post_folder_time_shift"))
+        from tagpup.web import app as web
+
+        self.assertNotIn("/api/folder/time-shift",
+                         [rule.rule for rule in web.create_app("tuner").url_map.iter_rules()])
 
 
 if __name__ == "__main__":

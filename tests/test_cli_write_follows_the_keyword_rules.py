@@ -3,8 +3,8 @@
 It had its own ExifTool code: every hierarchical tag was also split into its parts, so
 "Activity/Rowing" wrote loose "Activity" and "Rowing" keywords beside it; a person named
 by a bare leaf was written bare; and the index was never told, so its rows described
-what the photos used to hold. It now writes through write_keyword_fields and
-record_tags_in_index, like every other keyword write.
+what the photos used to hold. It now writes through tagpup.files.keywords.write_keywords,
+people resolved first, and tagpup.store.photos.record_tags, like every other keyword write.
 """
 import json
 import os
@@ -14,8 +14,9 @@ from unittest import mock
 from tests.handler_harness import Library
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
-from exiftool_session import ExifToolSession
 from writer import MetadataWriter
+
+from tagpup.files.exiftool_session import ExifToolSession
 
 
 @requires_exiftool

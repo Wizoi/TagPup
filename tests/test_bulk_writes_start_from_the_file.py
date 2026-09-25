@@ -16,9 +16,9 @@ from unittest import mock
 from tests.handler_harness import Library
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
-import tagpup_server
-from exiftool_session import ExifToolSession
-from tagpup_server import TagPupHTTPRequestHandler
+from tagpup.core import paths
+from tagpup.core.fields import expand_tag_fields
+from tagpup.files.exiftool_session import ExifToolSession
 
 EXISTING = ["Beach", "Holiday/Summer"]
 
@@ -28,7 +28,7 @@ def make_photo(path, tags=EXISTING, title=None):
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
     Image.new("RGB", (32, 24), (90, 110, 130)).save(path, "JPEG")
-    flat, hierarchical = tagpup_server.expand_tag_fields(list(tags))
+    flat, hierarchical = expand_tag_fields(list(tags))
     fields = {"XMP:Subject": flat, "IPTC:Keywords": flat, "XMP:HierarchicalSubject": hierarchical}
     if title:
         fields["XMP:Description"] = title
@@ -39,7 +39,8 @@ def make_photo(path, tags=EXISTING, title=None):
 
 def tags_in(path):
     """The photo's tags, read the way a folder scan reads them."""
-    from metadata import clean_metadata_value, extract_tags
+    from tagpup.core.vocabulary import extract_tags
+    from tagpup.files.metadata import clean_metadata_value
 
     with ExifToolSession(executable=EXIFTOOL) as et:
         meta = et.get_tags([path], tags=["IPTC:Keywords", "XMP:Subject",
@@ -54,16 +55,15 @@ class TestTheFileIsTheStartingPoint(unittest.TestCase):
     def setUp(self):
         self.lib = Library(self)
         self.photo = make_photo(os.path.join(self.lib.photos, "a.jpg"))
-        self.handler = self.lib.handler(EXIFTOOL)
 
     def test_bulk_add_keeps_the_keywords_already_in_the_file(self):
-        status, reply = self.handler.call("handle_post_photos_bulk_tags", {
+        status, reply = self.lib.post("/api/photos/bulk-tags", {
             "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
         self.assertEqual(status, 200, reply)
         self.assertEqual(sorted(tags_in(self.photo)), sorted(EXISTING + ["Sunset"]))
 
     def test_bulk_remove_takes_away_only_that_tag(self):
-        status, reply = self.handler.call("handle_post_photos_bulk_tags", {
+        status, reply = self.lib.post("/api/photos/bulk-tags", {
             "paths": [self.photo], "add_tags": [], "remove_tags": ["Beach"]})
         self.assertEqual(status, 200, reply)
         self.assertEqual(tags_in(self.photo), ["Holiday/Summer"])
@@ -71,17 +71,15 @@ class TestTheFileIsTheStartingPoint(unittest.TestCase):
     def test_apply_all_keeps_the_keywords_already_in_the_file(self):
         self.lib.save_suggestions({os.path.abspath(self.photo): {
             "tags": [{"tag": "Sunset", "score": 0.9}], "people": []}})
-        status, reply = self.handler.call("handle_post_folder_auto_apply", {
-            "folder_path": self.lib.photos})
+        status, reply = self.lib.post("/api/folder/auto-apply", {"folder_path": self.lib.photos})
         self.assertEqual(status, 200, reply)
         self.assertEqual(sorted(tags_in(self.photo)), sorted(EXISTING + ["Sunset"]))
 
     def test_the_file_wins_over_a_stale_cache_entry(self):
         # The cache says the photo holds nothing (it was edited elsewhere since).
-        TagPupHTTPRequestHandler.folder_cache[tagpup_server.paths.key(self.lib.photos)] = {
-            tagpup_server.paths.key(self.photo): {
-                "path": os.path.abspath(self.photo), "tags": [], "raw_metadata": {}}}
-        status, reply = self.handler.call("handle_post_photos_bulk_tags", {
+        self.lib.folders().put(self.lib.photos, {
+            paths.key(self.photo): {"path": os.path.abspath(self.photo), "tags": [], "raw_metadata": {}}})
+        status, reply = self.lib.post("/api/photos/bulk-tags", {
             "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
         self.assertEqual(status, 200, reply)
         self.assertEqual(sorted(tags_in(self.photo)), sorted(EXISTING + ["Sunset"]))
@@ -94,24 +92,21 @@ class TestASubfolderPhotoIsFoundInTheCache(unittest.TestCase):
     def setUp(self):
         self.lib = Library(self)
         self.photo = make_photo(os.path.join(self.lib.photos, "Day 1", "a.jpg"))
-        self.handler = self.lib.handler(EXIFTOOL)
-        status, reply = self.handler.call("handle_get_folder_scan", None,
-                                          {"path": [self.lib.photos]})
+        status, reply = self.lib.get("/api/folder/scan", {"path": self.lib.photos})
         self.assertEqual(status, 200, reply)
         self.assertEqual(len(reply), 1)
 
     def cached(self):
-        folder_map = TagPupHTTPRequestHandler.folder_cache[tagpup_server.paths.key(self.lib.photos)]
-        return folder_map.get(tagpup_server.paths.key(self.photo))
+        return self.lib.folders().get(self.lib.photos).get(paths.key(self.photo))
 
     def test_save_metadata_updates_its_record(self):
-        status, reply = self.handler.call("handle_post_photo_save_metadata", {
+        status, reply = self.lib.post("/api/photo/save-metadata", {
             "path": self.photo, "title": "", "tags": ["Beach", "Sunset"]})
         self.assertEqual(status, 200, reply)
         self.assertEqual(sorted(self.cached()["tags"]), ["Beach", "Sunset"])
 
     def test_bulk_tags_update_its_record(self):
-        status, reply = self.handler.call("handle_post_photos_bulk_tags", {
+        status, reply = self.lib.post("/api/photos/bulk-tags", {
             "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
         self.assertEqual(status, 200, reply)
         self.assertIn("Sunset", self.cached()["tags"])
@@ -119,8 +114,7 @@ class TestASubfolderPhotoIsFoundInTheCache(unittest.TestCase):
     def test_apply_all_updates_its_record(self):
         self.lib.save_suggestions({os.path.abspath(self.photo): {
             "tags": [{"tag": "Sunset", "score": 0.9}], "people": []}})
-        status, reply = self.handler.call("handle_post_folder_auto_apply", {
-            "folder_path": self.lib.photos})
+        status, reply = self.lib.post("/api/folder/auto-apply", {"folder_path": self.lib.photos})
         self.assertEqual(status, 200, reply)
         self.assertIn("Sunset", self.cached()["tags"])
 
@@ -130,7 +124,7 @@ class TestASubfolderPhotoIsFoundInTheCache(unittest.TestCase):
             os.remove(path)
             return True
         with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=remove):
-            status, reply = self.handler.call("handle_post_photo_delete", {"path": self.photo})
+            status, reply = self.lib.post("/api/photo/delete", {"path": self.photo})
         self.assertEqual(status, 200, reply)
         self.assertIsNone(self.cached())
 
@@ -138,7 +132,7 @@ class TestASubfolderPhotoIsFoundInTheCache(unittest.TestCase):
         with ExifToolSession(executable=EXIFTOOL) as et:
             et.set_tags([self.photo], tags={"EXIF:DateTimeOriginal": "2020:06:01 10:00:00"},
                         params=["-overwrite_original"])
-        status, reply = self.handler.call("handle_post_folder_time_shift", {
+        status, reply = self.lib.post("/api/folder/time-shift", {
             "folder_path": os.path.dirname(self.photo), "camera_model": "All Cameras",
             "shift_minutes": 30})
         self.assertEqual(status, 200, reply)
@@ -146,7 +140,7 @@ class TestASubfolderPhotoIsFoundInTheCache(unittest.TestCase):
         self.assertEqual(raw.get("EXIF:DateTimeOriginal"), "2020:06:01 10:30:00")
 
     def test_the_record_is_found_whichever_folder_was_scanned(self):
-        entries = TagPupHTTPRequestHandler.cached_photo_entries(self.photo)
+        entries = self.lib.folders().entries_for(self.photo)
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0][1]["path"], os.path.abspath(self.photo))
 

@@ -1,4 +1,5 @@
-"""Grouping faces a block at a time, so the screen can say how far along it is.
+"""Grouping faces a block at a time, so the screen can say how far along it is
+(tagpup.ml.grouping).
 
 The per-person grid spends most of its minute inside one sklearn DBSCAN call, and one
 call is one call: it says nothing until it finishes, so the screen could only sit
@@ -21,9 +22,8 @@ from sklearn.cluster import DBSCAN
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-from tuner_server import CLUSTER_EPS, cluster_candidates
+from tagpup.ml.grouping import CLUSTER_EPS, cluster_candidates  # noqa: E402
 
 
 def unit_rows(matrix):
@@ -100,16 +100,16 @@ class TestItIsTheSameClustering(unittest.TestCase):
 
     def test_it_crosses_more_than_one_block(self):
         """The blocks are an implementation detail; the answer must not notice them."""
-        import tuner_server
+        from tagpup.ml import grouping
 
         pool = people_shaped_pool(5, 5, 0.02, seed=6)
-        original = tuner_server.CLUSTER_BLOCK_BYTES
+        original = grouping.CLUSTER_BLOCK_BYTES
         try:
             # Small enough to force several blocks over a pool of this size.
-            tuner_server.CLUSTER_BLOCK_BYTES = 4 * 512 * 7
+            grouping.CLUSTER_BLOCK_BYTES = 4 * 512 * 7
             blocked = cluster_candidates(pool)
         finally:
-            tuner_server.CLUSTER_BLOCK_BYTES = original
+            grouping.CLUSTER_BLOCK_BYTES = original
         self.assertEqual(partition(reference(pool)), partition(blocked))
 
 

@@ -134,22 +134,37 @@ class KnownFacesFromTheLibrary(unittest.TestCase):
 
 class FaceModelsLoadOnce(unittest.TestCase):
     def test_warm_up_actually_loads_the_models(self):
-        import tagpup_server
+        import embedder
+        import suggest_models
         loaded = []
 
         class Processor:
             def _init_models(self):
                 loaded.append(True)
 
-        embedder = mock.Mock()
         saved = suggester._global_face_processor
         suggester._global_face_processor = None
         try:
-            with mock.patch.object(faces, "FaceProcessor", Processor):
-                tagpup_server.warmup_embedder_thread(embedder)
+            with mock.patch.object(faces, "FaceProcessor", Processor), \
+                    mock.patch.object(embedder, "ClipEmbedder", mock.Mock()):
+                suggest_models.warm_up()
         finally:
             suggester._global_face_processor = saved
         self.assertEqual(loaded, [True])
+
+    def test_warm_up_opens_no_library(self):
+        """The warm-up made a PhotoIndex on the startup library and kept it open until
+        the process ended; a thread starting after the file had gone made an empty
+        library in its place (docs/findings.md, #99). The models are the process's."""
+        import embedder
+        import index
+        import suggest_models
+
+        with mock.patch.object(embedder, "ClipEmbedder", mock.Mock()) as clip, \
+                mock.patch.object(index, "PhotoIndex", side_effect=AssertionError("a library was opened")), \
+                mock.patch.object(faces, "FaceProcessor", mock.Mock()):
+            suggest_models.warm_up()
+        clip.assert_called_once_with()
 
     def test_four_workers_arriving_together_load_the_models_once(self):
         processor = faces.FaceProcessor(device="cpu")

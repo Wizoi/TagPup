@@ -2,9 +2,6 @@ import os
 import sys
 import json
 import sqlite3
-import urllib.request
-import urllib.error
-import threading
 import time
 import unittest
 import numpy as np
@@ -15,12 +12,17 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from index import PhotoIndex
-from tuner_server import start_server, TunerHTTPRequestHandler
-from tagpup_server import TagPupHTTPRequestHandler
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_people, add_vector, configured_model, people_of  # noqa: E402
-from free_port import free_port  # noqa: E402
 import own_home  # noqa: E402
+import tuner_client  # noqa: E402
+from handler_harness import Library  # noqa: E402
+
+from tagpup.core import paths  # noqa: E402
+from tagpup.core.library import Library as PathLibrary  # noqa: E402
+from tagpup.services import photos as photo_actions  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
+from tagpup.web import tuner_routes  # noqa: E402
 
 
 def native(path):
@@ -29,24 +31,14 @@ def native(path):
 
 
 class TestStability(unittest.TestCase):
+    """TagTuner's matching rules, through Flask's test client (tests/tuner_client.py)."""
+
     DB_NAME = "test_validation_index.db"   # in a home of the class's own
-    TEST_PORT = free_port()
-    server_thread = None
 
     @classmethod
     def setUpClass(cls):
-        # Its own port: subclasses inherit the attribute, and a port
-        # already held by the last class's server is refused.
-        cls.TEST_PORT = free_port()
         cls.TEST_DB_PATH = own_home.for_class(cls, "tagpup_stability_").library(cls.DB_NAME)
-        # Start the server once in a background thread
-        cls.server_thread = threading.Thread(
-            target=start_server,
-            kwargs={"port": cls.TEST_PORT, "db_path": cls.TEST_DB_PATH, "gui_dir": os.path.join(WORKSPACE_DIR, "gui")},
-            daemon=True
-        )
-        cls.server_thread.start()
-        time.sleep(1.0) # Wait for server to bind
+        cls.app = tuner_client.app_on(cls.TEST_DB_PATH)
 
     def setUp(self):
         # Setup dummy data in test DB for each test to run in isolation
@@ -66,8 +58,9 @@ class TestStability(unittest.TestCase):
             # timeout and fails "database is locked" -- 30 seconds apiece.
             photo_index.close()
 
-        # Reset handler state
-        TunerHTTPRequestHandler.clustering_in_progress = False
+        # What the server keeps of the library describes the rows the last test made.
+        tuner_client.forget(self.TEST_DB_PATH)
+        self.requests = tuner_client.Requests(self.app)
 
     def _seed(self, photo_index):
         # Insert a dummy photo with a valid embedding
@@ -111,8 +104,6 @@ class TestStability(unittest.TestCase):
         photo_index.conn.commit()
 
     def tearDown(self):
-        from tuner_server import set_active_db_path
-        set_active_db_path(None)
         if os.path.exists(self.TEST_DB_PATH):
             try:
                 os.remove(self.TEST_DB_PATH)
@@ -148,52 +139,27 @@ class TestStability(unittest.TestCase):
         photo_index.close()
 
     def test_api_unmatched_photos(self):
-        url = f"http://127.0.0.1:{self.TEST_PORT}/api/photos?mode=unmatched"
-        response = urllib.request.urlopen(url)
-        data = json.loads(response.read().decode('utf-8'))
+        data = self.requests.get("/api/photos?mode=unmatched")
         self.assertEqual(len(data), 0, "No unmatched photo should be returned if face has a name")
 
     def test_api_validation_malformed_json(self):
-        url = f"http://127.0.0.1:{self.TEST_PORT}/api/face/match"
-        req = urllib.request.Request(
-            url,
-            data=b"not-json-format",
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            urllib.request.urlopen(req)
-        self.assertEqual(ctx.exception.code, 400, "Server should reject malformed JSON with 400 Bad Request")
+        status, _ = self.requests.post("/api/face/match", data=b"not-json-format")
+        self.assertEqual(status, 400, "Server should reject malformed JSON with 400 Bad Request")
 
     def test_api_validation_missing_params(self):
-        url = f"http://127.0.0.1:{self.TEST_PORT}/api/face/match"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps({"face_id": 1}).encode('utf-8'), # Missing person_name
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            urllib.request.urlopen(req)
-        self.assertEqual(ctx.exception.code, 400, "Server should reject missing parameters with 400 Bad Request")
+        status, _ = self.requests.post("/api/face/match", {"face_id": 1})   # Missing person_name
+        self.assertEqual(status, 400, "Server should reject missing parameters with 400 Bad Request")
 
     def test_api_clustering_busy_lock(self):
-        # Force clustering_in_progress to True to simulate active clustering
-        TunerHTTPRequestHandler.clustering_in_progress = True
-        
-        url = f"http://127.0.0.1:{self.TEST_PORT}/api/face/match"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps({"face_id": 1, "person_name": "Jane Doe"}).encode('utf-8'),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            urllib.request.urlopen(req)
-        self.assertEqual(ctx.exception.code, 409, "Server should reject writes with 409 Conflict when clustering is active")
-        
+        # The library is being clustered, as the indexer's cluster-faces marks it.
+        being_clustered = tuner_routes.clustering.of(PathLibrary(self.TEST_DB_PATH))
+        being_clustered.set()
+        self.addCleanup(being_clustered.clear)
+
+        status, error_body = self.requests.post("/api/face/match", {"face_id": 1, "person_name": "Jane Doe"})
+        self.assertEqual(status, 409, "Server should reject writes with 409 Conflict when clustering is active")
+
         # Verify JSON body in 409 error
-        error_body = json.loads(ctx.exception.read().decode('utf-8'))
         self.assertFalse(error_body["success"])
         self.assertIn("clustering", error_body["error"].lower())
 
@@ -420,13 +386,8 @@ class TestStability(unittest.TestCase):
         photo_index.close()
         
         # Test performance of fetching a large page of 5000 faces from endpoint
-        import urllib.request
-        import urllib.parse
-        
         start_time = time.time()
-        url = f"http://127.0.0.1:{self.TEST_PORT}/api/person-faces?name=John%20Doe&limit=5000"
-        response = urllib.request.urlopen(url)
-        res_data = json.loads(response.read().decode('utf-8'))
+        res_data = self.requests.get("/api/person-faces?name=John%20Doe&limit=5000")
         duration = time.time() - start_time
         
         print(f"\n[PERF TEST] Loading 5000 faces from endpoint took {duration:.4f} seconds.")
@@ -437,8 +398,8 @@ class TestStability(unittest.TestCase):
     def test_year_fallback_chain(self):
         import sys
         sys.path.append("scripts")
-        from tuner_server import shown_year
         from metadata import parse_year_from_metadata
+        from tagpup.core.dates import shown_year
         from tagpup.core import dates
 
         # 1. The year the library records (photos.year, tagpup.core.dates.photo_year),
@@ -490,15 +451,8 @@ class TestStability(unittest.TestCase):
         photo_index.close()
         
         # Trigger automatch API
-        url = f"http://127.0.0.1:{self.TEST_PORT}/api/photo/automatch"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps({"photo_path": "C:/photos/automatch_test.jpg"}).encode('utf-8'),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        response = urllib.request.urlopen(req)
-        data = json.loads(response.read().decode('utf-8'))
+        status, data = self.requests.post("/api/photo/automatch", {"photo_path": "C:/photos/automatch_test.jpg"})
+        self.assertEqual(status, 200, data)
         self.assertTrue(data["success"])
         self.assertEqual(data["matched_count"], 1)
         
@@ -543,15 +497,8 @@ class TestStability(unittest.TestCase):
         photo_index.close()
         
         # Trigger folder automatch API
-        url = f"http://127.0.0.1:{self.TEST_PORT}/api/folder/automatch"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps({"folder_path": "C:/photos/folderA"}).encode('utf-8'),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        response = urllib.request.urlopen(req)
-        data = json.loads(response.read().decode('utf-8'))
+        status, data = self.requests.post("/api/folder/automatch", {"folder_path": "C:/photos/folderA"})
+        self.assertEqual(status, 200, data)
         self.assertTrue(data["success"])
         self.assertEqual(data["matched_count"], 2)
         self.assertIn("remaining_counts", data)
@@ -591,16 +538,9 @@ class TestStability(unittest.TestCase):
         photo_index.close()
         
         # Trigger automatch API
-        url = f"http://127.0.0.1:{self.TEST_PORT}/api/photo/automatch"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps({"photo_path": "C:/photos/duplicate_test.jpg"}).encode('utf-8'),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        response = urllib.request.urlopen(req)
-        data = json.loads(response.read().decode('utf-8'))
-        
+        status, data = self.requests.post("/api/photo/automatch", {"photo_path": "C:/photos/duplicate_test.jpg"})
+        self.assertEqual(status, 200, data)
+
         # Neither face should be matched (matched_count = 0)
         self.assertEqual(data["matched_count"], 0)
         
@@ -639,16 +579,9 @@ class TestStability(unittest.TestCase):
         photo_index.close()
         
         # Trigger automatch API
-        url = f"http://127.0.0.1:{self.TEST_PORT}/api/photo/automatch"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps({"photo_path": "C:/photos/already_tagged_test.jpg"}).encode('utf-8'),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        response = urllib.request.urlopen(req)
-        data = json.loads(response.read().decode('utf-8'))
-        
+        status, data = self.requests.post("/api/photo/automatch", {"photo_path": "C:/photos/already_tagged_test.jpg"})
+        self.assertEqual(status, 200, data)
+
         # The unmatched face should not be matched because John Doe is already tagged on this photo
         self.assertEqual(data["matched_count"], 0)
         
@@ -682,21 +615,10 @@ class TestStability(unittest.TestCase):
         photo_index.close()
         
         # Trigger single match API trying to tag face 2 as "John Doe"
-        url = f"http://127.0.0.1:{self.TEST_PORT}/api/face/match"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps({"face_id": face2_id, "person_name": "John Doe"}).encode('utf-8'),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        try:
-            response = urllib.request.urlopen(req)
-            self.fail("API should return HTTP 400 for duplicate tag conflict")
-        except urllib.error.HTTPError as e:
-            self.assertEqual(e.code, 400)
-            data = json.loads(e.read().decode('utf-8'))
-            self.assertFalse(data["success"])
-            self.assertIn("already tagged on another face", data["error"])
+        status, data = self.requests.post("/api/face/match", {"face_id": face2_id, "person_name": "John Doe"})
+        self.assertEqual(status, 400, "API should return HTTP 400 for duplicate tag conflict")
+        self.assertFalse(data["success"])
+        self.assertIn("already tagged on another face", data["error"])
 
     def test_api_faces_match_bulk_duplicate_conflict(self):
         photo_index = PhotoIndex(db_path=self.TEST_DB_PATH)
@@ -724,21 +646,11 @@ class TestStability(unittest.TestCase):
         photo_index.close()
         
         # Trigger match-bulk trying to assign Face 2 and Face 3 to "John Doe"
-        url = f"http://127.0.0.1:{self.TEST_PORT}/api/faces/match-bulk"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps({"face_ids": [face2_id, face3_id], "person_name": "John Doe"}).encode('utf-8'),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        try:
-            response = urllib.request.urlopen(req)
-            self.fail("API should return HTTP 400 for duplicate tag conflict in bulk match")
-        except urllib.error.HTTPError as e:
-            self.assertEqual(e.code, 400)
-            data = json.loads(e.read().decode('utf-8'))
-            self.assertFalse(data["success"])
-            self.assertIn("already tagged on another face", data["error"])
+        status, data = self.requests.post("/api/faces/match-bulk",
+                                          {"face_ids": [face2_id, face3_id], "person_name": "John Doe"})
+        self.assertEqual(status, 400, "API should return HTTP 400 for duplicate tag conflict in bulk match")
+        self.assertFalse(data["success"])
+        self.assertIn("already tagged on another face", data["error"])
 
     def test_build_photo_ui_record(self):
         from metadata import build_photo_ui_record
@@ -859,24 +771,8 @@ class TestStability(unittest.TestCase):
             self.assertEqual(name, "Wren", f"Teen face {path} should remain resolved to Wren under era-aware centroids")
             
         # Verify `/api/person-faces` returns high similarity for both eras when queried
-        from tuner_server import TunerHTTPRequestHandler
-        import io
-        class MockHandler(TunerHTTPRequestHandler):
-            def __init__(self, db_path):
-                self.db_path = db_path
-                self.wfile = io.BytesIO()
-            def send_response(self, code):
-                self.code = code
-            def send_header(self, keyword, value):
-                pass
-            def end_headers(self):
-                pass
-                
-        handler = MockHandler(self.TEST_DB_PATH)
-        handler.handle_get_person_faces({"name": ["Wren"]})
-        handler.wfile.seek(0)
-        response_data = json.loads(handler.wfile.read().decode('utf-8'))
-        
+        response_data = self.requests.get("/api/person-faces?name=Wren")
+
         faces = response_data["faces"]
         self.assertEqual(len(faces), 12, "Should return all 12 faces")
         for f in faces:
@@ -884,59 +780,38 @@ class TestStability(unittest.TestCase):
             
         photo_index.close()
 
-
 class TestPhotoActions(unittest.TestCase):
-    """Time shift, Smart Rename and delete, on the TagPup server.
+    """Time shift, Smart Rename and delete, on the TagPup app.
 
     These ran against TagTuner's copies of the routes, which no page ever called and
     which are gone; TagPup's are the ones people use. Its library lives in a folder of
-    its own (own_home), not the checkout's data/.
+    its own (tests/handler_harness.Library), and the app is asked through Flask's test
+    client: no server, no port, no sleep.
     """
 
-    @classmethod
-    def setUpClass(cls):
-        from tagpup_server import start_server as start_tagpup_server
-
-        cls.TEST_PORT = free_port()
-        # The server holds its library open until the process ends; own_home deletes
-        # the home once it has.
-        cls.TEST_DB_PATH = own_home.for_class(cls, "tagpup_photo_actions_").library("photo_actions.db")
-        PhotoIndex(db_path=cls.TEST_DB_PATH).load()
-        threading.Thread(
-            target=start_tagpup_server,
-            kwargs={"port": cls.TEST_PORT, "db_path": cls.TEST_DB_PATH,
-                    "gui_dir": os.path.join(WORKSPACE_DIR, "gui_tagpup")},
-            daemon=True,
-        ).start()
-        time.sleep(1.0)  # Wait for server to bind
-
     def setUp(self):
-        from tagpup_server import set_active_db_path
+        self.lib = Library(self, "photo_actions")
+        self.TEST_DB_PATH = self.lib.db_path
 
-        conn = sqlite3.connect(self.TEST_DB_PATH)
-        conn.execute("DELETE FROM faces")
-        conn.execute("DELETE FROM photos")
-        conn.execute("DELETE FROM embeddings")
-        conn.commit()
-        conn.close()
-        set_active_db_path(self.TEST_DB_PATH)
-        TagPupHTTPRequestHandler.folder_cache.clear()
-        set_active_db_path(None)
+    def post(self, path, body):
+        status, reply = self.lib.post(path, body)
+        self.assertEqual(200, status, reply)
+        return reply
+
+    def cache(self, folder, photos):
+        """File `photos` the way the folder scan files them: under the folder's key,
+        then each photo's."""
+        self.lib.folders().put(folder, photos)
 
     def test_api_folder_time_shift(self):
         import tempfile
-        import shutil
         from PIL import Image
-        
-        import paths
 
-        temp_dir = tempfile.mkdtemp()
+        temp_dir = tempfile.mkdtemp(dir=self.lib.root)
         img_path = os.path.join(temp_dir, "test_shift.jpg")
-        img = Image.new("RGB", (10, 10), color="blue")
-        img.save(img_path, "JPEG")
+        Image.new("RGB", (10, 10), color="blue").save(img_path, "JPEG")
 
-        # Filed the way the folder scan files it: the folder's key, then each photo's.
-        TagPupHTTPRequestHandler.folder_cache[paths.key(temp_dir)] = {
+        self.cache(temp_dir, {
             paths.key(img_path): {
                 "path": img_path,
                 "raw_metadata": {
@@ -945,30 +820,12 @@ class TestPhotoActions(unittest.TestCase):
                     "EXIF:CreateDate": "2026:01:01 12:00:00"
                 }
             }
-        }
+        })
 
-        url = f"http://127.0.0.1:{self.TEST_PORT}/api/folder/time-shift"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps({
-                "folder_path": temp_dir,
-                "camera_model": "Test Camera",
-                "shift_minutes": 30
-            }).encode('utf-8'),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        
-        try:
-            response = urllib.request.urlopen(req)
-            data = json.loads(response.read().decode('utf-8'))
-            self.assertTrue(data["success"])
-            self.assertIn("updated_photos", data)
-        except Exception as e:
-            shutil.rmtree(temp_dir)
-            self.fail(f"Time shift API request failed: {e}")
-
-        shutil.rmtree(temp_dir)
+        data = self.post("/api/folder/time-shift", {
+            "folder_path": temp_dir, "camera_model": "Test Camera", "shift_minutes": 30})
+        self.assertTrue(data["success"])
+        self.assertIn("updated_photos", data)
         # The page is handed the photo's own path, not the lower-cased key it is
         # filed under in the cache.
         self.assertEqual([p["path"] for p in data["updated_photos"]], [img_path])
@@ -977,26 +834,15 @@ class TestPhotoActions(unittest.TestCase):
         """With nothing cached, the shift scans the folder itself -- and still hands
         back each photo's path as it is, not the lower-cased key it files it under."""
         import tempfile
-        import shutil
         from PIL import Image
 
-        temp_dir = os.path.join(tempfile.mkdtemp(), "Shoot_Day")
+        temp_dir = os.path.join(tempfile.mkdtemp(dir=self.lib.root), "Shoot_Day")
         os.makedirs(temp_dir)
-        self.addCleanup(shutil.rmtree, os.path.dirname(temp_dir), True)
         img_path = os.path.join(temp_dir, "IMG_Shift.jpg")
         Image.new("RGB", (10, 10), color="blue").save(img_path, "JPEG")
 
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.TEST_PORT}/api/folder/time-shift",
-            data=json.dumps({
-                "folder_path": temp_dir,
-                "camera_model": "All Cameras",
-                "shift_minutes": 30
-            }).encode('utf-8'),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        data = json.loads(urllib.request.urlopen(req).read().decode('utf-8'))
+        data = self.post("/api/folder/time-shift", {
+            "folder_path": temp_dir, "camera_model": "All Cameras", "shift_minutes": 30})
         self.assertTrue(data["success"], data)
         self.assertEqual([p["path"] for p in data["updated_photos"]], [img_path])
 
@@ -1014,246 +860,209 @@ class TestPhotoActions(unittest.TestCase):
                 (path, "[0,0,10,10]", b"", face_name, 0.9))
 
     def _post_rename(self, temp_dir, photo_paths):
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.TEST_PORT}/api/folder/rename-photos",
-            data=json.dumps({
-                "folder_path": temp_dir,
-                "photo_paths": photo_paths,
-                "grouping": "TestGroup"
-            }).encode('utf-8'),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        return json.loads(urllib.request.urlopen(req).read().decode('utf-8'))
+        return self.post("/api/folder/rename-photos", {
+            "folder_path": temp_dir, "photo_paths": photo_paths, "grouping": "TestGroup"})
 
     def _rows(self, sql, params=()):
-        conn = sqlite3.connect(self.TEST_DB_PATH)
-        try:
-            return conn.execute(sql, params).fetchall()
-        finally:
-            conn.close()
+        return self.lib.rows(sql, params)
+
+    def _record(self, path, taken, mtime):
+        return photo_actions.page_record(
+            path, {"path": path, "raw_metadata": {"EXIF:DateTimeOriginal": taken} if taken else {}}, mtime, 100)
 
     def test_api_folder_rename_photos(self):
         import tempfile
-        import shutil
         from PIL import Image
-        import paths
 
-        temp_dir = tempfile.mkdtemp()
-        try:
-            p1 = os.path.join(temp_dir, "file_A.jpg")
-            p2 = os.path.join(temp_dir, "file_B.jpg")
+        temp_dir = tempfile.mkdtemp(dir=self.lib.root)
+        p1 = os.path.join(temp_dir, "file_A.jpg")
+        p2 = os.path.join(temp_dir, "file_B.jpg")
 
-            im = Image.new("RGB", (10, 10), "blue")
-            im.save(p1)
-            im.save(p2)
+        im = Image.new("RGB", (10, 10), "blue")
+        im.save(p1)
+        im.save(p2)
 
-            conn = sqlite3.connect(self.TEST_DB_PATH)
-            self._seed_rename_photo(conn, p1, 2000.0, "2026:06:27 12:00:00", "Rowan Thackeray")
-            self._seed_rename_photo(conn, p2, 1000.0, "2026:06:27 11:00:00", "Tamsin Okafor")
-            conn.commit()
-            conn.close()
-            faces_before = self._rows("SELECT COUNT(*) FROM faces")[0][0]
+        conn = tagpup_db.connect(self.TEST_DB_PATH)
+        self._seed_rename_photo(conn, p1, 2000.0, "2026:06:27 12:00:00", "Rowan Thackeray")
+        self._seed_rename_photo(conn, p2, 1000.0, "2026:06:27 11:00:00", "Tamsin Okafor")
+        conn.commit()
+        conn.close()
+        faces_before = self._rows("SELECT COUNT(*) FROM faces")[0][0]
 
-            from metadata import build_photo_ui_record
-            TagPupHTTPRequestHandler.folder_cache[paths.key(temp_dir)] = {
-                paths.key(p1): build_photo_ui_record(p1, {"path": p1, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 12:00:00"}}, 2000.0, 100),
-                paths.key(p2): build_photo_ui_record(p2, {"path": p2, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 11:00:00"}}, 1000.0, 100)
-            }
+        self.cache(temp_dir, {
+            paths.key(p1): self._record(p1, "2026:06:27 12:00:00", 2000.0),
+            paths.key(p2): self._record(p2, "2026:06:27 11:00:00", 1000.0),
+        })
 
-            data = self._post_rename(temp_dir, [p1, p2])
-            self.assertTrue(data["success"])
+        data = self._post_rename(temp_dir, [p1, p2])
+        self.assertTrue(data["success"])
 
-            expected_p2_new = os.path.join(temp_dir, "TestGroup - 1.jpg")
-            expected_p1_new = os.path.join(temp_dir, "TestGroup - 2.jpg")
+        expected_p2_new = os.path.join(temp_dir, "TestGroup - 1.jpg")
+        expected_p1_new = os.path.join(temp_dir, "TestGroup - 2.jpg")
 
-            self.assertTrue(os.path.exists(expected_p2_new))
-            self.assertTrue(os.path.exists(expected_p1_new))
-            self.assertFalse(os.path.exists(p1))
-            self.assertFalse(os.path.exists(p2))
+        self.assertTrue(os.path.exists(expected_p2_new))
+        self.assertTrue(os.path.exists(expected_p1_new))
+        self.assertFalse(os.path.exists(p1))
+        self.assertFalse(os.path.exists(p2))
 
-            # The index follows the files: photo rows at the new names, spelled as
-            # the indexer spells them, and nothing left at the old ones.
-            db_paths = sorted(r[0] for r in self._rows("SELECT path FROM photos"))
-            self.assertIn(expected_p1_new, db_paths)
-            self.assertIn(expected_p2_new, db_paths)
-            self.assertNotIn(p1, db_paths)
-            self.assertNotIn(p2, db_paths)
+        # The index follows the files: photo rows at the new names, spelled as
+        # the indexer spells them, and nothing left at the old ones.
+        db_paths = sorted(r[0] for r in self._rows("SELECT path FROM photos"))
+        self.assertIn(expected_p1_new, db_paths)
+        self.assertIn(expected_p2_new, db_paths)
+        self.assertNotIn(p1, db_paths)
+        self.assertNotIn(p2, db_paths)
 
-            # And the faces go with them, names kept, none duplicated.
-            faces = dict(self._rows("SELECT p.path, f.name FROM faces f JOIN photos p ON p.id = f.photo_id WHERE f.name IS NOT NULL"
-                                    " AND p.path IN (?, ?, ?, ?)",
-                                    (p1, p2, expected_p1_new, expected_p2_new)))
-            self.assertEqual(faces, {expected_p1_new: "Rowan Thackeray",
-                                     expected_p2_new: "Tamsin Okafor"})
-            self.assertEqual(self._rows("SELECT COUNT(*) FROM faces")[0][0], faces_before)
-            self.assertEqual(data["index_rows_moved"], 2)
-            self.assertEqual(data["index_skipped"], [])
-
-        finally:
-            shutil.rmtree(temp_dir)
+        # And the faces go with them, names kept, none duplicated.
+        faces = dict(self._rows("SELECT p.path, f.name FROM faces f JOIN photos p ON p.id = f.photo_id WHERE f.name IS NOT NULL"
+                                " AND p.path IN (?, ?, ?, ?)",
+                                (p1, p2, expected_p1_new, expected_p2_new)))
+        self.assertEqual(faces, {expected_p1_new: "Rowan Thackeray",
+                                 expected_p2_new: "Tamsin Okafor"})
+        self.assertEqual(self._rows("SELECT COUNT(*) FROM faces")[0][0], faces_before)
+        self.assertEqual(data["index_rows_moved"], 2)
+        self.assertEqual(data["index_skipped"], [])
 
     def test_api_folder_rename_photos_does_not_merge_onto_rows_already_there(self):
         """A stale row at the new name is not merged into: that duplicates faces."""
         import tempfile
-        import shutil
         from PIL import Image
 
-        temp_dir = tempfile.mkdtemp()
-        try:
-            p1 = os.path.join(temp_dir, "file_A.jpg")
-            Image.new("RGB", (10, 10), "blue").save(p1)
-            stale = os.path.join(temp_dir, "TestGroup - 1.jpg")  # no file, only rows
+        temp_dir = tempfile.mkdtemp(dir=self.lib.root)
+        p1 = os.path.join(temp_dir, "file_A.jpg")
+        Image.new("RGB", (10, 10), "blue").save(p1)
+        stale = os.path.join(temp_dir, "TestGroup - 1.jpg")  # no file, only rows
 
-            conn = sqlite3.connect(self.TEST_DB_PATH)
-            self._seed_rename_photo(conn, p1, 2000.0, "2026:06:27 12:00:00", "Rowan Thackeray")
-            self._seed_rename_photo(conn, stale, 500.0, None, "Tamsin Okafor")
-            conn.commit()
-            conn.close()
+        conn = tagpup_db.connect(self.TEST_DB_PATH)
+        self._seed_rename_photo(conn, p1, 2000.0, "2026:06:27 12:00:00", "Rowan Thackeray")
+        self._seed_rename_photo(conn, stale, 500.0, None, "Tamsin Okafor")
+        conn.commit()
+        conn.close()
 
-            data = self._post_rename(temp_dir, [p1])
-            self.assertTrue(data["success"])
-            self.assertTrue(os.path.exists(stale), "the file itself was still renamed")
+        data = self._post_rename(temp_dir, [p1])
+        self.assertTrue(data["success"])
+        self.assertTrue(os.path.exists(stale), "the file itself was still renamed")
 
-            self.assertEqual(data["index_skipped"], [stale])
-            self.assertEqual(data["index_rows_moved"], 0)
-            self.assertEqual(
-                self._rows("SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (stale,)),
-                [("Tamsin Okafor",)], "faces were merged onto the rows already there")
-            self.assertEqual(
-                self._rows("SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (p1,)),
-                [("Rowan Thackeray",)])
-        finally:
-            shutil.rmtree(temp_dir)
+        self.assertEqual(data["index_skipped"], [stale])
+        self.assertEqual(data["index_rows_moved"], 0)
+        self.assertEqual(
+            self._rows("SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (stale,)),
+            [("Tamsin Okafor",)], "faces were merged onto the rows already there")
+        self.assertEqual(
+            self._rows("SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (p1,)),
+            [("Rowan Thackeray",)])
 
     def test_api_folder_rename_photos_conflict_resolution(self):
         import tempfile
-        import shutil
         from PIL import Image
-        import paths
 
-        temp_dir = tempfile.mkdtemp()
-        try:
-            # Create two selected files
-            p1 = os.path.join(temp_dir, "file_A.jpg")
-            p2 = os.path.join(temp_dir, "file_B.jpg")
-            # Create conflicting file occupant (this one is NOT in our renaming selection)
-            p_conflict = os.path.join(temp_dir, "TestGroup - 1.jpg")
+        temp_dir = tempfile.mkdtemp(dir=self.lib.root)
+        # Create two selected files
+        p1 = os.path.join(temp_dir, "file_A.jpg")
+        p2 = os.path.join(temp_dir, "file_B.jpg")
+        # Create conflicting file occupant (this one is NOT in our renaming selection)
+        p_conflict = os.path.join(temp_dir, "TestGroup - 1.jpg")
 
-            im = Image.new("RGB", (10, 10), "blue")
-            im.save(p1)
-            im.save(p2)
-            im.save(p_conflict)
+        im = Image.new("RGB", (10, 10), "blue")
+        im.save(p1)
+        im.save(p2)
+        im.save(p_conflict)
 
-            # Setup DB record cache
-            conn = sqlite3.connect(self.TEST_DB_PATH)
-            self._seed_rename_photo(conn, p1, 2000.0, "2026:06:27 12:00:00", "Rowan Thackeray")
-            self._seed_rename_photo(conn, p2, 1000.0, "2026:06:27 11:00:00", "Tamsin Okafor")
-            self._seed_rename_photo(conn, p_conflict, 500.0, None, "Ellis Marchetti")
-            conn.commit()
-            conn.close()
+        conn = tagpup_db.connect(self.TEST_DB_PATH)
+        self._seed_rename_photo(conn, p1, 2000.0, "2026:06:27 12:00:00", "Rowan Thackeray")
+        self._seed_rename_photo(conn, p2, 1000.0, "2026:06:27 11:00:00", "Tamsin Okafor")
+        self._seed_rename_photo(conn, p_conflict, 500.0, None, "Ellis Marchetti")
+        conn.commit()
+        conn.close()
 
-            # Pre-populate server cache
-            from metadata import build_photo_ui_record
-            TagPupHTTPRequestHandler.folder_cache[paths.key(temp_dir)] = {
-                paths.key(p1): build_photo_ui_record(p1, {"path": p1, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 12:00:00"}}, 2000.0, 100),
-                paths.key(p2): build_photo_ui_record(p2, {"path": p2, "raw_metadata": {"EXIF:DateTimeOriginal": "2026:06:27 11:00:00"}}, 1000.0, 100),
-                paths.key(p_conflict): build_photo_ui_record(p_conflict, {"path": p_conflict, "raw_metadata": {}}, 500.0, 100)
-            }
+        # Pre-populate the server's cache
+        self.cache(temp_dir, {
+            paths.key(p1): self._record(p1, "2026:06:27 12:00:00", 2000.0),
+            paths.key(p2): self._record(p2, "2026:06:27 11:00:00", 1000.0),
+            paths.key(p_conflict): self._record(p_conflict, None, 500.0),
+        })
 
-            data = self._post_rename(temp_dir, [p1, p2])
-            self.assertTrue(data["success"])
+        data = self._post_rename(temp_dir, [p1, p2])
+        self.assertTrue(data["success"])
 
-            # Check targets were successfully created
-            expected_p2_new = os.path.join(temp_dir, "TestGroup - 1.jpg")
-            expected_p1_new = os.path.join(temp_dir, "TestGroup - 2.jpg")
-            expected_conflict_new = os.path.join(temp_dir, "TestGroup - 1_conflict_1.jpg")
+        # Check targets were successfully created
+        expected_p2_new = os.path.join(temp_dir, "TestGroup - 1.jpg")
+        expected_p1_new = os.path.join(temp_dir, "TestGroup - 2.jpg")
+        expected_conflict_new = os.path.join(temp_dir, "TestGroup - 1_conflict_1.jpg")
 
-            self.assertTrue(os.path.exists(expected_p2_new), f"Should have created {expected_p2_new}")
-            self.assertTrue(os.path.exists(expected_p1_new), f"Should have created {expected_p1_new}")
-            self.assertTrue(os.path.exists(expected_conflict_new), f"Should have moved conflicting occupant to {expected_conflict_new}")
+        self.assertTrue(os.path.exists(expected_p2_new), f"Should have created {expected_p2_new}")
+        self.assertTrue(os.path.exists(expected_p1_new), f"Should have created {expected_p1_new}")
+        self.assertTrue(os.path.exists(expected_conflict_new), f"Should have moved conflicting occupant to {expected_conflict_new}")
 
-            # Verify original selected files and old conflict files are gone from their old paths
-            self.assertFalse(os.path.exists(p1))
-            self.assertFalse(os.path.exists(p2))
-            # Note that p_conflict old path was occupied by expected_p2_new, so the old path now has the new file content.
+        # Verify original selected files and old conflict files are gone from their old paths
+        self.assertFalse(os.path.exists(p1))
+        self.assertFalse(os.path.exists(p2))
+        # Note that p_conflict old path was occupied by expected_p2_new, so the old path now has the new file content.
 
-            # Verify DB paths
-            db_paths = [r[0] for r in self._rows("SELECT path FROM photos")]
-            self.assertIn(expected_p1_new, db_paths)
-            self.assertIn(expected_p2_new, db_paths)
-            self.assertIn(expected_conflict_new, db_paths)
+        # Verify DB paths
+        db_paths = [r[0] for r in self._rows("SELECT path FROM photos")]
+        self.assertIn(expected_p1_new, db_paths)
+        self.assertIn(expected_p2_new, db_paths)
+        self.assertIn(expected_conflict_new, db_paths)
 
-            # Each face followed its own photo: the occupant's to where it was moved
-            # aside, the renamed photo's onto the name the occupant gave up.
-            faces = dict(self._rows("SELECT f.name, p.path FROM faces f JOIN photos p ON p.id = f.photo_id WHERE f.name IS NOT NULL"))
-            self.assertEqual(faces["Ellis Marchetti"], expected_conflict_new)
-            self.assertEqual(faces["Tamsin Okafor"], expected_p2_new)
-            self.assertEqual(faces["Rowan Thackeray"], expected_p1_new)
-            self.assertEqual(data["index_rows_moved"], 3)
-
-        finally:
-            shutil.rmtree(temp_dir)
+        # Each face followed its own photo: the occupant's to where it was moved
+        # aside, the renamed photo's onto the name the occupant gave up.
+        faces = dict(self._rows("SELECT f.name, p.path FROM faces f JOIN photos p ON p.id = f.photo_id WHERE f.name IS NOT NULL"))
+        self.assertEqual(faces["Ellis Marchetti"], expected_conflict_new)
+        self.assertEqual(faces["Tamsin Okafor"], expected_p2_new)
+        self.assertEqual(faces["Rowan Thackeray"], expected_p1_new)
+        self.assertEqual(data["index_rows_moved"], 3)
 
     def test_api_photo_delete(self):
         import tempfile
-        import shutil
-        import paths
-        temp_dir = tempfile.mkdtemp()
-        try:
-            p = os.path.join(temp_dir, "to_delete.jpg")
-            with open(p, "wb") as f:
-                f.write(b"fake jpeg content")
+        from unittest import mock
 
-            # Seed the database the way the indexer writes it: native paths.
-            conn = sqlite3.connect(self.TEST_DB_PATH)
-            c = conn.cursor()
-            c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags) VALUES (?, 1.0, 10, '[]')", (p,))
-            c.execute("INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector) SELECT id, 'm|p|cropped|1.0|100', 1.0, 10, ? FROM photos WHERE path = ?", (b'\x00'*512, p))
-            c.execute("INSERT INTO faces (photo_id, box, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', 'Rowan Thackeray', 1.0)", (p,))
-            conn.commit()
-            conn.close()
+        temp_dir = tempfile.mkdtemp(dir=self.lib.root)
+        p = os.path.join(temp_dir, "to_delete.jpg")
+        with open(p, "wb") as f:
+            f.write(b"fake jpeg content")
 
-            # Populate server folder cache
-            folder_key = paths.key(temp_dir)
-            photo_key = paths.key(p)
-            TagPupHTTPRequestHandler.folder_cache[folder_key] = {
-                photo_key: {"path": p, "filename": "to_delete.jpg", "tags": []}
-            }
+        # Seed the database the way the indexer writes it: native paths.
+        conn = tagpup_db.connect(self.TEST_DB_PATH)
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO photos (path, mtime, size, tags) VALUES (?, 1.0, 10, '[]')", (p,))
+        c.execute("INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector) SELECT id, 'm|p|cropped|1.0|100', 1.0, 10, ? FROM photos WHERE path = ?", (b'\x00'*512, p))
+        c.execute("INSERT INTO faces (photo_id, box, name, prob) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', 'Rowan Thackeray', 1.0)", (p,))
+        conn.commit()
+        conn.close()
 
-            # Send POST delete request
-            url = f"http://127.0.0.1:{self.TEST_PORT}/api/photo/delete"
-            req = urllib.request.Request(
-                url,
-                data=json.dumps({"path": p}).encode('utf-8'),
-                headers={"Content-Type": "application/json"},
-                method="POST"
-            )
-            response = urllib.request.urlopen(req)
-            data = json.loads(response.read().decode('utf-8'))
+        # Populate the server's folder cache
+        folder_key = paths.key(temp_dir)
+        photo_key = paths.key(p)
+        self.cache(temp_dir, {photo_key: {"path": p, "filename": "to_delete.jpg", "tags": []}})
 
-            self.assertTrue(data["success"])
+        # Removed outright here rather than sent to this machine's Recycle Bin, which
+        # the old test filled with a file per run.
+        def remove(path):
+            os.remove(path)
+            return True
 
-            # Verify file is not on disk (moved to recycle bin)
-            self.assertFalse(os.path.exists(p))
+        with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=remove):
+            data = self.post("/api/photo/delete", {"path": p})
+        self.assertTrue(data["success"])
 
-            # Verify records are gone from DB
-            photos_count = self._rows("SELECT COUNT(*) FROM photos WHERE path = ?", (p,))[0][0]
-            # By the photo's path, or pointing at no photo row at all: a vector whose
-            # photo went while it stayed would otherwise count as gone.
-            cache_count = self._rows("SELECT COUNT(*) FROM embeddings e LEFT JOIN photos p ON p.id = e.photo_id"
-                                     " WHERE p.path = ? OR p.id IS NULL", (p,))[0][0]
-            faces_count = self._rows("SELECT COUNT(*) FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (p,))[0][0]
+        # Verify file is not on disk (moved to recycle bin)
+        self.assertFalse(os.path.exists(p))
 
-            self.assertEqual(photos_count, 0)
-            self.assertEqual(cache_count, 0)
-            self.assertEqual(faces_count, 0)
+        # Verify records are gone from DB
+        photos_count = self._rows("SELECT COUNT(*) FROM photos WHERE path = ?", (p,))[0][0]
+        # By the photo's path, or pointing at no photo row at all: a vector whose
+        # photo went while it stayed would otherwise count as gone.
+        cache_count = self._rows("SELECT COUNT(*) FROM embeddings e LEFT JOIN photos p ON p.id = e.photo_id"
+                                 " WHERE p.path = ? OR p.id IS NULL", (p,))[0][0]
+        faces_count = self._rows("SELECT COUNT(*) FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (p,))[0][0]
 
-            # Verify folder_cache entry is evicted
-            self.assertNotIn(photo_key, TagPupHTTPRequestHandler.folder_cache[folder_key])
+        self.assertEqual(photos_count, 0)
+        self.assertEqual(cache_count, 0)
+        self.assertEqual(faces_count, 0)
 
-        finally:
-            shutil.rmtree(temp_dir)
+        # Verify the folder cache's entry is evicted
+        self.assertNotIn(photo_key, self.lib.folders().get(folder_key))
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,8 +16,10 @@ logger = logging.getLogger(__name__)
 
 
 def error(status, message):
-    """The JSON error the pages read: {"error": message}, with `status`."""
-    return jsonify({"error": message}), status
+    """The JSON error both pages read: {"success": false, "error": message}, with
+    `status`. TagTuner's page reads `data.success` on every reply, refusals included,
+    and TagPup's treats the key missing as false; one shape, so neither has to know."""
+    return jsonify({"success": False, "error": message}), status
 
 
 def image(content, content_type, cache_seconds=None):

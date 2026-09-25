@@ -18,8 +18,8 @@ import unittest
 from tests.handler_harness import Library
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
-import tagpup_server
-from exiftool_session import ExifToolSession
+from tagpup.files.exiftool_session import ExifToolSession
+from tagpup.store import taxonomy as store_taxonomy
 
 TREE = [
     (1, "People", "People", None, 1),
@@ -67,16 +67,15 @@ class TaxonomyEditsReportWhatTheyWrote(unittest.TestCase):
     def tree(self):
         return {r[0] for r in self.lib.rows("SELECT tag FROM tag_taxonomy")}
 
-    def call(self, method, body):
-        handler = self.lib.handler(EXIFTOOL)
-        return handler.call(method, body)
+    def call(self, path, body):
+        return self.lib.post(path, body)
 
     def test_a_person_renamed_is_not_written_back_under_the_old_path(self):
         photo = self.add_photo("regatta.jpg", ["People/Rowan Thackeray", "Rowan Thackeray"])
         # A running server has the people cache warm.
-        tagpup_server.people_paths_for(self.lib.db_path)
+        store_taxonomy.people_paths(self.lib.db_path)
 
-        self.call("handle_post_taxonomy_rename", {"tag_id": 2, "new_name": "Rowan Thackeray-Vale"})
+        self.call("/api/taxonomy/rename", {"tag_id": 2, "new_name": "Rowan Thackeray-Vale"})
 
         written = self.hierarchical(photo)
         self.assertIn("People/Rowan Thackeray-Vale", written)
@@ -86,7 +85,7 @@ class TaxonomyEditsReportWhatTheyWrote(unittest.TestCase):
         self.add_photo("boathouse.jpg", ["Activity/Rowing"])
         self.add_photo("broken.jpg", ["Activity/Rowing"], writable=False)
 
-        status, reply = self.call("handle_post_taxonomy_rename", {"tag_id": 4, "new_name": "Sculling"})
+        status, reply = self.call("/api/taxonomy/rename", {"tag_id": 4, "new_name": "Sculling"})
 
         self.assertEqual(200, status, reply)
         self.assertEqual(2, reply["photos_affected"])
@@ -97,7 +96,7 @@ class TaxonomyEditsReportWhatTheyWrote(unittest.TestCase):
         good = self.add_photo("boathouse.jpg", ["Activity/Rowing"])
         self.add_photo("broken.jpg", ["Activity/Rowing"], writable=False)
 
-        status, reply = self.call("handle_post_taxonomy_delete_confirm",
+        status, reply = self.call("/api/taxonomy/delete-confirm",
                                   {"tag_id": 4, "action": "remove"})
 
         self.assertFalse(reply.get("success"), reply)
@@ -108,7 +107,7 @@ class TaxonomyEditsReportWhatTheyWrote(unittest.TestCase):
     def test_a_delete_that_rewrites_every_photo_removes_the_tag(self):
         good = self.add_photo("boathouse.jpg", ["Activity/Rowing"])
 
-        status, reply = self.call("handle_post_taxonomy_delete_confirm",
+        status, reply = self.call("/api/taxonomy/delete-confirm",
                                   {"tag_id": 4, "action": "remove"})
 
         self.assertTrue(reply.get("success"), reply)
@@ -117,7 +116,7 @@ class TaxonomyEditsReportWhatTheyWrote(unittest.TestCase):
         self.assertNotIn("Activity/Rowing", self.hierarchical(good))
 
     def test_renaming_club_a_leaves_clubxa_alone(self):
-        self.call("handle_post_taxonomy_rename", {"tag_id": 5, "new_name": "Club_B"})
+        self.call("/api/taxonomy/rename", {"tag_id": 5, "new_name": "Club_B"})
 
         tree = self.tree()
         self.assertIn("Club_B/Juniors", tree)

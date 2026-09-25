@@ -8,6 +8,9 @@ while the index quietly went on describing what those photos used to hold.
 It surfaced a long way from the cause. A repair script planning from the index reported
 nothing to do on a folder that had just been tagged wholesale, because as far as the
 database was concerned it had not been.
+
+The recorder is tagpup.store.photos.record_tags; the routes called it as
+record_tags_in_index.
 """
 import json
 import os
@@ -16,11 +19,11 @@ import unittest
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-import db as tagpup_db
-import tagpup_server
+from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup.store import schema  # noqa: E402
+from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
+from tagpup.store.photos import read_tags, record_tags  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import people_of  # noqa: E402
@@ -55,10 +58,10 @@ class TestTheIndexHearsAboutBulkEdits(unittest.TestCase):
         )
         conn.commit()
         conn.close()
-        tagpup_server.invalidate_people_cache()
+        store_taxonomy.forget_people_paths()
 
         def cleanup():
-            tagpup_server.invalidate_people_cache()
+            store_taxonomy.forget_people_paths()
             for suffix in ("", "-wal", "-shm"):
                 target = self.db_path + suffix
                 if os.path.exists(target):
@@ -88,14 +91,14 @@ class TestTheIndexHearsAboutBulkEdits(unittest.TestCase):
         }
 
     def test_the_new_tags_are_recorded(self):
-        tagpup_server.record_tags_in_index(
+        record_tags(
             self.db_path, PHOTO, ["Beach", "People/Jane Doe"],
             flat=["Beach", "People/Jane Doe"], hierarchical=["People/Jane Doe"],
         )
         self.assertEqual(self.row()["tags"], ["Beach", "People/Jane Doe"])
 
     def test_the_people_column_is_recomputed(self):
-        tagpup_server.record_tags_in_index(
+        record_tags(
             self.db_path, PHOTO, ["Beach", "People/Jane Doe"],
             flat=["Beach", "People/Jane Doe"], hierarchical=["People/Jane Doe"],
         )
@@ -104,7 +107,7 @@ class TestTheIndexHearsAboutBulkEdits(unittest.TestCase):
     def test_raw_metadata_keeps_agreeing_with_the_file(self):
         # The next read derives tags from raw_metadata, so leaving it stale would make
         # the row disagree with itself.
-        tagpup_server.record_tags_in_index(
+        record_tags(
             self.db_path, PHOTO, ["Beach", "People/Jane Doe"],
             flat=["Beach", "People/Jane Doe"], hierarchical=["People/Jane Doe"],
         )
@@ -113,21 +116,18 @@ class TestTheIndexHearsAboutBulkEdits(unittest.TestCase):
         self.assertEqual(raw["XMP:HierarchicalSubject"], ["People/Jane Doe"])
 
     def test_removing_a_tag_is_recorded_too(self):
-        tagpup_server.record_tags_in_index(
-            self.db_path, PHOTO, [], flat=[], hierarchical=[])
+        record_tags(self.db_path, PHOTO, [], flat=[], hierarchical=[])
         self.assertEqual(self.row()["tags"], [])
 
     def test_a_photo_the_database_has_never_seen_is_not_invented(self):
         # Adding it here would be indexing, which is a different job with a different
         # cost: embeddings and face detection, not a row.
-        written = tagpup_server.record_tags_in_index(
-            self.db_path, "D:/Library/2020/never-indexed.jpg", ["Beach"])
+        written = record_tags(self.db_path, "D:/Library/2020/never-indexed.jpg", ["Beach"])
         self.assertFalse(written)
         self.assertIsNone(self.row(os.path.abspath("D:/Library/2020/never-indexed.jpg")))
 
     def test_the_write_reports_that_it_changed_the_row(self):
-        self.assertTrue(tagpup_server.record_tags_in_index(
-            self.db_path, PHOTO, ["Beach", "Cross Country"]))
+        self.assertTrue(record_tags(self.db_path, PHOTO, ["Beach", "Cross Country"]))
 
     @unittest.skipUnless(os.name == "nt", "separators and case only differ on Windows")
     def test_any_spelling_of_the_photo_finds_its_native_row(self):
@@ -137,7 +137,7 @@ class TestTheIndexHearsAboutBulkEdits(unittest.TestCase):
         for spelling in (PHOTO, "d:/library/2020/A.JPG", "D:\\Library\\2020\\a.jpg"):
             with self.subTest(spelling=spelling):
                 tags = ["Beach", spelling]
-                self.assertTrue(tagpup_server.record_tags_in_index(self.db_path, spelling, tags))
+                self.assertTrue(record_tags(self.db_path, spelling, tags))
                 self.assertEqual(self.row()["tags"], tags)
         conn = tagpup_db.connect(self.db_path)
         try:
@@ -147,38 +147,39 @@ class TestTheIndexHearsAboutBulkEdits(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "separators and case only differ on Windows")
     def test_a_cold_cache_reads_the_tags_from_the_native_row(self):
-        # Bulk writes start from these when the folder was never scanned; missing the
-        # row meant starting from nothing and erasing the photo's tags.
-        self.assertEqual(tagpup_server.indexed_tags_for_photo(self.db_path, PHOTO), ["Beach"])
-        self.assertEqual(
-            tagpup_server.indexed_tags_for_photo(self.db_path, "d:/LIBRARY/2020/a.jpg"), ["Beach"])
+        # The bulk writers start from the file now; what the index holds for a photo is
+        # still read by any spelling (tagpup.store.photos.read_tags), or a rename would
+        # miss the row and erase the photo's tags.
+        self.assertEqual(read_tags(self.db_path, [PHOTO])[0][1], ["Beach"])
+        self.assertEqual(read_tags(self.db_path, ["d:/LIBRARY/2020/a.jpg"])[0][1], ["Beach"])
 
     def test_a_broken_database_does_not_fail_the_write(self):
         # The file is already written and correct by this point; a stale row is
         # recoverable, and raising here would report a failure that did not happen.
-        self.assertFalse(
-            tagpup_server.record_tags_in_index("no/such.db", PHOTO, ["Beach"])
-        )
+        self.assertFalse(record_tags("no/such.db", PHOTO, ["Beach"]))
 
 
 class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
     """The guard. Both bulk handlers wrote files without recording the result, and
     nothing in the app showed the difference, so a third one would be just as quiet."""
 
-    #: A keyword write: the server's (which resolves people first) or the files layer's.
-    WRITES = ("write_keyword_fields(", "write_keywords(")
+    #: A keyword write, wherever it is made: the files layer's one writer.
+    WRITES = ("write_keywords(",)
 
     #: The rule is that the index hears about it, not that any one helper is used:
     #: saving a single photo writes its own row as part of a larger update, and
     #: rewriting that to funnel through the helper would be churn for its own sake.
-    RECORDS = ("record_tags_in_index", "record_tags(", "record_saved(", "UPDATE photos",
-               "INSERT OR REPLACE INTO photos")
+    RECORDS = ("record_tags(", "record_saved(", "UPDATE photos", "INSERT OR REPLACE INTO photos")
+
+    #: Where keywords are written: the routes (which must not), the services, and the
+    #: CLI's writer.
+    SOURCES = (os.path.join("tagpup", "web", "tagpup_routes.py"), os.path.join("scripts", "writer.py"))
 
     def write_sites(self):
-        """(where, the source from there on) of every keyword write in the server and
-        the services."""
+        """(where, the source from there on) of every keyword write in the routes, the
+        services and the writer."""
         services = os.path.join(WORKSPACE_DIR, "tagpup", "services")
-        sources = [os.path.join("scripts", "tagpup_server.py")] + [
+        sources = list(self.SOURCES) + [
             os.path.join("tagpup", "services", name) for name in sorted(os.listdir(services))
             if name.endswith(".py")]
         for relative in sources:
@@ -187,8 +188,8 @@ class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
             for i, line in enumerate(lines):
                 if not any(call in line for call in self.WRITES):
                     continue
-                if line.lstrip().startswith(("def ", "#", "return file_keywords.")):
-                    continue   # a definition, or the server's wrapper handing on
+                if line.lstrip().startswith(("def ", "#", "from ", "import ")):
+                    continue   # a definition, a comment or an import
                 yield "%s:%d" % (relative, i + 1), "\n".join(lines[i:i + 40])
 
     def test_each_bulk_write_records_what_it_wrote(self):
@@ -206,10 +207,11 @@ class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
         sites = [where for where, _ in self.write_sites()]
         self.assertTrue(any("tagging.py" in where for where in sites),
                         "the write sites moved; the guard above is checking nothing")
+        self.assertTrue(any("writer.py" in where for where in sites))
 
-    def test_the_server_writes_no_keywords_itself(self):
-        # Every keyword write it serves is a service's now (tagpup.services.tagging).
-        self.assertEqual([where for where, _ in self.write_sites() if "tagpup_server.py" in where], [])
+    def test_the_routes_write_no_keywords_themselves(self):
+        # Every keyword write they serve is a service's (tagpup.services.tagging).
+        self.assertEqual([where for where, _ in self.write_sites() if "tagpup_routes.py" in where], [])
 
 
 if __name__ == "__main__":

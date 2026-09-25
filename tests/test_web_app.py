@@ -52,7 +52,13 @@ class TheLibraryAUrlNames(unittest.TestCase):
     def test_a_pages_name_is_refused_as_a_library(self):
         reply = self.client.post("/library/api/databases/create", json={"db_name": "api"})
         self.assertEqual(400, reply.status_code)
+        # The shape both pages read: TagTuner's reads data.success on every reply.
+        self.assertEqual(False, reply.get_json()["success"])
         self.assertIn("error", reply.get_json())
+
+    def test_a_json_reply_is_never_kept_by_the_browser(self):
+        reply = self.client.get("/library/api/databases")
+        self.assertIn("no-store", reply.headers["Cache-Control"])
 
 
 class ThePage(unittest.TestCase):
