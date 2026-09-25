@@ -57,6 +57,15 @@ class RotatingAPhoto(unittest.TestCase):
         self.assertIsNone(crop, "a crop cut from the old box must be cut again")
         self.assertEqual(result.details["faces_turned"], 1)
 
+    def test_a_direction_that_is_not_one_is_refused_before_the_file_is_touched(self):
+        # The "rotate direction" kind (docs/findings.md, #224): the route checked it, the
+        # service took anything, and the file layer raised on it.
+        with mock.patch("tagpup.files.metadata.rotate_image_file") as turn:
+            result = photos.rotate(self.lib.library, self.photo, "up", "exiftool")
+        self.assertEqual("Direction must be 'left' or 'right'", result.refused)
+        self.assertEqual((result.changed, result.errors), (0, []))
+        turn.assert_not_called()
+
     def test_a_failed_rotation_changes_nothing_and_says_why(self):
         result = self.rotate(fails=RuntimeError("the file now says 1"))
         self.assertFalse(result.ok)

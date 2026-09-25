@@ -17,7 +17,6 @@ import os
 import re
 import string
 import threading
-import urllib.parse
 
 from flask import Blueprint, jsonify, request
 
@@ -133,10 +132,9 @@ def _folder_indexer(library):
 
 
 def _wanted_path():
-    """The request's `path`, or None. Decoded a second time, as every old route did
-    (docs/findings.md, #32): one place to stop doing it."""
-    wanted = request.args.get("path")
-    return urllib.parse.unquote(wanted) if wanted else None
+    """The request's `path`, or None, as Flask decoded it. The old routes decoded it a
+    second time, and a name holding "%41" became one holding "A" (docs/findings.md, #32)."""
+    return request.args.get("path") or None
 
 
 def _sorted(photos):
@@ -161,7 +159,7 @@ def autocomplete_folder():
     typed = request.args.get("path")
     if not typed:
         return jsonify([])
-    return jsonify(_folder_suggestions(urllib.parse.unquote(typed).strip()))
+    return jsonify(_folder_suggestions(typed.strip()))
 
 
 def _folder_suggestions(typed):
@@ -474,13 +472,13 @@ def photo_rotate():
     direction = body.get("direction")
     if not photo_path or not os.path.exists(photo_path):
         return responses.error(400, "Invalid file path")
-    # Reject anything but an explicit direction rather than silently treating an
-    # unrecognised value as a right turn.
-    if direction not in ("left", "right"):
-        return responses.error(400, "Direction must be 'left' or 'right'")
     photo_path = paths.stored(photo_path)
     try:
+        # Anything but an explicit direction is refused by the service, with the
+        # "rotate direction" kind's message, rather than taken for a right turn.
         result = photo_actions.rotate(library, photo_path, direction, state.exiftool(library))
+        if result.refused:
+            return responses.error(400, result.refused)
         if not result.ok:
             logger.error("Error rotating image %s: %s", photo_path, result.message())
             return responses.error(500, result.message())

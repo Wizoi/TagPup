@@ -98,9 +98,17 @@ def sql_equals(column, path):
 def sql_under(column, folder):
     """(clause, params) matching rows whose `column` is inside `folder`, any depth.
 
-    A prefix comparison rather than LIKE, so "%" and "_" in folder names are plain
-    characters.
+    A range rather than LIKE, so "%" and "_" in folder names are plain characters,
+    and a range the path index can seek: every path that starts with "D:\\Run\\"
+    sorts at or after it and before "D:\\Run]", the same prefix with its separator
+    raised by one. It was `substr(path, 1, n) = ?`, a function on the column, and
+    every read of a folder scanned the whole index (docs/findings.md, #168).
+
+    The bound is right case-insensitively too: NOCASE folds only A-Z, and neither
+    separator nor the character after it is a letter, so no folded spelling of a path
+    in the folder sorts past it.
     """
     prefix = _as_folder(stored(folder))
-    return ("substr(%s, 1, ?) = ? COLLATE %s" % (column, COLLATE),
-            (len(prefix), prefix))
+    upper = prefix[:-1] + chr(ord(prefix[-1]) + 1)
+    return ("%s >= ? COLLATE %s AND %s < ? COLLATE %s" % (column, COLLATE, column, COLLATE),
+            (prefix, upper))

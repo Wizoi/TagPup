@@ -5,7 +5,6 @@ apps' photo route differed in two settings; scripts/localserver.py held the one 
 of the photo route for both. The shapes are kept exactly: the pages read them.
 """
 import logging
-import urllib.parse
 
 from flask import Response, abort, jsonify
 
@@ -43,7 +42,7 @@ def photo(wanted, size, upright, cache_seconds=None):
     """
     if not wanted:
         abort(400, description="Missing 'path' parameter")
-    photo_path = urllib.parse.unquote(wanted)   # a second decoding: docs/findings.md, #32
+    photo_path = wanted   # as Flask decoded it, once (docs/findings.md, #32)
     try:
         max_size = int(size) if size else None
     except ValueError:

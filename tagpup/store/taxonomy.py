@@ -551,7 +551,7 @@ class TagTaxonomy:
         if not normalized:
             return
 
-        if "/" not in normalized and self.find_person_path(normalized):
+        if "/" not in normalized and self.person_paths(normalized):
             return
 
         self.paths.update(vocabulary.lineage(normalized))
@@ -576,20 +576,32 @@ class TagTaxonomy:
                 pass
         return {vocabulary.NEW_LIBRARY_FACE_ROOT.lower()}
 
-    def find_person_path(self, name: str) -> Optional[str]:
-        """An existing people path whose last segment is this name."""
+    def person_paths(self, name: str) -> List[str]:
+        """Every existing people path whose last segment is this name, sorted."""
         wanted = vocabulary.key(vocabulary.leaf_of(name))
         if not wanted:
-            return None
+            return []
         roots = self.people_roots()
+        found = set()
         for path in self.paths:
             if "/" not in path:
                 continue
             if vocabulary.key(vocabulary.root_of(path)) not in roots:
                 continue
             if vocabulary.key(vocabulary.leaf_of(path)) == wanted:
-                return path
-        return None
+                found.add(path)
+        return sorted(found)
+
+    def find_person_path(self, name: str) -> Optional[str]:
+        """The one existing people path whose last segment is this name.
+
+        None when nobody is filed under the name, and also when two people paths end in
+        it: this returned the first path it met in a set, so which of the two a
+        suggestion named could change from one run to the next (docs/findings.md, #27).
+        A caller that must know whether the name is filed at all asks person_paths.
+        """
+        paths = self.person_paths(name)
+        return paths[0] if len(paths) == 1 else None
 
     def find_by_leaf(self, name: str) -> Optional[str]:
         """The one existing path whose last segment is this name.
@@ -668,7 +680,7 @@ class TagTaxonomy:
             if "/" in normalized:
                 self.add_tag(normalized)
                 continue
-            if self.find_person_path(normalized):
+            if self.person_paths(normalized):
                 continue
             self.add_tag("%s/%s" % (root, normalized))
 

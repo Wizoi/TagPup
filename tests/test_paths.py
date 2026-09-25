@@ -156,6 +156,46 @@ class SqlUnderMatchesStoredRows(unittest.TestCase):
         rows = [r"D:\Pictures\Run\a.jpg", r"D:\Pictures\Run 2\a.jpg"]
         self.assertEqual(self.rows_under(r"D:\Pictures\Run", rows), [r"D:\Pictures\Run\a.jpg"])
 
+    def test_a_sibling_whose_name_sorts_just_past_the_separator_is_not_found(self):
+        # "]" and "^" follow the separator in byte order; "[" and "Z" come before it but
+        # fold past it as letters would. None of them is inside the folder.
+        rows = [r"D:\Pictures\Run\a.jpg", r"D:\Pictures\Run]\a.jpg", r"D:\Pictures\Run^\a.jpg",
+                r"D:\Pictures\Run[\a.jpg", r"D:\Pictures\RunZ\a.jpg", r"D:\Pictures\Runz\a.jpg",
+                r"D:\Pictures\Ru\a.jpg", r"D:\Pictures\Rum\a.jpg"]
+        self.assertEqual(self.rows_under(r"d:\pictures\RUN", rows), [r"D:\Pictures\Run\a.jpg"])
+
+    def test_the_same_rows_as_a_prefix_compare_in_every_case(self):
+        # The range answers exactly what the prefix comparison it replaced answered.
+        rows = [r"D:\Pictures\%s\%s.jpg" % (folder, name)
+                for folder in ("Run", "run", "RUN", "Run_1", "RunX1", "Run%1", "Run 1", "Run\\Sub",
+                               "RUN\\sub", "Rün", "RÜN", "Run]", "Ruo")
+                for name in ("a", "B_1", "%41")]
+        conn = _table(rows)
+        try:
+            for folder in ("D:/pictures/run", r"D:\Pictures\Run_1", r"D:\PICTURES\RUN%1", "d:/pictures/rün",
+                           r"D:\Pictures\Run\Sub", r"D:\Pictures"):
+                prefix = paths._as_folder(paths.stored(folder))
+                expected = sorted(r for (r,) in conn.execute(
+                    "SELECT path FROM photos WHERE substr(path, 1, ?) = ? COLLATE %s" % paths.COLLATE,
+                    (len(prefix), prefix)))
+                clause, params = paths.sql_under("path", folder)
+                found = sorted(r for (r,) in conn.execute("SELECT path FROM photos WHERE " + clause, params))
+                self.assertEqual(expected, found, folder)
+                self.assertTrue(found or folder.endswith("rün"), folder)
+        finally:
+            conn.close()
+
+    def test_seeks_the_path_index(self):
+        # It compared substr(path, 1, n): a function on the column, a scan of the whole
+        # index for every folder read (docs/findings.md, #168).
+        conn = _table([r"D:\Pictures\Run\a.jpg"])
+        clause, params = paths.sql_under("path", r"D:\Pictures\Run")
+        plan = " ".join(str(row[3]) for row in conn.execute(
+            "EXPLAIN QUERY PLAN SELECT path FROM photos WHERE " + clause, params))
+        conn.close()
+        self.assertIn("SEARCH", plan)
+        self.assertIn("idx_photos_path", plan)
+
 
 class EmptyInEmptyOut(unittest.TestCase):
     def test_empty(self):

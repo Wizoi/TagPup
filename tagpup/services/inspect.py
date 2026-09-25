@@ -113,10 +113,11 @@ def photos(library, folder=None, tag=None, person=None, reveal=False, limit=LIMI
             of_person = dict(inspection.of_person(conn, name))
             found = of_person if found is None else {i: p for i, p in found.items() if i in of_person}
         if tag:
+            # Only the photos a folder or a person has narrowed to: it read every
+            # photo's tags to keep thirty of them (docs/findings.md, #185).
             wanted = vocabulary.normalize(tag)
-            carrying = {photo_id: path for photo_id, path, tags in inspection.tags_of_every_photo(conn)
-                        if (found is None or photo_id in found) and vocabulary.retag(tags, wanted)[1]}
-            found = carrying
+            rows = inspection.tags_of_every_photo(conn) if found is None else inspection.tags_of(conn, found)
+            found = {photo_id: path for photo_id, path, tags in rows if vocabulary.retag(tags, wanted)[1]}
     return _listed(sorted(found.items()), reveal, limit)
 
 

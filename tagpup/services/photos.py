@@ -339,8 +339,13 @@ def rotate(library, photo_path, direction, exiftool_path):
 
     details: `mtime` and `size` of the file now (the pages version image URLs by mtime,
     because thumbnails are cached for a day), its `orientation`, and `faces_turned`.
+    Refused, touching nothing, for a direction that is not a "rotate direction".
     """
     result = Result(attempted=1)
+    refused = validation.problem("rotate direction", direction)
+    if refused:
+        result.refuse(refused)
+        return result
     try:
         width, height, oriented = images.shown_size(photo_path)
         orientation = metadata.rotate_image_file(photo_path, direction, exiftool_path)

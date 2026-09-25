@@ -42,6 +42,14 @@ shows, plus every request slower than a second (`slow: GET /api/... took 2.31s`)
 every request that failed, with its traceback. Look there before reproducing a report.
 The CLI still logs to the console only; redirect it when it matters.
 
+**Time a click, in a sandbox.** `scripts/measure_identify_faces.py` copies a library
+(SQLite's backup API; the original opened read-only), snapshots the code, runs TagTuner
+on it as its own process with the sandbox as `TAGPUP_HOME` on a free port, drives the
+Identify grid in headless Chromium, and deletes the sandbox afterwards, saying so if it
+cannot. It times Ignore Cluster by default and New Person with `--action new-person`,
+each from the click until the page is usable again. Take the baseline with it before a
+change and the result with it after (CLAUDE.md, "Performance work").
+
 ## Tests
 
 | suite | command | count |

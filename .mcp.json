@@ -2,8 +2,11 @@
   "mcpServers": {
     "tagpup": {
       "type": "stdio",
-      "command": ".venv/Scripts/python.exe",
-      "args": ["-m", "tagpup.mcp"],
+      "command": "node",
+      "args": [
+        "-e",
+        "const p = require('path'), f = require('fs'); let d = process.env.CLAUDE_PROJECT_DIR || process.cwd(); while (!f.existsSync(p.join(d, 'tools', 'mcp_launcher.cjs')) && p.dirname(d) !== d) d = p.dirname(d); require(p.join(d, 'tools', 'mcp_launcher.cjs'));"
+      ],
       "env": {}
     }
   }

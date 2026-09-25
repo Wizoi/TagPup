@@ -23,18 +23,11 @@ from tagpup.store import db, faces, photos
 
 logger = logging.getLogger(__name__)
 
-#: Why a face is excluded when no reason is given.
-DEFAULT_REASON = "not a person"
-
-#: Why the faces of a cluster TagTuner's page was told to ignore are excluded.
-IGNORED_CLUSTER = "ignored cluster"
-
-#: Why a face may be excluded: the four TagTuner's page offers (EXCLUDE_REASONS in
-#: web/tuner/main.js, the first its default), and the one it sets itself when a cluster is
-#: ignored. The page keeps a copy, which tests/test_rules_have_one_owner.py holds to
-#: this. The reason used to be free text, and collected "fuzzy" beside "bad crop"
-#: (docs/findings.md, #53, #74).
-EXCLUSION_REASONS = (DEFAULT_REASON, "stranger", "bad crop", "duplicate", IGNORED_CLUSTER)
+#: Why a face is excluded when no reason is given, why an ignored cluster's are, and every
+#: reason one may be: the "exclusion reason" kind's (tagpup.core.validation).
+DEFAULT_REASON = validation.DEFAULT_EXCLUSION_REASON
+IGNORED_CLUSTER = validation.IGNORED_CLUSTER
+EXCLUSION_REASONS = validation.EXCLUSION_REASONS
 
 
 def name_face(library, face_id, person_name):
@@ -196,9 +189,9 @@ def exclude(library, face_ids, reason=None):
     _library_there(library)
     result = Result(attempted=len(face_ids))
     reason = (reason or "").strip().lower() or DEFAULT_REASON
-    if reason not in EXCLUSION_REASONS:
-        result.refuse("'%s' is not a reason to exclude a face: use one of %s."
-                      % (reason, ", ".join(EXCLUSION_REASONS)))
+    refused = validation.problem("exclusion reason", reason)
+    if refused:
+        result.refuse(refused)
         return result
     with faces.accounted_write(library.path, "exclude faces") as write:
         result.changed = faces.exclude(write.conn, face_ids, reason)

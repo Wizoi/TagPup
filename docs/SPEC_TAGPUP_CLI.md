@@ -22,7 +22,7 @@ The tool is built as a modular Python application with script wrappers. It relie
                        [TagTaxonomy]             ---> [TagSuggester] (Face Match)
                                |                              | (Aggregate & Score)
                                v                              v
-                       [photo_index.db: tree]   ---> [suggestions.json]
+                       [photo_index.db: tree]   ---> [photo_index_suggestions.json]
                                                               |
                                                               v
                                                       [write_suggestions (ExifTool)]
@@ -223,7 +223,7 @@ Analyzes untagged photos and generates tag recommendations.
 - **Options**:
   - `--k INTEGER`: Number of nearest neighbors to consider (default: `15`).
   - `--min-sim FLOAT`: Cosine similarity cutoff (default: `0.35`).
-  - `--output TEXT`: Path to write the output suggestions JSON file (default: `suggestions.json`).
+  - `--output TEXT`: Path to write the output suggestions JSON file (default: `<library>_suggestions.json` beside the library, e.g. `data/photo_index_suggestions.json`; never the working folder).
 
 #### 3. `write`
 Writes suggested tags and descriptions back to photo file metadata using ExifTool.

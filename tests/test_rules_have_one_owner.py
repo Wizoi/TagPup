@@ -252,7 +252,7 @@ class WhereALibraryIs(unittest.TestCase):
 
 class WhyAFaceIsExcluded(unittest.TestCase):
     """The reasons a face may be excluded, and the one it is given when none is, are
-    tagpup.services.faces's. TagTuner's page keeps a copy to offer them from, held here
+    tagpup.core.validation's "exclusion reason" kind, which tagpup.services.faces uses. TagTuner's page keeps a copy to offer them from, held here
     to the service's; the server and the page each spelled the default again."""
 
     def page(self):
@@ -274,7 +274,7 @@ class WhyAFaceIsExcluded(unittest.TestCase):
         from tagpup.services import faces
         # The server's own choices: a caller may still send "stranger" as its reason.
         chosen = r"[\"'](%s|%s)[\"']" % (re.escape(faces.DEFAULT_REASON), re.escape(faces.IGNORED_CLUSTER))
-        self.assertEqual([], sources_matching(chosen, os.path.join("tagpup", "services", "faces.py")))
+        self.assertEqual([], sources_matching(chosen, os.path.join("tagpup", "core", "validation.py")))
         spelled = r"[\"'](%s)[\"']" % "|".join(re.escape(r) for r in faces.EXCLUSION_REASONS)
         lines = [n for n, line in enumerate(self.page().splitlines(), 1)
                  if re.search(spelled, line) and "const EXCLUDE_" not in line

@@ -30,6 +30,12 @@ So: a performance claim about this app is a claim about a click, and the only wa
 support it is to perform the click. Server timings are a diagnosis, never a result.
 
     .venv/Scripts/python.exe scripts/measure_identify_faces.py
+    .venv/Scripts/python.exe scripts/measure_identify_faces.py --action new-person
+
+Two clicks are measured, one per run: Ignore Cluster (the default), and New Person
+(`--action new-person`: select one face in the grid, click New Person, until the faces
+it offers are on screen and the page runs again; docs/findings.md, #5). The first New
+Person of a run also reads the pool of nameless faces, so it is reported apart.
 
 Take a baseline before changing anything. A harness that cannot reproduce the reported
 slowness is not measuring the reported thing, and the fix that follows will be aimed at
@@ -232,10 +238,58 @@ def drive(url, args):
     return timings
 
 
+def drive_new_person(url, args):
+    """Open New Person on a different face each round: its click-to-usable times."""
+    from playwright.sync_api import sync_playwright
+
+    timings = []
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=not args.headed)
+        page = browser.new_page(viewport={"width": 1600, "height": 1000})
+        started = time.time()
+        page.goto(url, wait_until="domcontentloaded")
+        page.wait_for_selector("#matching-faces-grid [data-face-id]", timeout=args.timeout * 1000)
+        print("\nopening the grid")
+        print("  first faces on screen        : %7.2fs" % (time.time() - started))
+        page.wait_for_timeout(4000)
+        ids = page.eval_on_selector_all("#matching-faces-grid [data-face-id]",
+                                        "els => els.map(e => e.dataset.faceId)")
+        print("  cards rendered               : %d\n" % len(ids))
+
+        for round_number in range(1, args.rounds + 1):
+            face_id = ids[(round_number - 1) * 7 % len(ids)]
+            # One face selected, as a click on its card leaves it.
+            page.evaluate("""(id) => {
+                document.querySelectorAll('#matching-faces-grid .selected').forEach(e => e.click());
+                document.querySelector(`#matching-faces-grid [data-face-id="${id}"]`).click();
+            }""", face_id)
+            page.wait_for_function("() => !document.getElementById('btn-new-person').disabled",
+                                   timeout=args.timeout * 1000)
+            started = time.time()
+            page.click("#btn-new-person")
+            # Usable: the offered faces are on screen, and the main thread runs again.
+            page.wait_for_function("""() => {
+                const loading = document.getElementById('modal-matches-loading');
+                return loading && loading.classList.contains('hidden');
+            }""", timeout=args.timeout * 1000)
+            page.evaluate("() => new Promise(r => requestAnimationFrame(() => r(1)))")
+            elapsed = time.time() - started
+            timings.append(elapsed)
+            shown = page.eval_on_selector_all("#modal-matches-list .modal-face-card", "els => els.length")
+            print("  round %-2d %4d faces offered -> %6.2fs" % (round_number, shown, elapsed))
+            page.click("#btn-modal-cancel")
+            page.wait_for_timeout(300)
+
+        browser.close()
+    return timings
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", default=tagpup_config.library_path("photo_index.db"),
                         help="the library to copy; opened read-only and never written")
+    parser.add_argument("--action", choices=("ignore-cluster", "new-person"), default="ignore-cluster",
+                        help="the click to time")
     parser.add_argument("--person", default="Unknown Faces")
     parser.add_argument("--rounds", type=int, default=5)
     parser.add_argument("--timeout", type=int, default=600, help="seconds")
@@ -261,7 +315,15 @@ def main():
                % (port, args.person.replace(" ", "+")))
         print("  serving on port %d, isolated from anything else you have running" % port)
 
-        timings = drive(url, args)
+        if args.action == "new-person":
+            timings = drive_new_person(url, args)
+            if len(timings) > 1:
+                print("\nclick to usable: first %.2fs (reads the pool); then median %.2fs, worst %.2fs,"
+                      " over %d rounds" % (timings[0], statistics.median(timings[1:]), max(timings[1:]),
+                                           len(timings) - 1))
+            timings = []
+        else:
+            timings = drive(url, args)
         if timings:
             print("\nclick to usable: median %.2fs, worst %.2fs, over %d rounds"
                   % (statistics.median(timings), max(timings), len(timings)))

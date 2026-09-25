@@ -73,6 +73,16 @@ def tags_of_every_photo(conn):
             for photo_id, path, tags_json in conn.execute("SELECT id, path, tags FROM photos ORDER BY id")]
 
 
+def tags_of(conn, photo_ids):
+    """(id, path as stored, tags) of these photos, by id; unreadable tags are []. The
+    rows are read by id, so a folder of thirty photos reads thirty (docs/findings.md, #185)."""
+    found = []
+    for chunk in _chunks(sorted(photo_ids)):
+        found.extend((photo_id, path, _json(tags_json, [])) for photo_id, path, tags_json in conn.execute(
+            "SELECT id, path, tags FROM photos WHERE id IN (%s)" % _marks(chunk), chunk))
+    return sorted(found)
+
+
 def of_person(conn, name):
     """(id, path as stored) of each photo whose people (photo_people) list `name`, spelled
     exactly as the rows spell it, by id. idx_photo_people_name serves it."""

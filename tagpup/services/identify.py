@@ -224,37 +224,151 @@ def face_matches(library, face_id, named):
     return top_matches
 
 
-def unnamed_like(library, face_id):
+class UnnamedFaces:
+    """Every nameless face in play, for New Person: their ids, and their embeddings as a
+    float16 matrix, the rows of faces named or excluded since it was read masked out.
+
+    Opening New Person read all 190,000 of them from SQLite, 390 MB of embeddings, and
+    took two to three seconds every time (docs/findings.md, #5). This is read once per
+    state of the faces table and kept (tagpup.jobs.identify.unnamed_faces). float16
+    halves what it holds, to about 190 MB for that library; it only chooses which faces
+    to look at. Each is then scored from its row, in float32, as before.
+    """
+
+    #: Rows compared at once: a float32 copy of a slice, not of the whole matrix.
+    SLICE = 8192
+
+    def __init__(self, ids, matrix, largest_norm, gone=None):
+        self.ids = ids
+        self.matrix = matrix
+        self.largest_norm = largest_norm
+        self.gone = gone if gone is not None else np.zeros(len(ids), dtype=bool)
+
+    @classmethod
+    def of(cls, rows, count=None):
+        """From (id, embedding bytes) rows, taken once and in order; `count` is how many
+        there are, as counted before they were read.
+
+        The float16 matrix is made to size and filled a slice at a time, so neither the
+        rows nor a float32 copy of them are ever held whole. Built from a list of the rows
+        through np.vstack and astype, a rebuild held about 1.15 GB of photo_index's
+        190,000 faces at its peak, beside the pool it replaced. A row whose embedding is
+        missing, or not as long as the first, is left out."""
+        if count is None:
+            rows = list(rows)
+            count = len(rows)
+        ids = np.zeros(count, dtype=np.int64)
+        matrix = None
+        largest = 0.0
+        filled = 0
+        buffer, waiting = None, []
+
+        def flush():
+            nonlocal matrix, ids, filled, largest
+            if not waiting:
+                return
+            part = buffer[:len(waiting)]
+            largest = max(largest, float(np.max(np.linalg.norm(part, axis=1))))
+            end = filled + len(waiting)
+            if end > len(ids):   # more rows than counted: grow, rarely
+                ids = np.concatenate([ids, np.zeros(end - len(ids), dtype=np.int64)])
+                matrix = np.concatenate([matrix, np.zeros((end - len(matrix), matrix.shape[1]), dtype=np.float16)])
+            ids[filled:end] = waiting
+            matrix[filled:end] = part
+            filled = end
+            waiting.clear()
+
+        for face_id, blob in rows:
+            if not blob:
+                continue
+            vector = np.frombuffer(blob, dtype=np.float32)
+            if matrix is None:
+                matrix = np.zeros((max(count, 1), len(vector)), dtype=np.float16)
+                buffer = np.empty((cls.SLICE, len(vector)), dtype=np.float32)
+            elif len(vector) != matrix.shape[1]:
+                continue
+            buffer[len(waiting)] = vector
+            waiting.append(face_id)
+            if len(waiting) == cls.SLICE:
+                flush()
+        if matrix is None:
+            return cls(np.zeros(0, dtype=np.int64), np.zeros((0, 0), dtype=np.float16), 0.0)
+        flush()
+        if filled < len(ids):   # fewer than counted: rows without an embedding
+            ids, matrix = ids[:filled].copy(), matrix[:filled].copy()
+        return cls(ids, matrix, largest)
+
+    def without(self, face_ids):
+        """The same faces less `face_ids`: those named or excluded since. The matrix is
+        shared, not copied."""
+        gone = self.gone | np.isin(self.ids, np.fromiter((int(f) for f in face_ids), dtype=np.int64))
+        return UnnamedFaces(self.ids, self.matrix, self.largest_norm, gone)
+
+    def near(self, target, might):
+        """The ids of the faces whose likeness to `target` `might` accept (a function of
+        the likenesses and the most they may be off by): every one it accepts, and
+        perhaps a few just short. float16 rounds each value by at most one part in
+        2,048, so a dot product moves by at most |row| |target| / 2,048; the slack is
+        twice that, and a little for the smallest values."""
+        if not len(self.ids):
+            return []
+        target = np.asarray(target, dtype=np.float32)
+        slack = 2.0 ** -10 * self.largest_norm * float(np.linalg.norm(target)) + 1e-4
+        likeness = np.empty(len(self.ids), dtype=np.float32)
+        for start in range(0, len(self.ids), self.SLICE):
+            part = self.matrix[start:start + self.SLICE].astype(np.float32)
+            np.dot(part, target, out=likeness[start:start + len(part)])
+        return self.ids[might(likeness, slack) & ~self.gone].tolist()
+
+
+def unnamed_faces(library):
+    """(fingerprint, UnnamedFaces) of the library now: the fingerprint read first, on
+    the same connection, so the faces are stamped with a state no newer than theirs."""
+    conn = _reading(library)
+    try:
+        # One read transaction: the fingerprint, the count and the rows see one state.
+        db.begin(conn)
+        stamp = faces.fingerprint(conn)
+        count = faces.count_unnamed(conn)
+        return stamp, UnnamedFaces.of(faces.unnamed_embeddings(conn), count)
+    finally:
+        conn.close()
+
+
+def unnamed_like(library, face_id, unnamed=None):
     """{"matches": [...]}: the other nameless faces alike enough to be gathered for New
-    Person without a look at each (tagpup.core.clustering.names_unasked), best first."""
+    Person without a look at each (tagpup.core.clustering.names_unasked), best first.
+
+    `unnamed` gives the UnnamedFaces to look among, kept between requests
+    (tagpup.jobs.identify.unnamed_faces); without it they are read now. Either way the
+    faces it finds are read again by id and scored from their rows."""
     conn = _reading(library)
     try:
         target_emb = _embedding_of(conn, face_id)
-        faces_rows = faces.unnamed_except(conn, face_id)
     finally:
         conn.close()
-    if not faces_rows:
+    pool = unnamed() if unnamed is not None else unnamed_faces(library)[1]
+    candidates = [fid for fid in pool.near(target_emb, face_rules.might_name_unasked) if fid != face_id]
+    if not candidates:
         return {"matches": []}
+    conn = _reading(library)
+    try:
+        faces_rows = faces.unnamed_among(conn, candidates)
+    finally:
+        conn.close()
 
-    face_ids, photo_paths, boxes, embeddings_list = [], [], [], []
-    for fid, photo_path, box_json, emb_bytes in faces_rows:
-        face_ids.append(fid)
-        photo_paths.append(photo_path)
-        boxes.append(_box(box_json))
-        embeddings_list.append(np.frombuffer(emb_bytes, dtype=np.float32))
-
-    similarities = np.dot(np.array(embeddings_list, dtype=np.float32), target_emb)
     matches = []
-    for idx in np.argsort(similarities)[::-1]:
-        sim = float(similarities[idx])
-        if face_rules.names_unasked(sim):
+    for fid, photo_path, box_json, emb_bytes in faces_rows:
+        sim = float(np.dot(np.frombuffer(emb_bytes, dtype=np.float32), target_emb))
+        if fid != face_id and face_rules.names_unasked(sim):
             matches.append({
-                "id": face_ids[idx],
-                "photo_path": photo_paths[idx],
-                "filename": os.path.basename(photo_paths[idx]),
-                "box": boxes[idx],
+                "id": fid,
+                "photo_path": photo_path,
+                "filename": os.path.basename(photo_path),
+                "box": _box(box_json),
                 "similarity": sim,
             })
+    matches.sort(key=lambda match: (-match["similarity"], match["id"]))
     return {"matches": matches}
 
 

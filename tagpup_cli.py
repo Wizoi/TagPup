@@ -74,9 +74,24 @@ def get_runtime(read_only=False):
     the MCP server's inspections and the doctor do -- a look was a journaled change."""
     return Runtime(read_only=read_only)
 
-def library_index(runtime, db_path):
-    """The library's photos, with their vectors under its CLIP model."""
-    return PhotoIndex(db_path=db_path, model=runtime.model_key(Library(db_path)))
+def library_index(runtime, db_path, read_only=False):
+    """The library's photos, with their vectors under its CLIP model. `read_only` for a
+    command that only looks: the library is not migrated (docs/findings.md, #243)."""
+    return PhotoIndex(db_path=db_path, model=runtime.model_key(Library(db_path)), read_only=read_only)
+
+def default_suggestions_file(db_path):
+    """Where `suggest` writes when not told: beside the library, named for it, as the
+    app's own files are. It was suggestions.json in whatever folder the command was run
+    from, which left one at the checkout's root (docs/findings.md, #102)."""
+    folder = os.path.dirname(os.path.abspath(db_path))
+    return os.path.join(folder, os.path.splitext(os.path.basename(db_path))[0] + "_suggestions.json")
+
+def say_if_behind(photo_index):
+    """Tell the person a library a look did not migrate is behind this version of TagPup."""
+    if photo_index.behind:
+        console.print(f"[yellow]This library has not had {len(photo_index.behind)} of this version's"
+                      " migrations; a look does not apply them. Indexing it, or opening it in TagPup,"
+                      " brings it up to date.[/yellow]")
 
 def get_exiftool_path(db_path, read_only=False) -> str:
     """The ExifTool the library names, else the machine's (tagpup.runtime.exiftool).
@@ -392,7 +407,8 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
 @click.argument("directory", type=click.Path(exists=True, file_okay=False))
 @click.option("--k", default=15, help="Number of nearest neighbors to consider.")
 @click.option("--min-sim", default=0.35, type=float, help="Cosine similarity cutoff.")
-@click.option("--output", default="suggestions.json", help="Path to write the suggestions JSON file.")
+@click.option("--output", default=None,
+              help="Path to write the suggestions JSON file (default: <library>_suggestions.json beside the library).")
 @click.pass_context
 def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
     """Phase 2: Suggest tags for untagged photos."""
@@ -400,10 +416,9 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
 
     # Load Index & Taxonomy
     test_mode = ctx.obj.get("test", False)
-    if test_mode and output == "suggestions.json":
-        output = "test_suggestions.json"
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(test_mode, cli_db)
+    output = output or default_suggestions_file(db_path)
     library = Library(db_path)
     settings = runtime.settings(library)
     model_name = settings.embedder["model_name"]
@@ -660,8 +675,10 @@ def search(ctx, query: str, k: int):
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(test_mode, cli_db)
     model_name = runtime.settings(Library(db_path)).embedder["model_name"]
-    photo_index = library_index(runtime, db_path)
-    if not photo_index.load():
+    photo_index = library_index(runtime, db_path, read_only=True)
+    loaded = photo_index.load()
+    say_if_behind(photo_index)
+    if not loaded:
         console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
         return
         
@@ -707,8 +724,10 @@ def stats(ctx):
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(test_mode, cli_db)
 
-    photo_index = library_index(runtime, db_path)
-    if not photo_index.load():
+    photo_index = library_index(runtime, db_path, read_only=True)
+    loaded = photo_index.load()
+    say_if_behind(photo_index)
+    if not loaded:
         console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
         return
         
@@ -957,8 +976,10 @@ def list_index(ctx, folder):
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(test_mode, cli_db)
 
-    photo_index = library_index(runtime, db_path)
-    if not photo_index.load():
+    photo_index = library_index(runtime, db_path, read_only=True)
+    loaded = photo_index.load()
+    say_if_behind(photo_index)
+    if not loaded:
         console.print("[bold red]Error:[/bold red] No photo index found.")
         return
         
