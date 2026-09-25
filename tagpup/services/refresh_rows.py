@@ -83,7 +83,7 @@ def why_stale(row):
         stat = os.stat(path)
     except OSError:
         return None   # file gone: a job for relink or remove, not this
-    if size != stat.st_size or mtime is None or abs(mtime - stat.st_mtime) >= 0.1:
+    if not store_photos.describes(mtime, size, (stat.st_mtime, stat.st_size)):
         reasons.append("mtime/size")
     if is_garbled(captions_json) or is_garbled(raw_json):
         reasons.append("garbled text")

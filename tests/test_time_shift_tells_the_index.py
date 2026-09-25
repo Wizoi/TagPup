@@ -14,10 +14,12 @@ import json
 import os
 import unittest
 
+from tests import photo_rows
 from tests.handler_harness import Library
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
 from tagpup.files.exiftool_session import ExifToolSession
+from tagpup.store import db
 
 TAKEN = "2024:07:04 10:00:00"
 SHIFTED = "2024:07:04 10:30:00"
@@ -46,11 +48,14 @@ class TimeShiftTellsTheIndex(unittest.TestCase):
         self.broken = os.path.join(self.lib.photos, "broken.jpg")
         with open(self.broken, "wb") as handle:
             handle.write(b"not a picture")
-        for path in self.photos:
-            self.lib.execute(
-                "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
-                " VALUES (?, 1.0, 1, '[]', '[]', ?)",
-                (path, json.dumps({"EXIF:DateTimeOriginal": TAKEN, "EXIF:Model": "Harbour Cam"})))
+        # Rows as the indexer makes them, describing their files.
+        conn = db.connect(self.lib.db_path)
+        try:
+            for path in self.photos:
+                photo_rows.add_read(conn, path, {"EXIF:DateTimeOriginal": TAKEN, "EXIF:Model": "Harbour Cam"})
+            conn.commit()
+        finally:
+            conn.close()
 
     def shift(self):
         status, reply = self.lib.post("/api/folder/time-shift", {

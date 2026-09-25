@@ -42,8 +42,13 @@ class ShiftingDateTaken(unittest.TestCase):
     def setUp(self):
         self.lib = TempLibrary(self)
         self.shot = [self.lib.photo(name) for name in ("a.jpg", "b.jpg", "c.jpg")]
+        # Each row describes its file (docs/findings.md, #249): a partial write stamps only
+        # such a row.
+        self.stamps = {}
         for path in self.shot:
-            self.lib.add_row(path, mtime=1.0, size=1)
+            stat = os.stat(path)
+            self.stamps[path] = (stat.st_mtime, stat.st_size)
+            self.lib.add_row(path, mtime=stat.st_mtime, size=stat.st_size)
         # The third holds no date to move.
         self.files = {self.shot[0]: {"EXIF:DateTimeOriginal": TAKEN, "EXIF:CreateDate": TAKEN},
                       self.shot[1]: {"EXIF:DateTimeOriginal": TAKEN},
@@ -83,13 +88,13 @@ class ShiftingDateTaken(unittest.TestCase):
             self.assertEqual(raw["EXIF:DateTimeOriginal"], SHIFTED)
             self.assertEqual((mtime, size), (stat.st_mtime, stat.st_size))
         # Nothing written to the third: its row is left as it was.
-        self.assertEqual(rows[self.shot[2]], ({}, 1.0, 1))
+        self.assertEqual(rows[self.shot[2]], ({},) + self.stamps[self.shot[2]])
 
     def test_a_file_that_cannot_be_written_is_an_error_and_keeps_its_row(self):
         result = self.shift(refuses=[self.shot[1]])
         self.assertEqual((result.changed, result.message()), (1, "the file is locked"))
         self.assertEqual(self.files[self.shot[1]], {"EXIF:DateTimeOriginal": TAKEN})
-        self.assertEqual(self.rows()[self.shot[1]], ({}, 1.0, 1))
+        self.assertEqual(self.rows()[self.shot[1]], ({},) + self.stamps[self.shot[1]])
 
 
 if __name__ == "__main__":

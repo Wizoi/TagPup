@@ -7,7 +7,7 @@ from tagpup.core import dates, fields, paths, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
 from tagpup.files import images, metadata, names, recycle_bin
 from tagpup.services import file_changes
-from tagpup.store import db, faces, photos, taxonomy
+from tagpup.store import db, embeddings, faces, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +88,7 @@ def scan_folder(library, folder, exiftool_path):
         except OSError:
             continue
         row = known.get(paths.key(file))
-        if (row and row["mtime"] is not None and row["size"] is not None
-                and abs(row["mtime"] - stat.st_mtime) < 0.1 and row["size"] == stat.st_size):
+        if row and photos.describes(row["mtime"], row["size"], (stat.st_mtime, stat.st_size)):
             found[paths.key(file)] = page_record(row["path"], row, stat.st_mtime, stat.st_size)
         else:
             to_read.append((file, stat.st_mtime, stat.st_size))
@@ -341,6 +340,8 @@ def rotate(library, photo_path, direction, exiftool_path):
     because thumbnails are cached for a day), its `orientation`, and `faces_turned`.
     """
     result = Result(attempted=1)
+    # The row is stamped only if it described the file just before the turn (#249).
+    before = embeddings.stamp_of(photo_path)
     try:
         width, height, oriented = images.shown_size(photo_path)
         orientation = metadata.rotate_image_file(photo_path, direction, exiftool_path)
@@ -353,7 +354,7 @@ def rotate(library, photo_path, direction, exiftool_path):
         faces.turn_boxes(library.path, photo_path, direction, width, height) if oriented else 0)
     # The embedder applies the Orientation, so the photo's vectors describe the turn
     # before; they go, and are computed again.
-    photos.record_file_stat(library.path, photo_path, looks_different=True)
+    photos.record_file_stat(library.path, photo_path, looks_different=True, before=before)
     stat = os.stat(photo_path)
     result.details.update(mtime=stat.st_mtime, size=stat.st_size)
     return result
