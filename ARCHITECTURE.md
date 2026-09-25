@@ -253,6 +253,7 @@ Exit: every rule the sweep found has one owner, and the full check runs across t
 - Flask and Waitress: both ports, one process, services behind thin routes.
 - The two standard-library servers and their launchers retire.
 - Web tests use the test client.
+- No startup library (#100): a library is reached by its URL; the pages remember the last one in the browser and show the picker without one; the CLI requires `--db`; `default_db` goes, and nothing writes config.ini.
 
 Exit: one server process, and no test opens a socket to check logic it could check in-process.
 
@@ -308,7 +309,7 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 2. Services | done, 2026-09-24 |
 | 3. Store | done, 2026-09-24 |
 | 4. Data model | done, 2026-09-24 |
-| 4.5. One owner for each rule | not started |
+| 4.5. One owner for each rule | done, 2026-09-24 |
 | 5. One server | not started |
 | 6. Pages | not started |
 | 7. MCP | not started |
