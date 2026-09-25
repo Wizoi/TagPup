@@ -37,6 +37,7 @@ MAY_IMPORT = {
     "runtime": {"core", "config", "logs", "store", "files", "ml", "services", "jobs"},
     "web": {"core", "config", "logs", "runtime", "services", "jobs"},
     "cli": {"core", "config", "logs", "runtime", "services", "jobs"},
+    "mcp": {"core", "config", "logs", "runtime", "services", "jobs"},
 }
 
 #: A line importing the package itself, not a module whose name starts with "tagpup".

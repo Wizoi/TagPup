@@ -12,6 +12,8 @@ scikit-learn
 # The web layer (tagpup.web): the apps' routes, and the server that runs both.
 flask
 waitress
+# The MCP server Claude works with a library through (tagpup.mcp), over stdio.
+mcp
 # Drives the real app in a real browser: screenshots, and the end-to-end
 # click-latency measurements in scripts/measure_identify_faces.py.
 playwright
