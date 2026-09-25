@@ -143,6 +143,50 @@ def follow_tree(conn, before):
     return rebuild(conn, affected, after) if affected else 0
 
 
+def _spelled(keyword):
+    """A keyword as extract_people looks it up."""
+    return str(keyword).replace("\\", "/").strip().lower()  # not a path: a keyword hierarchy
+
+
+def photos_named_by(conn, nodes):
+    """The ids of the photos whose people a change to the tree nodes `nodes` -- (tag,
+    name) of each, as it was or is -- may have changed: those carrying a keyword spelled
+    as one of their tags or names, or under one of them that is a root.
+
+    follow_tree compares the tree's people from before an edit with after; a change the
+    journal finishes at start (tagpup.store.journal) has only its rows, not the tree from
+    before. A keyword whose person changes is one some changed node spells, by tag or by
+    name (PeopleVocabulary.from_rows), or one under a root that changed, so this finds
+    every photo follow_tree would, and some it would not, which rebuild leaves alone.
+    """
+    keys, roots = set(), set()
+    for tag, name in nodes:
+        keys.update(_spelled(text) for text in (tag, name) if text)
+        if tag and len(vocabulary.segments(tag)) == 1:
+            roots.update(str(text).strip().lower() for text in (tag, name) if text)
+    if not keys:
+        return []
+    affected = []
+    for photo_id, tags_json in conn.execute("SELECT id, tags FROM photos WHERE tags IS NOT NULL AND tags != '[]'"):
+        try:
+            tags = json.loads(tags_json)
+        except (TypeError, ValueError):
+            continue
+        for tag in tags:
+            parts = vocabulary.segments(tag)
+            if _spelled(tag) in keys or (roots and parts and parts[0].lower() in roots):
+                affected.append(photo_id)
+                break
+    return affected
+
+
+def follow_nodes(conn, nodes):
+    """Rebuild the photos whose people a change to the tree nodes `nodes` may have changed
+    (photos_named_by). Returns how many photos' people changed. The caller commits."""
+    affected = photos_named_by(conn, nodes)
+    return rebuild(conn, affected) if affected else 0
+
+
 @contextlib.contextmanager
 def tree_edit(conn):
     """An edit of the tag tree on `conn`, after which the photos whose people it changed
