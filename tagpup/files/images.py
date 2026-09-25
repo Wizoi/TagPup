@@ -113,6 +113,22 @@ def opened(photo_path, upright):
         return img
 
 
+def pad_to_square(image, background_color=(0, 0, 0)):
+    """The picture centred on a square of `background_color` (black), so that a model
+    that crops to a square sees the whole frame."""
+    width, height = image.size
+    if width == height:
+        return image
+    elif width > height:
+        result = Image.new(image.mode, (width, width), background_color)
+        result.paste(image, (0, (width - height) // 2))
+        return result
+    else:
+        result = Image.new(image.mode, (height, height), background_color)
+        result.paste(image, ((height - width) // 2, 0))
+        return result
+
+
 def parse_box(box):
     """A face box as stored -- JSON, or the bare "[x1, y1, x2, y2]" of older rows -- as a
     list of numbers, or [] if it cannot be read."""

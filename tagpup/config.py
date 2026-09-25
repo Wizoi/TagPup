@@ -135,7 +135,8 @@ def exiftool_path(settings=None):
 
 
 def embedder_settings(settings=None):
-    """The keyword arguments ClipEmbedder takes from the config."""
+    """The CLIP model's settings (tagpup.ml.clip.ClipModel's keyword arguments), which
+    tagpup.runtime builds it from."""
     settings = settings or load()
     size = settings.get("model", "force_image_size").strip()
     return {
