@@ -1,11 +1,82 @@
-/* The library's settings (web/common/settings-dialog.js), in TagTuner's .modal frame. */
+/* The library's settings (web/common/settings-dialog.js). Its frame is its own, as the
+   history dialog's is: it is a TagTuner .modal, and TagPup's page styles no .modal, so
+   in TagPup it opened with no overlay, no panel and no padding. These are TagTuner's
+   .modal rules, scoped to this dialog. */
+
+.settings-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(9, 13, 22, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.settings-modal.hidden {
+    display: none !important;
+}
 
 .settings-content {
+    display: flex;
+    flex-direction: column;
     width: 680px;
+    max-width: 90vw;
+    max-height: 85vh;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    color: var(--text-primary);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+}
+
+.settings-content .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.settings-content .close-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
 }
 
 .settings-body {
+    display: flex;
+    flex-direction: column;
     gap: 16px;
+    padding: 24px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.settings-modal .form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.settings-modal .form-group label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.settings-modal .modal-input {
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 14px;
+    color: var(--text-primary);
 }
 
 .settings-group {
@@ -107,7 +178,12 @@
 }
 
 .settings-footer {
+    display: flex;
+    justify-content: flex-end;
     align-items: center;
+    gap: 8px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--border-color);
 }
 
 .settings-status {
