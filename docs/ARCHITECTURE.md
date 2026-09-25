@@ -335,6 +335,22 @@ state and are also imported directly by node tests.
 
 Exit: no page file over about 1,000 lines, and the two pages share every common helper.
 
+### Phase 6.5: No shims
+Every move left a shim at the old name in `scripts/`, so that old code kept working
+(`import db` is `tagpup.store.db`). On 2026-09-25 they are still imported: `db` by 29
+files, `paths` by 14, `taxonomy` by 10, `exiftool_session` by 7, `identity` and
+`suggester` by 2, and the three compositions phase 5.5 kept for tests -- `index` by 7,
+`faces` by 3, `embedder` by 1 (findings #139). Two modules are not shims but sit where
+they should not: `writer.py`, the CLI's `write` command, and `metadata.py`, imported by 6
+and 11. Phases 7 and 8 add features, not structure; they should find one name for
+everything.
+- [ ] The re-export shims (`db`, `paths`, `taxonomy`, `exiftool_session`, `identity`): every importer uses the package name, and the shims go.
+- [ ] The compositions (`embedder`, `faces`, `index`, `suggester`): their tests use `tagpup.ml` and `tagpup.services`, handing in fakes as arguments -- the two behaviour anchors pass `faces=` rather than setting a module slot (findings #136) -- and the shims go.
+- [ ] `writer.py` into `tagpup.services.tagging`, which the CLI's `write` calls; `metadata.py` into the owners "Where everything goes" names.
+- [ ] Guard: every module in `scripts/` is an entry point (it has a `__main__` block) or a helper the entry points share (`_root`, `code_snapshot`), and nothing but a script's own tests imports one. CLAUDE.md stops describing shims.
+
+Exit: `scripts/` holds entry points only, and `import db` fails.
+
 ### Phase 7: MCP
 An MCP server, `tagpup.mcp`, so that Claude works with a library through the same services the apps use, rather than through a one-off script per question. Settling #42 in findings.md took four throwaway scripts to learn that its 35 names sat on 28 rows of a folder deleted on purpose. Its reads need the repositories, so it follows phase 3; its order among phases 4 to 6 does not matter.
 - An entry point beside web and cli, over stdio, in a process of its own. It opens the library `TAGPUP_HOME` names and never talks to a running app's port.
@@ -391,5 +407,6 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 5. One server | done, 2026-09-24 |
 | 5.5. Models in the package, one composition root | done, 2026-09-24 (shims for tests remain: findings #139) |
 | 6. Pages | in progress, 2026-09-25 |
+| 6.5. No shims | not started |
 | 7. MCP | not started |
 | 8. Sync | not started |
