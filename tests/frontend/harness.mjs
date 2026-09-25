@@ -149,10 +149,11 @@ export function pageModules(pageDir, commonDir = COMMON_DIR) {
 
   const owner = new Map();
   for (const module of ordered) {
-    for (const name of module.exported) if (!owner.has(name)) owner.set(name, module.url);
+    for (const name of module.declared) if (!owner.has(name)) owner.set(name, module.url);
   }
 
-  // A module using another's export without importing it fails in a browser. In the
+  // A module using another's top-level name without importing it -- exported or not --
+  // fails in a browser. In the
   // tests it fails too -- each module has its own scope -- but only on a path a test
   // runs; this finds it on every path. A name the module binds itself (a parameter, a
   // local) is its own, not a use of the other module's.

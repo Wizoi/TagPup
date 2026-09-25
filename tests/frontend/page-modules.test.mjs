@@ -126,6 +126,12 @@ describe("what the page loader cannot take is refused", () => {
       "common/api.js": "export function libraryIn(p) { return p; }\nexport const api = { url: (p) => p };\n",
     });
     assert.throws(() => pageModules(page, common), /uses libraryIn from .*api\.js without importing it/);
+    // A name the other module does not export is a ReferenceError in a browser too.
+    const hidden = site({
+      "page/main.js": 'import { api } from "./common/api.js";\nconst address = trim("/x/");\n',
+      "common/api.js": "function trim(p) { return p; }\nexport const api = {};\n",
+    });
+    assert.throws(() => pageModules(hidden.page, hidden.common), /uses trim from .*api\.js without importing it/);
     // Named in a comment or a string, it is not used.
     const quiet = site({
       "page/main.js": 'import { api } from "./common/api.js";\n// libraryIn is api.js\'s\nconst label = "libraryIn";\n',
