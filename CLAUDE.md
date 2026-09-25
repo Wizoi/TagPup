@@ -99,6 +99,13 @@ selects or creates a library runs with a `TAGPUP_HOME` of its own.
 a name is filed. `tests/frontend/tag-vocabulary.test.mjs` and `tests/test_vocabulary.py`
 enforce it.
 
+**A test's data is made by the code that makes the real thing.** A photo row is what
+the indexer records of a read (`tests/photo_rows.py`: `add_read`), or what Suggest makes
+of a photo it never read (`add_unread`); a record the page sends is built as the page
+builds it. Two regressions reached the owner in one day (#246, #247) because a fixture
+held a shape nothing real makes -- a year only in raw metadata, grouped field names
+without their bare copies -- and the tests agreed with the bug.
+
 **A bulk write must tell the index what it wrote.** Saving one photo always did;
 the bulk paths did not, and rows described what photos used to hold.
 `record_tags_in_index()`.
@@ -151,6 +158,9 @@ reported 60 done, and wrote nothing; the paths did not match and nothing said so
 - Edit through `tools/patch.py` from a script written with the Write tool: exact,
   counted, newline-preserving, all-or-nothing. One script per concern that patches,
   lints and runs the tests, not one tool call per step.
+- Before briefing a new tool, script or module, find the existing owner: grep
+  `tagpup/services/`, the MCP server's tools and `scripts/`. A worker asked for a new
+  repair script had half of it built before `refresh_rows` turned out to own the job.
 - Delegate multi-file work to the `tagpup-worker` agent in a worktree; its definition
   holds the standing rules, so the brief says only the task and which files are its.
 - After any change more than one agent made, run `tagpup-reviewer` over it before
