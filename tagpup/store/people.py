@@ -134,18 +134,11 @@ def follow_tree(conn, before):
         except (TypeError, ValueError):
             continue
         for tag in tags:
-            # Spelled as extract_people looks a keyword up.
-            spelled = str(tag).replace("\\", "/").strip().lower()  # not a path: a keyword hierarchy
             parts = vocabulary.segments(tag)   # none for a keyword that is only a separator (#88)
-            if spelled in keys or (roots and parts and parts[0].lower() in roots):
+            if vocabulary.keyword_key(tag) in keys or (roots and parts and parts[0].lower() in roots):
                 affected.append(photo_id)
                 break
     return rebuild(conn, affected, after) if affected else 0
-
-
-def _spelled(keyword):
-    """A keyword as extract_people looks it up."""
-    return str(keyword).replace("\\", "/").strip().lower()  # not a path: a keyword hierarchy
 
 
 def photos_named_by(conn, nodes):
@@ -161,9 +154,9 @@ def photos_named_by(conn, nodes):
     """
     keys, roots = set(), set()
     for tag, name in nodes:
-        keys.update(_spelled(text) for text in (tag, name) if text)
+        keys.update(vocabulary.keyword_key(text) for text in (tag, name) if text)
         if tag and len(vocabulary.segments(tag)) == 1:
-            roots.update(str(text).strip().lower() for text in (tag, name) if text)
+            roots.update(vocabulary.key(text) for text in (tag, name) if text)
     if not keys:
         return []
     affected = []
@@ -174,7 +167,7 @@ def photos_named_by(conn, nodes):
             continue
         for tag in tags:
             parts = vocabulary.segments(tag)
-            if _spelled(tag) in keys or (roots and parts and parts[0].lower() in roots):
+            if vocabulary.keyword_key(tag) in keys or (roots and parts and parts[0].lower() in roots):
                 affected.append(photo_id)
                 break
     return affected

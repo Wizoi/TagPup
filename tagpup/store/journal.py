@@ -17,11 +17,21 @@ each with what the plan read of the row (`expect`). Then:
   commit; then rebuild what the change touched of the derived data (each touched
   photo's people and dates) and mark it `applied`. A crash between the two leaves it
   `derived_pending`, and `settle` finishes it the next time a process opens the library.
+  An edit marked `skippable` whose row is not what the plan read is left out of the
+  change instead, and listed (`Applied.skipped`): only a refresh, whose rows are
+  independent, uses it.
 - **undo**: the same with old and new swapped, refused when a row is not what the
   change left, when a newer change touched the same rows (named), or when the schema
   has moved on since.
 - **rehearse**: the change and its undo inside a transaction that is rolled back,
   saying whether the undo restored every row exactly. Nothing is written.
+
+Either way a write is refused, before anything is written, when it would leave a row
+naming a row that is not there -- a face put back on a photo deleted since, a node under
+a parent deleted since -- or break a UNIQUE constraint (`_blocked`): the journal writes
+on connections with foreign keys off, so SQLite would not say. Both are read from the
+schema, as the cascade guard reads it. An IntegrityError SQLite raises all the same
+becomes a Refusal, the transaction rolled back.
 
 A delete takes more than its row: triggers delete a face's crop and a photo's vectors,
 people and suggestions, and ON DELETE CASCADE, on a connection with foreign keys on,
@@ -37,10 +47,11 @@ real people, many of them minors.
 import collections
 import json
 import logging
+import sqlite3
 import threading
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from tagpup.store import db, people, schema
 from tagpup.store import photos as store_photos
@@ -60,6 +71,12 @@ KEYS = {
 
 #: Derived tables: never journaled, rebuilt from what a change touched.
 DERIVED = ("photo_people",)
+
+#: Derived columns of journaled tables, rebuilt from the row's other columns after each
+#: write (a photo's dates, from its metadata and path: store.photos.date_photos). An
+#: inserted photo is recorded as written, before they are filled in, so an undo does not
+#: hold a row to them: it would find every inserted photo changed since.
+DERIVED_COLUMNS = {"photos": ("taken", "year")}
 
 RECORDED, REBUILT, FORBIDDEN = "recorded", "rebuilt", "forbidden"
 
@@ -108,18 +125,23 @@ class Edit:
     values: Dict[str, Any] = field(default_factory=dict)
     #: What the operation counts the edit as, if it counts by kind.
     kind: str = ""
+    #: When the row is not what the plan read, leave this edit out of the change and list
+    #: it (Applied.skipped) instead of refusing the whole change. For an operation whose
+    #: rows do not depend on each other -- a refresh, where one row saved in the app while
+    #: the files were read must not throw away the rest of the read.
+    skippable: bool = False
 
 
 def insert(table, values, kind=""):
     return Edit("insert", table, None, {}, dict(values), kind)
 
 
-def update(table, key, expect, values, kind=""):
-    return Edit("update", table, tuple(key), dict(expect), dict(values), kind)
+def update(table, key, expect, values, kind="", skippable=False):
+    return Edit("update", table, tuple(key), dict(expect), dict(values), kind, skippable)
 
 
-def delete(table, key, expect, kind=""):
-    return Edit("delete", table, tuple(key), dict(expect), {}, kind)
+def delete(table, key, expect, kind="", skippable=False):
+    return Edit("delete", table, tuple(key), dict(expect), {}, kind, skippable)
 
 
 @dataclass
@@ -161,6 +183,8 @@ class Applied:
     #: The derived data is rebuilt. False leaves the change `derived_pending`, finished
     #: the next time the library is opened.
     settled: bool = True
+    #: (row, why) of each skippable edit left out: its row was not what the plan read.
+    skipped: List[Tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -187,6 +211,8 @@ class Rehearsal:
     #: Photos whose people were not what the rule makes them before the change: a writer
     #: that did not rebuild. The change rebuilds them, and its undo does not unbuild them.
     derived_stale: int = 0
+    #: [row, why] of each skippable edit applying would leave out.
+    skipped: List[List[str]] = field(default_factory=list)
 
     def as_dict(self):
         return asdict(self)
@@ -236,8 +262,10 @@ def has_journal(conn):
 # ---- Reading a change against the rows --------------------------------------------------
 
 def _resolve(conn, edits):
-    """The rows `edits` would write, cascades first, as they stand; Refusal when any is
-    not what the plan read. Reads only."""
+    """(the rows `edits` would write, cascades first, as they stand; (row, why) of each
+    skippable edit left out). Refusal when any other is not what the plan read, or when
+    writing them would leave a row naming one that is not there or break a UNIQUE
+    constraint (_blocked). Reads only."""
     columns = {}
 
     def cols(table):
@@ -245,7 +273,7 @@ def _resolve(conn, edits):
             columns[table] = _columns(conn, table)
         return columns[table]
 
-    refusals, top, seen = [], [], set()
+    refusals, top, seen, skipped = [], [], set(), []
     deletes = collections.defaultdict(dict)
     for edit in edits:
         if edit.table not in KEYS:
@@ -279,11 +307,18 @@ def _resolve(conn, edits):
                                                                                      + list(edit.values)))
         row = _read(conn, edit.table, key, wanted)
         if row is None:
-            refusals.append("%s is gone" % _named(edit.table, key))
+            if edit.skippable:
+                skipped.append((_named(edit.table, key), "gone since the plan read it"))
+            else:
+                refusals.append("%s is gone" % _named(edit.table, key))
             continue
         differs = [column for column, value in edit.expect.items() if not _same(row[column], value)]
         if differs:
-            refusals.append("%s is not what the plan read: %s changed" % (_named(edit.table, key), ", ".join(differs)))
+            if edit.skippable:
+                skipped.append((_named(edit.table, key), "not what the plan read: %s changed" % ", ".join(differs)))
+            else:
+                refusals.append("%s is not what the plan read: %s changed"
+                                % (_named(edit.table, key), ", ".join(differs)))
             continue
         if edit.action == "update":
             changed = {column: value for column, value in edit.values.items() if not _same(row[column], value)}
@@ -338,7 +373,159 @@ def _resolve(conn, edits):
 
     for change in top:
         emit(change)
-    return ordered
+    refusals = _blocked(conn, ordered)
+    if refusals:
+        raise Refusal(refusals)
+    return ordered, skipped
+
+
+# ---- What the schema asks of a row ---------------------------------------------------------
+
+def _primary(conn, table):
+    return tuple(row[1] for row in sorted(conn.execute('PRAGMA table_info("%s")' % table),
+                                          key=lambda row: row[5]) if row[5])
+
+
+def _foreign_keys(conn, table):
+    """[(columns, parent table, parent columns)] of every foreign key of `table`, from the
+    schema."""
+    found = {}
+    for row in conn.execute('PRAGMA foreign_key_list("%s")' % table):
+        number, _seq, parent, column, parent_column = row[:5]
+        found.setdefault(number, (parent, [], []))
+        found[number][1].append(column)
+        found[number][2].append(parent_column)
+    keys = []
+    for parent, columns, parent_columns in found.values():
+        if any(c is None for c in parent_columns):
+            parent_columns = _primary(conn, parent)   # REFERENCES t: its primary key
+        keys.append((tuple(columns), parent, tuple(parent_columns)))
+    return keys
+
+
+def _uniques(conn, table):
+    """[(columns, collations)] of every UNIQUE constraint and unique index of `table` but
+    its key, which the journal checks itself. A partial index, or one on an expression, is
+    left to the backstop: SQLite raises, and the write becomes a Refusal."""
+    found = []
+    for row in conn.execute('PRAGMA index_list("%s")' % table):
+        name, unique, origin, partial = row[1], row[2], row[3], row[4]
+        if not unique or origin == "pk" or partial:
+            continue
+        info = [r for r in conn.execute('PRAGMA index_xinfo("%s")' % name) if r[5]]
+        if any(r[2] is None for r in info):
+            continue
+        found.append((tuple(r[2] for r in info), tuple(r[4] or "BINARY" for r in info)))
+    return found
+
+
+def _who(change):
+    return _named(change.table, change.key) if change.key is not None else "a new row of %s" % change.table
+
+
+def _existing(conn, table, columns, wanted):
+    """{values: [key of each row of `table` holding them in `columns`]} for each tuple in
+    `wanted`. One query per chunk when the columns are one, as a foreign key's are."""
+    keys = KEYS.get(table) or _primary(conn, table)
+    selected = ", ".join('"%s"' % c for c in keys + tuple(columns))
+    found = collections.defaultdict(list)
+    wanted = list(wanted)
+    if len(columns) == 1:
+        for start in range(0, len(wanted), CHUNK):
+            chunk = [values[0] for values in wanted[start:start + CHUNK]]
+            for row in conn.execute('SELECT %s FROM "%s" WHERE "%s" IN (%s)' % (
+                    selected, table, columns[0], ",".join("?" * len(chunk))), chunk):
+                found[tuple(row[len(keys):])].append(tuple(row[:len(keys)]))
+        return found
+    where = " AND ".join('"%s" = ?' % c for c in columns)
+    for values in wanted:
+        for row in conn.execute('SELECT %s FROM "%s" WHERE %s' % (selected, table, where), values):
+            found[values].append(tuple(row[:len(keys)]))
+    return found
+
+
+def _blocked(conn, writes):
+    """Why writing `writes`, in order, would leave a row naming a row that is not there,
+    or break a UNIQUE constraint: [] when it would not. Every foreign key and UNIQUE of the
+    tables written, read from the schema -- faces.photo_id, tag_taxonomy.parent_id,
+    face_crops.face_id, tag_taxonomy.tag, photos.path... A parent the same writes insert
+    counts as there, one they delete as gone; a value a row they delete or move held is
+    free. Names rows and columns, never values. Reads only."""
+    constraints = {}
+
+    def of(table):
+        if table not in constraints:
+            constraints[table] = (_foreign_keys(conn, table), _uniques(conn, table))
+        return constraints[table]
+
+    def values_of(change, columns):
+        """The row's `columns` once `change` is written; None when one is NULL, which
+        neither a foreign key nor a UNIQUE constraint holds to anything."""
+        if change.action == "insert" or all(c in change.new for c in columns):
+            values = tuple(change.new.get(c) for c in columns)
+        else:
+            row = _read(conn, change.table, change.key, list(columns)) or {}
+            values = tuple(change.new[c] if c in change.new else row.get(c) for c in columns)
+        return None if any(v is None for v in values) else values
+
+    written = [change for change in writes if change.action != "delete"]
+    deleted = {(change.table, change.key) for change in writes if change.action == "delete"}
+    reasons = []
+
+    # Foreign keys: each value a written row names, looked up once per parent and chunk.
+    needed = collections.defaultdict(lambda: collections.defaultdict(list))
+    for change in written:
+        for columns, parent, parent_columns in of(change.table)[0]:
+            if change.action == "update" and not set(columns) & set(change.new):
+                continue
+            values = values_of(change, columns)
+            if values is not None:
+                needed[(parent, parent_columns)][values].append((change, columns))
+    for (parent, parent_columns), by_values in needed.items():
+        inserted = {tuple(c.new.get(p) for p in parent_columns) for c in written
+                    if c.action == "insert" and c.table == parent}
+        missing = [values for values in by_values if values not in inserted]
+        there = _existing(conn, parent, parent_columns, missing) if missing else {}
+        by_key = parent_columns == (KEYS.get(parent) or _primary(conn, parent))
+        for values in missing:
+            if any((parent, key) not in deleted for key in there.get(values, ())):
+                continue
+            for change, columns in by_values[values]:
+                reasons.append("%s: %s names %s, which is not there" % (
+                    _who(change), ", ".join(columns), _named(parent, values) if by_key else "a row of %s" % parent))
+
+    # UNIQUE: a value another row holds, or another written row claims.
+    claimed = {}
+    for change in written:
+        for columns, collations in of(change.table)[1]:
+            if change.action == "update" and not set(columns) & set(change.new):
+                continue
+            values = values_of(change, columns)
+            if values is None:
+                continue
+            slot = (change.table, columns, values)
+            if slot in claimed:
+                reasons.append("%s: %s is the same as %s's, which the change also writes"
+                               % (_who(change), ", ".join(columns), _who(claimed[slot])))
+                continue
+            claimed[slot] = change
+            moved = {c.key for c in written if c.action == "update" and c.table == change.table
+                     and set(columns) & set(c.new)}
+            where = " AND ".join('"%s" = ? COLLATE %s' % (c, collation) for c, collation in zip(columns, collations))
+            for row in conn.execute('SELECT %s FROM "%s" WHERE %s' % (
+                    ", ".join('"%s"' % c for c in KEYS[change.table]), change.table, where), values):
+                key = tuple(row)
+                if key == change.key or (change.table, key) in deleted or key in moved:
+                    continue
+                reasons.append("%s: %s is taken by %s" % (_who(change), ", ".join(columns),
+                                                          _named(change.table, key)))
+    return reasons
+
+
+def _integrity(error):
+    """A Refusal for an IntegrityError SQLite raised all the same: its message names the
+    constraint, the table and the column, never a value."""
+    return Refusal(["the database refused a row: %s" % error])
 
 
 def _write(conn, changes):
@@ -423,7 +610,8 @@ def _not_as_left(conn, change_id, changes):
         if row is None:
             reasons.append("%s is gone" % _named(change.table, change.key))
             continue
-        differs = [c for c in change.new if not _same(row[c], change.new[c])]
+        derived = DERIVED_COLUMNS.get(change.table, ())
+        differs = [c for c in change.new if c not in derived and not _same(row[c], change.new[c])]
         if differs:
             reasons.append("%s is not what change %d left: %s changed"
                            % (_named(change.table, change.key), change_id, ", ".join(differs)))
@@ -460,19 +648,23 @@ def _touched(conn, changes):
     for change in changes:
         values = [d for d in (change.old, change.new) if d]
         columns = set().union(*values) if values else set()
+        # An insert not yet written has no key and nothing derived from it: its photo
+        # does not exist yet. Once the forward writes it, it has both.
         if change.table == "photos":
+            if change.key is None:
+                continue
             photo_ids.add(change.key[0])
             if change.action != "update" or columns & {"path", "raw_metadata"}:
                 dated.add(change.key[0])
         elif change.table == "faces":
             found = {d["photo_id"] for d in values if "photo_id" in d}
-            if not found:
+            if not found and change.key is not None:
                 row = _read(conn, "faces", change.key, ["photo_id"])
                 found = {row["photo_id"]} if row else set()
             photo_ids |= found
         elif change.table == "tag_taxonomy":
             nodes += [(d.get("tag"), d.get("name")) for d in values]
-            if not {"tag", "name"} <= columns:
+            if not {"tag", "name"} <= columns and change.key is not None:
                 row = _read(conn, "tag_taxonomy", change.key, ["tag", "name"])
                 if row:
                     nodes.append((row["tag"], row["name"]))
@@ -542,15 +734,19 @@ def apply(db_path, operation, edits, summary=None):
         try:
             db.begin(conn, immediate=True)
             try:
-                changes = _resolve(conn, edits)
-                change_id = _forward(conn, operation, changes, summary) if changes else None
+                try:
+                    changes, skipped = _resolve(conn, edits)
+                    change_id = _forward(conn, operation, changes, summary) if changes else None
+                except sqlite3.IntegrityError as e:
+                    raise _integrity(e) from e
                 _reached("forward written")
                 conn.commit()
             except BaseException:
                 conn.rollback()
                 raise
             applied = Applied(change_id, sum(1 for c in changes if c.top), len(changes),
-                              dict(collections.Counter(c.kind for c in changes if c.top and c.kind)))
+                              dict(collections.Counter(c.kind for c in changes if c.top and c.kind)),
+                              skipped=list(skipped))
             if change_id is None:
                 return applied
             _reached("forward committed")
@@ -585,9 +781,15 @@ def _undo_in(conn, change_id):
                        for other, name in newer])
     changes = _load(conn, change_id)
     reasons = _not_as_left(conn, change_id, changes)
+    inverse = [_inverse(change) for change in reversed(changes)]
+    if not reasons:
+        reasons = _blocked(conn, inverse)
     if reasons:
         raise Refusal(reasons)
-    _write(conn, [_inverse(change) for change in reversed(changes)])
+    try:
+        _write(conn, inverse)
+    except sqlite3.IntegrityError as e:
+        raise _integrity(e) from e
     conn.execute("UPDATE changes SET status = 'derived_pending', undone = ? WHERE id = ?", (_now(), change_id))
     return changes
 
@@ -655,6 +857,9 @@ def _rehearsed(conn, before, changes, restore, count, stale):
     `restore` has run."""
     try:
         restore()
+    except sqlite3.IntegrityError as e:
+        return Rehearsal(rows=len(changes), changed=count,
+                         differences=["the undo was refused: %s" % _integrity(e)], derived_stale=stale)
     except Refusal as e:
         return Rehearsal(rows=len(changes), changed=count, differences=["the undo was refused: %s" % e],
                          derived_stale=stale)
@@ -675,23 +880,30 @@ def rehearse(db_path, operation, edits, summary=None):
             db.begin(conn, immediate=True)
             try:
                 try:
-                    changes = _resolve(conn, edits)
+                    changes, skipped = _resolve(conn, edits)
                 except Refusal as e:
                     return Rehearsal(refused=str(e))
+                skipped = [list(s) for s in skipped]
                 if not changes:
-                    return Rehearsal(exact=True, derived_exact=True)
+                    return Rehearsal(exact=True, derived_exact=True, skipped=skipped)
                 # The people as the rule makes them from the rows as they are, so that a
-                # photo some writer left stale is not blamed on the undo.
+                # photo some writer left stale is not blamed on the undo. An insert has no
+                # key yet, and nothing derived: the forward gives it both.
                 stale = _derive(conn, changes)
                 before = _snapshot(conn, changes)
-                change_id = _forward(conn, operation, changes, summary)
+                try:
+                    change_id = _forward(conn, operation, changes, summary)
+                except sqlite3.IntegrityError as e:
+                    return Rehearsal(refused=str(_integrity(e)))
                 _derive(conn, changes)
                 conn.execute("UPDATE changes SET status = 'applied' WHERE id = ?", (change_id,))
 
                 def undo_it():
                     _derive(conn, _undo_in(conn, change_id))
 
-                return _rehearsed(conn, before, changes, undo_it, sum(1 for c in changes if c.top), stale)
+                rehearsal = _rehearsed(conn, before, changes, undo_it, sum(1 for c in changes if c.top), stale)
+                rehearsal.skipped = skipped
+                return rehearsal
             finally:
                 conn.rollback()
         finally:
@@ -798,12 +1010,16 @@ def history(db_path, limit=20, change_id=None, values=False):
                     chunk):
                 by_id[cid]["rows"].setdefault(table, {})[action] = count
         if change_id is not None and entries:
-            changes = _load(conn, change_id)
+            # The keys alone: the old and new values -- a deleted face's crop and vector,
+            # 8 KB a face -- are read only when asked for.
             keys = collections.defaultdict(list)
-            for change in changes:
-                keys[change.table].append(list(change.key))
+            for table, key_text in conn.execute(
+                    "SELECT table_name, row_key FROM change_rows WHERE change_id = ?"
+                    " GROUP BY action, table_name, row_key ORDER BY MIN(id)", (change_id,)):
+                keys[table].append(json.loads(key_text))
             entries[0]["keys"] = dict(keys)
             if values:
+                changes = _load(conn, change_id)
                 entries[0]["values"] = [{
                     "action": change.action, "table": change.table, "key": list(change.key),
                     "old": None if change.old is None else {c: _shown(v) for c, v in change.old.items()},

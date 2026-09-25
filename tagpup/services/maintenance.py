@@ -21,7 +21,8 @@ operation can re-read cheaply.
 Applying records the edits as one change of the library's journal (phase 7.5) instead of
 copying the library first: applied only where every row is still what the plan read --
 otherwise the whole change is refused, naming the rows -- and undoable afterwards on the
-same terms (tagpup.services.journal). A dry run is the rehearsal: the change applied and
+same terms (tagpup.services.journal). An edit marked skippable (a refresh's) whose row
+changed since is left out instead, and listed in the Result's `skipped`. A dry run is the rehearsal: the change applied and
 undone inside a transaction that is rolled back, which says whether the undo restored
 every row exactly. Nothing is written by it.
 
@@ -85,6 +86,8 @@ def run(library, operation, plan, edits, apply=False, remaining=None, kinds=()):
             result.fail("the rehearsal", "%s: %s" % (type(e).__name__, e))
             return result
         result.details["rehearsal"] = rehearsal.as_dict()
+        for what, why in rehearsal.skipped:
+            result.skip(what, why)
         if rehearsal.refused:
             result.refuse(rehearsal.refused)
         return result
@@ -98,6 +101,8 @@ def run(library, operation, plan, edits, apply=False, remaining=None, kinds=()):
         return result
     result.changed = applied.changed
     result.details["change"] = applied.change_id
+    for what, why in applied.skipped:
+        result.skip(what, why)
     if kinds:
         result.details["changed"] = {kind: applied.by_kind.get(kind, 0) for kind in kinds}
     if not applied.settled:
@@ -126,5 +131,19 @@ def rehearsed(result):
 
 def recorded(result, db_path):
     """Which change an apply was recorded as, and how to take it back, in a line."""
+    change = result.details.get("change")
+    if change is None:
+        return "Nothing was recorded: no change was written."
     return ('Recorded as change %d; to undo it: tagpup_cli.py --db "%s" undo %d --apply'
-            % (result.details["change"], db_path, result.details["change"]))
+            % (change, db_path, change))
+
+
+def skipped(result):
+    """The rows left out, a line each, for a person; [] when none were."""
+    return ["Skipped %s: %s" % (what, why) for what, why in result.skipped]
+
+
+def failed(result):
+    """What failed, a line each, for a person; [] when nothing did. A script prints these
+    and exits non-zero."""
+    return ["FAILED: %s: %s" % (what, error) for what, error in result.errors]

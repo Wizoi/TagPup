@@ -343,7 +343,7 @@ class RefreshRows(refresh_fixture.RefreshRowsFromFiles):
         self.assertEqual(3, len(self.read), "the fixture has three files to read")
         self.assertLessEqual(read.call_count, 2)
 
-    def test_a_row_saved_after_the_read_refuses_the_change_by_id(self):
+    def test_a_row_saved_after_the_read_is_skipped_by_id_and_the_rest_written(self):
         real = self.fake_batch_read
 
         def read_then_the_app_saves(extractor, paths, people=None):
@@ -357,14 +357,15 @@ class RefreshRows(refresh_fixture.RefreshRowsFromFiles):
         self.fake_batch_read = read_then_the_app_saves
         before = self.rows()
         result = self.refresh(apply=True)
-        # It wrote the other three and skipped the saved one; now the plan no longer holds
-        # as a whole, so nothing is written and a second run reads that file again.
-        self.assertEqual((4, 0), (result.attempted, result.changed))
-        self.assertIn("photos %d is not what the plan read: mtime changed" % self.ids("stale_stat")[0],
-                      result.refused)
-        tags, captions, raw, _mtime = before[self.files["stale_stat"]]
-        before[self.files["stale_stat"]] = (tags, captions, raw, 2000000.0)
-        self.assertEqual(before, self.rows(), "only the app's save is there")
+        # The saved row is skipped, by id, and keeps its save; the other three are written
+        # (the whole change was refused, and a second run read every file again). A
+        # second run reads the skipped one again.
+        self.assertEqual((4, 3, None), (result.attempted, result.changed, result.refused))
+        self.assertEqual([("photos %d" % self.ids("stale_stat")[0], "not what the plan read: mtime changed")],
+                         result.skipped)
+        self.assertEqual(2000000.0, self.rows()[self.files["stale_stat"]][3], "the app's save is kept")
+        for name in ("garbled", "stale_keywords", "twice"):
+            self.assertNotEqual(before[self.files[name]], self.rows()[self.files[name]], name)
 
 
 if __name__ == "__main__":

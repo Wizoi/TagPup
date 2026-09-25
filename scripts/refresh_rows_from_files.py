@@ -11,7 +11,9 @@ Dry run by default: lists what would change and changes nothing.
     .venv/Scripts/python.exe scripts/refresh_rows_from_files.py --db data/photo_index.db
     .venv/Scripts/python.exe scripts/refresh_rows_from_files.py --db data/photo_index.db --apply
 
---apply backs the database up first and reports rows actually changed. Stop the
+--apply records the rows it writes as one change of the library's journal, undoable
+with tagpup_cli.py undo, and reports rows actually changed. A row saved in the app while
+the files were read is skipped, and listed; the next run reads it again. Stop the
 servers first: they hold rows in memory.
 """
 import argparse
@@ -24,6 +26,16 @@ import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import maintenance, refresh_rows  # noqa: E402
+
+
+def reported(result):
+    """Print what was skipped and what failed; 1 when anything failed, else 0."""
+    lines = maintenance.skipped(result) + maintenance.failed(result)
+    if lines:
+        print()
+    for line in lines:
+        print(line)
+    return 1 if result.errors else 0
 
 
 def progress(stage, counts):
@@ -71,21 +83,22 @@ def main(argv=None):
     if result.details["dry_run"]:
         print("\n%s" % maintenance.rehearsed(result))
         print("Dry run. Nothing was changed. Re-run with --apply to write.")
-        return 0
+        return reported(result)
     if not result.attempted:
         print("\nNothing to write.")
         return 0
     if result.refused:
-        # A row the app saved while this run read the files: the whole change is refused
-        # rather than write the older read over the save.
         print("\n%s" % result.refused)
-        print("Run it again to read those files again.")
         return 1
     print("\n%s" % maintenance.recorded(result, args.db))
-    changed = result.details["changed"]
-    print("rows changed from their files: %d" % changed["from_files"])
-    print("rows with repeated captions removed: %d" % changed["captions"])
-    return 0
+    changed = result.details.get("changed")
+    if changed is not None:
+        print("rows changed from their files: %d" % changed["from_files"])
+        print("rows with repeated captions removed: %d" % changed["captions"])
+    if result.skipped:
+        print("rows saved in the app while the files were read, left for the next run: %d"
+              % len(result.skipped))
+    return reported(result)
 
 
 if __name__ == "__main__":

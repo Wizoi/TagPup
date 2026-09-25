@@ -79,6 +79,14 @@ def key(text):
     return str(text or "").strip().lower()
 
 
+def keyword_key(tag):
+    """A keyword as a tree's people are looked up by (PeopleVocabulary.by_keyword): "\\"
+    read as "/", trimmed, case ignored. extract_people looks keywords up by it, and
+    tagpup.store.people finds the photos a tree edit touches by it: the two must agree, or
+    a photo whose people changed is not rebuilt."""
+    return str(tag).replace("\\", "/").strip().lower()  # not a path: a keyword hierarchy
+
+
 def same_person(a, b):
     """Do two tags or names name the same person? Their leaves, compared without case."""
     left = key(leaf_of(a))
@@ -274,7 +282,7 @@ def extract_people(meta, tags, known=None):
         if len(parts) >= 2 and parts[0].lower() in known.roots:
             people.append(parts[-1])
     for tag in tags:
-        name = known.by_keyword.get(tag.replace("\\", "/").strip().lower())  # not a path: a keyword hierarchy
+        name = known.by_keyword.get(keyword_key(tag))
         if name:
             people.append(name)
     return list(dict.fromkeys(p for p in people if p))

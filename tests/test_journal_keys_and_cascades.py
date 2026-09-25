@@ -25,8 +25,29 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tagpup.store import db, journal, schema  # noqa: E402
 
-#: A trigger that deletes one table's rows when another's go.
-DELETES_WITH = re.compile(r"AFTER DELETE ON (\w+)\s+BEGIN\s+DELETE FROM (\w+) WHERE (\w+) = OLD\.(\w+)", re.I)
+#: The table a trigger is on, and each table its body deletes from: every DELETE in it,
+#: not only the first (a trigger may clear two tables).
+TRIGGER_ON = re.compile(r"\b(?:BEFORE|AFTER|INSTEAD\s+OF)?\s*(?:DELETE|INSERT|UPDATE)(?:\s+OF\s+[\w\s,\"]+?)?"
+                        r"\s+ON\s+\"?(\w+)\"?", re.I)
+DELETES_FROM = re.compile(r"\bDELETE\s+FROM\s+\"?(\w+)\"?", re.I)
+
+
+def cascades_in(triggers, foreign):
+    """{(parent, child)}: each table whose rows go when another's do -- from the triggers'
+    SQL, every DELETE in each body, and from ON DELETE CASCADE in `foreign` ({table: its
+    PRAGMA foreign_key_list rows})."""
+    found = set()
+    for sql in triggers:
+        parts = re.split(r"\bBEGIN\b", sql, maxsplit=1, flags=re.I)
+        head, body = parts if len(parts) == 2 else (sql, "")
+        on = TRIGGER_ON.search(head)
+        if on:
+            found.update((on.group(1), child) for child in DELETES_FROM.findall(body))
+    for child, keys in foreign.items():
+        for row in keys:
+            if row[6].upper() == "CASCADE":
+                found.add((row[2], child))
+    return found
 
 
 class ANewLibrary(unittest.TestCase):
@@ -67,16 +88,18 @@ class ANewLibrary(unittest.TestCase):
 
     def cascades(self):
         """{(parent, child)}: every table whose rows go when a journaled table's rows do."""
-        found = set()
-        for sql in self.triggers:
-            match = DELETES_WITH.search(sql)
-            if match:
-                found.add((match.group(1), match.group(2)))
-        for child, keys in self.foreign.items():
-            for row in keys:
-                if row[6].upper() == "CASCADE":
-                    found.add((row[2], child))
-        return {(parent, child) for parent, child in found if parent in journal.KEYS}
+        return {(parent, child) for parent, child in cascades_in(self.triggers, self.foreign)
+                if parent in journal.KEYS}
+
+    def test_every_delete_in_a_trigger_body_is_found(self):
+        two = ("CREATE TRIGGER photos_take_two AFTER DELETE ON photos BEGIN"
+               " DELETE FROM suggestions WHERE photo_id = OLD.id;"
+               " DELETE FROM embeddings WHERE photo_id = OLD.id; END")
+        self.assertEqual({("photos", "suggestions"), ("photos", "embeddings")}, cascades_in([two], {}))
+        quoted = ('CREATE TRIGGER "t" BEFORE UPDATE OF tags ON "photos" BEGIN'
+                  ' UPDATE generations SET value = value + 1; DELETE FROM "photo_people" WHERE photo_id = OLD.id; END')
+        self.assertEqual({("photos", "photo_people")}, cascades_in([quoted], {}))
+        self.assertIn(("faces", "face_crops"), cascades_in(self.triggers, {}), "the schema's own triggers")
 
     def test_every_cascade_is_recorded_rebuilt_or_forbidden(self):
         cascades = self.cascades()

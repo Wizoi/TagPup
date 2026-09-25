@@ -250,9 +250,12 @@ def _edits(planned):
 
     Each row is written only while it still has what the plan found before the files were
     read (`found`): one the app saved while this run was reading already describes
-    something newer, and writing the older read over it would take the save back. Then
-    the whole change is refused, naming the row, and a second run reads it again. The
-    DocumentID is recorded only where the row has none, as the indexer does.
+    something newer, and writing the older read over it would take the save back. That
+    row is skipped (the edits are skippable) and reported, and the rest are written: the
+    rows do not depend on each other, and refusing the whole change for one save threw
+    away minutes of reading, on a library in use perhaps every time. The next run reads
+    the skipped row again. The DocumentID is recorded only where the row has none, as the
+    indexer does.
     """
     records, to_write, captions_only, found, identities, ids = planned.work
     edits = []
@@ -265,10 +268,10 @@ def _edits(planned):
         if identities.get(path) is None and record.get("document_id"):
             values["document_id"] = record["document_id"]
             expect["document_id"] = None
-        edits.append(journal.update("photos", (ids[path],), expect, values, kind="from_files"))
+        edits.append(journal.update("photos", (ids[path],), expect, values, kind="from_files", skippable=True))
     for path, fixed in captions_only.items():
         edits.append(journal.update("photos", (ids[path],), {"captions": found[path]["captions"]},
-                                    {"captions": json.dumps(fixed)}, kind="captions"))
+                                    {"captions": json.dumps(fixed)}, kind="captions", skippable=True))
     return edits
 
 
@@ -277,8 +280,8 @@ def refresh_rows(library, exiftool_path, apply=False, folder=None, examples=5, p
     under `folder`) that no longer describes its file, reading the files with ExifTool at
     `exiftool_path`. A Result, on the maintenance scaffold: `changed` is rows changed,
     from their files (details["changed"]["from_files"]) and captions alone ("captions"). Applied
-    as one change of the journal, undoable; refused, naming the rows, when a row changed
-    after this run read it.
+    as one change of the journal, undoable, of the rows written; a row changed after this
+    run read it is left as it is and listed in `skipped`.
 
     `examples` caps the captions shown under details["reveal"]["examples"]. `progress`,
     if given, is called progress(stage, counts): "found" once the rows are sorted, with
