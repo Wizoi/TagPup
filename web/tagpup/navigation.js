@@ -1,5 +1,6 @@
 // TagPup's page: moving between photos, by key, swipe or drag.
 import { state } from './state.js';
+import { dialogOpen } from './common/dialog.js';
 import { photoList, photoSearch } from './elements.js';
 import { hasUnsavedEdits, leavePhotoThen } from './edits.js';
 import { carryTagsForward, selectPhoto } from './photo.js';
@@ -58,6 +59,7 @@ export function keystrokeBelongsToField(el) {
 export function wireKeyboard() {
     document.addEventListener('keydown', (e) => {
         if (state.leavePrompt) return;   // "Save changes?" is open; its keys are its own
+        if (dialogOpen()) return;        // so are any other dialog's (web/common/dialog.js)
         if (keystrokeBelongsToField(document.activeElement)) return;
 
         // Ctrl+D copies the previous photo's tags onto this one, so that tagging a

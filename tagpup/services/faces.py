@@ -17,7 +17,7 @@ import os
 
 import numpy as np
 
-from tagpup.core import clustering, vocabulary
+from tagpup.core import clustering, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Result
 from tagpup.store import db, faces, photos
 
@@ -46,7 +46,7 @@ def name_face(library, face_id, person_name):
     """
     result = Result(attempted=1)
     person_name = (person_name or "").strip()
-    problem = vocabulary.problem_with_name(person_name)
+    problem = validation.problem("name", person_name)
     if problem:
         result.refuse(problem)
         return result
@@ -84,7 +84,7 @@ def name_faces(library, face_ids, person_name):
     """
     result = Result(attempted=len(face_ids))
     person_name = (person_name or "").strip()
-    problem = vocabulary.problem_with_name(person_name)
+    problem = validation.problem("name", person_name)
     if problem:
         result.refuse(problem)
         return result

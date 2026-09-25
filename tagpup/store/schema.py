@@ -494,6 +494,21 @@ def _journal(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_changes_status ON changes(status)")
 
 
+def _settings(conn):
+    """The library's settings: `settings(key, value)`, one row per setting, the key its
+    declaration's in tagpup.core.validation.SETTINGS ("faces.min_face_size") and the value
+    as text (tagpup.store.settings; docs/ARCHITECTURE.md, phase 7.6). They lived in
+    config.ini, one file for the machine, so a library opened on another machine, or with
+    the file edited, was read with settings it was not made with, and nothing said so.
+
+    Written only through the journal (tagpup.services.settings), so every change is in
+    the library's history and can be undone. The table starts empty: the service stamps
+    it -- from the defaults, or once from config.ini for a library in use. Only adds a
+    table, so it needs no backup.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)")
+
+
 MIGRATIONS = (
     Migration(1, "the tables as of 2026-09", _tables, changes_data=False),
     Migration(2, "one generations table", _generations, changes_data=False),
@@ -504,6 +519,7 @@ MIGRATIONS = (
     Migration(7, "suggestions by photo", _suggestions, changes_data=True),
     Migration(8, "when each photo was taken", _dates, changes_data=False),
     Migration(9, "a journal of changes", _journal, changes_data=False),
+    Migration(10, "the library's settings", _settings, changes_data=False),
 )
 
 LATEST = MIGRATIONS[-1].version

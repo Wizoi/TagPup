@@ -32,7 +32,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shipped_sources import python_sources  # noqa: E402
 
-from tagpup import config as tagpup_config  # noqa: E402
+from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
@@ -64,16 +64,26 @@ class _LibraryFixture(unittest.TestCase):
 
 
 class _FakeIndex:
-    """A library's photo index with nothing in it, and no connection to keep vectors on."""
+    """A library's photo index with nothing in it, and no connection to keep vectors on:
+    what the runtime makes in place of tagpup.services.search.PhotoIndex."""
     db_path = "no such library.db"
     conn = None
+
+    def __init__(self, db_path=None, model=None):
+        self.model = model
+
+    def reload_if_changed(self):
+        return False
+
+    def close(self):
+        pass
 
 
 class _FakeClip:
     """CLIP, as the runtime's settings name it, that embeds everything alike."""
 
     def __init__(self):
-        self.settings = tagpup_config.embedder_settings()
+        self.settings = library_settings.LibrarySettings(dict(library_settings.DEFAULTS)).embedder
 
     def embed_image(self, path):
         return [0.0]
@@ -127,8 +137,8 @@ class _RunFixture(_LibraryFixture):
                 return RealSuggester.apply_folder_consensus(self, suggestions)
 
         # The models are the runtime's fakes, and this library's index an empty one.
-        self.runtime = Runtime(tagpup_config.load(), clip=_FakeClip(), faces=object())
-        for patched in (mock.patch.object(self.runtime, "photo_index", lambda library: _FakeIndex()),
+        self.runtime = Runtime(clip=_FakeClip(), faces=object())
+        for patched in (mock.patch("tagpup.runtime.search.PhotoIndex", _FakeIndex),
                         mock.patch.object(suggester_service, "TagSuggester", ScriptedSuggester),
                         mock.patch.object(suggester_service, "TagTaxonomy", _FakeTaxonomy)):
             patched.start()

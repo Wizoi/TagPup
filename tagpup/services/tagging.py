@@ -2,7 +2,7 @@
 import logging
 import os
 
-from tagpup.core import fields, paths, suggesting, vocabulary
+from tagpup.core import fields, paths, suggesting, validation, vocabulary
 from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
@@ -17,10 +17,10 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     after its new caption if Smart Rename named it.
 
     `tags` is the photo's whole tag list. Only the ones the file does not hold yet are
-    checked: one written by another program must not stop the photo being saved, least
-    of all a save that removes it. A new one that may not be set refuses the save and
-    nothing is written; the others go in in their one spelling, as the tag tree holds
-    them. A rename moves the photo's index row -- embedding, faces and all -- rather
+    checked (tagpup.core.validation): one written by another program must not stop the
+    photo being saved, least of all a save that removes it. A new one that may not be
+    set refuses the save and nothing is written; the others go in in their one spelling,
+    as the tag tree holds them. The caption is held to its rules the same way. A rename moves the photo's index row -- embedding, faces and all -- rather
     than leaving them behind; then the row gets what the file holds now. A failure
     recording it is logged, not raised: the file is written either way.
 
@@ -34,7 +34,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     people = taxonomy.people_paths(library.path)
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
         held = set(keywords.tags_in_file(et, photo_path))
-        problem = vocabulary.problem_with_tags(t for t in tags if t not in held)
+        problem = (validation.first_problem("tag", (t for t in tags if t not in held))
+                   or _caption_problem(et, photo_path, title))
         if problem:
             result.refuse(problem)
             return result
@@ -65,18 +66,51 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     return result
 
 
+def _caption_problem(et, photo_path, caption):
+    """Why `caption` cannot be set on the photo, or None. A caption the file holds
+    already is not being set: one another program wrote is kept, as a tag is. The file
+    is read for it only when the caption breaks a rule -- every field a caption is held
+    in, EXIF's too -- and the caption is compared as the reader trims the file's."""
+    problem = validation.problem("caption", caption or "")
+    if not problem:
+        return None
+    found = et.get_tags([photo_path], tags=[field for field in vocabulary.HELD_CAPTION_FIELDS if ":" in field])
+    held = vocabulary.captions_held(found[0] if found else {})
+    return None if vocabulary.trimmed(caption) in held else problem
+
+
 def change_tags(library, photo_paths, add, remove, exiftool_path):
     """Add the same tags to many photos and take the same tags off them. Adding or
-    removing tags on a selection of photos. See _change_each."""
+    removing tags on a selection of photos. See _change_each.
+
+    What is added is checked (tagpup.core.validation) and written in its one spelling;
+    what is taken off is not: taking a bad tag off must stay possible. One that may not
+    be set refuses the whole change, and nothing is written."""
+    problem = validation.first_problem("tag", add)
+    if problem:
+        return _refused(len(photo_paths), problem)
+    add = [vocabulary.normalize(tag) for tag in add]
     return _change_each(library, [(path, add, remove) for path in photo_paths], exiftool_path)
 
 
 def add_tags(library, additions, exiftool_path):
     """Add each photo in `additions` (path -> tags) its own tags. Apply All on a folder's
     suggestions: suggestions deal in people's bare names, which are written as the tags
-    they are filed under. A photo with nothing to add is left alone. See _change_each."""
+    they are filed under. A photo with nothing to add is left alone. See _change_each.
+    A tag that may not be set refuses the whole of it, and nothing is written."""
+    problem = validation.first_problem("tag", dict.fromkeys(t for tags in additions.values() for t in tags))
+    if problem:
+        return _refused(len(additions), problem)
     return _change_each(library, [(path, tags, ()) for path, tags in additions.items() if tags],
                         exiftool_path)
+
+
+def _refused(attempted, problem):
+    """A bulk change refused before anything was written; `written` is empty."""
+    result = Result(attempted=attempted)
+    result.details["written"] = {}
+    result.refuse(problem)
+    return result
 
 
 def _change_each(library, plan, exiftool_path):
@@ -203,8 +237,16 @@ def write_suggestions(library, writes, exiftool_path, nobackup=False):
     A photo that cannot be written is an error, and the next is tried; ExifTool that
     cannot be started raises. changed: the photos written. `nobackup` has ExifTool
     overwrite each file rather than keep an _original beside it.
+
+    A tag or a caption that may not be set refuses the whole run before anything is
+    written (tagpup.core.validation).
     """
     result = Result(attempted=len(writes))
+    problem = (validation.first_problem("tag", dict.fromkeys(t for _, tags, _ in writes for t in tags))
+               or validation.first_problem("caption", (caption for _, _, caption in writes if caption)))
+    if problem:
+        result.refuse(problem)
+        return result
     params = ["-overwrite_original"] if nobackup else None
     # Who a bare name means, read once for the run, not once per photo.
     people = taxonomy.people_paths(library.path)

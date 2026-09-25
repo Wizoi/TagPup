@@ -31,6 +31,17 @@ def under_test():
     return bool(path) and pathlib.Path(path).resolve().parent.name == "tests"
 
 
+def free_device_memory():
+    """Give the GPU back the memory of weights let go: torch keeps it cached for its next
+    allocation, so a model dropped still held its gigabytes until the process ended.
+    Nothing on a machine without CUDA."""
+    import gc
+    gc.collect()
+    import torch
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def refuse_in_tests(what):
     """Raise instead of loading `what` in a test run."""
     if under_test():

@@ -182,7 +182,7 @@ The journal: one row for each bulk edit applied to the library (`tagpup.store.jo
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | The change; `tagpup_cli.py undo <id>` and the MCP `undo` tool name it. |
-| `operation` | TEXT | NOT NULL | What made it: `merge_duplicate_person_tags`, `dedupe_faces`, `refresh_rows`. |
+| `operation` | TEXT | NOT NULL | What made it: `merge_duplicate_person_tags`, `dedupe_faces`, `refresh_rows`, `change settings`, `stamp settings from config.ini`, `stamp settings with the defaults`. |
 | `status` | TEXT | NOT NULL, one of `planned`, `applied`, `derived_pending`, `undone`, `failed`, `pruned` | Where it stands. `planned` and `failed` are for the photo-file stage of phase 7.5. |
 | `schema_version` | INTEGER | NOT NULL | The migration the library was at when it was made; an undo at another is refused. |
 | `created` | TEXT | NOT NULL | Local time it was made, `YYYY-MM-DD HH:MM:SS`. |
@@ -198,11 +198,19 @@ What each change found and left, one row per changed column (`tagpup.store.journ
 | `id` | INTEGER | PRIMARY KEY | The order the rows were written in; an undo reverses it. |
 | `change_id` | INTEGER | NOT NULL, → `changes.id`, INDEXED | The change. |
 | `action` | TEXT | NOT NULL, `insert`, `update` or `delete` | What was done to the row: tells an insert from an update whose old values were NULL. |
-| `table_name` | TEXT | NOT NULL, INDEXED (with `row_key`) | The table: `photos`, `faces`, `tag_taxonomy`, `face_crops`, `embeddings` or `suggestions` (`journal.KEYS`). |
+| `table_name` | TEXT | NOT NULL, INDEXED (with `row_key`) | The table: `photos`, `faces`, `tag_taxonomy`, `face_crops`, `embeddings`, `suggestions` or `settings` (`journal.KEYS`). |
 | `row_key` | TEXT | NOT NULL | The row's key as a JSON list, `[123]` or `[123, "<model>"]`. |
 | `column_name` | TEXT | NOT NULL | The column. |
 | `old` | (none) | | The value before, as SQLite stored it: an integer, a real, text or a BLOB. No declared type, so nothing is converted. NULL for an insert. |
 | `new` | (none) | | The value after; NULL for a delete. |
+
+### 13. `settings` Table
+The library's settings (`tagpup.store.settings`, `tagpup.services.settings`, migration 10; ARCHITECTURE.md, phase 7.6): the CLIP model its vectors are made with, the face-detection thresholds, Suggest's candidate words, the rename format and the ExifTool program. Each is declared once, in `tagpup.core.validation.SETTINGS`: its type, range, default, whether it is locked and what changing it does, and its info text, which the settings dialog is made from. Written only through the journal, so each change is a row of `changes` and can be undone. A new library is stamped with the defaults (`stamp settings with the defaults`); a library from before migration 10 is stamped once, the first time it is opened, from the home's `config.ini` if there is one (`stamp settings from config.ini`), else with the defaults. A setting a library does not hold reads as its default. Where the libraries are is not a setting: `data/` in `TAGPUP_HOME`.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `key` | TEXT | PRIMARY KEY, NOT NULL | The setting, `<section>.<key>` as config.ini named it: `model.name`, `faces.min_face_size`, `candidates.tags`, `renaming.format`, `paths.exiftool` ... A name, not an id: a row put back under it is that setting again (`journal.NAMED`). |
+| `value` | TEXT | NOT NULL | Its value as text, as the validator reads it (`true`/`false`, `0.85`, `0.6, 0.7, 0.7`). An empty `paths.exiftool` is the machine's ExifTool; an empty `model.force_image_size` the model's own size. |
 
 ---
 

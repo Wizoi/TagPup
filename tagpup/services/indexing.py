@@ -12,6 +12,7 @@ from contextlib import nullcontext
 
 from tagpup.core import paths
 from tagpup.core import processes
+from tagpup.core import validation
 from tagpup.core.result import Result
 
 #: Where faces are clustered when adding a folder did not: the runner's button, whose
@@ -78,7 +79,7 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
 
     The CLI runs in a process of its own, from `code_folder` -- the code this program
     runs, which the caller has from tagpup.config -- so the GPU work stays out of the
-    server. Clustering runs only on request: it re-derives every face name in the
+    server. It reads the library's settings itself (tagpup.runtime). Clustering runs only on request: it re-derives every face name in the
     library, not only this folder's.
 
     `report(message, percent)` hears progress as it comes. `while_clustering`, if given,
@@ -89,9 +90,16 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
     its exit code was never read. It is now, and a failure is the Result's error.
 
     details: `message`, what to tell the person; `percent`, where the bar stops.
+    Refused, and nothing run, for a folder that is not named by its full path
+    (tagpup.core.validation).
     """
     report = report or (lambda message=None, percent=None: None)
     result = Result(attempted=1)
+    problem = validation.problem("folder", folder)
+    if problem:
+        result.refuse(problem)
+        result.details["percent"] = 0
+        return result
     env = os.environ.copy()
     env["TAGPUP_DB_PATH"] = library.path
 

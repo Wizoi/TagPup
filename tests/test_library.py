@@ -9,7 +9,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-from tagpup.core import library  # noqa: E402
+from tagpup.core import library, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
@@ -104,7 +104,7 @@ class ThePicker(unittest.TestCase):
         self.assertEqual(library.picker_names(["test_" + name for name in once_hidden],
                                               test_mode=True), offered)
         for name in once_hidden:
-            self.assertIsNone(library.problem_with_new_name(name), name)
+            self.assertIsNone(validation.problem("library name", library.picker_name(name)), name)
 
     def test_a_name_from_the_page_names_a_file(self):
         self.assertEqual(library.file_name_for("Harbour"), "Harbour.db")
@@ -112,14 +112,15 @@ class ThePicker(unittest.TestCase):
         self.assertEqual(library.picker_name("test_photo_index.db"), "photo_index")
 
     def test_a_new_library_needs_a_plain_name(self):
-        self.assertIsNone(library.problem_with_new_name("kr-track_2.db"))
-        self.assertIsNotNone(library.problem_with_new_name("kr track.db"))
+        self.assertIsNone(validation.problem("library name", "kr-track_2"))
+        self.assertIsNotNone(validation.problem("library name", "kr track"))
 
     def test_a_name_the_urls_route_is_refused(self):
-        # Created, it could never be opened: /api/ reaches the API (#73).
-        for taken in ("api.db", "common.db", "gui.db", "gui_tagpup.db", "API.db"):
-            self.assertIsNotNone(library.problem_with_new_name(taken), taken)
-        self.assertIsNone(library.problem_with_new_name("apiary.db"))
+        # Created, it could never be opened: /api/ reaches the API (#73). Every route
+        # the servers take a URL's first part for is one of the reserved names.
+        for taken in sorted(library.ROUTES) + ["API"]:
+            self.assertIsNotNone(validation.problem("library name", taken), taken)
+        self.assertIsNone(validation.problem("library name", "apiary"))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 // A photo's details and the strip of its faces.
 import { api } from './common/api.js';
+import { buildElement, replaceContent } from './common/dom.js';
 import { samePath } from './common/paths.js';
 import { nameProblem, samePerson } from './common/vocabulary.js';
 import { state } from './state.js';
@@ -315,7 +316,9 @@ function renderPhotoDetails(details) {
             valError.textContent = '';
 
             // Fetch matches
-            suggestionsList.innerHTML = '<span style="font-size:11px;color:var(--text-muted);font-style:italic;">Loading matches...</span>';
+            replaceContent(suggestionsList, buildElement('span', {
+                style: 'font-size:11px;color:var(--text-muted);font-style:italic;', text: 'Loading matches...',
+            }));
             api.fetch(`/api/face-matches?id=${face.id}`)
                 .then(res => {
                     if (!res.ok) throw new Error('Failed to load matches');
@@ -345,7 +348,9 @@ function renderPhotoDetails(details) {
                 })
                 .catch(err => {
                     console.error('Error fetching face matches:', err);
-                    suggestionsList.innerHTML = '<span style="font-size:11px;color:#f87171;">Failed to load</span>';
+                    replaceContent(suggestionsList, buildElement('span', {
+                        style: 'font-size:11px;color:#f87171;', text: 'Failed to load',
+                    }));
                 });
         });
 
@@ -518,8 +523,9 @@ function postAutoMatchAll(photoPath) {
 // POST automatch all photos in a folder
 export function postFolderAutoMatch(folderGroup, btn) {
     btn.disabled = true;
-    const originalContent = btn.innerHTML;
-    btn.innerHTML = '⏳';
+    // What the button showed, put back as it was: its own nodes, not a copy as markup.
+    const originalContent = [...btn.childNodes];
+    btn.textContent = '⏳';
     btn.title = 'AutoMatching...';
 
     api.fetch('/api/folder/automatch', {
@@ -576,7 +582,7 @@ export function postFolderAutoMatch(folderGroup, btn) {
     })
     .finally(() => {
         btn.disabled = false;
-        btn.innerHTML = originalContent;
+        replaceContent(btn, ...originalContent);
         btn.title = 'AutoMatch all photos in this folder';
     });
 }

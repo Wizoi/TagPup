@@ -69,11 +69,15 @@ in-memory comparison; `sql_equals()` / `sql_under()` for SQL. A helper that turn
 months while reporting success. In the pages, `pathKey` / `samePath` (`web/common/paths.js`).
 `tests/test_paths_single_owner.py` and `tests/frontend/path-helpers.test.mjs` enforce it.
 
-**Never read `config.ini` yourself.** `tagpup/config.py` owns where it is (`TAGPUP_HOME`,
-else the code folder), how it is decoded, what a relative path in it is relative to,
-and which ExifTool to run. 26 places read it, and they disagreed on all four. A test
-that selects or creates a library runs with a `TAGPUP_HOME` of its own, or it rewrites
-the config of the app somebody is using. `tests/test_config_single_owner.py` enforces it.
+**A library's settings live in the library.** The CLIP model, face detection, Suggest's
+words, the rename format and ExifTool's path are each library's own (`settings`, read
+through `tagpup.services.settings`, changed only by a journaled change). An entry point
+reads them from the library it was given (`tagpup.runtime.library_settings`); nothing
+reads `config.ini` but the one-time stamping of a library that has none. `tagpup/config.py`
+owns only where the libraries are (`TAGPUP_HOME/data`) and where ExifTool is found by
+default. 26 places once read `config.ini` and disagreed on four things. A test that
+selects or creates a library runs with a `TAGPUP_HOME` of its own.
+`tests/test_config_single_owner.py` enforces it.
 
 **SQL on this library is not SQL on a test fixture.** 225,000 faces, most carrying a
 6 KB crop, and every one of these has shipped:
@@ -187,7 +191,7 @@ ten seconds rebuilding passes a "are the cards gone" check. Wait for the main th
 as well.
 
 **Validate in a sandbox; never in the app somebody is using.** Copy the library, copy
-the code, give it its own `config.ini` and a free port, and run it as a separate
+the code, give it its own `TAGPUP_HOME` and a free port, and run it as a separate
 process. All four, not some of them — a copy on a different port that still lives in
 `data/` shows up in the database picker of the app they have open, and code run from
 the repo shares the reloader with their server. `scripts/measure_identify_faces.py`

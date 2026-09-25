@@ -224,6 +224,14 @@ export function pageSource(appName) {
   return pageModules(path.join(REPO_ROOT, APPS[appName].dir)).map((m) => m.body).join("\n");
 }
 
+/**
+ * What /api/rules answers: the rules of what may be set (tagpup/core/validation.py).
+ * tests/test_validation.py holds the file to what the server publishes, and every
+ * FakeServer answers it unless a test says otherwise, as every page asks it.
+ */
+export const PUBLISHED_RULES = JSON.parse(
+  fs.readFileSync(path.join(REPO_ROOT, "tests", "validation_rules.json"), "utf8"));
+
 /** A fetch stub that routes by URL substring and records every call. */
 export class FakeServer {
   constructor() {
@@ -278,7 +286,7 @@ export class FakeServer {
       // otherwise fall through to the default empty reply.
       const route = self.routes.find(
         (r) => url.includes(r.match) || url.includes(r.match.replace(/^\//, ""))
-      );
+      ) || (url.includes("api/rules") ? { body: PUBLISHED_RULES, status: 200 } : undefined);
       const status = route ? route.status : 200;
       const reply = (payload) => ({
         ok: status >= 200 && status < 300,

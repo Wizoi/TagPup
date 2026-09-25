@@ -17,20 +17,7 @@ tree says about people is read by tagpup.store.taxonomy and passed in. Everythin
 works on what they hand over, and touches neither.
 """
 
-import re
-
 SEPARATOR = "/"
-
-#: Other programs' separators between levels. Written into a keyword, one is a level
-#: to one program and part of a name to the next.
-OTHER_SEPARATORS = ("|", "\\")  # not a path: tag separators
-
-#: A tab, a line break, any other control character, and the invisible byte-order
-#: mark: none can be seen in a tag, or typed back to find it.
-CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029\ufeff]")
-
-#: Nothing between two separators, or before the first, or after the last.
-EMPTY_LEVEL = re.compile(r"(?:^|/)\s*(?:/|$)")
 
 
 def normalize(tag):
@@ -120,22 +107,6 @@ NEW_LIBRARY_ROOTS = (ACTIVITY_ROOT, "Pets") + PLACE_ROOTS
 CONTEXT_ROOTS = (ACTIVITY_ROOT,) + PLACE_ROOTS + ("Scenic", "Location", "Albums")
 
 
-def problem_with_tag(tag):
-    """Why this cannot be set as a tag, or None if it can.
-
-    Asked where a tag is set -- typed, created, merged into -- never where one is
-    read: a photo holding a bad tag from elsewhere must still open, and lose it. The
-    pages ask the same question first (tagProblem), and tests/tag_rules.json holds
-    the answers both must give.
-    """
-    return _problem(tag, "A tag", levels=True)
-
-
-def problem_with_tags(tags):
-    """The first reason any of these cannot be set as a tag, or None."""
-    return next(filter(None, (problem_with_tag(tag) for tag in tags)), None)
-
-
 #: TagTuner's lists of faces that are not a person's, named where its people are listed:
 #: the server names them from here, and its page keeps a copy a test holds to this.
 BUCKETS = {"unknown": "Unknown Faces", "ungrouped": "Ungrouped", "excluded": "Excluded"}
@@ -144,34 +115,9 @@ BUCKETS = {"unknown": "Unknown Faces", "ungrouped": "Ungrouped", "excluded": "Ex
 UNMATCHED = "Unmatched"
 
 #: Names nobody can be given: a person called one opened that bucket instead of
-#: themselves (docs/findings.md, #68). Whatever the case.
+#: themselves (docs/findings.md, #68). Whatever the case. tagpup.core.validation holds
+#: a name to it.
 NOT_A_PERSON = frozenset(name.lower() for name in (*BUCKETS.values(), UNMATCHED))
-
-
-def problem_with_name(name):
-    """Why this cannot be a person's name, or one level of a tag, or None if it can."""
-    if str(name or "").strip().lower() in NOT_A_PERSON:
-        return "'%s' is the name of one of TagTuner's lists, not a person's." % str(name).strip()
-    return _problem(name, "A name", levels=False)
-
-
-def _problem(value, what, levels):
-    # Controls first: Python and JavaScript disagree on whether some of them are
-    # space, and asked in this order the two give the same answer.
-    text = "" if value is None else str(value)
-    if CONTROL.search(text):
-        return "%s cannot contain a tab, a line break or another control character." % what
-    for mark in OTHER_SEPARATORS:
-        if mark in text:
-            return ('%s cannot contain "%s": other programs read it as a break between levels.%s'
-                    % (what, mark, ' Use "/" instead.' if levels else ""))
-    if not text.strip():
-        return "%s cannot be empty." % what
-    if not levels and SEPARATOR in text:
-        return 'A name cannot contain "/": it separates the levels of a tag.'
-    if levels and EMPTY_LEVEL.search(text):
-        return '%s cannot have an empty level, as in "A//B" or "A/".' % what
-    return None
 
 
 # What a photo's metadata says. `meta` is the record tagpup.files.metadata reads: every
@@ -189,6 +135,24 @@ CAPTION_FIELDS = ("IPTC:Caption-Abstract", "Caption-Abstract", "XMP:Description"
                   "XMP:Title", "Title", "IPTC:ObjectName", "ObjectName")
 
 
+def _held_caption_fields():
+    from tagpup.core import fields   # the one spelling of the fields a caption write sets
+    written = [name for field in fields.caption_fields("") for name in (field, field.split(":", 1)[-1])]
+    return CAPTION_FIELDS + tuple(name for name in dict.fromkeys(written) if name not in CAPTION_FIELDS)
+
+
+#: Every field a photo's caption is held in: those read as its captions, and the ones a
+#: caption write sets as well (tagpup.core.fields.caption_fields: EXIF's too) -- where a
+#: caption another program wrote may be all the file holds. Asked when a caption is
+#: being set, to tell one the file holds already from a new one.
+HELD_CAPTION_FIELDS = _held_caption_fields()
+
+
+def trimmed(value):
+    """A field's value as the reader keeps it: text, without the blanks around it."""
+    return str(value).strip()
+
+
 def _values(meta, fields):
     """Every value these fields hold, trimmed, in field order; empty ones left out."""
     found = []
@@ -196,9 +160,9 @@ def _values(meta, fields):
         val = meta.get(key)
         if val:
             if isinstance(val, list):
-                found.extend(str(v).strip() for v in val if v)
+                found.extend(trimmed(v) for v in val if v)
             else:
-                found.append(str(val).strip())
+                found.append(trimmed(val))
     return found
 
 
@@ -223,6 +187,12 @@ def extract_captions(meta):
     one everything shows.
     """
     return list(dict.fromkeys(c for c in _values(meta, CAPTION_FIELDS) if c))
+
+
+def captions_held(meta):
+    """Every caption a file holds, in any field a caption is held in (HELD_CAPTION_FIELDS),
+    each distinct text once, trimmed as the reader trims it."""
+    return list(dict.fromkeys(c for c in _values(meta, HELD_CAPTION_FIELDS) if c))
 
 
 class PeopleVocabulary:

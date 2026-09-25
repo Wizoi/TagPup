@@ -90,7 +90,8 @@ def run_screenshot_flow():
             # --- 2. Taxonomy Manager Modal Tree Screenshot ---
             # Open the Tags Tree taxonomy manager
             print("Opening Taxonomy Tree Manager...")
-            page.click("#btn-manage-taxonomy")
+            page.click("#btn-gear")
+            page.click("#gear-menu [data-action='tag-editor']")
             page.wait_for_selector("#taxonomy-modal.active", timeout=5000)
             time.sleep(1.5)
             

@@ -15,12 +15,15 @@ from unittest import mock
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import own_home  # noqa: E402
 import web_client  # noqa: E402
 
-from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
+from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.services import settings as library_settings  # noqa: E402
+from tagpup.store import db  # noqa: E402
 
 
 class TheRuntimeReachesSuggest(unittest.TestCase):
@@ -53,67 +56,69 @@ class TheRuntimeReachesSuggest(unittest.TestCase):
             work.begin()
 
 
-def settings_with(**sections):
-    """This home's settings, with `sections` ({section: {key: value}}) set over them."""
-    settings = tagpup_config.load()
-    for section, values in sections.items():
-        for key, value in values.items():
-            settings.set(section, key, value)
-    return settings
-
-
 class ARuntime(unittest.TestCase):
+    """Each library's models, from the library's settings (tagpup.services.settings)."""
+
+    def setUp(self):
+        self.home = own_home.for_test(self)
+        path = self.home.library("harbour.db")
+        library_actions.create(path)
+        self.library = Library(path)
+
     def test_builds_no_model_until_one_is_asked_for(self):
         from tagpup.ml import clip, faces
         with mock.patch.object(clip, "ClipModel") as clip_model, \
                 mock.patch.object(faces, "FaceModel") as face_model:
-            runtime = Runtime(tagpup_config.load())
+            runtime = Runtime()
             clip_model.assert_not_called()
             face_model.assert_not_called()
-            self.assertIs(runtime.clip, runtime.clip)
-            self.assertIs(runtime.faces, runtime.faces)
-        clip_model.assert_called_once_with(**runtime.embedder_settings)
-        face_model.assert_called_once_with(**runtime.face_settings)
+            self.assertIs(runtime.clip(self.library), runtime.clip(self.library))
+            self.assertIs(runtime.faces(self.library), runtime.faces(self.library))
+        found = library_settings.of(self.library)
+        clip_model.assert_called_once_with(**found.embedder)
+        face_model.assert_called_once_with(**found.faces)
 
     def test_the_candidate_words_are_read_at_each_run(self):
-        """The settings' candidate words were read when each Suggest run began; an
-        edit reached the next run without a restart. Found in review of 5.5, where the
-        runtime read them once, at start."""
-        # The runtime reads once as it is made (the CLIP settings), then once a run.
-        read = iter([settings_with(candidates={"tags": "Kayak"}),
-                     settings_with(candidates={"tags": "Kayak"}),
-                     settings_with(candidates={"tags": "Kayak, Canoe"})])
-        runtime = Runtime(lambda: next(read), clip=object(), faces=object())
+        """The candidate words were read when each Suggest run began; an edit reached the
+        next run without a restart. Found in review of 5.5, where the runtime read them
+        once, at start. Now they are the library's, changed in its settings."""
+        library_settings.change(self.library, {"candidates.tags": "Kayak"})
+        runtime = Runtime(clip=object(), faces=object())
+        self.addCleanup(runtime.forget, self.library)
         asked = []
         with mock.patch("tagpup.services.suggester.model_for_run",
-                        side_effect=lambda index, clip, faces, words: asked.append(words)), \
-                mock.patch.object(runtime, "photo_index", return_value=object()):
-            runtime.begin(Library("a.db"))
-            runtime.begin(Library("a.db"))
+                        side_effect=lambda index, clip, faces, words: asked.append(words)):
+            runtime.begin(self.library).end()
+            library_settings.change(self.library, {"candidates.tags": "Kayak, Canoe"})
+            runtime.begin(self.library).end()
         self.assertEqual([["Kayak"], ["Kayak", "Canoe"]], asked)
 
     def test_a_command_with_no_face_model_reads_no_face_settings(self):
-        """stats, list and remove never touch a model; a malformed [faces] setting
-        failed them once the runtime read every setting at its start. Found in review
-        of 5.5."""
-        runtime = Runtime(settings_with(faces={"min_face_size": "twenty"}))
-        self.assertTrue(runtime.model_key)
+        """stats, list and remove never touch a model; a malformed face setting failed
+        them once the runtime read every setting at its start. Found in review of 5.5.
+        (A value the validator would refuse, as a later version might have left it.)"""
+        conn = db.connect(self.library.path)
+        try:
+            conn.execute("UPDATE settings SET value = 'twenty' WHERE key = 'faces.min_face_size'")
+            conn.commit()
+        finally:
+            conn.close()
+        runtime = Runtime()
+        self.assertTrue(runtime.model_key(self.library))
         with self.assertRaises(ValueError):
-            _ = runtime.faces
+            runtime.faces(self.library)
 
     def test_names_its_vectors_as_the_store_does(self):
         from tagpup.store import embeddings
-        settings = tagpup_config.load()
-        self.assertEqual(embeddings.model_key(**tagpup_config.embedder_settings(settings)),
-                         Runtime(settings).model_key)
+        self.assertEqual(embeddings.model_key(**library_settings.of(self.library).embedder),
+                         Runtime().model_key(self.library))
 
-    def test_is_given_the_settings_and_reads_none_itself(self):
-        settings = tagpup_config.load()
-        settings.set("faces", "min_face_size", "33")
-        settings.set("candidates", "tags", "Kayak, Lighthouse")
-        runtime = Runtime(settings)
-        self.assertEqual(33, runtime.face_settings["min_face_size"])
-        self.assertEqual(["Kayak", "Lighthouse"], runtime.candidate_words)
+    def test_reads_the_librarys_settings(self):
+        library_settings.change(self.library, {"faces.min_face_size": "33", "candidates.tags": "Kayak, Lighthouse"},
+                                acknowledged=["faces"])
+        runtime = Runtime()
+        self.assertEqual(33, runtime.settings(self.library).faces["min_face_size"])
+        self.assertEqual(["Kayak", "Lighthouse"], runtime.candidate_words(self.library))
 
 
 if __name__ == "__main__":

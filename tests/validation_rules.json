@@ -1,0 +1,432 @@
+{
+ "version": "5c70a78e7273",
+ "blank": "\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
+ "kinds": {
+  "tag": {
+   "rules": [
+    {
+     "rule": "forbid_pattern",
+     "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\ufeff]",
+     "message": "A tag cannot contain a tab, a line break or another control character."
+    },
+    {
+     "rule": "forbid_text",
+     "text": "|",
+     "message": "A tag cannot contain \"|\": other programs read it as a break between levels. Use \"/\" instead."
+    },
+    {
+     "rule": "forbid_text",
+     "text": "\\",
+     "message": "A tag cannot contain \"\\\": other programs read it as a break between levels. Use \"/\" instead."
+    },
+    {
+     "rule": "required",
+     "message": "A tag cannot be empty."
+    },
+    {
+     "rule": "forbid_pattern",
+     "pattern": "(?:^|/)\\s*(?:/|$)",
+     "message": "A tag cannot have an empty level, as in \"A//B\" or \"A/\"."
+    }
+   ]
+  },
+  "name": {
+   "rules": [
+    {
+     "rule": "reserved",
+     "names": [
+      "excluded",
+      "ungrouped",
+      "unknown faces",
+      "unmatched"
+     ],
+     "message": "'{value}' is the name of one of TagTuner's lists, not a person's."
+    },
+    {
+     "rule": "forbid_pattern",
+     "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\ufeff]",
+     "message": "A name cannot contain a tab, a line break or another control character."
+    },
+    {
+     "rule": "forbid_text",
+     "text": "|",
+     "message": "A name cannot contain \"|\": other programs read it as a break between levels."
+    },
+    {
+     "rule": "forbid_text",
+     "text": "\\",
+     "message": "A name cannot contain \"\\\": other programs read it as a break between levels."
+    },
+    {
+     "rule": "required",
+     "message": "A name cannot be empty."
+    },
+    {
+     "rule": "forbid_text",
+     "text": "/",
+     "message": "A name cannot contain \"/\": it separates the levels of a tag."
+    }
+   ]
+  },
+  "caption": {
+   "rules": [
+    {
+     "rule": "forbid_pattern",
+     "pattern": "[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\ufffe\\uffff]",
+     "message": "A caption cannot contain a control character other than a tab or a line break."
+    },
+    {
+     "rule": "max_bytes",
+     "max": 2000,
+     "message": "A caption cannot be longer than 2,000 bytes, the most IPTC keeps."
+    }
+   ]
+  },
+  "library name": {
+   "rules": [
+    {
+     "rule": "required",
+     "message": "A library needs a name."
+    },
+    {
+     "rule": "pattern",
+     "pattern": "[A-Za-z0-9_-]+",
+     "message": "A library's name can hold only letters, numbers, underscores and hyphens."
+    },
+    {
+     "rule": "reserved",
+     "names": [
+      "api",
+      "common",
+      "gui",
+      "gui_tagpup"
+     ],
+     "message": "'{value}' is the name of one of the app's own pages; choose another"
+    }
+   ]
+  },
+  "grouping": {
+   "rules": [
+    {
+     "rule": "required",
+     "message": "Enter a grouping name to rename by"
+    },
+    {
+     "rule": "forbid_text",
+     "text": " - ",
+     "message": "A grouping cannot contain \" - \": it separates the parts of a photo's name. A dash without spaces, as in 2019-06, is fine."
+    }
+   ]
+  },
+  "folder": {
+   "rules": [
+    {
+     "rule": "required",
+     "message": "Choose a folder."
+    },
+    {
+     "rule": "forbid_pattern",
+     "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\ufeff]",
+     "message": "A folder's path cannot contain a tab, a line break or another control character."
+    },
+    {
+     "rule": "pattern",
+     "pattern": "(?:[A-Za-z]:[/\\\\]|[/\\\\]{2}[^/\\\\]|/)[\\s\\S]*",
+     "message": "A folder is named by its full path, as in D:/Photos."
+    }
+   ]
+  },
+  "time shift": {
+   "rules": [
+    {
+     "rule": "integer",
+     "message": "A time shift is a whole number of minutes."
+    }
+   ]
+  },
+  "setting model.name": {
+   "group": "clip",
+   "label": "Model",
+   "type": "text",
+   "default": "ViT-H-14",
+   "info": "The CLIP architecture Suggest compares photos and words with (an open_clip model name). Every photo's vector is made with it when its folder is indexed.",
+   "locked": true,
+   "consequences": [
+    "Every photo's vector was made with the model it has now, so Suggest finds nothing until every folder is indexed again.",
+    "Indexing a folder again makes a vector for each of its photos with the new model; on a large library that takes hours."
+   ],
+   "rules": [
+    {
+     "rule": "required",
+     "message": "The CLIP model cannot be empty."
+    },
+    {
+     "rule": "forbid_pattern",
+     "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\ufeff]",
+     "message": "The CLIP model cannot contain a tab, a line break or another control character."
+    }
+   ]
+  },
+  "setting model.pretrained": {
+   "group": "clip",
+   "label": "Weights",
+   "type": "text",
+   "default": "laion2b_s32b_b79k",
+   "info": "The trained weights the model is loaded with (an open_clip pretrained tag for the model above).",
+   "locked": true,
+   "consequences": [
+    "Every photo's vector was made with the model it has now, so Suggest finds nothing until every folder is indexed again.",
+    "Indexing a folder again makes a vector for each of its photos with the new model; on a large library that takes hours."
+   ],
+   "rules": [
+    {
+     "rule": "required",
+     "message": "The CLIP weights cannot be empty."
+    },
+    {
+     "rule": "forbid_pattern",
+     "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\ufeff]",
+     "message": "The CLIP weights cannot contain a tab, a line break or another control character."
+    }
+   ]
+  },
+  "setting model.preserve_full_frame": {
+   "group": "clip",
+   "label": "Keep the full frame",
+   "type": "boolean",
+   "default": "true",
+   "info": "Show the model the whole photo, padded to the widest aspect ratio below, rather than the square crop from its middle.",
+   "locked": true,
+   "consequences": [
+    "Every photo's vector was made with the model it has now, so Suggest finds nothing until every folder is indexed again.",
+    "Indexing a folder again makes a vector for each of its photos with the new model; on a large library that takes hours."
+   ],
+   "rules": [
+    {
+     "rule": "boolean",
+     "message": "Keep the full frame is true or false."
+    }
+   ]
+  },
+  "setting model.max_aspect_ratio": {
+   "group": "clip",
+   "label": "Widest aspect ratio",
+   "type": "number",
+   "default": "1.4",
+   "info": "With the full frame kept, how far a photo is padded towards square: 1 is square.",
+   "locked": true,
+   "consequences": [
+    "Every photo's vector was made with the model it has now, so Suggest finds nothing until every folder is indexed again.",
+    "Indexing a folder again makes a vector for each of its photos with the new model; on a large library that takes hours."
+   ],
+   "rules": [
+    {
+     "rule": "number",
+     "message": "The widest aspect ratio is a number."
+    },
+    {
+     "rule": "range",
+     "min": 1,
+     "max": 4,
+     "message": "The widest aspect ratio must be between 1 and 4."
+    }
+   ]
+  },
+  "setting model.force_image_size": {
+   "group": "clip",
+   "label": "Image size",
+   "type": "integer",
+   "default": "512",
+   "info": "The size in pixels a photo is scaled to before the model sees it. Empty is the model's own size.",
+   "locked": true,
+   "consequences": [
+    "Every photo's vector was made with the model it has now, so Suggest finds nothing until every folder is indexed again.",
+    "Indexing a folder again makes a vector for each of its photos with the new model; on a large library that takes hours."
+   ],
+   "rules": [
+    {
+     "rule": "optional"
+    },
+    {
+     "rule": "integer",
+     "message": "The image size is a whole number of pixels."
+    },
+    {
+     "rule": "range",
+     "min": 32,
+     "max": 2048,
+     "message": "The image size must be between 32 and 2048."
+    }
+   ]
+  },
+  "setting faces.min_face_size": {
+   "group": "faces",
+   "label": "Smallest face",
+   "type": "integer",
+   "default": "20",
+   "info": "The smallest face, in pixels, that indexing looks for. Smaller finds more faces in crowds, and more that are not faces.",
+   "locked": true,
+   "consequences": [
+    "Only photos indexed after the change are detected with it; the faces already found stay as they are.",
+    "Indexing a folder again applies it to that folder."
+   ],
+   "rules": [
+    {
+     "rule": "integer",
+     "message": "The smallest face is a whole number of pixels."
+    },
+    {
+     "rule": "range",
+     "min": 1,
+     "max": 2000,
+     "message": "The smallest face must be between 1 and 2000."
+    }
+   ]
+  },
+  "setting faces.confidence_threshold": {
+   "group": "faces",
+   "label": "Confidence",
+   "type": "number",
+   "default": "0.85",
+   "info": "How sure the detector must be that it found a face before the face is kept, from 0 to 1.",
+   "locked": true,
+   "consequences": [
+    "Only photos indexed after the change are detected with it; the faces already found stay as they are.",
+    "Indexing a folder again applies it to that folder."
+   ],
+   "rules": [
+    {
+     "rule": "number",
+     "message": "The confidence is a number."
+    },
+    {
+     "rule": "range",
+     "min": 0,
+     "max": 1,
+     "message": "The confidence must be between 0 and 1."
+    }
+   ]
+  },
+  "setting faces.mtcnn_thresholds": {
+   "group": "faces",
+   "label": "Stage thresholds",
+   "type": "list",
+   "default": "0.6, 0.7, 0.7",
+   "info": "The face detector's (MTCNN's) threshold at each of its three stages, from 0 to 1.",
+   "locked": true,
+   "consequences": [
+    "Only photos indexed after the change are detected with it; the faces already found stay as they are.",
+    "Indexing a folder again applies it to that folder."
+   ],
+   "rules": [
+    {
+     "rule": "list",
+     "separator": ",",
+     "count": 3,
+     "message": "Face detection takes three thresholds, one for each stage.",
+     "each": [
+      {
+       "rule": "number",
+       "message": "Each threshold is a number."
+      },
+      {
+       "rule": "range",
+       "min": 0,
+       "max": 1,
+       "message": "Each threshold must be between 0 and 1."
+      }
+     ]
+    }
+   ]
+  },
+  "setting paths.exiftool": {
+   "group": "exiftool",
+   "label": "ExifTool program",
+   "type": "path",
+   "default": "",
+   "info": "The ExifTool program every photo file is read and written with. Empty is the one its installer puts in your profile, else the one on PATH.",
+   "locked": true,
+   "consequences": [
+    "Every read and every write of a photo file goes through this program: tags, captions, dates, renames and rotations.",
+    "A program that is not ExifTool, or that is missing, makes every one of them fail."
+   ],
+   "rules": [
+    {
+     "rule": "optional"
+    },
+    {
+     "rule": "forbid_pattern",
+     "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\ufeff]",
+     "message": "ExifTool's path cannot contain a tab, a line break or another control character."
+    }
+   ]
+  },
+  "setting candidates.tags": {
+   "group": "suggest",
+   "label": "Candidate words",
+   "type": "list",
+   "default": "Landscape, Portrait, Nature, Urban, Sunset, Sunrise, Night, Ocean, Mountain, Forest, Animal, Cat, Dog, Food, Indoor, Outdoor, Vehicle, Flower, Architecture, Party, Wedding, Beach, Sports, Concert",
+   "info": "Words Suggest asks CLIP about each photo, beside every tag in the tree that is not a person, separated by commas. Accepted, a word is written as a tag. From the next Suggest.",
+   "locked": false,
+   "consequences": [],
+   "rules": [
+    {
+     "rule": "list",
+     "separator": ",",
+     "skip_empty": true,
+     "each": [
+      {
+       "rule": "forbid_pattern",
+       "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\ufeff]",
+       "message": "A tag cannot contain a tab, a line break or another control character."
+      },
+      {
+       "rule": "forbid_text",
+       "text": "|",
+       "message": "A tag cannot contain \"|\": other programs read it as a break between levels. Use \"/\" instead."
+      },
+      {
+       "rule": "forbid_text",
+       "text": "\\",
+       "message": "A tag cannot contain \"\\\": other programs read it as a break between levels. Use \"/\" instead."
+      },
+      {
+       "rule": "required",
+       "message": "A tag cannot be empty."
+      },
+      {
+       "rule": "forbid_pattern",
+       "pattern": "(?:^|/)\\s*(?:/|$)",
+       "message": "A tag cannot have an empty level, as in \"A//B\" or \"A/\"."
+      }
+     ]
+    }
+   ]
+  },
+  "setting renaming.format": {
+   "group": "renaming",
+   "label": "Rename format",
+   "type": "text",
+   "default": "{grouping} - {index} - {caption}",
+   "info": "The name Smart Rename gives each photo: {grouping} is the name you type, {index} the photo's number, {caption} its caption. From the next rename.",
+   "locked": false,
+   "consequences": [],
+   "rules": [
+    {
+     "rule": "required",
+     "message": "The rename format cannot be empty."
+    },
+    {
+     "rule": "forbid_pattern",
+     "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\ufeff]",
+     "message": "The rename format cannot contain a tab, a line break or another control character."
+    },
+    {
+     "rule": "must_contain",
+     "text": "{index}",
+     "message": "The rename format must hold {index}, or every photo is given the same name."
+    }
+   ]
+  }
+ }
+}

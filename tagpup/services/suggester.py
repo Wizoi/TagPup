@@ -626,7 +626,7 @@ class SuggestionModel:
 
 def model_for_run(photo_index, clip, faces, configured_words):
     """Ready the suggester for one run over a library, on the run's thread: its tag tree,
-    the words CLIP is asked about -- `configured_words`, config.ini's, and the tree's, but
+    the words CLIP is asked about -- `configured_words`, the library's, and the tree's, but
     no one's name (tagpup.core.suggesting) -- and their embeddings, before the parallel
     photos need them. `photo_index` is the library's, loaded; `clip` and `faces` the
     models (tagpup.runtime)."""

@@ -60,13 +60,14 @@ for (const app of ["tagpup", "tagtuner"]) {
     });
 
     test("with no library, the page asks the server about libraries only", async (t) => {
+      // And what a new one may be called (/api/rules), which is every library's.
       const { server } = await loadApp(app, {
         t, url: "http://localhost:8090/", server: libraries(["photo_index"]),
       });
       const asked = server.urls().filter((u) => u.includes("api/"));
       assert.ok(asked.length > 0, "the page never asked for the libraries");
       for (const url of asked) {
-        assert.match(url, /^\/?api\/databases(?:[/?]|$)/, `asked for more than the libraries: ${url}`);
+        assert.match(url, /^\/?api\/(?:databases|rules)(?:[/?]|$)/, `asked for more than the libraries: ${url}`);
       }
     });
 

@@ -9,7 +9,6 @@ So this checks the rules, and fails the build on a raw `.split("/")` -- or rspli
 partition, rpartition -- anywhere outside vocabulary.py. A line splitting something
 that is not a tag can say so with a `# not a tag: <why>` comment.
 """
-import json
 import os
 import re
 import sys
@@ -19,7 +18,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from tagpup.core import vocabulary  # noqa: E402
+from tagpup.core import validation, vocabulary  # noqa: E402
 from shipped_sources import ROOT, python_sources  # noqa: E402
 
 
@@ -141,43 +140,13 @@ class WhatAPhotosMetadataSays(unittest.TestCase):
         self.assertEqual(people, ["Rowan Thackeray", "Hazel Brookmire"])
 
 
-RULES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tag_rules.json")
-
-
 class WhatMayBeSet(unittest.TestCase):
-    """The cases the pages are held to as well (tests/frontend/tag-rules.test.mjs)."""
-
-    @classmethod
-    def setUpClass(cls):
-        with open(RULES, encoding="utf-8") as handle:
-            cls.rules = json.load(handle)
-
-    def test_tags(self):
-        for text, expected in self.rules["tags"]:
-            with self.subTest(tag=text):
-                self.assertEqual(vocabulary.problem_with_tag(text), expected)
-
-    def test_names(self):
-        for text, expected in self.rules["names"]:
-            with self.subTest(name=text):
-                self.assertEqual(vocabulary.problem_with_name(text), expected)
-
-    def test_an_allowed_tag_is_set_in_its_one_spelling(self):
-        for typed, stored in self.rules["spelled"]:
-            with self.subTest(tag=typed):
-                self.assertIsNone(vocabulary.problem_with_tag(typed))
-                self.assertEqual(vocabulary.normalize(typed), stored)
-
-    def test_the_cases_cover_every_refusal(self):
-        # Each message is one branch; a branch no case reaches is one the pages were
-        # never checked against.
-        said = {expected for _, expected in self.rules["tags"] + self.rules["names"] if expected}
-        for kind in ("empty", "control character", '"|"', '"\\"', "empty level", 'contain "/"'):
-            self.assertTrue(any(kind in message for message in said), kind)
+    """What may be set as a tag or a name is tagpup.core.validation's now, tested with
+    the cases the pages share (test_validation.py); nothing is empty, whatever it is."""
 
     def test_nothing_is_nothing(self):
-        self.assertEqual(vocabulary.problem_with_tag(None), "A tag cannot be empty.")
-        self.assertEqual(vocabulary.problem_with_name(None), "A name cannot be empty.")
+        self.assertEqual(validation.problem("tag", None), "A tag cannot be empty.")
+        self.assertEqual(validation.problem("name", None), "A name cannot be empty.")
 
 
 OWNER = os.path.join("tagpup", "core", "vocabulary.py")

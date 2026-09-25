@@ -7,6 +7,7 @@
  * going at once. TagPup's Change button, which closes the open folder, is TagPup's.
  */
 import { api, libraryIn } from './api.js';
+import { ruleProblem } from './validate.js';
 
 // The library opened last, kept in this browser. The server used to keep it, in
 // config.ini, and wrote that file whenever a library was chosen (docs/findings.md,
@@ -91,8 +92,10 @@ export function initDatabaseSelector(select, createButton, { beforeLeaving = (go
                 cleanName = cleanName.substring(0, cleanName.length - 3);
             }
             
-            if (!/^[a-zA-Z0-9_\-]+$/.test(cleanName)) {
-                alert('Invalid name. Only letters, numbers, underscores, and hyphens are allowed.');
+            // The server's rule, reserved names and all (tagpup/core/validation.py).
+            const refused = ruleProblem('library name', cleanName);
+            if (refused) {
+                alert(refused);
                 return;
             }
             

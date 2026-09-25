@@ -45,9 +45,12 @@ function apiUrl(path) {
     return library ? '/' + library + route : route;
 }
 
-/** What a page with no library may ask: which libraries there are, and to make one. */
+/**
+ * What a page with no library may ask: which libraries there are, and to make one --
+ * and what a new one may be called (/api/rules).
+ */
 function askableWithoutALibrary(route) {
-    return /^\/api\/databases(?:\/|\?|$)/.test(route);
+    return /^\/api\/(?:databases|rules)(?:\/|\?|$)/.test(route);
 }
 
 /**

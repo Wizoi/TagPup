@@ -1,5 +1,6 @@
 // Review Tags.
 import { api } from './common/api.js';
+import { buildElement, replaceContent } from './common/dom.js';
 import { tagProblem } from './common/vocabulary.js';
 import { state } from './state.js';
 import { listStats, peopleSort, photoList, photoSearch } from './elements.js';
@@ -174,9 +175,10 @@ function showTag(tag) {
             tagViewSummary.textContent = parts.join(' · ');
 
             if (photos.length === 0) {
-                tagPhotoGrid.innerHTML =
-                    '<p class="tag-empty">No photo carries this tag. It can still be '
-                    + 'suggested, which is usually a reason to retire it.</p>';
+                replaceContent(tagPhotoGrid, buildElement('p', {
+                    className: 'tag-empty',
+                    text: 'No photo carries this tag. It can still be suggested, which is usually a reason to retire it.',
+                }));
                 return;
             }
             photos.forEach(photo => tagPhotoGrid.appendChild(tagPhotoCard(photo)));

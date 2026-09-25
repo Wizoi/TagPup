@@ -28,7 +28,7 @@ Everything below holds for every task; the brief does not repeat it.
 
 ## The rules the guards enforce (each shipped a bug before it was a rule)
 - The database through `tagpup.store.db`; ExifTool through `ExifToolSession`; photo
-  paths through `tagpup.core.paths`; config.ini through `tagpup.config`; tags and names
+  paths through `tagpup.core.paths`; a library's settings through `tagpup.services.settings` (never config.ini); tags and names
   through `tagpup.core.vocabulary`; processes through `tagpup.core.processes`.
 - SQL: no `LIKE` for equality, no function on an indexed column, never a BLOB you do not
   use, no per-item query for a per-run answer. Check `EXPLAIN QUERY PLAN` on the real

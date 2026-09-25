@@ -9,10 +9,11 @@
  * here: tests/frontend/tag-vocabulary.test.mjs fails on a raw `.split('/')` in the
  * pages outside them. The server's reading of a tag is tagpup/core/vocabulary.py's.
  *
- * And what may be set as a tag or a name, in the server's words:
- * tests/frontend/tag-rules.test.mjs holds these to tests/tag_rules.json, as the
- * server's problem_with_tag is held.
+ * And what may be set as a tag, a name or a caption, which is the server's to say
+ * (tagpup/core/validation.py): asked of web/common/validate.js, which applies the
+ * rules the server publishes.
  */
+import { ruleProblem } from './validate.js';
 
 /** The last segment of a tag path: the name a person is known by. */
 export function leafOf(tag) {
@@ -53,39 +54,21 @@ export function photoAlreadyHas(photo, tag, isPersonTag) {
 /**
  * Why this cannot be set as a tag, or null if it can.
  *
- * The server refuses the same tags (problem_with_tag, tagpup/core/vocabulary.py),
- * with the same words; tests/tag_rules.json holds both to one list. Asking here
- * first only means nothing is created for a tag that will be refused, and the
- * text stays where it was typed.
+ * The server refuses the same tags, with the same words: both ask the rules of
+ * tagpup/core/validation.py, the page through validate.js. Asking here first only
+ * means nothing is created for a tag that will be refused, and the text stays where
+ * it was typed.
  */
 export function tagProblem(tag) {
-    return textProblem(tag, 'A tag', true);
+    return ruleProblem('tag', tag);
 }
 
 /** The same for a person's name or one level of a tag, which cannot hold a "/" either. */
 export function nameProblem(name) {
-    return textProblem(name, 'A name', false);
+    return ruleProblem('name', name);
 }
 
-export function textProblem(value, what, levels) {
-    // Controls first, as the server asks: the two languages disagree on whether
-    // some of them count as space.
-    const text = value == null ? '' : String(value);
-    if (/[\u0000-\u001F\u007F-\u009F\u2028\u2029\uFEFF]/.test(text)) {
-        return `${what} cannot contain a tab, a line break or another control character.`;
-    }
-    for (const mark of ['|', '\\']) {
-        if (text.includes(mark)) {
-            return `${what} cannot contain "${mark}": other programs read it as a break between levels.`
-                + (levels ? ' Use "/" instead.' : '');
-        }
-    }
-    if (!text.trim()) return `${what} cannot be empty.`;
-    if (!levels && text.includes('/')) {
-        return 'A name cannot contain "/": it separates the levels of a tag.';
-    }
-    if (levels && /(?:^|\/)\s*(?:\/|$)/.test(text)) {
-        return `${what} cannot have an empty level, as in "A//B" or "A/".`;
-    }
-    return null;
+/** The same for a photo's caption, which is its title too. */
+export function textProblem(text) {
+    return ruleProblem('caption', text);
 }

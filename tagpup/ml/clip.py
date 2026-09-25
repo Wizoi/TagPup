@@ -1,8 +1,8 @@
 """CLIP: a photo or a text as a vector, from the settings it is given.
 
 It embeds an image or a text and nothing else. Which settings it runs with is the
-config's (tagpup.config.embedder_settings), read by an entry point and handed down
-through tagpup.runtime; where a photo's vector is kept is the library's
+library's (tagpup.services.settings, LibrarySettings.embedder), made into a model by
+tagpup.runtime; where a photo's vector is kept is the library's
 (tagpup.store.embeddings), read and written by the service that asks
 (tagpup.services.search.PhotoEmbeddings).
 
@@ -12,7 +12,7 @@ process, and read and wrote the library's cache itself (docs/ARCHITECTURE.md, "T
 layers, revisited"). A model is now one object, built once by the runtime and shared by
 handing it on.
 """
-from tagpup.ml import refuse_in_tests
+from tagpup.ml import free_device_memory, refuse_in_tests
 import logging
 import os
 import threading
@@ -24,7 +24,7 @@ from tagpup.files import images
 
 logger = logging.getLogger("tagpup_cli.embedder")
 
-#: The settings a model is made from: tagpup.config.embedder_settings()'s keys.
+#: The settings a model is made from: tagpup.services.settings.LibrarySettings.embedder's keys.
 SETTINGS = ("model_name", "pretrained", "preserve_full_frame", "max_aspect_ratio", "force_image_size")
 
 
@@ -73,6 +73,16 @@ class ClipModel:
     def load(self):
         """Load the model now, if it is not loaded yet."""
         self._init_model()
+
+    def unload(self):
+        """Let the weights go, and the GPU memory they held (tagpup.runtime drops a model
+        no library it serves uses any more). Used again, it loads again."""
+        with self.model_lock:
+            if self.model is None:
+                return
+            self.model = self.preprocess = self.tokenizer = None
+        logger.info("Unloaded CLIP model %s (%s).", self.model_name, self.pretrained)
+        free_device_memory()
 
     def _init_model(self):
         """Lazily load the CLIP model."""

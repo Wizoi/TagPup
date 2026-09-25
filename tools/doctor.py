@@ -19,7 +19,8 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from tagpup import config  # noqa: E402
+from tagpup import runtime  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import checks, db, embeddings  # noqa: E402
 
 
@@ -27,12 +28,15 @@ def report(db_path, show=0, out=print):
     """Report on the library at `db_path`. Returns the number of rules broken."""
     if not os.path.exists(db_path):
         raise SystemExit("There is no library at %s." % db_path)
+    # The library's CLIP model, read without writing: a library never stamped reads as
+    # stamping would make it.
+    model = embeddings.model_key(**runtime.peek_settings(Library(db_path)).embedder)
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         held = checks.summary(conn)
         results = checks.run(conn)
         missing = checks.missing_files(conn)
-        unembedded = checks.without_a_vector(conn, embeddings.model_key(**config.embedder_settings()))
+        unembedded = checks.without_a_vector(conn, model)
     finally:
         conn.close()
 

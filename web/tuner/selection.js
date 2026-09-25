@@ -1,11 +1,17 @@
 // Selecting faces in the Identify grid, and the selected face's details.
 import { api } from './common/api.js';
+import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
 import {
     btnExcludeSelected, btnNewPerson, btnReassignSelected, btnRestoreSelected,
     btnUnmatchSelected, inputReassignName, matchingFacesGrid,
 } from './elements.js';
 import { BUCKET } from './rules.js';
+
+/** A line the details sidebar shows while it loads, or in place of what it has none of. */
+function detailNote(text, style = 'font-size:11px;color:var(--text-muted);font-style:italic;', tag = 'span') {
+    return buildElement(tag, { style, text });
+}
 
 // Face Matching Details Sidebar DOM Elements
 const matchingDetailsPlaceholder = document.getElementById('matching-details-placeholder');
@@ -105,9 +111,9 @@ export function showFaceDetails(faceId) {
     }
 
     // Loading placeholders
-    matchingDetailTags.innerHTML = '<span style="font-size:11px;color:var(--text-muted);font-style:italic;">Loading tags...</span>';
-    matchingDetailPeople.innerHTML = '<span style="font-size:11px;color:var(--text-muted);font-style:italic;">Loading people...</span>';
-    matchingDetailDiagnostics.innerHTML = '<span style="font-size:11px;color:var(--text-muted);font-style:italic;">Loading diagnostics...</span>';
+    replaceContent(matchingDetailTags, detailNote('Loading tags...'));
+    replaceContent(matchingDetailPeople, detailNote('Loading people...'));
+    replaceContent(matchingDetailDiagnostics, detailNote('Loading diagnostics...'));
 
     api.fetch(`/api/photo-details?path=${encodeURIComponent(face.photo_path)}`, { signal })
         .then(res => {
@@ -124,7 +130,7 @@ export function showFaceDetails(faceId) {
                 matchingDetailTags.appendChild(pill);
             });
             if (tagsList.length === 0) {
-                matchingDetailTags.innerHTML = '<span style="font-size:11px;color:var(--text-muted);font-style:italic;">No tags</span>';
+                replaceContent(matchingDetailTags, detailNote('No tags'));
             }
 
             matchingDetailPeople.innerHTML = '';
@@ -136,14 +142,14 @@ export function showFaceDetails(faceId) {
                 matchingDetailPeople.appendChild(pill);
             });
             if (peopleList.length === 0) {
-                matchingDetailPeople.innerHTML = '<span style="font-size:11px;color:var(--text-muted);font-style:italic;">No people resolved</span>';
+                replaceContent(matchingDetailPeople, detailNote('No people resolved'));
             }
         })
         .catch(err => {
             if (err.name === 'AbortError') return;
             console.error('Error loading photo details:', err);
-            matchingDetailTags.innerHTML = '<span style="font-size:11px;color:#f87171;">Failed to load</span>';
-            matchingDetailPeople.innerHTML = '<span style="font-size:11px;color:#f87171;">Failed to load</span>';
+            replaceContent(matchingDetailTags, detailNote('Failed to load', 'font-size:11px;color:#f87171;'));
+            replaceContent(matchingDetailPeople, detailNote('Failed to load', 'font-size:11px;color:#f87171;'));
         });
 
     api.fetch(`/api/face-matches?id=${face.id}`, { signal })
@@ -154,7 +160,8 @@ export function showFaceDetails(faceId) {
         .then(diagnostics => {
             matchingDetailDiagnostics.innerHTML = '';
             if (!diagnostics || diagnostics.length === 0) {
-                matchingDetailDiagnostics.innerHTML = '<div style="font-size:12px;color:var(--text-muted);font-style:italic;padding:4px;">No diagnostic matches found</div>';
+                replaceContent(matchingDetailDiagnostics, detailNote('No diagnostic matches found',
+                    'font-size:12px;color:var(--text-muted);font-style:italic;padding:4px;', 'div'));
             } else {
                 diagnostics.forEach(item => {
                     const itemDiv = document.createElement('div');
@@ -181,7 +188,8 @@ export function showFaceDetails(faceId) {
         .catch(err => {
             if (err.name === 'AbortError') return;
             console.error('Error loading diagnostics:', err);
-            matchingDetailDiagnostics.innerHTML = '<div style="font-size:11px;color:#f87171;padding:4px;">Failed to load diagnostics</div>';
+            replaceContent(matchingDetailDiagnostics, detailNote('Failed to load diagnostics',
+                'font-size:11px;color:#f87171;padding:4px;', 'div'));
         });
 }
 

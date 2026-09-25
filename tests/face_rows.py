@@ -43,10 +43,11 @@ def people_of(conn, photo_path):
 
 
 def configured_model():
-    """The model key search reads: the one the config names, as PhotoIndex uses it."""
-    from tagpup import config
+    """The model key search reads in a library made in a test's home: the defaults' (a
+    new library is stamped with them; tagpup.services.settings), as PhotoIndex uses it."""
+    from tagpup.services import settings
     from tagpup.store import embeddings
-    return embeddings.model_key(**config.embedder_settings())
+    return embeddings.model_key(**settings.LibrarySettings(dict(settings.DEFAULTS)).embedder)
 
 
 #: A photo's vectors with its path: `SELECT p.path, e.vector FROM ` + VECTORS_WITH_PATHS.

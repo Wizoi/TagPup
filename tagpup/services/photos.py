@@ -3,7 +3,7 @@ import json
 import logging
 import os
 
-from tagpup.core import dates, fields, paths, renaming, vocabulary
+from tagpup.core import dates, fields, paths, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
 from tagpup.files import images, metadata, names, recycle_bin, times
 from tagpup.store import db, embeddings, faces, photos, taxonomy
@@ -209,8 +209,19 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     included; `renamed`, those whose name changed; `moved_aside`, the files moved out
     of the way; `index_rows_moved`; `index_skipped`, the (old, new) pairs whose new name
     already had rows in the index, left as they were.
+
+    Refused, and nothing renamed, for a grouping that may not be used
+    (tagpup.core.validation). The grouping is used trimmed as the rules trim it
+    (validation.trim): the rules allow blanks at its ends, and a trailing space -- from
+    a caller that does not strip, or before a U+FEFF, which strip() leaves -- put a
+    double space before every photo's number.
     """
     result = Result(attempted=len(photo_paths))
+    problem = validation.problem("grouping", grouping)
+    if problem:
+        result.refuse(problem)
+        return result
+    grouping = validation.trim(grouping)
     width = len(str(len(photo_paths)))
     captions = names.read_for_renaming(exiftool_path, [p for p in photo_paths if os.path.exists(p)])
     renames = {}
@@ -254,9 +265,14 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
     compared against, and each file's new mtime and size, without which the next scan
     distrusts them.
 
-    details: `records`, each photo as read back afterwards.
+    details: `records`, each photo as read back afterwards. Refused, and nothing
+    written, for a shift that is not a whole number of minutes (tagpup.core.validation).
     """
     result = Result(attempted=len(photo_paths))
+    problem = validation.problem("time shift", minutes)
+    if problem:
+        result.refuse(problem)
+        return result
     before = {photo_path: embeddings.stamp_of(photo_path) for photo_path in photo_paths}
     try:
         result.changed = times.shift_date_taken(exiftool_path, photo_paths, minutes)

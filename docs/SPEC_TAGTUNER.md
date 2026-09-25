@@ -16,6 +16,48 @@ This document records the design, specifications, prerequisites, and instruction
 
 ## Features and Mechanics
 
+### The gear
+
+A gear at the right of the header holds what is not tuning: **Tag editor** opens the tag
+tree's editor -- the same module TagPup's gear opens (`web/common/tag-editor.js`), over the
+same routes, which both apps serve. **Library settings** opens the library's settings
+(below). **Open in TagPup**
+opens TagPup on the same library in a new tab, its address from `/api/apps`. The menu
+opens on click, Enter or Space; the arrow keys move through it, Escape closes it and puts
+the focus back on the gear, and a click anywhere else closes it. An edit made in the
+editor refreshes the names offered while typing, and one that rewrote photos refreshes
+the list.
+
+### Library settings
+
+**Library settings** in the gear opens the settings of the library the page is on
+(`web/common/settings-dialog.js`, over `/api/settings`): the CLIP model its vectors are
+made with, face detection, the ExifTool program, Suggest's candidate words and the rename
+format. They are the library's own, kept in it (`tagpup.services.settings`), not the
+machine's. The dialog is made from each setting's one declaration
+(`tagpup.core.validation.SETTINGS`): its label, its type (a checkbox for true or false,
+a box of text otherwise), its value, and an info button (i) that shows what it changes
+and when. Each value is checked as it is typed against the rules `/api/rules` publishes,
+the message shown under it and Save disabled while one is refused; the server checks it
+again before it writes.
+
+The CLIP model (model, weights, keep the full frame, widest aspect ratio, image size),
+face detection (smallest face, confidence, stage thresholds) and the ExifTool program are
+**locked**: shown, not editable. Each group opens only through its **Change...**, which
+lists what changing it does, each with a box to tick -- every photo's vector was made
+with the old model, so Suggest finds nothing until every folder is indexed again; face
+detection applies only to photos indexed afterwards; every read and write of a photo file
+goes through ExifTool. Save is enabled only when something changed, every value may be
+set, and every box of every group opened is ticked. After a locked setting is saved the
+page reloads. Candidate words and the rename format are edited directly, and apply from
+the next Suggest or rename.
+
+Save sends only what changed, as one change of the library's journal: it is in the
+library's history and can be undone (`tagpup_cli.py history`, `undo`). A library opened
+for the first time since its settings moved into it is stamped once, from the home's
+`config.ini` if it has one, else with the defaults; a new library is made with the
+defaults. Escape, Cancel or the close button close it without saving.
+
 ### 0. Managing the Index
 
 TagTuner can bring folders into the current database and take them out again, using the
@@ -357,12 +399,22 @@ matching can still read its name.
 
 - `/api/tags/list`: Every word tag the library knows, with `count` (photos carrying it), `flat`, `in_taxonomy`, `has_embedding` and `is_person`. People are excluded unless `?people=1`, since the point of this view is the tags face curation could not reach. Also returns `buckets`: `flat`, `used_once` (where typos hide), `unused` (in the vocabulary, on no photo, yet still feeding zero-shot matching) and `people_without_a_path` (a person written as a bare leaf, which the keyword convention forbids).
 - `/api/tags/photos?tag=`: The photos carrying one tag, newest first. Matches the whole tag, never a prefix.
+- `/api/taxonomy/tree`: The tag tree's nodes, with each node's photo count and its `has_face` and `hidden_from_autocomplete`. The tree's six routes are TagPup's too, the same routes on both apps (`tagpup.web.taxonomy_routes`); the tag editor, which both pages open, is what calls them. docs/SPEC_TAGPUP_GUI.md says what each does.
+- `/api/apps`: Returns `{"this": "tagpup" | "tuner", "apps": {"tagpup": url, "tuner": url}}` -- each app's page for the library the request names, on the host the page was reached by and the port the process serves that app on. The gear's link to the other app is read from it, so a page never spells a port. Both apps serve it alike.
+- `/api/settings`: Returns the settings of the library the URL names, as the settings dialog is made from them: `{"library": name, "stamped": bool, "exiftool_found": path, "groups": [{"name", "title", "locked", "consequences": [text], "settings": [{"key", "kind", "label", "type", "default", "info", "locked", "consequences", "value"}]}]}`. Each setting's declaration is `tagpup.core.validation.SETTINGS`'; `kind` is what `/api/rules` checks its value as; `exiftool_found` is the ExifTool the machine has, which an empty `paths.exiftool` runs. A library holding no settings is stamped first (from the home's config.ini if it has one, else with the defaults). Both apps serve it alike (`tagpup.web.settings_routes`).
+- `/api/rules`: Returns `{"version": string, "kinds": {kind: {"rules": list}}}` -- what may be set, as data: every kind of input (`tag`, `name`, `caption`, `library name`, `grouping`, `folder`, `time shift`, and `setting <section>.<key>` for each setting), each with its rules in order (patterns, forbidden text, lengths, ranges, choices) and the message each gives. The rules are `tagpup.core.validation`'s, which every service checks before it writes; `web/common/validate.js` fetches them once and the page checks against them before sending (docs/SPEC_TAGPUP_GUI.md). `version` changes whenever a rule does. The same for every library, so both apps serve it alike, and a page open on no library may ask it.
 
 ### `POST` Endpoints
 
-**What may be set.** A tag or a person's name being set is refused with `400` and a message saying why if it holds `|` or `\` (which other programs read as a break between levels), a control character such as a tab or a line break, or nothing at all. A tag also may not have an empty level (`A//B`, `A/`); a person's name is one level, so it may not hold `/`. The rules are `problem_with_tag` and `problem_with_name` in `tagpup/core/vocabulary.py`, the same as TagPup's, and the page asks them before sending.
+**What may be set.** A tag or a person's name being set is refused with `400` and a message saying why if it holds `|` or `\` (which other programs read as a break between levels), a control character such as a tab or a line break, or nothing at all. A tag also may not have an empty level (`A//B`, `A/`); a person's name is one level, so it may not hold `/`. The rules are the `tag` and `name` kinds of `tagpup/core/validation.py`, the same as TagPup's, which `/api/rules` publishes and the page asks before sending. A name is not one of TagTuner's lists (`Unknown Faces`, `Ungrouped`, `Excluded`, `Unmatched`), whatever the case.
 
 - `/api/databases/create`: Expects JSON body `{"db_name": string}`. Creates a new empty database file, seeded with the default taxonomy categories.
+- `/api/settings` (POST): Expects JSON body `{"values": {key: value}, "acknowledged": [group]}`. Changes those settings as one journaled change (`change settings`), so it is in the library's history and can be undone (`tagpup_cli.py undo`). Refused with `400` and the validator's message, and nothing written, for a key that is no setting or a value that may not be set -- and for a change to a locked setting whose group (`clip`, `faces`, `exiftool`) `acknowledged` does not name, the message listing each such group and what changing it means (the lock is `tagpup.services.settings.change`'s, so it holds for every caller; the dialog names each group whose consequences were ticked). After a change the process lets go of the models and photo index the library no longer uses (`tagpup.runtime.Runtime.settings_changed`). Returns `{"success": true, "changed": int, "settings": [key], "locked": bool, "change": id}`: `changed` counts the settings whose value changed; `locked` says one of them was a locked one (the CLIP model, face detection, the ExifTool program), after which the page reloads.
+- `/api/taxonomy/create`: Expects JSON body `{"name": string, "parent_id": int, "has_face": int}`. Adds a tag to the tree (docs/SPEC_TAGPUP_GUI.md).
+- `/api/taxonomy/update`: Expects JSON body `{"id": int, "has_face": int, "hidden_from_autocomplete": int}`. Sets a node's flags, and its descendants'.
+- `/api/taxonomy/delete-check`: Expects JSON body `{"tag_id": int}`. How many photos carry the tag or one under it.
+- `/api/taxonomy/delete-confirm`: Expects JSON body `{"tag_id": int, "action": string, "target_tag": string}`. Takes the tag off its photos, or moves them to `target_tag`, then out of the tree. Clears TagPup's cached scans of the library whichever app served it.
+- `/api/taxonomy/rename`: Expects JSON body `{"tag_id": int, "new_name": string}`. Renames a node, its descendants and the photos carrying them. Clears TagPup's cached scans of the library whichever app served it.
 - `/api/face/match`: Expects JSON body `{"face_id": int, "person_name": string}`. An excluded face is refused with `409`: it must be restored before it can be named. `person_name` must be a name that may be set (above).
 - `/api/face/unmatch`: Expects JSON body `{"face_id": int}`.
 - `/api/faces/match-bulk`: Expects JSON body `{"face_ids": list, "person_name": string}`. Matches face IDs in bulk. Implements duplicate-tagging protection. Excluded faces are skipped, never named. Returns `{"success", "matched", "matched_ids", "skipped_excluded"}` — `matched` is the rows actually changed, and the page offers Undo for `matched_ids` only. `person_name` must be a name that may be set (above).

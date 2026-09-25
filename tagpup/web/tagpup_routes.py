@@ -1,5 +1,6 @@
 """TagPup's routes (docs/SPEC_TAGPUP_GUI.md): the folder view, a photo's metadata,
-its faces, the taxonomy, Suggest and the bulk writes.
+its faces, Suggest and the bulk writes. The tag tree's routes are both apps'
+(tagpup.web.taxonomy_routes).
 
 Each route is thin: it reads the request, calls a service, and shapes the reply. What
 this server keeps for a library between requests is a `tagpup.core.per_library.PerLibrary`
@@ -21,7 +22,7 @@ import urllib.parse
 from flask import Blueprint, jsonify, request
 
 from tagpup import config as tagpup_config
-from tagpup.core import fields, paths, renaming, suggesting, vocabulary
+from tagpup.core import fields, paths, suggesting, vocabulary
 from tagpup.core.result import NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
@@ -97,6 +98,13 @@ class FolderCache:
 folders = state.PerLibrary(lambda library: FolderCache())
 
 
+def forget_scans(library):
+    """Photos of `library` were rewritten: its cached scans describe them as they were.
+    The cache is the process's, so whichever app rewrote them calls this -- the tree's
+    routes, and TagTuner's tag merge and person rename."""
+    folders.of(library).clear()
+
+
 def _folder_photos(library, folder):
     """The folder's photos as the page was shown them, scanned now if it has not been:
     what a suggestion run works from. Called on the run's own thread, with the library
@@ -105,7 +113,7 @@ def _folder_photos(library, folder):
     found = cache.get(folder)
     if not found:
         logger.info("Folder cache empty for %s; scanning it.", folder)
-        found = photo_actions.scan_folder(library, folder, tagpup_config.exiftool_path())
+        found = photo_actions.scan_folder(library, folder, state.exiftool(library))
         cache.put(folder, found)
     return found
 
@@ -196,7 +204,7 @@ def folder_scan():
     # opened never showed until Refresh, since its empty scan was kept like any other.
     photos = None if force else cache.get(folder)
     if not photos:
-        photos = photo_actions.scan_folder(library, folder, tagpup_config.exiftool_path())
+        photos = photo_actions.scan_folder(library, folder, state.exiftool(library))
         cache.put(folder, photos)
     return jsonify(_sorted(photos))
 
@@ -269,7 +277,9 @@ def folder_auto_apply():
     # Apply exactly what the panel offered (tagpup.core.suggesting.offered_tags).
     additions = {path: suggesting.offered_tags(entry, threshold) for path, entry in suggestions.items()}
     try:
-        result = tagging_actions.add_tags(library, additions, tagpup_config.exiftool_path())
+        result = tagging_actions.add_tags(library, additions, state.exiftool(library))
+        if result.refused:
+            return responses.error(400, result.refused)
         _records_written(library, result)
         if not result.ok:
             raise RuntimeError(result.message())
@@ -298,7 +308,7 @@ def folder_time_shift():
     photos = cache.get(folder)
     if not photos:
         try:
-            photos = photo_actions.read_folder(library, folder, tagpup_config.exiftool_path())
+            photos = photo_actions.read_folder(library, folder, state.exiftool(library))
             cache.put(folder, photos)
         except Exception as e:
             logger.error("Error scanning folder on the fly for time shift: %s", e)
@@ -309,7 +319,9 @@ def folder_time_shift():
     if not targets:
         return jsonify({"success": True, "message": "No photos matched the camera model"})
     try:
-        result = photo_actions.shift_date_taken(library, targets, shift_minutes, tagpup_config.exiftool_path())
+        result = photo_actions.shift_date_taken(library, targets, shift_minutes, state.exiftool(library))
+        if result.refused:
+            return responses.error(400, result.refused)
         if not result.ok:
             raise RuntimeError(result.message())
         for meta in result.details["records"]:
@@ -339,9 +351,6 @@ def folder_rename_photos():
         return responses.error(400, "Invalid folder path")
     if not photo_paths:
         return responses.error(400, "No photos selected for renaming")
-    problem = renaming.problem_with_grouping(grouping)
-    if problem:
-        return responses.error(400, problem)
     cache = folders.of(library)
     try:
         # In the order they were taken, by the Date Taken in the folder's cached scan; a
@@ -360,14 +369,16 @@ def folder_rename_photos():
                 return "9999"
 
         result = photo_actions.smart_rename(
-            library, sorted(photo_paths, key=taken), grouping, tagpup_config.rename_format(),
-            tagpup_config.exiftool_path())
+            library, sorted(photo_paths, key=taken), grouping, state.rename_format(library),
+            state.exiftool(library))
+        if result.refused:
+            return responses.error(400, result.refused)
         if not result.ok:
             return responses.error(500, result.message())
         # Their saved suggestions are kept by the photo's id, and went with the rows.
         # The folder is read again from its files, as the page is about to show it.
         cache.pop(folder)
-        photos = photo_actions.read_folder(library, folder, tagpup_config.exiftool_path())
+        photos = photo_actions.read_folder(library, folder, state.exiftool(library))
         cache.put(folder, photos)
     except Exception as e:
         logger.error("Error smart renaming photos: %s", e, exc_info=True)
@@ -469,7 +480,7 @@ def photo_rotate():
         return responses.error(400, "Direction must be 'left' or 'right'")
     photo_path = paths.stored(photo_path)
     try:
-        result = photo_actions.rotate(library, photo_path, direction, tagpup_config.exiftool_path())
+        result = photo_actions.rotate(library, photo_path, direction, state.exiftool(library))
         if not result.ok:
             logger.error("Error rotating image %s: %s", photo_path, result.message())
             return responses.error(500, result.message())
@@ -516,7 +527,7 @@ def photo_save_metadata():
     photo_path = paths.stored(photo_path)
     try:
         result = tagging_actions.save_photo(library, photo_path, title, tags, date_taken,
-                                            tagpup_config.exiftool_path(), tagpup_config.rename_format())
+                                            state.exiftool(library), state.rename_format(library))
         if result.refused:
             return responses.error(400, result.refused)
         new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
@@ -553,14 +564,12 @@ def photos_bulk_tags():
     remove_tags = body.get("remove_tags", [])
     if not photo_paths:
         return responses.error(400, "Missing paths list")
-    # What is added, not what is removed: taking a bad tag off must stay possible.
-    problem = vocabulary.problem_with_tags(add_tags)
-    if problem:
-        return responses.error(400, problem)
-    add_tags = [vocabulary.normalize(t) for t in add_tags]
     try:
+        # What is added is checked, not what is removed (tagpup.services.tagging).
         result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
-                                             tagpup_config.exiftool_path())
+                                             state.exiftool(library))
+        if result.refused:
+            return responses.error(400, result.refused)
         _records_written(library, result)
         if not result.ok:
             raise RuntimeError(result.message())
@@ -580,7 +589,7 @@ def _records_written(library, result):
             photo_actions.record_written(library, record, path, tags, flat, hierarchical)
 
 
-# ---- Autocomplete and the tag tree -----------------------------------------------------
+# ---- Autocomplete -----------------------------------------------------------------
 
 @routes.get("/api/tags")
 def tags():
@@ -597,102 +606,3 @@ def people():
         return jsonify(people_service.names(state.require()))
     except Exception as e:
         return responses.error(500, str(e))
-
-
-@routes.get("/api/taxonomy/tree")
-def taxonomy_tree():
-    try:
-        return jsonify(tags_service.tree(state.require()))
-    except Exception as e:
-        return responses.error(500, str(e))
-
-
-def _tree_edit(edit):
-    """Run an edit of the tag tree (tagpup.services.tags) on the request's library:
-    (its Result, None) or (None, the error reply) -- 404 for a node that is not there,
-    400 for a request refused, 500 for anything else."""
-    try:
-        result = edit(state.require())
-    except NotFound as missing:
-        return None, responses.error(404, str(missing))
-    except Exception as e:
-        return None, responses.error(500, str(e))
-    if result.refused:
-        return None, responses.error(400, result.refused)
-    return result, None
-
-
-@routes.post("/api/taxonomy/create")
-def taxonomy_create():
-    body = request.get_json(silent=True) or {}
-    result, failed = _tree_edit(lambda library: tags_service.create(
-        library, body.get("name", ""), body.get("parent_id"), body.get("has_face", 0)))
-    if failed:
-        return failed
-    return jsonify({"success": True, "id": result.details["id"], "tag": result.details["tag"]})
-
-
-@routes.post("/api/taxonomy/update")
-def taxonomy_update():
-    body = request.get_json(silent=True) or {}
-    tag_id = body.get("id")
-    if tag_id is None:
-        return responses.error(400, "Missing 'id' parameter")
-    _result, failed = _tree_edit(lambda library: tags_service.set_flags(
-        library, tag_id, body.get("has_face"), body.get("hidden_from_autocomplete")))
-    if failed:
-        return failed
-    return jsonify({"success": True})
-
-
-@routes.post("/api/taxonomy/delete-check")
-def taxonomy_delete_check():
-    body = request.get_json(silent=True) or {}
-    tag_id = body.get("tag_id")
-    if tag_id is None:
-        return responses.error(400, "Missing 'tag_id' parameter")
-    try:
-        usage = tags_service.usage(state.require(), tag_id)
-    except NotFound as missing:
-        return responses.error(404, str(missing))
-    except Exception as e:
-        return responses.error(500, str(e))
-    return jsonify(dict(usage, success=True))
-
-
-@routes.post("/api/taxonomy/delete-confirm")
-def taxonomy_delete_confirm():
-    body = request.get_json(silent=True) or {}
-    tag_id, action = body.get("tag_id"), body.get("action")
-    if tag_id is None or not action:
-        return responses.error(400, "Missing parameters")
-    result, failed = _tree_edit(lambda library: tags_service.delete(
-        library, tag_id, action, body.get("target_tag"), tagpup_config.exiftool_path()))
-    if failed:
-        return failed
-    # The photos rewritten are no longer what their cached scans say.
-    folders.of(state.require()).clear()
-    reply = {"success": result.ok, "photos_affected": result.details["photos_affected"],
-             "photos_rewritten": result.details["photos_rewritten"]}
-    if not result.ok:
-        reply["error"] = result.message()
-    return jsonify(reply)
-
-
-@routes.post("/api/taxonomy/rename")
-def taxonomy_rename():
-    body = request.get_json(silent=True) or {}
-    tag_id, new_name = body.get("tag_id"), str(body.get("new_name") or "").strip()
-    if tag_id is None or not new_name:
-        return responses.error(400, "Missing parameters")
-    result, failed = _tree_edit(lambda library: tags_service.rename(
-        library, tag_id, new_name, tagpup_config.exiftool_path()))
-    if failed:
-        return failed
-    folders.of(state.require()).clear()
-    reply = {"success": True, "photos_affected": result.details["photos_affected"],
-             "photos_rewritten": result.details["photos_rewritten"]}
-    # The tree has the new name; a photo that could not be rewritten keeps the old.
-    if not result.ok:
-        reply["warning"] = result.message()
-    return jsonify(reply)

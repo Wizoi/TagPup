@@ -22,6 +22,7 @@ from flask import Blueprint, current_app, g, jsonify, request
 
 from tagpup import config as tagpup_config
 from tagpup.core import library as libraries
+from tagpup.core import validation
 from tagpup.core.library import Library
 from tagpup.services import libraries as library_actions
 from tagpup.web import responses
@@ -33,9 +34,9 @@ PAGE_FILES = frozenset({"index.html", "style.css", "main.js", "favicon.ico", ""}
 PAGE_SUFFIXES = (".css", ".js", ".html", ".png", ".jpg", ".jpeg", ".ico")
 
 #: The page paths a request without a library is sent to the startup library for: the
-#: page, its style, its modules and the shared ones (tagpup.web.app).
+#: page, its style, its modules and the shared ones and their stylesheets (tagpup.web.app).
 PAGE_PATHS = ("/", "/index.html", "/style.css")
-PAGE_MODULE = re.compile(r"^/(?:common/)?[A-Za-z0-9_-]+\.js$")
+PAGE_MODULE = re.compile(r"^/(?:common/)?[A-Za-z0-9_-]+\.js$|^/common/[A-Za-z0-9_-]+\.css$")
 
 
 def is_page_path(path):
@@ -136,19 +137,18 @@ def list_libraries():
 
 @picker.post("/api/databases/create")
 def create_library():
-    """Make the library named, unless it is there already."""
+    """Make the library named, unless it is there already. Its name is the service's
+    to check (tagpup.services.libraries.create)."""
     body = request.get_json(silent=True) or {}
     db_name = body.get("db_name")
-    if not db_name:
-        return responses.error(400, "Invalid database name")
+    if not db_name or not isinstance(db_name, str):
+        return responses.error(400, validation.problem("library name", ""))
     db_name = libraries.file_name_for(db_name)
-    problem = libraries.problem_with_new_name(db_name)
-    if problem:
-        return responses.error(400, problem)
     db_path = tagpup_config.library_path(libraries.for_mode(db_name, _test_mode()))
     try:
-        if not os.path.exists(db_path):
-            library_actions.create(db_path)
+        result = library_actions.create(db_path)
     except Exception as e:
         return responses.error(500, "Error creating database: %s" % e)
+    if result.refused:
+        return responses.error(400, result.refused)
     return jsonify({"success": True, "db_name": os.path.splitext(db_name)[0]})

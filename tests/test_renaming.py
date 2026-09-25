@@ -14,19 +14,20 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from tagpup.core import renaming  # noqa: E402
+from tagpup.core import validation  # noqa: E402
 from handler_harness import Library  # noqa: E402
 
-RULES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tag_rules.json")
+CASES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "validation_cases.json")
 
 
 class WhatAGroupingMayHold(unittest.TestCase):
     def test_the_cases_the_page_is_held_to(self):
-        with open(RULES, encoding="utf-8") as handle:
-            cases = json.load(handle)["groupings"]
-        for grouping, expected in cases:
+        with open(CASES, encoding="utf-8") as handle:
+            cases = [case for case in json.load(handle)["cases"] if case[0] == "grouping"]
+        self.assertTrue(cases)
+        for _kind, grouping, expected in cases:
             with self.subTest(grouping=grouping):
-                self.assertEqual(renaming.problem_with_grouping(grouping), expected)
+                self.assertEqual(validation.problem("grouping", grouping), expected)
 
 
 class SmartRenameRefusesIt(unittest.TestCase):

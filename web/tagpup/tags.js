@@ -1,6 +1,7 @@
 // TagPup's page: the library's tags and people -- what they are, the lists the fields
 // offer, and turning what someone typed into a tag, asking where to file a new one.
 import { api } from './common/api.js';
+import { buildElement, replaceContent } from './common/dom.js';
 import { leafOf, rootOf, samePerson, tagProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -84,7 +85,7 @@ export function namesAPerson(tag) {
 /**
  * The one spelling of a tag, as the server stores it: each level trimmed.
  * " People / Hazel Brookmire " -> "People/Hazel Brookmire". Only for a tag that
- * tagProblem allows; the cases are in tests/tag_rules.json with the server's.
+ * tagProblem allows; the cases are in tests/validation_cases.json with the server's.
  */
 export function normalizeTag(tag) {
     return String(tag || '').split('/').map(level => level.trim()).filter(Boolean).join('/');
@@ -223,48 +224,53 @@ export function showPlacementModal(title, message, options, allowNewRoot = false
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay active';
         
-        let optionsHtml = options.map((opt, idx) => `
-                <label class="placement-option-label">
-                    <input type="radio" name="placement-opt" value="${opt}" ${idx === 0 ? 'checked' : ''}>
-                    <span>${opt}</span>
-                </label>
-            `).join('');
-        
+        // The typed text and the tag paths go in as text: a tag holding "<" or a quote
+        // was markup here, and broke the radio button's value.
+        const optionLabel = (value, text, checked) =>
+            buildElement('label', { className: 'placement-option-label' }, [
+                buildElement('input', { attrs: { type: 'radio', name: 'placement-opt', value, checked } }),
+                buildElement('span', { text }),
+            ]);
+        const choices = options.map((opt, idx) => optionLabel(opt, opt, idx === 0));
         if (allowNewRoot) {
-            optionsHtml += `
-                    <label class="placement-option-label">
-                        <input type="radio" name="placement-opt" value="__new_root__">
-                        <span>Create a new root category...</span>
-                    </label>
-                    <div id="new-root-input-container" style="display: none; padding-left: 24px; margin-top: 8px; flex-direction: column; gap: 8px;">
-                        <input type="text" id="new-root-name-input" placeholder="New root category name..." class="taxonomy-search-input">
-                        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary);">
-                            <input type="checkbox" id="new-root-has-face-checkbox">
-                            <span>Enable face matching (People/Pets)</span>
-                        </label>
-                    </div>
-                `;
+            choices.push(
+                optionLabel('__new_root__', 'Create a new root category...', false),
+                buildElement('div', {
+                    id: 'new-root-input-container',
+                    style: 'display: none; padding-left: 24px; margin-top: 8px; flex-direction: column; gap: 8px;',
+                }, [
+                    buildElement('input', {
+                        id: 'new-root-name-input', className: 'taxonomy-search-input',
+                        attrs: { type: 'text', placeholder: 'New root category name...' },
+                    }),
+                    buildElement('label', {
+                        style: 'display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary);',
+                    }, [
+                        buildElement('input', { id: 'new-root-has-face-checkbox', attrs: { type: 'checkbox' } }),
+                        buildElement('span', { text: 'Enable face matching (People/Pets)' }),
+                    ]),
+                ]),
+            );
         }
-        
-        overlay.innerHTML = `
-                <div class="modal-container" style="max-width: 450px;">
-                    <div class="modal-header">
-                        <h2>${title}</h2>
-                        <button class="modal-close-btn">&times;</button>
-                    </div>
-                    <div class="modal-body">
-                        <p style="margin-bottom: 16px; color: var(--text-secondary); line-height: 1.5; font-size: 14px;">${message}</p>
-                        <div class="placement-options">
-                            ${optionsHtml}
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button class="btn btn-secondary btn-cancel">Cancel</button>
-                        <button class="btn btn-primary btn-confirm">Confirm</button>
-                    </div>
-                </div>
-            `;
-        
+
+        overlay.appendChild(buildElement('div', { className: 'modal-container', style: 'max-width: 450px;' }, [
+            buildElement('div', { className: 'modal-header' }, [
+                buildElement('h2', { text: title }),
+                buildElement('button', { className: 'modal-close-btn', text: '\u00d7' }),
+            ]),
+            buildElement('div', { className: 'modal-body' }, [
+                buildElement('p', {
+                    style: 'margin-bottom: 16px; color: var(--text-secondary); line-height: 1.5; font-size: 14px;',
+                    text: message,
+                }),
+                buildElement('div', { className: 'placement-options' }, choices),
+            ]),
+            buildElement('div', { className: 'modal-footer' }, [
+                buildElement('button', { className: 'btn btn-secondary btn-cancel', text: 'Cancel' }),
+                buildElement('button', { className: 'btn btn-primary btn-confirm', text: 'Confirm' }),
+            ]),
+        ]));
+
         document.body.appendChild(overlay);
         
         const radioNewRoot = overlay.querySelector('input[value="__new_root__"]');

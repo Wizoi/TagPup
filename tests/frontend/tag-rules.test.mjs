@@ -6,18 +6,17 @@
  * writes the photo: refused only at the write, a bad tag would already be in the
  * tree. And the typed text stays where it was, with the reason, to be corrected.
  *
- * Both pages ask web/common/vocabulary.js, which is run against tests/tag_rules.json,
- * the cases the server's copy is held to, so the two give the same answer in the same
- * words.
+ * Both pages ask web/common/vocabulary.js, which asks web/common/validate.js, which
+ * applies the rules the server publishes; tests/frontend/validation.test.mjs runs it
+ * against the cases the server is held to (tests/validation_cases.json).
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { REPO_ROOT, loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, pageSource } from "./harness.mjs";
-import { tagProblem, nameProblem } from "../../web/common/vocabulary.js";
 
-const RULES = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tests", "tag_rules.json"), "utf8"));
+const RULES = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tests", "validation_cases.json"), "utf8"));
 
 /** TagPup's page: its modules, as the browser loads them (harness.mjs). */
 const TAGPUP = pageSource("tagpup");
@@ -31,32 +30,6 @@ function functionSource(source, name) {
   assert.ok(end > start, `could not find the end of ${name}`);
   return lines.slice(start, end + 1).join("\n");
 }
-
-describe("web/common/vocabulary.js: what may be set", () => {
-  test("tags, as the server answers them", () => {
-    for (const [text, expected] of RULES.tags) {
-      assert.equal(tagProblem(text), expected, JSON.stringify(text));
-    }
-  });
-
-  test("names, as the server answers them", () => {
-    for (const [text, expected] of RULES.names) {
-      assert.equal(nameProblem(text), expected, JSON.stringify(text));
-    }
-  });
-});
-
-describe("web/tagpup/rename.js: what a Smart Rename grouping may hold", () => {
-  const source = TAGPUP;
-  const groupingProblem = new Function(
-    `${functionSource(source, "groupingProblem")}\nreturn groupingProblem;`)();
-
-  test("as the server answers it", () => {
-    for (const [grouping, expected] of RULES.groupings) {
-      assert.equal(groupingProblem(grouping), expected, JSON.stringify(grouping));
-    }
-  });
-});
 
 describe("web/tagpup/tags.js: a typed tag is set in its one spelling", () => {
   // Only TagPup's page turns typed text into a tag path.

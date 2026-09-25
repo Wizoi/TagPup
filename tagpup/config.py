@@ -1,117 +1,48 @@
-"""Where TagPup keeps its settings and libraries, and what the settings say.
+"""Where TagPup's libraries are, which ExifTool the machine has, and -- once, for each
+library that has no settings of its own yet -- what the old config.ini said.
 
 config.ini was read in 26 places, each with its own idea of where the file is and what
-a missing value means. Most looked beside the code; metadata.py looked in whatever
-folder the program was started from, and read it as cp1252. A relative data_dir was
-resolved against the code in some places and the working directory in others, and
-runner.py ignored data_dir altogether. ExifTool had three different fallbacks. Every
-read now comes here; tests/test_config_single_owner.py fails the build on one that
-does not.
+a missing value means, and then by this module alone. Its settings are each library's
+now (tagpup.services.settings; docs/ARCHITECTURE.md, phase 7.6): the CLIP model a
+library's vectors were made with, the face thresholds, Suggest's words, the rename
+format and the ExifTool it names. What is left here is the machine's:
 
-TAGPUP_HOME names the folder that holds config.ini and that relative paths in it are
-resolved against. Unset, it is the folder the code is in, which is where config.ini and
-data/ have always been. Tests set it to a folder of their own, so nothing they do
-reaches the config of the app somebody is using.
-
-The file is read fresh on every call. It is small, and the servers change it while they
-run: selecting a library remembers it for next time.
+- TAGPUP_HOME, the folder whose data/ holds the libraries, their backups, locks and
+  logs. Unset, it is the folder the code is in, where data/ has always been. Tests set
+  it to a folder of their own, so nothing they do reaches the app somebody is using.
+  Where the libraries are is not a setting: data/ in the home.
+- Which ExifTool the machine has: where its installer puts it, else the one on PATH.
+  A library may name another.
+- `config_ini`, what a home's config.ini says, which tagpup.runtime hands to the
+  one-time stamping of a library holding no settings (tagpup.services.settings.of), so
+  a library in use keeps the settings it was made with. Nothing else reads the file
+  (tests/test_config_single_owner.py); once every library has been stamped it is unused,
+  and can be deleted.
 """
 import configparser
 import os
 import platform
 import shutil
-import threading
 
 CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-#: A setting config.ini does not give: the project's settings, as config.example.ini
-#: gives them (tests/test_config.py keeps the two in step). config.ini is not in git, so
-#: a checkout can lack one, and these must then be the settings its libraries were built
-#: with -- the CLI's index clears every embedding when the model's dimensions differ.
-DEFAULTS = {
-    "paths": {
-        "data_dir": "data",
-    },
-    "model": {
-        "name": "ViT-H-14",
-        "pretrained": "laion2b_s32b_b79k",
-        "preserve_full_frame": "true",
-        "max_aspect_ratio": "1.4",
-        "force_image_size": "512",
-    },
-    "candidates": {"tags": "Landscape, Portrait, Nature, Urban, Sunset, Sunrise, Night, Ocean, "
-                           "Mountain, Forest, Animal, Cat, Dog, Food, Indoor, Outdoor, Vehicle, "
-                           "Flower, Architecture, Party, Wedding, Beach, Sports, Concert"},
-    "faces": {
-        "min_face_size": "20",
-        "confidence_threshold": "0.85",
-        "mtcnn_thresholds": "0.6, 0.7, 0.7",
-    },
-    "renaming": {"format": "{grouping} - {index} - {caption}"},
-}
-
-_write_lock = threading.Lock()
+#: The folder in a home that holds the libraries.
+DATA = "data"
 
 
 def home():
-    """The folder holding config.ini, which relative paths in it are resolved against."""
+    """The TagPup home: TAGPUP_HOME, else the code folder."""
     return os.path.abspath(os.environ.get("TAGPUP_HOME") or CODE_ROOT)
 
 
-def config_path(folder=None):
-    """The config.ini of a TagPup home: this one, or `folder` (a sandbox being built)."""
-    return os.path.join(folder or home(), "config.ini")
+def data_dir():
+    """The folder the libraries are in: data/ in the home."""
+    return os.path.join(home(), DATA)
 
 
-def load():
-    """The settings: config.ini over DEFAULTS, so every setting has a value."""
-    settings = configparser.ConfigParser(interpolation=None)
-    settings.read_dict(DEFAULTS)
-    if os.path.exists(config_path()):
-        settings.read(config_path(), encoding="utf-8")
-    return settings
-
-
-def read_file(folder=None):
-    """A home's config.ini as written, without DEFAULTS: for changing and writing back."""
-    settings = configparser.ConfigParser(interpolation=None)
-    if os.path.exists(config_path(folder)):
-        settings.read(config_path(folder), encoding="utf-8")
-    return settings
-
-
-def write_file(settings, folder=None):
-    """Write a home's config.ini whole, or not at all, with LF line endings.
-
-    `settings` is a ConfigParser or a {section: {key: value}} dict. Written beside the
-    target and swapped in, so a reader never sees half a file.
-    """
-    if isinstance(settings, dict):
-        parser = configparser.ConfigParser(interpolation=None)
-        parser.read_dict(settings)
-        settings = parser
-    target = config_path(folder)
-    temporary = target + ".writing"
-    with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
-        settings.write(handle)
-    os.replace(temporary, target)
-
-
-def resolve(value):
-    """A path setting as an absolute path. Relative means relative to home(), never to
-    the folder the program happened to be started from."""
-    expanded = os.path.expandvars(os.path.expanduser(value.strip()))
-    return expanded if os.path.isabs(expanded) else os.path.join(home(), expanded)
-
-
-def data_dir(settings=None):
-    """The folder the libraries are in."""
-    return resolve((settings or load()).get("paths", "data_dir"))
-
-
-def library_path(db_name, settings=None):
+def library_path(db_name):
     """Where the library with that file name lives."""
-    return os.path.join(data_dir(settings), db_name)
+    return os.path.join(data_dir(), db_name)
 
 
 def default_exiftool():
@@ -122,52 +53,45 @@ def default_exiftool():
     return shutil.which("exiftool") or "/usr/bin/exiftool"
 
 
-def exiftool_path(settings=None):
-    """The ExifTool to run: the configured one if it exists, else one on PATH.
+def exiftool_path(named=""):
+    """The ExifTool to run: the program a library names (its paths.exiftool setting) if
+    it exists, else where the installer puts it, else the one on PATH.
 
-    If neither exists, the configured one, so that the error names what was asked for.
+    If none exists, the one asked for, so that the error names it.
     """
-    configured = (settings or load()).get("paths", "exiftool", fallback="").strip()
-    path = os.path.expandvars(configured) if configured else default_exiftool()
+    named = (named or "").strip()
+    path = os.path.expandvars(named) if named else default_exiftool()
     if os.path.exists(path):
         return path
     return shutil.which("exiftool") or path
 
 
-def embedder_settings(settings=None):
-    """The CLIP model's settings (tagpup.ml.clip.ClipModel's keyword arguments), which
-    tagpup.runtime builds it from."""
-    settings = settings or load()
-    size = settings.get("model", "force_image_size").strip()
-    return {
-        "model_name": settings.get("model", "name"),
-        "pretrained": settings.get("model", "pretrained"),
-        "preserve_full_frame": settings.getboolean("model", "preserve_full_frame"),
-        "max_aspect_ratio": settings.getfloat("model", "max_aspect_ratio"),
-        "force_image_size": int(size) if size else None,
-    }
-
-
-def candidate_tags(settings=None):
-    """The zero-shot tags config.ini lists, in order."""
-    listed = (settings or load()).get("candidates", "tags")
-    return [tag.strip() for tag in listed.split(",") if tag.strip()]
-
-
-def face_settings(settings=None):
-    """Face detection thresholds. A threshold list that does not parse gets the default."""
-    settings = settings or load()
+def _same_file(a, b):
+    """Are `a` and `b` one program on this machine? Asked of the file system, not the
+    spelling (tagpup.core.paths spells photo paths; this is neither)."""
     try:
-        thresholds = [float(x) for x in settings.get("faces", "mtcnn_thresholds").split(",")]
-    except ValueError:
-        thresholds = [float(x) for x in DEFAULTS["faces"]["mtcnn_thresholds"].split(",")]
-    return {
-        "min_face_size": settings.getint("faces", "min_face_size"),
-        "confidence_threshold": settings.getfloat("faces", "confidence_threshold"),
-        "mtcnn_thresholds": thresholds,
-    }
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
-def rename_format(settings=None):
-    """The pattern Smart Rename names photos with."""
-    return (settings or load()).get("renaming", "format")
+def config_ini(folder=None):
+    """What the config.ini of this home (or of `folder`) says, as {"section.key": value},
+    or None when there is none: for stamping a library that holds no settings yet, and
+    for nothing else.
+
+    An ExifTool it names that is the one the installer put where it puts it is given as
+    "" -- found on each machine, rather than this machine's profile folder written into
+    the library.
+    """
+    path = os.path.join(folder or home(), "config.ini")
+    if not os.path.exists(path):
+        return None
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(path, encoding="utf-8")
+    found = {"%s.%s" % (section, key): value for section in parser.sections()
+             for key, value in parser.items(section)}
+    exiftool = found.get("paths.exiftool", "").strip()
+    if exiftool and _same_file(os.path.expandvars(exiftool), default_exiftool()):
+        found["paths.exiftool"] = ""
+    return found

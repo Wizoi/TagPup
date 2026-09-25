@@ -2,8 +2,8 @@
 
 Nothing stopped one before. A tag holding "|" was written into a photo file, where
 some programs read it as a break between levels and others as part of a name. The
-rules themselves are tagpup.core.vocabulary's, tested with the cases the pages share
-(test_vocabulary.py); this checks that every way in asks them, and that a refusal
+rules themselves are tagpup.core.validation's, tested with the cases the pages share
+(test_validation.py); this checks that every way in asks them, and that a refusal
 writes nothing.
 
 Only what is being set is checked. A photo already holding a bad tag from another

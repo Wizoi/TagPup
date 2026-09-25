@@ -12,8 +12,8 @@ to a TagPup or TagTuner you have open:
 * the copy goes in a temporary directory, **not** in `data/`, so it never appears in
   the database picker of the app you are using;
 * the code is snapshotted too, and the server runs with the sandbox as its home
-  (TAGPUP_HOME) and its own `config.ini` there, so it resolves databases inside the
-  sandbox and cannot reach yours;
+  (TAGPUP_HOME), so it resolves databases inside the sandbox's data/ and cannot reach
+  yours;
 * the server runs as a separate process on a high port, so editing files in the repo
   does not restart it and it does not restart anything of yours.
 
@@ -79,10 +79,8 @@ def build_sandbox(source_db, sandbox):
     os.makedirs(os.path.join(sandbox, "data"), exist_ok=True)
     copy_code(sandbox, launchers=True)
 
-    # Its own config, so database names in URLs resolve inside the sandbox. The server
-    # runs with the sandbox as its TAGPUP_HOME (start_sandbox_server).
-    tagpup_config.write_file({"paths": {"data_dir": os.path.join(sandbox, "data")}}, folder=sandbox)
-
+    # The server runs with the sandbox as its TAGPUP_HOME (start_sandbox_server), so
+    # library names in URLs resolve to the sandbox's data/.
     target = os.path.join(sandbox, "data", "measured.db")
     started = time.time()
     source = tagpup_db.connect(

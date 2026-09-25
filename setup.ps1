@@ -24,10 +24,7 @@ if (-not (Test-Path $dataDir)) {
     Write-Host "Created directory: $dataDir" -ForegroundColor Green
 }
 
-# The settings: config.ini is not in git, so a new checkout starts from the example.
-if (-not (Test-Path "config.ini")) {
-    Copy-Item "config.example.ini" "config.ini"
-    Write-Host "Created config.ini from config.example.ini" -ForegroundColor Green
-}
+# There is no settings file to make: each library holds its own settings, and a new
+# library is made with the defaults (tagpup.services.settings).
 
 Write-Host "Setup complete!" -ForegroundColor Green

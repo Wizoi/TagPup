@@ -1,7 +1,9 @@
 // TagPup's page: Image Details' unsaved edits, saving them, and the queue every write to
 // a photo goes through.
 import { api } from './common/api.js';
-import { leafOf, photoAlreadyHas, tagProblem } from './common/vocabulary.js';
+import { dialogOpen } from './common/dialog.js';
+import { buildElement, replaceContent } from './common/dom.js';
+import { leafOf, photoAlreadyHas, tagProblem, textProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { btnSaveDetails, inputAddPerson, inputAddTag, inputPhotoTitle } from './elements.js';
@@ -82,7 +84,8 @@ export function wireUnsavedEdits() {
         if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
         if (e.key !== 's' && e.key !== 'S') return;
         e.preventDefault();
-        if (state.leavePrompt) return;
+        // Not while a dialog is open: what it asks is not settled yet.
+        if (state.leavePrompt || dialogOpen()) return;
         if (hasUnsavedEdits()) saveDetailEdits();
     }, true);
 
@@ -181,8 +184,10 @@ export async function writeDetailEdits(fields) {
         ...splitTyped(tagText).map(text => ({ text, isPerson: false })),
         ...splitTyped(personText).map(text => ({ text, isPerson: true })),
     ];
-    // A tag that cannot be set stops the save the same way, and says why.
-    const refused = typed.map(item => tagProblem(item.text)).find(Boolean);
+    // A tag that cannot be set stops the save the same way, and says why; so does a
+    // caption, when it is the one being changed.
+    const refused = (newTitle === null ? null : textProblem(newTitle))
+        || typed.map(item => tagProblem(item.text)).find(Boolean);
     if (refused) {
         setStatus('error', `Not saved: ${refused}`, { transient: false });
         alert(refused);
@@ -359,25 +364,25 @@ export function askToSaveEdits(fileName) {
         overlay.className = 'modal-overlay active unsaved-edits-modal';
         overlay.setAttribute('role', 'dialog');
         overlay.setAttribute('aria-modal', 'true');
-        overlay.innerHTML = `
-                <div class="modal-container" style="max-width: 420px;">
-                    <div class="modal-header">
-                        <h2></h2>
-                    </div>
-                    <div class="modal-body">
-                        <p style="margin: 0; color: var(--text-secondary); line-height: 1.5; font-size: 14px;">
-                            This photo has edits that have not been written to the file.
-                        </p>
-                    </div>
-                    <div class="modal-footer">
-                        <button class="btn btn-secondary" data-choice="cancel">Cancel</button>
-                        <button class="btn btn-secondary" data-choice="discard">Discard</button>
-                        <button class="btn btn-primary" data-choice="save">Save</button>
-                    </div>
-                </div>
-            `;
-        // The file name goes in as text, never as markup.
-        overlay.querySelector('h2').textContent = `Save changes to ${fileName}?`;
+        const choice = (className, value, text) =>
+            buildElement('button', { className: `btn ${className}`, data: { choice: value }, text });
+        overlay.appendChild(buildElement('div', { className: 'modal-container', style: 'max-width: 420px;' }, [
+            buildElement('div', { className: 'modal-header' }, [
+                // The file name goes in as text, never as markup.
+                buildElement('h2', { text: `Save changes to ${fileName}?` }),
+            ]),
+            buildElement('div', { className: 'modal-body' }, [
+                buildElement('p', {
+                    style: 'margin: 0; color: var(--text-secondary); line-height: 1.5; font-size: 14px;',
+                    text: 'This photo has edits that have not been written to the file.',
+                }),
+            ]),
+            buildElement('div', { className: 'modal-footer' }, [
+                choice('btn-secondary', 'cancel', 'Cancel'),
+                choice('btn-secondary', 'discard', 'Discard'),
+                choice('btn-primary', 'save', 'Save'),
+            ]),
+        ]));
         document.body.appendChild(overlay);
 
         const close = (choice) => {

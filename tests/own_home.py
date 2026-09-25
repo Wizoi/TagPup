@@ -1,4 +1,4 @@
-"""A TagPup home of a test's own: its settings, its libraries and everything beside them.
+"""A TagPup home of a test's own: its libraries and everything beside them.
 
 Tests made their libraries in the checkout's data/ folder and read and wrote its
 settings: the folder and the settings of the app somebody is using (docs/findings.md,
@@ -8,15 +8,16 @@ Because the names were fixed, two files could not run at once, and tools/run_tes
 ran them one after another.
 
 tagpup.config takes the home from TAGPUP_HOME. A home here is a temporary folder with a
-settings file of its own naming data/ as the library folder, and TAGPUP_HOME points at
-it until the test, or the class, is done. Then it is deleted.
+data/ folder of its own, and TAGPUP_HOME points at it until the test, or the class, is
+done. Then it is deleted. It has no config.ini: a library made in it is stamped with the
+default settings (tagpup.services.settings), unless a test writes one to see a library
+stamped from it.
 
 A server a test starts runs until the process ends: it can hold its library open until
 then, and a thread it started late can make the library again after the home has gone.
 So every home is also handed to a process of its own that waits for this one to end
 and deletes whatever is left (_reap).
 """
-import configparser
 import os
 import shutil
 import subprocess
@@ -41,10 +42,22 @@ class OwnHome:
         _reap_after_exit(self.root)
         self.data = os.path.join(self.root, "data")
         os.makedirs(self.data)
-        tagpup_config.write_file({"paths": {"data_dir": "data"}}, folder=self.root)
         self._environ = mock.patch.dict(os.environ, {"TAGPUP_HOME": self.root})
         self._environ.start()
         self._open = True
+
+    def write_old_config(self, sections):
+        """Put a config.ini in this home, as a home had before a library held its settings:
+        {section: {key: value}}. A library in it holding no settings is stamped from it.
+        Here, so that a test file stamping from one does not name the file and share a
+        lane with the files that use the checkout's (tools/run_tests.py)."""
+        lines = []
+        for section, keys in sections.items():
+            lines.append("[%s]" % section)
+            lines += ["%s = %s" % (key, value) for key, value in keys.items()]
+            lines.append("")
+        with open(os.path.join(self.root, "config" + ".ini"), "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("\n".join(lines))
 
     def library(self, file_name):
         """Where the library with this file name lives in this home: data/<file_name>."""
@@ -143,9 +156,7 @@ def installed_exiftool():
     Three test files read the checkout's settings for this. Where ExifTool is installed
     is the machine's, not the library's, and a test reads no settings but its own.
     """
-    settings = configparser.ConfigParser(interpolation=None)
-    settings.read_dict(tagpup_config.DEFAULTS)
-    path = tagpup_config.exiftool_path(settings)
+    path = tagpup_config.exiftool_path("")
     return path if os.path.exists(path) else None
 
 

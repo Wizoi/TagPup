@@ -1,13 +1,13 @@
 """Faces: finding them in a photo (MTCNN) and making each one's vector (FaceNet), from
 the settings it is given.
 
-Which thresholds it runs with is the config's (tagpup.config.face_settings), read by an
-entry point and handed down through tagpup.runtime. It was scripts/faces.py's
+Which thresholds it runs with is the library's (tagpup.services.settings,
+LibrarySettings.faces), made into a model by tagpup.runtime. It was scripts/faces.py's
 FaceProcessor, which read config.ini itself and also resolved who is who across a
 library -- which is a service's, tagpup.services.identities (docs/ARCHITECTURE.md, "The
 layers, revisited").
 """
-from tagpup.ml import refuse_in_tests
+from tagpup.ml import free_device_memory, refuse_in_tests
 import logging
 import os
 import threading
@@ -24,7 +24,7 @@ from tagpup.files import images  # noqa: E402
 
 logger = logging.getLogger("tagpup_cli.faces")
 
-#: The settings a model is made from: tagpup.config.face_settings()'s keys.
+#: The settings a model is made from: tagpup.services.settings.LibrarySettings.faces' keys.
 SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds")
 
 
@@ -44,6 +44,16 @@ class FaceModel:
     def load(self):
         """Load the models now, if they are not loaded yet."""
         self._init_models()
+
+    def unload(self):
+        """Let the weights go, and the GPU memory they held (tagpup.runtime drops a model
+        no library it serves uses any more). Used again, they load again."""
+        with self._init_lock:
+            if self.mtcnn is None and self.resnet is None:
+                return
+            self.mtcnn = self.resnet = None
+        logger.info("Unloaded the face models.")
+        free_device_memory()
 
     def _init_models(self):
         """Lazily initialize MTCNN detector and InceptionResnetV1 face embedder.

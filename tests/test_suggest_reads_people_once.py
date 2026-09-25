@@ -21,7 +21,6 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
 import _root  # noqa: E402,F401
-from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import clustering  # noqa: E402
 from tagpup.ml import clip as clip_model  # noqa: E402
 from tagpup.ml import faces as face_model  # noqa: E402
@@ -132,18 +131,26 @@ class FaceModelsLoadOnce(unittest.TestCase):
             def load(self):
                 loaded.append(True)
 
-        Runtime(tagpup_config.load(), clip=mock.Mock(), faces=Faces()).warm_up()
+        Runtime(clip=mock.Mock(), faces=Faces()).warm_up()
         self.assertEqual(loaded, [True])
 
     def test_warm_up_builds_each_model_once_from_the_settings(self):
-        settings = tagpup_config.load()
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import own_home
+        from tagpup.core.library import Library
+        from tagpup.services import libraries as library_actions
+        from tagpup.services import settings as library_settings
+        home = own_home.for_test(self)
+        library_actions.create(home.library("harbour.db"))
+        library = Library(home.library("harbour.db"))
         with mock.patch.object(clip_model, "ClipModel") as clip, \
                 mock.patch.object(face_model, "FaceModel") as faces:
-            runtime = Runtime(settings)
-            runtime.warm_up()
-            runtime.warm_up()
-        clip.assert_called_once_with(**tagpup_config.embedder_settings(settings))
-        faces.assert_called_once_with(**tagpup_config.face_settings(settings))
+            runtime = Runtime()
+            runtime.warm_up([library])
+            runtime.warm_up([library])
+        found = library_settings.of(library)
+        clip.assert_called_once_with(**found.embedder)
+        faces.assert_called_once_with(**found.faces)
         self.assertEqual(2, clip.return_value.load.call_count)
         self.assertEqual(2, faces.return_value.load.call_count)
 
@@ -154,7 +161,7 @@ class FaceModelsLoadOnce(unittest.TestCase):
         opened = []
         with mock.patch.object(search, "PhotoIndex", side_effect=lambda *a, **k: opened.append(a)), \
                 self.assertNoLogs("tagpup.runtime", level="ERROR"):
-            Runtime(tagpup_config.load(), clip=mock.Mock(), faces=mock.Mock()).warm_up()
+            Runtime(clip=mock.Mock(), faces=mock.Mock()).warm_up()
         # The warm-up catches what a model raises, and logs it: a patch that raised was
         # swallowed there, so the library it opened is counted instead.
         self.assertEqual([], opened)

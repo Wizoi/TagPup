@@ -27,6 +27,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from tagpup import config, logs
+from tagpup import runtime as runtimes
 from tagpup.core import library as libraries
 from tagpup.core.library import Library
 from tagpup.core.result import NotFound, Refused
@@ -144,9 +145,12 @@ def build():
 
     @tool("What a library holds, as tools/doctor.py prints it: photos, faces, named, named by hand, "
           "excluded, untagged; the schema's version, the tag tree's nodes, the people the photos "
-          "list, and photos without a CLIP vector for the configured model. Counts only.")
+          "list, and photos without a CLIP vector for the library's CLIP model. Counts only.")
     def summary(library: str) -> dict[str, Any]:
-        return _answer(lambda: inspect.summary(find_library(library), config.embedder_settings()))
+        def read():
+            found = find_library(library)
+            return inspect.summary(found, runtimes.peek_settings(found).embedder)
+        return _answer(read)
 
     @tool("The folders a library's photos are directly in, the fullest first: each one's number, "
           "photo count and whether it is on disk. `limit` caps the folders listed." + REVEAL)
@@ -166,8 +170,11 @@ def build():
           "the people its keywords name, its DocumentID, and which raw metadata fields differ. "
           "`stale` says whether anything does. The file is only read." + REVEAL)
     def photo_against_file(library: str, photo_id: int, reveal: bool = False) -> dict[str, Any]:
-        return _answer(lambda: inspect.photo_against_file(find_library(library), photo_id,
-                                                          config.exiftool_path(), reveal), reveal)
+        def read():
+            found = find_library(library)
+            return inspect.photo_against_file(found, photo_id, runtimes.exiftool(found, runtimes.peek_settings(found)),
+                                              reveal)
+        return _answer(read, reveal)
 
     @tool("The faces in a photo, by photo id: each face's id, box, whether it is named and by whom "
           "(name_source 'manual' is a person's decision), detection confidence, and whether it is "
@@ -183,11 +190,13 @@ def build():
 
     @tool("Every consistency check tools/doctor.py runs, in its order, with how many rows break "
           "each and how many checks are broken; and how many photos have no CLIP vector for the "
-          "configured model (reported, not broken). Rows whose file is gone are missing_files'."
+          "library's CLIP model (reported, not broken). Rows whose file is gone are missing_files'."
           + REVEAL)
     def checks(library: str, reveal: bool = False) -> dict[str, Any]:
-        return _answer(lambda: inspect.all_checks(find_library(library), reveal, config.embedder_settings()),
-                       reveal)
+        def read():
+            found = find_library(library)
+            return inspect.all_checks(found, reveal, runtimes.peek_settings(found).embedder)
+        return _answer(read, reveal)
 
     @tool("The rows whose file is not on disk, by folder: whether each folder is gone entirely, its "
           "rows as ids (up to `limit` a folder), and the faces on them -- named, named by hand, "
@@ -221,7 +230,9 @@ def build():
                 reveal: bool = False, limit: int = inspect.LIMIT) -> dict[str, Any]:
         def act():
             found = find_library(library)
-            return written(refresh_rows.refresh_rows(found, config.exiftool_path(), apply=apply, folder=folder),
+            # The library's ExifTool, read without stamping it: a dry run writes nothing.
+            exiftool = runtimes.exiftool(found, runtimes.peek_settings(found))
+            return written(refresh_rows.refresh_rows(found, exiftool, apply=apply, folder=folder),
                            found, reveal, limit)
         return _answer(act, reveal)
 

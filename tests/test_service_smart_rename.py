@@ -35,6 +35,20 @@ class SmartRenaming(unittest.TestCase):
                                         "Regatta - 3 - Finish.jpg"])
         self.assertEqual((result.attempted, result.changed, result.errors), (3, 3, []))
 
+    def test_blanks_the_rules_allow_at_the_ends_of_the_grouping_are_not_in_the_names(self):
+        """The rules trim a grouping; the service used it untrimmed. A space before a
+        U+FEFF -- which the route's strip() leaves, and the file-name filter then drops,
+        leaving the space -- or any trailing space from a caller without that strip (the
+        MCP server, a script) put a double space before every photo's number. Found in
+        review of the settings."""
+        a, b = self.lib.photo("a.jpg"), self.lib.photo("b.jpg")
+        result = self.rename([a, b], {a: "Start"}, grouping=chr(0x2003) + "Harbour Day " + chr(0xFEFF))
+        self.assertIsNone(result.refused)
+        self.assertEqual(self.names(), ["Harbour Day - 1 - Start.jpg", "Harbour Day - 2.jpg"])
+        c = self.lib.photo("c.jpg")
+        self.rename([c], {}, grouping="Regatta  ")
+        self.assertIn("Regatta - 1.jpg", self.names())
+
     def test_the_index_follows_the_files(self):
         a = self.lib.photo("a.jpg")
         self.lib.add_row(a)

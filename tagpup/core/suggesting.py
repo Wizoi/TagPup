@@ -33,7 +33,7 @@ OFFER_A_TAG = 0.60
 
 
 def zero_shot_words(configured, tag_paths, face_roots):
-    """The words CLIP scores a photo against: `configured` (config.ini's candidates, in
+    """The words CLIP scores a photo against: `configured` (the library's candidates, in
     order), then the leaf of each of `tag_paths` in sorted order, once each whatever the
     case -- but no one filed under one of `face_roots` (lowercased). People are matched
     by their faces, not by asking CLIP whether a photo looks like a name (#66)."""

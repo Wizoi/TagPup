@@ -118,11 +118,3 @@ export const btnCloseDateModal = document.getElementById('btn-close-date-modal')
 export const btnCancelDateModal = document.getElementById('btn-cancel-date-modal');
 export const btnSaveDateModal = document.getElementById('btn-save-date-modal');
 export const inputDateTaken = document.getElementById('input-date-taken');
-
-// Taxonomy Tree Manager Controls & Resolution Dialogs
-export const btnManageTaxonomy = document.getElementById('btn-manage-taxonomy');
-export const taxonomyModal = document.getElementById('taxonomy-modal');
-export const btnCloseTaxonomy = document.getElementById('btn-close-taxonomy');
-export const btnCloseTaxonomyFooter = document.getElementById('btn-close-taxonomy-footer');
-export const btnTaxonomyAddRoot = document.getElementById('btn-taxonomy-add-root');
-export const taxonomySearchInput = document.getElementById('taxonomy-search-input');

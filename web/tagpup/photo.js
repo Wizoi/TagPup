@@ -1,6 +1,7 @@
 // TagPup's page: the open photo -- its details, tags, faces and zoom, carrying tags
 // forward, opening, rotating and deleting it, and editing when it was taken.
 import { api } from './common/api.js';
+import { buildElement, replaceContent } from './common/dom.js';
 import { photoAlreadyHas } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -402,7 +403,9 @@ export function renderTags(tags) {
     }
 
     if (peopleTags.length === 0) {
-        detailPeople.innerHTML = '<span style="color: var(--text-muted); font-size: 13px;">No people tags.</span>';
+        replaceContent(detailPeople, buildElement('span', {
+            style: 'color: var(--text-muted); font-size: 13px;', text: 'No people tags.',
+        }));
     } else {
         peopleTags.forEach(tag => {
             const pill = document.createElement('span');
@@ -418,7 +421,9 @@ export function renderTags(tags) {
     }
 
     if (nonPeopleTags.length === 0) {
-        detailTags.innerHTML = '<span style="color: var(--text-muted); font-size: 13px;">No keywords set.</span>';
+        replaceContent(detailTags, buildElement('span', {
+            style: 'color: var(--text-muted); font-size: 13px;', text: 'No keywords set.',
+        }));
     } else {
         nonPeopleTags.forEach(tag => {
             const pill = document.createElement('span');
