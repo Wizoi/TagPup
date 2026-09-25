@@ -111,6 +111,13 @@ def names_unasked(similarity):
     return similarity is not None and similarity >= NAME_WITHOUT_ASKING
 
 
+def might_name_unasked(similarities, slack):
+    """Which of `similarities` (an array) names_unasked could accept, were each off by
+    as much as `slack`: for a rough first look that must miss none it would name
+    (tagpup.services.identify.UnnamedFaces)."""
+    return similarities >= NAME_WITHOUT_ASKING - slack
+
+
 def looks_wrong(similarity):
     """Is a name on a face only `similarity`-like its person worth a second look? Below
     the value it would be offered at, it would not even have been suggested."""

@@ -439,10 +439,22 @@ def unnamed_for_matching(conn):
         " FROM faces f" + PHOTO + " WHERE f.name IS NULL AND f.excluded = 0").fetchall()
 
 
-def unnamed_except(conn, face_id):
-    """(id, photo_path, box JSON, embedding) of every nameless face in play but one."""
-    return conn.execute("SELECT f.id, p.path, f.box, f.embedding FROM faces f" + PHOTO
-                        + " WHERE f.name IS NULL AND f.excluded = 0 AND f.id != ?", (face_id,)).fetchall()
+def unnamed_embeddings(conn):
+    """(id, embedding) of every nameless face in play, by id: New Person's pool
+    (tagpup.services.identify.unnamed_faces). idx_faces_identify finds them."""
+    return conn.execute("SELECT id, embedding FROM faces WHERE name IS NULL AND excluded = 0"
+                        " ORDER BY id").fetchall()
+
+
+def unnamed_among(conn, face_ids):
+    """(id, photo_path, box JSON, embedding) of those of `face_ids` that are nameless
+    faces in play, read by id."""
+    found = []
+    for chunk in _chunks(list(face_ids)):
+        found.extend(conn.execute(
+            "SELECT f.id, p.path, f.box, f.embedding FROM faces f" + PHOTO + " WHERE f.id IN (%s)"
+            " AND f.name IS NULL AND f.excluded = 0" % ",".join("?" * len(chunk)), chunk).fetchall())
+    return found
 
 
 def names_by_photo(conn):

@@ -75,8 +75,8 @@ class BuildProgress:
 
 class GridCache:
     """The cached Identify Faces answers of one library, each stamped with the
-    fingerprint of the faces table it was read under: "queue", "named_matrix", and
-    "matches:<name>" for each grid."""
+    fingerprint of the faces table it was read under: "queue", "named_matrix",
+    "unnamed_faces" (New Person's) and "matches:<name>" for each grid."""
 
     def __init__(self):
         self._entries = {}
@@ -139,6 +139,12 @@ class GridCache:
         removed = {int(fid) for fid in face_ids}
         if not removed:
             return
+
+        # New Person's pool loses the faces too: its rows are masked, not read again
+        # (docs/findings.md, #5). Only from the state the write began at, as below.
+        pool = self.entry("unnamed_faces")
+        if pool and pool.get("fingerprint") == expected_fingerprint:
+            self.put("unnamed_faces", fingerprint_after, pool["value"].without(removed))
 
         for key in self.keys():
             if not key.startswith("matches:"):
@@ -258,6 +264,18 @@ def named_faces(library, cache):
         return cached
     stamp, value = identify.named_faces(library)
     cache.put("named_matrix", stamp, value)
+    return value
+
+
+def unnamed_faces(library, cache):
+    """Every nameless face in play (tagpup.services.identify.UnnamedFaces), read once per
+    state of the faces table rather than each time New Person opens; naming or excluding
+    faces masks them out (GridCache.forget_faces), anything else reads them again."""
+    cached = cache.get("unnamed_faces", identify.fingerprint(library))
+    if cached is not None:
+        return cached
+    stamp, value = identify.unnamed_faces(library)
+    cache.put("unnamed_faces", stamp, value)
     return value
 
 

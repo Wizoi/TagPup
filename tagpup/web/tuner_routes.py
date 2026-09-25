@@ -280,7 +280,8 @@ def face_matches_unmatched():
     if not _library_there(library):
         return jsonify({"matches": []})
     try:
-        return jsonify(identify_service.unnamed_like(library, face_id))
+        return jsonify(identify_service.unnamed_like(
+            library, face_id, lambda: identify_jobs.unnamed_faces(library, identify_cache.of(library))))
     except NotFound:
         abort(404, description="Face not found")
 
