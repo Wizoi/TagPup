@@ -83,9 +83,8 @@ class BackupsGoBesideTheLibrary(unittest.TestCase):
 class ThePicker(unittest.TestCase):
     """What both servers and the runner offer, choose and create -- one set of rules."""
 
-    FOLDER = ["photo_index.db", "kr-track.db", "notes.txt", "tag_emb_cache.db",
-              "validation_index.db", "test_photo_index.db", "test_kr-track.db",
-              "test_validation_perf.db", "test_tag_emb_cache.db"]
+    FOLDER = ["photo_index.db", "kr-track.db", "notes.txt", "test_photo_index.db",
+              "test_kr-track.db"]
 
     def test_it_offers_the_libraries_and_nothing_else(self):
         self.assertEqual(library.picker_names(self.FOLDER, test_mode=False), ["kr-track", "photo_index"])
@@ -95,6 +94,18 @@ class ThePicker(unittest.TestCase):
         self.assertEqual(library.picker_names(["photo_index.db"], test_mode=True), ["photo_index"],
                          "an empty list offers the first library")
 
+    def test_no_library_is_hidden_for_its_name(self):
+        # These were hidden (NOT_LIBRARIES), and could not be created: files the tests
+        # left in the checkout's data folder, and a cache nothing makes any more (#14).
+        once_hidden = ["validation_index.db", "validation_perf.db", "multiple_db_startup.db",
+                       "tag_emb_cache.db"]
+        offered = sorted(name[:-3] for name in once_hidden)
+        self.assertEqual(library.picker_names(once_hidden, test_mode=False), offered)
+        self.assertEqual(library.picker_names(["test_" + name for name in once_hidden],
+                                              test_mode=True), offered)
+        for name in once_hidden:
+            self.assertIsNone(library.problem_with_new_name(name), name)
+
     def test_a_name_from_the_page_names_a_file(self):
         self.assertEqual(library.file_name_for("Harbour"), "Harbour.db")
         self.assertEqual(library.file_name_for("test_Harbour.db"), "Harbour.db")
@@ -103,7 +114,6 @@ class ThePicker(unittest.TestCase):
     def test_a_new_library_needs_a_plain_name(self):
         self.assertIsNone(library.problem_with_new_name("kr-track_2.db"))
         self.assertIsNotNone(library.problem_with_new_name("kr track.db"))
-        self.assertIsNotNone(library.problem_with_new_name("tag_emb_cache.db"))
 
     def test_a_name_the_urls_route_is_refused(self):
         # Created, it could never be opened: /api/ reaches the API (#73).

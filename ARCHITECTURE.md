@@ -245,7 +245,7 @@ The sweep of 2026-09-24 found rules, lists and thresholds written in more than o
 - [x] What counts as a photo, once, in `tagpup.files.images` (#72).
 - [x] Library names the URLs reserve refused (#73).
 - [x] The agreeing copies (#74), each to one owner.
-- [ ] The tests that use the checkout's `data/` or `config.ini` in homes of their own (#14), so `tools/run_tests.py` spreads the whole suite across the cores.
+- [x] The tests that use the checkout's `data/` or `config.ini` in homes of their own (#14), so `tools/run_tests.py` spreads the whole suite across the cores. Done: `tests/own_home.py`; the lane is empty.
 
 Exit: every rule the sweep found has one owner, and the full check runs across the cores.
 

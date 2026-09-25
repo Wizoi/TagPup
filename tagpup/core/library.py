@@ -72,12 +72,7 @@ class Library:
 
 # The library picker. Both servers and the runner each listed the libraries in the data
 # folder, and chose and created them, with their own copy of these rules -- five copies
-# of the list below among them.
-
-#: Files in a data folder that are not libraries anybody made: test fixtures, and the
-#: shared cache of tag embeddings.
-NOT_LIBRARIES = frozenset({"validation_index.db", "validation_perf.db",
-                           "multiple_db_startup.db", "tag_emb_cache.db"})
+# among them of a list of names to hide, which went with the tests' files (#14).
 
 #: What a test library's file name starts with. A server started on one shows and
 #: creates only test libraries, under their names without it.
@@ -105,20 +100,20 @@ def picker_names(file_names, test_mode):
 
     A server started on a test library offers only the test libraries, by their names
     without the prefix; any other offers only the rest.
+
+    Every .db file is offered. A list of names was hidden (NOT_LIBRARIES): files the
+    test suite left in the checkout's data folder, and a tag-embedding cache nothing
+    has made since the cache moved into the library. The tests keep their libraries in
+    homes of their own now (docs/findings.md, #14).
     """
     names = []
     for file_name in file_names:
         if not file_name.endswith(".db"):
             continue
-        if file_name in NOT_LIBRARIES or file_name.startswith(TEST_PREFIX + "tag_emb_cache.db"):
-            continue
         if test_mode:
             if not file_name.startswith(TEST_PREFIX):
                 continue
-            clean = file_name[len(TEST_PREFIX):]
-            if clean in NOT_LIBRARIES:
-                continue
-            name = os.path.splitext(clean)[0]
+            name = os.path.splitext(file_name[len(TEST_PREFIX):])[0]
         else:
             if file_name.startswith(TEST_PREFIX):
                 continue
@@ -154,8 +149,6 @@ def problem_with_new_name(file_name):
     """Why a library cannot be created under this file name, or None if it can."""
     if not re.match(r"^[a-zA-Z0-9_\-]+\.db$", file_name):
         return "Invalid characters in database name"
-    if file_name in NOT_LIBRARIES:
-        return "Cannot create database with reserved test name"
     if picker_name(file_name).lower() in ROUTES:
         return "'%s' is the name of one of the app's own pages; choose another" % picker_name(file_name)
     return None

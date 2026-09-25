@@ -114,14 +114,15 @@ class TestMultipleDatabases(unittest.TestCase):
         self.setUp()
 
     def test_database_api_endpoints(self):
-        # 1. GET /api/databases - verify startup DB selected, but excluded from databases dropdown list
+        # 1. GET /api/databases - the startup library is selected, and offered: it was
+        # hidden from the list by name while the tests kept theirs in the checkout (#14)
         url = f"http://127.0.0.1:{self.TEST_PORT}/api/databases"
         response = urllib.request.urlopen(url)
         data = json.loads(response.read().decode('utf-8'))
         
         self.assertIn("databases", data)
         self.assertIn("selected", data)
-        self.assertNotIn("multiple_db_startup", data["databases"])
+        self.assertIn("multiple_db_startup", data["databases"])
         self.assertTrue(data["selected"])
 
         # 2. POST /api/databases/create - create a new database (without .db suffix in request)
