@@ -10,7 +10,8 @@ way whichever of the three it is.
 A field written with an empty value is cleared: ExifTool reads an empty list as "no
 change", so a cleared field is an explicit '-FIELD=' (tagpup.files.keywords), in the one
 command that sets the rest. It was a second command, and a crash between the two left a
-file holding neither what it held nor what it was to hold (docs/findings.md, #271).
+file holding neither what it held nor what it was to hold (docs/findings.md, #271). The
+photo's identity goes in that command too (#282).
 """
 from tagpup.core import fields, paths
 from tagpup.files import identity
@@ -79,22 +80,28 @@ def read_one(et, photo_path, wanted):
 
 def write(et, photo_path, values):
     """Write `values` ({field: value}) into a photo, in one ExifTool command, clearing a
-    field whose value is empty. The photo's identity goes through tagpup.files.identity,
-    which tells ExifTool an objection to the photo's XMP is minor and checks the write
-    cost the keywords nothing. Raises when ExifTool fails."""
+    field whose value is empty. A write of the photo's identity that ExifTool refuses is
+    made again telling it an objection to the photo's XMP is minor, and checked to have
+    cost the keywords nothing (tagpup.files.identity.tolerating_minor_errors). Raises
+    when ExifTool fails."""
     params, clear = {}, []
     for field, value in values.items():
         texts = fields.field_values(value)
-        if field == identity.DOCUMENT_ID_FIELD:
-            identity.write_document_id(et, photo_path, texts[0] if texts else "")
-        elif not texts:
+        if not texts:
             clear.append("-%s=" % field)
         elif fields.read_key(field) in fields.LIST_FIELDS or len(texts) > 1:
             params[field] = list(texts)
         else:
             params[field] = texts[0]
-    if params:
-        # The clears go before the values, in the same command.
-        et.set_tags([photo_path], tags=params, params=["-overwrite_original"] + clear)
-    elif clear:
-        et.execute(*clear, "-overwrite_original", photo_path)
+
+    def command(extra):
+        if params:
+            # The clears go before the values, in the same command.
+            et.set_tags([photo_path], tags=params, params=list(extra) + ["-overwrite_original"] + clear)
+        elif clear:
+            et.execute(*extra, *clear, "-overwrite_original", photo_path)
+
+    if identity.DOCUMENT_ID_FIELD in values:
+        identity.tolerating_minor_errors(et, photo_path, command, written=[fields.read_key(f) for f in values])
+    else:
+        command([])

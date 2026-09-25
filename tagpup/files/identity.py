@@ -78,23 +78,29 @@ def _keywords(et, path):
 
 
 def _write_forcing_minor_errors(et, path, minted):
-    """Write the identity into a photo whose XMP ExifTool objects to.
+    """Write the identity into a photo whose XMP ExifTool objects to (_forcing)."""
+    _forcing(et, path, lambda extra: et.execute(*extra, "-overwrite_original",
+                                                "-%s=%s" % (DOCUMENT_ID_FIELD, minted), path))
+
+
+def _forcing(et, path, write, written=()):
+    """Make a write -- `write(extra_params)` -- into a photo whose XMP ExifTool objects to.
 
     Some photos here carry two XMP blocks with different `rdf:about` attributes, which
     ExifTool refuses to write to until told the error is minor. `-m` makes it proceed,
     and rewrites the XMP as it does -- so the keyword fields are read before and after,
-    and put back if the write cost them anything. Photo files are not recoverable and
-    this is the one path that edits a structure ExifTool has already called wrong.
+    and put back if the write cost them anything; a keyword field in `written` is the
+    write's own to change. Photo files are not recoverable and this is the one path that
+    edits a structure ExifTool has already called wrong.
     """
     before = _keywords(et, path)
-    et.execute("-m", "-overwrite_original",
-               "-%s=%s" % (DOCUMENT_ID_FIELD, minted), path)
+    write(["-m"])
 
     after = _keywords(et, path)
     if before is None or after is None or before == after:
         return
 
-    lost = {f: v for f, v in before.items() if v and v != after.get(f)}
+    lost = {f: v for f, v in before.items() if v and v != after.get(f) and f not in written}
     if not lost:
         return
 
@@ -107,18 +113,16 @@ def _write_forcing_minor_errors(et, path, minted):
                      path, e)
 
 
-def write_document_id(et, path, value):
-    """Write `value` into a photo as its identity, or take its identity away when `value`
-    is empty: the file journal's write, forward and in an undo. A refusal is retried
-    telling ExifTool the objection is minor, checking the keywords survived
-    (_write_forcing_minor_errors). Raises when neither write is made."""
+def tolerating_minor_errors(et, path, write, written=()):
+    """Make a write that sets or takes away a photo's identity -- `write(extra_params)`,
+    one ExifTool command, with whatever else it writes (tagpup.files.field_values) -- and
+    when ExifTool refuses it, make it again telling ExifTool the objection is minor,
+    checking the keywords survived (_forcing); `written` are the fields the write sets,
+    as ExifTool answers them. Raises when neither write is made."""
     try:
-        if value:
-            et.set_tags([path], tags={DOCUMENT_ID_FIELD: value}, params=["-overwrite_original"])
-        else:
-            et.execute("-%s=" % DOCUMENT_ID_FIELD, "-overwrite_original", path)
+        write([])
     except Exception:
-        _write_forcing_minor_errors(et, path, value or "")
+        _forcing(et, path, write, written)
 
 
 def ensure_document_id(et, path, metadata=None):
