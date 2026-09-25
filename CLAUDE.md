@@ -30,6 +30,10 @@ this codebase, add it there with a comment saying why rather than working around
 No `pip.exe`, no `Activate.ps1`, no pytest — invoke the interpreter by path. Use the
 glob for the frontend suite; `node --test tests/frontend/` fails on `harness.mjs`.
 
+**The whole Python suite is `tools/run_tests.py`: about 45 seconds.** Run all of it
+before a commit that touches Python; choosing which files to run cost more turns than
+it saved. `tools/affected_tests.py` is for the loop while editing, not for the commit.
+
 **The owner runs the apps from an installed copy** (`%LOCALAPPDATA%\TagPup\*.cmd`,
 made by `scripts/install_app.py`), with `TAGPUP_HOME` set to the repository. Saving a
 file here changes nothing they are running, and a merge reaches them only when the
@@ -115,11 +119,29 @@ should own this? That question produced `db.py`, the tag vocabulary, and
 `write_keyword_fields` — each ended a whole class of bug. Reaching for it after the
 second round beats reaching for it after the fourth.
 
+**Watch an OS-level symptom before fixing it.** A window on the desktop, a port held,
+a file that will not delete: run `tools/watch_processes.ps1` while it happens and read
+which process did it. Three rounds of per-site fixes for terminal windows found nothing;
+one watched run found the test-home reaper.
+
 **Check the destination before moving data into it.** Re-pointing rows at paths that
 already had rows created 233 duplicate faces.
 
 **A write reports what it changed, not what it attempted.** A backfill read 60 photos,
 reported 60 done, and wrote nothing; the paths did not match and nothing said so.
+
+## Working in few turns
+
+- Edit through `tools/patch.py` from a script written with the Write tool: exact,
+  counted, newline-preserving, all-or-nothing. One script per concern that patches,
+  lints and runs the tests, not one tool call per step.
+- Delegate multi-file work to the `tagpup-worker` agent in a worktree; its definition
+  holds the standing rules, so the brief says only the task and which files are its.
+- After any change more than one agent made, run `tagpup-reviewer` over it before
+  committing. It found the defects that lived between two agents' briefs.
+- Decide by the rules here and in docs/ARCHITECTURE.md; ask the owner only what they
+  alone can answer. The cheapest correct change first: no extra backup, no workaround
+  around the model where the model can be fixed.
 
 ## Performance work
 
