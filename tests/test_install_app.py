@@ -114,6 +114,27 @@ class InstallingANewCommitAtStart(InstallCase):
         self.assertEqual(first, install_app.read_current(self.dest))
 
 
+class Shortcuts(InstallCase):
+    """A .cmd cannot be pinned to the taskbar or given an icon; a shortcut can."""
+
+    def test_each_app_gets_a_shortcut_with_its_icon(self):
+        folder = tempfile.mkdtemp(prefix="tagpup_shortcuts_")
+        self.addCleanup(remove_sandbox, folder)
+        install_app.install(self.dest, self.home, sys.executable, apply=True,
+                            say=self.said.append, shortcuts_in=[folder])
+        for name, (launcher, icon, _description) in install_app.SHORTCUTS.items():
+            self.assertTrue(os.path.exists(os.path.join(folder, name)), name)
+            self.assertTrue(os.path.exists(os.path.join(self.dest, icon)), icon)
+            self.assertTrue(os.path.exists(os.path.join(self.dest, launcher)), launcher)
+
+    def test_a_dry_run_makes_no_shortcut(self):
+        folder = tempfile.mkdtemp(prefix="tagpup_shortcuts_")
+        self.addCleanup(remove_sandbox, folder)
+        install_app.install(self.dest, self.home, sys.executable, apply=False,
+                            say=self.said.append, shortcuts_in=[folder])
+        self.assertEqual([], os.listdir(folder))
+
+
 class KeepingVersions(InstallCase):
     def test_installing_again_moves_to_the_new_version_and_keeps_three(self):
         names = ["20260101-000000-a", "20260102-000000-b", "20260103-000000-c",

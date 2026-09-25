@@ -17,6 +17,10 @@ Start the apps with the launchers it writes: TagPup.cmd and TagTuner.cmd (one se
 for both; the second started opens its page in the running one), TagPup Runner.cmd,
 and TagPup CLI.cmd for indexing and the other CLI commands.
 
+It also makes shortcuts to TagPup and TagTuner, with their icons, on the Desktop and
+in the Start menu: a .cmd cannot be pinned to the taskbar or given an icon, and a
+shortcut can.
+
 Each launcher first runs this with --if-changed: when the checkout has moved to
 another commit and holds no uncommitted code, that commit is installed before the app
 starts, so a merge reaches the apps at their next start. A checkout in the middle of
@@ -58,6 +62,61 @@ LAUNCHER = (
     'set /p TAGPUP_VERSION=<"%~dp0current.txt"\r\n'
     '"{python}" "%~dp0versions\\%TAGPUP_VERSION%\\{script}" {args} %*\r\n'
 )
+
+
+#: Shortcut -> (the launcher it runs, its icon in web/common/icons, what it says).
+SHORTCUTS = {
+    "TagPup.lnk": ("TagPup.cmd", "tagpup.ico", "Tag the photos of a folder"),
+    "TagTuner.lnk": ("TagTuner.cmd", "tagtuner.ico", "Tune a photo library's tags and faces"),
+}
+
+#: Makes one shortcut; its values come in the environment, so no path is quoted here.
+SHORTCUT_SCRIPT = (
+    "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:TAGPUP_LNK); "
+    "$s.TargetPath = $env:TAGPUP_TARGET; $s.Arguments = $env:TAGPUP_ARGS; "
+    "$s.WorkingDirectory = $env:TAGPUP_WORKDIR; $s.IconLocation = $env:TAGPUP_ICON; "
+    "$s.Description = $env:TAGPUP_DESC; $s.Save()"
+)
+
+
+def shortcut_folders():
+    """The Desktop and the Start menu's Programs folder, wherever Windows keeps them
+    (a Desktop moved into OneDrive, say)."""
+    script = "[Environment]::GetFolderPath('Desktop'); [Environment]::GetFolderPath('Programs')"
+    try:
+        out = processes.run(["powershell", "-NoProfile", "-Command", script],
+                            capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def make_shortcuts(destination, folders, say=print):
+    """Put the icons beside the launchers and a shortcut to each app in each of
+    `folders`: cmd.exe running the launcher, which can be pinned to the taskbar.
+    Returns the shortcuts made."""
+    made = []
+    for icon in {icon for _cmd, icon, _desc in SHORTCUTS.values()}:
+        shutil.copyfile(os.path.join(REPO_ROOT, "web", "common", "icons", icon),
+                        os.path.join(destination, icon))
+    cmd = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe")
+    for folder in folders:
+        for name, (launcher, icon, description) in SHORTCUTS.items():
+            link = os.path.join(folder, name)
+            env = dict(os.environ, TAGPUP_LNK=link, TAGPUP_TARGET=cmd,
+                       TAGPUP_ARGS='/c "%s"' % os.path.join(destination, launcher),
+                       TAGPUP_WORKDIR=destination, TAGPUP_ICON=os.path.join(destination, icon),
+                       TAGPUP_DESC=description)
+            try:
+                processes.run(["powershell", "-NoProfile", "-Command", SHORTCUT_SCRIPT],
+                              env=env, capture_output=True, text=True, timeout=60)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            if os.path.exists(link):
+                made.append(link)
+            else:
+                say("could not make the shortcut %s" % link)
+    return made
 
 
 def default_destination():
@@ -153,8 +212,9 @@ def to_remove(existing, new, previous):
     return [name for name in ordered[:-KEEP] if name not in (new, previous)]
 
 
-def install(destination, home, python, name=None, apply=False, say=print):
-    """Install a new version. Returns (the version's name, the versions removed)."""
+def install(destination, home, python, name=None, apply=False, say=print, shortcuts_in=()):
+    """Install a new version, and make shortcuts to the apps in each folder of
+    `shortcuts_in`. Returns (the version's name, the versions removed)."""
     name = name or version_name()
     folder = os.path.join(destination, "versions", name)
     while os.path.exists(folder):   # two installs in one second
@@ -171,6 +231,8 @@ def install(destination, home, python, name=None, apply=False, say=print):
         say("replacing    %s" % previous)
     for old in removing:
         say("removing     %s" % os.path.join(destination, "versions", old))
+    for folder in shortcuts_in:
+        say("shortcuts    %s" % ", ".join(os.path.join(folder, n) for n in SHORTCUTS))
     if not apply:
         say("\nDry run. Nothing was changed. Re-run with --apply to install.")
         return name, []
@@ -186,6 +248,8 @@ def install(destination, home, python, name=None, apply=False, say=print):
     with open(current + ".writing", "w", encoding="utf-8") as handle:
         handle.write(name)
     os.replace(current + ".writing", current)
+    if shortcuts_in:
+        make_shortcuts(destination, shortcuts_in, say)
 
     removed = []
     for old in removing:
@@ -215,11 +279,14 @@ def main(argv=None):
                         help="TAGPUP_HOME for the installed apps (default: %(default)s)")
     parser.add_argument("--python", default=default_python(),
                         help="the interpreter the launchers use (default: %(default)s)")
+    parser.add_argument("--no-shortcuts", action="store_true",
+                        help="make no shortcuts on the Desktop or in the Start menu")
     args = parser.parse_args(argv)
     if args.if_changed and args.apply:
         update(os.path.abspath(args.to), os.path.abspath(args.home), args.python)
         return 0
-    install(os.path.abspath(args.to), os.path.abspath(args.home), args.python, apply=args.apply)
+    install(os.path.abspath(args.to), os.path.abspath(args.home), args.python, apply=args.apply,
+            shortcuts_in=() if args.no_shortcuts else shortcut_folders())
     return 0
 
 
