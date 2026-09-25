@@ -260,6 +260,10 @@ def same_fields(held, wanted):
 #: A text ExifTool answers as a JSON number, by the pattern its JSON writer goes by
 #: (EscapeJSON): "1.50" comes back 1.5, "1e5" 100000.0; "007" and a number of more than
 #: fifteen digits stay text.
+#: A text ExifTool answers as a JSON boolean, /^(true|false)$/i, by what the journal
+#: keeps of it.
+_JSON_BOOLEANS = {"true": str(True), "false": str(False)}
+
 _JSON_NUMBER = re.compile(r"-?(\d|[1-9]\d{1,14})(\.\d{1,16})?([eE][-+]?\d{1,3})?")
 
 
@@ -283,6 +287,9 @@ def _as_read(key, text, charset):
     if _JSON_NUMBER.fullmatch(text):
         # The reader parses ExifTool's JSON; the journal keeps str() of what it gives.
         return str(json.loads(text))
+    if text.lower() in _JSON_BOOLEANS:
+        # Answered as a JSON boolean, kept as str() of it: "true" reads back "True".
+        return _JSON_BOOLEANS[text.lower()]
     return text
 
 
@@ -290,7 +297,7 @@ def as_read(field, value, charset=IPTC_CHARSETS[0]):
     """What a read of a file gives for `value` written to `field`, as the journal keeps a
     value (field_values), trimmed: IPTC cuts a keyword at 64 bytes and writes a letter
     outside its `charset` as "?" (IPTC_LIMITS, IPTC_CHARSETS), and a text that looks like
-    a number is answered as one. A value written is not always read back as written;
+    a number, or is true or false in any case, is answered as one. A value written is not always read back as written;
     comparing what was asked with what a read gives found a difference where there was
     none (docs/findings.md, #264, #277)."""
     key = read_key(field)
