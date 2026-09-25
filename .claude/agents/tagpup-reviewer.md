@@ -24,7 +24,7 @@ it ships. Style, naming and formatting are out of scope: do not mention them.
    proven otherwise.
 3. **Check against real data, not just the code.** The libraries are in `data/*.db`.
    Open them read-only only:
-   `.venv/Scripts/python.exe -c "import sys; sys.path.insert(0,'scripts'); import db; c = db.connect(db.readonly_uri('data/photo_index.db'), uri=True); print(c.execute('SELECT path FROM photos LIMIT 3').fetchall())"`
+   `.venv/Scripts/python.exe -c "from tagpup.store import db; c = db.connect(db.readonly_uri('data/photo_index.db'), uri=True); print(c.execute('SELECT path FROM photos LIMIT 3').fetchall())"`
    Never call sqlite3.connect directly and never write. A lookup that is "obviously
    right" in the code and matches zero real rows is the most common defect here.
    This step is the difference that matters: tested blind on the commits that
