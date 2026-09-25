@@ -125,8 +125,13 @@ class PhotoIndex:
     tagpup.services.faces': it held a wrapper for each.
     """
 
-    def __init__(self, db_path: str, model: Optional[str] = None):
+    def __init__(self, db_path: str, model: Optional[str] = None, read_only: bool = False):
         self.db_path = db_path
+        #: A look only (the CLI's stats, list-index and search): the library is opened
+        #: read-only and never migrated or created. `behind` names the migrations it
+        #: has not had, for the caller to say so (docs/findings.md, #243).
+        self.read_only = read_only
+        self.behind: List[str] = []
         #: Whose vectors are searched and written: a tagpup.store.embeddings.model_key,
         #: the model's the runtime runs (tagpup.runtime.Runtime.model_key). Vectors from
         #: other settings cannot be compared with a query embedded under these. None
@@ -148,6 +153,14 @@ class PhotoIndex:
 
     def _load_unlocked(self) -> bool:
         try:
+            if self.read_only:
+                if not os.path.exists(self.db_path):
+                    return False
+                self.behind = [m.name for m in schema.pending(self.db_path)]
+                if self.conn is None:
+                    self.conn = db.connect(db.readonly_uri(self.db_path), uri=True, timeout=30.0,
+                                           check_same_thread=False)
+                return self._read_rows()
             db_dir = os.path.dirname(self.db_path)
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
@@ -159,53 +172,56 @@ class PhotoIndex:
             if self.conn is None:
                 self.conn = db.connect(self.db_path, timeout=30.0, check_same_thread=False,
                                               foreign_keys=True)
-
-            # Taken before the rows: a write landing in between costs one reload
-            # later, never a missed one. See reload_if_changed.
-            self._signature = self._photos_signature()
-            self.metadata = []
-            self.indexed_metadata = []
-            embeddings = []
-            for path, mtime, size, tags_json, people_json, captions_json, raw_meta_json, year, emb_bytes in (
-                    store_photos.index_rows(self.conn, self.model)):
-                try:
-                    tags = json.loads(tags_json)
-                    people = json.loads(people_json)
-                    captions = json.loads(captions_json)
-                    raw_meta = json.loads(raw_meta_json)
-                except Exception:
-                    tags, people, captions, raw_meta = [], [], [], {}
-                has_emb = (emb_bytes is not None and len(emb_bytes) > 0)
-                meta_item = {
-                    "path": path,
-                    "mtime": mtime,
-                    "size": size,
-                    "tags": tags,
-                    "people": people,
-                    "captions": captions,
-                    "raw_metadata": raw_meta,
-                    # When it was taken, as the library records it (photos.year).
-                    "year": year,
-                    "has_embedding": has_emb
-                }
-                self.metadata.append(meta_item)
-                if has_emb:
-                    embeddings.append(np.frombuffer(emb_bytes, dtype=np.float32))
-                    self.indexed_metadata.append(meta_item)
-
-            if embeddings:
-                self.dim = len(embeddings[0])
-                self.index = VectorIndex(embeddings, self.indexed_metadata)
-                index_log.info(f"Loaded {len(self.metadata)} index entries from SQLite.")
-            else:
-                self.index = None
-            return True
+            return self._read_rows()
         except Exception as e:
             index_log.error(f"Error loading SQLite database: {e}", exc_info=True)
             self.index = None
             self.metadata = []
             self.indexed_metadata = []
             return False
+
+    def _read_rows(self) -> bool:
+        """Read the photos and their vectors on self.conn into memory."""
+        # Taken before the rows: a write landing in between costs one reload
+        # later, never a missed one. See reload_if_changed.
+        self._signature = self._photos_signature()
+        self.metadata = []
+        self.indexed_metadata = []
+        embeddings = []
+        for path, mtime, size, tags_json, people_json, captions_json, raw_meta_json, year, emb_bytes in (
+                store_photos.index_rows(self.conn, self.model)):
+            try:
+                tags = json.loads(tags_json)
+                people = json.loads(people_json)
+                captions = json.loads(captions_json)
+                raw_meta = json.loads(raw_meta_json)
+            except Exception:
+                tags, people, captions, raw_meta = [], [], [], {}
+            has_emb = (emb_bytes is not None and len(emb_bytes) > 0)
+            meta_item = {
+                "path": path,
+                "mtime": mtime,
+                "size": size,
+                "tags": tags,
+                "people": people,
+                "captions": captions,
+                "raw_metadata": raw_meta,
+                # When it was taken, as the library records it (photos.year).
+                "year": year,
+                "has_embedding": has_emb
+            }
+            self.metadata.append(meta_item)
+            if has_emb:
+                embeddings.append(np.frombuffer(emb_bytes, dtype=np.float32))
+                self.indexed_metadata.append(meta_item)
+
+        if embeddings:
+            self.dim = len(embeddings[0])
+            self.index = VectorIndex(embeddings, self.indexed_metadata)
+            index_log.info(f"Loaded {len(self.metadata)} index entries from SQLite.")
+        else:
+            self.index = None
+        return True
 
     def build_or_update(self, embeddings: List[List[float]], metas: List[Dict[str, Any]], dim: int = 512, reload: bool = True):
         """Batch insert/update photos inside the SQLite database (transaction-safe)."""
