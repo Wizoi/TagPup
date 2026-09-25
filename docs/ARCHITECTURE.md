@@ -521,6 +521,6 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 6.5. No shims | done, 2026-09-25 |
 | 7. MCP | done, 2026-09-25 |
 | 7.5. A journal for every bulk edit and migration | in progress: the database journal done 2026-09-25; migrations and photo files next |
-| 7.6. Settings in the library, and a gear on each page | done, 2026-09-25 (the owner's `config.ini` is deleted by hand once both libraries are stamped) |
+| 7.6. Settings in the library, and a gear on each page | done, 2026-09-25 |
 | 8. Sync | not started |
 | 9. Library views | planned for October 2026 *(owner, 2026-09-25)*; design questions open |
