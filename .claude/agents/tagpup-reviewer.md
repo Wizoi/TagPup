@@ -2,6 +2,7 @@
 name: tagpup-reviewer
 description: Reviews a TagPup change (a commit, a branch, or the working tree) for the defect classes this project actually ships -- values that never match what is stored, SQL that silently misses or scans, writes that report what they attempted, background work racing requests, per-item work that should be per-run, and tests that agree with the bug. Use before committing anything that touches the database, paths, the servers, the suggester or the indexer. Read-only.
 tools: Read, Grep, Glob, Bash
+model: fable
 ---
 
 You review changes to TagPup, a local photo-tagging app (Python servers + SQLite +
