@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup import logs  # noqa: E402
+from tagpup.core import library as libraries  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
@@ -51,17 +52,18 @@ def answering(port):
         return False
 
 
-def open_page(url, reloading):
+def open_page(url):
     """Open `url` in the browser once, from the process that serves.
 
     The reloader runs a parent supervisor and a child; the child is the one with the
     server. A guard on the restart flag alone opened a tab from each, since neither
     has it on a first start (tests/test_browser_opens_once.py). `serving` means "I am
-    the server": without the reloader, this process; with it, its child. `restarting`
-    means "this is a restart, they already have a tab open".
+    the server" -- with the reloader, its child; without it, this process, which
+    main() marks as the child for that reason. `restarting` means "this is a restart,
+    they already have a tab open".
     """
-    serving = not reloading or bool(os.environ.get(RELOADER + "_CHILD"))
-    restarting = bool(os.environ.get(RELOADER))
+    serving = bool(os.environ.get("TAGPUP_WEB_RELOADED_CHILD"))
+    restarting = bool(os.environ.get("TAGPUP_WEB_RELOADED"))
     if serving and not restarting:
         webbrowser.open(url)
 
@@ -71,38 +73,46 @@ def main(argv=None):
     parser.add_argument("--tagpup-port", type=int, default=PORTS["tagpup"])
     parser.add_argument("--tuner-port", type=int, default=PORTS["tuner"])
     parser.add_argument("--db", default=None,
-                        help="the library to start on, a file in the data folder (default: the configured one)")
+                        help="serve this library to a URL naming none, making it if it is missing: for a "
+                             "sandbox or a test. Normally none: a page is reached by its library's URL, and "
+                             "the browser remembers the last one (docs/findings.md, #100).")
     parser.add_argument("--open", choices=("tagpup", "tuner", "none"), default="none",
                         help="open this app's page in the browser once the server answers")
     parser.add_argument("--reload", action="store_true", help="restart when a .py file is saved (development)")
     args = parser.parse_args(argv)
 
+    # Without the reloader this process is the server, which is what the child flag
+    # means; setting it here lets the log and the browser ask one question either way.
+    if not args.reload:
+        os.environ[RELOADER + "_CHILD"] = "1"
+
     # The serving process writes the log; the reloader's supervisor only restarts it,
     # and two processes rotating one file fail on Windows.
-    serving = not args.reload or bool(os.environ.get(RELOADER + "_CHILD"))
-    if serving:
+    if os.environ.get(RELOADER + "_CHILD"):
         logger.info("Logging to %s", logs.to_file("tagpup_web"))
 
     ports = {"tagpup": args.tagpup_port, "tuner": args.tuner_port}
     if args.open != "none" and answering(ports[args.open]):
         logger.info("A server is already answering on port %d; opening its page.", ports[args.open])
-        open_page(page_url(ports[args.open]), args.reload)
+        open_page(page_url(ports[args.open]))
         return 0
 
     if args.reload:
         from reloader import start_reloader_thread
         start_reloader_thread(RELOADER)
 
-    db_path = tagpup_config.library_path(args.db) if args.db else tagpup_config.default_library()
-    if not os.path.exists(db_path):
-        logger.info("No library at %s; making one.", db_path)
-        library_actions.create(db_path)
-    startup = Library(db_path)
+    startup = None
+    if args.db:
+        db_path = tagpup_config.library_path(libraries.file_name_for(args.db))
+        if not os.path.exists(db_path):
+            logger.info("No library at %s; making one.", db_path)
+            library_actions.create(db_path)
+        startup = Library(db_path)
     apps = {ports[kind]: web.create_app(kind, startup=startup) for kind in ("tagpup", "tuner")}
     ready = None
     if args.open != "none":
         def ready():
-            open_page(page_url(ports[args.open]), args.reload)
+            open_page(page_url(ports[args.open]))
     web.serve(apps, ready=ready)
     return 0
 

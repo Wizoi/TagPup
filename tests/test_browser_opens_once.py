@@ -18,7 +18,7 @@ import unittest
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 
-LAUNCHERS = {"tagpup_gui.py": "TAGPUP", "tagtuner.py": "TAGTUNER"}
+LAUNCHERS = {"tagpup_web.py": "TAGPUP_WEB"}
 
 
 def guard_of(filename):

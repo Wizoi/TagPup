@@ -62,7 +62,6 @@ def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
         config.add_section("paths")
     data_dir = os.path.join(sandbox, "data")
     config.set("paths", "data_dir", data_dir)
-    config.set("paths", "default_db", "measured.db")
     tagpup_config.write_file(config, folder=sandbox)
 
     target = os.path.join(sandbox, "data", "measured.db")
@@ -99,10 +98,11 @@ def start_server(sandbox, db_path, port):
             "    format='%%(asctime)s.%%(msecs)03d %%(threadName)s %%(name)s %%(message)s',\n"
             "    datefmt='%%H:%%M:%%S')\n"
             "sys.path.insert(0, %r)\n"
-            "from tagpup_server import start_server\n"
-            "start_server(port=%d, db_path=%r, gui_dir=%r)\n"
-            % (log_path, os.path.join(sandbox, "scripts"), port, db_path,
-               os.path.join(sandbox, "gui_tagpup")))
+            "sys.path.insert(0, %r)\n"
+            "from tagpup.core.library import Library\n"
+            "from tagpup.web import app as web\n"
+            "web.serve({%d: web.create_app('tagpup', startup=Library(%r))})\n"
+            % (log_path, sandbox, os.path.join(sandbox, "scripts"), port, db_path))
     # Its home is the sandbox, whatever TAGPUP_HOME this was run with.
     process = subprocess.Popen([sys.executable, launcher], cwd=sandbox,
                                env=dict(os.environ, TAGPUP_HOME=sandbox),

@@ -84,8 +84,7 @@ def build_sandbox(source_db, sandbox):
 
     # Its own config, so database names in URLs resolve inside the sandbox. The server
     # runs with the sandbox as its TAGPUP_HOME (start_sandbox_server).
-    tagpup_config.write_file({"paths": {"data_dir": os.path.join(sandbox, "data"),
-                                        "default_db": "measured.db"}}, folder=sandbox)
+    tagpup_config.write_file({"paths": {"data_dir": os.path.join(sandbox, "data")}}, folder=sandbox)
 
     target = os.path.join(sandbox, "data", "measured.db")
     started = time.time()
@@ -109,10 +108,11 @@ def start_sandbox_server(sandbox, db_path, port):
         handle.write(
             "import sys\n"
             "sys.path.insert(0, %r)\n"
-            "from tuner_server import start_server\n"
-            "start_server(port=%d, db_path=%r, gui_dir=%r)\n"
-            % (os.path.join(sandbox, "scripts"), port, db_path,
-               os.path.join(sandbox, "gui")))
+            "sys.path.insert(0, %r)\n"
+            "from tagpup.core.library import Library\n"
+            "from tagpup.web import app as web\n"
+            "web.serve({%d: web.create_app('tuner', startup=Library(%r))})\n"
+            % (sandbox, os.path.join(sandbox, "scripts"), port, db_path))
 
     process = subprocess.Popen(
         [sys.executable, launcher],

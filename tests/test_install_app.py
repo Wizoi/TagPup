@@ -47,7 +47,7 @@ class WhatAnInstallIs(InstallCase):
     def test_a_version_holds_the_code_and_the_programs_and_nothing_else(self):
         name, _ = self.install()
         folder = os.path.join(self.dest, "versions", name)
-        for part in ("scripts", "tagpup", "gui", "gui_tagpup", "tagpup_gui.py", "tagtuner.py",
+        for part in ("scripts", "tagpup", "gui", "gui_tagpup", "tagpup_web.py",
                      "tagpup_cli.py", "runner.py", "VERSION.txt"):
             self.assertTrue(os.path.exists(os.path.join(folder, part)), part)
         # The libraries and the settings stay in the home.
@@ -57,13 +57,13 @@ class WhatAnInstallIs(InstallCase):
 
     def test_each_launcher_runs_the_current_version_against_the_home(self):
         self.install()
-        for launcher, script in install_app.LAUNCHERS.items():
+        for launcher, (script, args) in install_app.LAUNCHERS.items():
             with open(os.path.join(self.dest, launcher), encoding="utf-8", newline="") as handle:
                 text = handle.read()
             self.assertIn('set "TAGPUP_HOME=%s"' % self.home, text)
             self.assertIn('"%s"' % sys.executable, text)
             # %~dp0 is the launcher's own folder, and ends in a backslash.
-            self.assertIn('"%~dp0versions\\%TAGPUP_VERSION%\\' + script + '"', text)
+            self.assertIn('"%~dp0versions\\%TAGPUP_VERSION%\\' + script + '" ' + args, text)
             self.assertNotIn("\n", text.replace("\r\n", ""), "cmd.exe wants CRLF throughout")
 
     def test_a_version_is_named_for_when_and_which_commit(self):
@@ -103,14 +103,13 @@ class TheInstalledAppRuns(InstallCase):
 
     def test_tagtuner_starts_from_the_install_and_keeps_its_data_in_the_home(self):
         self.install()
-        port = free_port()
-        # As the serving child that is restarting: no reloader supervisor, so no sweep of
-        # other TagTuner processes, and no browser tab.
-        env = dict(os.environ, TAGTUNER_RELOADED_CHILD="1", TAGTUNER_RELOADED="1",
-                   TAGTUNER_PORT=str(port))
+        port, other = free_port(), free_port()
+        # As a restart: the launcher's --open would open a tab, and a restart never does.
+        env = dict(os.environ, TAGPUP_WEB_RELOADED="1")
         env.pop("TAGPUP_HOME", None)   # the launcher sets it
         process = subprocess.Popen(["cmd", "/c", os.path.join(self.dest, "TagTuner.cmd"),
-                                    "installed.db"], env=env,
+                                    "--db", "installed", "--tuner-port", str(port),
+                                    "--tagpup-port", str(other)], env=env,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(self.stop, process)
 
@@ -127,7 +126,7 @@ class TheInstalledAppRuns(InstallCase):
 
         self.assertIn("installed", reply["databases"])
         self.assertTrue(os.path.exists(os.path.join(self.home, "data", "installed.db")))
-        self.assertTrue(os.path.exists(os.path.join(self.home, "data", "logs", "tagtuner.log")))
+        self.assertTrue(os.path.exists(os.path.join(self.home, "data", "logs", "tagpup_web.log")))
 
 
 if __name__ == "__main__":

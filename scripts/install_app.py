@@ -11,8 +11,9 @@ to it; the two before it are kept, to go back to by editing current.txt.
     .venv/Scripts/python.exe scripts/install_app.py            # shows what it would do
     .venv/Scripts/python.exe scripts/install_app.py --apply
 
-Start the apps with the launchers it writes: TagPup.cmd, TagTuner.cmd, TagPup
-Runner.cmd, and TagPup CLI.cmd for indexing and the other CLI commands.
+Start the apps with the launchers it writes: TagPup.cmd and TagTuner.cmd (one server
+for both; the second started opens its page in the running one), TagPup Runner.cmd,
+and TagPup CLI.cmd for indexing and the other CLI commands.
 """
 import argparse
 import datetime
@@ -31,12 +32,12 @@ from tagpup import config as tagpup_config  # noqa: E402
 #: Versions kept: the new one and the two before it.
 KEEP = 3
 
-#: Launcher file -> the program it starts.
+#: Launcher file -> the program it starts, and its arguments.
 LAUNCHERS = {
-    "TagPup.cmd": "tagpup_gui.py",
-    "TagTuner.cmd": "tagtuner.py",
-    "TagPup Runner.cmd": "runner.py",
-    "TagPup CLI.cmd": "tagpup_cli.py",
+    "TagPup.cmd": ("tagpup_web.py", "--open tagpup"),
+    "TagTuner.cmd": ("tagpup_web.py", "--open tuner"),
+    "TagPup Runner.cmd": ("runner.py", ""),
+    "TagPup CLI.cmd": ("tagpup_cli.py", ""),
 }
 
 LAUNCHER = (
@@ -45,7 +46,7 @@ LAUNCHER = (
     'set "TAGPUP_HOME={home}"\r\n'
     'set /p TAGPUP_VERSION=<"%~dp0current.txt"\r\n'
     'cd /d "%TAGPUP_HOME%"\r\n'
-    '"{python}" "%~dp0versions\\%TAGPUP_VERSION%\\{script}" %*\r\n'
+    '"{python}" "%~dp0versions\\%TAGPUP_VERSION%\\{script}" {args} %*\r\n'
 )
 
 
@@ -132,10 +133,10 @@ def install(destination, home, python, name=None, apply=False, say=print):
     copy_code(folder, REPO_ROOT, launchers=True)
     with open(os.path.join(folder, "VERSION.txt"), "w", encoding="utf-8") as handle:
         handle.write("%s\nfrom %s\n" % (name, REPO_ROOT))
-    for launcher, script in LAUNCHERS.items():
+    for launcher, (script, args) in LAUNCHERS.items():
         # newline="" keeps the CRLFs the template already has: cmd.exe wants them.
         with open(os.path.join(destination, launcher), "w", encoding="utf-8", newline="") as handle:
-            handle.write(LAUNCHER.format(home=home, python=python, script=script))
+            handle.write(LAUNCHER.format(home=home, python=python, script=script, args=args))
     current = os.path.join(destination, "current.txt")
     with open(current + ".writing", "w", encoding="utf-8") as handle:
         handle.write(name)

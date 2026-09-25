@@ -1,5 +1,6 @@
 # generate_screenshots.py
 import os
+import socket
 import sys
 import time
 import subprocess
@@ -11,7 +12,9 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
 
 # Import environment prep to seed test DB
 from prepare_test_environment import main as prepare_env
-import localserver
+
+#: Ports of its own, so a run never answers the apps somebody has open.
+TAGPUP_PORT, TUNER_PORT = 8092, 8081
 
 def run_screenshot_flow():
     refresh = os.environ.get("REFRESH_TUTORIAL") == "1" or "--refresh" in sys.argv
@@ -24,62 +27,30 @@ def run_screenshot_flow():
     print("Skipping Playwright screenshot generation (for now, as requested).")
     return
 
-    gui_proc = None
-    tuner_proc = None
-    
-    gui_log = open("gui_server.log", "w", encoding="utf-8")
-    tuner_log = open("tuner_server.log", "w", encoding="utf-8")
-    
+    server = None
+    gui_port, tuner_port = TAGPUP_PORT, TUNER_PORT
+
     try:
-        print("Starting TagPup GUI on port 8092...")
-        gui_proc = subprocess.Popen(
-            [sys.executable, "tagpup_gui.py", "test_photo_index.db"],
-            env=dict(os.environ, TAGPUP_RELOADED="1"),
-            stdout=gui_log,
-            stderr=gui_log
+        # One server for both pages (tagpup_web.py), logging where the apps log
+        # (data/logs), not into whatever folder this was run from.
+        print(f"Starting the server: TagPup on port {gui_port}, TagTuner on port {tuner_port}...")
+        server = subprocess.Popen(
+            [sys.executable, os.path.join(PROJECT_ROOT, "tagpup_web.py"), "--db", "test_photo_index",
+             "--tagpup-port", str(gui_port), "--tuner-port", str(tuner_port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        
-        print("Starting TagTuner on port 8081...")
-        tuner_proc = subprocess.Popen(
-            [sys.executable, "tagtuner.py", "test_photo_index.db"],
-            env=dict(os.environ, TAGTUNER_RELOADED="1"),
-            stdout=tuner_log,
-            stderr=tuner_log
-        )
-        
-        print("Waiting for servers to initialize and detecting ports...")
-        gui_port = localserver.TAGPUP_PORT
-        tuner_port = 8081
-        
-        for _ in range(30):
-            time.sleep(0.5)
-            # Check GUI port
-            if os.path.exists("gui_server.log"):
-                with open("gui_server.log", "r", encoding="utf-8") as f:
-                    content = f.read()
-                    if "TagPup server started on port" in content:
-                        parts = content.split("TagPup server started on port ")
-                        if len(parts) > 1:
-                            try:
-                                gui_port = int(parts[1].split()[0])
-                            except Exception:
-                                pass
-            # Check Tuner port
-            if os.path.exists("tuner_server.log"):
-                with open("tuner_server.log", "r", encoding="utf-8") as f:
-                    content = f.read()
-                    if "TagTuner server started on port" in content:
-                        parts = content.split("TagTuner server started on port ")
-                        if len(parts) > 1:
-                            try:
-                                tuner_port = int(parts[1].split()[0])
-                            except Exception:
-                                pass
-        
-        print(f"Detected TagPup GUI port: {gui_port}")
-        print(f"Detected TagTuner port: {tuner_port}")
+        for _ in range(60):
+            try:
+                with socket.create_connection(("127.0.0.1", tuner_port), timeout=1):
+                    break
+            except OSError:
+                if server.poll() is not None:
+                    raise RuntimeError("the server exited before it was ready") from None
+                time.sleep(0.5)
+        else:
+            raise RuntimeError("the server never came up")
         time.sleep(1)
-        
+
         with sync_playwright() as p:
             print("Launching headless Chromium...")
             browser = p.chromium.launch(headless=True)
@@ -183,33 +154,18 @@ def run_screenshot_flow():
             print("\nSuccessfully regenerated all 4 screenshots for docs/TUTORIAL.md!")
             
     except Exception as e:
-        print(f"Error during flow: {e}", file=sys.stderr)
-        print("\n=== GUI SERVER LOG ===")
-        try:
-            if os.path.exists("gui_server.log"):
-                with open("gui_server.log", "r", encoding="utf-8") as f:
-                    print(f.read())
-        except Exception as log_err:
-            print(f"Could not read GUI log: {log_err}")
-        print("\n=== TUNER SERVER LOG ===")
-        try:
-            if os.path.exists("tuner_server.log"):
-                with open("tuner_server.log", "r", encoding="utf-8") as f:
-                    print(f.read())
-        except Exception as log_err:
-            print(f"Could not read Tuner log: {log_err}")
+        print(f"Error during flow: {e}; the server's log is in data/logs/tagpup_web.log", file=sys.stderr)
     finally:
-        print("Cleaning up backend servers...")
-        for proc in [gui_proc, tuner_proc]:
-            if proc:
+        print("Cleaning up the server...")
+        if server:
+            try:
+                server.terminate()
+                server.wait(timeout=2)
+            except Exception:
                 try:
-                    proc.terminate()
-                    proc.wait(timeout=2)
+                    server.kill()
                 except Exception:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
+                    pass
         print("Done.")
 
 if __name__ == "__main__":

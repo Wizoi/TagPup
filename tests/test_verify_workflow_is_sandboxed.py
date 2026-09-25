@@ -16,8 +16,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-import tagpup_server  # noqa: E402
-import tuner_server  # noqa: E402
+from tagpup.web import app as web  # noqa: E402
 import verify_workflow  # noqa: E402
 from index import PhotoIndex  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -56,8 +55,7 @@ class VerifyWorkflowIsSandboxed(unittest.TestCase):
                 patch.object(verify_workflow, "run_checks", run_checks), \
                 patch.object(verify_workflow, "indexers_running", lambda: []), \
                 patch.object(verify_workflow.time, "sleep", lambda s: None), \
-                patch.object(tuner_server, "start_server", lambda **kw: None), \
-                patch.object(tagpup_server, "start_server", lambda **kw: None):
+                patch.object(web, "serve", lambda apps, **kw: None):
             verify_workflow.main()
 
         self.assertNotEqual(os.path.abspath(self.folder), os.path.abspath(seen["folder"]),

@@ -5,9 +5,9 @@ noticing: they copy a fixed list of folders into the sandbox, the list did not i
 tagpup/, and the sandbox server could no longer import its database module. It exited
 before it was ready, and every measurement would have failed.
 
-So this snapshots the code the way the tools do and imports both servers there, in an
+So this snapshots the code the way the tools do and makes both apps there, in an
 interpreter that cannot see the repository (`-I`: no working directory, no PYTHONPATH).
-It fails if the snapshot is missing anything the servers import, and it fails if they
+It fails if the snapshot is missing anything the apps import, and it fails if they
 load a module from anywhere but the sandbox.
 """
 import os
@@ -25,20 +25,23 @@ import measure_identify_faces  # noqa: E402
 PROBE = """\
 import sys
 sys.path.insert(0, %r)
-import tuner_server, tagpup_server
+sys.path.insert(0, %r)
+from tagpup.web import app as web
+web.create_app("tagpup")
+web.create_app("tuner")
 import tagpup.store.db
 print(tagpup.store.db.__file__)
 """
 
 
 class SandboxHasAllTheCode(unittest.TestCase):
-    def test_both_servers_import_from_the_sandbox_alone(self):
+    def test_both_apps_import_from_the_sandbox_alone(self):
         sandbox = tempfile.mkdtemp(prefix="tagpup_sandbox_code_")
         self.addCleanup(measure_identify_faces.remove_sandbox, sandbox)
         code_snapshot.copy_code(sandbox)
 
         result = subprocess.run(
-            [sys.executable, "-I", "-c", PROBE % os.path.join(sandbox, "scripts")],
+            [sys.executable, "-I", "-c", PROBE % (sandbox, os.path.join(sandbox, "scripts"))],
             cwd=sandbox, capture_output=True, text=True, timeout=300)
 
         self.assertEqual(result.returncode, 0, "the sandbox cannot run its server:\n"

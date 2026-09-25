@@ -171,14 +171,12 @@ def main():
     global TUNER_PORT, TAGPUP_PORT
     TUNER_PORT, TAGPUP_PORT = free_port(), free_port()
 
-    import tuner_server
-    import tagpup_server
-    start_tuner, start_tagpup = tuner_server.start_server, tagpup_server.start_server
-
-    threading.Thread(target=start_tuner, kwargs={
-        "port": TUNER_PORT, "db_path": work_db, "gui_dir": "gui"}, daemon=True).start()
-    threading.Thread(target=start_tagpup, kwargs={
-        "port": TAGPUP_PORT, "db_path": work_db, "gui_dir": "gui_tagpup"}, daemon=True).start()
+    from tagpup.core.library import Library
+    from tagpup.web import app as web
+    startup = Library(work_db)
+    threading.Thread(target=web.serve, args=({TUNER_PORT: web.create_app("tuner", startup=startup),
+                                              TAGPUP_PORT: web.create_app("tagpup", startup=startup)},),
+                     daemon=True).start()
     time.sleep(3.0)
 
     started_before = set(indexers_running())

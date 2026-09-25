@@ -2,7 +2,7 @@
 
 Each kept its own list of folders once, and the sandbox's lacked tagpup/ when the
 foundation modules moved there: its server could not start. One list here, and
-tests/test_sandbox_has_all_the_code.py imports both servers from a copy made with it.
+tests/test_sandbox_has_all_the_code.py makes both apps from a copy made with it.
 """
 import os
 import shutil
@@ -13,7 +13,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FOLDERS = ("scripts", "tagpup", "gui", "gui_tagpup")
 
 #: The programs people start, at the top of the repository.
-LAUNCHERS = ("tagpup_gui.py", "tagtuner.py", "tagpup_cli.py", "runner.py")
+LAUNCHERS = ("tagpup_web.py", "tagpup_cli.py", "runner.py")
 
 
 def copy_code(destination, code_root=REPO_ROOT, launchers=False):
