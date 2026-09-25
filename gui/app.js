@@ -11,6 +11,19 @@
             break;
         }
     }
+    if (!activeDbName) {
+        // No library in the URL. The page asks the server which libraries there are
+        // and nothing else: every other route needs a library, and a page that asked
+        // anyway got a 404 for each and showed them as errors. Where to go is decided
+        // by the picker below, from what this browser remembers.
+        const originalFetch = window.fetch;
+        window.fetch = function(input, init) {
+            if (typeof input === 'string' && /^\/?api\//.test(input) && !/^\/?api\/databases(?:\/|\?|$)/.test(input)) {
+                return Promise.reject(new Error('No library is open'));
+            }
+            return originalFetch(input, init);
+        };
+    }
     if (activeDbName) {
         // Intercept fetch calls
         const originalFetch = window.fetch;
@@ -51,6 +64,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const dbSelect = document.getElementById('db-select');
     const btnCreateDb = document.getElementById('btn-create-db');
 
+    // The library opened last, kept in this browser. The server used to keep it, in
+    // config.ini, and wrote that file whenever a library was chosen (docs/findings.md,
+    // #100); now a library is only ever reached by its URL, and this is where a bare
+    // URL learns which one.
+    const LIBRARY_KEY = 'tagpup.library';
+
+    function rememberedLibrary() {
+        try { return localStorage.getItem(LIBRARY_KEY); } catch (e) { return null; }
+    }
+
+    function rememberLibrary(name) {
+        try {
+            if (name) localStorage.setItem(LIBRARY_KEY, name);
+            else localStorage.removeItem(LIBRARY_KEY);
+        } catch (e) { /* a browser that keeps nothing: the picker asks each time */ }
+    }
+
+    function goToLibrary(name) {
+        window.location.href = '/' + name + '/' + window.location.search;
+    }
+
     function initDatabaseSelector() {
         if (!dbSelect) return;
         
@@ -64,45 +98,43 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         
+        if (activeDb) rememberLibrary(activeDb);
+
         fetch('api/databases')
             .then(res => res.json())
             .then(data => {
                 dbSelect.innerHTML = '';
-                const selectedDb = activeDb || data.selected || 'photo_index';
-                
+                if (!activeDb) {
+                    // Nothing in the URL: the library this browser opened last, if it
+                    // is still there; otherwise the picker, empty, asking for one.
+                    const remembered = rememberedLibrary();
+                    if (remembered && data.databases.includes(remembered)) {
+                        goToLibrary(remembered);
+                        return;
+                    }
+                    rememberLibrary(null);
+                    const ask = document.createElement('option');
+                    ask.value = '';
+                    ask.textContent = 'Choose a library\u2026';
+                    ask.disabled = true;
+                    ask.selected = true;
+                    dbSelect.appendChild(ask);
+                }
+
                 data.databases.forEach(db => {
                     const option = document.createElement('option');
                     option.value = db;
                     option.textContent = db;
-                    if (db === selectedDb) {
+                    if (db === activeDb) {
                         option.selected = true;
                     }
                     dbSelect.appendChild(option);
                 });
-                
-                if (!activeDb && data.selected) {
-                    window.location.pathname = '/' + data.selected + '/';
-                }
             })
             .catch(err => console.error('Error fetching databases:', err));
 
         dbSelect.addEventListener('change', () => {
-            const selectedDb = dbSelect.value;
-            fetch('api/databases/select', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ db_name: selectedDb + '.db' })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    const queryStr = window.location.search;
-                    window.location.href = '/' + selectedDb + '/' + queryStr;
-                } else {
-                    alert('Error selecting database: ' + (data.error || 'Unknown error'));
-                }
-            })
-            .catch(err => alert('Error selecting database: ' + err));
+            goToLibrary(dbSelect.value);
         });
 
         if (btnCreateDb) {

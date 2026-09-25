@@ -123,10 +123,13 @@ export function closeAllApps() {
  * poll on intervals, and an open window keeps node's event loop alive -- without this
  * the test run hangs instead of finishing.
  *
+ * `before(window)` runs once the window exists and before the app does: where a test
+ * puts what the browser remembers (localStorage) from an earlier visit.
+ *
  * @param {"tagpup"|"tagtuner"} appName
- * @param {{url?: string, server?: FakeServer, t?: object}} options
+ * @param {{url?: string, server?: FakeServer, t?: object, before?: function}} options
  */
-export async function loadApp(appName, { url, server = new FakeServer(), t } = {}) {
+export async function loadApp(appName, { url, server = new FakeServer(), t, before } = {}) {
   const app = APPS[appName];
   if (!app) throw new Error(`unknown app: ${appName}`);
 
@@ -181,6 +184,7 @@ export async function loadApp(appName, { url, server = new FakeServer(), t } = {
     });
   }
   server.install(window);
+  if (before) before(window);
 
   // Record image loads instead of attempting them, and keep the src rewriting
   // interceptor observable.

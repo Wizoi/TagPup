@@ -118,8 +118,8 @@ describe("tagpup: routing with no database segment", () => {
     const server = baseRoutes(new FakeServer());
     await loadApp("tagpup", { t, url: "http://localhost:8090/", server });
 
-    // With no database segment the server falls back to its startup database,
-    // so the client must not invent a prefix of its own.
+    // With no database segment the page asks only which libraries there are
+    // (library-memory.test.mjs), and must not invent a prefix for that.
     for (const url of server.urls().filter((u) => u.startsWith("/"))) {
       assert.ok(
         url.startsWith("/api/"),
