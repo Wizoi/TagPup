@@ -631,7 +631,12 @@ class Check:
 
 class RowsKept(Check):
     """The tables named -- without names, every table the library had but those in `but`
-    and those the migration drops -- have as many rows after as before."""
+    and those the migration drops -- have as many rows after as before.
+
+    Without names, an additive migration's are only the tables it touches: the runner's
+    watch refuses one that changed a row anywhere else, and counting every table, twice,
+    took 26 s on the owner's library under the write lock, most of it face_crops
+    (docs/findings.md, #272)."""
 
     def __init__(self, *tables, but=()):
         self.tables, self.but = tables, tuple(but)
@@ -639,7 +644,10 @@ class RowsKept(Check):
 
     def before(self, conn, migration):
         present = set(_tables_now(conn))
-        tables = self.tables or sorted(t for t in present if t not in RUNNER_TABLES and t not in self.but)
+        tables = self.tables
+        if not tables:
+            among = migration.touches if migration.kind == ADDITIVE else present
+            tables = sorted(t for t in among if t not in RUNNER_TABLES and t not in self.but)
         return {table: _count(conn, table) for table in tables if table in present}
 
     def after(self, conn, migration, state):

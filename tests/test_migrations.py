@@ -517,6 +517,28 @@ class ALibraryAtEveryOlderVersion(unittest.TestCase):
                 self.assertEqual(wanted, len(backups(path)), "backups at version %d" % version)
 
 
+class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
+    def test_migration_11_counts_no_table_it_does_not_touch(self):
+        # Migration 11 took 26 s on the owner's library: its rows-kept check counted
+        # every table twice, face_crops (1.4 GB) among them, under the write lock. The
+        # runner's watch already refuses an additive migration that changed a row
+        # anywhere; the count is of the tables it touches (docs/findings.md, #272).
+        home = own_home.for_test(self)
+        path = home.library("harbour.db")
+        at_version(path, 10)
+        counted = []
+        real = schema._count
+
+        def count(conn, table):
+            counted.append(table)
+            return real(conn, table)
+
+        with mock.patch.object(schema, "_count", side_effect=count):
+            self.assertEqual(["photo files in the journal"], schema.ensure(path))
+        # What it touches: change_files, which it makes, and changes, the runner's own.
+        self.assertLessEqual(set(counted), {"change_files", "changes"})
+
+
 class ANewLibrary(unittest.TestCase):
     def test_is_made_without_a_backup_or_a_record_of_each_step(self):
         # Making a library is not migrating one: there is nothing to keep or undo.
