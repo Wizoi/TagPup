@@ -20,9 +20,10 @@ could put back is. `changes.owner` names the process carrying a change out, so a
 another live process is writing is not taken for one a crash left (tagpup.services.
 file_changes.settle).
 
-A field change keeps `fields_before` and `fields_after` as JSON, {field: [texts]}; a
-rename keeps the file's old and new path, and its size and modified time, which a rename
-does not change, to know the file by wherever it is found. Reading and writing the files
+A field change keeps `fields_before` and `fields_after` as JSON, {field: [texts]}, and
+the file's stamp, [mtime, size], as it is marked writing, over which settling carries its
+vectors (migration 12); a rename keeps the file's old and new path, and its size and
+modified time, which a rename does not change, to know the file by wherever it is found. Reading and writing the files
 is tagpup.services.file_changes'; this is the rows.
 """
 import json
@@ -54,6 +55,8 @@ class FileRow:
     after: Dict[str, Any] = field(default_factory=dict)
     state: str = "planned"
     note: Optional[str] = None
+    #: (mtime, size) of the file just before its write, or None.
+    stamp: Optional[tuple] = None
 
     @property
     def is_rename(self):
@@ -123,12 +126,12 @@ def has_table(conn):
 
 
 def _row(found):
-    file_id, change_id, photo_id, path, new_path, before, after, state, note = found
+    file_id, change_id, photo_id, path, new_path, before, after, state, note, stamp = found
     return FileRow(file_id, change_id, photo_id, path, new_path, json.loads(before or "{}"),
-                   json.loads(after or "{}"), state, note)
+                   json.loads(after or "{}"), state, note, tuple(json.loads(stamp)) if stamp else None)
 
 
-_FILE_COLUMNS = "id, change_id, photo_id, path, new_path, fields_before, fields_after, state, note"
+_FILE_COLUMNS = "id, change_id, photo_id, path, new_path, fields_before, fields_after, state, note, stamp"
 
 
 def plan(db_path, operation, files, summary=None):
@@ -169,6 +172,16 @@ def set_after(conn, file_id, after):
     """Record what a file holds after its write, where ExifTool did not keep a value as
     written (tagpup.services.file_changes). The caller commits, with the file's row."""
     conn.execute("UPDATE change_files SET fields_after = ? WHERE id = ?", (json.dumps(after, sort_keys=True), file_id))
+
+
+def writing(db_path, file_id, stamp):
+    """Mark one file `writing`, with `stamp`, (mtime, size) of the file just before its
+    write: settling after a crash carries the photo's vectors over the write by it."""
+    def work(conn):
+        conn.execute("UPDATE change_files SET state = 'writing', note = NULL, stamp = ? WHERE id = ?",
+                     (json.dumps(list(stamp)) if stamp else None, file_id))
+
+    db.write_with_connection(db_path, work, label="file %d writing" % file_id)
 
 
 def mark(db_path, file_ids, state, note=None):

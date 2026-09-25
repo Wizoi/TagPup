@@ -560,6 +560,17 @@ def _change_files(conn):
         conn.execute("ALTER TABLE changes ADD COLUMN owner TEXT")
 
 
+def _change_file_stamps(conn):
+    """The stamp of each photo file just before its write: `change_files.stamp`, JSON
+    [mtime, size], recorded as the file is marked writing (tagpup.store.file_journal).
+    A crash between a file's write and its row lost it, and settling could not carry the
+    photo's CLIP vectors over the write (docs/findings.md, #265). Only adds a column, so
+    it needs no backup.
+    """
+    if "stamp" not in _columns(conn, "change_files"):
+        conn.execute("ALTER TABLE change_files ADD COLUMN stamp TEXT")
+
+
 # ---- What a migration holds true before it commits ----------------------------------------
 
 #: The runner's own tables: it writes them as it records each migration.
@@ -1025,6 +1036,10 @@ MIGRATIONS = (
     Migration(11, "photo files in the journal", _change_files, ADDITIVE,
               "adds the change_files table, empty, and the column changes.owner, NULL in every row",
               ("change_files", "changes"),
+              (RowsKept(),) + STANDARD),
+    Migration(12, "the stamp of each file before its write", _change_file_stamps, ADDITIVE,
+              "adds the column change_files.stamp, NULL in every row",
+              ("change_files",),
               (RowsKept(),) + STANDARD),
 )
 

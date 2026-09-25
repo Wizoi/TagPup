@@ -298,15 +298,16 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None):
     except field_values.Unreadable as e:
         return _conflict(library, row, "could not be read: %s" % e)
     if fields.reads_same(now, target):
-        # Written already: by a run a crash stopped before it recorded the row.
-        _record_held(library, row, now, target, finished)
+        # Written already: by a run a crash stopped before it recorded the row, whose
+        # stamp from before the write was recorded with it (#265).
+        _record_held(library, row, now, target, finished, row.stamp)
         return finished, None
     if not fields.reads_same(now, origin):
         return _conflict(library, row, "changed since it was read: it holds neither what the change found"
                                        " nor what it was to leave, and is not overwritten")
-    file_journal.mark(library.path, [row.id], "writing")
+    stamp = row.stamp = embeddings.stamp_of(row.path)
+    file_journal.writing(library.path, row.id, stamp)
     _reached("file writing")
-    stamp = embeddings.stamp_of(row.path)
     try:
         field_values.write(et, row.path, target)
     except Exception as e:
@@ -319,16 +320,17 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None):
     return finished, None
 
 
-def _record_held(library, row, now, target, finished):
+def _record_held(library, row, now, target, finished, stamp=None):
     """Record a file found holding `target` already, as it holds it: a value ExifTool does
     not keep as written ("1.50" read as 1.5) is recorded as read, in the row and, going
-    forward, as the journal's after, as _read_back records a file just written."""
+    forward, as the journal's after, as _read_back records a file just written. `stamp`
+    is the file's from just before a write of this change, when one was made."""
     held = {field: now.get(field, []) for field in target}
     after = None
     if finished == "done" and not fields.same_fields(held, target):
         after = held
         row.after = held
-    _record(library, row, held, finished, after=after)
+    _record(library, row, held, finished, stamp, after=after)
 
 
 def _after_failure(et, library, row, origin, target, finished, on_failure, error):
@@ -338,7 +340,7 @@ def _after_failure(et, library, row, origin, target, finished, on_failure, error
     except field_values.Unreadable:
         now = None
     if now is not None and fields.reads_same(now, target):
-        _record_held(library, row, now, target, finished)
+        _record_held(library, row, now, target, finished, row.stamp)
         return finished, None
     if now is not None and fields.reads_same(now, origin):
         if on_failure == "withdraw":

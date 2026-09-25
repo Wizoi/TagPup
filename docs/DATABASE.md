@@ -229,6 +229,7 @@ The photo files a change writes, one row each (`tagpup.store.file_journal`, `tag
 | `fields_after` | TEXT | NOT NULL | JSON: what it is to hold, in the same form. |
 | `state` | TEXT | NOT NULL, one of `planned`, `writing`, `done`, `conflict`, `undone` | Where the write of this file stands. |
 | `note` | TEXT | | Why a file is a conflict: changed outside since it was read, could not be read or written (ExifTool's error), not undone. |
+| `stamp` | TEXT | | JSON `[mtime, size]` of the file just before its write, recorded as it is marked `writing` (migration 12): settling a write a crash stopped carries the photo's vectors over it. NULL for a rename, and for a file not written yet. |
 
 ---
 

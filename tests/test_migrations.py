@@ -41,6 +41,7 @@ KINDS = {
     9: schema.ADDITIVE,      # the journal's tables
     10: schema.ADDITIVE,     # the settings table
     11: schema.ADDITIVE,     # change_files, and changes.owner
+    12: schema.ADDITIVE,     # change_files.stamp
 }
 
 
@@ -534,8 +535,10 @@ class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
             return real(conn, table)
 
         with mock.patch.object(schema, "_count", side_effect=count):
-            self.assertEqual(["photo files in the journal"], schema.ensure(path))
-        # What it touches: change_files, which it makes, and changes, the runner's own.
+            self.assertEqual(["photo files in the journal", "the stamp of each file before its write"],
+                             schema.ensure(path))
+        # What it touches: change_files, which it makes, and changes, the runner's own;
+        # migration 12 touches change_files alone.
         self.assertLessEqual(set(counted), {"change_files", "changes"})
 
 
