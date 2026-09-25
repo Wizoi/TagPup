@@ -14,7 +14,7 @@ from unittest import mock
 from tests.handler_harness import Library
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
-from writer import MetadataWriter
+from tagpup_cli import write_suggestions_file
 
 from tagpup.files.exiftool_session import ExifToolSession
 
@@ -45,8 +45,7 @@ class CliWriteFollowsTheKeywordRules(unittest.TestCase):
 
     def write(self):
         with mock.patch("builtins.input", return_value="YES"):
-            return MetadataWriter(exiftool_path=EXIFTOOL).write_tags_to_photos(
-                self.suggestions, live=True, db_path=self.lib.db_path)
+            return write_suggestions_file(self.suggestions, self.lib.db_path, EXIFTOOL, live=True)
 
     def keywords(self):
         with ExifToolSession(executable=EXIFTOOL) as et:

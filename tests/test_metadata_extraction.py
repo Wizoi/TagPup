@@ -22,17 +22,12 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-from metadata import (
-    clean_metadata_value,
-    extract_tags,
-    extract_people,
-    extract_captions,
-    get_people_roots,
-    parse_year_from_metadata,
-    build_photo_ui_record,
-    sanitize_filename,
-)
-from writer import derive_caption_from_tags as _derive_caption  # noqa: E402
+from tagpup.core.dates import record_year
+from tagpup.core.suggesting import caption_from_tags as _derive_caption
+from tagpup.core.vocabulary import extract_captions, extract_people, extract_tags
+from tagpup.files.metadata import clean_metadata_value, sanitize_filename
+from tagpup.services.photos import page_record
+from tagpup.store.taxonomy import people_vocabulary
 
 
 def derive_caption_from_tags(tags):
@@ -126,31 +121,31 @@ class TestExtractPeopleWithoutADatabase(unittest.TestCase):
     (docs/findings.md, #66)."""
 
     def test_reads_person_in_image(self):
-        people = extract_people({"XMP:PersonInImage": ["Jane Doe"]}, [], db_path="")
+        people = extract_people({"XMP:PersonInImage": ["Jane Doe"]}, [], people_vocabulary(""))
         self.assertEqual(people, ["Jane Doe"])
 
     def test_reads_region_names(self):
-        people = extract_people({"XMP:RegionName": ["Jane Doe"]}, [], db_path="")
+        people = extract_people({"XMP:RegionName": ["Jane Doe"]}, [], people_vocabulary(""))
         self.assertEqual(people, ["Jane Doe"])
 
     def test_takes_the_leaf_of_a_hierarchical_people_tag(self):
-        people = extract_people({}, ["People/Immediate/Jane Doe"], db_path="")
+        people = extract_people({}, ["People/Immediate/Jane Doe"], people_vocabulary(""))
         self.assertEqual(people, ["Jane Doe"])
 
     def test_family_and_friends_are_not_face_roots_without_a_library(self):
         # docs/findings.md, #66: only a library's tree says Family or Friends hold faces.
-        self.assertEqual(extract_people({}, ["Family/Immediate/Jane Doe"], db_path=""), [])
-        self.assertEqual(extract_people({}, ["Friends/Bob Roe"], db_path=""), [])
+        self.assertEqual(extract_people({}, ["Family/Immediate/Jane Doe"], people_vocabulary("")), [])
+        self.assertEqual(extract_people({}, ["Friends/Bob Roe"], people_vocabulary("")), [])
 
     def test_handles_backslash_and_pipe_separators(self):
-        self.assertEqual(extract_people({}, [r"People\Jane Doe"], db_path=""), ["Jane Doe"])
-        self.assertEqual(extract_people({}, ["People|Bob Roe"], db_path=""), ["Bob Roe"])
+        self.assertEqual(extract_people({}, [r"People\Jane Doe"], people_vocabulary("")), ["Jane Doe"])
+        self.assertEqual(extract_people({}, ["People|Bob Roe"], people_vocabulary("")), ["Bob Roe"])
 
     def test_ignores_non_people_hierarchies(self):
-        self.assertEqual(extract_people({}, ["Trips/Texas"], db_path=""), [])
+        self.assertEqual(extract_people({}, ["Trips/Texas"], people_vocabulary("")), [])
 
     def test_ignores_a_bare_root_with_no_leaf(self):
-        self.assertEqual(extract_people({}, ["People"], db_path=""), [])
+        self.assertEqual(extract_people({}, ["People"], people_vocabulary("")), [])
 
     def test_no_database_means_no_taxonomy_resolution(self):
         """Without a database there must be no implicit fallback to another library.
@@ -158,13 +153,12 @@ class TestExtractPeopleWithoutADatabase(unittest.TestCase):
         extract_people used to default to data/photo_index.db, so a caller working on
         one database silently resolved people against the default library's taxonomy.
         """
-        self.assertEqual(extract_people({}, ["Some Person"], db_path=""), [])
+        self.assertEqual(extract_people({}, ["Some Person"], people_vocabulary("")), [])
         self.assertEqual(extract_people({}, ["Some Person"]), [])
 
     def test_deduplicates_names_from_different_sources(self):
         people = extract_people(
-            {"XMP:PersonInImage": ["Jane Doe"]}, ["People/Jane Doe"], db_path=""
-        )
+            {"XMP:PersonInImage": ["Jane Doe"]}, ["People/Jane Doe"], people_vocabulary(""))
         self.assertEqual(people, ["Jane Doe"])
 
 
@@ -210,43 +204,43 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
         # tree said. A root holds faces when the tree flags it, whatever its name.
         self.add_tag("People", "People", has_face=1)
         self.add_tag("Family", "Family", has_face=0)
-        self.assertEqual({"people"}, get_people_roots(db_path=self.db_path))
+        self.assertEqual({"people"}, people_vocabulary(self.db_path).roots)
 
     def test_a_custom_root_marked_as_a_face_category_is_honoured(self):
         self.add_tag("Crew", "Crew", has_face=1)
-        self.assertIn("crew", get_people_roots(db_path=self.db_path))
+        self.assertIn("crew", people_vocabulary(self.db_path).roots)
 
     def test_a_root_not_marked_as_a_face_category_is_not(self):
         self.add_tag("Trips", "Trips", has_face=0)
-        self.assertNotIn("trips", get_people_roots(db_path=self.db_path))
+        self.assertNotIn("trips", people_vocabulary(self.db_path).roots)
 
     def test_people_are_extracted_under_a_custom_face_root(self):
         self.add_tag("Crew", "Crew", has_face=1)
-        people = extract_people({}, ["Crew/Jane Doe"], db_path=self.db_path)
+        people = extract_people({}, ["Crew/Jane Doe"], people_vocabulary(self.db_path))
         self.assertEqual(people, ["Jane Doe"])
 
     def test_a_flat_tag_marked_as_a_person_resolves_to_that_person(self):
         """'Cora Ingersoll' with no hierarchy still counts if the taxonomy says it is a person."""
         self.add_tag("People", "People", has_face=1)
         self.add_tag("People/Cora Ingersoll", "Cora Ingersoll", has_face=1)
-        people = extract_people({}, ["Cora Ingersoll"], db_path=self.db_path)
+        people = extract_people({}, ["Cora Ingersoll"], people_vocabulary(self.db_path))
         self.assertEqual(people, ["Cora Ingersoll"])
 
     def test_a_face_root_category_never_resolves_as_a_person(self):
         """"Family" is a category; a photo tagged with it gains no person named Family."""
         self.add_tag("Family", "Family", has_face=1)
-        self.assertEqual(extract_people({}, ["Family"], db_path=self.db_path), [])
+        self.assertEqual(extract_people({}, ["Family"], people_vocabulary(self.db_path)), [])
 
     def test_a_person_under_a_face_root_still_resolves(self):
         self.add_tag("Family", "Family", has_face=1)
         self.add_tag("Family/Jane Doe", "Jane Doe", has_face=1)
         self.assertEqual(
-            extract_people({}, ["Jane Doe"], db_path=self.db_path), ["Jane Doe"]
+            extract_people({}, ["Jane Doe"], people_vocabulary(self.db_path)), ["Jane Doe"]
         )
 
     def test_a_flat_tag_that_is_not_a_person_is_ignored(self):
         self.add_tag("Trips/Texas", "Texas", has_face=0)
-        self.assertEqual(extract_people({}, ["Texas"], db_path=self.db_path), [])
+        self.assertEqual(extract_people({}, ["Texas"], people_vocabulary(self.db_path)), [])
 
     def test_an_existing_connection_is_reused_instead_of_opening_another(self):
         """Opening a second connection inside a write transaction deadlocks SQLite."""
@@ -258,7 +252,7 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
                 "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
                 ("Crew/Temp", None, "Temp", 1),
             )
-            people = extract_people({}, ["Crew/Jane Doe"], conn=conn)
+            people = extract_people({}, ["Crew/Jane Doe"], people_vocabulary(conn=conn))
             self.assertEqual(people, ["Jane Doe"])
         finally:
             conn.rollback()
@@ -268,49 +262,49 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
 class TestParseYearFromMetadata(unittest.TestCase):
     def test_prefers_the_exif_capture_date(self):
         meta = {"raw_metadata": {"EXIF:DateTimeOriginal": "2014:07:04 10:00:00"}}
-        self.assertEqual(parse_year_from_metadata(meta), 2014)
+        self.assertEqual(record_year(meta), 2014)
 
     def test_falls_back_through_the_documented_key_order(self):
         meta = {"raw_metadata": {"EXIF:CreateDate": "2011:01:01 00:00:00"}}
-        self.assertEqual(parse_year_from_metadata(meta), 2011)
+        self.assertEqual(record_year(meta), 2011)
 
     def test_rejects_implausible_years(self):
         meta = {"raw_metadata": {"EXIF:DateTimeOriginal": "0000:00:00 00:00:00"}}
-        self.assertIsNone(parse_year_from_metadata(meta))
+        self.assertIsNone(record_year(meta))
 
     def test_falls_back_to_a_year_in_the_filename(self):
         meta = {"path": r"D:\Library\misc\1998 birthday.jpg"}
-        self.assertEqual(parse_year_from_metadata(meta), 1998)
+        self.assertEqual(record_year(meta), 1998)
 
     def test_falls_back_to_a_year_in_a_folder_name(self):
         meta = {"path": r"D:\Library\1998\Christmas\IMG_0001.jpg"}
-        self.assertEqual(parse_year_from_metadata(meta), 1998)
+        self.assertEqual(record_year(meta), 1998)
 
     def test_the_filename_wins_over_a_folder(self):
         meta = {"path": r"D:\Library\1998\2001 party.jpg"}
-        self.assertEqual(parse_year_from_metadata(meta), 2001)
+        self.assertEqual(record_year(meta), 2001)
 
     def test_the_nearest_folder_wins_over_a_distant_one(self):
         meta = {"path": r"D:\1990\2005 Trip\IMG_0001.jpg"}
-        self.assertEqual(parse_year_from_metadata(meta), 2005)
+        self.assertEqual(record_year(meta), 2005)
 
     def test_exif_wins_over_the_path(self):
         meta = {
             "path": r"D:\Library\1998\IMG_0001.jpg",
             "raw_metadata": {"EXIF:DateTimeOriginal": "2014:07:04 10:00:00"},
         }
-        self.assertEqual(parse_year_from_metadata(meta), 2014)
+        self.assertEqual(record_year(meta), 2014)
 
     def test_returns_none_when_nothing_is_datable(self):
-        self.assertIsNone(parse_year_from_metadata({"path": r"D:\Library\IMG_0001.jpg"}))
+        self.assertIsNone(record_year({"path": r"D:\Library\IMG_0001.jpg"}))
 
     def test_tolerates_a_list_valued_date_tag(self):
         meta = {"raw_metadata": {"EXIF:DateTimeOriginal": ["2014:07:04 10:00:00"]}}
-        self.assertEqual(parse_year_from_metadata(meta), 2014)
+        self.assertEqual(record_year(meta), 2014)
 
     def test_a_four_digit_number_that_is_not_a_year_is_skipped(self):
         meta = {"path": r"D:\Library\IMG_9999.jpg"}
-        self.assertIsNone(parse_year_from_metadata(meta))
+        self.assertIsNone(record_year(meta))
 
 
 class TestBuildPhotoUIRecord(unittest.TestCase):
@@ -321,7 +315,7 @@ class TestBuildPhotoUIRecord(unittest.TestCase):
             "captions": ["A trip"],
             "raw_metadata": {"EXIF:DateTimeOriginal": "2014:07:04 10:00:00"},
         }
-        rec = build_photo_ui_record(r"D:\Library\a.jpg", meta, mtime=123.0, size=456)
+        rec = page_record(r"D:\Library\a.jpg", meta, mtime=123.0, size=456)
         self.assertEqual(rec["filename"], "a.jpg")
         self.assertEqual(rec["tags"], ["Trips/Texas"])
         self.assertEqual(rec["people"], ["Jane Doe"])
@@ -332,12 +326,12 @@ class TestBuildPhotoUIRecord(unittest.TestCase):
 
     def test_year_is_the_string_unknown_when_undatable(self):
         """Callers compare this field, so it must never be None or an int."""
-        rec = build_photo_ui_record(r"D:\Library\a.jpg", {})
+        rec = page_record(r"D:\Library\a.jpg", {})
         self.assertEqual(rec["year"], "Unknown")
         self.assertIsInstance(rec["year"], str)
 
     def test_missing_captions_give_an_empty_title(self):
-        self.assertEqual(build_photo_ui_record(r"D:\a.jpg", {})["title"], "")
+        self.assertEqual(page_record(r"D:\a.jpg", {})["title"], "")
 
 
 class TestSanitizeFilename(unittest.TestCase):
@@ -414,7 +408,7 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
     """
 
     def setUp(self):
-        from metadata import MetadataExtractor
+        from tagpup.files.metadata import MetadataExtractor
 
         self.tmpdir = tempfile.mkdtemp(prefix="meta_batch_")
         self.addCleanup(shutil.rmtree, self.tmpdir, True)
@@ -491,7 +485,7 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
 
     def test_a_clean_batch_still_reads_in_one_call(self):
         """The retry is the exception; a healthy batch must not pay for it."""
-        import metadata
+        from tagpup.files import metadata
 
         calls = []
         fake = self._fake_helper()
@@ -549,7 +543,7 @@ class TestABatchReadsTheLibrarysPeopleOnce(unittest.TestCase):
             self.paths.append(path)
 
     def test_once_and_for_every_photo(self):
-        import metadata
+        from tagpup.files import metadata
         from tagpup.store import taxonomy
 
         session = mock.MagicMock()
@@ -558,7 +552,8 @@ class TestABatchReadsTheLibrarysPeopleOnce(unittest.TestCase):
         with mock.patch("tagpup.files.metadata.ExifToolSession", session), \
                 mock.patch.object(taxonomy, "people_vocabulary",
                                   wraps=taxonomy.people_vocabulary) as read_people:
-            results = metadata.MetadataExtractor().batch_read(self.paths, db_path=self.db_path)
+            results = metadata.MetadataExtractor().batch_read(
+                self.paths, people=taxonomy.people_vocabulary(self.db_path))
 
         self.assertEqual(read_people.call_count, 1)
         # Crew is this library's own face root, so the tree was read, not assumed.

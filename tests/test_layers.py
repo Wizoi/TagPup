@@ -5,9 +5,9 @@ each carried its own copy of what a photo library is: 51 function names defined 
 both, and fixes that reached one copy and not the other. The package is organized in
 layers so that cannot happen again -- rules at the bottom, then the database and the
 files, then the actions that use them -- and this fails the build on an import that
-goes back up. It also fails on a bare import of an old module in scripts/ (`import
-db`): those resolve only through sys.path, and code in the package must not depend on
-code outside it.
+goes back up. It also fails on a bare import of a module in scripts/ (`import
+dedupe_faces`): those resolve only through sys.path, and code in the package must not
+depend on code outside it.
 
 A new layer is added to MAY_IMPORT and to docs/ARCHITECTURE.md together; a package that is
 in neither fails.
@@ -177,8 +177,8 @@ class ImportsGoDown(unittest.TestCase):
             (core, "import tagpup.files.identity", True),
             (files, "from ..store import db", True),
             (files, "from tagpup import store", True),
-            (store, "import db", True),
-            (store, "def f():\n    from index import PhotoIndex", True),
+            (store, "import dedupe_faces", True),
+            (store, "def f():\n    from reloader import start_reloader_thread", True),
             (os.path.join("tagpup", "__init__.py"), "from tagpup import core", True),
         ]
         for relative, source, expected in samples:

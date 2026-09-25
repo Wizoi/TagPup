@@ -25,14 +25,16 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-import db as tagpup_db
-import paths
-from index import PhotoIndex
+from tagpup.store import db as tagpup_db
+from tagpup.core import paths
+from tagpup.services import faces as face_records
+from tagpup.services.search import PhotoIndex
+from tagpup.store import faces as store_faces
 from tagpup_cli import cli, get_config
 from tagpup.ml.clip import output_dim
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from face_rows import add_face  # noqa: E402
+from face_rows import add_face, configured_model  # noqa: E402
 
 
 def make_jpeg(path, color="green"):
@@ -89,7 +91,7 @@ class FaceDecisionCase(unittest.TestCase):
     def seed(self, stored_as=None):
         """Index the photo and give it curated faces. Returns {box: face id}."""
         stored_as = stored_as or self.photo
-        index = PhotoIndex(db_path=self.db_path)
+        index = PhotoIndex(self.db_path, configured_model())
         index.load()
         meta = fake_meta(self.photo)
         meta["path"] = stored_as
@@ -177,7 +179,7 @@ class TestReindexingAChangedPhoto(FaceDecisionCase):
 class TestBuildOrUpdateWritesInPlace(FaceDecisionCase):
     def test_a_second_write_of_the_same_photo_keeps_its_faces(self):
         ids = self.seed()
-        index = PhotoIndex(db_path=self.db_path)
+        index = PhotoIndex(self.db_path, configured_model())
         index.load()
         meta = fake_meta(self.photo)
         meta["tags"] = ["Places/Harbour"]
@@ -202,10 +204,10 @@ class TestResetKeepsHandGivenNames(FaceDecisionCase):
         self.assertEqual(faces["[0, 8, 4, 12]"][1:3], (None, None),
                          "an automatic name survived the reset")
 
-        index = PhotoIndex(db_path=self.db_path)
+        index = PhotoIndex(self.db_path, configured_model())
         index.load()
         try:
-            self.assertEqual(index.get_manual_face_names(), {
+            self.assertEqual(store_faces.manual_names(index.conn), {
                 ids["[0, 0, 4, 4]"]: "Rowan Thackeray",
                 ids["[4, 0, 8, 4]"]: None,
                 ids["[8, 0, 12, 4]"]: None,
@@ -217,10 +219,10 @@ class TestResetKeepsHandGivenNames(FaceDecisionCase):
 
     def test_reset_reports_the_faces_it_cleared(self):
         self.seed()
-        index = PhotoIndex(db_path=self.db_path)
+        index = PhotoIndex(self.db_path, configured_model())
         index.load()
         try:
-            cleared = index.reset_face_assignments()
+            cleared = face_records.clear_automatic_names(index.conn)
             self.assertIsNot(cleared, True, "reported that it ran, not what it changed")
             self.assertEqual(cleared, 1)
         finally:

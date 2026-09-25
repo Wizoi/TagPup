@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
-import db as tagpup_db  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import clustering  # noqa: E402
 from tagpup.core import processes  # noqa: E402

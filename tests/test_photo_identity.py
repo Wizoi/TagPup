@@ -19,7 +19,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-from identity import (
+from tagpup.files.identity import (
     DOCUMENT_ID_FIELD,
     ensure_document_id,
     mint_document_id,
@@ -101,7 +101,7 @@ class TestEnsuring(unittest.TestCase):
 
 class TestTheExtractorCarriesIt(unittest.TestCase):
     def test_a_structured_record_reports_the_identity(self):
-        from metadata import MetadataExtractor
+        from tagpup.files.metadata import MetadataExtractor
 
         extractor = MetadataExtractor(mint_identities=False)
         record = extractor._structure(
@@ -112,7 +112,7 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
         # Reading a folder to show it used to write an identity into every photo that
         # had none, and nothing told the index -- whose rows then looked out of date.
         # The indexer, which records what it read, asks for minting; nothing else does.
-        from metadata import MetadataExtractor
+        from tagpup.files.metadata import MetadataExtractor
 
         self.assertFalse(MetadataExtractor().mint_identities,
                          "reading a photo writes to it")
@@ -158,7 +158,7 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
         expensive work, and it would look like the indexer never finishing.
         """
         import tempfile
-        from metadata import MetadataExtractor
+        from tagpup.files.metadata import MetadataExtractor
 
         fd, path = tempfile.mkstemp(suffix=".jpg")
         os.write(fd, b"not really a jpeg")
@@ -182,7 +182,7 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
         self.assertGreater(record["mtime"], 0.0)
 
     def test_a_photo_that_already_has_one_is_left_alone_in_a_batch(self):
-        from metadata import MetadataExtractor
+        from tagpup.files.metadata import MetadataExtractor
 
         et = FakeExifTool()
         records = [

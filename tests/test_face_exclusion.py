@@ -19,9 +19,9 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-from index import PhotoIndex
-from taxonomy import TagTaxonomy
-from faces import FaceProcessor
+from tagpup.services import faces as face_records
+from tagpup.services import identities
+from tagpup.services.search import PhotoIndex
 from tests.test_face_clustering_rules import identity_vector, near
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
@@ -41,7 +41,7 @@ class ExclusionTestBase(unittest.TestCase):
     def setUpClass(cls):
         cls.home = own_home.for_class(cls)
         cls.TEST_DB = cls.home.library(cls.DB_NAME)
-        pi = PhotoIndex(db_path=cls.TEST_DB)
+        pi = PhotoIndex(cls.TEST_DB)
         pi.load()
         pi.close()
         cls.app = tuner_client.app_on(cls.TEST_DB)
@@ -260,14 +260,10 @@ class TestExcludedFacesAreInvisibleToIdentityWork(ExclusionTestBase):
 
 class TestExcludedFacesSurviveClustering(ExclusionTestBase):
     def cluster(self):
-        index = PhotoIndex(db_path=self.TEST_DB)
+        index = PhotoIndex(self.TEST_DB)
         index.load()
-        taxonomy = TagTaxonomy(os.path.join(self.tmpdir, "tax.db"))
-        taxonomy.paths = set()
         try:
-            return FaceProcessor.__new__(FaceProcessor).cluster_and_resolve_identities(
-                index, taxonomy, max_iterations=3
-            )
+            return identities.resolve(index, max_iterations=3)
         finally:
             index.close()
 
@@ -312,7 +308,7 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
     """The suggester detects faces as a side effect; that work must be kept."""
 
     def index(self):
-        pi = PhotoIndex(db_path=self.TEST_DB)
+        pi = PhotoIndex(self.TEST_DB)
         pi.load()
         return pi
 
@@ -324,7 +320,7 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
         ]
         pi = self.index()
         try:
-            self.assertEqual(pi.save_faces_if_absent(photo, detected), 2)
+            self.assertEqual(face_records.record_detected(pi.db_path, photo, detected), 2)
         finally:
             pi.close()
 
@@ -344,7 +340,7 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
 
         pi = self.index()
         try:
-            inserted = pi.save_faces_if_absent(
+            inserted = face_records.record_detected(pi.db_path, 
                 photo, [{"box": [0, 0, 9, 9], "embedding": identity_vector(63).tolist(), "prob": 0.9}]
             )
         finally:
@@ -363,7 +359,7 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
     def test_an_empty_detection_records_nothing(self):
         pi = self.index()
         try:
-            self.assertEqual(pi.save_faces_if_absent(self.add_photo("a.jpg"), []), 0)
+            self.assertEqual(face_records.record_detected(pi.db_path, self.add_photo("a.jpg"), []), 0)
         finally:
             pi.close()
 
@@ -374,7 +370,7 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
         try:
             for i in range(2):
                 photo = self.add_photo(f"q{i}.jpg", people=["Jane Doe"])
-                pi.save_faces_if_absent(photo, [{
+                face_records.record_detected(pi.db_path, photo, [{
                     "box": [0, 0, 50, 50],
                     "embedding": near(base, 70 + i).tolist(),
                     "prob": 0.99,
@@ -443,14 +439,14 @@ class TestExcludedBucketIsReachable(ExclusionTestBase):
 class TestReindexingPreservesFaceCuration(ExclusionTestBase):
     """Re-indexing a photo must not discard the work done on its faces.
 
-    save_faces_batch replaces a photo's face rows wholesale. Those rows carry assigned
+    Recording a batch replaced a photo's face rows wholesale. Those rows carry assigned
     names, manual overrides, exclusions and cached crops; re-detection reproduces none
     of that. This mattered little when only tagged photos were indexed and matters a
     great deal now that every photo is, because far more photos get re-indexed.
     """
 
     def index(self):
-        pi = PhotoIndex(db_path=self.TEST_DB)
+        pi = PhotoIndex(self.TEST_DB)
         pi.load()
         return pi
 
@@ -467,7 +463,7 @@ class TestReindexingPreservesFaceCuration(ExclusionTestBase):
 
         pi = self.index()
         try:
-            pi.save_faces_batch({photo: [self.detection(2)]})
+            face_records.record_batch(pi.conn, {photo: [self.detection(2)]})
         finally:
             pi.close()
 
@@ -482,7 +478,7 @@ class TestReindexingPreservesFaceCuration(ExclusionTestBase):
 
         pi = self.index()
         try:
-            pi.save_faces_batch({photo: [self.detection(2)]})
+            face_records.record_batch(pi.conn, {photo: [self.detection(2)]})
         finally:
             pi.close()
 
@@ -494,7 +490,7 @@ class TestReindexingPreservesFaceCuration(ExclusionTestBase):
         photo = self.add_photo("new.jpg")
         pi = self.index()
         try:
-            pi.save_faces_batch({photo: [self.detection(3), self.detection(4)]})
+            face_records.record_batch(pi.conn, {photo: [self.detection(3), self.detection(4)]})
         finally:
             pi.close()
 
@@ -512,7 +508,7 @@ class TestReindexingPreservesFaceCuration(ExclusionTestBase):
 
         pi = self.index()
         try:
-            pi.save_faces_batch({photo: [self.detection(5)]}, overwrite=True)
+            face_records.record_batch(pi.conn, {photo: [self.detection(5)]}, overwrite=True)
         finally:
             pi.close()
 

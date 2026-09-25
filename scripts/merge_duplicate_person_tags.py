@@ -24,7 +24,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
-import db as tagpup_db  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import vocabulary  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402

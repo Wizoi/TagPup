@@ -73,6 +73,12 @@ def offered_tags(entry, threshold=0.0):
     return chosen
 
 
+def written_tags(suggested_tags, min_score=OFFER_A_TAG):
+    """What the CLI's `write` writes for one photo of its suggestions file: the tags of
+    `suggested_tags` scoring at least `min_score`, in their order."""
+    return [t["tag"] for t in suggested_tags if t.get("score", 0.0) >= min_score]
+
+
 def caption_from_tags(tags, face_roots):
     """Derive a clean, readable caption based directly on the hierarchical/flat tags.
 

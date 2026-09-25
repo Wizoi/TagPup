@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
 import web_client  # noqa: E402
-from taxonomy import TagTaxonomy  # noqa: E402
+from tagpup.store.taxonomy import TagTaxonomy  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.web import app as web  # noqa: E402

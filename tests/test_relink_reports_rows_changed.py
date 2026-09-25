@@ -10,9 +10,10 @@ import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
-import db  # noqa: E402
+from tagpup.store import db  # noqa: E402
 import relink_renamed_photos  # noqa: E402
 from tagpup.store import schema  # noqa: E402
 

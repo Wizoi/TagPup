@@ -93,7 +93,7 @@ class TunerAPITestBase(unittest.TestCase):
 
     def plant_status(self, folder, **status):
         """Say a folder has got somewhere -- running, say -- without indexing it."""
-        import paths
+        from tagpup.core import paths
         self.index_queue()._statuses[paths.key(folder)] = dict(status, folder=folder)
 
     def wait_until_idle(self, timeout=20.0):
@@ -1252,7 +1252,7 @@ def forward_slashes(path):
 def other_spelling(path):
     """The same file named another way: forward slashes and, where the filesystem
     ignores case, the case turned over."""
-    import paths
+    from tagpup.core import paths
     spelled = forward_slashes(path)
     return spelled.swapcase() if paths.CASE_INSENSITIVE else spelled
 
@@ -1328,7 +1328,7 @@ class TestFolderRemovalBySpelling(TunerAPITestBase):
         from the photo row. A face points at its photo by id since migration 4; what is
         left to pin is that one recorded under another spelling lands on the photo's
         row, and goes with it."""
-        import paths
+        from tagpup.core import paths
         from tagpup.store import db, faces as store_faces
         if not paths.CASE_INSENSITIVE:
             self.skipTest("two spellings of one file need a case-insensitive filesystem")
@@ -1409,7 +1409,7 @@ class TestSubfoldersOfATypedParent(TestSubfolderListing):
         body = self.get("/api/folder/subfolders?path=%s"
                         % urllib.parse.quote(other_spelling(self.parent)))
         self.assertEqual(body["folders"][0]["indexed"], 1)
-        import paths
+        from tagpup.core import paths
         self.assertTrue(paths.same(body["folders"][0]["path"], child))
         self.assertEqual(body["folders"][0]["path"],
                          os.path.join(body["parent"], "shoot"))

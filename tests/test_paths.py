@@ -3,9 +3,10 @@ import os
 import sys
 import unittest
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
-import paths  # noqa: E402
+from tagpup.core import paths  # noqa: E402
 
 WINDOWS = os.name == "nt"
 
@@ -82,7 +83,7 @@ class FolderMembership(unittest.TestCase):
 
 
 def _table(rows):
-    import db
+    from tagpup.store import db
     conn = db.connect(":memory:")
     conn.execute("CREATE TABLE photos (path TEXT)")
     conn.execute("CREATE INDEX idx_photos_path ON photos(path COLLATE %s)" % paths.COLLATE)

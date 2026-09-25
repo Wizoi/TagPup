@@ -167,7 +167,7 @@ class TheRenameSyncReadsTheConfiguredFormat(WithAHome):
     """
 
     def test_it_uses_the_format_in_home_from_any_working_directory(self):
-        import metadata
+        from tagpup.files import metadata
 
         self.write_config("[renaming]\nformat = {index} ~ {grouping} ~ {caption}\n")
         photos = tempfile.mkdtemp(prefix="tagpup_photos_")
@@ -179,7 +179,8 @@ class TheRenameSyncReadsTheConfiguredFormat(WithAHome):
         session.__enter__.return_value.get_tags.return_value = [
             {"XMP-xmpMM:PreservedFileName": "IMG_0007.jpg"}]
         with mock.patch("tagpup.files.metadata.ExifToolSession", return_value=session):
-            renamed = metadata.sync_title_to_filename(photo, "Gulls", r"C:\Tools\exiftool.exe")
+            renamed = metadata.sync_title_to_filename(photo, "Gulls", r"C:\Tools\exiftool.exe",
+                                                     config.rename_format())
 
         self.assertEqual(os.path.basename(renamed), "007 ~ Harbour ~ Gulls.jpg")
         self.assertTrue(os.path.exists(renamed))

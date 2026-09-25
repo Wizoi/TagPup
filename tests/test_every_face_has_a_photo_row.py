@@ -15,10 +15,10 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from index import PhotoIndex  # noqa: E402
-
+from tagpup.services import faces as face_records  # noqa: E402
+from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.store import checks, db  # noqa: E402
 
 
@@ -45,7 +45,7 @@ class EveryFaceHasAPhotoRow(unittest.TestCase):
             conn.close()
 
     def test_a_face_suggest_found_on_a_photo_never_indexed_gets_its_photo_a_row(self):
-        self.assertEqual(1, self.index.save_faces_if_absent(self.photo, [self.face()]))
+        self.assertEqual(1, face_records.record_detected(self.db_path, self.photo, [self.face()]))
         self.assertEqual([(self.photo, None, None)], self.rows())
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
         try:
@@ -54,8 +54,8 @@ class EveryFaceHasAPhotoRow(unittest.TestCase):
             conn.close()
 
     def test_a_photo_with_a_row_is_not_given_another(self):
-        self.index.save_faces_if_absent(self.photo, [self.face()])
-        self.index.save_faces_for_path(self.photo.upper() if os.name == "nt" else self.photo, [self.face()])
+        face_records.record_detected(self.db_path, self.photo, [self.face()])
+        face_records.replace_detected(self.index.conn, self.photo.upper() if os.name == "nt" else self.photo, [self.face()])
         self.assertEqual(1, len(self.rows()))
 
 

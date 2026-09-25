@@ -22,8 +22,8 @@ CLIP = os.path.join("tagpup", "ml", "clip.py")
 FACES = os.path.join("tagpup", "ml", "faces.py")
 
 #: What builds a model, and the one file each may be called in. The model classes are
-#: the runtime's to build; what they are made of, their own module's. The old names
-#: (the shims in scripts/ for the tests) are built nowhere that ships.
+#: the runtime's to build; what they are made of, their own module's. The old names,
+#: which read the config for themselves, are built nowhere.
 BUILDERS = {
     "ClipModel": RUNTIME,
     "FaceModel": RUNTIME,

@@ -178,8 +178,8 @@ class TestEveryWriteSiteResolvesPeople(unittest.TestCase):
     through it, and a new call site that forgets is invisible until a library has bare
     names in it again."""
 
-    #: Where keywords are written: the services, and the CLI's writer.
-    SOURCES = [os.path.join("scripts", "writer.py")] + [
+    #: Where keywords are written: the services, the CLI's `write` among them.
+    SOURCES = [
         os.path.join("tagpup", "services", name)
         for name in sorted(os.listdir(os.path.join(WORKSPACE_DIR, "tagpup", "services")))
         if name.endswith(".py")]
@@ -229,7 +229,7 @@ class TestEveryWriteSiteResolvesPeople(unittest.TestCase):
         # The check above is worthless if the writes moved away from what it reads.
         found = [where for where, _call, _function in self.writes()]
         self.assertTrue(any("tagging.py" in where for where in found), found)
-        self.assertTrue(any("writer.py" in where for where in found), found)
+        self.assertIn("write_suggestions", [function.name for _where, _call, function in self.writes()])
 
 
 if __name__ == "__main__":

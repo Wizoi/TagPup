@@ -1,7 +1,7 @@
 """The tag tree's table, tag_taxonomy: what it says about people, its nodes, and
 TagTaxonomy, the tree held in memory by the indexer and the suggester.
 
-TagTaxonomy was scripts/taxonomy.py, which is now a name for this module.
+TagTaxonomy was scripts/taxonomy.py.
 """
 import json
 import logging
@@ -691,6 +691,3 @@ class TagTaxonomy:
             roots[root] = roots.get(root, 0) + 1
         return roots
 
-
-#: The old name, kept for scripts/taxonomy.py's callers.
-seed_taxonomy_from_db = seed

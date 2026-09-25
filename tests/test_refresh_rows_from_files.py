@@ -9,9 +9,10 @@ import tempfile
 import unittest
 from unittest import mock
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
-import db  # noqa: E402
+from tagpup.store import db  # noqa: E402
 import refresh_rows_from_files as refresh  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 
@@ -69,17 +70,16 @@ class RefreshRowsFromFiles(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
 
-    def fake_batch_read(self, extractor, paths, db_path=None):
-        from metadata import MetadataExtractor, PeopleVocabulary
+    def fake_batch_read(self, extractor, paths, people=None):
+        from tagpup.files.metadata import MetadataExtractor
         self.assertFalse(extractor.mint_identities, "the refresh must never write to a photo")
         self.read.extend(paths)
-        people = PeopleVocabulary.load(db_path)
         return [MetadataExtractor._structure(extractor, p, dict(self.truth[p]), people)
                 for p in paths]
 
     def run_script(self, *extra):
         self.read = []
-        with mock.patch("metadata.MetadataExtractor.batch_read", autospec=True,
+        with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
                         side_effect=self.fake_batch_read), \
                 mock.patch.object(refresh.tagpup_db, "backup", return_value="(skipped in test)"), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
@@ -129,7 +129,7 @@ class RefreshRowsFromFiles(unittest.TestCase):
         self.assertEqual(self.rows()[self.files["twice"]][1], ["Harbour at dusk"])
 
     def test_the_extractor_lists_each_caption_once(self):
-        from metadata import extract_captions
+        from tagpup.core.vocabulary import extract_captions
         meta = {"IPTC:ObjectName": "Harbour at dusk", "ObjectName": "Harbour at dusk",
                 "XMP:Title": "Harbour at dusk", "Title": "Harbour at dusk",
                 "XMP:Description": "Boats coming in", "Description": "Boats coming in"}

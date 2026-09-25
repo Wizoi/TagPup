@@ -34,12 +34,15 @@ from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import db as tagpup_db  # noqa: E402
-from metadata import MetadataExtractor, extract_tags, photo_people  # noqa: E402
-
 import _root  # noqa: E402,F401
+from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.core.vocabulary import extract_people, extract_tags  # noqa: E402
+from tagpup.files.metadata import MetadataExtractor  # noqa: E402
+from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
+from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 
 
@@ -105,23 +108,22 @@ def people_checker(conn):
     """A test for rows whose people lack someone their own data names.
 
     A row's people are its keyword people and the names on its faces
-    (metadata.photo_people). Rows written before either rule reached every writer
+    (tagpup.core.vocabulary.people_in_photo). Rows written before either rule reached every writer
     miss some: 741 names on 597 rows of one library -- mostly face names, then people
     under Pets, Family and Friends. None of the other reasons notices, since the file
     and the tags agree; only the people column is short. The taxonomy and the face
     names are read once, not per row.
     """
-    import paths
-    from metadata import PeopleVocabulary, extract_people
+    from tagpup.core import paths
 
-    vocabulary = PeopleVocabulary.load(conn=conn)
+    vocabulary = store_taxonomy.people_vocabulary(conn=conn)
     named = store_faces.names_by_photo_key(conn)
 
     def missing(path, raw_json, tags_json, people_json):
         try:
             stored = set(json.loads(people_json or "[]"))
             wanted = set(extract_people(json.loads(raw_json or "{}"), json.loads(tags_json or "[]"),
-                                        vocabulary=vocabulary))
+                                        vocabulary))
         except Exception:
             return False
         wanted |= named.get(paths.key(path), set())
@@ -158,15 +160,16 @@ def read_files(photo_paths, db_path, exiftool_path=None):
     # The ExifTool the apps use. Without it this looked on PATH, and where ExifTool is
     # not there every file read as unreadable and nothing was refreshed.
     extractor = MetadataExtractor(exiftool_path=exiftool_path, mint_identities=False)
+    library = Library(db_path)
     records = {}
     for start in range(0, len(photo_paths), BATCH):
         batch = photo_paths[start:start + BATCH]
-        for record in extractor.batch_read(batch, db_path=db_path):
+        for record in extractor.batch_read(batch, people=store_taxonomy.people_vocabulary(db_path)):
             # People from the keywords AND the photo's named faces, as every writer
             # of the column now records them; the extractor alone knows only the
             # keywords, and would take off everyone identified by face.
-            record["people"] = photo_people(record["raw_metadata"], record["tags"],
-                                            record["path"], db_path=db_path)
+            record["people"] = photo_actions.people_of(library, record["raw_metadata"], record["tags"],
+                                                       record["path"])
             records[record["path"]] = record
         print("  read %d / %d" % (min(start + BATCH, len(photo_paths)), len(photo_paths)),
               end="\r", flush=True)

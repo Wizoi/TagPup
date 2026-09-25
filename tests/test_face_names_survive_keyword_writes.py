@@ -15,12 +15,12 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from index import PhotoIndex  # noqa: E402
+from tagpup.services.search import PhotoIndex  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from face_rows import add_face, people_of  # noqa: E402
+from face_rows import add_face, configured_model, people_of  # noqa: E402
 
 from tagpup.store import db, people  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
@@ -34,7 +34,7 @@ class FaceNamesSurviveKeywordWrites(unittest.TestCase):
         self.photo = os.path.join(self.dir, "Meet - 01.jpg")
         with open(self.photo, "wb") as handle:
             handle.write(b"jpeg")
-        index = PhotoIndex(self.db)
+        index = PhotoIndex(self.db, configured_model())
         index.load()
         index.conn.execute(
             "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
@@ -66,7 +66,7 @@ class FaceNamesSurviveKeywordWrites(unittest.TestCase):
         self.assertEqual(self.listed(), ["Rowan Thackeray"])
 
     def test_re_indexing_the_photo_keeps_a_face_named_person(self):
-        index = PhotoIndex(self.db)
+        index = PhotoIndex(self.db, configured_model())
         index.load()
         try:
             index.build_or_update([[0.0, 0.0, 0.0, 1.0]], [{

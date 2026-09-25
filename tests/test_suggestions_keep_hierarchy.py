@@ -23,7 +23,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from tagpup.services.suggester import TagSuggester
-from taxonomy import TagTaxonomy
+from tagpup.store.taxonomy import TagTaxonomy
 
 
 class FakeTaxonomy(TagTaxonomy):

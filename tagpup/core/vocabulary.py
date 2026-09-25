@@ -103,7 +103,7 @@ ACTIVITY_ROOT = "Activity"
 PLACE_ROOTS = ("School", "Trips")
 
 #: The roots a new library is given beside its face root (tagpup.store.taxonomy.seed).
-#: The seed, the caption (scripts/writer.py) and the suggester each named these
+#: The seed, the caption (tagpup.core.suggesting) and the suggester each named these
 #: themselves (docs/findings.md, #74).
 NEW_LIBRARY_ROOTS = (ACTIVITY_ROOT, "Pets") + PLACE_ROOTS
 

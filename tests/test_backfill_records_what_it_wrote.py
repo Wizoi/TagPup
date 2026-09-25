@@ -14,8 +14,8 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
 import backfill_document_ids as backfill  # noqa: E402
-import db as tagpup_db  # noqa: E402
-import paths  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
+from tagpup.core import paths  # noqa: E402
 
 from tagpup.store import schema  # noqa: E402
 

@@ -14,9 +14,10 @@ import unittest
 import torch
 from PIL import Image
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from embedder import ClipEmbedder  # noqa: E402
+from tagpup.ml.clip import ClipModel  # noqa: E402
+from tagpup.services.search import PhotoEmbeddings  # noqa: E402
 
 
 class FakeModel:
@@ -35,15 +36,16 @@ class ClipSeesPhotosUpright(unittest.TestCase):
         img.save(photo, exif=exif.tobytes())
 
         seen = []
-        embedder = ClipEmbedder()
-        embedder.device = "cpu"
+        # Not padded to a square, so the size CLIP is shown is the photo's own.
+        model = ClipModel(model_name="stub-model", pretrained="stub-weights", preserve_full_frame=False,
+                          max_aspect_ratio=2.0, force_image_size=None, device="cpu")
 
         def init_model():
-            embedder.model = FakeModel()
-            embedder.preprocess = lambda image: (seen.append(image.size), torch.zeros((3, 2, 2)))[1]
+            model.model = FakeModel()
+            model.preprocess = lambda image: (seen.append(image.size), torch.zeros((3, 2, 2)))[1]
 
-        embedder._init_model = init_model
-        embedder.embed_image(photo, force_recompute=True)
+        model._init_model = init_model
+        PhotoEmbeddings(model).of(photo, force_recompute=True)
 
         self.assertEqual([(20, 40)], seen, "CLIP was shown the stored, sideways pixels")
 

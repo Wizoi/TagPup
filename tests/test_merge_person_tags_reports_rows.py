@@ -10,9 +10,10 @@ import tempfile
 import unittest
 from unittest import mock
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
-import db as tagpup_db  # noqa: E402
+from tagpup.store import db as tagpup_db  # noqa: E402
 import merge_duplicate_person_tags as merge  # noqa: E402
 
 from tagpup.store import schema  # noqa: E402
