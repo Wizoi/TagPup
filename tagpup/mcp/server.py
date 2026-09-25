@@ -204,7 +204,9 @@ def build():
                 "limits it to the rows under a folder. SLOW even as a dry run: planning reads every "
                 "stale photo's file with ExifTool, which on a whole library can take many minutes; "
                 "ask about one folder first. Files are only read, never written. `changed_by_kind` "
-                "splits rows changed from their files and captions alone." + APPLY + REVEAL,
+                "splits rows changed from their files and captions alone. Before applying, the "
+                "person should close TagPup and TagTuner: an open page holds rows in memory, and "
+                "its next save writes back what it held before the refresh." + APPLY + REVEAL,
                 name="refresh_rows")
     def refresh(library: str, apply: bool = False, folder: Optional[str] = None,
                 reveal: bool = False, limit: int = inspect.LIMIT) -> dict[str, Any]:
@@ -217,7 +219,8 @@ def build():
     @write_tool("Remove the tag-tree nodes that are a person's bare name where a People path "
                 "already names the same person (a tree left by old indexing). Only the tree changes; "
                 "photos carrying the bare tag are counted, not rewritten. `changed` is tree nodes "
-                "removed. Refused when the library has no tag tree." + APPLY + REVEAL)
+                "removed. Refused when the library has no tag tree. An open TagPup page offers the "
+                "removed tags until it is reloaded." + APPLY + REVEAL)
     def merge_duplicate_person_tags(library: str, apply: bool = False, reveal: bool = False,
                                     limit: int = inspect.LIMIT) -> dict[str, Any]:
         def act():

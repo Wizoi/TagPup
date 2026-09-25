@@ -106,7 +106,7 @@ def _plan(library):
              "disputed": [face_ids for _path, _names, face_ids in disputed]},
         reveal={"redundant": [(r[0], r[1]) for r in redundant],
                 "disputed": [(photo_path, names) for photo_path, names, _ids in disputed]},
-        work=[r[0] for r in redundant])
+        work=[(r[0], r[3], r[4], r[5]) for r in redundant])
 
 
 def remove(library, face_ids):
@@ -119,7 +119,13 @@ def remove(library, face_ids):
 
 
 def _write(library, planned, result):
-    result.changed = remove(library, planned.work)
+    def delete(conn):
+        return store_faces.delete_if_unchanged(conn, planned.work)
+
+    # Only the copies still as the plan saw them: the library is copied between the plan
+    # and this write, and the app may name or exclude one meanwhile.
+    result.changed = db.write_with_connection(library.path, delete,
+                                              label="remove %d duplicate face row(s)" % len(planned.work))
 
 
 def _remaining(library):

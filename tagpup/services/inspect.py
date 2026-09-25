@@ -146,6 +146,16 @@ def _as_stored(value):
     return json.loads(json.dumps(value, default=str))
 
 
+def _by_field(raw):
+    """Raw metadata keyed by field name alone. A fresh read keeps each field twice,
+    group-prefixed and bare (`XMP:Subject`, `Subject`); most stored rows hold the prefixed
+    spelling only, so comparing the dicts as they are called nearly every row stale."""
+    fields = {}
+    for key, value in raw.items():
+        fields.setdefault(key.split(":", 1)[-1], value)
+    return fields
+
+
 def photo_against_file(library, photo_id, exiftool_path=None, reveal=False):
     """A photo's row against what its file holds now, read with ExifTool the way the
     indexer reads it: whether the file is there; its modified time and size; its tags,
@@ -163,9 +173,16 @@ def photo_against_file(library, photo_id, exiftool_path=None, reveal=False):
         answer["stale"] = True
         return answer
     record = MetadataExtractor(exiftool_path).batch_read([row["path"]], people=known)[0]
-    raw_file = _as_stored(record["raw_metadata"])
-    differing = sorted(k for k in set(row["raw_metadata"]) | set(raw_file)
-                       if row["raw_metadata"].get(k) != raw_file.get(k))
+    if "document_id" not in record:
+        # ExifTool could not be started, or could not read this file: the extractor
+        # answers an empty record, which is no statement about what the file holds.
+        answer.update(file_read=False, stale=None)
+        return answer
+    answer["file_read"] = True
+    in_row, in_file = _by_field(row["raw_metadata"]), _by_field(_as_stored(record["raw_metadata"]))
+    # A field one side lacks is not a difference: rows were written by readers that kept
+    # different fields, and only what both hold can disagree.
+    differing = sorted(k for k in set(in_row) & set(in_file) if in_row[k] != in_file[k])
     answer.update(
         mtime={"same": row["mtime"] is not None and abs(row["mtime"] - record["mtime"]) < 0.1,
                "seconds_apart": None if row["mtime"] is None else round(record["mtime"] - row["mtime"], 3)},
@@ -175,7 +192,9 @@ def photo_against_file(library, photo_id, exiftool_path=None, reveal=False):
         keyword_people=_compared(keyword_people, record["people"], reveal),
         document_id={"same": (row["document_id"] or None) == (record["document_id"] or None),
                      "in_row": bool(row["document_id"]), "in_file": bool(record["document_id"])},
-        raw_metadata={"same": not differing, "fields_differing": differing})
+        raw_metadata={"same": not differing, "fields_differing": differing,
+                      "only_in_row": len(set(in_row) - set(in_file)),
+                      "only_in_file": len(set(in_file) - set(in_row))})
     answer["stale"] = not all(answer[k]["same"] for k in
                               ("mtime", "size", "tags", "captions", "keyword_people", "document_id", "raw_metadata"))
     return answer

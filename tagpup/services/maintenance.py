@@ -72,7 +72,13 @@ def run(library, reason, plan, write, apply=False, remaining=None):
     if not apply or not planned.size:
         return result
     result.details["backup"] = db.backup(library.path, reason)
-    write(library, planned, result)
+    try:
+        write(library, planned, result)
+    except Exception as e:
+        # The backup is taken; say so, so nobody applies again for want of knowing (a
+        # second apply is a second backup, and the library keeps five).
+        result.fail("the write", "%s: %s" % (type(e).__name__, e))
+        return result
     if remaining is not None:
         result.details["remaining"] = remaining(library)
     return result
