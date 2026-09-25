@@ -13,6 +13,7 @@ import { loadApp, FakeServer, closeAllApps } from "./harness.mjs";
 
 const GONE = "D:\\Training\\Cross Country\\Old Meet";
 const HERE = "D:\\Training\\Cross Country\\Meet 2";
+const PARENT = "D:\\Training\\Cross Country";
 
 const settle = (window, ms = 40) => new Promise((r) => window.setTimeout(r, ms));
 const rows = (document) => [...document.querySelectorAll("#remove-folder-list .folder-picker-row")];
@@ -25,8 +26,9 @@ function server() {
     .on("/api/browse-folder", { path: HERE })
     .on("/api/folder/indexed", {
       folders: [
-        { path: HERE, photos: 12, on_disk: true },
-        { path: GONE, photos: 28, on_disk: false },
+        { path: PARENT, photos: 40, own_photos: 0, on_disk: true },
+        { path: HERE, photos: 12, own_photos: 12, on_disk: true },
+        { path: GONE, photos: 28, own_photos: 28, on_disk: false },
       ],
     })
     .on("/api/folder/remove", { success: true, photos_removed: 28, faces_removed: 40, manual_lost: 0, excluded_lost: 0 });
@@ -54,12 +56,21 @@ describe("Remove Folder", () => {
   test("lists every folder the library holds, one gone from disk marked", async (t) => {
     const { document } = await openRemove(t);
     const shown = rows(document);
-    assert.equal(shown.length, 2);
+    assert.equal(shown.length, 3);
     const gone = shown.find((r) => r.textContent.includes("Old Meet"));
     assert.ok(gone, "the folder gone from disk is not offered");
     assert.match(gone.textContent, /28 photo/);
     assert.match(gone.textContent, /not on disk/);
     assert.doesNotMatch(shown.find((r) => r.textContent.includes("Meet 2")).textContent, /not on disk/);
+  });
+
+  test("a parent holding none of its own says its photos are in folders under it", async (t) => {
+    const { document } = await openRemove(t);
+    const parent = rows(document).find((r) => r.querySelector(".folder-picker-name").textContent === PARENT);
+    assert.ok(parent, "the parent folder is not offered");
+    assert.match(parent.textContent, /40 photo\(s\) in folders under it/);
+    const leaf = rows(document).find((r) => r.textContent.includes("Meet 2"));
+    assert.doesNotMatch(leaf.textContent, /in folders under it/);
   });
 
   test("removes the folder chosen, as the library spells it", async (t) => {
@@ -85,7 +96,7 @@ describe("Remove Folder", () => {
   test("declining the question removes nothing", async (t) => {
     const { window, document, server: s } = await openRemove(t);
     window.confirm = () => false;
-    rows(document)[0].querySelector("input").click();
+    rows(document)[1].querySelector("input").click();
     document.getElementById("btn-remove-folder-confirm").click();
     await settle(window, 20);
     assert.ok(!s.urls().some((u) => u.includes("/api/folder/remove")));

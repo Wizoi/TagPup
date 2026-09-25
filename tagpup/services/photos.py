@@ -398,29 +398,34 @@ def indexed_by_folder(library):
 
 
 def indexed_folders(library):
-    """Each folder the library holds photos directly in, by path: {"path" (as stored),
-    "photos" (every photo under it, which is what removing it takes), "on_disk"}.
-    TagTuner's Remove Folder offers these rather than the disk's folders, so a folder
-    deleted from disk can still be taken out (#47)."""
+    """The folders Remove Folder offers, by path: each the library holds photos directly
+    in, and each folder above those up to (not including) its drive's root, which holds
+    none of its own -- removing a folder takes every folder under it
+    (store.photos.remove_under), so a parent removes a season in one step. Each is
+    {"path" (as stored), "photos" (every photo under it: what removing it takes),
+    "own_photos" (those directly in it; 0 for a folder above), "on_disk"}. TagTuner
+    offers these rather than the disk's folders, so a folder deleted from disk can still
+    be taken out (#47)."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         held = photos.folders_held(conn)
     finally:
         conn.close()
-    under = {paths.key(folder): 0 for folder, _count in held}
+    # {key: [spelling, photos under it, photos directly in it]}
+    listed = {paths.key(folder): [folder, 0, count] for folder, count in held}
     for folder, count in held:
-        # Up through its ancestors, adding its photos to each that is itself listed.
+        # Up through its ancestors, adding its photos to each; one not yet listed is
+        # listed under the spelling of the first folder found below it.
         current = folder
         while True:
-            key = paths.key(current)
-            if key in under:
-                under[key] += count
             parent = os.path.dirname(current)
             if parent == current:
-                break
+                break   # a drive's root: never offered
+            entry = listed.setdefault(paths.key(current), [current, 0, 0])
+            entry[1] += count
             current = parent
-    return [{"path": folder, "photos": under[paths.key(folder)], "on_disk": os.path.isdir(folder)}
-            for folder, _count in sorted(held, key=lambda item: paths.key(item[0]))]
+    return [{"path": folder, "photos": under, "own_photos": own, "on_disk": os.path.isdir(folder)}
+            for _key, (folder, under, own) in sorted(listed.items())]
 
 
 def is_photo(path):

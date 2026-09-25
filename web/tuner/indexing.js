@@ -391,7 +391,11 @@ function renderRemoveFolderList() {
 
         const meta = document.createElement('span');
         meta.className = 'folder-picker-meta';
-        meta.textContent = `${folder.photos} photo(s)` + (folder.on_disk ? '' : ' \u2014 not on disk');
+        // A folder above the ones holding photos has none of its own; removing it
+        // takes every folder under it.
+        meta.textContent = `${folder.photos} photo(s)`
+            + (folder.own_photos === 0 ? ' in folders under it' : '')
+            + (folder.on_disk ? '' : ' \u2014 not on disk');
 
         row.append(choice, name, meta);
         removeFolderList.appendChild(row);

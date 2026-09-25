@@ -4,7 +4,9 @@ It chose with the system folder dialog, which lists what is on disk, so a folder
 from disk -- the usual reason to remove one -- could not be chosen: a deleted training
 folder's rows stayed with no way to pick it. GET /api/folder/indexed lists each folder
 the library holds photos directly in, as the library spells it, with every photo under
-it (what removing it takes) and whether it is still on disk.
+it (what removing it takes) and whether it is still on disk -- and the folders above
+them too, which hold none of their own: the native dialog could pick a parent, and
+removing one takes every folder under it (store.photos.remove_under).
 """
 import os
 import shutil
@@ -31,8 +33,11 @@ class RemoveFolderListsTheLibrary(unittest.TestCase):
         self.season = os.path.join(self.photos, "Season")
         self.meet = os.path.join(self.season, "Meet 1")
         self.gone = os.path.join(self.photos, "Old Meet")   # indexed, then deleted from disk
+        self.training = os.path.join(self.photos, "Training")   # none of its own, two below
         on_disk = [os.path.join(self.season, "start.jpg"),
-                   os.path.join(self.meet, "a.jpg"), os.path.join(self.meet, "b.jpg")]
+                   os.path.join(self.meet, "a.jpg"), os.path.join(self.meet, "b.jpg"),
+                   os.path.join(self.training, "Week 1", "c.jpg"),
+                   os.path.join(self.training, "Week 2", "d.jpg"), os.path.join(self.training, "Week 2", "e.jpg")]
         for photo in on_disk:
             os.makedirs(os.path.dirname(photo), exist_ok=True)
             with open(photo, "wb") as handle:
@@ -51,8 +56,42 @@ class RemoveFolderListsTheLibrary(unittest.TestCase):
         return {f["path"]: f for f in reply.get_json()["folders"]}
 
     def test_each_folder_holding_photos_is_listed_as_the_library_spells_it(self):
-        self.assertEqual(sorted(self.folders()),
-                         sorted(paths.stored(f) for f in (self.season, self.meet, self.gone)))
+        held = [self.season, self.meet, self.gone,
+                os.path.join(self.training, "Week 1"), os.path.join(self.training, "Week 2")]
+        folders = self.folders()
+        for folder in held:
+            self.assertIn(paths.stored(folder), folders)
+            self.assertGreater(folders[paths.stored(folder)]["own_photos"], 0)
+
+    def test_a_folder_above_them_is_listed_holding_none_of_its_own(self):
+        folders = self.folders()
+        for parent in (self.training, self.photos):
+            self.assertIn(paths.stored(parent), folders)
+            self.assertEqual(0, folders[paths.stored(parent)]["own_photos"])
+            self.assertTrue(folders[paths.stored(parent)]["on_disk"])
+        self.assertEqual(3, folders[paths.stored(self.training)]["photos"])
+        self.assertEqual(7, folders[paths.stored(self.photos)]["photos"])
+
+    def test_no_drive_root_is_offered(self):
+        for folder in self.folders():
+            self.assertNotEqual(os.path.dirname(folder), folder, folder)
+
+    def test_every_count_is_what_removing_the_folder_would_take(self):
+        conn = db.connect(db.readonly_uri(self.home.library("library.db")), uri=True)
+        try:
+            for folder, entry in self.folders().items():
+                where, params = paths.sql_under("path", folder)
+                under = conn.execute("SELECT COUNT(*) FROM photos WHERE " + where, params).fetchone()[0]
+                self.assertEqual(under, entry["photos"], folder)
+        finally:
+            conn.close()
+
+    def test_a_parent_holding_none_of_its_own_can_be_removed_as_listed(self):
+        training = self.folders()[paths.stored(self.training)]
+        reply = self.client.post("/library/api/folder/remove", json={"folder_path": training["path"]})
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual(training["photos"], reply.get_json()["photos_removed"])
+        self.assertNotIn(paths.stored(self.training), self.folders())
 
     def test_a_folder_gone_from_disk_is_listed_and_marked(self):
         folders = self.folders()
@@ -64,6 +103,7 @@ class RemoveFolderListsTheLibrary(unittest.TestCase):
         self.assertEqual(folders[paths.stored(self.season)]["photos"], 3)
         self.assertEqual(folders[paths.stored(self.meet)]["photos"], 2)
         self.assertEqual(folders[paths.stored(self.gone)]["photos"], 1)
+        self.assertEqual(folders[paths.stored(self.season)]["own_photos"], 1)
 
     def test_the_folder_gone_from_disk_can_be_removed_as_listed(self):
         gone = self.folders()[paths.stored(self.gone)]["path"]
