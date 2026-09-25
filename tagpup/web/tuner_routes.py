@@ -32,7 +32,7 @@ from tagpup.services import indexing
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.services import tags as tags_service
-from tagpup.web import desktop, responses, state
+from tagpup.web import desktop, responses, state, tagpup_routes
 
 logger = logging.getLogger(__name__)
 
@@ -103,15 +103,21 @@ def _int_arg(name, what):
         abort(400, description="Invalid '%s' parameter" % what)
 
 
-@routes.before_request
-def refuse_writes_while_clustering():
-    if request.method != "POST":
-        return None
-    library = state.current()
+def clustering_refusal(library):
+    """The 409 a write that sets faces' names is answered with while `library`'s faces
+    are being clustered, or None. TagTuner's writes are refused here before each POST;
+    the tree's routes, which both apps serve, ask it for a rename and a delete."""
     if library is not None and clustering.of(library).is_set():
         return jsonify({"success": False,
                         "error": "Server is currently clustering faces. Please try again later."}), 409
     return None
+
+
+@routes.before_request
+def refuse_writes_while_clustering():
+    if request.method != "POST":
+        return None
+    return clustering_refusal(state.current())
 
 
 # ---- Photos ------------------------------------------------------------------------------
@@ -223,6 +229,8 @@ def tags_merge():
         _refuse(500, str(e))
     if result.refused:
         _refuse(400, result.refused)
+    if body.get("apply"):
+        tagpup_routes.forget_scans(library)
     reply = dict(result.details)
     if not result.ok:
         reply["error"] = result.message()
@@ -244,6 +252,7 @@ def person_rename():
         abort(500, description="Internal error: %s" % e)
     if result.refused:
         _refuse(400, result.refused)
+    tagpup_routes.forget_scans(library)
     reply = {"success": True, "photos_affected": result.details["photos_affected"],
              "photos_rewritten": result.details["photos_rewritten"]}
     if not result.ok:

@@ -19,6 +19,14 @@
 import { api } from './api.js';
 import { nameProblem, tagProblem } from './vocabulary.js';
 
+/**
+ * Keys the pages act on -- TagPup steps its photos on the arrows, TagTuner moves its
+ * sidebar on ArrowUp and ArrowDown -- and the editor does not, beyond what the browser
+ * does with them in a field or on a button. While it is open they go no further.
+ */
+const PAGE_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+                           'Home', 'End', 'PageUp', 'PageDown', 'Enter', ' ']);
+
 /** The page's hooks and the editor's elements, once wireTagEditor has run. */
 const tagEditor = {
     hooks: null,
@@ -131,6 +139,14 @@ function buildTagEditor() {
         e.stopPropagation();
         closeTagEditor();
     });
+    // Captured at the window, before any page's listener, and whatever has the focus:
+    // a click on the dialog's background leaves it on the body, not in the dialog.
+    // Stopped, not prevented, so a field still moves its caret and a button still
+    // presses; Escape is not one of them, and closes the editor as before.
+    window.addEventListener('keydown', (e) => {
+        if (!PAGE_KEYS.has(e.key) || !tagEditorShowing()) return;
+        e.stopPropagation();
+    }, true);
 
     tagEditor.overlay = overlay;
     tagEditor.search = search;
@@ -156,6 +172,11 @@ export function openTagEditor() {
     tagEditor.search.focus();
     // A page that keeps the tree has it already; otherwise it is read now.
     if (!tagEditor.hooks.nodes) reloadTree().then(renderTaxonomyTree);
+}
+
+/** Is the editor, or its removal check, in front of the page? */
+function tagEditorShowing() {
+    return tagEditor.conflictOpen || Boolean(tagEditor.overlay && tagEditor.overlay.classList.contains('active'));
 }
 
 export function closeTagEditor() {
@@ -523,46 +544,67 @@ export function showDeleteConflictModal(tagName, count, targetTagsOptions) {
         overlay.className = 'tag-editor active tag-editor-conflict';
         tagEditor.conflictOpen = true;
 
-        const dropdownHtml = targetTagsOptions.map(t => `<option value="${t}">${t}</option>`).join('');
+        // Built from text: a tag is the person's to name, and one holding a quote once
+        // ended its option's value early, so "move to" sent a tag other than the one shown.
+        const dialog = editorElement('div', 'tag-editor-dialog');
+        dialog.style.maxWidth = '500px';
 
-        overlay.innerHTML = `
-                <div class="tag-editor-dialog" style="max-width: 500px;">
-                    <div class="tag-editor-header">
-                        <h2>Tag Removal Check</h2>
-                        <button class="tag-editor-close">&times;</button>
-                    </div>
-                    <div class="tag-editor-body">
-                        <p style="margin-bottom: 16px; line-height: 1.5; font-size: 14px;">
-                            The tag <strong style="color: var(--accent);">${tagName}</strong> is used by <strong>${count}</strong> photos.
-                            Removing it requires clean up. Please choose how you want to handle these photos:
-                        </p>
-                        <div class="placement-options">
-                            <label class="placement-option-label">
-                                <input type="radio" name="delete-opt" value="remove" checked>
-                                <span>Remove this tag from all affected photos</span>
-                            </label>
-                            <label class="placement-option-label">
-                                <input type="radio" name="delete-opt" value="move">
-                                <span>Move affected photos to another tag</span>
-                            </label>
-                        </div>
-                        <div id="move-tag-dropdown-container" style="display: none; padding-left: 24px; margin-top: 8px;">
-                            <select id="move-target-select" class="taxonomy-search-input" style="width: 100%;">
-                                <option value="">-- Select Target Tag --</option>
-                                ${dropdownHtml}
-                            </select>
-                        </div>
-                    </div>
-                    <div class="tag-editor-footer">
-                        <button class="btn btn-secondary btn-cancel">Cancel</button>
-                        <button class="btn btn-primary btn-confirm">Confirm</button>
-                    </div>
-                </div>
-            `;
+        const header = editorElement('div', 'tag-editor-header');
+        header.appendChild(editorElement('h2', null, 'Tag Removal Check'));
+        const btnClose = editorElement('button', 'tag-editor-close', '×');
+        btnClose.title = 'Close';
+        btnClose.setAttribute('aria-label', 'Close');
+        header.appendChild(btnClose);
 
+        const body = editorElement('div', 'tag-editor-body');
+        const said = editorElement('p');
+        said.style.marginBottom = '16px';
+        said.style.lineHeight = '1.5';
+        said.style.fontSize = '14px';
+        const tagShown = editorElement('strong', null, tagName);
+        tagShown.style.color = 'var(--accent)';
+        said.append('The tag ', tagShown, ' is used by ', editorElement('strong', null, String(count)),
+            ' photos. Removing it requires clean up. Please choose how you want to handle these photos:');
+
+        const choices = editorElement('div', 'placement-options');
+        [['remove', 'Remove this tag from all affected photos'],
+         ['move', 'Move affected photos to another tag']].forEach(([value, text]) => {
+            const label = editorElement('label', 'placement-option-label');
+            const radio = editorElement('input');
+            radio.type = 'radio';
+            radio.name = 'delete-opt';
+            radio.value = value;
+            radio.checked = value === 'remove';
+            label.append(radio, editorElement('span', null, text));
+            choices.appendChild(label);
+        });
+
+        const dropdownContainer = editorElement('div');
+        dropdownContainer.id = 'move-tag-dropdown-container';
+        dropdownContainer.style.display = 'none';
+        dropdownContainer.style.paddingLeft = '24px';
+        dropdownContainer.style.marginTop = '8px';
+        const select = editorElement('select', 'taxonomy-search-input');
+        select.id = 'move-target-select';
+        select.style.width = '100%';
+        const none = editorElement('option', null, '-- Select Target Tag --');
+        none.value = '';
+        select.appendChild(none);
+        targetTagsOptions.forEach(tag => {
+            const option = editorElement('option', null, tag);
+            option.value = tag;
+            select.appendChild(option);
+        });
+        dropdownContainer.appendChild(select);
+        body.append(said, choices, dropdownContainer);
+
+        const footer = editorElement('div', 'tag-editor-footer');
+        footer.append(editorElement('button', 'btn btn-secondary btn-cancel', 'Cancel'),
+                      editorElement('button', 'btn btn-primary btn-confirm', 'Confirm'));
+
+        dialog.append(header, body, footer);
+        overlay.appendChild(dialog);
         document.body.appendChild(overlay);
-
-        const dropdownContainer = overlay.querySelector('#move-tag-dropdown-container');
 
         overlay.querySelectorAll('input[name="delete-opt"]').forEach(rad => {
             rad.addEventListener('change', (e) => {
@@ -589,7 +631,7 @@ export function showDeleteConflictModal(tagName, count, targetTagsOptions) {
         overlay.querySelector('.btn-confirm').onclick = () => {
             const selected = overlay.querySelector('input[name="delete-opt"]:checked').value;
             if (selected === 'move') {
-                const target = overlay.querySelector('#move-target-select').value;
+                const target = select.value;
                 if (!target) {
                     alert("Please select a target tag.");
                     return;

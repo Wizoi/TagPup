@@ -310,3 +310,156 @@ describe("TagTuner's gear", () => {
     assert.equal(document.querySelector(".tag-editor-status").textContent, "", "the editor did not finish");
   });
 });
+
+describe("The keys stay with what is in front of the page", () => {
+  // TagPup steps its photos on all four arrows (web/tagpup/navigation.js); TagTuner moves
+  // its sidebar on ArrowUp and ArrowDown (web/tuner/sidebar.js). Both listen on the
+  // document, so a key the gear or the editor lets go of moves what is behind them.
+  async function onAPhoto(t) {
+    const server = new FakeServer()
+      .on("/api/folder/scan", [photoRecord({ filename: "a.jpg" }), photoRecord({ filename: "b.jpg" })])
+      .on("/api/photo-details", { path: "D:/Library/2020/a.jpg", tags: [], people: [] });
+    const ctx = await tagpup(t, server);
+    await openFolder(ctx, "D:/Library/2020", { settle: 6 });
+    const rows = () => [...ctx.document.querySelectorAll(".photo-item-file")];
+    assert.equal(rows().length, 2);
+    click(ctx.window, rows()[0]);
+    await flush(ctx.window, 4);
+    ctx.shown = () => ctx.document.querySelector(".photo-item-file.active")?.getAttribute("data-path");
+    ctx.first = ctx.shown();
+    assert.ok(ctx.first, "no photo is shown");
+    return ctx;
+  }
+
+  test("the open menu keeps every arrow key, Home and End to itself", async (t) => {
+    const { window, document, shown, first } = await onAPhoto(t);
+    const { button, menu } = gearOf(document);
+    click(window, button);
+    await flush(window);
+    for (const name of ["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "Home", "End"]) {
+      const event = key(window, document.activeElement, name);
+      await flush(window, 2);
+      assert.ok(event.defaultPrevented, `${name} was not kept`);
+      assert.equal(shown(), first, `${name} stepped the photo behind the menu`);
+      assert.ok(!menu.classList.contains("hidden"), `${name} closed the menu`);
+    }
+  });
+
+  test("a closed gear opens on click, Enter and Space -- a button's -- not on the arrows", async (t) => {
+    const { window, document } = await onAPhoto(t);
+    const { button, menu } = gearOf(document);
+    assert.equal(button.tagName, "BUTTON", "Enter and Space press only a button");
+    button.focus();
+    for (const name of ["ArrowDown", "ArrowUp"]) {
+      key(window, button, name);
+      assert.ok(menu.classList.contains("hidden"), `${name} opened the menu`);
+    }
+  });
+
+  test("after the editor closes on the gear, the arrows step the photos as before", async (t) => {
+    const { window, document, shown, first } = await onAPhoto(t);
+    const { button, menu } = gearOf(document);
+    click(window, button);
+    click(window, menu.querySelector('[data-action="tag-editor"]'));
+    await flush(window, 2);
+    key(window, document.activeElement, "Escape");
+    await flush(window, 2);
+    assert.equal(document.activeElement, button, "the focus did not come back to the gear");
+
+    key(window, button, "ArrowDown");
+    await flush(window, 4);
+    assert.ok(menu.classList.contains("hidden"), "ArrowDown opened the menu");
+    assert.notEqual(shown(), first, "ArrowDown did not step the photo");
+    key(window, document.activeElement, "ArrowUp");
+    await flush(window, 4);
+    assert.equal(shown(), first, "ArrowUp did not step back");
+  });
+
+  test("TagPup's open editor keeps the page's keys, wherever its focus is", async (t) => {
+    const { window, document, shown, first } = await onAPhoto(t);
+    const { button, menu } = gearOf(document);
+    click(window, button);
+    click(window, menu.querySelector('[data-action="tag-editor"]'));
+    await flush(window, 2);
+    const editor = document.getElementById("taxonomy-modal");
+    const treeButton = editor.querySelector(".taxonomy-node-actions button");
+    for (const target of [treeButton, document.body]) {
+      for (const name of ["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft", "Home", "End", "Enter", " "]) {
+        if (target !== document.body) target.focus();
+        key(window, target, name);
+        await flush(window, 2);
+        assert.equal(shown(), first, `${JSON.stringify(name)} on ${target.tagName} stepped the photo behind the editor`);
+        assert.ok(editor.classList.contains("active"), `${JSON.stringify(name)} closed the editor`);
+      }
+    }
+    key(window, treeButton, "Escape");
+    assert.ok(!editor.classList.contains("active"), "Escape no longer closes it");
+    key(window, document.activeElement, "ArrowDown");
+    await flush(window, 4);
+    assert.notEqual(shown(), first, "the page's keys stayed kept after the editor closed");
+  });
+
+  test("TagTuner's open editor keeps its sidebar's keys from the page", async (t) => {
+    const { window, document } = await tuner(t);
+    const reached = [];
+    document.addEventListener("keydown", (e) => reached.push(e.key));
+    click(window, gearOf(document).button);
+    click(window, document.querySelector('#gear-menu [data-action="tag-editor"]'));
+    await flush(window, 4);
+    const treeButton = document.querySelector("#taxonomy-modal .taxonomy-node-actions button");
+    treeButton.focus();
+    for (const name of ["ArrowUp", "ArrowDown", "Home", "End", "Enter", " "]) key(window, treeButton, name);
+    assert.deepEqual(reached, [], "the page heard the editor's keys");
+    key(window, treeButton, "Escape");
+    key(window, document.activeElement, "ArrowDown");
+    assert.deepEqual(reached, ["ArrowDown"], "the page does not hear its keys once the editor is closed");
+  });
+});
+
+describe("The editor's removal check shows and sends the tags as they are", () => {
+  const ODD = 'Places/The "Anchor" <b>Inn</b>';
+  const TREE_WITH_ODD = [
+    ...TREE,
+    { id: 4, tag: "Places", name: "Places", parent_id: null, has_face: 0, hidden_from_autocomplete: 0, usage_count: 1 },
+    { id: 5, tag: ODD, name: 'The "Anchor" <b>Inn</b>', parent_id: 4, has_face: 0, hidden_from_autocomplete: 0, usage_count: 1 },
+  ];
+
+  async function removalCheck(t, id) {
+    const server = new FakeServer()
+      .on("/api/taxonomy/tree", TREE_WITH_ODD)
+      .on("/api/taxonomy/delete-check", { success: true, used: true, count: 1 })
+      .on("/api/taxonomy/delete-confirm", { success: true, photos_affected: 1, photos_rewritten: 1 });
+    const ctx = await tagpup(t, server);
+    click(ctx.window, gearOf(ctx.document).button);
+    click(ctx.window, ctx.document.querySelector('#gear-menu [data-action="tag-editor"]'));
+    await flush(ctx.window);
+    ctx.document.querySelectorAll("#taxonomy-modal .taxonomy-sublist").forEach((l) => l.classList.remove("hidden"));
+    const del = ctx.document.querySelector(`#taxonomy-modal li[data-id="${id}"] > .taxonomy-node-content button[title^="Delete"]`);
+    click(ctx.window, del);
+    await flush(ctx.window, 4);
+    const conflict = ctx.document.querySelector(".tag-editor-conflict");
+    assert.ok(conflict, "no removal check was shown");
+    return { ...ctx, conflict };
+  }
+
+  test("moving to a tag holding a quote sends that tag", async (t) => {
+    const { window, server, conflict } = await removalCheck(t, 3);
+    const select = conflict.querySelector("#move-target-select");
+    const offered = [...select.options].map((o) => o.value).filter(Boolean);
+    assert.ok(offered.includes(ODD), `the tag offered is not the tag: ${JSON.stringify(offered)}`);
+    assert.equal(conflict.querySelector("b"), null, "a tag's text became markup");
+    const move = conflict.querySelector('input[name="delete-opt"][value="move"]');
+    move.checked = true;
+    move.dispatchEvent(new window.Event("change", { bubbles: true }));
+    select.value = ODD;
+    click(window, conflict.querySelector(".btn-confirm"));
+    await flush(window, 8);
+    assert.deepEqual(server.lastBody("/api/taxonomy/delete-confirm"), { tag_id: 3, action: "move", target_tag: ODD });
+  });
+
+  test("the tag being removed is shown as text", async (t) => {
+    const { conflict } = await removalCheck(t, 5);
+    assert.equal(conflict.querySelector(".tag-editor-body strong").textContent, ODD);
+    assert.equal(conflict.querySelector(".tag-editor-body b"), null, "the tag's text became markup");
+  });
+});

@@ -98,6 +98,13 @@ class FolderCache:
 folders = state.PerLibrary(lambda library: FolderCache())
 
 
+def forget_scans(library):
+    """Photos of `library` were rewritten: its cached scans describe them as they were.
+    The cache is the process's, so whichever app rewrote them calls this -- the tree's
+    routes, and TagTuner's tag merge and person rename."""
+    folders.of(library).clear()
+
+
 def _folder_photos(library, folder):
     """The folder's photos as the page was shown them, scanned now if it has not been:
     what a suggestion run works from. Called on the run's own thread, with the library

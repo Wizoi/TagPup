@@ -8,21 +8,19 @@ editor reads.
 A rename or a delete rewrites photos, so what TagPup's page was last shown of a folder
 no longer holds (tagpup.web.tagpup_routes.folders). That cache is the process's, not an
 app's: an edit made from TagTuner's page clears it as one made from TagPup's does.
+
+A rename or a delete also writes faces' names, which cluster-faces rewrites while it
+runs. TagTuner's own writes were refused meanwhile and these were not, on either port;
+they ask the same guard now (tagpup.web.tuner_routes.clustering_refusal).
 """
 from flask import Blueprint, jsonify, request
 
 from tagpup import config as tagpup_config
 from tagpup.core.result import NotFound
 from tagpup.services import tags as tags_service
-from tagpup.web import responses, state, tagpup_routes
+from tagpup.web import responses, state, tagpup_routes, tuner_routes
 
 routes = Blueprint("taxonomy", __name__)
-
-
-def _forget_scans(library):
-    """Photos were rewritten: TagPup's cached scans of this library describe them as they
-    were."""
-    tagpup_routes.folders.of(library).clear()
 
 
 @routes.get("/api/taxonomy/tree")
@@ -88,6 +86,9 @@ def taxonomy_delete_check():
 
 @routes.post("/api/taxonomy/delete-confirm")
 def taxonomy_delete_confirm():
+    refused = tuner_routes.clustering_refusal(state.current())
+    if refused:
+        return refused
     body = request.get_json(silent=True) or {}
     tag_id, action = body.get("tag_id"), body.get("action")
     if tag_id is None or not action:
@@ -96,7 +97,7 @@ def taxonomy_delete_confirm():
         library, tag_id, action, body.get("target_tag"), tagpup_config.exiftool_path()))
     if failed:
         return failed
-    _forget_scans(state.require())
+    tagpup_routes.forget_scans(state.require())
     reply = {"success": result.ok, "photos_affected": result.details["photos_affected"],
              "photos_rewritten": result.details["photos_rewritten"]}
     if not result.ok:
@@ -106,6 +107,9 @@ def taxonomy_delete_confirm():
 
 @routes.post("/api/taxonomy/rename")
 def taxonomy_rename():
+    refused = tuner_routes.clustering_refusal(state.current())
+    if refused:
+        return refused
     body = request.get_json(silent=True) or {}
     tag_id, new_name = body.get("tag_id"), str(body.get("new_name") or "").strip()
     if tag_id is None or not new_name:
@@ -114,7 +118,7 @@ def taxonomy_rename():
         library, tag_id, new_name, tagpup_config.exiftool_path()))
     if failed:
         return failed
-    _forget_scans(state.require())
+    tagpup_routes.forget_scans(state.require())
     reply = {"success": True, "photos_affected": result.details["photos_affected"],
              "photos_rewritten": result.details["photos_rewritten"]}
     # The tree has the new name; a photo that could not be rewritten keeps the old.

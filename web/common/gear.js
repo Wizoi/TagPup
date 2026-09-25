@@ -13,10 +13,16 @@
  *       </div>
  *     </div>
  *
- * and this makes it a menu: it opens on click, Enter, Space or ArrowDown; the arrow keys,
- * Home and End move through its items; Escape or Tab closes it, Escape putting the focus
- * back on the gear; a click anywhere else closes it. An item marked aria-disabled is
- * shown and focusable -- its title says why -- but does nothing.
+ * and this makes it a menu: it opens on click, Enter or Space -- the button's own; ArrowUp,
+ * ArrowDown, Home and End move through its items; Escape or Tab closes it, Escape putting
+ * the focus back on the gear; a click anywhere else closes it. An item marked
+ * aria-disabled is shown and focusable -- its title says why -- but does nothing.
+ *
+ * The pages step through photos on the arrow keys. While the menu is open it keeps every
+ * arrow key, and Home and End, to itself; ArrowLeft and ArrowRight once stepped the photo
+ * behind it. A closed gear keeps none of them: the focus comes back to it when the tag
+ * editor closes, and an arrow there opened the menu instead of stepping the photos, as
+ * every arrow did before there was a gear.
  *
  * An item with data-app is a link to that app's page on this library. Its address comes
  * from the server (/api/apps): the ports are the process's, and a page that spelled
@@ -114,11 +120,7 @@ export function wireGear(button, menu, actions = {}) {
         else open(0);
     });
     button.addEventListener('keydown', (e) => {
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-            e.preventDefault();
-            e.stopPropagation();
-            open(e.key === 'ArrowUp' ? -1 : 0);
-        } else if (e.key === 'Escape' && isOpen()) {
+        if (e.key === 'Escape' && isOpen()) {
             e.preventDefault();
             e.stopPropagation();
             close();
@@ -133,6 +135,9 @@ export function wireGear(button, menu, actions = {}) {
             e.preventDefault();
             e.stopPropagation();   // the pages step through photos on the arrow keys
             focusItem(moves[e.key]);
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            e.preventDefault();    // a menu of one column: nowhere to go, and not the page's
+            e.stopPropagation();
         } else if (e.key === 'Escape') {
             e.preventDefault();
             e.stopPropagation();

@@ -15,7 +15,7 @@ import web_client  # noqa: E402
 
 import tagpup_web  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
-from tagpup.web import tagpup_routes, taxonomy_routes  # noqa: E402
+from tagpup.web import tagpup_routes, taxonomy_routes, tuner_routes  # noqa: E402
 
 TREE_ROUTES = ("/api/taxonomy/tree", "/api/taxonomy/create", "/api/taxonomy/update",
                "/api/taxonomy/delete-check", "/api/taxonomy/delete-confirm", "/api/taxonomy/rename")
@@ -69,6 +69,97 @@ class BothAppsServeTheTree(unittest.TestCase):
         reply = tuner.test_client().post("/library/api/taxonomy/create", json={"name": "Places|Harbour"})
         self.assertEqual(400, reply.status_code)
         self.assertEqual(False, reply.get_json()["success"])
+
+
+class RefusedWhileClustering(unittest.TestCase):
+    """A rename or a delete of the tree writes faces' names, which cluster-faces rewrites
+    while it runs. TagTuner's own writes were refused meanwhile; the tree's routes were
+    not, on either port, once both apps served them."""
+
+    def clustering(self, kind):
+        """The app, its client, and a node Places/Harbour, with the library's faces
+        being clustered."""
+        app, _home = web_client.app_for(self, kind)
+        library = app.config["STARTUP_LIBRARY"]
+        client = app.test_client()
+        node = client.post("/library/api/taxonomy/create",
+                           json={"name": "Places/Harbour", "parent_id": None, "has_face": 0}).get_json()
+        flag = tuner_routes.clustering.of(library)
+        flag.set()
+        self.addCleanup(tuner_routes.clustering.forget, library)
+        self.addCleanup(flag.clear)
+        return client, node
+
+    def tags(self, client):
+        return [n["tag"] for n in client.get("/library/api/taxonomy/tree").get_json()]
+
+    def test_both_apps_refuse_a_rename_and_a_delete_as_tagtuner_refuses_its_writes(self):
+        for kind in ("tagpup", "tuner"):
+            with self.subTest(kind):
+                client, node = self.clustering(kind)
+                renamed = client.post("/library/api/taxonomy/rename",
+                                      json={"tag_id": node["id"], "new_name": "Quay"})
+                deleted = client.post("/library/api/taxonomy/delete-confirm",
+                                      json={"tag_id": node["id"], "action": "remove"})
+                for reply in (renamed, deleted):
+                    self.assertEqual(409, reply.status_code, reply.data)
+                    self.assertEqual({"success": False,
+                                      "error": "Server is currently clustering faces. Please try again later."},
+                                     reply.get_json())
+                self.assertIn("Places/Harbour", self.tags(client), "the refused edit was made anyway")
+
+    def test_the_refusal_is_tagtuners_own(self):
+        client, node = self.clustering("tuner")
+        own = client.post("/library/api/face/unmatch", json={"face_id": 1})
+        tree = client.post("/library/api/taxonomy/rename", json={"tag_id": node["id"], "new_name": "Quay"})
+        self.assertEqual((own.status_code, own.get_json()), (tree.status_code, tree.get_json()))
+
+    def test_edits_that_write_no_names_are_not_refused(self):
+        client, _node = self.clustering("tagpup")
+        made = client.post("/library/api/taxonomy/create",
+                           json={"name": "Activity", "parent_id": None, "has_face": 0})
+        self.assertEqual(200, made.status_code, made.data)
+        self.assertEqual(200, client.get("/library/api/taxonomy/tree").status_code)
+
+
+class TagTunersRewritesForgetTagPupsScans(unittest.TestCase):
+    """TagTuner's tag merge and person rename rewrite photos, as the tree's rename does;
+    TagPup's cached scans of the library went on describing them as they were."""
+
+    def cached(self):
+        tuner, _home = web_client.app_for(self, "tuner")
+        library = tuner.config["STARTUP_LIBRARY"]
+        cache = tagpup_routes.folders.of(library)
+        self.addCleanup(tagpup_routes.folders.forget, library)
+        cache.put("D:/Library/2020", {"d:/library/2020/a.jpg": {"tags": ["Places/Harbour"]}})
+        return tuner.test_client(), cache
+
+    def test_a_merge_applied_forgets_them(self):
+        client, cache = self.cached()
+        reply = client.post("/library/api/tags/merge",
+                            json={"from": "Places/Harbour", "into": "Places/Quay", "apply": True})
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertIsNone(cache.get("D:/Library/2020"), "TagPup's scan still says what the photos held")
+
+    def test_a_merge_not_applied_leaves_them(self):
+        client, cache = self.cached()
+        reply = client.post("/library/api/tags/merge", json={"from": "Places/Harbour", "into": "Places/Quay"})
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertIsNotNone(cache.get("D:/Library/2020"), "a dry run forgot the scans")
+
+    def test_a_person_rename_forgets_them(self):
+        client, cache = self.cached()
+        reply = client.post("/library/api/person/rename",
+                            json={"old_name": "Hazel Brookmire", "new_name": "Hazel Quillane"})
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertIsNone(cache.get("D:/Library/2020"), "TagPup's scan still says what the photos held")
+
+    def test_one_helper_forgets_them(self):
+        import inspect
+        for module in (taxonomy_routes, tuner_routes):
+            source = inspect.getsource(module)
+            self.assertNotIn("folders.of(", source, module.__name__)
+            self.assertIn("tagpup_routes.forget_scans(", source, module.__name__)
 
 
 PORTS = tagpup_web.PORTS
