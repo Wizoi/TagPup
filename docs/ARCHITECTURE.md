@@ -353,10 +353,12 @@ Exit: `scripts/` holds entry points only, and `import db` fails.
 
 ### Phase 7: MCP
 An MCP server, `tagpup.mcp`, so that Claude works with a library through the same services the apps use, rather than through a one-off script per question. Settling #42 in findings.md took four throwaway scripts to learn that its 35 names sat on 28 rows of a folder deleted on purpose. Its reads need the repositories, so it follows phase 3; its order among phases 4 to 6 does not matter.
-- An entry point beside web and cli, over stdio, in a process of its own. It opens the library `TAGPUP_HOME` names and never talks to a running app's port.
-- Read tools first, read-only (`db.readonly_uri`): what a library holds, photos by folder, tag or person, a photo's row against its file, the faces in a photo, the consistency checks (face names missing from people, rows whose file is gone, rows that disagree with their file), and the query plan of a query.
-- Answers give counts and ids by default, and paths and names only when asked: the library is photographs of real people, many of them minors.
-- Write tools only by calling a service. Each is a dry run unless told to apply, backs the library up before it applies, and returns the service's `Result`.
+- [ ] An entry point beside web and cli, `python -m tagpup.mcp`, over stdio, in a process of its own; it never talks to a running app's port. There is no default library (#100): every tool names the library it asks about, a name in the home's data folder, and `libraries` lists them. The project's `.mcp.json` starts it for Claude Code sessions in this repository.
+- [ ] Its reads are a service, `tagpup.services.inspect`, read-only (`db.readonly_uri`): the entry point may not import `store`. What a library holds; photos by folder, tag or person; a photo's row against its file; the faces in a photo; the consistency checks `tools/doctor.py` runs, one tool each or together; rows whose file is gone, by folder; and the query plan of a query (`EXPLAIN QUERY PLAN` only, a `SELECT` only, never run).
+- [ ] Each question a finding in findings.md needed a throwaway script to answer is one tool call; the tests name the finding each tool answers (#42 first: which names sit on rows of a folder whose files are gone).
+- [ ] Answers give counts and ids by default, and paths and names only when a tool is asked for them (`reveal=True`): the library is photographs of real people, many of them minors.
+- [ ] Write tools only by calling a service: the maintenance scripts' operations (re-reading rows from their files, merging duplicate person tags, removing duplicate faces) become services the scripts and the tools both call, on one scaffold -- a dry run unless told to apply, a backup before it applies, and the service's `Result` back.
+- [ ] Tests call every tool through an in-process MCP client session over a library in a home of its own; one test starts the stdio server as a process (`tagpup.core.processes`) and lists its tools.
 
 Exit: every check in `tools/doctor.py`, and each question asked of the library while settling a finding, is one tool call. Every tool calls a service, and each has a test.
 
@@ -394,6 +396,7 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 2026-09-24 | `PerLibrary` lives in `core`: a locked map keyed by library that web, jobs and the runtime all use. |
 | 2026-09-25 | The page tests load a page's ES modules into jsdom as one script, in import order, each module in a function of its own handed its imports (first as one shared scope; two splits hit its false positives, so each module got its scope). jsdom cannot load modules, a bundler is a build step, and modules run under node would keep their timers on node's clock, which closing the page's window cannot stop. |
 | 2026-09-25 | The pages move to `web/tagpup/` and `web/tuner/`, sharing `web/common/`, imported relative to the page so every request carries its library. |
+| 2026-09-25 | The MCP server names a library in every tool call; it has no library of its own (#100). Its reads are a read-only service, `tagpup.services.inspect`, since an entry point may not import `store`; its writes are the maintenance scripts' operations, moved into services the scripts call too. |
 
 ## Progress
 
@@ -408,5 +411,5 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 5.5. Models in the package, one composition root | done, 2026-09-24 (the shims it left for tests went in 6.5) |
 | 6. Pages | done, 2026-09-25 |
 | 6.5. No shims | done, 2026-09-25 |
-| 7. MCP | not started |
+| 7. MCP | in progress, 2026-09-25 |
 | 8. Sync | not started |
