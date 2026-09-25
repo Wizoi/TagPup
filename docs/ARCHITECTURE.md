@@ -425,7 +425,7 @@ A job that keeps each library in step with its folders. Today a row changes only
 
 Exit: after files are added, edited, moved or deleted outside the apps, one sync brings the rows back in step. `tools/doctor.py` finds nothing it would change, except missing files it has reported.
 
-### Phase 9: Library views (planned)
+### Phase 9: Library views (planned for October 2026)
 The owner's idea *(2026-09-25)*: TagPup shows the whole library, not only the folder it
 has open -- by folder, by keyword, by person, by date -- as Windows Live Photo Gallery
 did, from the database, with the editing TagPup gives a folder today. It follows phase 8:
@@ -515,4 +515,4 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 7.5. A journal for every bulk edit and migration | in progress, 2026-09-25 |
 | 7.6. Settings in the library, and a gear on each page | in progress, 2026-09-25 |
 | 8. Sync | not started |
-| 9. Library views | planned, 2026-09-25 (design open) |
+| 9. Library views | planned for October 2026 *(owner, 2026-09-25)*; design questions open |
