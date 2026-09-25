@@ -195,7 +195,7 @@ function tagPhotoCard(photo) {
     card.title = photo.path;
 
     const img = document.createElement('img');
-    img.src = api.image(`/api/photo-file?path=${encodeURIComponent(photo.path)}&thumb=1`);
+    img.src = api.image(`/api/photo-file?path=${encodeURIComponent(photo.path)}&size=300`);   // TagPup's grid size
     img.alt = photo.filename;
     img.loading = 'lazy';
     card.appendChild(img);

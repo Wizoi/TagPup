@@ -161,6 +161,17 @@ describe("opening a tag", () => {
     assert.equal(ctx.document.querySelectorAll(".tag-photo-card").length, 2);
   });
 
+  test("its cards ask for a small copy, as the other grids do (#31)", async (t) => {
+    // `thumb=1` was read by no route, so every card downloaded the original file.
+    const ctx = await openKentridge(t);
+    const sources = [...ctx.document.querySelectorAll(".tag-photo-card img")].map((i) => i.getAttribute("src"));
+    assert.equal(sources.length, 2);
+    for (const src of sources) {
+      assert.match(src, /[?&]size=300(&|$)/, src);
+      assert.doesNotMatch(src, /thumb=/, src);
+    }
+  });
+
   test("the header names it and says what it is", async (t) => {
     const ctx = await openKentridge(t);
     assert.equal(ctx.document.getElementById("tag-view-name").textContent, "Kentridge");
