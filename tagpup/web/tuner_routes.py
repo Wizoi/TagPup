@@ -16,7 +16,6 @@ error pages, as send_error sent them.
 import logging
 import os
 import threading
-import urllib.parse
 from contextlib import contextmanager
 
 from flask import Blueprint, abort, jsonify, make_response, request
@@ -141,7 +140,7 @@ def photo_details():
         abort(400, description="Missing 'path' parameter")
     if not _library_there(library):
         abort(404, description="Database not found")
-    photo_path = urllib.parse.unquote(wanted)
+    photo_path = wanted
     return jsonify(identify_service.photo_details(library, photo_path, _named(library)))
 
 
@@ -292,7 +291,6 @@ def person_faces():
     name = request.args.get("name")
     if not name:
         abort(400, description="Missing 'name' parameter")
-    name = urllib.parse.unquote(name)
     limit, page = 100, 1
     try:
         if request.args.get("limit") is not None:
@@ -334,7 +332,6 @@ def unmatched_faces_person_matches():
     name = request.args.get("name")
     if not name:
         abort(400, description="Missing 'name' parameter")
-    name = urllib.parse.unquote(name)
     if not _library_there(library):
         return jsonify({"faces": [], "total_count": 0, "has_more": False})
     return jsonify(identify_jobs.grid(library, identify_cache.of(library),
@@ -350,7 +347,7 @@ def unmatched_faces_build_status():
     name = request.args.get("name")
     if not name:
         abort(400, description="Missing 'name' parameter")
-    return jsonify(identify_progress.of(library).of(urllib.parse.unquote(name)))
+    return jsonify(identify_progress.of(library).of(name))
 
 
 # ---- Faces: the writes -------------------------------------------------------------------------
@@ -544,7 +541,7 @@ def folder_index_status():
     wanted = request.args.get("path")
     if not wanted:
         _refuse(400, "Missing path parameter")
-    return jsonify(indexing_jobs.queue_for(library).status(urllib.parse.unquote(wanted)))
+    return jsonify(indexing_jobs.queue_for(library).status(wanted))
 
 
 @routes.post("/api/folder/index-start")
@@ -611,7 +608,7 @@ def folder_subfolders():
         _refuse(400, "Missing path parameter")
     # Stored form before anything is joined onto it: a parent typed with forward
     # slashes otherwise yields children spelled with both separators at once.
-    parent = paths.stored(urllib.parse.unquote(wanted))
+    parent = paths.stored(wanted)
     if not os.path.isdir(parent):
         _refuse(400, "Not a folder: %s" % parent)
     try:
