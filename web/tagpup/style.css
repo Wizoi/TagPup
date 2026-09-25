@@ -1638,6 +1638,12 @@ input:checked + .slider:before {
     transform: translateX(14px);
 }
 
+/* The page is dark; without this Windows draws a select's drop-down list light,
+   and the list shows a white strip below the options styled dark. */
+select {
+    color-scheme: dark;
+}
+
 #db-select {
     background-color: var(--bg-tertiary) !important;
     color: var(--text-primary) !important;
