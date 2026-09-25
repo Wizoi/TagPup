@@ -63,7 +63,8 @@ deliberately disjoint:
 
 The tab pairs are distinct on purpose. In **Review People** they split faces that already
 carry a name by how well each matches that person's visual centroid, so *Needs Review*
-means "named, but probably wrong" (similarity < 0.85). In **Identify Faces** they split
+means "named, but probably wrong": less like the person's closest face than a name would
+be offered at (`tagpup.core.clustering.looks_wrong`, below 0.70). In **Identify Faces** they split
 faces that carry no name at all by how confident the suggestion is. Earlier versions
 labelled these *Matches/Outliers* and *High/Lower Confidence* and additionally offered an
 `Unmatched` pseudo-person inside Review People, which dropped a flat, unordered list of
@@ -131,8 +132,10 @@ That second case is why a plainly recognisable person can sit in Unknown Faces: 
 keyword mechanism has no name to file them under, however obvious they are. So each
 cluster is additionally compared against the **faces already named**.
 
-- At **0.85 and above** the pill reads "Looks like Emory Kade (93%)".
-- Between **0.70 and 0.85** it reads "Possibly Emory Kade (72%)", styled down and
+- In the **likely** band (`tagpup.core.clustering.band`: alike enough to be named unasked,
+  0.80 and above) the pill reads "Looks like Emory Kade (93%)".
+- In the **possible** band (alike enough to be offered, 0.70 to 0.80) it reads
+  "Possibly Emory Kade (72%)", styled down and
   saying to check the faces first. The floor sits at 0.70 rather than higher because
   a weak guess is still a shortlist of one, and confirming or rejecting it costs a
   glance -- which beats reading a nameless grid.
@@ -339,10 +342,11 @@ matching can still read its name.
 - `/api/face-crop?id=<face_id>`: Dynamically crops the face from the original photo and returns it as a JPEG (caches the JPEG crop binary in the database).
 - `/api/people`: Returns a sorted list of all unique people names in the database, leaving out people hidden from autocomplete. `include_hidden=1` includes them: the page asks that way to check whether a name already exists.
 - `/api/people-with-counts`: Returns unique names with their respective face counts.
-- `/api/person-faces?name=<name>`: Returns matched/outlier faces for a person (outliers defined as similarity < 0.85).
+- `/api/person-faces?name=<name>`: Returns matched/outlier faces for a person (an outlier is a face `possibly_wrong`:
+  `tagpup.core.clustering.looks_wrong` against the person's closest face in the years around the photo).
 - `/api/face-matches?id=<face_id>`: Evaluates face similarity and returns the top 5 closest matched people.
 - `/api/face-matches-unmatched?id=<face_id>`: Returns other unmatched faces with cosine similarity $\ge 0.8$ for bulk profile creation.
-- `/api/unmatched-faces/people`: Returns the **Identify Faces** queue as `[{"name", "count"}]` — each name that has two or more unmatched candidates library-wide, plus two catch-all buckets: `Unknown Faces` (unmatched faces whose photo names nobody new) first, and `Ungrouped` last (faces whose every unmatched tag has only a single candidate, so no group can form). Counts are photo counts. The result is cached per database against a fingerprint of the `faces` table and recomputed when a face is added or named.
+- `/api/unmatched-faces/people`: Returns the **Identify Faces** queue as `[{"name", "count"}]` — each name that has two or more unmatched candidates library-wide, plus two catch-all buckets: `Unknown Faces` (unmatched faces whose photo names nobody new) first, and `Ungrouped` last (faces whose every unmatched tag has only a single candidate, so no group can form). Counts are face counts (`"unit": "face"`), with the photo count beside each. The result is cached per database against a fingerprint of the `faces` table and recomputed when a face is added or named.
 - `/api/unmatched-faces/person-matches?name=<person_name>`: Returns the unmatched faces that are candidates for the given name, as `{"faces", "total_count", "unclustered_total", "unclustered_shown", "has_more"}`. Candidates are clustered with DBSCAN and ordered by similarity to their cluster centroid. Faces DBSCAN treats as noise are still returned, reported with `cluster_id: -1` and ranked last, capped at 500 per request so a person with tens of thousands of unclustered candidates does not lock up the browser. Accepts the two bucket names `Unknown Faces` and `Ungrouped` in place of a person. Cached like the queue above.
 - `/api/unmatched-faces/build-status?name=<person_name>`: Returns `{"name", "active", "percent", "stage", "message"}` for a grid that is being built right now, or `{"active": false}` when none is. Building a person's grid on a large library is the better part of a minute, nearly all of it grouping the candidates, so the request that does the work publishes how far it has got and the page polls this alongside its own in-flight `person-matches` request. Touches no database; the threaded server answers it while the slow request is still running. Stages are `reading`, `grouping`, `suggesting`, `ranking` and `building`, weighted so `percent` only moves forward. A cached grid never reports progress, because it never builds one.
 - `/api/folder/index-active`: Returns `{"busy": bool, "remaining": int, "active": [{"folder", "name", "percent", "message"}], "queued": [{"folder", "name"}]}` for whatever is indexing right now. `index-status` can only answer about a folder the caller already knows about, so a freshly loaded page cannot use it to discover a job started before the page existed — it would show an idle, enabled **Add folder** button over a busy server. The page asks this on load and restores the progress bar and the disabled controls from the answer.
