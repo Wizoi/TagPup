@@ -2,7 +2,7 @@
 it: a quarter turn, and renaming a photo after its caption.
 
 What the fields mean -- which hold tags, people, captions -- is tagpup.core.vocabulary's.
-What the library's tag tree says about people, and the rename format config.ini names,
+What the library's tag tree says about people, and the rename format its settings name,
 are the caller's to pass in: this layer reads photo files and nothing else.
 """
 import logging
@@ -265,7 +265,7 @@ def sync_title_to_filename(photo_path: str, new_title: str, exiftool_path: str,
                            rename_format: str) -> str:
     """If the photo has an XMP-xmpMM:PreservedFileName tag set, automatically syncs
     any changes to the title back into the filename structure, in `rename_format`
-    (config.ini's, tagpup.config.rename_format).
+    (the library's renaming.format setting, tagpup.services.settings).
     Returns the new path if renamed, or the original path if not renamed."""
     if not os.path.exists(photo_path):
         return photo_path

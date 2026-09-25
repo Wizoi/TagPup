@@ -30,7 +30,7 @@ from tagpup.core import paths
 from tagpup.services import faces as face_records
 from tagpup.services.search import PhotoIndex
 from tagpup.store import faces as store_faces
-from tagpup_cli import cli, get_config
+from tagpup_cli import cli
 from tagpup.ml.clip import output_dim
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -43,8 +43,10 @@ def make_jpeg(path, color="green"):
 
 
 def expected_dim():
-    # The length the configured model makes, as the CLI checks it (tagpup.ml.clip.output_dim).
-    return output_dim(get_config().get("model", "name", fallback="ViT-B-32")) or 512
+    # The length the library's model makes, as the CLI checks it (tagpup.ml.clip.output_dim):
+    # a library made in a test's home holds the defaults.
+    from tagpup.services import settings
+    return output_dim(settings.DEFAULTS["model.name"]) or 512
 
 
 def swap_case(text):

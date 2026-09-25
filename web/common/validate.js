@@ -60,8 +60,22 @@ function asText(value) {
     return value === null || value === undefined ? '' : String(value);
 }
 
+/**
+ * `text` without the characters the rules call blank around it -- validation.py's BLANK,
+ * which the rules carry (`blank`). String.trim() strips a different set from Python's
+ * str.strip(), and the two sides disagreed on what a blank value is.
+ */
+function trimBlank(text) {
+    const blank = (published && published.blank) || '';
+    let start = 0;
+    let end = text.length;
+    while (start < end && blank.includes(text[start])) start++;
+    while (end > start && blank.includes(text[end - 1])) end--;
+    return text.slice(start, end);
+}
+
 function isBlank(value) {
-    return !Array.isArray(value) && !asText(value).trim();
+    return !Array.isArray(value) && !trimBlank(asText(value));
 }
 
 const INTEGER = /^[+-]?[0-9]+$/;
@@ -72,7 +86,7 @@ const BOOLEANS = new Set(['true', 'false', 'yes', 'no', 'on', 'off', '1', '0']);
 function asNumber(value) {
     if (typeof value === 'boolean') return null;
     if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-    const text = asText(value).trim();
+    const text = trimBlank(asText(value));
     return NUMBER.test(text) ? parseFloat(text) : null;
 }
 
@@ -114,15 +128,15 @@ const CHECKS = {
     forbid_text: (rule, value) => asText(value).includes(rule.text),
     pattern: (rule, value) => !regex(rule.pattern, true).test(asText(value)),
     must_contain: (rule, value) => !asText(value).includes(rule.text),
-    reserved: (rule, value) => rule.names.includes(asText(value).trim().toLowerCase()),
+    reserved: (rule, value) => rule.names.includes(trimBlank(asText(value)).toLowerCase()),
     max_bytes: (rule, value) => utf8Length(asText(value)) > rule.max,
     integer: (rule, value) => {
         if (typeof value === 'boolean') return true;
         if (typeof value === 'number') return !Number.isFinite(value) || !Number.isInteger(value);
-        return !INTEGER.test(asText(value).trim());
+        return !INTEGER.test(trimBlank(asText(value)));
     },
     number: (rule, value) => asNumber(value) === null,
-    boolean: (rule, value) => typeof value !== 'boolean' && !BOOLEANS.has(asText(value).trim().toLowerCase()),
+    boolean: (rule, value) => typeof value !== 'boolean' && !BOOLEANS.has(trimBlank(asText(value)).toLowerCase()),
     range: (rule, value) => {
         const number = asNumber(value);
         return number === null || !(rule.min <= number && number <= rule.max);
@@ -131,8 +145,8 @@ const CHECKS = {
 
 function items(rule, value) {
     const listed = Array.isArray(value)
-        ? value.map(item => asText(item).trim())
-        : asText(value).split(rule.separator).map(item => item.trim());
+        ? value.map(item => trimBlank(asText(item)))
+        : asText(value).split(rule.separator).map(item => trimBlank(item));
     return rule.skip_empty ? listed.filter(Boolean) : listed;
 }
 
@@ -153,7 +167,7 @@ function check(rules, value) {
         }
         const fails = CHECKS[rule.rule];
         if (!fails) throw new Error(`validate.js has no check called ${rule.rule}`);
-        if (fails(rule, value)) return rule.message.split('{value}').join(asText(value).trim());
+        if (fails(rule, value)) return rule.message.split('{value}').join(trimBlank(asText(value)));
     }
     return null;
 }

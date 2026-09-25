@@ -171,34 +171,42 @@ class TheLengthOfAPhotosVector(unittest.TestCase):
 
 
 class TheEmbeddersSettings(unittest.TestCase):
-    """The model a photo is embedded with is config.ini's (tagpup.config.embedder_settings),
+    """The model a photo is embedded with is the library's (tagpup.services.settings),
     made into a model by the runtime: the embedder had defaults of its own, ViT-B-32
-    among them, that nothing checked against the config's."""
+    among them, that nothing checked against the settings."""
 
-    def test_the_runtimes_model_is_the_configs(self):
+    def test_the_runtimes_model_is_the_librarys(self):
         from unittest import mock
 
-        from tagpup import config
+        sys.path.insert(0, os.path.join(ROOT, "tests"))
+        import own_home
+        from tagpup.core.library import Library
         from tagpup.ml import clip
         from tagpup.runtime import Runtime
+        from tagpup.services import libraries as library_actions
         from tagpup.services import search
+        from tagpup.services import settings as library_settings
         from tagpup.store import embeddings
+        home = own_home.for_test(self)
+        library_actions.create(home.library("harbour.db"))
+        library = Library(home.library("harbour.db"))
+        found = library_settings.of(library).embedder
         with mock.patch.object(clip, "ClipModel") as model:
-            model.return_value.settings = config.embedder_settings()
-            runtime = Runtime(config.load())
-            self.assertEqual(embeddings.model_key(**config.embedder_settings()), runtime.model_key)
-            self.assertEqual(runtime.model_key, search.PhotoEmbeddings(runtime.clip).model_key)
-        model.assert_called_once_with(**config.embedder_settings())
+            model.return_value.settings = found
+            runtime = Runtime()
+            self.assertEqual(embeddings.model_key(**found), runtime.model_key(library))
+            self.assertEqual(runtime.model_key(library), search.PhotoEmbeddings(runtime.clip(library)).model_key)
+        model.assert_called_once_with(**found)
 
     def test_it_has_no_model_of_its_own(self):
         module = os.path.join("tagpup", "ml", "clip.py")
         self.assertNotRegex(read(module), r"[\"'](ViT-|laion)|max_aspect_ratio:\s*float\s*=", module)
 
     def test_a_setting_it_does_not_know_is_refused(self):
-        from tagpup import config
         from tagpup.ml.clip import ClipModel
+        from tagpup.services import settings as library_settings
         with self.assertRaises(TypeError):
-            ClipModel(model="ViT-T", **config.embedder_settings())
+            ClipModel(model="ViT-T", **library_settings.LibrarySettings(dict(library_settings.DEFAULTS)).embedder)
 
 
 class ATestLibrarysName(unittest.TestCase):
@@ -222,7 +230,8 @@ class ATestLibrarysName(unittest.TestCase):
 
 
 class WhereALibraryIs(unittest.TestCase):
-    """Where a library lives is tagpup.config's to say (data_dir, library_path): the index,
+    """Where a library lives is tagpup.config's to say (data_dir, library_path: data/ in the
+    home): the index,
     both servers and the bulk scripts named theirs as data/<name>.db, which is the
     working directory's data folder -- a library of its own wherever they were started."""
 

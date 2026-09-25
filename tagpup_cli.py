@@ -49,7 +49,9 @@ from tagpup.store.taxonomy import TagTaxonomy
 from tagpup.core import paths
 from tagpup.store import db as tagpup_db
 from tagpup import config as tagpup_config
+from tagpup import runtime as runtimes
 from tagpup.runtime import Runtime
+from tagpup.services import settings as library_settings
 from tagpup.services import faces as face_records
 from tagpup.services import identities
 from tagpup.services import journal as library_journal
@@ -64,24 +66,21 @@ from tagpup.files import images as image_files
 from tagpup.core import library as libraries
 from tagpup.core.library import Library
 
-def get_config():
-    """The settings, config.ini over the defaults (tagpup.config)."""
-    return tagpup_config.load()
-
-def get_runtime(config):
-    """The models a command runs, from the settings (tagpup.runtime): each is built the
-    first time the command asks for it, and loaded the first time it is used."""
-    return Runtime(config)
+def get_runtime():
+    """The models a command runs (tagpup.runtime), from the settings of the library it is
+    given: each is built the first time the command asks for it, and loaded the first
+    time it is used."""
+    return Runtime()
 
 def library_index(runtime, db_path):
-    """The library's photos, with their vectors under the runtime's CLIP model."""
-    return PhotoIndex(db_path=db_path, model=runtime.model_key)
+    """The library's photos, with their vectors under its CLIP model."""
+    return PhotoIndex(db_path=db_path, model=runtime.model_key(Library(db_path)))
 
-def get_exiftool_path(config) -> str:
-    """The configured ExifTool if it exists, else one on PATH (tagpup.config)."""
-    return tagpup_config.exiftool_path(config)
+def get_exiftool_path(db_path) -> str:
+    """The ExifTool the library names, else the machine's (tagpup.runtime.exiftool)."""
+    return runtimes.exiftool(Library(db_path))
 
-def get_db_path(config, test_mode=False, cli_db=None):
+def get_db_path(test_mode=False, cli_db=None):
     """The library the command works on: --db (a name in the data folder, or a path;
     a name's test_ twin in test mode), else TAGPUP_DB_PATH, which the indexing service
     sets for the indexer it runs. There is no default: a command that indexes, writes
@@ -95,7 +94,7 @@ def get_db_path(config, test_mode=False, cli_db=None):
         db_name = cli_db if cli_db.endswith(".db") else (cli_db + ".db")
         if os.path.isabs(db_name) or "/" in db_name.replace("\\", "/"):  # not a path: is --db a name or a location
             return db_name
-        return os.path.join(tagpup_config.data_dir(config), libraries.for_mode(db_name, test_mode))
+        return os.path.join(tagpup_config.data_dir(), libraries.for_mode(db_name, test_mode))
 
     env_db = os.environ.get("TAGPUP_DB_PATH")
     if env_db:
@@ -131,14 +130,14 @@ def cli(ctx, db, test):
 @click.pass_context
 def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: bool):
     """Phase 1: Scan and index a tagged photo library."""
-    config = get_config()
-    exiftool_path = get_exiftool_path(config)
-    runtime = get_runtime(config)
-    model_name = runtime.embedder_settings["model_name"]
+    runtime = get_runtime()
 
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
-    db_path = get_db_path(config, test_mode, cli_db)
+    db_path = get_db_path(test_mode, cli_db)
+    # A reset deletes the library, and its settings with it; the new one is stamped
+    # with them again, not with the defaults.
+    kept_settings = runtimes.library_settings(Library(db_path)).values if reset and os.path.exists(db_path) else None
 
     # Handle reset flag
     if reset:
@@ -151,6 +150,12 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
                 console.print(f"  Removed {db_path}")
             except Exception as e:
                 console.print(f"[bold red]Failed to delete {db_path}: {e}[/bold red]")
+        if kept_settings is not None and not os.path.exists(db_path):
+            library_settings.stamp(Library(db_path), kept_settings)
+
+    settings = runtime.settings(Library(db_path))
+    exiftool_path = runtimes.exiftool(Library(db_path), settings)
+    model_name = settings.embedder["model_name"]
 
     # Setup / Load components
     photo_index = library_index(runtime, db_path)
@@ -168,7 +173,7 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     taxonomy = TagTaxonomy(db_path)
     taxonomy.load()
 
-    embeddings = runtime.embeddings(photo_index)
+    embeddings = runtime.embeddings(Library(db_path), photo_index)
 
     console.print(f"[bold cyan]Scanning directory:[/bold cyan] {directory}")
     all_images = scan_for_images(directory)
@@ -266,7 +271,7 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     # Per-photo write locks, shared with every other indexer of the libraries in this
     # folder, wherever each was started from.
     locker = PathLocker(lock_dir=Library(db_path).locks)
-    face_processor = runtime.faces if not skip_faces else None
+    face_processor = runtime.faces(Library(db_path), settings) if not skip_faces else None
     
     try:
         # Generate Embeddings with incremental saving (batches of 100) to protect against halts/crashes
@@ -387,16 +392,17 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
 @click.pass_context
 def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
     """Phase 2: Suggest tags for untagged photos."""
-    config = get_config()
-    runtime = get_runtime(config)
-    model_name = runtime.embedder_settings["model_name"]
+    runtime = get_runtime()
 
     # Load Index & Taxonomy
     test_mode = ctx.obj.get("test", False)
     if test_mode and output == "suggestions.json":
         output = "test_suggestions.json"
     cli_db = ctx.obj.get("db")
-    db_path = get_db_path(config, test_mode, cli_db)
+    db_path = get_db_path(test_mode, cli_db)
+    library = Library(db_path)
+    settings = runtime.settings(library)
+    model_name = settings.embedder["model_name"]
 
     photo_index = library_index(runtime, db_path)
     if not photo_index.load():
@@ -413,12 +419,12 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
         taxonomy = TagTaxonomy(db_path)
         taxonomy.load()
 
-        # config.ini's words and the tree's, but no one's name (tagpup.core.suggesting).
-        candidate_tags = suggesting.zero_shot_words(tagpup_config.candidate_tags(config), taxonomy.paths, taxonomy.people_roots())
+        # The library's words and the tree's, but no one's name (tagpup.core.suggesting).
+        candidate_tags = suggesting.zero_shot_words(settings.candidate_words, taxonomy.paths, taxonomy.people_roots())
 
-        embeddings = runtime.embeddings(photo_index)
-        suggester = TagSuggester(photo_index, taxonomy, embedder=runtime.clip, candidate_tags=candidate_tags,
-                                 faces=runtime.faces)
+        embeddings = runtime.embeddings(library, photo_index)
+        suggester = TagSuggester(photo_index, taxonomy, embedder=runtime.clip(library, settings),
+                                 candidate_tags=candidate_tags, faces=runtime.faces(library, settings))
 
         # Scan untagged photos
         console.print(f"[bold cyan]Scanning directory for untagged photos:[/bold cyan] {directory}")
@@ -431,7 +437,7 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
 
         # Batch read metadata for all untagged images
         console.print(f"[bold cyan]Reading metadata for {len(all_images)} image(s)...[/bold cyan]")
-        exiftool_path = get_exiftool_path(config)
+        exiftool_path = runtimes.exiftool(library, settings)
         extractor = MetadataExtractor(exiftool_path=exiftool_path)
         
         batch_size = 500
@@ -546,10 +552,9 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
 @click.pass_context
 def write(ctx, suggestions_file: str, live: bool, min_score: float, nobackup: bool):
     """Phase 3: Write suggested tags back to photos using ExifTool."""
-    config = get_config()
-    exiftool_path = get_exiftool_path(config)
     # The library: its taxonomy files people, and its index is told what was written.
-    db_path = get_db_path(config, ctx.obj.get("test", False), ctx.obj.get("db"))
+    db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
+    exiftool_path = get_exiftool_path(db_path)
 
     write_suggestions_file(suggestions_file, db_path, exiftool_path, live=live,
                            min_score=min_score, nobackup=nobackup)
@@ -640,14 +645,13 @@ def write_suggestions_file(suggestions_file, db_path, exiftool_path, live=False,
 @click.pass_context
 def search(ctx, query: str, k: int):
     """Semantic text search across indexed library."""
-    config = get_config()
-    runtime = get_runtime(config)
-    model_name = runtime.embedder_settings["model_name"]
+    runtime = get_runtime()
 
     # Load Index
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
-    db_path = get_db_path(config, test_mode, cli_db)
+    db_path = get_db_path(test_mode, cli_db)
+    model_name = runtime.settings(Library(db_path)).embedder["model_name"]
     photo_index = library_index(runtime, db_path)
     if not photo_index.load():
         console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
@@ -662,7 +666,7 @@ def search(ctx, query: str, k: int):
 
         # Embed text query
         console.print(f"Embedding query: '[bold yellow]{query}[/bold yellow]'")
-        query_vector = runtime.clip.embed_text(query)
+        query_vector = runtime.clip(Library(db_path)).embed_text(query)
 
         # Perform search
         results = photo_index.search(query_vector, k=k)
@@ -689,12 +693,11 @@ def search(ctx, query: str, k: int):
 @click.pass_context
 def stats(ctx):
     """Index statistics (tag counts, people, coverage)."""
-    config = get_config()
-    runtime = get_runtime(config)
-    
+    runtime = get_runtime()
+
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
-    db_path = get_db_path(config, test_mode, cli_db)
+    db_path = get_db_path(test_mode, cli_db)
 
     photo_index = library_index(runtime, db_path)
     if not photo_index.load():
@@ -759,8 +762,7 @@ def stats(ctx):
 def export_tree(ctx, output: str):
     """Write the library's tag tree to OUTPUT as JSON: a copy to keep or read. The tree
     itself lives in the library."""
-    config = get_config()
-    db_path = get_db_path(config, ctx.obj.get("test", False), ctx.obj.get("db"))
+    db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
     if not os.path.exists(db_path):
         raise click.ClickException("There is no library at %s." % db_path)
     count = store_taxonomy.export_json(db_path, output)
@@ -774,8 +776,7 @@ def compact(ctx, apply_: bool):
     """Give back the space the library holds free: pages left empty by deleted rows and
     dropped columns, which the file keeps until it is rewritten. Close the apps first;
     the rewrite needs the file to itself."""
-    config = get_config()
-    db_path = get_db_path(config, ctx.obj.get("test", False), ctx.obj.get("db"))
+    db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
     if not os.path.exists(db_path):
         raise click.ClickException("There is no library at %s." % db_path)
     size, free = tagpup_db.space(db_path)
@@ -794,7 +795,7 @@ def compact(ctx, apply_: bool):
 
 def _existing_library(ctx):
     """The Library the command names, which must be there."""
-    db_path = get_db_path(get_config(), ctx.obj.get("test", False), ctx.obj.get("db"))
+    db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
     if not os.path.exists(db_path):
         raise click.ClickException("There is no library at %s." % db_path)
     return Library(db_path)
@@ -896,10 +897,9 @@ def prune_journal(ctx, days, apply_):
 @click.pass_context
 def inspect(ctx, photo_path: str):
     """Inspect metadata found in a single image (useful for debugging)."""
-    config = get_config()
-    exiftool_path = get_exiftool_path(config)
     # Who the keywords name depends on the library's taxonomy.
-    db_path = get_db_path(config, ctx.obj.get("test", False), ctx.obj.get("db"))
+    db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
+    exiftool_path = get_exiftool_path(db_path)
 
     console.print(f"Inspecting file: [bold cyan]{photo_path}[/bold cyan]")
     extractor = MetadataExtractor(exiftool_path=exiftool_path)
@@ -928,12 +928,11 @@ def inspect(ctx, photo_path: str):
 @click.pass_context
 def list_index(ctx, folder):
     """List all photos currently stored in the index, optionally filtered by folder."""
-    config = get_config()
-    runtime = get_runtime(config)
-    
+    runtime = get_runtime()
+
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
-    db_path = get_db_path(config, test_mode, cli_db)
+    db_path = get_db_path(test_mode, cli_db)
 
     photo_index = library_index(runtime, db_path)
     if not photo_index.load():
@@ -983,12 +982,11 @@ def remove(ctx, path, folder):
         console.print("[bold red]Error:[/bold red] You must specify either --path or --folder to remove items.")
         return
 
-    config = get_config()
-    runtime = get_runtime(config)
-    
+    runtime = get_runtime()
+
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
-    db_path = get_db_path(config, test_mode, cli_db)
+    db_path = get_db_path(test_mode, cli_db)
 
     photo_index = library_index(runtime, db_path)
     if not photo_index.load():
@@ -1033,11 +1031,10 @@ def remove(ctx, path, folder):
 @click.pass_context
 def index_faces(ctx, directory: str, force: bool):
     """Scan photos and extract/index face embeddings into the database."""
-    config = get_config()
-    runtime = get_runtime(config)
+    runtime = get_runtime()
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
-    db_path = get_db_path(config, test_mode, cli_db)
+    db_path = get_db_path(test_mode, cli_db)
 
     photo_index = library_index(runtime, db_path)
     if not photo_index.load():
@@ -1074,7 +1071,7 @@ def index_faces(ctx, directory: str, force: bool):
             return
 
         console.print(f"Extracting face embeddings for [bold yellow]{len(to_process)}[/bold yellow] photo(s)...")
-        processor = runtime.faces
+        processor = runtime.faces(Library(db_path))
         
         from tqdm import tqdm
         count_faces = 0
@@ -1094,11 +1091,10 @@ def index_faces(ctx, directory: str, force: bool):
 @click.pass_context
 def cluster_faces(ctx, reset: bool, max_iterations: int):
     """Run self-tuning identity resolution to cluster and name faces using photo tags."""
-    config = get_config()
-    runtime = get_runtime(config)
+    runtime = get_runtime()
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
-    db_path = get_db_path(config, test_mode, cli_db)
+    db_path = get_db_path(test_mode, cli_db)
 
     photo_index = library_index(runtime, db_path)
     if not photo_index.load():

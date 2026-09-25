@@ -78,6 +78,11 @@ class ANewLibrary(unittest.TestCase):
             self.assertEqual(list(key), self.primary[table], "%s: the journal keys it otherwise" % table)
             if self.autoincrement(table):
                 continue
+            if table in journal.NAMED:
+                # A name, not an id: a setting put back under its key is that setting.
+                self.assertNotIn("INTEGER", self.sql[table].upper(),
+                                 "%s is named NAMED but keyed by a number" % table)
+                continue
             # Else its key starts with the id of a table that is AUTOINCREMENT.
             parents = [row[2] for row in self.foreign[table] if row[3] == key[0] and row[4] == "id"]
             self.assertTrue(parents and all(self.autoincrement(p) for p in parents),

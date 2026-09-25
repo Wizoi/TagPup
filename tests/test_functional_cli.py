@@ -13,7 +13,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
-from tagpup_cli import cli, get_config, get_exiftool_path
+from tagpup_cli import cli, get_exiftool_path
 from tagpup.ml.clip import output_dim
 import exiftool
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -51,8 +51,7 @@ class TestFunctionalCLI(unittest.TestCase):
 
         # Retrieve ExifTool path and write metadata to photo1 and photo2.
         # photo3 remains untagged and should not be indexed.
-        config = get_config()
-        self.exiftool_path = get_exiftool_path(config)
+        self.exiftool_path = get_exiftool_path(self.db_path)
 
         try:
             with exiftool.ExifToolHelper(executable=self.exiftool_path) as et:
@@ -85,8 +84,8 @@ class TestFunctionalCLI(unittest.TestCase):
     @patch('tagpup.ml.faces.FaceModel.detect_and_embed_faces')
     def test_cli_end_to_end_workflow(self, mock_detect, mock_init_faces, mock_embed_text, mock_embed_image, mock_init_clip):
         # Mock ML models behavior to match database expected dimensionality
-        config = get_config()
-        model_name = config.get("model", "name", fallback="ViT-B-32")
+        from tagpup.services import settings
+        model_name = settings.DEFAULTS["model.name"]   # a library made in a test's home holds them
         expected_dim = output_dim(model_name) or 512   # as the CLI checks it
         mock_embed_image.return_value = [0.1] * expected_dim
         mock_embed_text.return_value = [0.1] * expected_dim

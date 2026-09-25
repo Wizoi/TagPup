@@ -79,7 +79,7 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
 
     The CLI runs in a process of its own, from `code_folder` -- the code this program
     runs, which the caller has from tagpup.config -- so the GPU work stays out of the
-    server. Clustering runs only on request: it re-derives every face name in the
+    server. It reads the library's settings itself (tagpup.runtime). Clustering runs only on request: it re-derives every face name in the
     library, not only this folder's.
 
     `report(message, percent)` hears progress as it comes. `while_clustering`, if given,

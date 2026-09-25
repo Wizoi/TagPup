@@ -568,8 +568,7 @@ class RunnerApp:
         self.refresh_database_list()
 
     def refresh_database_list(self):
-        settings = tagpup_config.load()
-        data_dir = tagpup_config.data_dir(settings)
+        data_dir = tagpup_config.data_dir()
         test_mode = self.var_test_db.get()
 
         files = os.listdir(data_dir) if os.path.exists(data_dir) else []

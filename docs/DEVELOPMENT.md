@@ -31,8 +31,8 @@ through the CLI where no reloader can reach them.
 **Run the apps from an installed copy** to stop that. `scripts/install_app.py` (a dry
 run; `--apply` to install) copies the code into `%LOCALAPPDATA%\TagPup\versions\<when>-<commit>`
 and writes `TagPup.cmd`, `TagTuner.cmd`, `TagPup Runner.cmd` and `TagPup CLI.cmd` beside
-it. They run that copy with `TAGPUP_HOME` set to the checkout, so `config.ini` and
-`data/` stay where they are. Saving a file in the repository changes nothing they are
+it. They run that copy with `TAGPUP_HOME` set to the checkout, so `data/` -- the
+libraries, which hold their own settings -- stays where it is. Saving a file in the repository changes nothing they are
 running. To update, install again; the two versions before stay, and `current.txt`
 names the one the launchers start.
 
@@ -138,8 +138,9 @@ Some tests exist to stop a whole class of mistake rather than to cover a feature
 A test that makes a library, or needs settings, logs or anything else a library keeps
 beside it, takes a home of its own from `tests/own_home.py`: `own_home.for_class(cls)`
 in `setUpClass`, `own_home.for_test(self)` in a test, then `home.library("x.db")`.
-Without one, the servers write the checkout's `config.ini` and create libraries in the
-checkout's `data/`, where the owner's are. A server a test starts holds its library
+Without one, the servers create libraries in the checkout's `data/`, where the owner's
+are, and stamp them from the checkout's `config.ini`. A test that needs an old
+`config.ini` to stamp from writes it with `home.write_old_config({...})`. A server a test starts holds its library
 until the process ends, so a home it still holds is deleted once the process has gone.
 
 ## Traps

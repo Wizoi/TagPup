@@ -1,8 +1,8 @@
 """Faces: finding them in a photo (MTCNN) and making each one's vector (FaceNet), from
 the settings it is given.
 
-Which thresholds it runs with is the config's (tagpup.config.face_settings), read by an
-entry point and handed down through tagpup.runtime. It was scripts/faces.py's
+Which thresholds it runs with is the library's (tagpup.services.settings,
+LibrarySettings.faces), made into a model by tagpup.runtime. It was scripts/faces.py's
 FaceProcessor, which read config.ini itself and also resolved who is who across a
 library -- which is a service's, tagpup.services.identities (docs/ARCHITECTURE.md, "The
 layers, revisited").
@@ -24,7 +24,7 @@ from tagpup.files import images  # noqa: E402
 
 logger = logging.getLogger("tagpup_cli.faces")
 
-#: The settings a model is made from: tagpup.config.face_settings()'s keys.
+#: The settings a model is made from: tagpup.services.settings.LibrarySettings.faces' keys.
 SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds")
 
 

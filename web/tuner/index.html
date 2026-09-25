@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="common/gear.css">
     <link rel="stylesheet" href="common/tag-editor.css">
+    <link rel="stylesheet" href="common/settings-dialog.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -51,7 +52,7 @@
                     <button id="btn-gear" class="btn btn-secondary btn-sm" title="Tag editor, library settings, and TagPup on this library" aria-label="Tools" aria-controls="gear-menu">⚙️</button>
                     <div id="gear-menu" class="gear-menu hidden" role="menu" aria-label="Tools">
                         <button type="button" role="menuitem" data-action="tag-editor">Tag editor</button>
-                        <button type="button" role="menuitem" data-action="library-settings" aria-disabled="true" title="Comes next: this library's settings -- the CLIP model, face detection, Suggest's words, the rename format and ExifTool -- move into the library and are changed here.">Library settings</button>
+                        <button type="button" role="menuitem" data-action="library-settings" title="This library's settings: the CLIP model, face detection, Suggest's words, the rename format and ExifTool">Library settings</button>
                         <div class="gear-menu-separator" role="separator"></div>
                         <a role="menuitem" data-app="tagpup" target="_blank" rel="noopener" aria-disabled="true">Open in TagPup</a>
                     </div>

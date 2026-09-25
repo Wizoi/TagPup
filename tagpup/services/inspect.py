@@ -64,7 +64,7 @@ def _listed(pairs, reveal, limit):
 def summary(library, embedder_settings=None):
     """What the library holds, as tools/doctor.py prints it: photos, faces, named, named by
     hand, excluded, untagged; with the schema's version, the tree's nodes, the people the
-    photos list, and -- given the CLIP model's settings (tagpup.config.embedder_settings)
+    photos list, and -- given the CLIP model's settings (the library's: tagpup.services.settings)
     -- how many photos have no vector for that model. Counts only."""
     with _reading(library) as conn:
         held = dict(rules.summary(conn))

@@ -23,7 +23,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
-from tagpup import config as tagpup_config  # noqa: E402
+from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import maintenance, refresh_rows  # noqa: E402
 
@@ -61,12 +61,13 @@ def main(argv=None):
     parser.add_argument("--apply", action="store_true", help="write; the default is a dry run")
     parser.add_argument("--show", type=int, default=5, help="examples to print")
     parser.add_argument("--exiftool", default=None,
-                        help="ExifTool to read with; the one config.ini names by default")
+                        help="ExifTool to read with; the one the library names by default")
     args = parser.parse_args(argv)
 
     print("%s\n" % args.db)
     result = refresh_rows.refresh_rows(
-        Library(args.db), args.exiftool or tagpup_config.exiftool_path(), apply=args.apply,
+        Library(args.db), args.exiftool or runtimes.exiftool(Library(args.db), runtimes.peek_settings(Library(args.db))),
+        apply=args.apply,
         folder=args.folder, examples=args.show, progress=progress)
     counts = result.details["counts"]
 

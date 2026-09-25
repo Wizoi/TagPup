@@ -12,17 +12,15 @@ import sys
 
 import _root  # noqa: F401
 from tagpup.store import db as tagpup_db
-from tagpup import config as tagpup_config
 from tagpup.files import images
-from tagpup.runtime import Runtime
+from tagpup.services import settings as library_settings
+from tagpup.store import embeddings as store_embeddings
 from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
 
-#: The models the config names (tagpup.runtime); none is built or loaded here.
-RUNTIME = Runtime(tagpup_config.load())
-
-#: The vectors below are kept under the model the config names, which search reads.
-MODEL = RUNTIME.model_key
+#: The vectors below are kept under the model a new library is stamped with (the
+#: defaults: tagpup.services.settings), which search reads. No model is built here.
+MODEL = store_embeddings.model_key(**library_settings.LibrarySettings(dict(library_settings.DEFAULTS)).embedder)
 
 # Ensure project root is in search path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

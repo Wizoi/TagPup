@@ -3,13 +3,15 @@ what opening a library by its URL does first.
 
 The old server made a library by opening it through PhotoIndex and then seeding its
 tag tree, two old modules the web layer may not import (tests/test_layers.py). A new
-library's tables come from tagpup.store.schema and its first nodes -- one face root,
-People -- from tagpup.store.taxonomy.seed.
+library's tables come from tagpup.store.schema, its first nodes -- one face root,
+People -- from tagpup.store.taxonomy.seed, and its settings, the defaults, from
+tagpup.services.settings.
 """
 import os
 
 from tagpup.core import library, validation
 from tagpup.core.result import Result
+from tagpup.services import settings
 from tagpup.store import schema, taxonomy
 
 
@@ -35,5 +37,9 @@ def create(db_path):
     os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
     bring_up_to_date(db_path)
     taxonomy.seed(db_path)
+    if not existed:
+        # A new library holds the defaults from the start (tagpup.services.settings): it
+        # was made with nothing else, whatever an old config.ini beside it says.
+        settings.stamp(library.Library(db_path), None)
     result.changed = 0 if existed else 1
     return result

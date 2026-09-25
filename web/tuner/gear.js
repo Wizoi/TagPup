@@ -1,6 +1,7 @@
 // TagTuner's page: the gear in its header (web/common/gear.js) -- the tag editor, the
-// library's settings (next: docs/ARCHITECTURE.md, phase 7.6), and TagPup on this library.
+// library's settings (web/common/settings-dialog.js), and TagPup on this library.
 import { wireGear } from './common/gear.js';
+import { openSettings } from './common/settings-dialog.js';
 import { wireTagEditor } from './common/tag-editor.js';
 import { fetchKnownPeople } from './shared.js';
 import { refreshSidebarQuietly } from './sidebar.js';
@@ -20,5 +21,6 @@ export function wireTunerGear() {
     });
     return wireGear(document.getElementById('btn-gear'), document.getElementById('gear-menu'), {
         'tag-editor': editor.open,
+        'library-settings': openSettings,
     });
 }

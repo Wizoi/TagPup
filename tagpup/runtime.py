@@ -1,15 +1,22 @@
-"""The composition root: the settings an entry point read, made into the process's
-long-lived objects.
+"""The composition root: each library's settings, made into the process's long-lived
+objects.
 
-    runtime = Runtime(tagpup.config.load)      # read again when a setting is needed
+    runtime = Runtime()
     app = tagpup.web.app.create_app("tagpup", runtime=runtime)
-    runtime.warm_up_in_background()
+    runtime.warm_up_in_background(libraries)
 
-A Runtime builds the CLIP model and the face models once each, the first time either is
-asked for, and hands them to whatever needs them; it keeps each library's photo index
-for Suggest, brought up to date when a run begins. Nothing below it builds a model or
-reads a setting: a service that uses a model is given it (docs/ARCHITECTURE.md, "The
-layers, revisited").
+A library's settings are its own (tagpup.services.settings; docs/ARCHITECTURE.md, phase
+7.6), and `library_settings` is where an entry point reads them: the first time a
+library holding none is opened, it is stamped from what the home's config.ini says, if
+it has one, else with the defaults. That is the one read of config.ini left
+(tests/test_config_single_owner.py).
+
+A Runtime builds each CLIP model and each set of face models once per set of settings,
+the first time a library with those settings asks: two libraries on one model share it,
+and a library on another gets its own. It keeps each library's photo index for Suggest,
+brought up to date when a run begins. Nothing below it builds a model or reads a
+setting: a service that uses a model is given it (docs/ARCHITECTURE.md, "The layers,
+revisited").
 
 It replaces scripts/suggest_models.py, which the web launcher used to fill a module-level
 slot in tagpup.jobs.suggestions with (docs/findings.md, #112), and the class attribute
@@ -22,111 +29,166 @@ import threading
 from tagpup import config as tagpup_config
 from tagpup.core.per_library import PerLibrary
 from tagpup.services import search
+from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester as suggestions
 from tagpup.store import embeddings as store_embeddings
 
 logger = logging.getLogger(__name__)
 
 
+def library_settings(library):
+    """The library's settings (tagpup.services.settings.LibrarySettings), a library
+    holding none stamped first: from the home's config.ini if it has one, else with the
+    defaults."""
+    return library_settings_service.of(library, tagpup_config.config_ini)
+
+
+def peek_settings(library):
+    """The library's settings, writing nothing: for a read-only look (the MCP server's
+    inspections, tools/doctor.py). A library never stamped reads as stamping would make it."""
+    return library_settings_service.read(library, tagpup_config.config_ini)
+
+
+def exiftool(library, settings=None):
+    """The ExifTool program to run for `library`: the one it names, else the machine's
+    (tagpup.config.exiftool_path)."""
+    return tagpup_config.exiftool_path((settings or library_settings(library)).exiftool)
+
+
+def _frozen(settings):
+    """A settings dict as a key: its items, a list as a tuple."""
+    return tuple(sorted((key, tuple(value) if isinstance(value, list) else value)
+                        for key, value in settings.items()))
+
+
+def _build_clip(settings):
+    # Here, not at the top: open_clip and torch take seconds to import.
+    from tagpup.ml.clip import ClipModel
+    return ClipModel(**settings)
+
+
+def _build_faces(settings):
+    from tagpup.ml.faces import FaceModel
+    return FaceModel(**settings)
+
+
 class Runtime:
-    """What lives as long as the process: the models, built from the settings, and each
-    library's photo index for Suggest.
+    """What lives as long as the process: the models, one per set of settings a library
+    names, and each library's photo index for Suggest.
 
-    `settings` is the settings (a tagpup.config.load()) or what reads them
-    (tagpup.config.load itself): a server passes the reader, so a setting read per run --
-    the candidate words -- follows an edit to config.ini as it always did. The CLIP
-    model's settings are read once, here: its vectors are named by them. The face
-    models' are read when those models are first built, so a command that never uses
-    them never parses them.
-
-    `clip` and `faces` stand in for the models the settings name: a test's fakes, which
-    are then never built.
+    `clip` and `faces` stand in for every library's models: a test's fakes, which are
+    then never built. `build_clip` and `build_faces` make a model from its settings
+    (tagpup.ml.clip.ClipModel's and tagpup.ml.faces.FaceModel's keyword arguments): a
+    test's, to see which settings each library's model was made from.
     """
 
-    def __init__(self, settings, clip=None, faces=None):
-        self._read = settings if callable(settings) else (lambda: settings)
-        #: The CLIP model's settings (tagpup.config.embedder_settings).
-        self.embedder_settings = tagpup_config.embedder_settings(self._read())
-        #: The name the CLIP model's vectors are kept under (tagpup.store.embeddings).
-        self.model_key = store_embeddings.model_key(**self.embedder_settings)
+    def __init__(self, clip=None, faces=None, build_clip=None, build_faces=None):
         self._clip = clip
         self._faces = faces
+        self._build_clip = build_clip or _build_clip
+        self._build_faces = build_faces or _build_faces
+        self._clips = {}
+        self._face_models = {}
         self._models_lock = threading.Lock()
         self._indexes = PerLibrary(self._open_index)
 
-    @property
-    def face_settings(self):
-        """The face models' thresholds (tagpup.config.face_settings), read now."""
-        return tagpup_config.face_settings(self._read())
+    # ---- A library's settings --------------------------------------------------------
 
-    @property
-    def candidate_words(self):
-        """config.ini's words CLIP is asked about a photo, before the tree's
-        (tagpup.core.suggesting.zero_shot_words), read now: each run reads them, as
-        each run always did."""
-        return tagpup_config.candidate_tags(self._read())
+    def settings(self, library):
+        """The library's settings, read now (library_settings): a change made in the
+        dialog, or by another process, is seen by the next run."""
+        return library_settings(library)
+
+    def model_key(self, library, settings=None):
+        """The name the library's CLIP model's vectors are kept under (tagpup.store.embeddings)."""
+        return store_embeddings.model_key(**(settings or self.settings(library)).embedder)
+
+    def candidate_words(self, library):
+        """The library's words CLIP is asked about a photo, before the tree's."""
+        return self.settings(library).candidate_words
+
+    def exiftool(self, library):
+        """The ExifTool program to run for `library`."""
+        return exiftool(library)
 
     # ---- The models ------------------------------------------------------------------
 
-    @property
-    def clip(self):
-        """The CLIP model (tagpup.ml.clip), built the first time it is asked for. Its
-        weights load on first use, or in warm_up."""
-        with self._models_lock:
-            if self._clip is None:
-                # Here, not at the top: open_clip and torch take seconds to import.
-                from tagpup.ml.clip import ClipModel
-                self._clip = ClipModel(**self.embedder_settings)
+    def clip(self, library, settings=None):
+        """The CLIP model the library's settings name, built the first time any library
+        on those settings asks for it. Its weights load on first use, or in warm_up."""
+        if self._clip is not None:
             return self._clip
+        return self._model(self._clips, self._build_clip, (settings or self.settings(library)).embedder)
 
-    @property
-    def faces(self):
-        """The face models (tagpup.ml.faces), built the first time they are asked for.
-        Their weights load on first use, or in warm_up."""
-        with self._models_lock:
-            if self._faces is None:
-                from tagpup.ml.faces import FaceModel
-                self._faces = FaceModel(**self.face_settings)
+    def faces(self, library, settings=None):
+        """The face models the library's settings name, built the first time any library
+        on those settings asks for them. Their weights load on first use, or in warm_up."""
+        if self._faces is not None:
             return self._faces
+        return self._model(self._face_models, self._build_faces, (settings or self.settings(library)).faces)
 
-    def warm_up(self):
-        """Load the CLIP model and the face models, so the first Suggest does not pay for
-        them. It opens no library.
+    def _model(self, built, build, settings):
+        key = _frozen(settings)
+        with self._models_lock:
+            if key not in built:
+                built[key] = build(settings)
+            return built[key]
+
+    def warm_up(self, libraries=()):
+        """Load the CLIP model and the face models each of `libraries` names -- each set
+        of settings once -- so the first Suggest does not pay for them. It stamps no
+        library: their settings are read as they are (peek_settings).
 
         The old server's warm-up made a PhotoIndex on the startup library and loaded it in
         the background, keeping it open until the process ended -- and a thread that
         started after the file had gone made an empty library in its place
         (docs/findings.md, #99). The models are the process's; a library is a request's.
         """
-        logger.info("Background thread starting CLIP model warmup...")
-        try:
-            clip = self.clip
-            clip.load()
-            clip.embed_text("warmup")
-            logger.info("Background CLIP model warmup completed successfully.")
-        except Exception as e:
-            logger.error("Error warming up CLIP model: %s", e)
+        wanted = []
+        if self._clip is not None or self._faces is not None:
+            wanted.append((None, None))
+        seen = set()
+        for library in libraries:
+            try:
+                settings = peek_settings(library)
+            except Exception as e:
+                logger.error("Could not read the settings of %s to warm its models: %s", library.name, e)
+                continue
+            key = (_frozen(settings.embedder), _frozen(settings.faces))
+            if key not in seen:
+                seen.add(key)
+                wanted.append((library, settings))
+        for library, settings in wanted:
+            logger.info("Background thread starting CLIP model warmup...")
+            try:
+                clip = self.clip(library, settings)
+                clip.load()
+                clip.embed_text("warmup")
+                logger.info("Background CLIP model warmup completed successfully.")
+            except Exception as e:
+                logger.error("Error warming up CLIP model: %s", e)
 
-        try:
-            logger.info("Background thread starting Face model warmup...")
-            # Building the model loads nothing; its weights load on first use. So a
-            # warm-up that only built it reported the face models warm while the first
-            # Suggest still paid for loading them.
-            self.faces.load()
-            logger.info("Background Face model warmup completed successfully.")
-        except Exception as e:
-            logger.error("Error warming up Face models: %s", e)
+            try:
+                logger.info("Background thread starting Face model warmup...")
+                # Building the model loads nothing; its weights load on first use. So a
+                # warm-up that only built it reported the face models warm while the first
+                # Suggest still paid for loading them.
+                self.faces(library, settings).load()
+                logger.info("Background Face model warmup completed successfully.")
+            except Exception as e:
+                logger.error("Error warming up Face models: %s", e)
 
-    def warm_up_in_background(self):
+    def warm_up_in_background(self, libraries=()):
         """warm_up on a daemon thread; returns the thread."""
-        thread = threading.Thread(target=self.warm_up, name="WarmupModelsThread", daemon=True)
+        thread = threading.Thread(target=self.warm_up, args=(list(libraries),), name="WarmupModelsThread",
+                                  daemon=True)
         thread.start()
         return thread
 
     # ---- Each library's photo index ---------------------------------------------------
 
     def _open_index(self, library):
-        photo_index = search.PhotoIndex(library.path, self.model_key)
+        photo_index = search.PhotoIndex(library.path, self.model_key(library))
         photo_index.load()
         return photo_index
 
@@ -136,9 +198,14 @@ class Runtime:
         The startup library's was made at startup and never reloaded, so photos indexed
         and tags saved since never reached Suggest. Every other library had none, and
         loaded its whole index again on every run. Each library keeps one, and it is
-        loaded again only when the photos table has changed.
+        loaded again only when the photos table has changed -- or made again when the
+        library's CLIP model has.
         """
         photo_index = self._indexes.of(library)
+        if photo_index.model != self.model_key(library):
+            photo_index.close()
+            self._indexes.forget(library)
+            photo_index = self._indexes.of(library)
         photo_index.reload_if_changed()
         return photo_index
 
@@ -150,10 +217,12 @@ class Runtime:
 
     def begin(self, library):
         """Ready the suggester for a run over `library`, on the run's thread: what
-        tagpup.jobs.suggestions calls (tagpup.services.suggester.SuggestionModel)."""
-        return suggestions.model_for_run(self.photo_index(library), self.clip, self.faces,
-                                         self.candidate_words)
+        tagpup.jobs.suggestions calls (tagpup.services.suggester.SuggestionModel). The
+        library's settings are read once for the run."""
+        settings = self.settings(library)
+        return suggestions.model_for_run(self.photo_index(library), self.clip(library, settings),
+                                         self.faces(library, settings), settings.candidate_words)
 
-    def embeddings(self, photo_index):
-        """The photos' vectors under the CLIP model, kept in `photo_index`'s library."""
-        return search.PhotoEmbeddings(self.clip, photo_index)
+    def embeddings(self, library, photo_index):
+        """The photos' vectors under the library's CLIP model, kept in `photo_index`."""
+        return search.PhotoEmbeddings(self.clip(library), photo_index)

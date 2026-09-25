@@ -15,7 +15,6 @@ they ask the same guard now (tagpup.web.tuner_routes.clustering_refusal).
 """
 from flask import Blueprint, jsonify, request
 
-from tagpup import config as tagpup_config
 from tagpup.core.result import NotFound
 from tagpup.services import tags as tags_service
 from tagpup.web import responses, state, tagpup_routes, tuner_routes
@@ -94,7 +93,7 @@ def taxonomy_delete_confirm():
     if tag_id is None or not action:
         return responses.error(400, "Missing parameters")
     result, failed = _tree_edit(lambda library: tags_service.delete(
-        library, tag_id, action, body.get("target_tag"), tagpup_config.exiftool_path()))
+        library, tag_id, action, body.get("target_tag"), state.exiftool(library)))
     if failed:
         return failed
     tagpup_routes.forget_scans(state.require())
@@ -115,7 +114,7 @@ def taxonomy_rename():
     if tag_id is None or not new_name:
         return responses.error(400, "Missing parameters")
     result, failed = _tree_edit(lambda library: tags_service.rename(
-        library, tag_id, new_name, tagpup_config.exiftool_path()))
+        library, tag_id, new_name, state.exiftool(library)))
     if failed:
         return failed
     tagpup_routes.forget_scans(state.require())

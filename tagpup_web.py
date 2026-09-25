@@ -70,6 +70,17 @@ def open_page(url):
         webbrowser.open(url)
 
 
+def served_libraries(startup=None):
+    """The libraries whose models are warmed at start: the startup library, or else each
+    one the picker offers in the data folder."""
+    if startup is not None:
+        return [startup]
+    folder = tagpup_config.data_dir()
+    files = os.listdir(folder) if os.path.isdir(folder) else []
+    return [Library(tagpup_config.library_path(libraries.for_mode(name + ".db", False)))
+            for name in libraries.picker_names(files, False)]
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--tagpup-port", type=int, default=PORTS["tagpup"])
@@ -109,15 +120,21 @@ def main(argv=None):
         db_path = args.db if os.path.isabs(args.db) else tagpup_config.library_path(libraries.file_name_for(args.db))
         if not os.path.exists(db_path):
             logger.info("No library at %s; making one.", db_path)
-            library_actions.create(db_path)
+            made = library_actions.create(db_path)
+            if made.refused:
+                # A name the library-name rule refuses makes nothing; serving it would
+                # answer every request against a library that is not there.
+                logger.error("Could not make a library at %s: %s", db_path, made.refused)
+                return 2
         startup = Library(db_path)
-    # The process's models, from the settings, given to both apps; warmed on a thread of
-    # their own -- the models, never a library (#99).
-    runtime = Runtime(tagpup_config.load)   # read again where a run needs a setting
+    # The process's models, one per set of settings a library names, given to both apps;
+    # warmed on a thread of their own for the libraries in the data folder -- their
+    # models, never a library held open (#99).
+    runtime = Runtime()
     apps = {ports[kind]: web.create_app(kind, startup=startup, runtime=runtime, ports=ports)
             for kind in ("tagpup", "tuner")}
     if not os.environ.get("TAGPUP_WEB_NO_WARMUP"):
-        runtime.warm_up_in_background()
+        runtime.warm_up_in_background(served_libraries(startup))
     ready = None
     if args.open != "none":
         def ready():

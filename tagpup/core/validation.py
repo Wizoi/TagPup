@@ -1,7 +1,7 @@
 """What may be set: every kind of input TagPup is handed, and the rules each is held to.
 
 A tag, a person's name, a caption, a library's name, a Smart Rename grouping, a folder,
-a time shift and each setting config.ini holds are each a kind here, with its rules.
+a time shift and each setting a library holds are each a kind here, with its rules.
 The checks were written twice -- once in Python where a value is written, once in the
 page that asks first -- and the library-name rule was a pattern the page repeated
 without the reserved names. Now the rules are data: patterns, forbidden text, lengths,
@@ -66,6 +66,22 @@ LIBRARY_NAME = "[A-Za-z0-9_-]+"
 
 #: The longest caption IPTC keeps: Caption-Abstract holds 2,000 bytes.
 CAPTION_BYTES = 2000
+
+#: What is blank: trimmed from around a value, and all a blank value holds. Python's
+#: str.strip() and JavaScript's String.trim() strip different characters -- Python the
+#: separators U+001C to U+001F and U+0085, JavaScript the byte-order mark U+FEFF -- so a
+#: grouping of a lone U+FEFF was refused by the page and accepted by the server, and one
+#: of U+0085 the reverse (docs/findings.md). Both languages trim exactly these, which
+#: /api/rules publishes: every character either one calls whitespace.
+BLANK = "".join(chr(code) for code in (
+    [0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x85, 0xa0, 0x1680]
+    + list(range(0x2000, 0x200b)) + [0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff]))
+
+
+def trim(text):
+    """`text` without the BLANK characters around it: as the rules trim a value, in both
+    languages (validate.js's trimBlank)."""
+    return text.strip(BLANK)
 
 
 def _text_rules(what, levels):
@@ -151,61 +167,137 @@ KINDS = {
     ]},
 }
 
-#: The settings config.ini holds today (tagpup.config.DEFAULTS, and the ExifTool it
-#: names), each as a kind of its own -- "setting faces.min_face_size" -- with its type:
-#: what the settings dialog will be made from (docs/ARCHITECTURE.md, phase 7.6). The
-#: ranges are what the program can run with, not what is sensible.
+#: The groups the settings dialog shows them in, in order, and what changing one does.
+#: A group whose change has consequences is locked: shown, not editable, opened only
+#: through Change..., which lists each consequence to be acknowledged before it saves
+#: (docs/ARCHITECTURE.md, phase 7.6). Every setting of a group carries the group's lock
+#: and consequences in its own declaration below, so the validator and the dialog read
+#: one declaration.
+SETTING_GROUPS = {
+    "clip": {
+        "title": "The CLIP model",
+        "consequences": [
+            "Every photo's vector was made with the model it has now, so Suggest finds nothing "
+            "until every folder is indexed again.",
+            "Indexing a folder again makes a vector for each of its photos with the new model; "
+            "on a large library that takes hours.",
+        ],
+    },
+    "faces": {
+        "title": "Face detection",
+        "consequences": [
+            "Only photos indexed after the change are detected with it; the faces already found stay as they are.",
+            "Indexing a folder again applies it to that folder.",
+        ],
+    },
+    "exiftool": {
+        "title": "ExifTool",
+        "consequences": [
+            "Every read and every write of a photo file goes through this program: tags, captions, "
+            "dates, renames and rotations.",
+            "A program that is not ExifTool, or that is missing, makes every one of them fail.",
+        ],
+    },
+    "suggest": {"title": "Suggest", "consequences": []},
+    "renaming": {"title": "Smart Rename", "consequences": []},
+}
+
+
+def _setting(group, label, value_type, default, info, rules):
+    """A setting's declaration: its group, its label, its type, the value a new library
+    is stamped with, what it changes and when (the info button's text), whether it is
+    locked and what changing it does (its group's), and the rules its value is held to."""
+    consequences = list(SETTING_GROUPS[group]["consequences"])
+    return {"group": group, "label": label, "type": value_type, "default": default, "info": info,
+            "locked": bool(consequences), "consequences": consequences, "rules": rules}
+
+
+#: Every setting a library holds (tagpup.services.settings), each as a kind of its own --
+#: "setting faces.min_face_size" -- declared once: what the settings dialog is made from,
+#: what a new library is stamped with, and what a value is held to. The ranges are what
+#: the program can run with, not what is sensible. The keys are config.ini's section and
+#: key, from which a library in use is stamped once.
 SETTINGS = {
-    "paths.exiftool": {"type": "path", "rules": [
-        # Empty means where ExifTool's installer puts it (tagpup.config.default_exiftool).
-        {"rule": "optional"}, _no_controls("ExifTool's path")]},
-    "paths.data_dir": {"type": "path", "rules": [
-        _required("The data folder"), _no_controls("The data folder")]},
-    "model.name": {"type": "text", "rules": [
-        _required("The CLIP model"), _no_controls("The CLIP model")]},
-    "model.pretrained": {"type": "text", "rules": [
-        _required("The CLIP weights"), _no_controls("The CLIP weights")]},
-    "model.preserve_full_frame": {"type": "boolean", "rules": [
-        {"rule": "boolean", "message": "Keep the full frame is true or false."}]},
-    "model.max_aspect_ratio": {"type": "number", "rules": [
-        {"rule": "number", "message": "The widest aspect ratio is a number."},
-        # 1 is square; below it is the same ratio turned.
-        _between("The widest aspect ratio", 1, 4)]},
-    "model.force_image_size": {"type": "integer", "rules": [
-        # Empty means the model's own size.
-        {"rule": "optional"},
-        {"rule": "integer", "message": "The image size is a whole number of pixels."},
-        _between("The image size", 32, 2048)]},
-    "candidates.tags": {"type": "list", "rules": [
-        # Suggested as tags, and written as tags when accepted.
-        {"rule": "list", "separator": ",", "skip_empty": True, "each": KINDS["tag"]["rules"]}]},
-    "faces.min_face_size": {"type": "integer", "rules": [
-        {"rule": "integer", "message": "The smallest face is a whole number of pixels."},
-        _between("The smallest face", 1, 2000)]},
-    "faces.confidence_threshold": {"type": "number", "rules": [
-        {"rule": "number", "message": "The confidence is a number."},
-        _between("The confidence", 0, 1)]},
-    "faces.mtcnn_thresholds": {"type": "list", "rules": [
-        {"rule": "list", "separator": ",", "count": 3,
-         "message": "Face detection takes three thresholds, one for each stage.",
-         "each": [{"rule": "number", "message": "Each threshold is a number."},
-                  _between("Each threshold", 0, 1)]}]},
-    "renaming.format": {"type": "text", "rules": [
-        _required("The rename format"), _no_controls("The rename format"),
-        # Without the number every photo is given the same name.
-        {"rule": "must_contain", "text": "{index}",
-         "message": "The rename format must hold {index}, or every photo is given the same name."}]},
+    "model.name": _setting(
+        "clip", "Model", "text", "ViT-H-14",
+        "The CLIP architecture Suggest compares photos and words with (an open_clip model name). "
+        "Every photo's vector is made with it when its folder is indexed.",
+        [_required("The CLIP model"), _no_controls("The CLIP model")]),
+    "model.pretrained": _setting(
+        "clip", "Weights", "text", "laion2b_s32b_b79k",
+        "The trained weights the model is loaded with (an open_clip pretrained tag for the model above).",
+        [_required("The CLIP weights"), _no_controls("The CLIP weights")]),
+    "model.preserve_full_frame": _setting(
+        "clip", "Keep the full frame", "boolean", "true",
+        "Show the model the whole photo, padded to the widest aspect ratio below, rather than "
+        "the square crop from its middle.",
+        [{"rule": "boolean", "message": "Keep the full frame is true or false."}]),
+    "model.max_aspect_ratio": _setting(
+        "clip", "Widest aspect ratio", "number", "1.4",
+        "With the full frame kept, how far a photo is padded towards square: 1 is square.",
+        [{"rule": "number", "message": "The widest aspect ratio is a number."},
+         # 1 is square; below it is the same ratio turned.
+         _between("The widest aspect ratio", 1, 4)]),
+    "model.force_image_size": _setting(
+        "clip", "Image size", "integer", "512",
+        "The size in pixels a photo is scaled to before the model sees it. Empty is the model's own size.",
+        [{"rule": "optional"},
+         {"rule": "integer", "message": "The image size is a whole number of pixels."},
+         _between("The image size", 32, 2048)]),
+    "faces.min_face_size": _setting(
+        "faces", "Smallest face", "integer", "20",
+        "The smallest face, in pixels, that indexing looks for. Smaller finds more faces in crowds, "
+        "and more that are not faces.",
+        [{"rule": "integer", "message": "The smallest face is a whole number of pixels."},
+         _between("The smallest face", 1, 2000)]),
+    "faces.confidence_threshold": _setting(
+        "faces", "Confidence", "number", "0.85",
+        "How sure the detector must be that it found a face before the face is kept, from 0 to 1.",
+        [{"rule": "number", "message": "The confidence is a number."},
+         _between("The confidence", 0, 1)]),
+    "faces.mtcnn_thresholds": _setting(
+        "faces", "Stage thresholds", "list", "0.6, 0.7, 0.7",
+        "The face detector's (MTCNN's) threshold at each of its three stages, from 0 to 1.",
+        [{"rule": "list", "separator": ",", "count": 3,
+          "message": "Face detection takes three thresholds, one for each stage.",
+          "each": [{"rule": "number", "message": "Each threshold is a number."},
+                   _between("Each threshold", 0, 1)]}]),
+    "paths.exiftool": _setting(
+        "exiftool", "ExifTool program", "path", "",
+        "The ExifTool program every photo file is read and written with. Empty is the one its "
+        "installer puts in your profile, else the one on PATH.",
+        [{"rule": "optional"}, _no_controls("ExifTool's path")]),
+    "candidates.tags": _setting(
+        "suggest", "Candidate words", "list",
+        "Landscape, Portrait, Nature, Urban, Sunset, Sunrise, Night, Ocean, Mountain, Forest, Animal, "
+        "Cat, Dog, Food, Indoor, Outdoor, Vehicle, Flower, Architecture, Party, Wedding, Beach, Sports, Concert",
+        "Words Suggest asks CLIP about each photo, beside every tag in the tree that is not a person, "
+        "separated by commas. Accepted, a word is written as a tag. From the next Suggest.",
+        [{"rule": "list", "separator": ",", "skip_empty": True, "each": KINDS["tag"]["rules"]}]),
+    "renaming.format": _setting(
+        "renaming", "Rename format", "text", "{grouping} - {index} - {caption}",
+        "The name Smart Rename gives each photo: {grouping} is the name you type, {index} the photo's "
+        "number, {caption} its caption. From the next rename.",
+        [_required("The rename format"), _no_controls("The rename format"),
+         # Without the number every photo is given the same name.
+         {"rule": "must_contain", "text": "{index}",
+          "message": "The rename format must hold {index}, or every photo is given the same name."}]),
 }
 
 SETTING = "setting "
 
-for _key, _setting in SETTINGS.items():
-    KINDS[SETTING + _key] = _setting
+for _key, _setting_declared in SETTINGS.items():
+    KINDS[SETTING + _key] = _setting_declared
 
 
 def setting_kind(key):
     """The kind a setting's value is checked as: "faces.min_face_size" -> its kind."""
     return SETTING + key
+
+
+def setting_defaults():
+    """{key: the value a new library is stamped with}, for every setting."""
+    return {key: declared["default"] for key, declared in SETTINGS.items()}
 
 
 # ---- The checks ------------------------------------------------------------------------
@@ -222,7 +314,7 @@ def _text(value):
 
 
 def _is_blank(value):
-    return not isinstance(value, (list, tuple)) and not _text(value).strip()
+    return not isinstance(value, (list, tuple)) and not trim(_text(value))
 
 
 _INTEGER = re.compile(r"[+-]?[0-9]+")
@@ -236,7 +328,7 @@ def _number(value):
         return None
     if isinstance(value, (int, float)):
         return value if value == value and abs(value) != float("inf") else None
-    text = _text(value).strip()
+    text = trim(_text(value))
     return float(text) if _NUMBER.fullmatch(text) else None
 
 
@@ -245,7 +337,7 @@ def _fails_integer(rule, value):
         return True
     if isinstance(value, (int, float)):
         return _number(value) is None or float(value) != int(value)
-    return not _INTEGER.fullmatch(_text(value).strip())
+    return not _INTEGER.fullmatch(trim(_text(value)))
 
 
 def _fails_range(rule, value):
@@ -255,9 +347,9 @@ def _fails_range(rule, value):
 
 def _items(rule, value):
     if isinstance(value, (list, tuple)):
-        items = [_text(item).strip() for item in value]
+        items = [trim(_text(item)) for item in value]
     else:
-        items = [item.strip() for item in _text(value).split(rule["separator"])]
+        items = [trim(item) for item in _text(value).split(rule["separator"])]
     return [item for item in items if item] if rule.get("skip_empty") else items
 
 
@@ -267,11 +359,11 @@ CHECKS = {
     "forbid_text": lambda rule, value: rule["text"] in _text(value),
     "pattern": lambda rule, value: re.fullmatch(rule["pattern"], _text(value)) is None,
     "must_contain": lambda rule, value: rule["text"] not in _text(value),
-    "reserved": lambda rule, value: _text(value).strip().lower() in rule["names"],
+    "reserved": lambda rule, value: trim(_text(value)).lower() in rule["names"],
     "max_bytes": lambda rule, value: len(_text(value).encode("utf-8", "surrogatepass")) > rule["max"],
     "integer": _fails_integer,
     "number": lambda rule, value: _number(value) is None,
-    "boolean": lambda rule, value: not isinstance(value, bool) and _text(value).strip().lower() not in _BOOLEANS,
+    "boolean": lambda rule, value: not isinstance(value, bool) and trim(_text(value)).lower() not in _BOOLEANS,
     "range": _fails_range,
 }
 
@@ -293,7 +385,7 @@ def _check(rules, value):
                     return found
             continue
         if CHECKS[name](rule, value):
-            return rule["message"].replace("{value}", _text(value).strip())
+            return rule["message"].replace("{value}", trim(_text(value)))
     return None
 
 
@@ -313,9 +405,9 @@ def first_problem(kind, values):
 
 
 def published():
-    """The rules as data, for /api/rules: {"version", "kinds": {kind: {"rules", ...}}}.
-    The version is the rules' own digest, so it changes whenever a rule does and a page
-    holding an older copy can tell."""
+    """The rules as data, for /api/rules: {"version", "blank", "kinds": {kind: {"rules",
+    ...}}}; `blank` is what the checks trim (BLANK). The version is the rules' own
+    digest, so it changes whenever a rule does and a page holding an older copy can tell."""
     kinds = {kind: dict(declared) for kind, declared in KINDS.items()}
-    text = json.dumps(kinds, sort_keys=True, ensure_ascii=True)
-    return {"version": hashlib.sha256(text.encode("ascii")).hexdigest()[:12], "kinds": kinds}
+    text = json.dumps({"blank": BLANK, "kinds": kinds}, sort_keys=True, ensure_ascii=True)
+    return {"version": hashlib.sha256(text.encode("ascii")).hexdigest()[:12], "blank": BLANK, "kinds": kinds}

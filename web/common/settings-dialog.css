@@ -1,0 +1,117 @@
+/* The library's settings (web/common/settings-dialog.js), in TagTuner's .modal frame. */
+
+.settings-content {
+    width: 680px;
+}
+
+.settings-body {
+    gap: 16px;
+}
+
+.settings-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.settings-group h4 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.settings-row {
+    gap: 4px;
+}
+
+.settings-row textarea {
+    font-family: inherit;
+    resize: vertical;
+}
+
+.settings-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-info-button {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 50%;
+    background: none;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-style: italic;
+    line-height: 16px;
+    cursor: pointer;
+}
+
+.settings-info-button[aria-expanded="true"] {
+    color: var(--text-primary);
+    border-color: var(--accent);
+}
+
+.settings-info {
+    margin: 2px 0 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.settings-info.hidden,
+.settings-row .validation-error.hidden {
+    display: none;
+}
+
+.settings-group-locked .modal-input[readonly] {
+    opacity: 0.7;
+    cursor: default;
+}
+
+.settings-change {
+    align-self: flex-start;
+}
+
+.settings-change-notice {
+    padding: 8px 12px;
+    border-left: 3px solid #f59e0b;
+    background-color: var(--bg-tertiary);
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.settings-change-notice p {
+    margin: 0 0 6px;
+}
+
+.settings-consequences {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.settings-consequences label {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    cursor: pointer;
+}
+
+.settings-footer {
+    align-items: center;
+}
+
+.settings-status {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text-secondary);
+}

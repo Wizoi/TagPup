@@ -135,6 +135,24 @@ CAPTION_FIELDS = ("IPTC:Caption-Abstract", "Caption-Abstract", "XMP:Description"
                   "XMP:Title", "Title", "IPTC:ObjectName", "ObjectName")
 
 
+def _held_caption_fields():
+    from tagpup.core import fields   # the one spelling of the fields a caption write sets
+    written = [name for field in fields.caption_fields("") for name in (field, field.split(":", 1)[-1])]
+    return CAPTION_FIELDS + tuple(name for name in dict.fromkeys(written) if name not in CAPTION_FIELDS)
+
+
+#: Every field a photo's caption is held in: those read as its captions, and the ones a
+#: caption write sets as well (tagpup.core.fields.caption_fields: EXIF's too) -- where a
+#: caption another program wrote may be all the file holds. Asked when a caption is
+#: being set, to tell one the file holds already from a new one.
+HELD_CAPTION_FIELDS = _held_caption_fields()
+
+
+def trimmed(value):
+    """A field's value as the reader keeps it: text, without the blanks around it."""
+    return str(value).strip()
+
+
 def _values(meta, fields):
     """Every value these fields hold, trimmed, in field order; empty ones left out."""
     found = []
@@ -142,9 +160,9 @@ def _values(meta, fields):
         val = meta.get(key)
         if val:
             if isinstance(val, list):
-                found.extend(str(v).strip() for v in val if v)
+                found.extend(trimmed(v) for v in val if v)
             else:
-                found.append(str(val).strip())
+                found.append(trimmed(val))
     return found
 
 
@@ -169,6 +187,12 @@ def extract_captions(meta):
     one everything shows.
     """
     return list(dict.fromkeys(c for c in _values(meta, CAPTION_FIELDS) if c))
+
+
+def captions_held(meta):
+    """Every caption a file holds, in any field a caption is held in (HELD_CAPTION_FIELDS),
+    each distinct text once, trimmed as the reader trims it."""
+    return list(dict.fromkeys(c for c in _values(meta, HELD_CAPTION_FIELDS) if c))
 
 
 class PeopleVocabulary:

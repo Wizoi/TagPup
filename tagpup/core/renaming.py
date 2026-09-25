@@ -1,5 +1,5 @@
 """The file names Smart Rename gives photos: "<grouping> - <index> - <caption>" in the
-default format config.ini holds.
+default rename format (a library's renaming.format setting).
 
 Smart Rename makes one for each photo it renames, and editing the caption of a photo
 it named makes a new one. Both go through file_base; each had its own copy.

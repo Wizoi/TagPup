@@ -38,7 +38,8 @@ DURATIONS = os.path.join(TESTS, ".durations.json")
 
 #: A test file that names the checkout's data/ folder or config.ini: joined to the
 #: checkout's own folder, relative to the working directory (the checkout, as files are
-#: run here), or config.ini by name. A home's own settings file is config.config_path().
+#: run here), or config.ini by name. A test home's old config.ini is written by
+#: tests/own_home.OwnHome.write_old_config.
 SHARED = re.compile(
     r"""\b(?:WORKSPACE_DIR|REPO_ROOT|ROOT|PROJECT_ROOT|project_root|CODE_ROOT)\s*,\s*["'](?:data|config\.ini)["']"""
     r"""|os\.path\.join\(\s*["']data["']|["']data(?:/|\\\\)"""

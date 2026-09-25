@@ -88,7 +88,7 @@ The **AI CLI Engine** is the underlying machine learning backend that indexes vi
 ### 📋 Preconditions
 - **OS:** Windows 10 or 11
 - **Python:** Python 3.10+ added to your system PATH
-- **ExifTool:** Installed on your computer (expected path: `%USERPROFILE%\AppData\Local\Programs\ExifTool\exiftool.exe` or customized in `config.ini`).
+- **ExifTool:** Installed on your computer (expected path: `%USERPROFILE%\AppData\Local\Programs\ExifTool\exiftool.exe`, else the one on PATH; a library may name another in its settings).
 
 ### 🔧 Installation & Setup
 
@@ -137,39 +137,13 @@ For guides, tutorials, specifications, and schemas:
 
 ---
 
-## ⚙️ Configuration (`config.ini`)
+## ⚙️ Settings
 
-Settings live in `config.ini`, next to the code, unless the `TAGPUP_HOME` environment variable names another folder. Relative paths in it, such as `data_dir`, are relative to that folder, wherever the program is started from. `config.ini` is not in git, since it belongs to one installation and the app writes the library you last opened into it. `setup.bat` makes one from [config.example.ini](config.example.ini), and a setting it leaves out takes the example's value.
+Each library holds its own settings: the CLIP model its vectors are made with, the face-detection thresholds, Suggest's candidate words, the rename format and the ExifTool program. Change them in TagTuner's gear, **Library settings**; the ones whose change has consequences (the model, face detection, ExifTool) are locked behind a **Change...** that lists each consequence to acknowledge. Every change is recorded in the library's history and can be undone (`tagpup_cli.py --db <library> history`, `undo`).
 
-```ini
-[paths]
-exiftool = %USERPROFILE%\AppData\Local\Programs\ExifTool\exiftool.exe
-data_dir = data
+A new library starts with the defaults. The libraries are in `data/` in the TagPup home: the folder the code is in, unless the `TAGPUP_HOME` environment variable names another. ExifTool is found where its installer puts it, else on PATH.
 
-[model]
-; CLIP architecture and its pretrained weights
-name = ViT-H-14
-pretrained = laion2b_s32b_b79k
-; Keep the photo's aspect ratio, padding up to this ratio, at this input size
-preserve_full_frame = true
-max_aspect_ratio = 1.4
-force_image_size = 512
-
-[candidates]
-tags = Landscape, Portrait, Nature, Urban, Sunset, Sunrise, Night, Ocean, Mountain, Forest, Animal, Cat, Dog, Food, Indoor, Outdoor, Vehicle, Flower, Architecture, Party, Wedding, Beach, Sports, Concert
-
-[faces]
-; Smallest face in pixels, the detection confidence to keep a face, and MTCNN's per-stage thresholds
-min_face_size = 20
-confidence_threshold = 0.85
-mtcnn_thresholds = 0.6, 0.7, 0.7
-
-[renaming]
-; The pattern Smart Rename names photos with
-format = {grouping} - {index} - {caption}
-```
-
-Put comments on a line of their own. A `#` or `;` after a value is read as part of the value.
+A `config.ini` from an older version is read once per library, the first time the library is opened, to give it the settings it was made with; after that it is unused and can be deleted.
 
 ---
 

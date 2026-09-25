@@ -6,8 +6,8 @@ sequence, performed in a browser, against a server started the way the app start
 
 Everything runs in a sandbox, built and deleted the same way as
 measure_identify_faces.py: the library is copied through SQLite's backup API (the
-original opened read-only), the code is snapshotted with its own config.ini, and the
-server is a separate process on a free port. The photos are copied too, into folders
+original opened read-only, keeping the library's settings), the code is snapshotted,
+and the server is a separate process on a free port with the sandbox as its home. The photos are copied too, into folders
 the library has never seen -- so nothing is cached for them, which is the situation
 the report describes.
 
@@ -45,25 +45,22 @@ import _root  # noqa: E402,F401
 from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup.files import images  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
+from tagpup import runtime as runtimes  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 
 
 
 def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
-    """Code, config, library and taxonomy, plus `copies` fresh copies of the photos."""
+    """Code, library and taxonomy, plus `copies` fresh copies of the photos."""
     os.makedirs(os.path.join(sandbox, "data"), exist_ok=True)
     copy_code(sandbox, code_root, launchers=True)
 
-    # The real config, for its model and candidate settings -- suggestions made with a
-    # different model would be measuring something else -- with every path pointed
-    # into the sandbox.
-    config = tagpup_config.read_file()
-    if not config.has_section("paths"):
-        config.add_section("paths")
-    data_dir = os.path.join(sandbox, "data")
-    config.set("paths", "data_dir", data_dir)
-    tagpup_config.write_file(config, folder=sandbox)
-
+    # The server runs with the sandbox as its TAGPUP_HOME, so library names resolve to
+    # its data/. The copy keeps the library's settings -- suggestions made with a
+    # different model would be measuring something else; a library not stamped yet is
+    # stamped below with what stamping it at home would give.
     target = os.path.join(sandbox, "data", "measured.db")
     started = time.time()
     source = tagpup_db.connect(tagpup_db.readonly_uri(source_db), uri=True)
@@ -73,6 +70,9 @@ def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
     finally:
         destination.close()
         source.close()
+    home = runtimes.peek_settings(Library(source_db))
+    if not home.stamped:
+        library_settings.stamp(Library(target), home.values)
     print("  copied %.1f GB in %.1fs" % (os.path.getsize(target) / 1e9, time.time() - started))
 
     folders = []

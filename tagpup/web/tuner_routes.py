@@ -222,7 +222,7 @@ def tags_merge():
     try:
         result = tags_service.merge(
             library, body.get("from"), body.get("into") or body.get("to"),
-            tagpup_config.exiftool_path(), retire=bool(body.get("retire")),
+            state.exiftool(library), retire=bool(body.get("retire")),
             apply=bool(body.get("apply")))
     except Exception as e:
         logger.error("Error merging tag %r: %s", body.get("from"), e)
@@ -244,7 +244,7 @@ def person_rename():
     body = request.get_json(silent=True) or {}
     try:
         result = tags_service.rename_person(library, body.get("old_name"), body.get("new_name"),
-                                            tagpup_config.exiftool_path())
+                                            state.exiftool(library))
     except NotFound as missing:
         abort(404, description=str(missing))
     except Exception as e:

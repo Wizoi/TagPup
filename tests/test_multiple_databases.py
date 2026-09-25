@@ -43,15 +43,12 @@ class TestMultipleDatabases(unittest.TestCase):
     both apps (tagpup.web.libraries)."""
 
     def setUp(self):
-        self.app, home = web_client.app_for(self, "tuner", startup="test_multiple_db_startup.db")
+        self.app, self.home = web_client.app_for(self, "tuner", startup="test_multiple_db_startup.db")
         self.client = self.app.test_client()
-        self.data_dir = home.data
-        self.TEST_DB_PATH = home.library("test_multiple_db_startup.db")
-        code_folder = tempfile.mkdtemp(prefix="tagpup_code_folder_")
+        self.data_dir = self.home.data
+        self.TEST_DB_PATH = self.home.library("test_multiple_db_startup.db")
+        code_folder = self.code_folder = tempfile.mkdtemp(prefix="tagpup_code_folder_")
         self.addCleanup(own_home.remove, code_folder)
-        tagpup_config.write_file({"paths": {"default_db": "the_code_folders.db"}}, folder=code_folder)
-        self.code_config = tagpup_config.config_path(code_folder)
-        self.code_config_bytes = file_bytes(self.code_config)
         code_root = mock.patch.object(tagpup_config, "CODE_ROOT", code_folder)
         code_root.start()
         self.addCleanup(code_root.stop)
@@ -99,9 +96,9 @@ class TestMultipleDatabases(unittest.TestCase):
         # 4. There is no route to remember a choice by, and no setting was written:
         # neither this home's nor the one beside the code.
         self.assertEqual(404, self.client.post("/api/databases/select", json={"db_name": "x"}).status_code)
-        self.assertFalse(tagpup_config.read_file().has_option("paths", "default_db"))
-        self.assertEqual(file_bytes(self.code_config), self.code_config_bytes,
-                         "creating a library changed the config.ini beside the code")
+        # Nothing writes a settings file at all: a library holds its own settings.
+        self.assertEqual([], os.listdir(self.code_folder), "creating a library wrote beside the code")
+        self.assertEqual(["data"], os.listdir(self.home.root), "creating a library wrote a file in the home")
 
     def test_a_created_library_is_not_left_open(self):
         """Creating a library opened it for its schema and never closed it.

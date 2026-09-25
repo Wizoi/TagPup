@@ -22,7 +22,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_face, add_vector  # noqa: E402
 
-from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
@@ -94,7 +93,7 @@ class OneIndexPerLibrary(unittest.TestCase):
         add_photo(self.db_path, "a.jpg")
         self.library = Library(self.db_path)
         # No model is built: the index is all this asks for.
-        self.runtime = Runtime(tagpup_config.load(), clip=object(), faces=object())
+        self.runtime = Runtime(clip=object(), faces=object())
 
     def tearDown(self):
         self.runtime.photo_index(self.library).close()
@@ -114,7 +113,7 @@ class OneIndexPerLibrary(unittest.TestCase):
         self.assertEqual(2, len(again.metadata))
 
     def test_its_vectors_are_the_runtimes_models(self):
-        self.assertEqual(self.runtime.model_key, self.runtime.photo_index(self.library).model)
+        self.assertEqual(self.runtime.model_key(self.library), self.runtime.photo_index(self.library).model)
 
 
 if __name__ == "__main__":

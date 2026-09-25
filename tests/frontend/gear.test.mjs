@@ -243,7 +243,7 @@ describe("TagPup's tag editor, as Manage Tags was", () => {
 });
 
 describe("TagTuner's gear", () => {
-  test("holds the tag editor, the library's settings (not yet), and TagPup", async (t) => {
+  test("holds the tag editor, the library's settings, and TagPup", async (t) => {
     const { window, document } = await tuner(t);
     const { button, menu } = gearOf(document);
     assert.ok(button.closest(".app-header"), "the gear is not in the header");
@@ -251,10 +251,12 @@ describe("TagTuner's gear", () => {
     await flush(window);
     assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Library settings", "Open in TagPup"]);
     const settings = menu.querySelector('[data-action="library-settings"]');
-    assert.equal(settings.getAttribute("aria-disabled"), "true");
-    assert.match(settings.title, /next/i);
+    assert.equal(settings.getAttribute("aria-disabled"), null, "Library settings is still disabled");
     click(window, settings);
-    assert.ok(!menu.classList.contains("hidden"), "a disabled item closed the menu as if it did something");
+    await flush(window, 4);
+    assert.ok(menu.classList.contains("hidden"), "the menu stayed open over the settings");
+    const dialog = document.getElementById("settings-modal");
+    assert.ok(dialog && !dialog.classList.contains("hidden"), "Library settings opened nothing");
   });
 
   test("its TagPup link is the server's address for this same library", async (t) => {

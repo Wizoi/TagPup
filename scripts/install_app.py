@@ -4,7 +4,9 @@ Run from the repository, TagPup and TagTuner restart whenever a .py file is save
 reloader drops the folder queue and the identify cache and can orphan an indexer, and
 a half-made change is what is running. This copies the code into a version folder of
 its own and writes launchers that run that copy, with TAGPUP_HOME set to this checkout
-so that config.ini and data/ stay where they are. Saving a file here then changes
+so that data/ -- the libraries, which hold their own settings -- stays where it is.
+Nothing is copied or expected beside it: config.ini is read only to stamp a library
+that holds no settings yet (tagpup.config). Saving a file here then changes
 nothing that is running. Installing again makes a new version and moves the launchers
 to it; the two before it are kept, to go back to by editing current.txt.
 
@@ -120,7 +122,7 @@ def install(destination, home, python, name=None, apply=False, say=print):
     removing = to_remove(versions(destination), name, previous)
 
     say("install      %s" % folder)
-    say("home         %s  (config.ini and data/)" % home)
+    say("home         %s  (data/)" % home)
     say("python       %s" % python)
     say("launchers    %s" % ", ".join(os.path.join(destination, n) for n in LAUNCHERS))
     if previous:

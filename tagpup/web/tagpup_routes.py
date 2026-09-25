@@ -113,7 +113,7 @@ def _folder_photos(library, folder):
     found = cache.get(folder)
     if not found:
         logger.info("Folder cache empty for %s; scanning it.", folder)
-        found = photo_actions.scan_folder(library, folder, tagpup_config.exiftool_path())
+        found = photo_actions.scan_folder(library, folder, state.exiftool(library))
         cache.put(folder, found)
     return found
 
@@ -204,7 +204,7 @@ def folder_scan():
     # opened never showed until Refresh, since its empty scan was kept like any other.
     photos = None if force else cache.get(folder)
     if not photos:
-        photos = photo_actions.scan_folder(library, folder, tagpup_config.exiftool_path())
+        photos = photo_actions.scan_folder(library, folder, state.exiftool(library))
         cache.put(folder, photos)
     return jsonify(_sorted(photos))
 
@@ -277,7 +277,7 @@ def folder_auto_apply():
     # Apply exactly what the panel offered (tagpup.core.suggesting.offered_tags).
     additions = {path: suggesting.offered_tags(entry, threshold) for path, entry in suggestions.items()}
     try:
-        result = tagging_actions.add_tags(library, additions, tagpup_config.exiftool_path())
+        result = tagging_actions.add_tags(library, additions, state.exiftool(library))
         if result.refused:
             return responses.error(400, result.refused)
         _records_written(library, result)
@@ -308,7 +308,7 @@ def folder_time_shift():
     photos = cache.get(folder)
     if not photos:
         try:
-            photos = photo_actions.read_folder(library, folder, tagpup_config.exiftool_path())
+            photos = photo_actions.read_folder(library, folder, state.exiftool(library))
             cache.put(folder, photos)
         except Exception as e:
             logger.error("Error scanning folder on the fly for time shift: %s", e)
@@ -319,7 +319,7 @@ def folder_time_shift():
     if not targets:
         return jsonify({"success": True, "message": "No photos matched the camera model"})
     try:
-        result = photo_actions.shift_date_taken(library, targets, shift_minutes, tagpup_config.exiftool_path())
+        result = photo_actions.shift_date_taken(library, targets, shift_minutes, state.exiftool(library))
         if result.refused:
             return responses.error(400, result.refused)
         if not result.ok:
@@ -369,8 +369,8 @@ def folder_rename_photos():
                 return "9999"
 
         result = photo_actions.smart_rename(
-            library, sorted(photo_paths, key=taken), grouping, tagpup_config.rename_format(),
-            tagpup_config.exiftool_path())
+            library, sorted(photo_paths, key=taken), grouping, state.rename_format(library),
+            state.exiftool(library))
         if result.refused:
             return responses.error(400, result.refused)
         if not result.ok:
@@ -378,7 +378,7 @@ def folder_rename_photos():
         # Their saved suggestions are kept by the photo's id, and went with the rows.
         # The folder is read again from its files, as the page is about to show it.
         cache.pop(folder)
-        photos = photo_actions.read_folder(library, folder, tagpup_config.exiftool_path())
+        photos = photo_actions.read_folder(library, folder, state.exiftool(library))
         cache.put(folder, photos)
     except Exception as e:
         logger.error("Error smart renaming photos: %s", e, exc_info=True)
@@ -480,7 +480,7 @@ def photo_rotate():
         return responses.error(400, "Direction must be 'left' or 'right'")
     photo_path = paths.stored(photo_path)
     try:
-        result = photo_actions.rotate(library, photo_path, direction, tagpup_config.exiftool_path())
+        result = photo_actions.rotate(library, photo_path, direction, state.exiftool(library))
         if not result.ok:
             logger.error("Error rotating image %s: %s", photo_path, result.message())
             return responses.error(500, result.message())
@@ -527,7 +527,7 @@ def photo_save_metadata():
     photo_path = paths.stored(photo_path)
     try:
         result = tagging_actions.save_photo(library, photo_path, title, tags, date_taken,
-                                            tagpup_config.exiftool_path(), tagpup_config.rename_format())
+                                            state.exiftool(library), state.rename_format(library))
         if result.refused:
             return responses.error(400, result.refused)
         new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
@@ -567,7 +567,7 @@ def photos_bulk_tags():
     try:
         # What is added is checked, not what is removed (tagpup.services.tagging).
         result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
-                                             tagpup_config.exiftool_path())
+                                             state.exiftool(library))
         if result.refused:
             return responses.error(400, result.refused)
         _records_written(library, result)

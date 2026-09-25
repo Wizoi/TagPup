@@ -69,12 +69,14 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
 def _caption_problem(et, photo_path, caption):
     """Why `caption` cannot be set on the photo, or None. A caption the file holds
     already is not being set: one another program wrote is kept, as a tag is. The file
-    is read for it only when the caption breaks a rule."""
+    is read for it only when the caption breaks a rule -- every field a caption is held
+    in, EXIF's too -- and the caption is compared as the reader trims the file's."""
     problem = validation.problem("caption", caption or "")
     if not problem:
         return None
-    found = et.get_tags([photo_path], tags=[field for field in vocabulary.CAPTION_FIELDS if ":" in field])
-    return None if caption in vocabulary.extract_captions(found[0] if found else {}) else problem
+    found = et.get_tags([photo_path], tags=[field for field in vocabulary.HELD_CAPTION_FIELDS if ":" in field])
+    held = vocabulary.captions_held(found[0] if found else {})
+    return None if vocabulary.trimmed(caption) in held else problem
 
 
 def change_tags(library, photo_paths, add, remove, exiftool_path):

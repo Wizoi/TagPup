@@ -1,8 +1,8 @@
 """CLIP: a photo or a text as a vector, from the settings it is given.
 
 It embeds an image or a text and nothing else. Which settings it runs with is the
-config's (tagpup.config.embedder_settings), read by an entry point and handed down
-through tagpup.runtime; where a photo's vector is kept is the library's
+library's (tagpup.services.settings, LibrarySettings.embedder), made into a model by
+tagpup.runtime; where a photo's vector is kept is the library's
 (tagpup.store.embeddings), read and written by the service that asks
 (tagpup.services.search.PhotoEmbeddings).
 
@@ -24,7 +24,7 @@ from tagpup.files import images
 
 logger = logging.getLogger("tagpup_cli.embedder")
 
-#: The settings a model is made from: tagpup.config.embedder_settings()'s keys.
+#: The settings a model is made from: tagpup.services.settings.LibrarySettings.embedder's keys.
 SETTINGS = ("model_name", "pretrained", "preserve_full_frame", "max_aspect_ratio", "force_image_size")
 
 

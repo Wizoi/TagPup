@@ -168,42 +168,123 @@ describe("TagPup: the page behind a dialog hears none of its shortcuts", () => {
 });
 
 describe("TagTuner: the sidebar does not move behind a dialog", () => {
-  async function tuner(t) {
-    const server = new FakeServer()
+  const PHOTOS = ["a.jpg", "b.jpg"].map((filename) => ({
+    path: `D:/Library/2020/${filename}`, filename, folder: "D:/Library/2020", year: "2020", unmatched_count: 1,
+  }));
+
+  function server() {
+    return new FakeServer()
       .on("/api/apps", { this: "tuner", apps: {} })
       .on("/api/taxonomy/tree", TREE)
       .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
       .on("/api/databases", { databases: ["photo_index"] })
       .on("/api/people-with-counts", [])
       .on("/api/people", [])
-      .on("/api/photos", ["a.jpg", "b.jpg"].map((filename) => ({
-        path: `D:/Library/2020/${filename}`, filename, folder: "D:/Library/2020", year: "2020", unmatched_count: 1,
-      })));
-    const ctx = await loadApp("tagtuner", { t, server });
+      .on("/api/photos", PHOTOS)
+      .on("/api/photo-details", (url) => ({
+        path: decodeURIComponent(url.split("path=")[1]), filename: "a.jpg", year: "2020", caption: "",
+        tags: [], people: [],
+        faces: [{ id: 41, box: [10, 10, 40, 40], name: null, excluded: false, max_similarity: 0 }],
+      }))
+      .on("/api/face-matches", { matches: [] })
+      .on("/api/unmatched-faces/people", [{ name: "Unknown Faces", count: 3, unit: "face" },
+                                          { name: "Ungrouped", count: 2, unit: "face" }])
+      .on("/api/unmatched-faces/person-matches", {
+        faces: [1, 2, 3].map((id) => ({
+          id, photo_path: `D:\\meets\\m${id}.jpg`, filename: `m${id}.jpg`, box: [10, 10, 40, 40], prob: 0.99,
+          mtime: 0, year: 2025, similarity: 0.9, person_similarity: 0.9, cluster_id: 5, cluster_name: "Cluster 5",
+          other_names: [], suggested_name: null, suggested_similarity: 0, suggestion_strength: null,
+        })),
+        total_count: 3, unclustered_total: 0, unclustered_shown: 0, has_more: false,
+      });
+  }
+
+  /** The folder view, its first photo shown (the sidebar's first item active). */
+  async function folderView(t) {
+    const ctx = await loadApp("tagtuner", { t, server: server() });
     await flush(ctx.window, 6);
     click(ctx.window, ctx.document.querySelector("#photo-list .folder-header"));
-    ctx.active = () => ctx.document.querySelector("#photo-list .photo-item.active")?.textContent || null;
+    click(ctx.window, ctx.document.querySelector("#photo-list .photo-item"));
+    await flush(ctx.window, 6);
     return ctx;
   }
 
-  // Shown the way the page shows them: `hidden` taken off.
-  for (const id of ["new-person-modal", "exclude-reason-modal", "ignore-confirm-modal", "folder-picker-modal"]) {
+  /** Identify Faces on its first person (the sidebar's first item active). */
+  async function identifyView(t) {
+    const ctx = await loadApp("tagtuner", {
+      t, server: server(),
+      url: `http://localhost:8080/photo_index/?mode=unmatched-faces&person=${encodeURIComponent("Unknown Faces")}`,
+    });
+    ctx.window.confirm = () => true;
+    ctx.window.alert = () => {};
+    await new Promise((r) => ctx.window.setTimeout(r, 150));
+    return ctx;
+  }
+
+  const active = (ctx) => ctx.document.querySelector("#photo-list .photo-item.active")?.textContent || null;
+
+  // Each opened the way the page opens it -- its own button -- and closed by its own Cancel.
+  const DIALOGS = {
+    "folder-picker-modal": {
+      view: folderView,
+      open: (ctx) => click(ctx.window, ctx.document.getElementById("btn-add-folder")),
+      close: "btn-folder-picker-cancel",
+    },
+    "new-person-modal": {
+      view: folderView,
+      open: async (ctx) => {
+        click(ctx.window, ctx.document.querySelector("#faces-grid .face-card, .face-card"));
+        await flush(ctx.window, 4);
+        const create = [...ctx.document.querySelectorAll(".face-card button")]
+          .find((b) => b.title === "Create new person profile");
+        assert.ok(create, "the face has no Create new person button");
+        click(ctx.window, create);
+      },
+      close: "btn-modal-cancel",
+    },
+    "exclude-reason-modal": {
+      view: identifyView,
+      open: async (ctx) => {
+        click(ctx.window, ctx.document.querySelector('#matching-faces-grid [data-face-id="1"]'));
+        await flush(ctx.window, 4);
+        click(ctx.window, ctx.document.getElementById("btn-exclude-selected"));
+      },
+      close: "btn-exclude-reason-cancel",
+    },
+    "ignore-confirm-modal": {
+      view: identifyView,
+      open: (ctx) => {
+        const ignore = [...ctx.document.querySelectorAll("#matching-faces-grid .matching-group-section button")]
+          .find((b) => b.textContent.includes("Ignore Cluster"));
+        assert.ok(ignore, "the cluster has no Ignore Cluster button");
+        click(ctx.window, ignore);
+      },
+      close: "btn-ignore-confirm-cancel",
+    },
+  };
+
+  for (const [id, how] of Object.entries(DIALOGS)) {
     test(id, async (t) => {
-      const ctx = await tuner(t);
+      const ctx = await how.view(t);
       const modal = ctx.document.getElementById(id);
       assert.ok(modal.classList.contains("hidden"), "it starts open");
-      modal.classList.remove("hidden");
-      const before = ctx.active();
+      const before = active(ctx);
+      assert.ok(before, "nothing in the sidebar is active to move from");
+      await how.open(ctx);
+      await flush(ctx.window, 4);
+      assert.ok(!modal.classList.contains("hidden"), "the page's own button did not open it");
       for (const target of [ctx.document.body, modal.querySelector("button")]) {
         for (const key of ["ArrowDown", "ArrowUp", "ArrowDown"]) press(ctx.window, target, key);
       }
       await flush(ctx.window, 4);
-      assert.equal(ctx.active(), before, "the sidebar moved behind it");
+      assert.equal(active(ctx), before, "the sidebar moved behind it");
 
-      modal.classList.add("hidden");
+      click(ctx.window, ctx.document.getElementById(how.close));
+      await flush(ctx.window, 4);
+      assert.ok(modal.classList.contains("hidden"), "its Cancel did not close it");
       press(ctx.window, ctx.document.body, "ArrowDown");
       await flush(ctx.window, 4);
-      assert.notEqual(ctx.active(), before, "the sidebar stayed still once it closed");
+      assert.notEqual(active(ctx), before, "the sidebar stayed still once it closed");
     });
   }
 });

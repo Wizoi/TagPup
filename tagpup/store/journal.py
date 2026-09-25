@@ -59,7 +59,8 @@ from tagpup.store import photos as store_photos
 logger = logging.getLogger(__name__)
 
 #: The tables a change may write, by the columns that key a row. Each key is one SQLite
-#: never gives out again: an AUTOINCREMENT id, or the id of a row that has one.
+#: never gives out again: an AUTOINCREMENT id, or the id of a row that has one -- or a
+#: name that means the same row whenever it is used (NAMED).
 KEYS = {
     "photos": ("id",),
     "faces": ("id",),
@@ -67,7 +68,13 @@ KEYS = {
     "face_crops": ("face_id",),
     "embeddings": ("photo_id", "model"),
     "suggestions": ("photo_id",),
+    "settings": ("key",),
 }
+
+#: Tables keyed by a name, not by an id SQLite hands out: a row put back under its name is
+#: the same thing again -- a setting is "faces.min_face_size" whichever row holds it -- so
+#: a key used again cannot mean another row (tests/test_journal_keys_and_cascades.py).
+NAMED = ("settings",)
 
 #: Derived tables: never journaled, rebuilt from what a change touched.
 DERIVED = ("photo_people",)

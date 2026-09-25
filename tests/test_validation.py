@@ -16,7 +16,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
-from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import validation, vocabulary  # noqa: E402
 import web_client  # noqa: E402
 
@@ -126,23 +125,40 @@ class WhatIsPublished(unittest.TestCase):
 
 
 class TheSettings(unittest.TestCase):
-    """Each setting config.ini holds is declared, with its type, for the settings dialog."""
+    """Each setting a library holds is declared once: its type, range, default, whether it
+    is locked and what changing it does, and its info text -- what the settings dialog
+    is made from (docs/ARCHITECTURE.md, phase 7.6)."""
+
+    #: The settings config.ini held, which a library in use is stamped from; where the
+    #: libraries are (paths.data_dir) is not one.
+    HELD = {"paths.exiftool", "model.name", "model.pretrained", "model.preserve_full_frame",
+            "model.max_aspect_ratio", "model.force_image_size", "candidates.tags", "faces.min_face_size",
+            "faces.confidence_threshold", "faces.mtcnn_thresholds", "renaming.format"}
 
     def test_every_setting_is_declared(self):
-        held = {"%s.%s" % (section, key) for section, keys in tagpup_config.DEFAULTS.items() for key in keys}
-        held.add("paths.exiftool")   # config.example.ini names it; DEFAULTS finds it instead
-        self.assertEqual(set(validation.SETTINGS), held)
+        self.assertEqual(set(validation.SETTINGS), self.HELD)
 
     def test_every_default_is_allowed(self):
-        for section, keys in tagpup_config.DEFAULTS.items():
-            for key, value in keys.items():
-                with self.subTest(setting="%s.%s" % (section, key)):
-                    self.assertIsNone(validation.problem(validation.setting_kind("%s.%s" % (section, key)), value))
+        for key, value in validation.setting_defaults().items():
+            with self.subTest(setting=key):
+                self.assertIsNone(validation.problem(validation.setting_kind(key), value))
 
-    def test_each_has_a_type(self):
+    def test_each_has_a_type_a_label_and_info(self):
         for key, declared in validation.SETTINGS.items():
             with self.subTest(setting=key):
                 self.assertIn(declared["type"], ("text", "path", "boolean", "integer", "number", "list"))
+                self.assertTrue(declared["label"].strip())
+                self.assertTrue(declared["info"].strip())
+                self.assertIn(declared["group"], validation.SETTING_GROUPS)
+
+    def test_the_locked_ones_are_those_with_consequences(self):
+        locked = {key for key, declared in validation.SETTINGS.items() if declared["locked"]}
+        self.assertEqual(locked, {"model.name", "model.pretrained", "model.preserve_full_frame",
+                                  "model.max_aspect_ratio", "model.force_image_size", "faces.min_face_size",
+                                  "faces.confidence_threshold", "faces.mtcnn_thresholds", "paths.exiftool"})
+        for key, declared in validation.SETTINGS.items():
+            with self.subTest(setting=key):
+                self.assertEqual(declared["locked"], bool(declared["consequences"]))
 
 
 class BothAppsPublishThem(unittest.TestCase):

@@ -94,6 +94,35 @@ class Tagging(PhotoCase):
         self.assertIsNone(result.refused)
         et.set_tags.assert_called()
 
+    def reading_only_what_is_asked(self, fields):
+        """ExifTool as it answers: only the fields asked for."""
+        _session, et = self.exiftool()
+        et.get_tags.return_value = None
+        et.get_tags.side_effect = lambda files, tags=None: [
+            {key: value for key, value in fields.items() if tags is None or key in tags}]
+        return et
+
+    def save(self, caption):
+        with mock.patch("tagpup.files.metadata.sync_title_to_filename", side_effect=lambda p, *rest: p):
+            return tagging.save_photo(self.lib.library, self.photo, caption, ["Places/Harbour"],
+                                      None, "exiftool", "{grouping} - {index} - {caption}")
+
+    def test_a_caption_held_only_in_exif_is_not_being_set(self):
+        # Another program's caption, in EXIF ImageDescription alone: the save that keeps
+        # it was refused as if setting it. Found in review of 3c04892.
+        self.reading_only_what_is_asked({"XMP:Subject": ["Places/Harbour"], "EXIF:ImageDescription": "Relays" + BELL})
+        self.assertIsNone(self.save("Relays" + BELL).refused)
+
+    def test_a_held_caption_saved_again_with_blanks_around_it_is_not_being_set(self):
+        # The file's captions were compared trimmed, the caller's as sent: a CLI or MCP
+        # save with a space around the caption was refused. Found in review of 3c04892.
+        self.reading_only_what_is_asked({"XMP:Subject": ["Places/Harbour"], "XMP:Description": "Relays" + BELL})
+        self.assertIsNone(self.save("  Relays" + BELL + " ").refused)
+
+    def test_a_new_caption_breaking_the_rule_is_still_refused(self):
+        self.reading_only_what_is_asked({"XMP:Subject": ["Places/Harbour"], "EXIF:ImageDescription": "Relays"})
+        self.assertEqual(self.save("Relays" + BELL).refused, CAPTION)
+
     def test_the_clis_write(self):
         session, _et = self.exiftool()
         result = tagging.write_suggestions(self.lib.library, [(self.photo, ["Places|Dunes"], "")], "exiftool")

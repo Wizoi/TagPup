@@ -48,11 +48,7 @@ This automatically sets up a Python virtual environment (`.venv`), upgrades pip,
 ### Step 2: Configure ExifTool
 Ensure ExifTool is installed on your machine.
 - Default expected path: `%USERPROFILE%\AppData\Local\Programs\ExifTool\exiftool.exe`
-- If you have ExifTool installed elsewhere, open the `config.ini` setup made from [config.example.ini](../config.example.ini) and change the `exiftool` path:
-  ```ini
-  [paths]
-  exiftool = C:\Path\To\Your\exiftool.exe
-  ```
+- Otherwise the one on PATH is used. To use another, open TagTuner on the library, choose **Library settings** in the gear, and under ExifTool choose **Change...** and give its path.
 
 ---
 
