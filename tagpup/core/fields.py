@@ -48,6 +48,20 @@ METADATA_FIELDS = [
 ]
 
 
+def scan_reads(field):
+    """Does the folder scan store `field` in a photo's raw_metadata? It asks ExifTool for
+    METADATA_FIELDS, and a name asked for bare is answered under every group that holds
+    it: CreateDate brings back EXIF:CreateDate and XMP:CreateDate. So a written field is
+    recorded in the row when its group's name or its bare name is asked for -- the rule
+    every recorder of a write goes by. XMP:CreateDate, which Shift Date Taken moves, was
+    left out when the rule was "named in METADATA_FIELDS", and the row kept the old date
+    (docs/findings.md, #270). EXIF:XPKeywords and EXIF:ImageDescription, which keyword
+    and caption writes set, are not read, and a row does not hold them."""
+    key = read_key(field)
+    bare = key.partition(":")[2] or key
+    return key in METADATA_FIELDS or bare in METADATA_FIELDS
+
+
 #: The fields a photo's camera is named from, the first it has: what Shift Date Taken
 #: chooses photos by. The TagPup page names cameras the same way, to offer them and to
 #: show which photos a shift is about, from a copy of these that
@@ -145,7 +159,7 @@ def record_keyword_fields(raw_meta, flat, hierarchical):
     read back just the same. A cleared field is removed, as a scan would find nothing.
     """
     for field, value in keyword_fields(flat, hierarchical).items():
-        if field not in METADATA_FIELDS:
+        if not scan_reads(field):
             continue
         bare = field.split(":", 1)[1]
         for name in (field, bare):
@@ -188,7 +202,7 @@ def record_date_taken(raw_meta, date_taken):
     """Make `raw_meta` say what a Date Taken write just put in the file -- the fields
     the scan reads, as record_keyword_fields does for keywords. Returns it."""
     for field, value in date_taken_fields(date_taken).items():
-        if field in METADATA_FIELDS:
+        if scan_reads(field):
             raw_meta[field] = value
     return raw_meta
 

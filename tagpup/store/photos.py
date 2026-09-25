@@ -234,7 +234,8 @@ def follow_fields(conn, photo_path, written, stat=None, before=None):
     the file done.
 
     As record_tags does for a keyword write, and for every field: raw_metadata takes each
-    field the scan reads (under its bare name too, where the scan stored one), a cleared
+    field the scan reads (fields.scan_reads; under its bare name too, where the scan
+    stored one), a cleared
     field taken out; the tags are derived again when a keyword field was written, the
     captions when a caption field was, document_id follows the identity. With `stat`, the
     file's new mtime and size, its vectors carried over `before`, its stamp just before
@@ -255,7 +256,7 @@ def follow_fields(conn, photo_path, written, stat=None, before=None):
     for field, value in written.items():
         key = fields.read_key(field)
         texts = fields.field_values(value)
-        if key in fields.METADATA_FIELDS:
+        if fields.scan_reads(key):
             bare = key.split(":", 1)[1]
             for name in (key, bare):
                 if name != key and name not in raw:
