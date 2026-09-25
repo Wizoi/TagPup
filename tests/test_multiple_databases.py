@@ -156,7 +156,7 @@ class TestMultipleDatabases(unittest.TestCase):
 
         # Caches isolation check: each library's server state is its own, filed by
         # the library rather than by a thread-local set by hand (tagpup.web.state).
-        from tagpup.web.state import PerLibrary
+        from tagpup.core.per_library import PerLibrary
 
         held = PerLibrary(lambda library: {})
         held.of(Library(db1_path))["shared_key"] = "value_1"

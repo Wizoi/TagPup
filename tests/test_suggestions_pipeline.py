@@ -41,7 +41,7 @@ from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.store import db, schema  # noqa: E402
-from tagpup.web.state import PerLibrary  # noqa: E402
+from tagpup.core.per_library import PerLibrary  # noqa: E402
 
 
 class _LibraryFixture(unittest.TestCase):

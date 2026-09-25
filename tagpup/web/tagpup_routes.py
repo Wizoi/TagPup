@@ -2,7 +2,7 @@
 its faces, the taxonomy, Suggest and the bulk writes.
 
 Each route is thin: it reads the request, calls a service, and shapes the reply. What
-this server keeps for a library between requests is a `tagpup.web.state.PerLibrary`
+this server keeps for a library between requests is a `tagpup.core.per_library.PerLibrary`
 here: the folder cache. The suggestion runs and the index queue keep theirs in
 `tagpup.jobs`, and the people cache is the store's, keyed by the tree's generation.
 

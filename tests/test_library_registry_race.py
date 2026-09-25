@@ -5,7 +5,7 @@ queues -- in a registry keyed by library, and made a library's entry with
 "if missing: registry[key] = {}". Two request threads reaching that line together
 each made one, and whatever the first had put in its copy was lost.
 
-The state is a tagpup.web.state.PerLibrary now, which makes a library's value under
+The state is a tagpup.core.per_library.PerLibrary now, which makes a library's value under
 a lock. A race cannot be timed in a test, so the first thread's make is held open
 while the second asks, which is what the second thread saw.
 """
@@ -13,7 +13,7 @@ import threading
 import unittest
 
 from tagpup.core.library import Library
-from tagpup.web.state import PerLibrary
+from tagpup.core.per_library import PerLibrary
 
 
 class LibraryRegistryRace(unittest.TestCase):

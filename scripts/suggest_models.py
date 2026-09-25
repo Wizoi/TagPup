@@ -21,7 +21,7 @@ import _root  # noqa: F401
 from tagpup import config as tagpup_config
 from tagpup.core import suggesting
 from tagpup.jobs import suggestions as suggestion_jobs
-from tagpup.web.state import PerLibrary
+from tagpup.core.per_library import PerLibrary
 
 logger = logging.getLogger(__name__)
 

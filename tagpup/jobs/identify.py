@@ -8,7 +8,7 @@ rather than recomputed per request (tagpup.store.faces.fingerprint). The reads a
 tagpup.services.identify's; this decides when to read again.
 
 One GridCache and one BuildProgress per library, held by the web layer
-(tagpup.web.state.PerLibrary) and handed in. The server kept them in dicts keyed by a
+(tagpup.core.per_library.PerLibrary) and handed in. The server kept them in dicts keyed by a
 thread-local "active library" (docs/findings.md, #44).
 """
 import collections
