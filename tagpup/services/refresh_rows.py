@@ -8,7 +8,12 @@ whose mtime or size changed:
 * they also left mtime and size as they were, so every folder scan re-read those
   photos with ExifTool, every time;
 * ExifTool's answers were decoded as cp1252 instead of UTF-8, so captions holding
-  "ü" were stored as "Ã¼" from files that were right all along.
+  "ü" were stored as "Ã¼" from files that were right all along;
+* a tag write on a row the index had never read (one Suggest made, path only) recorded
+  the keywords as its whole raw_metadata and stamped it with the file's mtime and size
+  (#247), so the scan trusted a row with no Date Taken. A read always records each field
+  under its bare name as well (`Subject` beside `XMP:Subject`); a row holding none is
+  "never read".
 
 This finds rows where the file on disk disagrees with the row -- mtime or size
 differ, the stored text shows UTF-8-read-as-cp1252, the tags re-derived from
@@ -58,6 +63,17 @@ def is_garbled(stored_json):
     return bool(MOJIBAKE.search(text))
 
 
+def never_read(raw_json):
+    """Does a row's raw_metadata hold only what writes recorded, never a read of its file?
+    ExifTool's fields are recorded by a read under both names, `XMP:Subject` and
+    `Subject`; the writes record only the first."""
+    try:
+        keys = json.loads(raw_json or "{}")
+    except Exception:
+        return False
+    return bool(keys) and all(":" in key for key in keys)
+
+
 def why_stale(row):
     """The reasons a row may not describe its file, [] if it looks right, or None if its
     file is gone."""
@@ -71,6 +87,8 @@ def why_stale(row):
         reasons.append("mtime/size")
     if is_garbled(captions_json) or is_garbled(raw_json):
         reasons.append("garbled text")
+    if never_read(raw_json):
+        reasons.append("never read")
     try:
         stored = set(json.loads(tags_json or "[]"))
         derived = set(extract_tags(json.loads(raw_json or "{}")))

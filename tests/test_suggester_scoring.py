@@ -214,6 +214,31 @@ class TestTimeDecayWeighting(SuggesterTestBase):
         self.assertAlmostEqual(scores["Holidays/Christmas"], round(near_w / total, 2), places=2)
         self.assertAlmostEqual(scores["Trips/Texas"], round(far_w / total, 2), places=2)
 
+    def test_the_pages_record_of_a_photo_gives_its_year_as_text(self):
+        """Suggest on a folder is given the page's record of each photo, whose year is
+        text ("2020", or "Unknown" for a photo with no date), while the neighbours come
+        from the library with a number: every photo of a folder failed on
+        "unsupported operand type(s) for -: 'str' and 'int'" and was suggested nothing."""
+        # As they arrive: the neighbours with the library's year (photos.year, a number),
+        # the target as the page gives it (its record's year, text). photo_meta keeps the
+        # year in raw metadata only, which is why no test saw this.
+        def dated(meta, year):
+            meta["year"] = year
+            return meta
+        neighbors = [
+            (0.9, dated(photo_meta("near.jpg", ["Holidays/Christmas"]), 2020)),
+            (0.9, dated(photo_meta("far.jpg", ["Trips/Texas"]), 2015)),
+        ]
+        as_number = self.scores(self.make_suggester(neighbors).suggest_for_photo(
+            "/nowhere/target.jpg", [1.0, 0.0, 0.0], target_metadata=dated(photo_meta("target.jpg"), 2020)))
+        as_text = self.scores(self.make_suggester(neighbors).suggest_for_photo(
+            "/nowhere/target.jpg", [1.0, 0.0, 0.0], target_metadata=dated(photo_meta("target.jpg"), "2020")))
+        self.assertEqual(as_number, as_text)
+        self.assertGreater(as_text["Holidays/Christmas"], as_text["Trips/Texas"])
+        undated = self.scores(self.make_suggester(neighbors).suggest_for_photo(
+            "/nowhere/target.jpg", [1.0, 0.0, 0.0], target_metadata=dated(photo_meta("target.jpg"), "Unknown")))
+        self.assertAlmostEqual(undated["Holidays/Christmas"], undated["Trips/Texas"], places=2)
+
     def test_no_decay_is_applied_without_a_target_year(self):
         neighbors = [
             (0.9, photo_meta("near.jpg", ["Holidays/Christmas"], year=2020)),

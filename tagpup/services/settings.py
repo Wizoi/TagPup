@@ -295,12 +295,15 @@ def change(library, values, acknowledged=()):
     return result
 
 
-def described(settings):
+def described(settings, app=None):
     """The settings as the dialog is made from them: each group, in order, with its title,
     whether it is locked and what changing it does, and each of its settings' declaration
-    (label, type, default, info, locked, consequences) with the library's value."""
+    (label, type, default, info, locked, consequences) with the library's value. With
+    `app` ("tagpup" or "tuner"), only the groups that app's gear shows."""
     groups = []
     for name, group in validation.SETTING_GROUPS.items():
+        if app is not None and group.get("app") != app:
+            continue
         members = [(key, declared) for key, declared in validation.SETTINGS.items() if declared["group"] == name]
         if not members:
             continue

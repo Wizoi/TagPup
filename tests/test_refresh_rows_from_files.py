@@ -52,7 +52,16 @@ class RefreshRowsFromFiles(unittest.TestCase):
         # The file was written after the row was: mtime disagrees.
         row("stale_stat", ["Activity/Running"], {"XMP:Subject": ["Activity/Running"]},
             mtime=999.0)
-        row("fine", ["Activity/Running"], {"XMP:Subject": ["Activity/Running"]})
+        row("fine", ["Activity/Running"], {"XMP:Subject": ["Activity/Running"],
+                                           "Subject": ["Activity/Running"]})
+        # Made by Suggest (path only), then tagged: the write recorded its keywords as
+        # the whole raw_metadata and stamped the file's mtime and size (#247).
+        self.files["never_read"] = os.path.join(self.dir, "never_read.jpg")
+        with open(self.files["never_read"], "wb") as handle:
+            handle.write(b"jpeg")
+        os.utime(self.files["never_read"], (1_000_000, 1_000_000))
+        row("never_read", ["Activity/Running"], {"XMP:Subject": ["Activity/Running"],
+                                                 "IPTC:Keywords": ["Activity/Running"]})
         # Right about its file, but indexed when every caption was listed twice.
         self.files["twice"] = os.path.join(self.dir, "twice.jpg")
         with open(self.files["twice"], "wb") as handle:
@@ -70,6 +79,9 @@ class RefreshRowsFromFiles(unittest.TestCase):
                                            "IPTC:Keywords": ["Activity/Running"]},
             self.files["stale_stat"]: {"XMP:Subject": ["Activity/Running"]},
             self.files["fine"]: {"XMP:Subject": ["Activity/Running"]},
+            self.files["never_read"]: {"XMP:Subject": ["Activity/Running"],
+                                       "IPTC:Keywords": ["Activity/Running"],
+                                       "EXIF:DateTimeOriginal": "2026:09:23 10:15:00"},
         }
 
     def tearDown(self):
@@ -108,11 +120,11 @@ class RefreshRowsFromFiles(unittest.TestCase):
     def test_only_rows_that_disagree_with_their_file_are_read(self):
         self.run_script()
         self.assertEqual(sorted(self.read), sorted(
-            self.files[n] for n in ("garbled", "stale_keywords", "stale_stat")))
+            self.files[n] for n in ("garbled", "stale_keywords", "stale_stat", "never_read")))
 
     def test_apply_records_what_the_files_hold(self):
         out = self.run_script("--apply")
-        self.assertIn("rows changed from their files: 3", out)
+        self.assertIn("rows changed from their files: 4", out)
         self.assertIn("rows with repeated captions removed: 1", out)
         rows = self.rows()
         # Whatever the indexer's extraction makes of the file (it currently lists
@@ -126,6 +138,17 @@ class RefreshRowsFromFiles(unittest.TestCase):
         again = self.run_script()
         self.assertIn("rows that may not describe their file: 0", again)
         self.assertIn("rows listing a caption more than once: 0", again)
+
+    def test_a_row_never_read_is_read_and_dated(self):
+        self.run_script("--apply")
+        conn = db.connect(db.readonly_uri(self.db), uri=True)
+        try:
+            raw, taken = conn.execute("SELECT raw_metadata, taken FROM photos WHERE path = ?",
+                                      (self.files["never_read"],)).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(json.loads(raw)["DateTimeOriginal"], "2026:09:23 10:15:00")
+        self.assertTrue(taken and taken.startswith("2026"), taken)
 
     def test_repeated_captions_are_fixed_from_the_row_without_reading_the_file(self):
         self.run_script("--apply")

@@ -42,17 +42,31 @@ class TheSettingsRoutes(unittest.TestCase):
                 self.assertEqual(answer["library"], "meadow")
                 self.assertTrue(answer["stamped"])
                 shown = {s["key"]: s for group in answer["groups"] for s in group["settings"]}
-                self.assertEqual(set(shown), set(validation.SETTINGS))
-                self.assertEqual(shown["faces.min_face_size"]["value"], "40")
+                # Each app's gear shows its own features' settings (owner, 2026-09-25).
+                mine = {key for key, d in validation.SETTINGS.items()
+                        if validation.SETTING_GROUPS[d["group"]]["app"] == kind}
+                self.assertEqual(set(shown), mine)
+                self.assertTrue(mine)
+                if kind == "tuner":
+                    self.assertEqual(shown["faces.min_face_size"]["value"], "40")
                 for key, declared in validation.SETTINGS.items():
+                    if key not in mine:
+                        continue
                     for field in ("label", "type", "default", "info", "locked", "consequences"):
                         self.assertEqual(shown[key][field], declared[field], (key, field))
                     self.assertEqual(shown[key]["kind"], validation.setting_kind(key))
-                self.assertEqual(client.get("/library/api/settings").get_json()["groups"][1]["settings"][0]["value"],
-                                 settings.DEFAULTS["faces.min_face_size"], "another library's value")
+                if kind == "tuner":
+                    other = {s["key"]: s["value"] for g in client.get("/library/api/settings").get_json()["groups"]
+                             for s in g["settings"]}
+                    self.assertEqual(other["faces.min_face_size"], settings.DEFAULTS["faces.min_face_size"],
+                                     "another library's value")
                 groups = {g["name"]: g for g in answer["groups"]}
-                self.assertTrue(groups["clip"]["locked"] and groups["faces"]["locked"] and groups["exiftool"]["locked"])
-                self.assertFalse(groups["suggest"]["locked"] or groups["renaming"]["locked"])
+                if kind == "tuner":
+                    self.assertEqual(set(groups), {"clip", "faces", "exiftool"})
+                    self.assertTrue(all(g["locked"] for g in groups.values()))
+                else:
+                    self.assertEqual(set(groups), {"suggest", "renaming"})
+                    self.assertFalse(any(g["locked"] for g in groups.values()))
 
     def test_a_change_is_journaled_on_that_library_alone(self):
         for kind, client, home in self.apps():
@@ -119,8 +133,10 @@ class TheSettingsRoutes(unittest.TestCase):
                 schema.ensure(home.library("quarry.db"))
                 home.write_old_config({"candidates": {"tags": "Kayak, Lighthouse"}})
                 shown = client.get("/quarry/api/settings").get_json()
-                words = [s for g in shown["groups"] for s in g["settings"] if s["key"] == "candidates.tags"][0]
-                self.assertEqual(words["value"], "Kayak, Lighthouse")
+                # Either app's asking stamps the library; TagPup's dialog shows the words.
+                if kind == "tagpup":
+                    words = [s for g in shown["groups"] for s in g["settings"] if s["key"] == "candidates.tags"][0]
+                    self.assertEqual(words["value"], "Kayak, Lighthouse")
                 self.assertEqual(rows(home.library("quarry.db"))["candidates.tags"], "Kayak, Lighthouse")
 
     def test_the_file_routes_use_the_librarys_exiftool(self):

@@ -123,3 +123,15 @@ class OneReadingOfTheDate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheYearOfARecord(unittest.TestCase):
+    """dates.record_year: a year is a number or nothing, whatever shape the record is."""
+
+    def test_a_number_a_numeral_and_nothing(self):
+        from tagpup.core import dates
+        self.assertEqual(2020, dates.record_year({"year": 2020}))
+        self.assertEqual(2020, dates.record_year({"year": "2020"}))
+        self.assertEqual(2020, dates.record_year({"year": " 2020 "}))
+        for missing in ("Unknown", "", None, "20x0"):
+            self.assertIsNone(dates.record_year({"year": missing}), missing)

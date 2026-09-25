@@ -217,3 +217,32 @@ describe("the settings dialog", () => {
     assert.ok(dialog.classList.contains("hidden"), "Escape on the page did not close it");
   });
 });
+
+describe("TagPup's gear has the settings of TagPup's own features", () => {
+  afterEach(() => closeAllApps());
+
+  test("Settings opens the dialog on TagPup's page, with the groups the server gives it", async (t) => {
+    const answer = settingsAnswer();
+    answer.groups = answer.groups.filter((g) => g.name === "suggest" || g.name === "renaming");
+    const server = new FakeServer()
+      .on("/api/apps", { this: "tagpup", apps: {} })
+      .on("/api/databases", { databases: [LIBRARY] })
+      .on("/api/tags", [])
+      .on("/api/people", [])
+      .on("/api/taxonomy/tree", [])
+      .on("/api/settings", answer);
+    const { window, document } = await loadApp("tagpup", { t, url: `http://localhost:8090/${LIBRARY}/`, server });
+    await flush(window, 6);
+    click(window, document.getElementById("btn-gear"));
+    await flush(window);
+    const item = document.querySelector('#gear-menu [data-action="library-settings"]');
+    assert.ok(item, "TagPup's gear has no Settings item");
+    click(window, item);
+    await flush(window, 6);
+    const dialog = document.getElementById("settings-modal");
+    assert.ok(dialog && !dialog.classList.contains("hidden"), "the settings dialog did not open");
+    const keys = [...dialog.querySelectorAll("[data-setting]")].map((e) => e.dataset.setting).sort();
+    assert.deepEqual(keys, ["candidates.tags", "renaming.format"]);
+    assert.ok(server.urls().some((u) => u.startsWith(`/${LIBRARY}/api/settings`)), "asked another library");
+  });
+});

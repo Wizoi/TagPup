@@ -16,6 +16,15 @@ to it; the two before it are kept, to go back to by editing current.txt.
 Start the apps with the launchers it writes: TagPup.cmd and TagTuner.cmd (one server
 for both; the second started opens its page in the running one), TagPup Runner.cmd,
 and TagPup CLI.cmd for indexing and the other CLI commands.
+
+It also makes shortcuts to TagPup and TagTuner, with their icons, on the Desktop and
+in the Start menu: a .cmd cannot be pinned to the taskbar or given an icon, and a
+shortcut can.
+
+Each launcher first runs this with --if-changed: when the checkout has moved to
+another commit and holds no uncommitted code, that commit is installed before the app
+starts, so a merge reaches the apps at their next start. A checkout in the middle of
+an edit is never installed; the version already installed starts instead.
 """
 import argparse
 import datetime
@@ -47,10 +56,67 @@ LAUNCHER = (
     "@echo off\r\n"
     "rem Written by scripts/install_app.py. Runs the installed {script} with this home.\r\n"
     'set "TAGPUP_HOME={home}"\r\n'
-    'set /p TAGPUP_VERSION=<"%~dp0current.txt"\r\n'
     'cd /d "%TAGPUP_HOME%"\r\n'
+    'if exist "%TAGPUP_HOME%\\scripts\\install_app.py" '
+    '"{python}" "%TAGPUP_HOME%\\scripts\\install_app.py" --apply --if-changed --to "%~dp0."\r\n'
+    'set /p TAGPUP_VERSION=<"%~dp0current.txt"\r\n'
     '"{python}" "%~dp0versions\\%TAGPUP_VERSION%\\{script}" {args} %*\r\n'
 )
+
+
+#: Shortcut -> (the launcher it runs, its icon in web/common/icons, what it says).
+SHORTCUTS = {
+    "TagPup.lnk": ("TagPup.cmd", "tagpup.ico", "Tag the photos of a folder"),
+    "TagTuner.lnk": ("TagTuner.cmd", "tagtuner.ico", "Tune a photo library's tags and faces"),
+}
+
+#: Makes one shortcut; its values come in the environment, so no path is quoted here.
+SHORTCUT_SCRIPT = (
+    "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:TAGPUP_LNK); "
+    "$s.TargetPath = $env:TAGPUP_TARGET; $s.Arguments = $env:TAGPUP_ARGS; "
+    "$s.WorkingDirectory = $env:TAGPUP_WORKDIR; $s.IconLocation = $env:TAGPUP_ICON; "
+    "$s.Description = $env:TAGPUP_DESC; $s.Save()"
+)
+
+
+def shortcut_folders():
+    """The Desktop and the Start menu's Programs folder, wherever Windows keeps them
+    (a Desktop moved into OneDrive, say)."""
+    script = "[Environment]::GetFolderPath('Desktop'); [Environment]::GetFolderPath('Programs')"
+    try:
+        out = processes.run(["powershell", "-NoProfile", "-Command", script],
+                            capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def make_shortcuts(destination, folders, say=print):
+    """Put the icons beside the launchers and a shortcut to each app in each of
+    `folders`: cmd.exe running the launcher, which can be pinned to the taskbar.
+    Returns the shortcuts made."""
+    made = []
+    for icon in {icon for _cmd, icon, _desc in SHORTCUTS.values()}:
+        shutil.copyfile(os.path.join(REPO_ROOT, "web", "common", "icons", icon),
+                        os.path.join(destination, icon))
+    cmd = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe")
+    for folder in folders:
+        for name, (launcher, icon, description) in SHORTCUTS.items():
+            link = os.path.join(folder, name)
+            env = dict(os.environ, TAGPUP_LNK=link, TAGPUP_TARGET=cmd,
+                       TAGPUP_ARGS='/c "%s"' % os.path.join(destination, launcher),
+                       TAGPUP_WORKDIR=destination, TAGPUP_ICON=os.path.join(destination, icon),
+                       TAGPUP_DESC=description)
+            try:
+                processes.run(["powershell", "-NoProfile", "-Command", SHORTCUT_SCRIPT],
+                              env=env, capture_output=True, text=True, timeout=60)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            if os.path.exists(link):
+                made.append(link)
+            else:
+                say("could not make the shortcut %s" % link)
+    return made
 
 
 def default_destination():
@@ -77,6 +143,41 @@ def version_name(now=None):
     commit = git("rev-parse", "--short", "HEAD") or "nogit"
     dirty = "-uncommitted" if git("status", "--porcelain", "--untracked-files=no") else ""
     return "%s-%s%s" % (stamp, commit, dirty)
+
+
+def stale(current, commit, dirty):
+    """Should the installed version `current` be replaced by the checkout at `commit`?
+    Only when the checkout's code is all committed (not `dirty`) and the version came
+    from another commit, or from this one with uncommitted code."""
+    if not commit or dirty:
+        return False
+    if not current:
+        return True
+    parts = current.rstrip("+").split("-")
+    return len(parts) < 3 or parts[2] != commit or "uncommitted" in parts[3:]
+
+
+def update(destination, home, python, say=print):
+    """Install the checkout's commit if the installed version is `stale`; what a
+    launcher runs before it starts its app. Never stops the app from starting: a
+    failed install leaves the version there was. Returns the version installed, or None."""
+    commit = git("rev-parse", "--short", "HEAD")
+    dirty = bool(git("status", "--porcelain", "--untracked-files=no"))
+    current = read_current(destination)
+    if not stale(current, commit, dirty):
+        if dirty and stale(current, commit, False):
+            say("TagPup: the checkout has uncommitted changes, so %s was not installed; "
+                "starting the installed version." % commit)
+        return None
+    say("TagPup: installing %s before starting..." % commit)
+    try:
+        name, _removed = install(destination, home, python, apply=True, say=lambda line: None)
+    except Exception as error:   # the app still starts, from the version there was
+        say("TagPup: could not install (%s); starting the installed version." % error)
+        return None
+    say("TagPup: installed %s. An app already running keeps the old code until it is "
+        "closed and started again." % name)
+    return name
 
 
 def is_link(path):
@@ -111,8 +212,9 @@ def to_remove(existing, new, previous):
     return [name for name in ordered[:-KEEP] if name not in (new, previous)]
 
 
-def install(destination, home, python, name=None, apply=False, say=print):
-    """Install a new version. Returns (the version's name, the versions removed)."""
+def install(destination, home, python, name=None, apply=False, say=print, shortcuts_in=()):
+    """Install a new version, and make shortcuts to the apps in each folder of
+    `shortcuts_in`. Returns (the version's name, the versions removed)."""
     name = name or version_name()
     folder = os.path.join(destination, "versions", name)
     while os.path.exists(folder):   # two installs in one second
@@ -129,6 +231,8 @@ def install(destination, home, python, name=None, apply=False, say=print):
         say("replacing    %s" % previous)
     for old in removing:
         say("removing     %s" % os.path.join(destination, "versions", old))
+    for place in shortcuts_in:   # not `folder`: that is the version's, copied into below
+        say("shortcuts    %s" % ", ".join(os.path.join(place, n) for n in SHORTCUTS))
     if not apply:
         say("\nDry run. Nothing was changed. Re-run with --apply to install.")
         return name, []
@@ -144,6 +248,8 @@ def install(destination, home, python, name=None, apply=False, say=print):
     with open(current + ".writing", "w", encoding="utf-8") as handle:
         handle.write(name)
     os.replace(current + ".writing", current)
+    if shortcuts_in:
+        make_shortcuts(destination, shortcuts_in, say)
 
     removed = []
     for old in removing:
@@ -164,14 +270,23 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--apply", action="store_true", help="install; the default is a dry run")
+    parser.add_argument("--if-changed", action="store_true",
+                        help="with --apply: install only if the checkout's commit is not the one "
+                             "installed and it holds no uncommitted code (what the launchers run)")
     parser.add_argument("--to", default=default_destination(),
                         help="where to install (default: %(default)s)")
     parser.add_argument("--home", default=tagpup_config.home(),
                         help="TAGPUP_HOME for the installed apps (default: %(default)s)")
     parser.add_argument("--python", default=default_python(),
                         help="the interpreter the launchers use (default: %(default)s)")
+    parser.add_argument("--no-shortcuts", action="store_true",
+                        help="make no shortcuts on the Desktop or in the Start menu")
     args = parser.parse_args(argv)
-    install(os.path.abspath(args.to), os.path.abspath(args.home), args.python, apply=args.apply)
+    if args.if_changed and args.apply:
+        update(os.path.abspath(args.to), os.path.abspath(args.home), args.python)
+        return 0
+    install(os.path.abspath(args.to), os.path.abspath(args.home), args.python, apply=args.apply,
+            shortcuts_in=() if args.no_shortcuts else shortcut_folders())
     return 0
 
 
