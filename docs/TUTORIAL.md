@@ -1,7 +1,7 @@
 # Getting Started with TagPup: From Raw Pixels to Organized Memories
 
 ---
-[◀ Back to README](README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
+[◀ Back to README](../README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
 ---
 
 Welcome to TagPup! This guide will walk you through the journey of transforming a raw, untagged folder of images into a deeply organized library using AI-powered inference.
@@ -29,11 +29,11 @@ Launch the **TagPup GUI** to scan your initial training folder:
 ```
 Open the **Taxonomy Manager** modal to organize category nodes. The default categories include **People** and **Pets** (which are both pre-configured to allow face-matching). Because of **Tree Propagation**, updating a category path here automatically cascades to update every photo using that tag on your hard drive:
 
-![Taxonomy Manager Tree Modal](docs/images/taxonomy_manager.png)
+![Taxonomy Manager Tree Modal](images/taxonomy_manager.png)
 
 When entering tags for photos, the **Resolution Prompt** modal helps you place the tag under the correct branch or resolve ambiguous names:
 
-![New Tag Placement Resolution Prompt](docs/images/tag_resolution_prompt.png)
+![New Tag Placement Resolution Prompt](images/tag_resolution_prompt.png)
 
 ---
 
@@ -54,7 +54,7 @@ Open **TagTuner** to view unmatched faces detected during the indexing step and 
 ```
 Clicking on a photo on the left sidebar opens its face cards on the right. You can assign names, view similar match recommendations, or create new people/pet profiles in bulk. The default `Pets` tag category functions identically to the `People` tag category for facial matching:
 
-![TagTuner Face Matching Workspace](docs/images/tagtuner_workspace.png)
+![TagTuner Face Matching Workspace](images/tagtuner_workspace.png)
 
 ---
 
@@ -67,7 +67,7 @@ Select a photo in the grid and click the **Get AI Suggestions** button in the si
 - **Face Match Boost:** If a face belonging to `Buddy` (under `Pets/Buddy`) is recognized, the system boosts the confidence of his associated tags to 100%.
 - **Visual Similarity:** If the scenery matches your previous "Backyard" images, it automatically suggests the `Garden` tag.
 
-![TagPup GUI Main Workspace](docs/images/tagpup_main_screen.png)
+![TagPup GUI Main Workspace](images/tagpup_main_screen.png)
 
 ### 2. Handling Certainty: The Confidence Tiers
 TagPup calculates confidence scores to keep you in control:
@@ -117,4 +117,4 @@ After running this script, start the servers pointing to `test_photo_index.db` t
 *   **Slow processing?** The first time you index, TagPup must generate "embeddings." This is a one-time cost; subsequent runs are nearly instant because of the **Smart Skip** logic.
 
 ---
-[◀ Back to README](README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
+[◀ Back to README](../README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)

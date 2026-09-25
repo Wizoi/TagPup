@@ -180,7 +180,7 @@ def run_screenshot_flow():
             print(f"Captured: {tuner_path}")
             
             browser.close()
-            print("\nSuccessfully regenerated all 4 screenshots for TUTORIAL.md!")
+            print("\nSuccessfully regenerated all 4 screenshots for docs/TUTORIAL.md!")
             
     except Exception as e:
         print(f"Error during flow: {e}", file=sys.stderr)

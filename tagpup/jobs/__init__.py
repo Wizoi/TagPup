@@ -1,1 +1,1 @@
-"""Background work, and when it runs: queues, status and cancelling (ARCHITECTURE.md)."""
+"""Background work, and when it runs: queues, status and cancelling (docs/ARCHITECTURE.md)."""

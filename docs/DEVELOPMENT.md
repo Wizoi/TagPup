@@ -1,13 +1,13 @@
 # Working on TagPup
 
 ---
-[◀ Back to README](README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
+[◀ Back to README](../README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
 ---
 
 Notes for changing this codebase: how to run things, how the tests work, and the traps
 that have cost real time. The specs describe what the system does; this describes what
 it is like to work on. [ARCHITECTURE.md](ARCHITECTURE.md) describes where the code is
-going, and [docs/findings.md](docs/findings.md) tracks known problems.
+going, and [findings.md](findings.md) tracks known problems.
 
 ## Running things
 
@@ -63,7 +63,7 @@ import.
 with a `TAGPUP_HOME` of its own. A file that named the checkout's own `data/` or
 `config.ini` -- or imported a test file that did -- would run in a lane of its own, one
 after another; none does since the tests moved into homes of their own
-(docs/findings.md, #14), and `tests/test_tests_have_homes_of_their_own.py` keeps it so.
+(findings.md, #14), and `tests/test_tests_have_homes_of_their_own.py` keeps it so.
 
 Use the glob for the frontend suite. `node --test tests/frontend/` treats `harness.mjs`
 as a test file, finds no tests in it, and reports a failure that is purely the
@@ -210,7 +210,7 @@ up first through `db.backup()`: SQLite's backup API, into `backups/` beside the 
 | `scripts/backfill_document_ids.py` | Gives already-indexed photos the identity new ones get. Resumable. |
 | `scripts/relink_renamed_photos.py` | Re-points index rows at photos renamed under them, by identity then `PreservedFileName`. |
 
-Retired on 2026-09-24 with nothing left to do on either library, and in git's history: `canonicalize_paths.py`, `repair_bare_person_tags.py`, `tidy_exclusion_reasons.py`, `restore_face_names.py` and `cache_all_crops.py` (docs/findings.md, #54).
+Retired on 2026-09-24 with nothing left to do on either library, and in git's history: `canonicalize_paths.py`, `repair_bare_person_tags.py`, `tidy_exclusion_reasons.py`, `restore_face_names.py` and `cache_all_crops.py` (findings.md, #54).
 
 ## Things that were true and are worth not re-learning
 

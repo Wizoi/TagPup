@@ -6,7 +6,7 @@ one action, not a wait beside the machine between each.
 
 TagTuner had this queue. TagPup started a thread per folder, so two folders asked for
 together were indexed at once. A process has one queue per library, which lasts as long
-as the process: nothing about it is saved yet (ARCHITECTURE.md, the `jobs` table).
+as the process: nothing about it is saved yet (docs/ARCHITECTURE.md, the `jobs` table).
 """
 import logging
 import os

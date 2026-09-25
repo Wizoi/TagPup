@@ -3,7 +3,7 @@
 Recording what a write did to a file -- its tags, or only its new mtime and size -- or
 what was read back from it, moving renamed photos' rows, forgetting a deleted photo,
 and what PhotoIndex reads and records when it indexes. The servers' queries move here
-in phase 3 (ARCHITECTURE.md).
+in phase 3 (docs/ARCHITECTURE.md).
 """
 import json
 import logging

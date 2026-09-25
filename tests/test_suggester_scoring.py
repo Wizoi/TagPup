@@ -8,7 +8,7 @@ Everything here runs against fakes: a stub index that returns canned neighbours 
 stub embedder that returns fixed vectors, so the arithmetic is deterministic and no
 model is ever loaded. The constants asserted (5-year half-life, +0.20 path boost,
 0.40/0.20/0.10 consensus bands, the 0.23 zero-shot floor) are the ones documented in
-SPEC_TAGPUP_CLI.md section 5.
+docs/SPEC_TAGPUP_CLI.md section 5.
 """
 import os
 import shutil

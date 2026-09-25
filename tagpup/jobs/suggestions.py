@@ -3,7 +3,7 @@
 What each photo was offered is kept in the library (tagpup.store.suggestions), by the
 photo's id: a deleted photo takes its suggestions, and a renamed one keeps them
 (docs/findings.md, #64). A run's own state -- preparing, running, how far -- stays in
-this process until background jobs have a home of their own (ARCHITECTURE.md). A folder
+this process until background jobs have a home of their own (docs/ARCHITECTURE.md). A folder
 with saved suggestions and no run here says "completed", with them.
 
 TagPup held all of this on its request handler; the run is here now. What it runs -- the

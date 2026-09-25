@@ -1,4 +1,4 @@
-"""Imports inside tagpup/ only go down the layers in ARCHITECTURE.md.
+"""Imports inside tagpup/ only go down the layers in docs/ARCHITECTURE.md.
 
 The two servers grew by importing whatever they needed from wherever it was, until
 each carried its own copy of what a photo library is: 51 function names defined in
@@ -9,7 +9,7 @@ goes back up. It also fails on a bare import of an old module in scripts/ (`impo
 db`): those resolve only through sys.path, and code in the package must not depend on
 code outside it.
 
-A new layer is added to MAY_IMPORT and to ARCHITECTURE.md together; a package that is
+A new layer is added to MAY_IMPORT and to docs/ARCHITECTURE.md together; a package that is
 in neither fails.
 """
 import ast
@@ -23,7 +23,7 @@ from shipped_sources import LAUNCHERS, ROOT, python_sources  # noqa: E402
 
 #: What each layer may import from tagpup besides itself. Core is pure rules, so every
 #: layer may import it. Config is read where a program starts -- the entry points --
-#: and what it says is passed down. ARCHITECTURE.md, "Layers".
+#: and what it says is passed down. docs/ARCHITECTURE.md, "Layers".
 MAY_IMPORT = {
     "core": set(),
     "config": set(),
@@ -96,7 +96,7 @@ def violations(relative_path, source):
         if own is None:
             found.append("tagpup/__init__.py imports %s; importing tagpup must stay free" % target)
         elif own not in MAY_IMPORT:
-            found.append("%s is not a layer in MAY_IMPORT or ARCHITECTURE.md" % own)
+            found.append("%s is not a layer in MAY_IMPORT or docs/ARCHITECTURE.md" % own)
         elif other not in MAY_IMPORT[own]:
             found.append("%s imports %s: %s may import only %s"
                          % (name, target, own, sorted(MAY_IMPORT[own]) or "itself"))
@@ -115,7 +115,7 @@ class ImportsGoDown(unittest.TestCase):
             with open(os.path.join(ROOT, relative), encoding="utf-8") as handle:
                 source = handle.read()
             problems += ["%s: %s" % (relative, v) for v in violations(relative, source)]
-        self.assertEqual(problems, [], "\n\nImports go down the layers in ARCHITECTURE.md:\n\n"
+        self.assertEqual(problems, [], "\n\nImports go down the layers in docs/ARCHITECTURE.md:\n\n"
                          + "\n".join(problems))
 
     def test_every_layer_is_in_the_table(self):
@@ -127,7 +127,7 @@ class ImportsGoDown(unittest.TestCase):
             elif entry.endswith(".py") and entry != "__init__.py":
                 present.add(os.path.splitext(entry)[0])
         self.assertEqual(sorted(present - set(MAY_IMPORT)), [],
-                         "in tagpup/ but not in the layer table here or in ARCHITECTURE.md")
+                         "in tagpup/ but not in the layer table here or in docs/ARCHITECTURE.md")
 
     def test_the_package_is_checked(self):
         """A guard that finds no files passes forever."""

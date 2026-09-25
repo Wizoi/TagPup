@@ -8,7 +8,7 @@ each photo's people as they were (docs/findings.md, #63).
 The names a photo's faces were given, turning their boxes when a photo is turned, a
 face's crop, a write to the table that the Identify Faces grids can account for, and
 what indexing and clustering read and record. The servers' queries move here in
-phase 3 (ARCHITECTURE.md).
+phase 3 (docs/ARCHITECTURE.md).
 """
 import contextlib
 import json

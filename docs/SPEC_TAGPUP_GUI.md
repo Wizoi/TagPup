@@ -1,7 +1,7 @@
 # TagPup GUI — Folder Tagging & Metadata Editor Specification
 
 ---
-[◀ Back to README](README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
+[◀ Back to README](../README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
 ---
 
 This document records the design, specifications, prerequisites, and instructions for the TagPup Graphical User Interface (Web Workspace) and its matching tag taxonomy mechanics.
@@ -197,12 +197,12 @@ to be sitting on `<body>`.
 
 ### `GET` Endpoints
 - `/api/databases`: Returns `{"databases": list, "selected": string}` — the selectable database names (without the `.db` suffix) and the current default from `config.ini`. Test databases and internal ones (validation, startup, embedding-cache) are excluded.
-- `/api/folder/index-status?path=<folder_path>`: Returns how far indexing a folder has got, as `{"status": string, "percent": int, "message": string, "folder": string}`. Status values are `queued`, `running`, `completed`, `failed` or `cancelled`. A folder not asked about in this session reports `completed`, with the message `Ready` and no `folder`. The queue belongs to this server's process (`tagpup.jobs.indexing`), so an index started in TagTuner does not show here until one process serves both apps (docs/findings.md, #34).
+- `/api/folder/index-status?path=<folder_path>`: Returns how far indexing a folder has got, as `{"status": string, "percent": int, "message": string, "folder": string}`. Status values are `queued`, `running`, `completed`, `failed` or `cancelled`. A folder not asked about in this session reports `completed`, with the message `Ready` and no `folder`. The queue belongs to this server's process (`tagpup.jobs.indexing`), so an index started in TagTuner does not show here until one process serves both apps (findings.md, #34).
 - `/api/browse-folder`: Invokes native folder dialog and returns selected path.
 - `/api/autocomplete-folder?path=<path_prefix>`: Returns autocomplete folder path suggestions based on Windows folder hierarchies.
 - `/api/folder/scan?path=<path>`: Scans folder and returns JSON array of photos.
 - `/api/folder/suggest-status?path=<folder_path>`: Returns the status, counts, and computed suggestions of the background tag suggest thread. Status values are `idle`, `preparing`, `running`, `completed`, or `error`.
-- `/api/photo-faces?path=<photo_path>`: Returns `{"faces": list, "total": int, "unmatched": int}` for the faces detected on one photo. Each entry carries its box, any assigned `name`, whether it is `excluded`, and for unidentified faces the closest `suggestion` with its `similarity` — measured against the nearest single resolved face of that person, the same way TagTuner's suggestion list measures it. A suggestion is only offered at 0.70 similarity or above (`tagpup.core.clustering.OFFER_A_NAME`); below that the nearest name is noise rather than a candidate, and two strangers in three reached the 0.5 this used (docs/findings.md, #75). Named faces are listed first, then by confidence, then by size.
+- `/api/photo-faces?path=<photo_path>`: Returns `{"faces": list, "total": int, "unmatched": int}` for the faces detected on one photo. Each entry carries its box, any assigned `name`, whether it is `excluded`, and for unidentified faces the closest `suggestion` with its `similarity` — measured against the nearest single resolved face of that person, the same way TagTuner's suggestion list measures it. A suggestion is only offered at 0.70 similarity or above (`tagpup.core.clustering.OFFER_A_NAME`); below that the nearest name is noise rather than a candidate, and two strangers in three reached the 0.5 this used (findings.md, #75). Named faces are listed first, then by confidence, then by size.
 - `/api/face-crop?id=<face_id>`: Serves the face thumbnail as JPEG, cropping from the original photo and caching the result in `faces.crop_image` when it is not already stored.
 - `/api/photo-file?path=<photo_path>`: Serves the photo image binary (supports resizing via `size` parameter).
 - `/api/tags`: Returns all autocomplete-visible tags.
@@ -249,17 +249,17 @@ to be sitting on `<body>`.
 ### 1. Hierarchical Tag Taxonomy Tree Manager
 Displays a clean, collapsed tree of tag hierarchies. Users can manage category attributes, add children, rename tags, or clean up deletion dependencies.
 
-![Taxonomy Tree Manager](docs/images/taxonomy_manager.png)
+![Taxonomy Tree Manager](images/taxonomy_manager.png)
 
 ### 2. Interactive New Tag Placement & Resolution Prompt
 Triggers when entering a new keyword tag. Allows the user to select which category it belongs under or create a new root category.
 
-![New Tag Resolution Prompt](docs/images/tag_resolution_prompt.png)
+![New Tag Resolution Prompt](images/tag_resolution_prompt.png)
 
 ### 3. TagPup GUI Workspace Main Screen
 Displays the primary tagging interface containing the scanned photo thumbnail grid, interactive selections, and the metadata editing panel on the right.
 
-![TagPup GUI Main Screen](docs/images/tagpup_main_screen.png)
+![TagPup GUI Main Screen](images/tagpup_main_screen.png)
 
 ---
-[◀ Back to README](README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
+[◀ Back to README](../README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)

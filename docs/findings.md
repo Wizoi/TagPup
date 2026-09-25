@@ -9,7 +9,7 @@ This file records every review finding, bug report and known problem: what was f
   - `not reproduced`: say what was tried.
   - `left as is`: say why.
   - `tabled`: say until when.
-  - `planned`: give the phase in [ARCHITECTURE.md](../ARCHITECTURE.md).
+  - `planned`: give the phase in [ARCHITECTURE.md](ARCHITECTURE.md).
 - **Decisions the owner makes** are marked *(owner, date)*. Don't reopen them without a new fact.
 - **Never put real names here.** The library is photographs of real people.
 

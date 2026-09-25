@@ -697,7 +697,7 @@ class TestPhotosListing(TunerAPITestBase):
         show_matched=true returns the same rows as show_matched=false. If this endpoint
         ever learns to honour the parameter, this test should fail and be replaced by one
         asserting that matched photos ARE returned -- and the Matched Photos Toggle note
-        in SPEC_TAGTUNER.md should be removed at the same time.
+        in docs/SPEC_TAGTUNER.md should be removed at the same time.
         """
         matched = self.add_photo(self.make_photo_file("matched.jpg"), people=["Jane Doe"])
         self.add_face(matched, unit_vector(112), name="Jane Doe")

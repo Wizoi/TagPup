@@ -1,7 +1,7 @@
 """What a library holds, and whether it keeps its own rules: read-only, counts first.
 
 tools/doctor.py reports these, scripts/verify_workflow.py compares them before and after
-a run, and the MCP phase (ARCHITECTURE.md) is to answer them as tools. Each check returns
+a run, and the MCP phase (docs/ARCHITECTURE.md) is to answer them as tools. Each check returns
 how many rows break the rule and a few of them, so a report can say how much without
 saying whose.
 """
@@ -160,7 +160,7 @@ def without_a_vector(conn, model):
 def missing_files(conn):
     """Rows whose file is not on disk, as (folder, rows, whether the folder is there).
     Reported, not broken: a folder on an unplugged drive looks the same as a deleted one
-    (ARCHITECTURE.md, phase 8)."""
+    (docs/ARCHITECTURE.md, phase 8)."""
     by_folder = collections.Counter()
     for (path,) in conn.execute("SELECT path FROM photos"):
         if not os.path.exists(path):

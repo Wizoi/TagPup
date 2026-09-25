@@ -62,7 +62,7 @@ The **TagPup GUI** is a lightweight, responsive local web interface designed to 
 *   **Interactive Tag Resolution**: When adding a new tag or person, TagPup displays placement prompts. It prompts which root category the tag belongs to, prevents duplicates, and resolves ambiguous leaf names.
 *   **Camera Time-Shifting**: Toggles a clock adjustment panel to offset capture timestamps recursively for specific camera models.
 
-*For details on the interface layout, shortcuts, and mechanics, refer to the [TagPup GUI Specification](SPEC_TAGPUP_GUI.md).*
+*For details on the interface layout, shortcuts, and mechanics, refer to the [TagPup GUI Specification](docs/SPEC_TAGPUP_GUI.md).*
 
 ---
 
@@ -76,14 +76,14 @@ The **AI CLI Engine** is the underlying machine learning backend that indexes vi
 *   **Automated Tag Suggestion**: Infers keywords using visual similarity, decay-weighted capture timestamps, path hints, and event-level consensus.
 *   **Face Profile Self-Tuning**: Clusters face vectors using **DBSCAN** and labels identity centroids automatically by analyzing photo metadata. Recognizes known faces in untagged images to boost tagging predictions.
 
-*For CLI commands references, algorithmic rules, and parameters, refer to the [CLI Specification](SPEC_TAGPUP_CLI.md).*
+*For CLI commands references, algorithmic rules, and parameters, refer to the [CLI Specification](docs/SPEC_TAGPUP_CLI.md).*
 
 ---
 
 ## 🚀 Getting Started
 
 > [!TIP]
-> For a conceptual, step-by-step walkthrough of how TagPup works—from importing photos to auto-matching faces and using AI suggestions—check out the [Getting Started Tutorial](TUTORIAL.md).
+> For a conceptual, step-by-step walkthrough of how TagPup works—from importing photos to auto-matching faces and using AI suggestions—check out the [Getting Started Tutorial](docs/TUTORIAL.md).
 
 ### 📋 Preconditions
 - **OS:** Windows 10 or 11
@@ -126,14 +126,14 @@ The **AI CLI Engine** is the underlying machine learning backend that indexes vi
 ## 📚 Project Documentation Directory
 
 For guides, tutorials, specifications, and schemas:
-*   📖 [Getting Started Tutorial](TUTORIAL.md): High-level concept tutorial on building your photo taxonomy and utilizing confidence-based AI suggestions.
-*   💡 [Usage & CLI Examples](EXAMPLE.md): Practical commands cheat sheet, setup instructions, indexing, clustering, and searching walkthroughs.
-*   🖥️ [TagPup GUI Specification](SPEC_TAGPUP_GUI.md): Detailed design guidelines, folder browser actions, tag taxonomy tree manager, and metadata resolution prompts.
-*   🎯 [TagTuner UI Specification](SPEC_TAGTUNER.md): Face tuning grid mechanics, autocompletes, DBSCAN identity matching, and profile workflows.
-*   🐶 [AI CLI Engine Specification](SPEC_TAGPUP_CLI.md): Machine learning architecture, CLIP embeddings, consensus scoring formulas, and CLI parameters.
-*   🗄️ [Database Specification](DATABASE.md): SQLite schema table structures and visual Entity-Relationship/Data-Flow diagrams.
-*   🛠️ [Development Notes](DEVELOPMENT.md): running the suites, how the jsdom harness works, and the traps that have cost real time.
-*   🏗️ [Architecture](ARCHITECTURE.md): the layers the code is moving to, where each module goes, and the phases that get it there.
+*   📖 [Getting Started Tutorial](docs/TUTORIAL.md): High-level concept tutorial on building your photo taxonomy and utilizing confidence-based AI suggestions.
+*   💡 [Usage & CLI Examples](docs/EXAMPLE.md): Practical commands cheat sheet, setup instructions, indexing, clustering, and searching walkthroughs.
+*   🖥️ [TagPup GUI Specification](docs/SPEC_TAGPUP_GUI.md): Detailed design guidelines, folder browser actions, tag taxonomy tree manager, and metadata resolution prompts.
+*   🎯 [TagTuner UI Specification](docs/SPEC_TAGTUNER.md): Face tuning grid mechanics, autocompletes, DBSCAN identity matching, and profile workflows.
+*   🐶 [AI CLI Engine Specification](docs/SPEC_TAGPUP_CLI.md): Machine learning architecture, CLIP embeddings, consensus scoring formulas, and CLI parameters.
+*   🗄️ [Database Specification](docs/DATABASE.md): SQLite schema table structures and visual Entity-Relationship/Data-Flow diagrams.
+*   🛠️ [Development Notes](docs/DEVELOPMENT.md): running the suites, how the jsdom harness works, and the traps that have cost real time.
+*   🏗️ [Architecture](docs/ARCHITECTURE.md): the layers the code is moving to, where each module goes, and the phases that get it there.
 
 ---
 

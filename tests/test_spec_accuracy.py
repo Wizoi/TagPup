@@ -23,11 +23,11 @@ sys.path.insert(0, WORKSPACE_DIR)
 SERVER_SPEC_PAIRS = (
     (
         os.path.join(WORKSPACE_DIR, "scripts", "tagpup_server.py"),
-        os.path.join(WORKSPACE_DIR, "SPEC_TAGPUP_GUI.md"),
+        os.path.join(WORKSPACE_DIR, "docs/SPEC_TAGPUP_GUI.md"),
     ),
     (
         os.path.join(WORKSPACE_DIR, "scripts", "tuner_server.py"),
-        os.path.join(WORKSPACE_DIR, "SPEC_TAGTUNER.md"),
+        os.path.join(WORKSPACE_DIR, "docs/SPEC_TAGTUNER.md"),
     ),
 )
 
@@ -139,7 +139,7 @@ class TestSpecMatchesImplementation(unittest.TestCase):
 
 
 class TestSpecDatabaseSchemaMatchesCode(unittest.TestCase):
-    """The schema tables in DATABASE.md must match what a new library actually has.
+    """The schema tables in docs/DATABASE.md must match what a new library actually has.
 
     Read from a library made by tagpup.store.schema, not from the text of a module: the
     schema was made in four places, and a regular expression over one of them saw only
@@ -168,7 +168,7 @@ class TestSpecDatabaseSchemaMatchesCode(unittest.TestCase):
                 conn.close()
         finally:
             shutil.rmtree(folder, ignore_errors=True)
-        with open(os.path.join(WORKSPACE_DIR, "DATABASE.md"), encoding="utf-8") as f:
+        with open(os.path.join(WORKSPACE_DIR, "docs/DATABASE.md"), encoding="utf-8") as f:
             cls.database_md = f.read()
 
     def test_documented_tables_are_the_tables_created(self):
@@ -177,7 +177,7 @@ class TestSpecDatabaseSchemaMatchesCode(unittest.TestCase):
         self.assertEqual(
             set(self.columns),
             documented,
-            f"DATABASE.md tables {sorted(documented)} do not match "
+            f"docs/DATABASE.md tables {sorted(documented)} do not match "
             f"the tables of a new library {sorted(self.columns)}",
         )
 
@@ -196,10 +196,10 @@ class TestSpecDatabaseSchemaMatchesCode(unittest.TestCase):
             missing = columns - documented
             extra = documented - columns
             if missing:
-                problems.append(f"DATABASE.md `{table}` is missing column(s) {sorted(missing)}")
+                problems.append(f"docs/DATABASE.md `{table}` is missing column(s) {sorted(missing)}")
             if extra:
                 problems.append(
-                    f"DATABASE.md `{table}` documents column(s) {sorted(extra)} "
+                    f"docs/DATABASE.md `{table}` documents column(s) {sorted(extra)} "
                     "that the schema does not create"
                 )
 

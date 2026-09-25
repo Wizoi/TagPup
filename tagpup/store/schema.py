@@ -207,7 +207,7 @@ FACES_GENERATION_UPDATE = "UPDATE OF name, name_source, excluded, embedding, pho
 
 
 def _photo_ids(conn):
-    """Photos get an integer id, and faces point at a photo by it (ARCHITECTURE.md,
+    """Photos get an integer id, and faces point at a photo by it (docs/ARCHITECTURE.md,
     principle 3). A photo's path was its identity: every rename re-pointed its faces by
     hand, and a face spelled apart from its photo's row joined to nothing -- the joins
     compared paths with case, where every lookup did not.

@@ -2,7 +2,7 @@
 face cut out of it.
 
 Thumbnails for the folder view move here with the services that make them
-(ARCHITECTURE.md, phase 2).
+(docs/ARCHITECTURE.md, phase 2).
 """
 import io
 import json
