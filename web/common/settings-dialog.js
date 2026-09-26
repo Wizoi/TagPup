@@ -141,8 +141,9 @@ function settingRow(setting) {
     if (setting.type === 'boolean') {
         input = buildElement('input', { id, attrs: { type: 'checkbox' } });
         input.checked = shownValue(setting) === 'true';
-    } else if (setting.key === 'candidates.tags') {
-        input = buildElement('textarea', { id, className: 'modal-input', attrs: { rows: 3 } });
+    } else if (setting.key === 'candidates.tags' || setting.type === 'folders') {
+        // Folders are one a line (the validator's `folders`), and a name may hold a comma.
+        input = buildElement('textarea', { id, className: 'modal-input', attrs: { rows: 3, spellcheck: 'false' } });
         input.value = setting.value;
     } else {
         input = buildElement('input', { id, className: 'modal-input', attrs: { type: 'text', spellcheck: 'false' } });

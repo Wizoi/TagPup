@@ -65,6 +65,13 @@ FULL_PATH = "(?:[A-Za-z]:[/%s]|[/%s]{2}[^/%s]|/)[%ss%sS]*" % (BS * 2, BS * 2, BS
 #: What a library's name may hold: it is a file name and the first part of its URL.
 LIBRARY_NAME = "[A-Za-z0-9_-]+"
 
+#: A whole drive, or a filesystem's root: "D:", "D:/", "D:\\", "/", with blanks around.
+DRIVE_ROOT = "^%ss*(?:[A-Za-z]:[/%s]?|[/%s]{1,2})%ss*$" % (BS, BS * 2, BS * 2, BS)
+
+#: What separates the folders of a list of folders: one a line. A folder's name may hold
+#: a comma or a semicolon; none holds a line break.
+FOLDER_SEPARATOR = chr(10)
+
 #: Why a face is excluded when no reason is given (tagpup.services.faces.exclude).
 DEFAULT_EXCLUSION_REASON = "not a person"
 
@@ -178,6 +185,18 @@ KINDS = {
         {"rule": "pattern", "pattern": FULL_PATH,
          "message": "A folder is named by its full path, as in D:/Photos."},
     ]},
+    # A library's root folders, or those it ignores: one full path a line, none a whole
+    # drive (docs/ARCHITECTURE.md, phase 8). Empty is none.
+    "folders": {"rules": [
+        {"rule": "optional"},
+        {"rule": "list", "separator": FOLDER_SEPARATOR, "skip_empty": True, "each": [
+            _no_controls("A folder's path"),
+            {"rule": "pattern", "pattern": FULL_PATH,
+             "message": "Each folder is named by its full path, one a line, as in D:/Photos."},
+            {"rule": "forbid_pattern", "pattern": DRIVE_ROOT,
+             "message": "A whole drive cannot be one of the library's folders: name a folder on it, as in D:/Photos."},
+        ]},
+    ]},
     # Shift Date Taken: minutes, later or earlier.
     "time shift": {"rules": [
         {"rule": "integer", "message": "A time shift is a whole number of minutes."},
@@ -229,6 +248,8 @@ SETTING_GROUPS = {
             "A program that is not ExifTool, or that is missing, makes every one of them fail.",
         ],
     },
+    # Where the library's photos live, which sync watches and walks (owner, 2026-09-26).
+    "library": {"app": "tuner", "title": "Library folders", "consequences": []},
     # What TagPup's own features use is shown in TagPup's gear (owner, 2026-09-25).
     "suggest": {"app": "tagpup", "title": "Suggest", "consequences": []},
     "renaming": {"app": "tagpup", "title": "Smart Rename", "consequences": []},
@@ -299,6 +320,18 @@ SETTINGS = {
         "The ExifTool program every photo file is read and written with. Empty is the one its "
         "installer puts in your profile, else the one on PATH.",
         [{"rule": "optional"}, _no_controls("ExifTool's path")]),
+    "library.roots": _setting(
+        "library", "Root folders", "folders", "",
+        "The folders the library's photos live under, one a line. Sync walks them: new photos in a "
+        "folder already indexed are indexed; a new folder under a root is listed for you to include "
+        "or ignore. Empty is the folders the library holds photos in. First set from the topmost "
+        "folders it holds photos in.",
+        KINDS["folders"]["rules"]),
+    "library.ignored": _setting(
+        "library", "Ignored folders", "folders", "",
+        "Folders under a root that sync never offers to include, nor any folder under them, one a "
+        "line. Photos already indexed in one stay in the library, and in step.",
+        KINDS["folders"]["rules"]),
     "candidates.tags": _setting(
         "suggest", "Candidate words", "list",
         "Landscape, Portrait, Nature, Urban, Sunset, Sunrise, Night, Ocean, Mountain, Forest, Animal, "

@@ -22,8 +22,8 @@ import { OPEN_DIALOG } from "../../web/common/dialog.js";
 afterEach(() => closeAllApps());
 
 const LIBRARY = "kr-track";
-const GROUP_TITLES = { clip: "The CLIP model", faces: "Face detection", exiftool: "ExifTool", suggest: "Suggest",
-                       renaming: "Smart Rename" };
+const GROUP_TITLES = { clip: "The CLIP model", faces: "Face detection", exiftool: "ExifTool",
+                       library: "Library folders", suggest: "Suggest", renaming: "Smart Rename" };
 
 /** What /api/settings answers for a library holding the defaults, from the declarations. */
 function settingsAnswer(values = {}) {
@@ -85,7 +85,7 @@ describe("the settings dialog", () => {
     assert.equal(document.getElementById("settings-title").textContent, `Library settings: ${LIBRARY}`);
     assert.deepEqual([...dialog.querySelectorAll("[data-setting]")].map((i) => i.dataset.setting), DECLARED);
     assert.deepEqual([...dialog.querySelectorAll(".settings-group h4")].map((h) => h.textContent),
-                     ["The CLIP model", "Face detection", "ExifTool", "Suggest", "Smart Rename"]);
+                     ["The CLIP model", "Face detection", "ExifTool", "Library folders", "Suggest", "Smart Rename"]);
     assert.equal(field("model.name").value, "ViT-H-14");
     assert.equal(field("model.preserve_full_frame").type, "checkbox");
     assert.equal(field("model.preserve_full_frame").checked, true);
@@ -140,6 +140,20 @@ describe("the settings dialog", () => {
     assert.ok(!save().disabled, "Save stays disabled with every consequence ticked");
     click(window, consequences[0]);
     assert.ok(save().disabled, "unticking one left Save enabled");
+  });
+
+  test("the library's folders are one a line, and a whole drive is refused as it is typed", async (t) => {
+    const { dialog, field, save, type } = await tunerWithSettings(t);
+    for (const key of ["library.roots", "library.ignored"]) {
+      assert.equal(field(key).tagName, "TEXTAREA", `${key} is not one a line`);
+      assert.ok(!field(key).readOnly, `${key} is locked`);
+    }
+    type("library.roots", "D:/Photos\nE:/");
+    assert.ok(save().disabled);
+    const problem = dialog.querySelector('.settings-row[data-key="library.roots"] .validation-error');
+    assert.equal(problem.textContent, "A whole drive cannot be one of the library's folders: name a folder on it, as in D:/Photos.");
+    type("library.roots", "D:/Photos\nE:/Pictures");
+    assert.ok(!save().disabled);
   });
 
   test("a value the rules refuse is shown, and keeps Save disabled", async (t) => {
