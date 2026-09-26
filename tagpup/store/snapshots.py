@@ -26,6 +26,7 @@ library as it is (`before-restore`), so a restore can itself be undone.
 
 The one-off copies before a bulk write stay db.backup's, in data/backups beside these.
 """
+import logging
 import os
 import re
 import shutil
@@ -35,7 +36,14 @@ from dataclasses import dataclass
 from tagpup.core.library import Library
 from tagpup.store import db, schema
 
+logger = logging.getLogger(__name__)
+
 DAY = 86400
+
+#: What a restore needs free on the disk, in times the library: the library as it is,
+#: snapshotted first; the snapshot copied back through the library's WAL; and the WAL
+#: checkpointed into the file.
+RESTORE_NEEDS = 3
 
 #: What a daily, weekly or monthly snapshot is, how many of each are kept, and how old
 #: the newest is before another is taken. `before-restore` is the library as a restore
@@ -273,13 +281,27 @@ def schema_version(path):
         conn.close()
 
 
+def library_bytes(db_path):
+    """The bytes the library at `db_path` takes, its -wal included."""
+    return sum(os.path.getsize(db_path + suffix) for suffix in ("", "-wal") if os.path.exists(db_path + suffix))
+
+
+def restore_needs(db_path):
+    """(bytes a restore of the library at `db_path` needs free, bytes free on the disk
+    its snapshots are kept on)."""
+    where = folder(db_path) if os.path.isdir(folder(db_path)) else os.path.dirname(os.path.abspath(db_path))
+    return RESTORE_NEEDS * library_bytes(db_path), shutil.disk_usage(where)[2]
+
+
 def restore(db_path, snapshot_path):
     """Copy the snapshot at `snapshot_path` back into the library at `db_path`, through the
     backup API, into the file every process has open. The generations are moved past
     where they stood before, so a cache another process keyed by them is not taken for
-    current (tagpup.store.generations); the WAL is checkpointed so every process sees the
-    file has changed, and the library is brought to the current schema. The caller took
-    the before-restore snapshot."""
+    current (tagpup.store.generations); the WAL is checkpointed, without waiting for
+    readers, so the file changes as every process sees it, and the library is brought to
+    the current schema. The caller took the before-restore snapshot. Returns what the
+    checkpoint did, {"busy", "log", "checkpointed"} (frames): one a reader held up is
+    logged, and finished by the next checkpoint."""
     check(snapshot_path)
     with db.lock_for(db_path):
         source = db.connect(db.readonly_uri(snapshot_path), uri=True)
@@ -295,11 +317,17 @@ def restore(db_path, snapshot_path):
                     destination.execute("UPDATE generations SET value = ? WHERE name = ? AND value <= ?",
                                         (value + 1, name, value))
                 destination.commit()
-            destination.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            # PASSIVE: TRUNCATE waited up to the busy timeout, 30 s, for any reader.
+            busy, log, done = destination.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
         finally:
             destination.close()
             source.close()
+    checkpoint = {"busy": busy, "log": log, "checkpointed": done}
+    if busy or log != done:
+        logger.warning("%s: restored, but the checkpoint after it wrote %d of %d frame(s) into the file"
+                       " (a reader held it up); the next checkpoint finishes it", db_path, done, log)
     schema.ensure(db_path)
+    return checkpoint
 
 
 def _has_generations(conn):

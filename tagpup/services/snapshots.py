@@ -50,7 +50,9 @@ def listing(library):
 def restore(library, name, apply=False, now=None):
     """Restore `library` from its snapshot `name` ("daily/20260926_090000"): a dry run
     unless `apply`. details["lost"] lists the changes of the journal it would lose, by id,
-    operation and time. Applied, the library as it stood is snapshotted first
+    operation and time, and details["needs"] and ["free"] the disk it needs and has:
+    refused, with nothing written, without it. Applied, the library as it stood is
+    snapshotted first
     (details["before_restore"], its name, which restores it again); `changed` is 1 once
     the snapshot's copy is in the library. NotFound for a name the library has none of."""
     snapshot = snapshots.find(library.path, name)
@@ -63,7 +65,14 @@ def restore(library, name, apply=False, now=None):
     if snapshots.schema_version(snapshot.path) > schema.LATEST:
         result.refuse("The snapshot %s was made by a newer version of TagPup; this one cannot open it." % name)
         return result
+    needs, free = snapshots.restore_needs(library.path)
+    result.details.update({"needs": needs, "free": free})
     if not apply:
+        return result
+    if free < needs:
+        result.refuse("Nothing was restored: restoring needs about %d MB free on the disk -- the library as it"
+                      " is, snapshotted first, and the copy back through its WAL -- and it has %d MB free."
+                      % (needs // 1_000_000, free // 1_000_000))
         return result
     try:
         # Not pruned until the restore is done: the snapshot restored may be the
@@ -74,7 +83,7 @@ def restore(library, name, apply=False, now=None):
         result.refuse("Nothing was restored: the library as it is could not be snapshotted first: %s" % e)
         return result
     result.details["before_restore"] = before.name
-    snapshots.restore(library.path, snapshot.path)
+    result.details["checkpoint"] = snapshots.restore(library.path, snapshot.path)
     result.changed = 1
     snapshots.prune(library.path, snapshots.BEFORE_RESTORE)
     return result

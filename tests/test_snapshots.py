@@ -225,6 +225,33 @@ class Restoring(Base):
         self.assertEqual(self.now, self.tags())
         self.assertEqual(2, len(self.names(snapshots.BEFORE_RESTORE)))
 
+    def test_a_disk_without_room_for_it_refuses_it_before_anything_is_written(self):
+        # Restoring takes the library as it is (a snapshot) and the copy back through the
+        # WAL: about three times the library (review of phase 8a, 4).
+        with mock.patch.object(snapshots.shutil, "disk_usage", return_value=(10 ** 12, 10 ** 12, 1000)):
+            result = snapshot_service.restore(self.library, "daily/20260901_120000", apply=True, now=NOON + DAY)
+        self.assertIn("free", result.refused or "")
+        self.assertEqual((0, self.now), (result.changed, self.tags()))
+        self.assertEqual([], self.names(snapshots.BEFORE_RESTORE))
+        self.assertEqual(3 * os.path.getsize(self.library.path), result.details["needs"])
+
+    def test_the_checkpoint_after_it_is_read_and_reported(self):
+        result = snapshot_service.restore(self.library, "daily/20260901_120000", apply=True, now=NOON + DAY)
+        checkpoint = result.details["checkpoint"]
+        self.assertEqual(0, checkpoint["busy"])
+        self.assertEqual(checkpoint["log"], checkpoint["checkpointed"])
+
+    def test_a_checkpoint_another_connection_holds_up_is_logged(self):
+        reader = db.connect(db.readonly_uri(self.library.path), uri=True)
+        self.addCleanup(reader.close)
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM photos").fetchone()
+        with self.assertLogs("tagpup.store.snapshots", level="WARNING") as logged:
+            result = snapshot_service.restore(self.library, "daily/20260901_120000", apply=True, now=NOON + DAY)
+        reader.rollback()
+        self.assertEqual(1, result.changed)
+        self.assertTrue(any("checkpoint" in line for line in logged.output), logged.output)
+
     def test_a_snapshot_it_has_not_is_not_found(self):
         with self.assertRaises(NotFound):
             snapshot_service.restore(self.library, "daily/20200101_000000")

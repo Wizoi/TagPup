@@ -81,6 +81,9 @@ class TheJobAndTheCommands(Base):
         dry = self.cli("snapshots", "restore", name)
         self.assertEqual(0, dry.exit_code, dry.output)
         self.assertIn("would lose 1 change(s)", dry.output)
+        # What it costs: the disk it needs, and what the disk has.
+        self.assertIn("needs about", dry.output)
+        self.assertIn("MB free", dry.output)
         self.assertIn("Nothing changed", dry.output)
         applied = self.cli("snapshots", "restore", name, "--apply")
         self.assertEqual(0, applied.exit_code, applied.output)
