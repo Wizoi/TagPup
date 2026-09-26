@@ -476,6 +476,50 @@ library view (they go through the same journaled writes, so they can be undone);
 of Photo Gallery's habits to keep (the date slider, the tag pane with counts, the info
 pane).
 
+**Where the code stands** *(2026-09-26)*: the grid (`web/tagpup/grid.js`, `folder.js`)
+builds a card for every photo of the folder it has open, keyed by path; nothing renders
+only what is on screen. A thumbnail is made on every request (`files.images.smaller_copy`,
+Pillow, `size=300`), never kept. Keywords are JSON in `photos.tags`; there is no
+`photo_tags` table. Folders under a folder are an index range now (#168); Remove Folder
+already lists the library's folders with counts (#47). `photos.taken` and `photos.year`
+exist. The journal, History and sync (phase 8) are what a library view's edits and
+staleness stand on.
+
+**Stages**, each reviewed and merged on its own; the performance ones measured as the
+click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
+- **9a. What views stand on (server only).** A derived `photo_tags(photo_id, tag)` table,
+  indexed on tag, kept by the writes that keep `photo_people` and rebuilt from
+  `photos.tags` by a migration; "a keyword and everything under it" is a range on it. A
+  thumbnail cache on disk: derived, keyed by photo id and the file's size and modified
+  time, under `data/cache/<library>/thumbs`, made on first ask and by an idle recurring
+  job (phase 8), pruned when a photo's stamp changes or it leaves the library; the budget
+  measured first (about 20-40 KB a 300 px thumbnail: 1.5-3 GB for photo_index). One query
+  service, `tagpup.services.library_view`: a source (folder and subfolders, keyword and
+  everything under it, person, year or month) to an ordered page of photo ids and the
+  total; and the navigator's counts (folder tree, tag tree, people, years and months),
+  each one query. Routes and specs; EXPLAIN QUERY PLAN on photo_index for each.
+- **9b. One grid on photo ids.** The grid, the details panel, the selection and the bulk
+  edits take a source and work on photo ids; today's folder view becomes the "folder on
+  disk" source through the same components. Only the cards on screen (and a screen
+  either side) exist in the DOM. Exit: a 20,000-photo keyword scrolls without a stall,
+  measured; the folder view's behaviour and tests unchanged.
+- **9c. The navigator and the move between views.** Folders, Keywords, People and Dates
+  beside the grid, with counts; the header and the URL name the source, so Back and a
+  bookmark work; "Show in library" from a disk folder; a banner where the disk holds
+  files the library does not (offering to index them, through sync); staleness marks on
+  the cards on screen (size and modified time, no ExifTool) and a missing photo shown
+  but not editable; "last in step" from sync.
+- **9d. Editing from a library view.** Bulk edits on a selection that spans folders,
+  through the same journaled writes (History lists and undoes them); a file changed
+  outside while an edit is planned is a conflict for sync to settle, never overwritten.
+- **9e. Photo Gallery's habits**, as the owner chooses them (the open questions above):
+  a date slider, the tag pane with counts, an info pane, ratings, saved searches.
+  Albums, if wanted now, are a source here and the ground phase 10 builds on.
+
+Exit: the owner can open the whole library by folder, keyword, person or date, move
+between a disk folder and its library view without losing place, and edit from either,
+with every edit undoable and nothing overwritten that changed outside.
+
 ### Phase 10: Family albums from many sources (idea, after phase 9)
 The owner's idea *(2026-09-25)*: once the local folders, the views and their management
 are right (phases 8 and 9), bring in photos from where the family keeps them --
