@@ -161,6 +161,33 @@ class NothingChanged(SyncTestCase):
         self.assertEqual(stamp, os.stat(path).st_mtime)
 
 
+class ALibraryThatIsBehind(SyncTestCase):
+    """A dry run writes nothing, and a library behind this version's migrations is not
+    brought up to date by one: the rehearsal would run in a migrated library, so it waits
+    until an app opens it, and the dry run says so."""
+
+    def test_a_dry_run_on_a_library_behind_leaves_its_file_as_it_was(self):
+        from test_migrations import at_version
+        from tagpup.store import schema
+
+        older = self.home.library("older.db")
+        at_version(older, schema.LATEST - 1)
+        path = self.photo(self.meet, "IMG_0001.jpg", **{"XMP:Subject": ["Events/Invitational"]})
+        self.db_path = older
+        self.indexed(path)
+        self.library = Library(older)
+        self.photo(self.meet, "IMG_0001.jpg", body=b"jpeg, edited", **{"XMP:Subject": ["Weather/Rain"]})   # changed: a rehearsal would be due
+        with open(older, "rb") as handle:
+            before = handle.read()
+        result = self.run_sync()
+        with open(older, "rb") as handle:
+            self.assertEqual(before, handle.read(), "a dry run wrote to a library that is behind")
+        self.assertEqual(1, len(schema.pending(older)))
+        self.assertEqual(1, result.details["behind"])
+        self.assertEqual(1, result.details["counts"]["to_write"])
+        self.assertNotIn("rehearsal", result.details)
+
+
 class NewFiles(SyncTestCase):
     def test_a_new_file_is_queued_for_indexing_not_indexed(self):
         self.indexed(self.photo(self.meet, "IMG_0001.jpg"))

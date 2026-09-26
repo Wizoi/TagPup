@@ -90,6 +90,9 @@ def written(result, library, reveal=False, limit=inspect.LIMIT):
     answer["change"] = details.get("change")
     if "rehearsal" in details:
         answer["rehearsal"] = details["rehearsal"]
+    if details.get("behind"):
+        answer["behind"] = ("the library is behind this version by %d migration(s); the rehearsal runs "
+                            "once an app has opened it" % details["behind"])
     if reveal:
         answer["reveal"] = details.get("reveal", {})
     elif answer["refused"]:
