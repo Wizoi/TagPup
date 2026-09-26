@@ -98,9 +98,9 @@ def claim(db_path, job, library, now, due=None):
     still running holds one, or `due`, called with the last run that ended (Run or None),
     answers False. A run whose process has ended is marked `abandoned` first. A Claim.
 
-    A library behind this version's schema is left alone ("behind"), not migrated: the
-    CLI's looks and the MCP server run what is due too, and a look does not migrate
-    (docs/findings.md, #243). Its jobs run once an app has opened it."""
+    A library behind this version's schema is left alone ("behind"), not migrated: a job
+    run by hand from the CLI is no reason to migrate one (docs/findings.md, #243). Its
+    jobs run once an app has opened it."""
     if schema.pending(db_path):
         return Claim(why="behind")
 

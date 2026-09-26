@@ -69,9 +69,10 @@ NO_JOBS = "TAGPUP_NO_JOBS"
 
 
 def runs_recurring_jobs():
-    """Does this process run the recurring jobs (tagpup.jobs.recurring)? Not when NO_JOBS
-    is set, nor in a test run (tagpup.ml.under_test) unless RUN_JOBS is: a server a test
-    starts would snapshot its library in the background."""
+    """Does this web server run the recurring jobs (tagpup.jobs.recurring)? Only the web
+    server asks: the always-on process runs them, nothing else (owner, 2026-09-26). Not
+    when NO_JOBS is set, nor in a test run (tagpup.ml.under_test) unless RUN_JOBS is: a
+    server a test starts would snapshot its library in the background."""
     if os.environ.get(NO_JOBS):
         return False
     if os.environ.get(RUN_JOBS):

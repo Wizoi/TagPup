@@ -18,13 +18,14 @@ ago or more -- or, when that run failed, RETRY_AFTER ago, if sooner -- so a miss
 period runs once, not once per period missed. A run is claimed in the library before it
 starts, so two processes, or two threads, never run one job for one library at once; a
 claim left by a process that has ended is taken over. A library behind this version's
-schema is left alone until an app opens it and migrates it: running what is due never
-migrates a library, since the CLI's looks and the MCP server run it too.
+schema is left alone until an app opens it and migrates it: running a job never
+migrates a library.
 
-The web server looks every CHECK_EVERY on a thread of its own (Runner.start), stopped at
-shutdown; the CLI runs what is due when it starts, the MCP server on a thread when it
-starts. No Windows Task Scheduler. A process the tests started runs none, unless a test
-asks (tagpup.runtime.runs_recurring_jobs).
+Only the web server -- the always-on process -- runs them: it looks every CHECK_EVERY on
+a thread of its own (Runner.start), stopped at shutdown (owner, 2026-09-26). The CLI
+lists them and runs one by hand (`jobs`, `jobs run NAME`); neither it nor the MCP server
+runs what is due as it starts. No Windows Task Scheduler. A server the tests started
+runs none, unless a test asks (tagpup.runtime.runs_recurring_jobs).
 """
 import logging
 import threading
@@ -275,12 +276,6 @@ class Runner:
                     return outcomes
                 outcomes.append(self.run_job(job, library, libraries))
         return outcomes
-
-    def run_due_in_background(self):
-        """run_due on a daemon thread, once; returns the thread."""
-        thread = threading.Thread(target=self._run_due_logged, name="RecurringJobsOnce", daemon=True)
-        thread.start()
-        return thread
 
     def _run_due_logged(self):
         try:

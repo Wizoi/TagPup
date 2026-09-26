@@ -204,7 +204,6 @@ The `tagpup_cli.py` engine is accessed via `click` subcommands.
 
 ### Global Options
 - `--test`: Use the test library (`test_photo_index.db`) to avoid altering the production one. The tag tree is in the library, so the test tree stays in the test library (findings.md, #61).
-- `--no-jobs`: Do not run the recurring jobs that are due before the command. Without it, every command but `jobs` and `snapshots` first runs what is due of the recurring jobs (`tagpup.jobs.recurring`: `snapshots`, daily; `prune-journal`, weekly) for every library in the data folder, a line for each it ran -- as any TagPup process that is up does (ARCHITECTURE.md, phase 8). Not in an indexer an app started (`TAGPUP_DB_PATH` set), whose app runs them; not in a test run; not when `TAGPUP_NO_JOBS` is set.
 
 ---
 
@@ -293,7 +292,7 @@ Says how many changes are older than N days (90 by default, `journal.RETENTION_D
 Writes the library's tag tree to OUTPUT as JSON (`{"paths": [...]}`): a copy to keep or read. The tree lives in the library; nothing reads this file back.
 
 ### `jobs`
-Lists each recurring job for the library `--db` names, or for every library in the data folder: its period, when it last ran, how that run ended (`running`, `done`, `failed`, `abandoned`), what it changed as counts, and when it is due next. The runs are recorded in each library (`job_runs`), by whichever TagPup process ran them: the web server looks every ten minutes, the CLI and the MCP server when they start. A job is due a period after its last run that ended started -- an hour after a failed one -- so a missed period runs once. A library that has not had this version's migrations is left alone (`behind`) until an app opens it: running the jobs never migrates a library.
+Lists each recurring job for the library `--db` names, or for every library in the data folder: its period, when it last ran, how that run ended (`running`, `done`, `failed`, `abandoned`), what it changed as counts, and when it is due next. The runs are recorded in each library (`job_runs`). Only the web server -- the always-on process -- runs what is due, looking every ten minutes; the CLI runs a job only when told to, with `jobs run`, and the MCP server never. A job is due a period after its last run that ended started -- an hour after a failed one -- so a missed period runs once. A library that has not had this version's migrations is left alone (`behind`) until an app opens it: running a job never migrates a library.
 
 ### `jobs run NAME`
 Runs the recurring job NAME now, for the library `--db` names or every library, whether or not it is due; a job another process is running is left to it (`not run, running`). Exit status 1 when a run failed or was not run. `jobs run snapshots` takes a daily snapshot now.

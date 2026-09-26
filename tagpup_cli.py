@@ -133,25 +133,6 @@ def scan_for_images(dir_path: str) -> List[str]:
     """
     return image_files.photos_under(dir_path)
 
-#: The commands that run the recurring jobs themselves, before which none are run.
-MANAGE_JOBS = ("jobs", "snapshots")
-
-
-def run_due_jobs(test_mode=False):
-    """Run the recurring jobs that are due, for every library in the data folder, saying
-    what each did (tagpup.jobs.recurring). Never fails the command it runs before."""
-    try:
-        outcomes = runtimes.recurring_jobs(Runtime(), libraries=lambda: runtimes.home_libraries(test_mode)).run_due()
-    except Exception as e:
-        logger.error("Could not run the recurring jobs that are due: %s", e)
-        return []
-    for outcome in outcomes:
-        if outcome.ran:
-            console.print("Recurring job %s for %s: %s" % (outcome.job, outcome.library or "every library",
-                                                         _outcome_text(outcome)), markup=False)
-    return outcomes
-
-
 def _outcome_text(outcome):
     if outcome.error is not None:
         return "failed: %s" % outcome.error
@@ -165,18 +146,12 @@ def _outcome_text(outcome):
 @click.group()
 @click.option("--db", type=str, help="The library to work on: a name in the data folder (e.g. 'my_photos') or a path. Required.")
 @click.option("--test", is_flag=True, help="Use test database paths to avoid cluttering production index.")
-@click.option("--no-jobs", is_flag=True, help="Do not run the recurring jobs that are due (snapshots, pruning the journal) first.")
 @click.pass_context
-def cli(ctx, db, test, no_jobs):
+def cli(ctx, db, test):
     """TagpupCLI: AI-powered local photo tagging command-line interface."""
     ctx.ensure_object(dict)
     ctx.obj["test"] = test
     ctx.obj["db"] = db
-    # What is due runs first, in whatever TagPup process is up -- not in an indexer an
-    # app started (TAGPUP_DB_PATH), whose app runs them, nor in a test run.
-    if (not no_jobs and ctx.invoked_subcommand not in MANAGE_JOBS and not os.environ.get("TAGPUP_DB_PATH")
-            and runtimes.runs_recurring_jobs()):
-        run_due_jobs(test)
 
 @cli.command()
 @click.argument("directory", type=click.Path(exists=True, file_okay=False))
@@ -982,8 +957,8 @@ def _job_libraries(ctx):
 @click.pass_context
 def jobs(ctx):
     """The recurring jobs (snapshots, pruning the journal): each one's last run and when
-    it is due next, for the library --db names or every library in the data folder.
-    `jobs run NAME` runs one now."""
+    it is due next, for the library --db names or every library in the data folder. The
+    web server runs them; `jobs run NAME` runs one now, by hand."""
     if ctx.invoked_subcommand is not None:
         return
     from tagpup.jobs import recurring
