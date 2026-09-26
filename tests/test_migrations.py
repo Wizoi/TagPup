@@ -42,7 +42,7 @@ KINDS = {
     10: schema.ADDITIVE,     # the settings table
     11: schema.ADDITIVE,     # change_files, and changes.owner
     12: schema.ADDITIVE,     # change_files.stamp
-    13: schema.ADDITIVE,     # the sync_runs table
+    14: schema.ADDITIVE,     # the sync_runs table (13 is job_runs, on the jobs branch)
 }
 
 
@@ -539,7 +539,7 @@ class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
             self.assertEqual(["photo files in the journal", "the stamp of each file before its write",
                               "when the library was last in step"], schema.ensure(path))
         # What it touches: change_files, which it makes, and changes, the runner's own;
-        # migration 12 touches change_files alone, and 13 sync_runs, which it makes.
+        # migration 12 touches change_files alone, and 14 sync_runs, which it makes.
         self.assertLessEqual(set(counted), {"change_files", "changes", "sync_runs"})
 
 

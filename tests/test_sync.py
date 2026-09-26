@@ -171,7 +171,7 @@ class ALibraryThatIsBehind(SyncTestCase):
         from tagpup.store import schema
 
         older = self.home.library("older.db")
-        at_version(older, schema.LATEST - 1)
+        at_version(older, len(schema.MIGRATIONS) - 1)
         path = self.photo(self.meet, "IMG_0001.jpg", **{"XMP:Subject": ["Events/Invitational"]})
         self.db_path = older
         self.indexed(path)

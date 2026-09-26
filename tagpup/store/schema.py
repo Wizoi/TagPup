@@ -1059,7 +1059,8 @@ MIGRATIONS = (
               "adds the column change_files.stamp, NULL in every row",
               ("change_files",),
               (RowsKept(),) + STANDARD),
-    Migration(13, "when the library was last in step", _sync_runs, ADDITIVE,
+    # 14, not 13: the jobs branch's job_runs is 13 (arch/phase-8a-jobs), merged beside this.
+    Migration(14, "when the library was last in step", _sync_runs, ADDITIVE,
               "adds the sync_runs table, empty",
               ("sync_runs",),
               (RowsKept(),) + STANDARD),

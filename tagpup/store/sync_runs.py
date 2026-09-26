@@ -1,4 +1,4 @@
-"""A library's record of its syncs: `sync_runs` (migration 13; docs/ARCHITECTURE.md,
+"""A library's record of its syncs: `sync_runs` (migration 14; docs/ARCHITECTURE.md,
 phase 8).
 
 Each applied sync is a row: when it started and finished, whether it looked at the whole
@@ -52,7 +52,7 @@ def _as_dict(row):
 def last(conn):
     """{"last_run": the newest record, or None; "last_in_step": when the newest sync of the
     whole library that left it in step finished, or None} of the library open on `conn`.
-    Both None for a library from before migration 13: a look does not migrate."""
+    Both None for a library from before migration 14: a look does not migrate."""
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (TABLE,)).fetchone() is None:
         return {"last_run": None, "last_in_step": None}
     newest = conn.execute("SELECT " + ", ".join(COLUMNS) + " FROM sync_runs ORDER BY id DESC LIMIT 1").fetchone()

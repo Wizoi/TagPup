@@ -320,7 +320,7 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None):
 
 def last(library):
     """{"last_run", "last_in_step"} of `library` (tagpup.store.sync_runs.last): counts and
-    times, never a path. Reads only; a library from before migration 13 has neither."""
+    times, never a path. Reads only; a library from before migration 14 has neither."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         return sync_runs.last(conn)
