@@ -189,10 +189,11 @@ def status(library, registry=JOBS, now=None):
     A job not run per library shows what `library` records of it: its runs are recorded
     in the first library by name."""
     now = time.time() if now is None else now
-    found = job_runs.latest(library)
+    # By name without case, as the library's runs are kept: `--db harbour` is Harbour.db.
+    found = {(job, name.lower() if name else None): runs for (job, name), runs in job_runs.latest(library).items()}
     listed = []
     for job in registry:
-        last, ended = found.get((job.name, library.name if job.per_library else None), (None, None))
+        last, ended = found.get((job.name, library.name.lower() if job.per_library else None), (None, None))
         due = next_due(job, ended)
         listed.append({
             "name": job.name, "period": job.period.name, "reason": job.reason, "per_library": job.per_library,

@@ -84,12 +84,27 @@ def folder(db_path):
     return Library(db_path).snapshots
 
 
+def spelled(db_path):
+    """The library's name as its file is spelled on disk: `--db harbour` names Harbour.db
+    on Windows, and its snapshots are Harbour's. As given when the file is not found."""
+    name = Library(db_path).name
+    try:
+        for file_name in os.listdir(os.path.dirname(os.path.abspath(db_path))):
+            stem, extension = os.path.splitext(file_name)
+            if extension.lower() == ".db" and stem.lower() == name.lower():
+                return stem
+    except OSError:
+        pass
+    return name
+
+
 def _file_name(db_path, taken):
-    return "%s-%s.db" % (Library(db_path).name, time.strftime(STAMP, time.localtime(taken)))
+    return "%s-%s.db" % (spelled(db_path), time.strftime(STAMP, time.localtime(taken)))
 
 
 def _pattern(db_path):
-    return re.compile(r"^%s-(\d{8}_\d{6})\.db$" % re.escape(Library(db_path).name))
+    """A snapshot's file name, the library's name in any case: one library by any spelling."""
+    return re.compile(r"^%s-(\d{8}_\d{6})\.db$" % re.escape(Library(db_path).name), re.IGNORECASE)
 
 
 def listed(db_path, kind=None):

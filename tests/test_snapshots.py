@@ -139,6 +139,19 @@ class Taking(Base):
         self.assertEqual([False], held, "a writer of this process waited for the copy")
 
 
+class ALibraryByAnySpelling(unittest.TestCase):
+    def test_has_one_set_of_snapshots(self):
+        home = own_home.for_test(self, prefix="snapshots_")
+        library_actions.create(home.library("Harbour.db"))
+        lower, upper = home.library("harbour.db"), home.library("Harbour.db")
+        snapshots.take(lower, now=NOON)
+        self.assertEqual(["daily/20260901_120000", "weekly/20260901_120000", "monthly/20260901_120000"],
+                         [s.name for s in snapshots.listed(upper)])
+        self.assertEqual([], snapshots.take(upper, now=NOON + 3600)["taken"])
+        # Named as the file on disk is.
+        self.assertTrue(os.path.basename(snapshots.listed(lower)[0].path).startswith("Harbour-"))
+
+
 class AFailedNight(Base):
     def setUp(self):
         super().setUp()

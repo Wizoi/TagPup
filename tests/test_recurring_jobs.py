@@ -190,6 +190,22 @@ class EachJobSaysWhyItIsScheduled(unittest.TestCase):
         self.assertEqual(["catch-up"], [job["reason"] for job in recurring.status(made(home, "harbour"), registry)])
 
 
+class ALibraryByAnySpelling(unittest.TestCase):
+    def test_is_one_library(self):
+        # `--db harbour` names Harbour.db on Windows: its runs were another library's
+        # (review of phase 8a, 6).
+        home = own_home.for_test(self, prefix="jobs_")
+        made(home, "Harbour")
+        lower, upper = Library(home.library("harbour.db")), Library(home.library("Harbour.db"))
+        registry = recurring.Registry()
+        registry.job("tidy", recurring.DAILY, reason=recurring.SAFETY)(Counting())
+        clock = Clock()
+        self.assertTrue(recurring.Runner(lambda: [lower], registry, clock=clock).run_due()[0].ran)
+        again = recurring.Runner(lambda: [upper], registry, clock=clock).run_due()[0]
+        self.assertEqual((False, "not due"), (again.ran, again.why))
+        self.assertEqual("done", recurring.status(upper, registry)[0]["last"]["outcome"])
+
+
 class ALibraryBehind(unittest.TestCase):
     def test_is_left_alone_not_migrated(self):
         from test_migrations import at_version

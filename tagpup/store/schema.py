@@ -573,7 +573,8 @@ def _change_file_stamps(conn):
 
 def _job_runs(conn):
     """The runs of each recurring job: `job_runs`, one row a run, the job's name, the
-    library's it ran for (NULL for a job not run per library), when it started and
+    library's it ran for (NULL for a job not run per library; compared without case, as
+    the file is found: `--db harbour` is Harbour.db), when it started and
     finished, its outcome, what it changed as counts, and while it runs the process that
     owns it (tagpup.store.job_runs; docs/ARCHITECTURE.md, phase 8). Any TagPup process
     runs what is due, so what is due, and who is running it, are the library's to say.
@@ -582,7 +583,7 @@ def _job_runs(conn):
     conn.execute("CREATE TABLE IF NOT EXISTS job_runs ("
                  " id INTEGER PRIMARY KEY AUTOINCREMENT,"
                  " job TEXT NOT NULL,"
-                 " library TEXT,"
+                 " library TEXT COLLATE NOCASE,"
                  " started TEXT NOT NULL,"
                  " finished TEXT,"
                  " outcome TEXT NOT NULL CHECK (outcome IN ('running', 'done', 'failed', 'abandoned')),"

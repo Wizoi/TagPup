@@ -238,7 +238,7 @@ The runs of each recurring job (`tagpup.store.job_runs`, `tagpup.jobs.recurring`
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | The run. |
 | `job` | TEXT | NOT NULL, INDEXED with `library` | The job's name in the registry: `snapshots`, `prune-journal`. |
-| `library` | TEXT | | The library's name the run was for; NULL for a job not run per library. |
+| `library` | TEXT | COLLATE NOCASE | The library's name the run was for, compared without case as its file is found (`--db harbour` is `Harbour.db`); NULL for a job not run per library. |
 | `started` | TEXT | NOT NULL | When it began, local time `YYYY-MM-DD HH:MM:SS`, as the journal's times. |
 | `finished` | TEXT | | When it ended; NULL while running. |
 | `outcome` | TEXT | NOT NULL, one of `running`, `done`, `failed`, `abandoned` | `failed`: the service raised, refused or reported an error; `abandoned`: its process ended before it finished. |
