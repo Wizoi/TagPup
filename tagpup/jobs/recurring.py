@@ -14,7 +14,8 @@ the list of libraries, and its runs are recorded in the first of them by name.
 
 Its runs are recorded in the library (`job_runs`, tagpup.store.job_runs), so any
 process knows what is due. A job is due when the last run that ended started a period
-ago or more -- or, when that run failed, RETRY_AFTER ago, if sooner -- so a missed
+ago or more (an hour less, SLACK, for a period of a day or more) -- or, when that run
+failed, RETRY_AFTER ago, if sooner -- so a missed
 period runs once, not once per period missed. A run is claimed in the library before it
 starts, so two processes, or two threads, never run one job for one library at once; a
 claim left by a process that has ended is taken over. A library behind this version's
@@ -67,6 +68,12 @@ def every_hours(hours):
 #: event was missed (sync). A job that names none of these is refused as it is registered.
 SAFETY, RETENTION, CATCH_UP = "safety", "retention", "catch-up"
 REASONS = (SAFETY, RETENTION, CATCH_UP)
+
+#: How much sooner than its period a job of a day or more is due. The server looks every
+#: CHECK_EVERY, not on the second: a daily that started at 09:00 was not due at 08:55 the
+#: next day, ran at 09:05, and slipped later every day. The snapshots allow the same
+#: (tagpup.store.snapshots.SLACK), so the daily the job asks for is taken.
+SLACK = HOUR
 
 #: How soon a job whose last run failed is tried again, when its period is longer.
 RETRY_AFTER = HOUR
@@ -154,7 +161,7 @@ def wait_after(job, last):
     if last is None:
         return 0
     if last.outcome == job_runs.DONE:
-        return job.period.seconds
+        return job.period.seconds - (SLACK if job.period.seconds >= DAY else 0)
     return min(RETRY_AFTER, job.period.seconds)
 
 

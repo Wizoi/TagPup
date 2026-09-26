@@ -78,11 +78,28 @@ class Base(unittest.TestCase):
 class WhatIsDue(Base):
     def test_a_job_never_run_is_due_and_then_not_until_its_period_is_up(self):
         self.assertEqual(1, len(self.ran()))
-        self.clock.now += 23 * HOUR
+        self.clock.now += 22 * HOUR
         self.assertEqual([], self.ran())
         self.clock.now += HOUR
         self.assertEqual(1, len(self.ran()))
         self.assertEqual(2, len(self.service.calls))
+
+    def test_a_daily_run_at_nine_is_due_at_five_to_nine_the_next_day(self):
+        # The server looks every ten minutes: a daily that started at 09:00 was not due
+        # at 08:55 the next day, nor again until 09:05, and slipped later each day
+        # (review of phase 8a, 5). A job of a day or more is due an hour early.
+        self.clock.now = time.mktime((2026, 9, 1, 9, 0, 0, 0, 0, -1))
+        self.assertEqual(1, len(self.ran()))
+        self.clock.now = time.mktime((2026, 9, 2, 7, 55, 0, 0, 0, -1))
+        self.assertEqual([], self.ran())
+        self.clock.now = time.mktime((2026, 9, 2, 8, 55, 0, 0, 0, -1))
+        self.assertEqual(1, len(self.ran()))
+
+    def test_a_job_of_a_few_hours_is_due_on_its_period(self):
+        job = recurring.Job("often", recurring.every_hours(2), recurring.CATCH_UP, True, None)
+        last = job_runs.Run(1, "often", "harbour", job_runs.stamp(NOON), None, "done")
+        self.assertFalse(recurring.is_due(job, last, NOON + 2 * HOUR - 60))
+        self.assertTrue(recurring.is_due(job, last, NOON + 2 * HOUR))
 
     def test_a_missed_period_runs_once_not_once_for_each_missed(self):
         self.ran()
@@ -92,8 +109,8 @@ class WhatIsDue(Base):
         self.clock.now += 10 * 60
         self.assertEqual([], self.ran())
         self.assertEqual(2, len(self.service.calls))
-        # And it is due a period after that run, not on the old schedule.
-        self.clock.now += DAY - 10 * 60
+        # And it is due a period after that run (an hour early), not on the old schedule.
+        self.clock.now += DAY - HOUR - 10 * 60
         self.assertEqual(1, len(self.ran()))
 
     def test_a_failed_run_is_tried_again_after_an_hour_not_a_period(self):
