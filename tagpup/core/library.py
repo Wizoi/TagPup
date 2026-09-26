@@ -56,6 +56,12 @@ class Library:
         return os.path.join(self.folder, "backups")
 
     @property
+    def snapshots(self):
+        """Where the library's snapshots are kept, a folder for each kind: backups/<name>/
+        daily, weekly and monthly (tagpup.store.snapshots)."""
+        return os.path.join(self.backups, self.name)
+
+    @property
     def locks(self):
         """Where indexers of the libraries in this folder take their per-photo write locks.
 
