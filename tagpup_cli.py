@@ -953,6 +953,9 @@ def sync(ctx, folder, apply_):
     files are reported, never removed. A dry run unless --apply; counts only."""
     library = _existing_library(ctx)
     result = runtimes.sync(library, folder=folder, apply=apply_)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
     counts = result.details["counts"]
     console.print("%d row(s), %d photo file(s) on disk in %d folder(s) walked." % (
         counts["rows"], counts["files"], counts["folders_walked"]))
@@ -963,9 +966,6 @@ def sync(ctx, folder, apply_):
                       " their rows are kept." % (counts["folders_gone"], counts["roots_gone"]))
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
-    if result.refused:
-        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
-        raise SystemExit(1)
     if not apply_:
         console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
         console.print("In step." if result.details["in_step"] else "Nothing changed. --apply brings it in step.")

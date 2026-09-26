@@ -105,6 +105,37 @@ class TheRoutes(Drifted, unittest.TestCase):
                 self.indexed.clear()
 
 
+class AFolderIsChecked(Drifted, unittest.TestCase):
+    """A folder is checked as the index routes check one (tagpup.core.validation), and one
+    the library holds no photo under is refused with a message saying so: sync keeps
+    indexed folders in step; indexing a folder is TagTuner's Add Folder."""
+
+    def test_the_route_refuses_a_folder_that_is_no_full_path_or_holds_no_indexed_photo(self):
+        app, home = web_client.app_for(self, "tuner")
+        client = app.test_client()
+        self.drift(os.path.join(home.root, "tuner"), home.library("library.db"))
+        elsewhere = os.path.join(home.root, "Elsewhere")
+        os.makedirs(elsewhere)
+        for folder, says in (("Harbourview Regatta", "full path"), (elsewhere, "no photo")):
+            with self.subTest(folder=folder):
+                reply = client.post("/library/api/sync", json={"folder": folder})
+                self.assertEqual(400, reply.status_code, reply.data)
+                self.assertIn(says, reply.get_json()["error"])
+                self.assertFalse(reply.get_json()["in_step"])
+        self.assertEqual(200, client.post("/library/api/sync", json={"folder": self.folder}).status_code)
+
+    def test_the_cli_refuses_a_folder_that_holds_no_indexed_photo(self):
+        home = own_home.for_test(self)
+        db_path = home.library("harbour.db")
+        library_actions.create(db_path)
+        self.drift(home.root, db_path)
+        elsewhere = os.path.join(home.root, "Elsewhere")
+        os.makedirs(elsewhere)
+        result = CliRunner().invoke(cli, ["--db", db_path, "sync", "--folder", elsewhere])
+        self.assertEqual(1, result.exit_code, result.output)
+        self.assertIn("no photo", result.output)
+
+
 class TheCli(Drifted, unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self)

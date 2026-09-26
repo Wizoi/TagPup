@@ -419,12 +419,12 @@ class Folders(SyncTestCase):
         self.assertEqual([self.pictures], sync.walk_roots([self.meet, self.pictures, self.trip]))
 
     def test_one_folder_looks_only_at_its_rows(self):
-        self.indexed(self.photo(self.meet, "IMG_0001.jpg"))
+        self.indexed(self.photo(self.meet, "IMG_0001.jpg"), self.photo(self.trip, "IMG_0002.jpg"))
         os.remove(os.path.join(self.meet, "IMG_0001.jpg"))
         self.photo(self.trip, "IMG_0100.jpg")
         result = self.run_sync(folder=self.trip)
         counts = result.details["counts"]
-        self.assertEqual((0, 1, 0), (counts["rows"], counts["new"], counts["missing"]))
+        self.assertEqual((1, 1, 0), (counts["rows"], counts["new"], counts["missing"]))
         found = self.run_sync(folder=self.meet).details["counts"]
         self.assertEqual((1, 0, 1), (found["rows"], found["new"], found["missing"]))
 

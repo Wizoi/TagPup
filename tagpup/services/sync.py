@@ -41,7 +41,7 @@ over; missing files do not count against it -- which is the pages' "last in step
 """
 import os
 
-from tagpup.core import paths
+from tagpup.core import paths, validation
 from tagpup.files import images
 from tagpup.services import maintenance, refresh_rows, relink_photos
 from tagpup.store import db, sync_runs
@@ -127,10 +127,22 @@ def look(library, folder=None, exiftool_path=None):
     """What differs between the library and its folders (or `folder`): a Plan (maintenance)
     whose `work` holds the edits and the folders of new files. Reads the rows, walks the
     folders, and reads with ExifTool only the changed files and, where a row is missing,
-    the new files' identities. Writes nothing."""
+    the new files' identities. Writes nothing.
+
+    Refused for a `folder` the rules do not take as one (tagpup.core.validation), and for
+    one the library holds no photo under: sync keeps indexed folders in step, and adding
+    a folder is indexing it."""
+    if folder is not None:
+        problem = validation.problem("folder", folder)
+        if problem:
+            return maintenance.Plan(refused=problem)
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         rows = store_photos.stamps(conn, folder)
+        if folder is not None and not rows:
+            return maintenance.Plan(refused=(
+                "The library holds no photo under that folder: sync keeps the folders it holds in step. "
+                "To add a folder, index it (TagTuner's Add Folder)."))
         by_key = {}
         for photo_id, path, mtime, size in rows:
             by_key.setdefault(paths.key(path), (photo_id, path, mtime, size))
@@ -231,7 +243,9 @@ def in_step(counts, result=None):
     """Is the library in step with its folders by what a sync found (`counts`) and, once
     applied, did (`result`)? Nothing new, nothing changed or moved left unwritten, nothing
     unreadable. Missing files do not count: they are reported, and removing their rows is
-    the owner's choice."""
+    the owner's choice. A sync refused found nothing to say so."""
+    if not counts:
+        return False
     if (counts.get("new") or counts.get("unreadable") or counts.get("moved_changed") or counts.get("occupied")
             or counts.get("ambiguous_rows")):
         return False

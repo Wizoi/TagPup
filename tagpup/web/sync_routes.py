@@ -36,6 +36,7 @@ def sync_library():
     library = state.require()
     body = request.get_json(silent=True) or {}
     apply = body.get("apply") is True
+    # Checked by the service (tagpup.core.validation), as the index routes' folder is.
     folder = body.get("folder") or None
     try:
         result = runtimes.sync(library, folder=folder, apply=apply)
