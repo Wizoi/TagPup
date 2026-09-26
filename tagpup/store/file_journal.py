@@ -116,6 +116,30 @@ def owner_parts(named):
     return ":".join(parts), numbers[0], numbers[1]
 
 
+def owner_alive(named):
+    """Is the process `named` by owner() ("host:pid:start", or "host:pid" as libraries
+    written before name it) still running? One on another machine is taken to be: this
+    one cannot tell. So is this process: what it holds is being carried out on another
+    thread. A process with the id but another start is one that had the id before, and
+    has ended (docs/findings.md, #275). Whoever takes over what a process left -- a
+    change of photo files (tagpup.services.file_changes.settle), a recurring job's run
+    (tagpup.store.job_runs) -- asks this."""
+    host, pid, start = owner_parts(named)
+    if host != socket.gethostname():
+        return True
+    if pid is None:
+        return False
+    if start is None:
+        return pid == os.getpid() or processes.is_alive(pid)
+    if pid == os.getpid():
+        return named == owner()
+    now = processes.started(pid)
+    if now is not None:
+        return now == start
+    # Its start could not be read: gone, or not ours to read.
+    return processes.is_alive(pid)
+
+
 def _now():
     return time.strftime(TIME)
 
