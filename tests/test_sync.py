@@ -271,6 +271,69 @@ class MovedFiles(SyncTestCase):
         self.assertEqual(0, self.reads.sessions, "identities are read only when something is new")
 
 
+class MovedWithoutAnIdentity(SyncTestCase):
+    """Most rows have no DocumentID (67,204 of photo_index's 68,387): a file moved out of
+    their folder is matched by its name, size and modified time, which the walk and the
+    rows already hold, when that match is the only one on both sides."""
+
+    def move(self, path, folder):
+        moved = os.path.join(folder, os.path.basename(path))
+        os.rename(path, moved)   # a move keeps the file's modified time
+        return moved
+
+    def test_a_moved_file_with_no_identity_follows_by_name_size_and_time(self):
+        old = self.photo(self.meet, "IMG_0001.jpg")
+        self.indexed(old, self.photo(self.trip, "IMG_0002.jpg"))
+        photo_id = self.rows()[old][0]
+        new = self.move(old, self.trip)
+        dry = self.run_sync()
+        self.assertEqual(0, self.reads.sessions, "a move matched by its stamp reads no file")
+        counts = dry.details["counts"]
+        self.assertEqual((1, 0, 0), (counts["moved"], counts["new"], counts["missing"]))
+        result = self.run_sync(apply=True, queue=lambda folders: self.fail("nothing is new: it moved"))
+        self.assertTrue(result.ok, result.message())
+        self.assertEqual(photo_id, self.rows()[new][0])
+        self.assertNotIn(old, self.rows())
+        self.assertTrue(result.details["in_step"])
+
+    def test_twins_are_reported_not_guessed_and_their_folders_not_queued(self):
+        old = self.photo(self.meet, "IMG_0001.jpg")
+        self.indexed(old, self.photo(self.trip, "IMG_0002.jpg"))
+        copies = []
+        for day in ("day 1", "day 2"):
+            folder = os.path.join(self.trip, "copies", day)
+            os.makedirs(folder)
+            copies.append(folder)
+            self.photo(folder, "IMG_0001.jpg")
+        os.remove(old)
+        self.photo(self.meet, "IMG_0200.jpg")   # new, beside the missing row
+        asked = []
+
+        def queue(folders):
+            asked.extend(folders)
+            return Result(attempted=len(folders), changed=len(folders))
+
+        result = self.run_sync(apply=True, queue=queue)
+        counts = result.details["counts"]
+        self.assertEqual((0, 1, 1, 2), (counts["moved"], counts["missing"], counts["ambiguous_rows"],
+                                        counts["ambiguous_files"]))
+        self.assertIn(old, self.rows(), "a row was moved onto one of two copies")
+        self.assertEqual([self.meet], asked, "a folder holding a possible copy of a missing photo was queued")
+        self.assertFalse(result.details["in_step"])
+
+    def test_identities_are_read_only_for_what_the_stamps_did_not_settle(self):
+        plain = self.photo(self.meet, "IMG_0001.jpg")
+        renamed = self.photo(self.meet, "IMG_0002.jpg", **{"XMP:DocumentID": "uuid:7a2e-renamed"})
+        self.indexed(plain, renamed, self.photo(self.trip, "IMG_0003.jpg"))
+        self.move(plain, self.trip)
+        new_name = os.path.join(self.trip, "Harbour - 02.jpg")
+        os.rename(renamed, new_name)
+        self.truth["Harbour - 02.jpg"] = self.truth["IMG_0002.jpg"]
+        result = self.run_sync()
+        self.assertEqual([new_name], self.reads.read, "only the file the stamps did not settle is read")
+        self.assertEqual(2, result.details["counts"]["moved"])
+
+
 class MissingFiles(SyncTestCase):
     def test_a_missing_file_is_reported_never_removed(self):
         gone = self.photo(self.meet, "IMG_0001.jpg")

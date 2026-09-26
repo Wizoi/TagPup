@@ -12,9 +12,14 @@ folder scan's rule), and sorts what differs:
   indexed here;
 - changed files -- a row whose stamp no longer describes its file: the row re-read from
   the file, as refresh_rows does (refresh_rows.reread, edits_for);
-- moved files -- a row whose file is gone, and a new file holding its DocumentID (or,
-  renamed in its folder by TagPup, its PreservedFileName): the row follows the file, and
-  its faces with it, as relink does (relink_photos.claims_of, pair, edits_for);
+- moved files -- a row whose file is gone, and a new file that is the same photo: the
+  row follows the file, and its faces with it, as relink does (relink_photos.edits_for).
+  Most rows hold no DocumentID, so a file is first matched by its name, size and
+  modified time, which the walk and the rows already hold -- only where exactly one file
+  matches the row and exactly one row the file; a match that is not one-to-one is
+  reported as ambiguous, never guessed, and the folders of its files are not queued.
+  What that leaves is matched by the DocumentID (or, renamed in its folder by TagPup,
+  the PreservedFileName) read from those new files alone (relink_photos.claims_of, pair);
 - missing files -- a row whose file is gone and was not found elsewhere: reported, never
   removed. A folder on an unplugged drive looks the same as a deleted one, so removing
   rows stays the owner's choice (TagTuner's Remove Folder), and the report says which
@@ -24,7 +29,7 @@ Which folders: every folder the library holds photos in, walked from the topmost
 (a folder under another is walked with it, as indexing walked it), or the one folder
 asked for. A scan that finds nothing costs one walk and no file reads
 (tagpup.files.images.stamps_under): ExifTool is started only for a changed file, or to
-read the new files' identities when a row is missing too.
+read the identities of the new files a missing row's stamp did not settle.
 
 On the maintenance scaffold (tagpup.services.maintenance): a dry run by default, which
 reads and rehearses and writes nothing -- neither a row nor a photo file (the files are
@@ -67,6 +72,47 @@ def walk_roots(folders):
     return roots
 
 
+def pair_by_stamp(missing, new):
+    """(pairs [(old, new)], ambiguous rows [path], ambiguous files {key}) of the `missing`
+    rows [(photo_id, path, mtime, size)] and the `new` files {key: (path, mtime, size)}:
+    a row and a file are the same photo when they have one name, one size, and a time
+    the row describes (store.photos.describes) -- and only when each is the other's one
+    match. A row or file with more than one match is ambiguous. Reads nothing."""
+    files = {}
+    for key, (path, mtime, size) in new.items():
+        files.setdefault((os.path.basename(path), size), []).append((key, path, mtime))
+    matches, claimed = {}, {}
+    for _photo_id, path, mtime, size in missing:
+        found = [(key, file_path) for key, file_path, file_mtime in files.get((os.path.basename(path), size), ())
+                 if store_photos.describes(mtime, size, (file_mtime, size))]
+        if found:
+            matches[path] = found
+            for key, _file_path in found:
+                claimed[key] = claimed.get(key, 0) + 1
+    pairs, ambiguous_rows, ambiguous_files = [], [], set()
+    for path, found in matches.items():
+        if len(found) == 1 and claimed[found[0][0]] == 1:
+            pairs.append((path, found[0][1]))
+        else:
+            ambiguous_rows.append(path)
+            ambiguous_files.update(key for key, _file_path in found)
+    return pairs, ambiguous_rows, ambiguous_files
+
+
+def queueable(new_paths, held_back):
+    """The folders to queue for `new_paths`: each folder holding a new file, less those
+    at or above a folder in `held_back` (indexing a folder takes its subfolders), each
+    once, under the outermost."""
+    blocked = {paths.key(folder) for folder in held_back}
+
+    def holds_back(folder):
+        key = paths.key(folder)
+        return any(other == key or paths.is_under(other, folder) for other in blocked)
+
+    return walk_roots({folder for folder in {os.path.dirname(path) for path in new_paths}
+                       if not holds_back(folder)})
+
+
 def _missing_by_folder(missing):
     """[(folder, rows, whether it is gone)] of the missing rows' folders, the most first."""
     by_folder = {}
@@ -107,15 +153,25 @@ def look(library, folder=None, exiftool_path=None):
                 never_stamped += mtime is None or size is None
         new = {key: stamp for key, stamp in on_disk.items() if key not in by_key}
 
-        # Moved: a missing row whose file turns up among the new ones. Only then are the
-        # new files read, and only for their identities.
-        moves = []
+        # Moved: a missing row whose file turns up among the new ones. First by name, size
+        # and time, reading nothing; then, for what that did not settle, by the identity
+        # read from those new files alone.
+        moves, ambiguous_rows, ambiguous_files = [], [], set()
         if missing and new:
-            lookup, by_identity = relink_photos.claims_of(sorted(path for path, _m, _s in new.values()),
-                                                          exiftool_path)
-            live = set(by_key) - {paths.key(path) for _id, path in missing}
-            pairs, _unmatched = relink_photos.pair([path for _id, path in missing], lookup, by_identity,
-                                                   store_photos.identities(conn), live)
+            stamped = [(photo_id, path) + tuple(by_key[paths.key(path)][2:]) for photo_id, path in missing]
+            pairs, ambiguous_rows, ambiguous_files = pair_by_stamp(stamped, new)
+            settled = {paths.key(old) for old, _new in pairs} | {paths.key(new_path) for _old, new_path in pairs}
+            left_rows = [path for _id, path in missing if paths.key(path) not in settled]
+            left_files = sorted(path for key, (path, _m, _s) in new.items() if key not in settled)
+            if left_rows and left_files:
+                lookup, by_identity = relink_photos.claims_of(left_files, exiftool_path)
+                live = set(by_key) - {paths.key(path) for _id, path in missing}
+                by_id, _unmatched = relink_photos.pair(left_rows, lookup, by_identity,
+                                                       store_photos.identities(conn), live)
+                pairs += by_id
+                found_by_id = {paths.key(old) for old, _new in by_id} | {paths.key(new_path) for _old, new_path in by_id}
+                ambiguous_rows = [path for path in ambiguous_rows if paths.key(path) not in found_by_id]
+                ambiguous_files -= found_by_id
             moves = relink_photos.moves_with_faces(conn, pairs)
         moved_from = {paths.key(move["from"]) for move in moves}
         moved_to = {paths.key(move["to"]) for move in moves}
@@ -142,8 +198,10 @@ def look(library, folder=None, exiftool_path=None):
     moved_edits, occupied = relink_photos.edits_for(library, moves)
     by_folder = _missing_by_folder(missing)
     new_paths = sorted((path for path, _m, _s in new.values()), key=paths.key)
-    # Indexing a folder takes its subfolders: each is queued once, under the outermost.
-    new_folders = walk_roots({os.path.dirname(path) for path in new_paths})
+    # A folder holding what may be a copy of a missing photo is not indexed until a person
+    # has looked: indexing it would give the photo a second row beside the dead one.
+    held_back = {os.path.dirname(new[key][0]) for key in ambiguous_files}
+    new_folders = queueable(new_paths, held_back)
     return maintenance.Plan(
         size=len(edits) + len(moved_edits),
         counts={"rows": len(by_key), "files": len(on_disk), "folders_walked": len(roots) - len(roots_gone),
@@ -152,13 +210,18 @@ def look(library, folder=None, exiftool_path=None):
                 "fields": dict(fields.most_common()), "unreadable": len(unreadable),
                 "moved": len(moves), "moved_faces": sum(m["faces"] for m in moves),
                 "moved_named": sum(m["named"] for m in moves), "moved_changed": moved_changed,
-                "occupied": len(occupied), "missing": len(missing), "missing_folders": len(by_folder),
+                "occupied": len(occupied), "ambiguous_rows": len(ambiguous_rows),
+                "ambiguous_files": len(ambiguous_files), "held_back_folders": len(held_back),
+                "missing": len(missing), "missing_folders": len(by_folder),
                 "folders_gone": sum(1 for _f, _n, gone in by_folder if gone), "roots_gone": len(roots_gone)},
         ids={"changed": sorted(changed.values()), "to_write": sorted(changed[p] for p in to_write),
              "unreadable": sorted(changed[p] for p in unreadable),
              "moved": sorted(by_key[paths.key(m["from"])][0] for m in moves),
-             "missing": sorted(photo_id for photo_id, _path in missing)},
+             "missing": sorted(photo_id for photo_id, _path in missing),
+             "ambiguous": sorted(by_key[paths.key(path)][0] for path in ambiguous_rows)},
         reveal={"new": new_paths, "new_folders": new_folders, "moves": moves, "occupied": occupied,
+                "ambiguous": {"rows": ambiguous_rows, "files": sorted(new[key][0] for key in ambiguous_files),
+                              "held_back_folders": sorted(held_back, key=paths.key)},
                 "missing_folders": [{"folder": f, "rows": n, "gone": gone} for f, n, gone in by_folder],
                 "roots_gone": roots_gone},
         work={"edits": edits + moved_edits, "new_folders": new_folders})
@@ -169,7 +232,8 @@ def in_step(counts, result=None):
     applied, did (`result`)? Nothing new, nothing changed or moved left unwritten, nothing
     unreadable. Missing files do not count: they are reported, and removing their rows is
     the owner's choice."""
-    if counts.get("new") or counts.get("unreadable") or counts.get("moved_changed") or counts.get("occupied"):
+    if (counts.get("new") or counts.get("unreadable") or counts.get("moved_changed") or counts.get("occupied")
+            or counts.get("ambiguous_rows")):
         return False
     if result is None:
         return not (counts.get("to_write") or counts.get("moved"))
