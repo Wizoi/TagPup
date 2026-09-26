@@ -15,7 +15,8 @@ from test_snapshots import NOON, Base  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
-from tagpup.store import job_runs, snapshots  # noqa: E402
+from tagpup.services import snapshots as snapshot_service  # noqa: E402
+from tagpup.store import db, job_runs, snapshots  # noqa: E402
 
 
 class TheJobAndTheCommands(Base):
@@ -31,6 +32,37 @@ class TheJobAndTheCommands(Base):
         run = [r for r in job_runs.runs(self.library.path) if r.job == "snapshots"][0]
         self.assertEqual(("done", 3, snapshots.disk(self.library.path)),
                          (run.outcome, run.changed["changed"], run.changed["bytes"]))
+
+    def test_a_snapshot_holds_no_run_still_running(self):
+        # The snapshots job's own run is `running` while it copies the library, and was in
+        # the copy: restored while this process lived, the job was held "running" by it
+        # until the process ended (review of phase 8a, 1).
+        runner = recurring.Runner(lambda: [self.library], clock=lambda: NOON)
+        self.assertTrue(runner.run("snapshots", self.library, force=True)[0].ran)
+        for snapshot in snapshots.listed(self.library.path):
+            self.assertEqual([], self.query("SELECT id FROM job_runs WHERE outcome = 'running'", path=snapshot.path),
+                             snapshot.name)
+        restored = snapshot_service.restore(self.library, snapshots.listed(self.library.path, "daily")[0].name,
+                                            apply=True, now=NOON + 60)
+        self.assertEqual(1, restored.changed)
+        self.assertEqual([], self.query("SELECT id FROM job_runs WHERE outcome = 'running'"))
+        again = runner.run("snapshots", self.library, force=True)[0]
+        self.assertEqual((True, None), (again.ran, again.why))
+
+    def test_a_restore_leaves_no_run_the_snapshot_held_running(self):
+        # A snapshot taken before this fix, or copied by hand, can still hold one.
+        snapshots.take(self.library.path, now=NOON)
+        daily = snapshots.listed(self.library.path, "daily")[0]
+        conn = db.connect(daily.path)
+        try:
+            conn.execute("INSERT INTO job_runs (job, library, started, outcome, owner) VALUES"
+                         " ('snapshots', 'harbour', '2026-09-01 12:00:00', 'running', ?)", (job_runs.file_journal.owner(),))
+            conn.commit()
+            conn.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            conn.close()
+        snapshot_service.restore(self.library, daily.name, apply=True, now=NOON + 60)
+        self.assertEqual([("abandoned",)], self.query("SELECT outcome FROM job_runs"))
 
     def test_the_commands_list_run_and_restore(self):
         taken = self.cli("jobs", "run", "snapshots")

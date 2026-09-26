@@ -12,7 +12,9 @@ three times. Each is:
   step began. Copied in several steps, a write by another connection between two of
   them would restart it;
 - written under a temporary name (`.partial`), made a file of its own (no -wal beside
-  it), checked with `PRAGMA quick_check`, and only then renamed into place;
+  it), its recurring jobs' runs still `running` marked `abandoned` -- the snapshots job's
+  own is, as it copies -- checked with `PRAGMA quick_check`, and only then renamed into
+  place;
 - counted against its kind's number only after it is in place: an old one is removed
   once its replacement has passed, so a failed night never leaves fewer good copies.
   A `.partial` a crash left is deleted by the next snapshot.
@@ -141,9 +143,29 @@ def copy_library(db_path, target):
         try:
             source.backup(destination)
             destination.execute("PRAGMA journal_mode=DELETE")
+            _abandon_runs(destination)
         finally:
             destination.close()
             source.close()
+
+
+#: Why a run a snapshot or a restore found `running` is marked abandoned.
+NOT_RUNNING = "running when its library was copied; not running in the copy"
+
+
+def _abandon_runs(conn):
+    """Mark every run `running` in the library on `conn` abandoned, and commit. A copy
+    holds the runs that were under way as it was taken -- the snapshots job's own among
+    them -- and a process still alive would hold the job "running" in the library the copy
+    is restored into until that process ended (tagpup.store.job_runs.claim). Returns how
+    many."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'job_runs'").fetchone():
+        return 0
+    marked = conn.execute("UPDATE job_runs SET outcome = 'abandoned', owner = NULL, note = ?,"
+                          " finished = COALESCE(finished, started) WHERE outcome = 'running'",
+                          (NOT_RUNNING,)).rowcount
+    conn.commit()
+    return marked
 
 
 def _remove(path):
@@ -274,6 +296,8 @@ def restore(db_path, snapshot_path):
             before = dict(destination.execute("SELECT name, value FROM generations").fetchall()) \
                 if _has_generations(destination) else {}
             source.backup(destination)
+            # The snapshot's runs under way as it was taken are not under way now.
+            _abandon_runs(destination)
             if before and _has_generations(destination):
                 for name, value in before.items():
                     destination.execute("UPDATE generations SET value = ? WHERE name = ? AND value <= ?",
