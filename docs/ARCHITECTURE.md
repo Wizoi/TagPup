@@ -470,11 +470,22 @@ The design, to be settled before it starts:
   time) and a grid that renders only what is on screen -- the Identify Faces work showed
   what rebuilding tens of thousands of cards costs.
 
-Open questions for the owner: sources beyond folder, keyword, person and date (ratings,
-saved searches such as "Trips/ and a person, 2019"); bulk edits across folders from a
-library view (they go through the same journaled writes, so they can be undone); which
-of Photo Gallery's habits to keep (the date slider, the tag pane with counts, the info
-pane).
+The owner's answers *(2026-09-26)*:
+- **The tag pane is there already**: the folder view's details panel and bulk tags are
+  what Photo Gallery's tag pane was used for. A library view gets the same panel.
+- **What is missing is the left navigation over the whole library**: by date (year, then
+  month) and by tag (the tag tree), as Photo Gallery's navigation pane did.
+- **Search, as Photo Gallery's**, with results shown as a folder view is. Photo Gallery
+  searched file name, tags, caption, author and camera for the words typed, within what
+  the navigation pane had selected; tags picked in the pane with Ctrl were OR (any of
+  them), the words in the search box were AND (all of them); it had no way to leave a
+  tag out ([Find your photos 2](https://ludwigkeck.wordpress.com/2009/09/21/find-your-photos-2-%E2%80%93-windows-live-photo-gallery/)).
+  2011's Find tab filtered by people, descriptive tags, date, place, folder, rating or
+  flag, in any combination. The owner wants more than that: three family members and
+  not a fourth -- *all of*, *any of* and *none of*, over tags and people, with text.
+- **Albums are folders**, here and in phase 10: no album entity.
+- **The thumbnail cache is not bounded.**
+- **Libraries are always distinct**: a view shows one library.
 
 **Where the code stands** *(2026-09-26)*: the grid (`web/tagpup/grid.js`, `folder.js`)
 builds a card for every photo of the folder it has open, keyed by path; nothing renders
@@ -492,8 +503,8 @@ click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
   `photos.tags` by a migration; "a keyword and everything under it" is a range on it. A
   thumbnail cache on disk: derived, keyed by photo id and the file's size and modified
   time, under `data/cache/<library>/thumbs`, made on first ask and by an idle recurring
-  job (phase 8), pruned when a photo's stamp changes or it leaves the library; the budget
-  measured first (about 20-40 KB a 300 px thumbnail: 1.5-3 GB for photo_index). One query
+  job (phase 8), pruned when a photo's stamp changes or it leaves the library; not bounded
+  *(owner)*: about 20-40 KB a 300 px thumbnail, 1.5-3 GB for photo_index, measured. One query
   service, `tagpup.services.library_view`: a source (folder and subfolders, keyword and
   everything under it, person, year or month) to an ordered page of photo ids and the
   total; and the navigator's counts (folder tree, tag tree, people, years and months),
@@ -512,9 +523,13 @@ click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
 - **9d. Editing from a library view.** Bulk edits on a selection that spans folders,
   through the same journaled writes (History lists and undoes them); a file changed
   outside while an edit is planned is a conflict for sync to settle, never overwritten.
-- **9e. Photo Gallery's habits**, as the owner chooses them (the open questions above):
-  a date slider, the tag pane with counts, an info pane, ratings, saved searches.
-  Albums, if wanted now, are a source here and the ground phase 10 builds on.
+- **9e. Search.** A search is a source: *all of* these tags or people, *any of* those,
+  *none of* these, and words matched against file name, tags, captions and people (as
+  Photo Gallery's search box did), optionally within the folder, tag or date the
+  navigator has selected. Built on `photo_tags` and `photo_people` as set operations in
+  one query; its results open in the same grid, panel and bulk edits as a folder, and
+  the URL holds the search so it can be bookmarked or opened again. A picker that
+  completes tag and person names (the tag editor's vocabulary) builds the three lists.
 
 Exit: the owner can open the whole library by folder, keyword, person or date, move
 between a disk folder and its library view without losing place, and edit from either,
