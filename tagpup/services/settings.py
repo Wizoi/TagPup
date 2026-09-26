@@ -383,6 +383,22 @@ def change(library, values, acknowledged=()):
     return result
 
 
+def ignore_folder(library, folder):
+    """Add `folder` to the library's ignored folders, as a change of its settings, so it is
+    in the library's history and can be undone: Ignore, on a folder sync lists to review.
+    Refused for a folder the rules do not take as one; `changed` 0 for one ignored
+    already."""
+    result = Result(attempted=1)
+    problem = validation.problem("folder", folder)
+    if problem:
+        result.refuse(problem)
+        return result
+    ignored = of(library).ignored
+    if any(paths.same(folder, other) for other in ignored):
+        return result
+    return change(library, {IGNORED: validation.FOLDER_SEPARATOR.join(ignored + [paths.stored(folder)])})
+
+
 def described(settings, app=None):
     """The settings as the dialog is made from them: each group, in order, with its title,
     whether it is locked and what changing it does, and each of its settings' declaration

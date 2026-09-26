@@ -73,7 +73,8 @@ def summarize_indexer_line(line):
     return clean
 
 
-def index_folder(library, folder, code_folder, cluster=False, report=None, while_clustering=None):
+def index_folder(library, folder, code_folder, cluster=False, report=None, while_clustering=None,
+                 subfolders=True):
     """Add a folder's photos to the library: the CLI's `index`, then, if `cluster`,
     `cluster-faces`. Adding a folder, in either app.
 
@@ -91,7 +92,9 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
 
     details: `message`, what to tell the person; `percent`, where the bar stops.
     Refused, and nothing run, for a folder that is not named by its full path
-    (tagpup.core.validation).
+    (tagpup.core.validation). Without `subfolders`, only the photos directly in the
+    folder are indexed (`index --no-subfolders`): sync's new files in a folder the library
+    holds, whose subfolders may be folders to review or ignored.
     """
     report = report or (lambda message=None, percent=None: None)
     result = Result(attempted=1)
@@ -119,7 +122,7 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
         return proc.returncode
 
     # The indexer stores the paths it walks as given, so it is handed the stored form.
-    code = run(["index", paths.stored(folder)], 0.9)
+    code = run(["index", paths.stored(folder)] + ([] if subfolders else ["--no-subfolders"]), 0.9)
     if code != 0:
         result.fail(folder, "Indexing failed with exit code %s." % code)
         result.details["percent"] = 0

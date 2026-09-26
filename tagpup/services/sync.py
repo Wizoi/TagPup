@@ -25,9 +25,14 @@ folder scan's rule), and sorts what differs:
   rows stays the owner's choice (TagTuner's Remove Folder), and the report says which
   folders are wholly gone.
 
-Which folders: every folder the library holds photos in, walked from the topmost of them
-(a folder under another is walked with it, as indexing walked it), or the one folder
-asked for. A scan that finds nothing costs one walk and no file reads
+Which folders: the library's root folders (its settings, tagpup.services.settings) and
+every folder it holds photos in, each walked once from the topmost, or the one folder
+asked for. New files in a folder the library holds photos in are queued with that folder
+alone (indexed without its subfolders); a folder under a root that holds photos and no
+indexed photo is not indexed on its own: it is listed as a folder to review (`review`),
+which the page offers to include (`include`: indexed with its subfolders) or to ignore
+(its path added to the library's ignored folders), and a folder under an ignored one is
+passed over. A scan that finds nothing costs one walk and no file reads
 (tagpup.files.images.stamps_under): ExifTool is started only for a changed file, or to
 read the identities of the new files a missing row's stamp did not settle.
 
@@ -42,6 +47,7 @@ over; missing files do not count against it -- which is the pages' "last in step
 import os
 
 from tagpup.core import paths, validation
+from tagpup.core.result import Result
 from tagpup.files import images
 from tagpup.services import maintenance, refresh_rows, relink_photos
 from tagpup.store import db, sync_runs
@@ -99,20 +105,6 @@ def pair_by_stamp(missing, new):
     return pairs, ambiguous_rows, ambiguous_files
 
 
-def queueable(new_paths, held_back):
-    """The folders to queue for `new_paths`: each folder holding a new file, less those
-    at or above a folder in `held_back` (indexing a folder takes its subfolders), each
-    once, under the outermost."""
-    blocked = {paths.key(folder) for folder in held_back}
-
-    def holds_back(folder):
-        key = paths.key(folder)
-        return any(other == key or paths.is_under(other, folder) for other in blocked)
-
-    return walk_roots({folder for folder in {os.path.dirname(path) for path in new_paths}
-                       if not holds_back(folder)})
-
-
 def _missing_by_folder(missing):
     """[(folder, rows, whether it is gone)] of the missing rows' folders, the most first."""
     by_folder = {}
@@ -123,76 +115,166 @@ def _missing_by_folder(missing):
     return sorted(listed, key=lambda entry: (-entry[1], paths.key(entry[0])))
 
 
-def look(library, folder=None, exiftool_path=None):
+def _under_any(folder, folders):
+    """Is `folder` one of `folders` ({key: spelling}), or under one?"""
+    key = paths.key(folder)
+    return key in folders or any(paths.is_under(folder, other) for other in folders.values())
+
+
+def _scan(conn, folder, roots):
+    """What is on disk against the rows: (by_key {key: (id, path, mtime, size)} of the rows
+    looked at, on_disk {key: (path, mtime, size)}, the folders walked, those not there).
+    The whole library walks every root and every folder it holds photos in, each once
+    from the topmost; a folder, that folder alone."""
+    by_key = {}
+    for photo_id, path, mtime, size in store_photos.stamps(conn, folder):
+        by_key.setdefault(paths.key(path), (photo_id, path, mtime, size))
+    walked = [paths.stored(folder)] if folder else walk_roots(
+        set(roots) | {os.path.dirname(path) for _id, path, _m, _s in by_key.values()})
+    on_disk, gone = {}, []
+    for root in walked:
+        if os.path.isdir(root):
+            on_disk.update(images.stamps_under(root))
+        else:
+            gone.append(root)
+    return by_key, on_disk, walked, gone
+
+
+def _missing_elsewhere(conn, by_key, new):
+    """The rows outside a folder-limited sync that a new file in it may have moved from:
+    another folder's row with the new file's name and size whose file is gone, as
+    [(photo_id, path, mtime, size)]. One read of the rows' stamps, and a look on disk for
+    each candidate alone: a file moved in from another folder keeps its row."""
+    wanted = {(os.path.basename(path), size) for path, _m, size in new.values()}
+    found = []
+    for photo_id, path, mtime, size in store_photos.stamps(conn):
+        if (os.path.basename(path), size) in wanted and paths.key(path) not in by_key and not os.path.exists(path):
+            found.append((photo_id, path, mtime, size))
+    return found
+
+
+def _pair_moves(conn, by_key, missing, new, exiftool_path, read=True):
+    """(pairs [(old, new)], ambiguous rows [path], ambiguous files {key}) of the missing
+    rows [(photo_id, path, mtime, size)] and the new files: by name, size and time first,
+    reading nothing; then, for what that left and only when `read`, by the identity read
+    from those new files alone."""
+    pairs, ambiguous_rows, ambiguous_files = pair_by_stamp(missing, new)
+    settled = {paths.key(old) for old, _new in pairs} | {paths.key(new_path) for _old, new_path in pairs}
+    left_rows = [path for _id, path, _m, _s in missing if paths.key(path) not in settled]
+    left_files = sorted(path for key, (path, _m, _s) in new.items() if key not in settled)
+    if read and left_rows and left_files:
+        lookup, by_identity = relink_photos.claims_of(left_files, exiftool_path)
+        live = set(by_key) - {paths.key(path) for _id, path, _m, _s in missing}
+        by_id, _unmatched = relink_photos.pair(left_rows, lookup, by_identity, store_photos.identities(conn), live)
+        pairs += by_id
+        found_by_id = {paths.key(old) for old, _new in by_id} | {paths.key(new_path) for _old, new_path in by_id}
+        ambiguous_rows = [path for path in ambiguous_rows if paths.key(path) not in found_by_id]
+        ambiguous_files -= found_by_id
+    return pairs, ambiguous_rows, ambiguous_files
+
+
+def _sort_new(new, by_key, stops, ignored, ambiguous_files):
+    """Where each new file goes: ({indexed folder: new files}, the folders its new files
+    are queued for; {folder to review: photos}; photos under an ignored folder; {folder
+    held back: files}). A new file in a folder the library holds photos in is indexed
+    with that folder alone. One in a folder holding none is under a folder to review: the
+    topmost above it, below a root (`stops`, keys), that holds no indexed photo at any
+    depth -- unless it is under an ignored folder. A folder holding a file that may be a
+    copy of a missing photo (`ambiguous_files`) is held back from both."""
+    held = {paths.key(os.path.dirname(path)) for _id, path, _m, _s in by_key.values()}
+    holding = set()
+    for _id, path, _m, _s in by_key.values():
+        current = os.path.dirname(path)
+        while paths.key(current) not in holding:
+            holding.add(paths.key(current))
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+    tops, queued, review, held_back, ignored_files = {}, {}, {}, {}, 0
+    ambiguous_folders = {paths.key(os.path.dirname(new[key][0])) for key in ambiguous_files}
+    for key, (path, _mtime, _size) in new.items():
+        folder = os.path.dirname(path)
+        folder_key = paths.key(folder)
+        if folder_key in held:
+            if folder_key in ambiguous_folders:
+                held_back[folder] = held_back.get(folder, 0) + 1
+            else:
+                queued.setdefault(folder_key, [folder, 0])[1] += 1
+            continue
+        if folder_key not in tops:
+            top = folder
+            while True:
+                parent = os.path.dirname(top)
+                if parent == top or paths.key(top) in stops or paths.key(parent) in holding:
+                    break
+                top = parent
+            tops[folder_key] = top
+        top = tops[folder_key]
+        if ignored and _under_any(folder, ignored):
+            ignored_files += 1
+        elif any(paths.key(os.path.dirname(new[other][0])) == folder_key or
+                 paths.is_under(new[other][0], top) for other in ambiguous_files):
+            held_back[top] = held_back.get(top, 0) + 1
+        else:
+            review.setdefault(paths.key(top), [top, 0])[1] += 1
+    return ({spelling: count for spelling, count in queued.values()},
+            {spelling: count for spelling, count in review.values()}, ignored_files, held_back)
+
+
+def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
     """What differs between the library and its folders (or `folder`): a Plan (maintenance)
     whose `work` holds the edits and the folders of new files. Reads the rows, walks the
-    folders, and reads with ExifTool only the changed files and, where a row is missing,
-    the new files' identities. Writes nothing.
+    roots and the folders the library holds photos in, and reads with ExifTool only the
+    changed files and, where a row is missing, the identities of the new files its stamp
+    did not settle. Writes nothing.
+
+    New files in a folder the library holds photos in are queued with that folder; a
+    folder under a root holding no indexed photo is listed to review (`review`), never
+    indexed on its own; one under an `ignored` folder is passed over.
 
     Refused for a `folder` the rules do not take as one (tagpup.core.validation), and for
-    one the library holds no photo under: sync keeps indexed folders in step, and adding
-    a folder is indexing it."""
+    one the library holds no photo under that is under none of its roots."""
+    roots = [paths.stored(root) for root in roots]
+    ignored_by_key = {paths.key(f): paths.stored(f) for f in ignored}
     if folder is not None:
         problem = validation.problem("folder", folder)
         if problem:
             return maintenance.Plan(refused=problem)
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        rows = store_photos.stamps(conn, folder)
-        if folder is not None and not rows:
+        by_key, on_disk, walked, roots_gone = _scan(conn, folder, roots)
+        if folder is not None and not by_key and not _under_any(folder, {paths.key(r): r for r in roots}):
             return maintenance.Plan(refused=(
-                "The library holds no photo under that folder: sync keeps the folders it holds in step. "
-                "To add a folder, index it (TagTuner's Add Folder)."))
-        by_key = {}
-        for photo_id, path, mtime, size in rows:
-            by_key.setdefault(paths.key(path), (photo_id, path, mtime, size))
-        roots = [paths.stored(folder)] if folder else walk_roots(
-            {os.path.dirname(path) for _id, path, _m, _s in by_key.values()})
-        on_disk, roots_gone = {}, []
-        for root in roots:
-            if os.path.isdir(root):
-                on_disk.update(images.stamps_under(root))
-            else:
-                roots_gone.append(root)
+                "The library holds no photo under that folder, and it is under none of the library's root "
+                "folders: sync keeps the library's folders in step. To add it, add a root folder or index it."))
 
         changed, missing, never_stamped = {}, [], 0
         for key, (photo_id, path, mtime, size) in by_key.items():
             stamp = on_disk.get(key)
             if stamp is None:
-                missing.append((photo_id, path))
+                missing.append((photo_id, path, mtime, size))
             elif not store_photos.describes(mtime, size, stamp[1:]):
                 changed[path] = photo_id
                 never_stamped += mtime is None or size is None
         new = {key: stamp for key, stamp in on_disk.items() if key not in by_key}
 
-        # Moved: a missing row whose file turns up among the new ones. First by name, size
-        # and time, reading nothing; then, for what that did not settle, by the identity
-        # read from those new files alone.
+        # Moved: a missing row whose file turns up among the new ones. A folder alone also
+        # looks for the rows of files moved in from elsewhere.
+        elsewhere = _missing_elsewhere(conn, by_key, new) if folder is not None and new else []
         moves, ambiguous_rows, ambiguous_files = [], [], set()
-        if missing and new:
-            stamped = [(photo_id, path) + tuple(by_key[paths.key(path)][2:]) for photo_id, path in missing]
-            pairs, ambiguous_rows, ambiguous_files = pair_by_stamp(stamped, new)
-            settled = {paths.key(old) for old, _new in pairs} | {paths.key(new_path) for _old, new_path in pairs}
-            left_rows = [path for _id, path in missing if paths.key(path) not in settled]
-            left_files = sorted(path for key, (path, _m, _s) in new.items() if key not in settled)
-            if left_rows and left_files:
-                lookup, by_identity = relink_photos.claims_of(left_files, exiftool_path)
-                live = set(by_key) - {paths.key(path) for _id, path in missing}
-                by_id, _unmatched = relink_photos.pair(left_rows, lookup, by_identity,
-                                                       store_photos.identities(conn), live)
-                pairs += by_id
-                found_by_id = {paths.key(old) for old, _new in by_id} | {paths.key(new_path) for _old, new_path in by_id}
-                ambiguous_rows = [path for path in ambiguous_rows if paths.key(path) not in found_by_id]
-                ambiguous_files -= found_by_id
+        if (missing or elsewhere) and new:
+            pairs, ambiguous_rows, ambiguous_files = _pair_moves(conn, by_key, missing + elsewhere, new, exiftool_path)
             moves = relink_photos.moves_with_faces(conn, pairs)
+        stamp_of = {paths.key(path): (mtime, size) for _id, path, mtime, size in missing + elsewhere}
+        id_of = {paths.key(path): photo_id for photo_id, path, _m, _s in missing + elsewhere}
         moved_from = {paths.key(move["from"]) for move in moves}
         moved_to = {paths.key(move["to"]) for move in moves}
-        missing = [(photo_id, path) for photo_id, path in missing if paths.key(path) not in moved_from]
+        missing = [(photo_id, path) for photo_id, path, _m, _s in missing if paths.key(path) not in moved_from]
         # A moved file whose stamp is not its row's is read again by the next sync, once
         # the row names it.
         moved_changed = sum(1 for move in moves
-                            if not store_photos.describes(by_key[paths.key(move["from"])][2],
-                                                          by_key[paths.key(move["from"])][3],
+                            if not store_photos.describes(*stamp_of[paths.key(move["from"])],
                                                           on_disk[paths.key(move["to"])][1:]))
         new = {key: stamp for key, stamp in new.items() if key not in moved_to}
 
@@ -209,15 +291,18 @@ def look(library, folder=None, exiftool_path=None):
     edits = refresh_rows.edits_for(records, to_write, {}, found, identities, changed)
     moved_edits, occupied = relink_photos.edits_for(library, moves)
     by_folder = _missing_by_folder(missing)
-    new_paths = sorted((path for path, _m, _s in new.values()), key=paths.key)
-    # A folder holding what may be a copy of a missing photo is not indexed until a person
-    # has looked: indexing it would give the photo a second row beside the dead one.
-    held_back = {os.path.dirname(new[key][0]) for key in ambiguous_files}
-    new_folders = queueable(new_paths, held_back)
+    stops = {paths.key(root) for root in walked + roots}
+    queued, review, ignored_files, held_back = _sort_new(new, by_key, stops, ignored_by_key, ambiguous_files)
+    new_folders = sorted(queued, key=paths.key)
+    new_paths = sorted((path for path, _m, _s in new.values()
+                        if paths.key(os.path.dirname(path)) in {paths.key(f) for f in queued}), key=paths.key)
+    listed = [{"path": top, "photos": review[top]} for top in sorted(review, key=paths.key)]
     return maintenance.Plan(
         size=len(edits) + len(moved_edits),
-        counts={"rows": len(by_key), "files": len(on_disk), "folders_walked": len(roots) - len(roots_gone),
-                "new": len(new_paths), "new_folders": len(new_folders),
+        counts={"rows": len(by_key), "files": len(on_disk), "folders_walked": len(walked) - len(roots_gone),
+                "new": sum(queued.values()), "new_folders": len(new_folders),
+                "review_folders": len(review), "review_photos": sum(review.values()),
+                "ignored_files": ignored_files,
                 "changed": len(changed), "never_stamped": never_stamped, "to_write": len(to_write),
                 "fields": dict(fields.most_common()), "unreadable": len(unreadable),
                 "moved": len(moves), "moved_faces": sum(m["faces"] for m in moves),
@@ -228,15 +313,67 @@ def look(library, folder=None, exiftool_path=None):
                 "folders_gone": sum(1 for _f, _n, gone in by_folder if gone), "roots_gone": len(roots_gone)},
         ids={"changed": sorted(changed.values()), "to_write": sorted(changed[p] for p in to_write),
              "unreadable": sorted(changed[p] for p in unreadable),
-             "moved": sorted(by_key[paths.key(m["from"])][0] for m in moves),
+             "moved": sorted(id_of[paths.key(m["from"])] for m in moves),
              "missing": sorted(photo_id for photo_id, _path in missing),
-             "ambiguous": sorted(by_key[paths.key(path)][0] for path in ambiguous_rows)},
-        reveal={"new": new_paths, "new_folders": new_folders, "moves": moves, "occupied": occupied,
+             "ambiguous": sorted(id_of[paths.key(path)] for path in ambiguous_rows)},
+        reveal={"new": new_paths, "new_folders": new_folders, "review": listed, "moves": moves,
+                "occupied": occupied,
                 "ambiguous": {"rows": ambiguous_rows, "files": sorted(new[key][0] for key in ambiguous_files),
                               "held_back_folders": sorted(held_back, key=paths.key)},
                 "missing_folders": [{"folder": f, "rows": n, "gone": gone} for f, n, gone in by_folder],
                 "roots_gone": roots_gone},
         work={"edits": edits + moved_edits, "new_folders": new_folders})
+
+
+def review(library, roots=(), ignored=()):
+    """The folders to review: each folder under a root that holds photos and no indexed
+    photo, and is not ignored, with how many photos it holds -- what sync lists and the
+    page offers to include or ignore. One walk, and no file read: a file that moved there
+    is told by its name, size and time alone. {"folders": [{"path", "photos"}], "photos"}."""
+    roots = [paths.stored(root) for root in roots]
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        by_key, on_disk, walked, _gone = _scan(conn, None, roots)
+        missing = [(photo_id, path, mtime, size) for key, (photo_id, path, mtime, size) in by_key.items()
+                   if key not in on_disk]
+        new = {key: stamp for key, stamp in on_disk.items() if key not in by_key}
+        ambiguous_files = set()
+        if missing and new:
+            pairs, _rows, ambiguous_files = _pair_moves(conn, by_key, missing, new, None, read=False)
+            moved_to = {paths.key(new_path) for _old, new_path in pairs}
+            new = {key: stamp for key, stamp in new.items() if key not in moved_to}
+    finally:
+        conn.close()
+    stops = {paths.key(root) for root in walked + roots}
+    _queued, found, _ignored, _held = _sort_new(new, by_key, stops, {paths.key(f): paths.stored(f) for f in ignored},
+                                                 ambiguous_files)
+    listed = [{"path": top, "photos": found[top]} for top in sorted(found, key=paths.key)]
+    return {"folders": listed, "photos": sum(found.values())}
+
+
+def include(library, folder, roots, queue):
+    """Index a folder to review, with its subfolders: `queue([folder])` (the index queue's
+    start). Refused for a folder the rules do not take as one, one not on disk, and one
+    under none of the library's `roots`. A Result: `changed` 1 when it was queued."""
+    result = Result(attempted=1)
+    problem = validation.problem("folder", folder)
+    if problem:
+        result.refuse(problem)
+        return result
+    folder = paths.stored(folder)
+    if not os.path.isdir(folder):
+        result.refuse("That folder is not on disk.")
+        return result
+    if not _under_any(folder, {paths.key(r): paths.stored(r) for r in roots}):
+        result.refuse("That folder is under none of the library's root folders.")
+        return result
+    outcome = queue([folder])
+    result.changed = outcome.changed
+    for what, why in outcome.skipped:
+        result.skip(what, why)
+    if outcome.refused:
+        result.refuse(outcome.refused)
+    return result
 
 
 def in_step(counts, result=None):
@@ -254,12 +391,15 @@ def in_step(counts, result=None):
     return result.ok and not result.skipped
 
 
-def sync(library, folder=None, apply=False, exiftool_path=None, queue=None):
+def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, roots=(), ignored=()):
     """Bring `library` in step with its folders (or with `folder`), reading changed files
     with the ExifTool at `exiftool_path`; a dry run unless `apply`. A Result on the
     maintenance scaffold: `changed` is the rows the change changed (details["changed"]:
     re-read "from_files", "relinked"), read from the writes; details["counts"] what was
     found (see look), ["ids"] the photo ids, ["reveal"] the paths.
+
+    `roots` and `ignored` are the library's root folders and ignored folders (its
+    settings): see look.
 
     Applied, the folders holding new files are handed to `queue(folders)`, which returns
     the index queue's Result (tagpup.jobs.indexing.IndexQueue.start): details["queued"] is
@@ -273,7 +413,7 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None):
     held = {}
 
     def plan(found_library):
-        held["plan"] = look(found_library, folder, exiftool_path)
+        held["plan"] = look(found_library, folder, exiftool_path, roots, ignored)
         return held["plan"]
 
     result = maintenance.run(library, OPERATION, plan, lambda planned: planned.work["edits"],

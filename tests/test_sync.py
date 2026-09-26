@@ -100,12 +100,13 @@ class SyncTestCase(unittest.TestCase):
             conn.close()
         return ids
 
-    def run_sync(self, apply=False, folder=None, queue=None):
+    def run_sync(self, apply=False, folder=None, queue=None, roots=(), ignored=()):
         self.reads = Reads(self.truth)
         with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
                         side_effect=self.reads.batch_read), \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=self.reads.session):
-            return sync.sync(self.library, folder=folder, apply=apply, exiftool_path="exiftool", queue=queue)
+            return sync.sync(self.library, folder=folder, apply=apply, exiftool_path="exiftool", queue=queue,
+                             roots=roots, ignored=ignored)
 
     def rows(self):
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
@@ -234,8 +235,10 @@ class NewFiles(SyncTestCase):
         self.indexed(self.photo(self.trip, "IMG_0002.jpg"))
 
         dry = self.run_sync()
-        self.assertEqual(2, dry.details["counts"]["new"])
-        self.assertEqual(1, dry.details["counts"]["new_folders"], "a subfolder is indexed with its folder")
+        self.assertEqual(1, dry.details["counts"]["new"])
+        self.assertEqual(1, dry.details["counts"]["new_folders"])
+        # A subfolder holding no indexed photo is a folder to review, not indexed on its own.
+        self.assertEqual(1, dry.details["counts"]["review_folders"])
         self.assertFalse(dry.details["in_step"])
         self.assertEqual([], self.reads.read, "a new file is the indexer's to read")
 
@@ -448,6 +451,77 @@ class MissingFiles(SyncTestCase):
         self.assertEqual(4, len(self.rows()), "rows on an unplugged drive were removed")
 
 
+class Roots(SyncTestCase):
+    """The library's roots are walked, not only the folders it holds photos in: a new
+    folder beside the indexed ones is seen -- and listed to review, never indexed on its
+    own. A folder under an ignored one is passed over."""
+
+    def setUp(self):
+        super().setUp()
+        self.indexed(self.photo(self.meet, "IMG_0001.jpg"), self.photo(self.trip, "IMG_0002.jpg"))
+
+    def queue(self, folders):
+        self.fail("a folder to review was queued: %s" % folders)
+
+    def test_a_new_folder_beside_the_indexed_ones_is_listed_to_review(self):
+        lights = os.path.join(self.pictures, "2025-12 Harbour Lights")
+        os.makedirs(os.path.join(lights, "day 2"))
+        self.photo(lights, "IMG_0300.jpg")
+        self.photo(os.path.join(lights, "day 2"), "IMG_0301.jpg")
+        unseen = self.run_sync()
+        self.assertEqual(0, unseen.details["counts"]["review_folders"], "without roots, only indexed folders are walked")
+        result = self.run_sync(apply=True, queue=self.queue, roots=[self.pictures])
+        counts = result.details["counts"]
+        self.assertEqual((0, 1, 2), (counts["new"], counts["review_folders"], counts["review_photos"]))
+        self.assertEqual([{"path": lights, "photos": 2}], result.details["reveal"]["review"])
+        self.assertTrue(result.details["in_step"], "a folder to review is the owner's question, not drift")
+        self.assertEqual({"folders": [{"path": lights, "photos": 2}], "photos": 2},
+                         sync.review(self.library, [self.pictures]))
+
+    def test_a_folder_under_an_ignored_one_is_passed_over(self):
+        scans = os.path.join(self.pictures, "Scans")
+        os.makedirs(os.path.join(scans, "1998"))
+        self.photo(os.path.join(scans, "1998"), "IMG_0400.jpg")
+        result = self.run_sync(roots=[self.pictures], ignored=[scans])
+        self.assertEqual((0, 1), (result.details["counts"]["review_folders"], result.details["counts"]["ignored_files"]))
+        self.assertEqual([], sync.review(self.library, [self.pictures], [scans])["folders"])
+
+    def test_a_folder_to_review_can_be_synced_alone(self):
+        lights = os.path.join(self.pictures, "2025-12 Harbour Lights")
+        os.makedirs(lights)
+        self.photo(lights, "IMG_0300.jpg")
+        result = self.run_sync(folder=lights, roots=[self.pictures])
+        self.assertFalse(result.refused, result.refused)
+        self.assertEqual(1, result.details["counts"]["review_folders"])
+
+    def test_one_folder_alone_keeps_the_row_of_a_file_moved_in_from_another(self):
+        old = os.path.join(self.meet, "IMG_0001.jpg")
+        photo_id = self.rows()[old][0]
+        new = os.path.join(self.trip, "IMG_0001.jpg")
+        os.rename(old, new)
+        result = self.run_sync(apply=True, folder=self.trip, queue=lambda folders: self.fail("it moved"),
+                               roots=[self.pictures])
+        self.assertEqual((1, 0), (result.details["counts"]["moved"], result.details["counts"]["new"]))
+        self.assertEqual(photo_id, self.rows()[new][0])
+        self.assertEqual(0, self.reads.sessions)
+
+    def test_include_queues_a_folder_under_a_root_and_refuses_one_outside(self):
+        lights = os.path.join(self.pictures, "2025-12 Harbour Lights")
+        os.makedirs(lights)
+        asked = []
+
+        def queue(folders):
+            asked.extend(folders)
+            return Result(attempted=1, changed=1)
+
+        self.assertEqual(1, sync.include(self.library, lights, [self.pictures], queue).changed)
+        self.assertEqual([lights], asked)
+        elsewhere = os.path.join(self.home.root, "Elsewhere")
+        os.makedirs(elsewhere)
+        self.assertTrue(sync.include(self.library, elsewhere, [self.pictures], queue).refused)
+        self.assertTrue(sync.include(self.library, "Harbour Lights", [self.pictures], queue).refused)
+
+
 class Folders(SyncTestCase):
     def test_a_folder_is_walked_once_from_the_topmost_indexed(self):
         sub = os.path.join(self.meet, "finals")
@@ -478,6 +552,22 @@ class Folders(SyncTestCase):
         self.addCleanup(os.rmdir, loop)   # the junction alone, never what it points at
         self.assertEqual([path], images.photos_under(self.meet))
         self.assertEqual([path], [stored for stored, _m, _s in images.stamps_under(self.meet).values()])
+
+    def test_a_folder_alone_is_indexed_without_its_subfolders(self):
+        """Sync queues an indexed folder's new files with that folder alone: its subfolders
+        may be folders to review, or ignored, and indexing takes them otherwise."""
+        from unittest.mock import MagicMock
+        from tagpup.services import indexing
+
+        path = self.photo(self.meet, "IMG_0001.jpg")
+        os.makedirs(os.path.join(self.meet, "finals"))
+        self.photo(os.path.join(self.meet, "finals"), "IMG_0002.jpg")
+        self.assertEqual([path], images.photos_in(self.meet))
+        proc = MagicMock(returncode=0)
+        proc.stdout.readline.side_effect = ["done\n", ""]
+        with mock.patch("subprocess.Popen", return_value=proc) as popen:
+            indexing.index_folder(self.library, self.meet, "code", subfolders=False)
+        self.assertEqual(["index", self.meet, "--no-subfolders"], popen.call_args[0][0][-3:])
 
     def test_the_walk_stamps_each_photo_as_the_disk_does(self):
         path = self.photo(self.meet, "IMG_0001.jpg", body=b"12345")

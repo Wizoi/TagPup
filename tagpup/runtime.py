@@ -65,11 +65,13 @@ def exiftool(library, settings=None):
     return tagpup_config.exiftool_path((settings or library_settings(library)).exiftool)
 
 
-def index_folder(library):
+def index_folder(library, subfolders=True):
     """How this process adds a folder to `library` from its index queue: the CLI's `index`
-    in a process of its own, from this code (tagpup.services.indexing.index_folder)."""
+    in a process of its own, from this code (tagpup.services.indexing.index_folder); with
+    its subfolders unless not `subfolders`."""
     def index(folder, cluster, report):
-        return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, cluster=cluster, report=report)
+        return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, cluster=cluster, report=report,
+                                     subfolders=subfolders)
     return index
 
 
@@ -85,9 +87,29 @@ def sync(library, folder=None, apply=False, index_new=True):
     settings = library_settings(library) if apply else peek_settings(library)
     queue = None
     if index_new:
+        # A folder the library holds is indexed without its subfolders: they may be
+        # folders to review, or ignored.
         def queue(folders):
-            return indexing_jobs.queue_for(library).start(folders, index_folder(library))
-    return sync_service.sync(library, folder, apply, exiftool(library, settings), queue)
+            return indexing_jobs.queue_for(library).start(folders, index_folder(library, subfolders=False))
+    return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
+                             roots=settings.roots, ignored=settings.ignored)
+
+
+def review(library):
+    """The folders under the library's roots to review (tagpup.services.sync.review), from
+    its settings, read without stamping them."""
+    settings = peek_settings(library)
+    return sync_service.review(library, settings.roots, settings.ignored)
+
+
+def include(library, folder):
+    """Index a folder to review, with its subfolders, on this process's index queue
+    (tagpup.services.sync.include)."""
+    settings = library_settings(library)
+
+    def queue(folders):
+        return indexing_jobs.queue_for(library).start(folders, index_folder(library))
+    return sync_service.include(library, folder, settings.roots, queue)
 
 
 def _frozen(settings):

@@ -110,6 +110,18 @@ def photos_under(folder):
     return [entry.path for entry in _photo_entries(folder)]
 
 
+def photos_in(folder):
+    """The photos directly in `folder`, not in its subfolders, in the form the index stores:
+    what indexing a folder alone reads (sync's new files in a folder the library holds)."""
+    folder = paths.stored(folder)
+    try:
+        with os.scandir(folder) as listing:
+            return [entry.path for entry in listing if is_photo(entry.name) and not _walk_into(entry)
+                    and not entry.is_dir()]
+    except OSError:
+        return []
+
+
 def stamps_under(folder):
     """{paths.key: (path as stored, mtime, size)} of the photos under `folder`, at any
     depth: the photos photos_under finds, each with the stamp its folder's listing gives.

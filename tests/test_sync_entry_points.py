@@ -52,11 +52,12 @@ class Drifted:
             conn.commit()
         finally:
             conn.close()
-        self.indexed = []
+        self.indexed, self.with_subfolders = [], []
 
-        def index_folder(library):
+        def index_folder(library, subfolders=True):
             def index(folder, cluster, report):
                 self.indexed.append(folder)
+                self.with_subfolders.append(subfolders)
                 return Result(attempted=1, changed=1)
             return index
 
@@ -96,6 +97,7 @@ class TheRoutes(Drifted, unittest.TestCase):
                 self.assertEqual((False, 1), (applied.get_json()["dry_run"], applied.get_json()["queued"]))
                 indexing_jobs.queue_for(library).wait()
                 self.assertEqual([self.folder], self.indexed)
+                self.assertEqual([False], self.with_subfolders, "an indexed folder's new files took its subfolders")
                 indexing_jobs.forget(library)
 
                 state = client.get("/library/api/sync").get_json()
@@ -103,6 +105,34 @@ class TheRoutes(Drifted, unittest.TestCase):
                 self.assertEqual((False, 1), (state["last_run"]["in_step"], state["last_run"]["changed"]["queued_folders"]))
                 self.assertIsNone(state["last_in_step"])
                 self.indexed.clear()
+                self.with_subfolders.clear()
+
+    def test_the_folders_to_review_are_listed_included_and_ignored(self):
+        app, home = web_client.app_for(self, "tuner")
+        client = app.test_client()
+        library = Library(home.library("library.db"))
+        self.drift(os.path.join(home.root, "tuner"), library.path)
+        # The regatta's folder is the library's root, stamped from the folder it holds.
+        found = os.path.join(self.folder, "Quayside")
+        ignored = os.path.join(self.folder, "Scans")
+        for folder in (found, ignored):
+            os.makedirs(folder)
+            with open(os.path.join(folder, "IMG_0500.jpg"), "wb") as handle:
+                handle.write(b"jpeg")
+        listed = client.get("/library/api/sync/review")
+        self.assertEqual(200, listed.status_code, listed.data)
+        self.assertEqual({"library": "library", "count": 2, "photos": 2,
+                          "folders": [{"path": found, "photos": 1}, {"path": ignored, "photos": 1}]}, listed.get_json())
+        reply = client.post("/library/api/sync/review/ignore", json={"folder": ignored})
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual(1, reply.get_json()["changed"])
+        self.assertEqual([{"path": found, "photos": 1}], client.get("/library/api/sync/review").get_json()["folders"])
+        reply = client.post("/library/api/sync/review/include", json={"folder": found})
+        self.assertEqual((200, 1), (reply.status_code, reply.get_json()["queued"]), reply.data)
+        indexing_jobs.queue_for(library).wait()
+        self.assertEqual(([found], [True]), (self.indexed, self.with_subfolders))
+        indexing_jobs.forget(library)
+        self.assertEqual(400, client.post("/library/api/sync/review/include", json={"folder": "Quayside"}).status_code)
 
 
 class AFolderIsChecked(Drifted, unittest.TestCase):

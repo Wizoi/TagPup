@@ -241,7 +241,7 @@ Each sync that was applied (`tagpup.store.sync_runs`, `tagpup.services.sync`, mi
 | `finished` | TEXT | NOT NULL | Local time it finished, after its write and its queueing. |
 | `whole` | INTEGER | NOT NULL | 1 for every folder of the library, 0 for one folder (`--folder`). Only a whole run can say the library is in step. |
 | `in_step` | INTEGER | NOT NULL | 1 when it left the library in step. |
-| `found` | TEXT | NOT NULL | JSON `{what: count}`: `rows`, `files`, `folders_walked`, `new`, `new_folders`, `changed`, `never_stamped`, `to_write`, `unreadable`, `moved`, `moved_faces`, `moved_named`, `moved_changed`, `occupied`, `ambiguous_rows`, `ambiguous_files`, `held_back_folders`, `missing`, `missing_folders`, `folders_gone`, `roots_gone`. Never a path. |
+| `found` | TEXT | NOT NULL | JSON `{what: count}`: `rows`, `files`, `folders_walked`, `new`, `new_folders`, `review_folders`, `review_photos`, `ignored_files`, `changed`, `never_stamped`, `to_write`, `unreadable`, `moved`, `moved_faces`, `moved_named`, `moved_changed`, `occupied`, `ambiguous_rows`, `ambiguous_files`, `held_back_folders`, `missing`, `missing_folders`, `folders_gone`, `roots_gone`. Never a path. |
 | `changed` | TEXT | NOT NULL | JSON `{what: count}`: `rows` the change wrote, `from_files` and `relinked` among them, and `queued_folders`, the folders of new files put on the index queue. |
 | `change_id` | INTEGER | | The change of `changes` its rows were written as; NULL when it wrote none. |
 

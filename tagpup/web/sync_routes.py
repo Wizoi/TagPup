@@ -8,12 +8,19 @@ says what it found and would write; applied, the rows are written as one change 
 journal, the new files' folders go on this process's index queue (TagTuner's indexing
 panel shows them), and the run is recorded. After an apply that changed rows, the folder
 scans TagPup keeps are let go, as after any rewrite of photos.
+
+The folders to review -- under the library's roots, holding photos and no indexed photo,
+not ignored -- are GET /api/sync/review, with their paths: the page that asks lists them,
+as Remove Folder's list does. Include indexes one with its subfolders on this process's
+index queue; Ignore adds it to the library's ignored folders, a journaled change of its
+settings.
 """
 import logging
 
 from flask import Blueprint, jsonify, request
 
 from tagpup import runtime as runtimes
+from tagpup.services import settings as settings_service
 from tagpup.services import sync as sync_service
 from tagpup.web import responses, state, tagpup_routes
 
@@ -56,3 +63,34 @@ def sync_library():
         answer["error"] = result.message()
     # Refused, nothing was written: 400, as every route answers a refusal.
     return jsonify(answer), (400 if result.refused else 200)
+
+
+@routes.get("/api/sync/review")
+def sync_review():
+    library = state.require()
+    try:
+        found = runtimes.review(library)
+    except Exception as e:
+        logger.error("Could not list the folders to review in %s: %s", library.name, e, exc_info=True)
+        return responses.error(500, str(e))
+    return jsonify({"library": library.name, "count": len(found["folders"]), **found})
+
+
+@routes.post("/api/sync/review/include")
+def sync_review_include():
+    library = state.require()
+    body = request.get_json(silent=True) or {}
+    result = runtimes.include(library, body.get("folder"))
+    if result.refused:
+        return responses.error(400, result.refused)
+    return jsonify({"success": True, "queued": result.changed})
+
+
+@routes.post("/api/sync/review/ignore")
+def sync_review_ignore():
+    library = state.require()
+    body = request.get_json(silent=True) or {}
+    result = settings_service.ignore_folder(library, body.get("folder"))
+    if result.refused:
+        return responses.error(400, result.refused)
+    return jsonify({"success": True, "changed": result.changed, "change": result.details.get("change")})

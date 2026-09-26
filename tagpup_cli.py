@@ -148,8 +148,9 @@ def cli(ctx, db, test):
 @click.option("--force-reembed", is_flag=True, help="Force recreation of embeddings.")
 @click.option("--reset", is_flag=True, help="Delete existing index and taxonomy to start fresh.")
 @click.option("--skip-faces", is_flag=True, help="Skip face detection during indexing.")
+@click.option("--no-subfolders", is_flag=True, help="Only the photos directly in DIRECTORY, not in its subfolders.")
 @click.pass_context
-def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: bool):
+def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: bool, no_subfolders: bool = False):
     """Phase 1: Scan and index a tagged photo library."""
     runtime = get_runtime()
 
@@ -197,7 +198,7 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
     embeddings = runtime.embeddings(Library(db_path), photo_index)
 
     console.print(f"[bold cyan]Scanning directory:[/bold cyan] {directory}")
-    all_images = scan_for_images(directory)
+    all_images = image_files.photos_in(directory) if no_subfolders else scan_for_images(directory)
     console.print(f"Found {len(all_images)} image(s) total.")
 
     if not all_images:
@@ -961,6 +962,10 @@ def sync(ctx, folder, apply_):
         counts["rows"], counts["files"], counts["folders_walked"]))
     for what, text, second in SYNC_FOUND:
         console.print("  %d %s" % (counts[what], text % counts[second] if second else text))
+    if counts["review_folders"]:
+        console.print("  %d folder(s) under the library's roots hold %d photo(s) and no indexed one: to review in"
+                      " TagTuner (gear, Folders to review), never indexed on their own."
+                      % (counts["review_folders"], counts["review_photos"]))
     if counts["missing"]:
         console.print("  %d folder(s) wholly gone, %d of them a whole root (an unplugged drive looks the same);"
                       " their rows are kept." % (counts["folders_gone"], counts["roots_gone"]))

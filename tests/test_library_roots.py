@@ -103,6 +103,16 @@ class StampedOnce(unittest.TestCase):
         self.assertTrue(changed.ok, changed.message())
         self.assertEqual([], settings.of(self.library).roots)
 
+    def test_ignoring_a_folder_is_a_journaled_change_once(self):
+        settings.of(self.library)
+        folder = path("D:", "Photos", "Scans")
+        first = settings.ignore_folder(self.library, folder)
+        self.assertEqual(1, first.changed)
+        self.assertIsNotNone(first.details["change"])
+        self.assertEqual(0, settings.ignore_folder(self.library, path("d:", "photos", "scans")).changed)
+        self.assertEqual([folder], settings.of(self.library).ignored)
+        self.assertTrue(settings.ignore_folder(self.library, "Scans").refused)
+
     def test_folders_are_changed_one_a_line_and_a_drive_is_refused(self):
         settings.of(self.library)
         folders = NL.join([path("D:", "Photos"), path("E:", "Meets")])
