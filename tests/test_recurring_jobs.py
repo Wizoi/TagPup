@@ -68,7 +68,7 @@ class Base(unittest.TestCase):
         self.clock = Clock()
         self.service = Counting()
         self.registry = recurring.Registry()
-        self.registry.job("tidy", recurring.DAILY)(self.service)
+        self.registry.job("tidy", recurring.DAILY, reason=recurring.SAFETY)(self.service)
         self.runner = recurring.Runner(lambda: [self.harbour], self.registry, clock=self.clock)
 
     def ran(self):
@@ -129,7 +129,7 @@ class WhatIsDue(Base):
         cove = made(self.home, "cove")
         seen = []
         registry = recurring.Registry()
-        registry.job("everywhere", recurring.WEEKLY, per_library=False)(
+        registry.job("everywhere", recurring.WEEKLY, reason=recurring.RETENTION, per_library=False)(
             lambda libraries, run: seen.append([lib.name for lib in libraries]) or Result())
         runner = recurring.Runner(lambda: [self.harbour, cove], registry, clock=self.clock)
         self.assertEqual(1, len([o for o in runner.run_due() if o.ran]))
@@ -140,15 +140,37 @@ class WhatIsDue(Base):
 
     def test_registering_a_job_is_one_line_and_a_name_is_registered_once(self):
         registry = recurring.Registry()
-        registry.job("sync", recurring.every_hours(6))(lambda library, run: Result())
+        registry.job("sync", recurring.every_hours(6), reason=recurring.CATCH_UP)(lambda library, run: Result())
         self.assertEqual((["sync"], 6 * HOUR), (registry.names(), registry.get("sync").period.seconds))
         with self.assertRaises(ValueError):
-            registry.job("sync", recurring.DAILY)(lambda library, run: Result())
+            registry.job("sync", recurring.DAILY, reason=recurring.CATCH_UP)(lambda library, run: Result())
 
     def test_the_registry_holds_the_snapshots_and_pruning_the_journal(self):
         self.assertEqual({"snapshots": "daily", "prune-journal": "weekly"},
                          {job.name: job.period.name for job in recurring.JOBS})
         self.assertTrue(all(job.per_library for job in recurring.JOBS))
+
+
+class EachJobSaysWhyItIsScheduled(unittest.TestCase):
+    """Event-driven first (owner, 2026-09-26): a schedule is only for what no event
+    announces -- safety, retention, a catch-up -- and a job says which."""
+
+    def test_a_job_without_a_reason_is_refused(self):
+        registry = recurring.Registry()
+        with self.assertRaises(ValueError):
+            registry.job("tidy", recurring.DAILY)(lambda library, run: Result())
+        with self.assertRaises(ValueError):
+            registry.job("tidy", recurring.DAILY, reason="because")(lambda library, run: Result())
+        self.assertEqual([], registry.names())
+
+    def test_each_registered_job_has_one_and_the_apps_are_told_it(self):
+        self.assertEqual({"snapshots": "safety", "prune-journal": "retention"},
+                         {job.name: job.reason for job in recurring.JOBS})
+        self.assertEqual(("safety", "retention", "catch-up"), recurring.REASONS)
+        registry = recurring.Registry()
+        registry.job("sync", recurring.DAILY, reason=recurring.CATCH_UP)(lambda library, run: Result())
+        home = own_home.for_test(self, prefix="jobs_")
+        self.assertEqual(["catch-up"], [job["reason"] for job in recurring.status(made(home, "harbour"), registry)])
 
 
 class ALibraryBehind(unittest.TestCase):
@@ -160,7 +182,7 @@ class ALibraryBehind(unittest.TestCase):
         at_version(library.path, 12)
         registry = recurring.Registry()
         service = Counting()
-        registry.job("tidy", recurring.DAILY)(service)
+        registry.job("tidy", recurring.DAILY, reason=recurring.SAFETY)(service)
         outcomes = recurring.Runner(lambda: [library], registry, clock=Clock()).run_due()
         self.assertEqual([(False, "behind")], [(o.ran, o.why) for o in outcomes])
         self.assertEqual([], service.calls)
@@ -179,7 +201,7 @@ class OneRunAtATime(Base):
             return Result(changed=1)
 
         registry = recurring.Registry()
-        registry.job("slow", recurring.DAILY)(slow)
+        registry.job("slow", recurring.DAILY, reason=recurring.SAFETY)(slow)
         barrier = threading.Barrier(2)
         answers = queue.Queue()
 
@@ -323,7 +345,7 @@ class WhatTheAppsAreTold(unittest.TestCase):
             registry = recurring.Registry()
             service = Counting()
             service.fail = True
-            registry.job("snapshots", recurring.DAILY)(service)
+            registry.job("snapshots", recurring.DAILY, reason=recurring.SAFETY)(service)
             recurring.Runner(lambda: [library], registry).run_due()
             answer = app.test_client().get("/library/api/jobs")
             self.assertEqual(200, answer.status_code)

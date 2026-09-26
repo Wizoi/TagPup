@@ -1,10 +1,10 @@
 """Recurring jobs: what each is, when it is due, and the one runner that runs what is due
 inside whatever TagPup process is up (docs/ARCHITECTURE.md, phase 8, "Recurring jobs").
 
-Each job declares its name, its period, whether it runs per library, and the service it
-calls; registering one is one line:
+Each job declares its name, its period, why it is scheduled at all, whether it runs per
+library, and the service it calls; registering one is one line:
 
-    @JOBS.job("sync", DAILY)
+    @JOBS.job("sync", DAILY, reason=CATCH_UP)
     def _sync(library, run):
         return sync.run(library, ...)          # a Result
 
@@ -60,6 +60,14 @@ def every_hours(hours):
     return Period("every %d hours" % hours, int(hours * HOUR))
 
 
+#: Why a job runs on a schedule. Work that follows an event is done when the event
+#: happens, never left for a schedule to find (docs/ARCHITECTURE.md, phase 8, "Event-driven
+#: first"); a schedule is only for what no event announces -- the library's safety (the
+#: snapshots), the retention of what it keeps (the journal), and a catch-up in case an
+#: event was missed (sync). A job that names none of these is refused as it is registered.
+SAFETY, RETENTION, CATCH_UP = "safety", "retention", "catch-up"
+REASONS = (SAFETY, RETENTION, CATCH_UP)
+
 #: How soon a job whose last run failed is tried again, when its period is longer.
 RETRY_AFTER = HOUR
 
@@ -73,6 +81,8 @@ FIRST_CHECK_AFTER = 60
 class Job:
     name: str
     period: Period
+    #: Why it is scheduled: one of REASONS.
+    reason: str
     per_library: bool
     #: call(library, run) -> Result; for a job not run per library, call(libraries, run).
     call: Callable
@@ -94,12 +104,17 @@ class Registry:
     def __init__(self):
         self._jobs = {}
 
-    def job(self, name, period, per_library=True, about=""):
-        """Register the function it decorates as the job `name`."""
+    def job(self, name, period, reason=None, per_library=True, about=""):
+        """Register the function it decorates as the job `name`, scheduled for `reason`,
+        one of REASONS: ValueError for none, or another."""
+        if reason not in REASONS:
+            raise ValueError("the job %r says no reason it is scheduled (%s), and what an event announces is"
+                             " done when it happens, not on a schedule" % (name, ", ".join(REASONS)))
+
         def register(call):
             if name in self._jobs:
                 raise ValueError("a job named %r is registered already" % name)
-            self._jobs[name] = Job(name, period, per_library, call, about or (call.__doc__ or "").strip())
+            self._jobs[name] = Job(name, period, reason, per_library, call, about or (call.__doc__ or "").strip())
             return call
         return register
 
@@ -116,14 +131,14 @@ class Registry:
 JOBS = Registry()
 
 
-@JOBS.job("snapshots", DAILY)
+@JOBS.job("snapshots", DAILY, reason=SAFETY)
 def _snapshots(library, run):
     """A daily snapshot of the library, and from it the weekly and the monthly when theirs
     are due (tagpup.services.snapshots)."""
     return snapshot_service.take(library, now=run.now, force=run.forced)
 
 
-@JOBS.job("prune-journal", WEEKLY)
+@JOBS.job("prune-journal", WEEKLY, reason=RETENTION)
 def _prune_journal(library, run):
     """Let the journal's changes older than its retention go (tagpup.services.journal.prune)."""
     return journal_service.prune(library, apply=True)
@@ -162,7 +177,7 @@ def _record_library(job, library, libraries):
 
 def status(library, registry=JOBS, now=None):
     """Each job's last run in `library`, and when it is due next: [{"name", "period",
-    "per_library", "about", "last": {"started", "finished", "outcome", "changed"} or None,
+    "reason", "per_library", "about", "last": {"started", "finished", "outcome", "changed"} or None,
     "running", "next_due"}]. Counts only: a run's note, which can name a path, is left out.
     A job not run per library shows what `library` records of it: its runs are recorded
     in the first library by name."""
@@ -173,7 +188,8 @@ def status(library, registry=JOBS, now=None):
         last, ended = found.get((job.name, library.name if job.per_library else None), (None, None))
         due = next_due(job, ended)
         listed.append({
-            "name": job.name, "period": job.period.name, "per_library": job.per_library, "about": job.about,
+            "name": job.name, "period": job.period.name, "reason": job.reason, "per_library": job.per_library,
+            "about": job.about,
             "last": None if last is None else {"started": last.started, "finished": last.finished,
                                                "outcome": last.outcome, "changed": last.changed},
             "running": last is not None and last.outcome == "running",

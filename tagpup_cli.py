@@ -967,13 +967,13 @@ def jobs(ctx):
         console.print("There is no library in %s." % tagpup_config.data_dir(), markup=False)
         return
     table = Table(title="Recurring jobs")
-    for column in ("Job", "Period", "Library", "Last run", "Outcome", "Changed", "Next due"):
+    for column in ("Job", "Period", "Why", "Library", "Last run", "Outcome", "Changed", "Next due"):
         table.add_column(column)
     for library in libraries:
         for entry in recurring.status(library):
             last = entry["last"] or {}
             changed = ", ".join("%s %s" % (value, name) for name, value in sorted((last.get("changed") or {}).items()))
-            table.add_row(entry["name"], entry["period"], library.name, last.get("started") or "never",
+            table.add_row(entry["name"], entry["period"], entry["reason"], library.name, last.get("started") or "never",
                           last.get("outcome") or "", changed, entry["next_due"])
     console.print(table)
 
