@@ -428,6 +428,21 @@ class Folders(SyncTestCase):
         found = self.run_sync(folder=self.meet).details["counts"]
         self.assertEqual((1, 0, 1), (found["rows"], found["new"], found["missing"]))
 
+    @unittest.skipUnless(sys.platform == "win32", "a directory junction is Windows'")
+    def test_a_junction_is_not_walked_into(self):
+        """os.scandir's is_symlink() is False for a junction on Python 3.11, so a junction
+        back up the tree was walked round and round until the path was too long, each
+        lap finding the same photos under a longer name -- and the indexer's walk made a
+        row for each of them."""
+        import _winapi
+
+        path = self.photo(self.meet, "IMG_0001.jpg")
+        loop = os.path.join(self.meet, "loop")
+        _winapi.CreateJunction(self.meet, loop)
+        self.addCleanup(os.rmdir, loop)   # the junction alone, never what it points at
+        self.assertEqual([path], images.photos_under(self.meet))
+        self.assertEqual([path], [stored for stored, _m, _s in images.stamps_under(self.meet).values()])
+
     def test_the_walk_stamps_each_photo_as_the_disk_does(self):
         path = self.photo(self.meet, "IMG_0001.jpg", body=b"12345")
         open(os.path.join(self.meet, "notes.txt"), "w").close()
