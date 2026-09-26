@@ -101,7 +101,10 @@ class Taking(Base):
         forced = snapshots.take(self.library.path, now=NOON + DAY, force=True)["taken"]
         self.assertEqual(["daily"], [s.kind for s in forced])
 
-    def test_the_library_is_held_against_this_processs_writers_during_the_copy(self):
+    def test_this_processs_writers_are_not_held_back_during_the_copy(self):
+        # One step of the backup API in one read transaction is consistent whoever writes
+        # meanwhile; holding db.lock_for only stalled every save in the web server for the
+        # whole copy, 6 s for photo_index (review of phase 8a, 3).
         held = []
         real = db.connect
 
@@ -111,7 +114,13 @@ class Taking(Base):
 
             def backup(self, destination):
                 lock = db.lock_for(self_library)
-                attempt = threading.Thread(target=lambda: held.append(not lock.acquire(blocking=False)))
+                def attempt_to_write():
+                    got = lock.acquire(blocking=False)
+                    held.append(not got)
+                    if got:
+                        lock.release()
+
+                attempt = threading.Thread(target=attempt_to_write)
                 attempt.start()
                 attempt.join(10)
                 return self.conn.backup(destination)
@@ -127,7 +136,7 @@ class Taking(Base):
 
         with mock.patch.object(snapshots.db, "connect", side_effect=connect):
             snapshots.take(self.library.path, now=NOON)
-        self.assertEqual([True], held, "a writer of this process could take the lock during the copy")
+        self.assertEqual([False], held, "a writer of this process waited for the copy")
 
 
 class AFailedNight(Base):

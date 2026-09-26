@@ -6,11 +6,12 @@ A daily is taken when the newest is a day old; the weekly and the monthly are co
 from that same daily when they are 7 or 30 days old, so the library is read once, not
 three times. Each is:
 
-- copied with this process's writers held back (db.lock_for) through SQLite's backup
-  API in one step, which reads the whole library inside one read transaction: in WAL
-  another process may write meanwhile, and the copy is the library as it stood when the
-  step began. Copied in several steps, a write by another connection between two of
-  them would restart it;
+- copied through SQLite's backup API in one step, which reads the whole library inside
+  one read transaction: in WAL any connection, of this process or another, may write
+  meanwhile, and the copy is the library as it stood when the step began. Copied in
+  several steps, a write by another connection between two of them would restart it.
+  Nothing is held back: holding this process's writers (db.lock_for) only stalled every
+  save in the web server for the whole copy;
 - written under a temporary name (`.partial`), made a file of its own (no -wal beside
   it), its recurring jobs' runs still `running` marked `abandoned` -- the snapshots job's
   own is, as it copies -- checked with `PRAGMA quick_check`, and only then renamed into
@@ -135,10 +136,9 @@ def check(path):
 
 def copy_library(db_path, target):
     """Copy the library at `db_path` to `target`, a new file, in one step of the backup
-    API with this process's writers held back, as a file of its own: rollback journal,
-    nothing beside it."""
-    with db.lock_for(db_path):
-        db.copy_database(db_path, target, then=_abandon_runs)
+    API -- consistent, and no writer waits for it -- as a file of its own: rollback
+    journal, nothing beside it, no run left `running` (db.copy_database)."""
+    db.copy_database(db_path, target, then=_abandon_runs)
 
 
 #: Why a run a snapshot or a restore found `running` is marked abandoned.
