@@ -29,9 +29,11 @@ import logging
 import threading
 
 from tagpup import config as tagpup_config
-from tagpup.services import file_changes, search
+from tagpup.jobs import indexing as indexing_jobs
+from tagpup.services import file_changes, indexing, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester as suggestions
+from tagpup.services import sync as sync_service
 from tagpup.store import embeddings as store_embeddings
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,31 @@ def exiftool(library, settings=None):
     """The ExifTool program to run for `library`: the one it names, else the machine's
     (tagpup.config.exiftool_path)."""
     return tagpup_config.exiftool_path((settings or library_settings(library)).exiftool)
+
+
+def index_folder(library):
+    """How this process adds a folder to `library` from its index queue: the CLI's `index`
+    in a process of its own, from this code (tagpup.services.indexing.index_folder)."""
+    def index(folder, cluster, report):
+        return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, cluster=cluster, report=report)
+    return index
+
+
+def sync(library, folder=None, apply=False, index_new=True):
+    """Bring `library` in step with its folders, or with `folder` (tagpup.services.sync):
+    a dry run unless `apply`, with the ExifTool the library names. A dry run reads the
+    library's settings without stamping them, and writes nothing. Applied, the folders of
+    new files go on this process's index queue for the library (tagpup.jobs.indexing),
+    unless not `index_new`; they are indexed one at a time, after the sync returns.
+
+    What the entry points call -- the CLI's `sync`, the MCP server's tool, the route --
+    and what a recurring job calls as sync(library, apply=True)."""
+    settings = library_settings(library) if apply else peek_settings(library)
+    queue = None
+    if index_new:
+        def queue(folders):
+            return indexing_jobs.queue_for(library).start(folders, index_folder(library))
+    return sync_service.sync(library, folder, apply, exiftool(library, settings), queue)
 
 
 def _frozen(settings):

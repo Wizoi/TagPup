@@ -571,6 +571,24 @@ def _change_file_stamps(conn):
         conn.execute("ALTER TABLE change_files ADD COLUMN stamp TEXT")
 
 
+def _sync_runs(conn):
+    """Each sync that was applied: `sync_runs`, when it started and finished, whether it
+    looked at the whole library, whether it left it in step, what it found and what it
+    changed, as counts (tagpup.store.sync_runs, tagpup.services.sync; docs/ARCHITECTURE.md,
+    phase 8). The pages show "last in step" from it. Only adds a table, so it needs no
+    backup.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS sync_runs ("
+                 " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                 " started TEXT NOT NULL,"
+                 " finished TEXT NOT NULL,"
+                 " whole INTEGER NOT NULL,"
+                 " in_step INTEGER NOT NULL,"
+                 " found TEXT NOT NULL,"
+                 " changed TEXT NOT NULL,"
+                 " change_id INTEGER)")
+
+
 # ---- What a migration holds true before it commits ----------------------------------------
 
 #: The runner's own tables: it writes them as it records each migration.
@@ -1040,6 +1058,10 @@ MIGRATIONS = (
     Migration(12, "the stamp of each file before its write", _change_file_stamps, ADDITIVE,
               "adds the column change_files.stamp, NULL in every row",
               ("change_files",),
+              (RowsKept(),) + STANDARD),
+    Migration(13, "when the library was last in step", _sync_runs, ADDITIVE,
+              "adds the sync_runs table, empty",
+              ("sync_runs",),
               (RowsKept(),) + STANDARD),
 )
 

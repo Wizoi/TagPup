@@ -74,6 +74,34 @@ def photos_under(folder):
     return found
 
 
+def stamps_under(folder):
+    """{paths.key: (path as stored, mtime, size)} of the photos under `folder`, at any
+    depth: the photos photos_under finds, each with the stamp its folder's listing gives.
+    On Windows the listing carries both, so no file is opened or looked up on its own: a
+    sync that finds nothing costs one walk (docs/ARCHITECTURE.md, phase 8). A link to a
+    folder is not followed, as os.walk does not; a folder that cannot be listed is passed
+    over."""
+    found = {}
+    pending = [paths.stored(folder)]
+    while pending:
+        try:
+            listing = os.scandir(pending.pop())
+        except OSError:
+            continue
+        with listing:
+            for entry in listing:
+                try:
+                    if entry.is_dir():
+                        if not entry.is_symlink():
+                            pending.append(entry.path)
+                    elif is_photo(entry.name):
+                        stat = entry.stat()
+                        found[paths.key(entry.path)] = (entry.path, stat.st_mtime, stat.st_size)
+                except OSError:
+                    continue
+    return found
+
+
 def content_type(photo_path):
     """The Content-Type a photo's own bytes go out under."""
     return PHOTO_TYPES.get(os.path.splitext(photo_path)[1].lower(), "application/octet-stream")

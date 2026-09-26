@@ -159,6 +159,20 @@ class IndexQueue:
         return {"active": running, "queued": waiting, "busy": bool(running or waiting),
                 "remaining": len(running) + len(waiting)}
 
+    def wait(self):
+        """Return once no worker is indexing: the waiting folders are done. For a program
+        that queued folders and must not end before they are indexed (the CLI's `sync`)."""
+        while True:
+            with self._lock:
+                runner = self._runner
+            if runner is None or runner is threading.current_thread():
+                return
+            runner.join()
+            with self._lock:
+                if self._runner is runner:
+                    # Joined, but not yet cleared by it: it has finished all the same.
+                    return
+
     def run_pending(self):
         """Index the waiting folders one at a time until none is left: the worker.
 
