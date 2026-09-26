@@ -250,7 +250,7 @@ describe("TagTuner's gear", () => {
     assert.ok(button.closest(".app-header"), "the gear is not in the header");
     click(window, button);
     await flush(window);
-    assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Library settings", "History...", "Open in TagPup"]);
+    assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Library settings", "History...", "Folders to review...", "Open in TagPup"]);
     const settings = menu.querySelector('[data-action="library-settings"]');
     assert.equal(settings.getAttribute("aria-disabled"), null, "Library settings is still disabled");
     click(window, settings);

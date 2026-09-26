@@ -18,6 +18,7 @@ import {
     fetchPhotos, refreshSidebarQuietly, updateMatchedToggleVisibility, wireSidebar,
 } from './sidebar.js';
 import { restoreIndexingState, wireIndexing } from './indexing.js';
+import { wireReview } from './review.js';
 import { wireTunerGear } from './gear.js';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -72,4 +73,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // The gear: the tag editor (web/common/tag-editor.js), the library's settings and
     // TagPup on this library.
     wireTunerGear();
+    // How many folders under the library's roots wait to be included or ignored.
+    wireReview();
 });

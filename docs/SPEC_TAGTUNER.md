@@ -36,6 +36,17 @@ over `/api/history`; the same dialog as TagPup's). A photo file changed since is
 refused, named by photo id, never overwritten. After an undo that changed something the
 list beside the photo is refreshed.
 
+### Folders to review
+
+Sync walks the library's root folders (Library settings, below) and never indexes a
+folder holding no indexed photo on its own: it lists it to review. **Folders to review...**
+in the gear, and a notice in the header saying how many there are (as the library's last
+sync counted them, `/api/sync`), open a dialog (`web/tuner/review.js`, over
+`/api/sync/review`) listing each -- the topmost such folder below a root, with its photo
+count -- with **Include**, which queues it for indexing with its subfolders (the indexing
+bar follows it), and **Ignore**, which adds it to the library's ignored folders (a
+journaled change of its settings, which History can undo). Either takes it off the list.
+
 ### Library settings
 
 **Library settings** in the gear opens the settings of the library the page is on
