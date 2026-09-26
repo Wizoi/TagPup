@@ -566,9 +566,10 @@ Design questions, to be settled before it starts:
   information"). An importer per source, behind one interface, and an export archive as
   the fallback that always works. Checked against each service's terms when the phase
   starts, not from memory.
-- **Albums and groups.** An album is a set of photos, possibly from many folders and
-  sources (a library view of phase 9 whose source is "album"); a group is the people who
-  may see and add to an album. Albums live in the library, journaled like any edit.
+- **Albums and groups.** An album is a folder *(owner, 2026-09-26)*: an event's photos,
+  from whatever source, are copied into one folder under the common root, and that
+  folder is the album -- no album entity, nothing a folder view cannot already show. A
+  group is the people who may see and add to a folder.
 - **People beyond this PC.** At first the home network: the apps already serve pages;
   another person on the network needs a login of their own and what they may do
   (view, add, tag, delete). Remote family members need the server reachable from outside
