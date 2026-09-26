@@ -138,15 +138,7 @@ def copy_library(db_path, target):
     API with this process's writers held back, as a file of its own: rollback journal,
     nothing beside it."""
     with db.lock_for(db_path):
-        source = db.connect(db.readonly_uri(db_path), uri=True)
-        destination = db.connect(target)
-        try:
-            source.backup(destination)
-            destination.execute("PRAGMA journal_mode=DELETE")
-            _abandon_runs(destination)
-        finally:
-            destination.close()
-            source.close()
+        db.copy_database(db_path, target, then=_abandon_runs)
 
 
 #: Why a run a snapshot or a restore found `running` is marked abandoned.
