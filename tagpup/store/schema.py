@@ -571,6 +571,28 @@ def _change_file_stamps(conn):
         conn.execute("ALTER TABLE change_files ADD COLUMN stamp TEXT")
 
 
+def _job_runs(conn):
+    """The runs of each recurring job: `job_runs`, one row a run, the job's name, the
+    library's it ran for (NULL for a job not run per library; compared without case, as
+    the file is found: `--db harbour` is Harbour.db), when it started and
+    finished, its outcome, what it changed as counts, and while it runs the process that
+    owns it (tagpup.store.job_runs; docs/ARCHITECTURE.md, phase 8). Any TagPup process
+    runs what is due, so what is due, and who is running it, are the library's to say.
+    Only adds a table, so it needs no backup.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS job_runs ("
+                 " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                 " job TEXT NOT NULL,"
+                 " library TEXT COLLATE NOCASE,"
+                 " started TEXT NOT NULL,"
+                 " finished TEXT,"
+                 " outcome TEXT NOT NULL CHECK (outcome IN ('running', 'done', 'failed', 'abandoned')),"
+                 " changed TEXT,"
+                 " owner TEXT,"
+                 " note TEXT)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_job_runs_job ON job_runs(job, library, id)")
+
+
 # ---- What a migration holds true before it commits ----------------------------------------
 
 #: The runner's own tables: it writes them as it records each migration.
@@ -1040,6 +1062,10 @@ MIGRATIONS = (
     Migration(12, "the stamp of each file before its write", _change_file_stamps, ADDITIVE,
               "adds the column change_files.stamp, NULL in every row",
               ("change_files",),
+              (RowsKept(),) + STANDARD),
+    Migration(13, "the runs of recurring jobs", _job_runs, ADDITIVE,
+              "adds the job_runs table, empty",
+              ("job_runs",),
               (RowsKept(),) + STANDARD),
 )
 

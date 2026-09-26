@@ -231,6 +231,21 @@ The photo files a change writes, one row each (`tagpup.store.file_journal`, `tag
 | `note` | TEXT | | Why a file is a conflict: changed outside since it was read, could not be read or written (ExifTool's error), not undone. |
 | `stamp` | TEXT | | JSON `[mtime, size]` of the file just before its write, recorded as it is marked `writing` (migration 12): settling a write a crash stopped carries the photo's vectors over it. NULL for a rename, and for a file not written yet. |
 
+### 15. `job_runs` Table
+The runs of each recurring job (`tagpup.store.job_runs`, `tagpup.jobs.recurring`, migration 13; ARCHITECTURE.md, phase 8): the snapshots, pruning the journal, and sync. Any TagPup process up -- the web server, the CLI, the MCP server -- runs what is due, so what is due and who is running it are read from here: a job is due when its last run that ended started a period ago or more (a missed period runs once, not once for each missed), and a run is claimed by inserting its row `running` in one IMMEDIATE transaction, so two processes never run one job for one library at once. A `running` row whose owner has ended is marked `abandoned`, and the job claimed over it. The last 50 runs of each job are kept. Written outside the journal: a run is a record of work, not an edit to undo.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | The run. |
+| `job` | TEXT | NOT NULL, INDEXED with `library` | The job's name in the registry: `snapshots`, `prune-journal`. |
+| `library` | TEXT | COLLATE NOCASE | The library's name the run was for, compared without case as its file is found (`--db harbour` is `Harbour.db`); NULL for a job not run per library. |
+| `started` | TEXT | NOT NULL | When it began, local time `YYYY-MM-DD HH:MM:SS`, as the journal's times. |
+| `finished` | TEXT | | When it ended; NULL while running. |
+| `outcome` | TEXT | NOT NULL, one of `running`, `done`, `failed`, `abandoned` | `failed`: the service raised, refused or reported an error; `abandoned`: its process ended before it finished. |
+| `changed` | TEXT | | JSON counts of what it changed, from the service's Result: `{"attempted", "changed", "skipped", "errors"}` and the numbers among its details (a snapshot's `bytes`). No names or paths. |
+| `owner` | TEXT | | While `running`, the process running it, `host:pid:start` as `changes.owner` names one; NULL once it ended. |
+| `note` | TEXT | | Why it failed or was abandoned, for the CLI's `jobs`; can name a path, so never sent to a page. |
+
 ---
 
 ## Entity-Relationship (ER) Diagram

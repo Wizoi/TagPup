@@ -363,7 +363,7 @@ class OverStdio(unittest.TestCase):
         home = own_home.for_test(self)
         schema.ensure(home.library(LIBRARY + ".db"))
         child = processes.start([sys.executable, "-m", "tagpup.mcp"], cwd=ROOT,
-                                env=dict(os.environ, TAGPUP_HOME=home.root),
+                                env=dict(os.environ, TAGPUP_HOME=home.root, TAGPUP_NO_JOBS="1"),
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self.addCleanup(lambda: child.poll() is None and processes.kill_tree(child.pid))
         lines = queue.Queue()

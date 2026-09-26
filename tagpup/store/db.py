@@ -197,11 +197,38 @@ def writing(target, label="database write"):
         yield
 
 
+def copy_database(source_path, target, then=None):
+    """Copy the database at `source_path` to `target`, a new file, in one step of the backup
+    API from a read-only connection -- one read transaction, so the copy is the database as
+    it stood when the step began, whoever writes meanwhile -- as a file of its own.
+
+    The destination is put in rollback-journal mode before the copy, not in WAL as
+    connect() leaves every connection: in WAL the backup wrote the whole database into the
+    -wal and then checkpointed it into the file, twice the writing (photo_index: 12.2 s,
+    not 6.1 s, and a 2.5 GB -wal beside it). The copied header says WAL, so it is put back
+    in rollback-journal mode after, and nothing is left beside it. `then(connection)`, if
+    given, runs on the destination before it is closed; it commits what it writes.
+    """
+    source = connect(readonly_uri(source_path), uri=True)
+    try:
+        destination = sqlite3.connect(target, timeout=BUSY_TIMEOUT_MS / 1000.0)
+        try:
+            destination.execute("PRAGMA journal_mode=DELETE")
+            source.backup(destination)
+            destination.execute("PRAGMA journal_mode=DELETE")
+            if then is not None:
+                then(destination)
+        finally:
+            destination.close()
+    finally:
+        source.close()
+
+
 def backup(db_path, reason, into=None):
     """Copy a database before a bulk write, and return where the copy went.
 
     Through SQLite's backup API, from a read-only connection, so the copy is
-    consistent even while an app has the database open. Into backups/ beside the
+    consistent even while an app has the database open (copy_database). Into backups/ beside the
     library unless `into` says otherwise, named for the database, the reason and the
     time: data/backups/photo_index.before-dedupe-faces-20260923_151200.db.
 
@@ -216,13 +243,7 @@ def backup(db_path, reason, into=None):
     target = os.path.join(into, "%s.before-%s-%s.db" % (
         os.path.splitext(os.path.basename(db_path))[0], reason,
         time.strftime("%Y%m%d_%H%M%S")))
-    source = connect(readonly_uri(db_path), uri=True)
-    destination = connect(target)
-    try:
-        source.backup(destination)
-    finally:
-        destination.close()
-        source.close()
+    copy_database(db_path, target)
     prune_backups(into, os.path.splitext(os.path.basename(db_path))[0])
     return target
 

@@ -26,9 +26,14 @@ module that builds a model anywhere else.
 """
 import collections
 import logging
+import os
 import threading
+import time
 
 from tagpup import config as tagpup_config
+from tagpup.core import library as libraries
+from tagpup.core.library import Library
+from tagpup.jobs import recurring
 from tagpup.services import file_changes, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester as suggestions
@@ -55,6 +60,42 @@ def peek_settings(library):
     """The library's settings, writing nothing: for a read-only look (the MCP server's
     inspections, tools/doctor.py). A library never stamped reads as stamping would make it."""
     return library_settings_service.read(library, tagpup_config.config_ini)
+
+
+#: Set, a process a test started runs the recurring jobs, which it otherwise never does;
+#: set NO_JOBS, no process runs them (a sandbox measuring the app, say).
+RUN_JOBS = "TAGPUP_RUN_JOBS"
+NO_JOBS = "TAGPUP_NO_JOBS"
+
+
+def runs_recurring_jobs():
+    """Does this web server run the recurring jobs (tagpup.jobs.recurring)? Only the web
+    server asks: the always-on process runs them, nothing else (owner, 2026-09-26). Not
+    when NO_JOBS is set, nor in a test run (tagpup.ml.under_test) unless RUN_JOBS is: a
+    server a test starts would snapshot its library in the background."""
+    if os.environ.get(NO_JOBS):
+        return False
+    if os.environ.get(RUN_JOBS):
+        return True
+    from tagpup.ml import under_test
+    return not under_test()
+
+
+def home_libraries(test_mode=False):
+    """Every library in the home's data folder that is there: the test libraries in test
+    mode, else the rest (tagpup.core.library.picker_names)."""
+    folder = tagpup_config.data_dir()
+    files = os.listdir(folder) if os.path.isdir(folder) else []
+    found = [Library(tagpup_config.library_path(libraries.for_mode(name + ".db", test_mode)))
+             for name in libraries.picker_names(files, test_mode)]
+    return [library for library in found if os.path.exists(library.path)]
+
+
+def recurring_jobs(runtime=None, libraries=None, clock=None):
+    """The recurring jobs' runner (tagpup.jobs.recurring.Runner) over `libraries`, a
+    callable read at each look -- by default every library in the home's data folder --
+    handing each job the process's `runtime`."""
+    return recurring.Runner(libraries or home_libraries, clock=clock or time.time, given={"runtime": runtime})
 
 
 def exiftool(library, settings=None):
