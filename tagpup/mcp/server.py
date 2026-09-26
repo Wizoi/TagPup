@@ -32,6 +32,7 @@ from tagpup.core import library as libraries
 from tagpup.core.library import Library
 from tagpup.core.result import NotFound, Refused
 from tagpup.services import duplicate_faces, inspect, person_tags, refresh_rows
+from tagpup.services import sync as sync_service
 from tagpup.services import journal as library_journal
 
 logger = logging.getLogger(__name__)
@@ -40,8 +41,9 @@ logger = logging.getLogger(__name__)
 INSTRUCTIONS = (
     "Questions about a TagPup photo library: what it holds, photos by folder, tag or "
     "person, a photo's row against its file, the faces in a photo, the consistency checks "
-    "tools/doctor.py runs, rows whose file is gone, and the plan of a query; three "
-    "maintenance operations (refresh_rows, merge_duplicate_person_tags, dedupe_faces), each "
+    "tools/doctor.py runs, rows whose file is gone, when the library was last in step with its "
+    "folders, and the plan of a query; four "
+    "maintenance operations (refresh_rows, sync, merge_duplicate_person_tags, dedupe_faces), each "
     "a rehearsal unless called with apply=true, which records it as one change of the "
     "library's journal; and the journal itself: `history`, `undo` (a rehearsal unless "
     "applied) and `prune_journal`. Call "
@@ -235,6 +237,33 @@ def build():
             return written(refresh_rows.refresh_rows(found, exiftool, apply=apply, folder=folder),
                            found, reveal, limit)
         return _answer(act, reveal)
+
+    @write_tool("Bring the library in step with its folders: walk every folder it holds photos in (or "
+                "`folder`) and compare each file with its row by path, size and modified time. Rows of "
+                "files changed outside the apps are read again from the files, as refresh_rows does; "
+                "a row whose file moved follows it, by its DocumentID, with its faces; new files are "
+                "counted (`new`, `new_folders`), not indexed -- index their folders in TagTuner or with "
+                "the CLI's `sync --apply`; missing files are counted by folder (`folders_gone`, "
+                "`roots_gone`: a folder on an unplugged drive looks the same as a deleted one) and never "
+                "removed. When nothing changed it reads no file. `changed_by_kind` splits rows read "
+                "again (`from_files`) and moved (`relinked`). An applied run is recorded as the "
+                "library's last sync (`sync_state`)." + APPLY + REVEAL,
+                name="sync")
+    def sync(library: str, apply: bool = False, folder: Optional[str] = None,
+             reveal: bool = False, limit: int = inspect.LIMIT) -> dict[str, Any]:
+        def act():
+            found = find_library(library)
+            result = runtimes.sync(found, folder=folder, apply=apply, index_new=False)
+            answer = written(result, found, reveal, limit)
+            answer["in_step"] = result.details["in_step"]
+            return answer
+        return _answer(act, reveal)
+
+    @tool("When the library was last in step with its folders, and its last applied sync: when it "
+          "started and finished, whether it looked at the whole library, whether it left it in step, "
+          "and what it found and changed, as counts. Both null for a library never synced.")
+    def sync_state(library: str) -> dict[str, Any]:
+        return _answer(lambda: sync_service.last(find_library(library)))
 
     @write_tool("Remove the tag-tree nodes that are a person's bare name where a People path "
                 "already names the same person (a tree left by old indexing). Only the tree changes; "

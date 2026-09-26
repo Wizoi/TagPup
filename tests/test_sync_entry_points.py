@@ -1,0 +1,183 @@
+"""Sync from each place it is asked for: the route both apps serve (/api/sync), the CLI's
+`sync`, and the MCP server's `sync` and `sync_state` (tagpup.runtime.sync over
+tagpup.services.sync; docs/ARCHITECTURE.md, phase 8).
+
+Each is a dry run unless told to apply, answers counts -- never a path, since folders
+name people -- and, applied, records the run, which GET /api/sync and `sync_state` read
+back as "last in step". The index queue is the process's own; the folder indexer it runs
+is stood in for, so no index is started, and the test waits for the queue as the CLI
+does, without sleeping.
+"""
+import asyncio
+import json
+import os
+import sys
+import unittest
+from unittest import mock
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import own_home  # noqa: E402
+import photo_rows  # noqa: E402
+import web_client  # noqa: E402
+
+from click.testing import CliRunner  # noqa: E402
+from mcp.shared.memory import create_connected_server_and_client_session  # noqa: E402
+
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.core.result import Result  # noqa: E402
+from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.mcp import server  # noqa: E402
+from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.store import db  # noqa: E402
+from tagpup_cli import cli  # noqa: E402
+
+THEN = 1_700_000_000
+
+
+class Drifted:
+    """A library whose one row describes its file, beside a folder holding a file it has
+    no row for."""
+
+    def drift(self, root, db_path):
+        self.folder = os.path.join(root, "Harbourview Regatta")
+        os.makedirs(self.folder)
+        known, self.new = os.path.join(self.folder, "regatta_01.jpg"), os.path.join(self.folder, "regatta_02.jpg")
+        for path in (known, self.new):
+            with open(path, "wb") as handle:
+                handle.write(b"jpeg")
+            os.utime(path, (THEN, THEN))
+        conn = db.connect(db_path)
+        try:
+            photo_rows.add_read(conn, known, {"XMP:Subject": ["People/Rowan Thackeray"]})
+            conn.commit()
+        finally:
+            conn.close()
+        self.indexed = []
+
+        def index_folder(library):
+            def index(folder, cluster, report):
+                self.indexed.append(folder)
+                return Result(attempted=1, changed=1)
+            return index
+
+        patcher = mock.patch("tagpup.runtime.index_folder", side_effect=index_folder)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def assert_no_path(self, text):
+        for secret in (self.folder, self.folder.replace("\\", "\\\\"), "regatta_", "Rowan Thackeray"):
+            self.assertNotIn(secret, text)
+
+
+class TheRoutes(Drifted, unittest.TestCase):
+    def test_a_dry_run_then_an_apply_then_last_in_step_on_both_apps(self):
+        for kind in ("tagpup", "tuner"):
+            with self.subTest(app=kind):
+                app, home = web_client.app_for(self, kind)
+                client = app.test_client()
+                library = Library(home.library("library.db"))
+                self.drift(os.path.join(home.root, kind), library.path)
+
+                state = client.get("/library/api/sync")
+                self.assertEqual(200, state.status_code, state.data)
+                self.assertEqual({"library": "library", "last_run": None, "last_in_step": None}, state.get_json())
+
+                dry = client.post("/library/api/sync", json={})
+                self.assertEqual(200, dry.status_code, dry.data)
+                answer = dry.get_json()
+                self.assert_no_path(dry.get_data(as_text=True))
+                self.assertEqual((True, 1, 0, 0, False), (answer["dry_run"], answer["counts"]["new"],
+                                                          answer["queued"], answer["changed"], answer["in_step"]))
+                self.assertIsNone(client.get("/library/api/sync").get_json()["last_run"])
+                self.assertEqual([], self.indexed)
+
+                applied = client.post("/library/api/sync", json={"apply": True})
+                self.assertEqual(200, applied.status_code, applied.data)
+                self.assertEqual((False, 1), (applied.get_json()["dry_run"], applied.get_json()["queued"]))
+                indexing_jobs.queue_for(library).wait()
+                self.assertEqual([self.folder], self.indexed)
+                indexing_jobs.forget(library)
+
+                state = client.get("/library/api/sync").get_json()
+                self.assert_no_path(json.dumps(state))
+                self.assertEqual((False, 1), (state["last_run"]["in_step"], state["last_run"]["changed"]["queued_folders"]))
+                self.assertIsNone(state["last_in_step"])
+                self.indexed.clear()
+
+
+class TheCli(Drifted, unittest.TestCase):
+    def setUp(self):
+        self.home = own_home.for_test(self)
+        self.db_path = self.home.library("harbour.db")
+        library_actions.create(self.db_path)
+        self.drift(self.home.root, self.db_path)
+
+    def run_cli(self, *args):
+        result = CliRunner().invoke(cli, ["--db", self.db_path, "sync", *args])
+        self.assertEqual(0, result.exit_code, result.output + repr(result.exception))
+        self.assert_no_path(result.output)
+        return result.output
+
+    def test_a_dry_run_says_what_it_found_and_changes_nothing(self):
+        out = self.run_cli()
+        self.assertIn("1 new file(s), in 1 folder(s)", out)
+        self.assertIn("--apply", out)
+        self.assertEqual([], self.indexed)
+        self.assertIsNone(self.last()["last_run"])
+
+    def test_apply_indexes_the_new_files_folder_and_waits_for_it(self):
+        out = self.run_cli("--apply")
+        self.assertEqual([self.folder], self.indexed)
+        self.assertIn("Indexing 1 folder(s)", out)
+        self.assertEqual(1, self.last()["last_run"]["changed"]["queued_folders"])
+        indexing_jobs.forget(Library(self.db_path))
+
+    def last(self):
+        from tagpup.services import sync
+        return sync.last(Library(self.db_path))
+
+
+class TheTools(Drifted, unittest.TestCase):
+    def setUp(self):
+        self.home = own_home.for_test(self)
+        self.db_path = self.home.library("harbour.db")
+        library_actions.create(self.db_path)
+        self.drift(self.home.root, self.db_path)
+        patcher = mock.patch.object(server.config, "exiftool_path",
+                                    return_value=os.path.join(self.home.root, "no-exiftool.exe"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def call(self, tool, **arguments):
+        async def run():
+            async with create_connected_server_and_client_session(server.build()) as client:
+                return await client.call_tool(tool, dict(arguments, library="harbour"))
+        result = asyncio.run(run())
+        self.assertFalse(result.isError, result.content[0].text if result.content else result)
+        self.assert_no_path(result.content[0].text)
+        return json.loads(result.content[0].text)
+
+    def test_sync_counts_and_queues_nothing_and_sync_state_reads_the_record(self):
+        self.assertEqual({"last_run": None, "last_in_step": None}, self.call("sync_state"))
+        with open(self.db_path, "rb") as handle:
+            before = handle.read()
+        dry = self.call("sync")
+        with open(self.db_path, "rb") as handle:
+            self.assertEqual(before, handle.read(), "a dry run changed the library")
+        self.assertEqual((True, 1, False), (dry["dry_run"], dry["counts"]["new"], dry["in_step"]))
+        applied = self.call("sync", apply=True)
+        self.assertEqual((False, 0), (applied["dry_run"], applied["changed"]))
+        self.assertEqual([], self.indexed, "the tool indexes nothing; it counts the new files")
+        state = self.call("sync_state")
+        self.assertEqual((1, 0), (state["last_run"]["found"]["new"], state["last_run"]["changed"]["queued_folders"]))
+        revealed = asyncio.run(self._revealed())
+        self.assertIn(self.new, revealed)
+
+    async def _revealed(self):
+        async with create_connected_server_and_client_session(server.build()) as client:
+            result = await client.call_tool("sync", {"library": "harbour", "reveal": True})
+        return json.loads(result.content[0].text)["reveal"]["new"]
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -56,6 +56,8 @@ from tagpup.services import faces as face_records
 from tagpup.services import identities
 from tagpup.services import journal as library_journal
 from tagpup.services import tagging
+from tagpup.services import maintenance
+from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services.search import PhotoIndex, stored_mismatch
 from tagpup.services.suggester import TagSuggester
 from tagpup.store.locks import PathLocker
@@ -932,6 +934,57 @@ def prune_journal(ctx, days, apply_):
                       % (result.attempted, days, result.details["values"]))
         return
     console.print("Pruned %d change(s), %d value(s)." % (result.changed, result.details["values"]))
+
+
+#: What `sync` says of each thing it counts.
+SYNC_FOUND = (("new", "new file(s), in %d folder(s)", "new_folders"), ("changed", "changed file(s)", None),
+              ("moved", "moved file(s)", None), ("missing", "missing file(s), in %d folder(s)", "missing_folders"))
+
+
+@cli.command()
+@click.option("--folder", default=None, type=click.Path(file_okay=False),
+              help="Only the photos under this folder. Without it, every folder the library holds photos in.")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write the rows, index the new files, and record the run. Without it, only says what it would do.")
+@click.pass_context
+def sync(ctx, folder, apply_):
+    """Bring the library in step with its folders: rows read again for files changed
+    outside the apps, rows following files that moved, and new files indexed. Missing
+    files are reported, never removed. A dry run unless --apply; counts only."""
+    library = _existing_library(ctx)
+    result = runtimes.sync(library, folder=folder, apply=apply_)
+    counts = result.details["counts"]
+    console.print("%d row(s), %d photo file(s) on disk in %d folder(s) walked." % (
+        counts["rows"], counts["files"], counts["folders_walked"]))
+    for what, text, second in SYNC_FOUND:
+        console.print("  %d %s" % (counts[what], text % counts[second] if second else text))
+    if counts["missing"]:
+        console.print("  %d folder(s) wholly gone, %d of them a whole root (an unplugged drive looks the same);"
+                      " their rows are kept." % (counts["folders_gone"], counts["roots_gone"]))
+    if counts["unreadable"]:
+        console.print("  %d changed file(s) could not be read." % counts["unreadable"])
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    if not apply_:
+        console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
+        console.print("In step." if result.details["in_step"] else "Nothing changed. --apply brings it in step.")
+        return
+    changed = result.details["changed"]
+    console.print("Wrote %d row(s): %d read again, %d moved. %s" % (
+        result.changed, changed["from_files"], changed["relinked"], maintenance.recorded(result, library.path)),
+        markup=False, soft_wrap=True)
+    for line in maintenance.skipped(result) + maintenance.failed(result):
+        console.print(line, markup=False, soft_wrap=True)
+    if result.details["queued"]:
+        console.print("Indexing %d folder(s) with new files, one at a time..." % result.details["queued"])
+        queue = indexing_jobs.queue_for(library)
+        queue.wait()
+        for folder_path in result.details["reveal"]["new_folders"]:
+            console.print("  %s" % queue.status(folder_path)["message"], markup=False)
+    console.print("In step." if result.details["in_step"] else "Not yet in step: sync again once indexing is done.")
+    if result.errors:
+        raise SystemExit(1)
 
 
 @cli.command()

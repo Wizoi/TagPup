@@ -39,10 +39,10 @@ SECRETS = ("Rowan Thackeray", "Maren Oakhollow", "Pell Quarrington", "Tamsin Fer
            "Harbourview", "Lindqvist", "regatta_", "camp_", "Sailing", "Dinghy")
 
 READ_TOOLS = {"libraries", "summary", "folders", "photos", "photo_against_file", "faces_in_photo",
-              "check", "checks", "missing_files", "query_plan", "history"}
+              "check", "checks", "missing_files", "query_plan", "history", "sync_state"}
 
 #: The maintenance operations (tests/test_mcp_write_tools.py applies them).
-MAINTENANCE_TOOLS = {"refresh_rows", "merge_duplicate_person_tags", "dedupe_faces"}
+MAINTENANCE_TOOLS = {"refresh_rows", "sync", "merge_duplicate_person_tags", "dedupe_faces"}
 
 #: What writes: the maintenance operations, and undoing and pruning the journal
 #: (tests/test_journal_through_the_tools.py).
@@ -331,13 +331,13 @@ class McpServer(unittest.TestCase):
                  ("query_plan", {"sql": "SELECT path FROM photos WHERE path = 'Harbourview'"})]
         # The write tools as dry runs: tearDown holds the library to being unchanged.
         calls += [(tool, {}) for tool in sorted(MAINTENANCE_TOOLS)]
-        calls += [("history", {}), ("undo", {"change": 1}), ("prune_journal", {})]
+        calls += [("history", {}), ("undo", {"change": 1}), ("prune_journal", {}), ("sync_state", {})]
         calls += [("check", {"name": rule.__name__}) for rule in checks.RULES]
         self.assertEqual({tool for tool, _ in calls}, TOOLS)
         for tool, arguments in calls:
             if tool != "libraries":
                 arguments = dict(arguments, library=LIBRARY)
-                if tool not in ("summary", "query_plan", "prune_journal", "undo"):
+                if tool not in ("summary", "query_plan", "prune_journal", "undo", "sync_state"):
                     arguments["reveal"] = reveal
             result = self.result(tool, **arguments)
             texts.append((tool, " ".join(c.text for c in result.content) + json.dumps(result.structuredContent)))
