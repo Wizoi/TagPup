@@ -77,6 +77,7 @@ def restore(library, name, apply=False, now=None):
     try:
         # Not pruned until the restore is done: the snapshot restored may be the
         # oldest before-restore, which the new one would push out.
+        snapshots.clear_partials(library.path, snapshots.BEFORE_RESTORE)
         before, _removed = snapshots.take_one(library.path, snapshots.BEFORE_RESTORE,
                                               time.time() if now is None else now, pruned=False)
     except Exception as e:

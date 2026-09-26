@@ -18,7 +18,8 @@ three times. Each is:
   place;
 - counted against its kind's number only after it is in place: an old one is removed
   once its replacement has passed, so a failed night never leaves fewer good copies.
-  A `.partial` a crash left is deleted by the next snapshot.
+  A `.partial` a crash left is deleted by the next snapshot of its kind, once it is
+  PARTIAL_AGE old: a younger one may be a copy under way.
 
 Restoring one copies it back into the library through the same API -- into the file
 every process has open, never a file swapped under them -- after a snapshot of the
@@ -60,6 +61,10 @@ SLACK = 3600
 
 STAMP = "%Y%m%d_%H%M%S"
 PARTIAL = ".partial"
+
+#: How old a partial copy is before it is taken for one a crash left, not one being
+#: written: a copy of photo_index takes about ten seconds.
+PARTIAL_AGE = 600
 
 
 class SnapshotFailed(RuntimeError):
@@ -200,17 +205,19 @@ def _place(partial, final):
     os.replace(partial, final)
 
 
-def _clear_partials(db_path):
-    """Delete what a snapshot stopped before its rename left: never a snapshot."""
+def clear_partials(db_path, kind):
+    """Delete what a snapshot of `kind` stopped before its rename left: never a snapshot,
+    never another kind's, and never one younger than PARTIAL_AGE -- a copy another
+    process, or a restore, may be writing now. Returns how many went."""
     removed = 0
-    for each in KINDS:
-        where = os.path.join(folder(db_path), each)
-        if not os.path.isdir(where):
-            continue
-        for name in os.listdir(where):
-            if PARTIAL in name:
-                os.remove(os.path.join(where, name))
-                removed += 1
+    where = os.path.join(folder(db_path), kind)
+    if not os.path.isdir(where):
+        return 0
+    for name in os.listdir(where):
+        path = os.path.join(where, name)
+        if PARTIAL in name and time.time() - os.path.getmtime(path) >= PARTIAL_AGE:
+            os.remove(path)
+            removed += 1
     return removed
 
 
@@ -256,14 +263,15 @@ def take(db_path, now=None, force=False):
     old. Returns {"taken": [Snapshot], "removed": snapshots removed, "partials":
     partial copies of an earlier run deleted}."""
     now = time.time() if now is None else now
-    partials = _clear_partials(db_path)
-    taken, removed = [], 0
+    taken, removed, partials = [], 0, 0
     if force or _due(db_path, DAILY, now):
+        partials += clear_partials(db_path, DAILY)
         daily, gone = take_one(db_path, DAILY, now)
         taken.append(daily)
         removed += gone
         for kind in (WEEKLY, MONTHLY):
             if _due(db_path, kind, now):
+                partials += clear_partials(db_path, kind)
                 copy, gone = take_one(db_path, kind, now, source=daily.path)
                 taken.append(copy)
                 removed += gone

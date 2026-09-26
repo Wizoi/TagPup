@@ -170,19 +170,46 @@ class AFailedNight(Base):
         self.assertEqual(sorted(self.before + ["daily/harbour-20260904_120000.db" + snapshots.PARTIAL]),
                          sorted(self.files()))
         self.assertEqual(3, len(self.names("daily")))
-        # The next takes the snapshot and deletes what the stopped one left.
+        # The next, once the partial is old enough to be no copy under way, takes the
+        # snapshot and deletes what the stopped one left.
+        self.age(os.path.join(self.library.snapshots, "daily", "harbour-20260904_120000.db" + snapshots.PARTIAL))
         done = snapshots.take(self.library.path, now=NOON + 3 * DAY + 60)
         self.assertEqual(1, done["partials"])
         self.assertEqual(["daily/20260904_120100", "daily/20260903_120000", "daily/20260902_120000"],
                          self.names("daily"))
 
-    def test_a_partial_a_crash_left_is_deleted_by_the_next(self):
-        left = os.path.join(self.library.snapshots, "daily", "harbour-20260904_120000.db" + snapshots.PARTIAL)
+    def partial(self, kind, age=0):
+        left = os.path.join(self.library.snapshots, kind, "harbour-20260904_110000.db" + snapshots.PARTIAL)
+        os.makedirs(os.path.dirname(left), exist_ok=True)
         with open(left, "wb") as handle:
             handle.write(b"half a library")
+        if age:
+            self.age(left, age)
+        return left
+
+    def age(self, path, seconds=3600):
+        then = time.time() - seconds
+        os.utime(path, (then, then))
+
+    def test_a_partial_a_crash_left_is_deleted_by_the_next(self):
+        left = self.partial("daily", age=3600)
         done = snapshots.take(self.library.path, now=NOON + 3 * DAY)
         self.assertEqual(1, done["partials"])
         self.assertFalse(os.path.exists(left))
+
+    def test_a_partial_being_written_now_is_left_alone(self):
+        # Another copy under way -- a restore's before-restore, say -- is not a crash's
+        # leftover (review of phase 8a, 8).
+        young = self.partial("daily")
+        done = snapshots.take(self.library.path, now=NOON + 3 * DAY)
+        self.assertEqual(0, done["partials"])
+        self.assertTrue(os.path.exists(young))
+
+    def test_only_the_kind_being_taken_is_swept(self):
+        other = self.partial(snapshots.BEFORE_RESTORE, age=3600)
+        done = snapshots.take(self.library.path, now=NOON + 3 * DAY)
+        self.assertEqual(["daily"], [s.kind for s in done["taken"]])
+        self.assertTrue(os.path.exists(other))
 
     def test_a_copy_that_fails_its_check_removes_nothing(self):
         with mock.patch.object(snapshots, "check", side_effect=snapshots.SnapshotFailed("a page is torn")):
