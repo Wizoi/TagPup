@@ -274,6 +274,40 @@ class OneRunAtATime(Base):
         self.assertEqual(1, len(self.ran()))
         self.assertEqual(["done", "abandoned"], [run.outcome for run in job_runs.runs(self.harbour.path)])
 
+    def test_whether_an_owner_lives_is_asked_outside_the_write_lock(self):
+        # Asking may start tasklist, seconds on a busy machine; the library's writers
+        # waited for it (review of phase 8a, 9).
+        self._left_by("%s:%d:%d" % (socket.gethostname(), os.getpid(), processes.started(os.getpid()) - 1))
+        free = []
+
+        def alive(owner):
+            probe = db.connect(self.harbour.path, timeout=0)
+            try:
+                probe.execute("BEGIN IMMEDIATE")
+                probe.rollback()
+                free.append(True)
+            except Exception:
+                free.append(False)
+            finally:
+                probe.close()
+            return False
+
+        with mock.patch.object(job_runs.file_journal, "owner_alive", side_effect=alive):
+            self.assertEqual(1, len(self.ran()))
+        self.assertEqual([True], free)
+
+    def test_a_run_claimed_between_the_look_and_the_claim_is_left_to_its_owner(self):
+        # Liveness is read first; a run that appears after is someone's now.
+        real = job_runs.file_journal.owner_alive
+
+        def alive(owner):
+            self._left_by("%s:%d:%d" % (socket.gethostname(), os.getppid(), processes.started(os.getppid())))
+            return real(owner)
+
+        with mock.patch.object(job_runs.file_journal, "owner_alive", side_effect=alive):
+            self._left_by("another-machine:4242:1234567")
+            self.assertEqual([(False, "running")], [(o.ran, o.why) for o in self.runner.run_due()])
+
     def test_a_run_another_machine_holds_is_left_to_it(self):
         self._left_by("another-machine:4242:1234567")
         self.assertEqual([(False, "running")], [(o.ran, o.why) for o in self.runner.run_due()])

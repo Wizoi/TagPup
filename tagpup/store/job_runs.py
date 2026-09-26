@@ -74,6 +74,11 @@ def has_table(conn):
     return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'job_runs'").fetchone() is not None
 
 
+def _running(conn, job, library):
+    return conn.execute("SELECT id, owner FROM job_runs WHERE job = ? AND library IS ?"
+                        " AND outcome = 'running' ORDER BY id", (job, library)).fetchall()
+
+
 def _last_ended(conn, job, library):
     found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE job = ? AND library IS ?"
                          " AND outcome IN ('done', 'failed') ORDER BY id DESC LIMIT 1", (job, library)).fetchone()
@@ -103,13 +108,21 @@ def claim(db_path, job, library, now, due=None):
     jobs run once an app has opened it."""
     if schema.pending(db_path):
         return Claim(why="behind")
+    # Whether each owner lives is asked before the write lock is taken -- it may start
+    # tasklist, seconds on a busy machine, which every writer of the library waited for --
+    # and the rows read again under it: a run that appeared meanwhile is its owner's.
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        owners = {owner for _, owner in _running(conn, job, library) if owner}
+    finally:
+        conn.close()
+    alive = {owner: file_journal.owner_alive(owner) for owner in owners}
 
     def work(conn):
         db.begin(conn, immediate=True)
         abandoned = 0
-        for run_id, owner in conn.execute("SELECT id, owner FROM job_runs WHERE job = ? AND library IS ?"
-                                          " AND outcome = 'running' ORDER BY id", (job, library)).fetchall():
-            if owner and file_journal.owner_alive(owner):
+        for run_id, owner in _running(conn, job, library):
+            if owner and alive.get(owner, True):
                 return Claim(why="running", holder=owner)
             conn.execute("UPDATE job_runs SET outcome = 'abandoned', finished = ?, note = ? WHERE id = ?",
                          (stamp(now), "its process ended before it finished", run_id))
