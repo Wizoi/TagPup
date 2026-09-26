@@ -308,5 +308,9 @@ def main():
     # Before FastMCP is made: it gives the root logger a console handler when it has none.
     logs.to_file("tagpup_mcp")
     logger.info("Serving the libraries in %s over stdio", config.data_dir())
+    # The recurring jobs that are due, once, on a thread of their own: the client is
+    # answered meanwhile (docs/ARCHITECTURE.md, phase 8).
+    if runtimes.runs_recurring_jobs():
+        runtimes.recurring_jobs(runtimes.Runtime(read_only=True)).run_due_in_background()
     build().run("stdio")
     return 0

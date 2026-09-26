@@ -55,6 +55,8 @@ from tagpup.services import settings as library_settings
 from tagpup.services import faces as face_records
 from tagpup.services import identities
 from tagpup.services import journal as library_journal
+from tagpup.services import snapshots as library_snapshots
+from tagpup.core.result import NotFound
 from tagpup.services import tagging
 from tagpup.services.search import PhotoIndex, stored_mismatch
 from tagpup.services.suggester import TagSuggester
@@ -131,15 +133,50 @@ def scan_for_images(dir_path: str) -> List[str]:
     """
     return image_files.photos_under(dir_path)
 
+#: The commands that run the recurring jobs themselves, before which none are run.
+MANAGE_JOBS = ("jobs", "snapshots")
+
+
+def run_due_jobs(test_mode=False):
+    """Run the recurring jobs that are due, for every library in the data folder, saying
+    what each did (tagpup.jobs.recurring). Never fails the command it runs before."""
+    try:
+        outcomes = runtimes.recurring_jobs(Runtime(), libraries=lambda: runtimes.home_libraries(test_mode)).run_due()
+    except Exception as e:
+        logger.error("Could not run the recurring jobs that are due: %s", e)
+        return []
+    for outcome in outcomes:
+        if outcome.ran:
+            console.print("Recurring job %s for %s: %s" % (outcome.job, outcome.library or "every library",
+                                                         _outcome_text(outcome)), markup=False)
+    return outcomes
+
+
+def _outcome_text(outcome):
+    if outcome.error is not None:
+        return "failed: %s" % outcome.error
+    result = outcome.result
+    text = "%s, %d changed" % ("done" if result.ok else "failed: %s" % result.message(), result.changed)
+    for what, why in result.skipped:
+        text += "; %s skipped: %s" % (what, why)
+    return text
+
+
 @click.group()
 @click.option("--db", type=str, help="The library to work on: a name in the data folder (e.g. 'my_photos') or a path. Required.")
 @click.option("--test", is_flag=True, help="Use test database paths to avoid cluttering production index.")
+@click.option("--no-jobs", is_flag=True, help="Do not run the recurring jobs that are due (snapshots, pruning the journal) first.")
 @click.pass_context
-def cli(ctx, db, test):
+def cli(ctx, db, test, no_jobs):
     """TagpupCLI: AI-powered local photo tagging command-line interface."""
     ctx.ensure_object(dict)
     ctx.obj["test"] = test
     ctx.obj["db"] = db
+    # What is due runs first, in whatever TagPup process is up -- not in an indexer an
+    # app started (TAGPUP_DB_PATH), whose app runs them, nor in a test run.
+    if (not no_jobs and ctx.invoked_subcommand not in MANAGE_JOBS and not os.environ.get("TAGPUP_DB_PATH")
+            and runtimes.runs_recurring_jobs()):
+        run_due_jobs(test)
 
 @cli.command()
 @click.argument("directory", type=click.Path(exists=True, file_okay=False))
@@ -932,6 +969,117 @@ def prune_journal(ctx, days, apply_):
                       % (result.attempted, days, result.details["values"]))
         return
     console.print("Pruned %d change(s), %d value(s)." % (result.changed, result.details["values"]))
+
+
+def _job_libraries(ctx):
+    """The library --db names, or every library in the data folder."""
+    if ctx.obj.get("db"):
+        return [_existing_library(ctx)]
+    return runtimes.home_libraries(ctx.obj.get("test", False))
+
+
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def jobs(ctx):
+    """The recurring jobs (snapshots, pruning the journal): each one's last run and when
+    it is due next, for the library --db names or every library in the data folder.
+    `jobs run NAME` runs one now."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from tagpup.jobs import recurring
+    libraries = _job_libraries(ctx)
+    if not libraries:
+        console.print("There is no library in %s." % tagpup_config.data_dir(), markup=False)
+        return
+    table = Table(title="Recurring jobs")
+    for column in ("Job", "Period", "Library", "Last run", "Outcome", "Changed", "Next due"):
+        table.add_column(column)
+    for library in libraries:
+        for entry in recurring.status(library):
+            last = entry["last"] or {}
+            changed = ", ".join("%s %s" % (value, name) for name, value in sorted((last.get("changed") or {}).items()))
+            table.add_row(entry["name"], entry["period"], library.name, last.get("started") or "never",
+                          last.get("outcome") or "", changed, entry["next_due"])
+    console.print(table)
+
+
+@jobs.command("run")
+@click.argument("name")
+@click.pass_context
+def jobs_run(ctx, name):
+    """Run the recurring job NAME now, for the library --db names or every library, whether
+    or not it is due: unless another process is running it."""
+    runner = runtimes.recurring_jobs(Runtime(), libraries=lambda: runtimes.home_libraries(ctx.obj.get("test", False)))
+    if runner.registry.get(name) is None:
+        raise click.ClickException("There is no recurring job %s; there are %s." % (name, ", ".join(runner.registry.names())))
+    library = _existing_library(ctx) if ctx.obj.get("db") else None
+    failed = False
+    for outcome in runner.run(name, library):
+        if outcome.ran:
+            console.print("%s for %s: %s" % (name, outcome.library or "every library", _outcome_text(outcome)),
+                          markup=False)
+            failed = failed or outcome.error is not None or not outcome.result.ok
+        else:
+            console.print("%s for %s: not run, %s" % (name, outcome.library or "every library", outcome.why),
+                          markup=False)
+            failed = True
+    if failed:
+        raise SystemExit(1)
+
+
+@cli.group()
+def snapshots():
+    """The library's snapshots, its backup: three daily, one weekly and one monthly, in
+    data/backups/<library>/, taken by the recurring job `snapshots`."""
+
+
+@snapshots.command("list")
+@click.pass_context
+def snapshots_list(ctx):
+    """Each snapshot of the library: when it was taken, its size, and how many of the
+    journal's changes were made since -- what restoring it would lose."""
+    library = _existing_library(ctx)
+    found = library_snapshots.listing(library)
+    if not found["snapshots"]:
+        console.print("%s has no snapshots yet; `jobs run snapshots` takes one." % library.name, markup=False)
+        return
+    table = Table(title="Snapshots of %s" % library.name)
+    for column in ("Name", "Taken", "Size", "Changes since"):
+        table.add_column(column)
+    for snapshot in found["snapshots"]:
+        table.add_row(snapshot["name"], snapshot["taken"], "%s MB" % format(snapshot["bytes"] // 1_000_000, ","),
+                      str(snapshot["changes_since"]))
+    console.print(table)
+    console.print("They take %s MB." % format(found["bytes"] // 1_000_000, ","), markup=False)
+
+
+@snapshots.command("restore")
+@click.argument("name")
+@click.option("--apply", "apply_", is_flag=True, help="Restore it, after a snapshot of the library as it is. Without it, only says what would be lost.")
+@click.pass_context
+def snapshots_restore(ctx, name, apply_):
+    """Put the library back as snapshot NAME (`snapshots list` names them, daily/20260926_090000)
+    held it. A dry run unless --apply, saying how many of the journal's changes since the
+    snapshot would be lost. Photo files written since keep what was written."""
+    library = _existing_library(ctx)
+    try:
+        result = library_snapshots.restore(library, name, apply=apply_)
+    except NotFound as e:
+        raise click.ClickException(str(e)) from e
+    lost = result.details["lost"]
+    console.print("Restoring %s would lose %d change(s) of the journal%s" % (
+        name, len(lost), ":" if lost else "."), markup=False)
+    for change in lost:
+        console.print("  %d  %s  %s" % (change["id"], change["created"], change["operation"]), markup=False)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    if not apply_:
+        console.print("Nothing changed. --apply restores it, after a snapshot of the library as it is.", markup=False)
+        return
+    console.print("Restored %s from %s. The library as it was is %s: `snapshots restore %s --apply` puts it back."
+                  % (library.name, name, result.details["before_restore"], result.details["before_restore"]),
+                  markup=False)
 
 
 @cli.command()
