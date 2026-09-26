@@ -264,8 +264,10 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None):
     Applied, the folders holding new files are handed to `queue(folders)`, which returns
     the index queue's Result (tagpup.jobs.indexing.IndexQueue.start): details["queued"] is
     the folders it queued. Without a queue they are reported, not queued. Then the run is
-    recorded (tagpup.store.sync_runs). details["in_step"] says whether the library is in
-    step: for a dry run, as found; applied, after the write.
+    recorded (tagpup.store.sync_runs) -- unless it was refused or its write failed, when
+    nothing is queued or recorded; a record that cannot be written is one of
+    details["warnings"], not a failure of the write. details["in_step"] says whether the
+    library is in step: for a dry run, as found; applied, after the write.
     """
     started = sync_runs.now()
     held = {}
@@ -283,9 +285,17 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None):
         return result
 
     result.details.setdefault("changed", {kind: 0 for kind in KINDS})
-    new_folders = planned.work["new_folders"] if planned is not None else []
+    result.details["queued"] = 0
+    result.details["warnings"] = []
+    if not result.ok:
+        # Refused, or the write failed: nothing was synced, so nothing is queued -- a
+        # moved file's folder indexed before its row follows it would get a second row --
+        # and nothing is recorded.
+        result.details["in_step"] = False
+        return result
+    new_folders = planned.work["new_folders"] if planned is not None and planned.work else []
     queued = 0
-    if new_folders and queue is not None and not result.refused:
+    if new_folders and queue is not None:
         try:
             outcome = queue(new_folders)
             queued = outcome.changed
@@ -302,7 +312,9 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None):
             changed={"rows": result.changed, **result.details["changed"], "queued_folders": queued},
             change_id=result.details.get("change"))
     except Exception as e:
-        result.fail("recording the sync", "%s: %s" % (type(e).__name__, e))
+        # The rows are written and the folders queued; only the record of it is missing.
+        result.details["warnings"].append("The sync was not recorded (%s: %s); the next sync records its own."
+                                          % (type(e).__name__, e))
     return result
 
 

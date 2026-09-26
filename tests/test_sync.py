@@ -188,6 +188,42 @@ class ALibraryThatIsBehind(SyncTestCase):
         self.assertNotIn("rehearsal", result.details)
 
 
+class TheRecord(SyncTestCase):
+    """A run is recorded when it was applied and its write went through: a refused or
+    failed apply is not a sync of the library. And a record that cannot be written after
+    the rows were is a warning, not a failure of the write."""
+
+    def changed_file(self):
+        path = self.photo(self.meet, "IMG_0001.jpg", **{"XMP:Subject": ["Events/Invitational"]})
+        self.indexed(path)
+        self.photo(self.meet, "IMG_0001.jpg", body=b"jpeg, edited", **{"XMP:Subject": ["Weather/Rain"]})
+        return path
+
+    def test_a_refused_apply_is_not_recorded(self):
+        self.changed_file()
+        elsewhere = os.path.join(self.pictures, "Elsewhere")
+        os.makedirs(elsewhere)
+        result = self.run_sync(apply=True, folder=elsewhere)
+        self.assertTrue(result.refused)
+        self.assertIsNone(sync.last(self.library)["last_run"])
+
+    def test_a_failed_write_is_not_recorded(self):
+        self.changed_file()
+        with mock.patch("tagpup.store.journal.apply", side_effect=OSError("disk full")):
+            result = self.run_sync(apply=True)
+        self.assertFalse(result.ok)
+        self.assertIsNone(sync.last(self.library)["last_run"])
+
+    def test_a_record_that_cannot_be_written_is_a_warning(self):
+        path = self.changed_file()
+        with mock.patch("tagpup.store.sync_runs.record", side_effect=OSError("locked")):
+            result = self.run_sync(apply=True)
+        self.assertTrue(result.ok, result.message())
+        self.assertEqual(1, result.changed)
+        self.assertEqual(["Weather/Rain"], self.rows()[path][3])
+        self.assertEqual(1, len(result.details["warnings"]))
+
+
 class NewFiles(SyncTestCase):
     def test_a_new_file_is_queued_for_indexing_not_indexed(self):
         self.indexed(self.photo(self.meet, "IMG_0001.jpg"))

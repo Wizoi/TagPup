@@ -974,7 +974,7 @@ def sync(ctx, folder, apply_):
     console.print("Wrote %d row(s): %d read again, %d moved. %s" % (
         result.changed, changed["from_files"], changed["relinked"], maintenance.recorded(result, library.path)),
         markup=False, soft_wrap=True)
-    for line in maintenance.skipped(result) + maintenance.failed(result):
+    for line in maintenance.skipped(result) + maintenance.failed(result) + result.details["warnings"]:
         console.print(line, markup=False, soft_wrap=True)
     if result.details["queued"]:
         console.print("Indexing %d folder(s) with new files, one at a time..." % result.details["queued"])

@@ -50,7 +50,7 @@ def sync_library():
               "changed_by_kind": result.details.get("changed", {}), "queued": result.details.get("queued", 0),
               "in_step": result.details["in_step"], "change": result.details.get("change"),
               "counts": result.details["counts"], "behind": result.details.get("behind", 0),
-              "skipped": len(result.skipped),
+              "skipped": len(result.skipped), "warnings": result.details.get("warnings", []),
               "errors": len(result.errors)}
     if not result.ok:
         answer["error"] = result.message()

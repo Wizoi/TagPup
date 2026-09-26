@@ -259,6 +259,7 @@ def build():
             result = runtimes.sync(found, folder=folder, apply=apply, index_new=False)
             answer = written(result, found, reveal, limit)
             answer["in_step"] = result.details["in_step"]
+            answer["warnings"] = result.details.get("warnings", [])
             return answer
         return _answer(act, reveal)
 
