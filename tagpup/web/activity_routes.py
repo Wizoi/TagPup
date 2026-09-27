@@ -35,7 +35,7 @@ from tagpup import logs
 from tagpup import runtime as runtimes
 from tagpup import supervisor
 from tagpup.core import library as libraries
-from tagpup.core import runs
+from tagpup.core import paths, runs
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import recurring
 from tagpup.jobs import suggestions as suggestion_jobs
@@ -288,10 +288,10 @@ def sync_state():
         watched = {}
         for root in (watching or {}).get("roots", []):
             if library.name in root["libraries"]:
-                watched[root["path"].lower()] = root
+                watched[paths.key(root["path"])] = root
         entry["roots"] = [{"path": root, "there": os.path.isdir(root),
-                           "watched": bool(watched.get(root.lower(), {}).get("watched"))} for root in roots]
-        entry["watches"] = sorted({root["path"] for root in watched.values() if root["watched"]}, key=str.lower)
+                           "watched": bool(watched.get(paths.key(root), {}).get("watched"))} for root in roots]
+        entry["watches"] = sorted({root["path"] for root in watched.values() if root["watched"]}, key=paths.key)
         entry["watcher"] = (watching or {}).get("libraries", {}).get(library.name)
         listed.append(entry)
     return jsonify({"watching": bool(watching and watching["running"]), "libraries": listed})

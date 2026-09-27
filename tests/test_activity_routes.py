@@ -322,6 +322,19 @@ class SyncSnapshotsAndTheTimeline(Base):
         self.assertIsNone(regatta["last_whole"])
         self.assertIsNone(regatta["review_folders"])
 
+    def test_a_root_spelled_another_way_is_the_watched_folder(self):
+        """The settings keep a root as it was typed -- forward slashes, a trailing
+        separator -- and the watcher as stored: one folder, compared by paths.key."""
+        root = os.path.join(self.home.root, "Photos")
+        os.makedirs(root)
+        typed = root.replace("\\", "/") + "/"
+        settings.change(self.harbour, {"library.roots": typed})
+        watcher = FakeWatcher({"running": True, "syncing": None, "libraries": {},
+                               "roots": [{"path": root, "watched": True, "absent": False, "libraries": ["harbour"]}]})
+        found = self.get("/api/activity/sync", tasks=[("folder watcher", watcher)])
+        harbour = [each for each in found["libraries"] if each["name"] == "harbour"][0]
+        self.assertEqual([True], [each["watched"] for each in harbour["roots"]])
+
     def test_snapshots_by_kind_age_and_size(self):
         daily = os.path.join(self.harbour.snapshots, "daily")
         os.makedirs(daily)
