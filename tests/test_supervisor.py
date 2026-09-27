@@ -277,7 +277,7 @@ class WhatAStoppedSupervisorLeaves(Base):
             return True
         with mock.patch.object(made, "end_orphan", side_effect=lambda: order.append("orphan")), \
                 mock.patch.object(made, "hand_over_to", side_effect=hand_over_to), \
-                mock.patch.object(made, "_taken_over", return_value=True):
+                mock.patch.object(made, "_taken_over", return_value=(True, None)):
             self.assertEqual(0, made.main())
         self.assertEqual(["orphan", ("hand over", "an-old-token")], order)
 
@@ -343,6 +343,25 @@ class AServerThatWillNotEnd(Base):
         self.assertIn(mock.call(5151), kill.call_args_list, "the new supervisor was left running")
         self.assertIsNotNone(made._child)
         made._child = None
+
+
+class ASupervisorHandedOverThatGivesUp(Base):
+    def test_points_current_txt_back_to_the_version_it_took_over_from(self):
+        installed = os.path.join(self.work, "installed")
+        for version in ("v1", "v2"):
+            os.makedirs(os.path.join(installed, "versions", version))
+        with open(os.path.join(installed, "current.txt"), "w", encoding="utf-8") as handle:
+            handle.write("v2")
+        supervisor.write_json(supervisor.data_file(supervisor.STATE_FILE),
+                              {"pid": 1, "state": "handed over", "version": "v1", "server_version": "v1"})
+        made = supervisor.Supervisor(
+            installed=installed, env=self.env, install=lambda: None, backoff=(0.05,), max_crashes=2, tick=0.02,
+            command=lambda code: [sys.executable, self.fake, "crash", os.path.basename(code), self.record])
+        made.own_version = "v2"
+        with self.assertLogs("tagpup.supervisor", level="ERROR") as logged:
+            self.assertEqual(supervisor.GAVE_UP, made.main(update_first=False, handed_over=True))
+        self.assertEqual("v1", supervisor.read_current(installed))
+        self.assertIn("points back", "\n".join(logged.output))
 
 
 class ItsFilesWithAReader(Base):

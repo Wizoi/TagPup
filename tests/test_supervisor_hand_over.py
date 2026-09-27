@@ -48,7 +48,8 @@ class HandingOver(unittest.TestCase):
         env = dict(os.environ, TAGPUP_NO_JOBS="1", TAGPUP_NO_MODEL_WEIGHTS="1", TAGPUP_WEB_NO_WARMUP="1")
         server_args = "--tagpup-port %d --tuner-port %d --db sandbox" % (self.port, free_port())
         first = processes.start([sys.executable, os.path.join(self.installed, supervisor.BACKGROUND_LAUNCHER),
-                                 "--server-args", server_args, "--update-every", "0.5", "--hand-over-wait", "20"],
+                                 "--server-args", server_args, "--update-every", "0.5", "--hand-over-wait", "20",
+                                 "--settle", "3"],
                                 env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL)
         self.addCleanup(lambda: first.poll() is None and processes.kill_tree(first.pid))
@@ -80,6 +81,24 @@ class HandingOver(unittest.TestCase):
         self.assertNotEqual(old_pid, now["pid"])
         self.assertEqual(NEW, now["version"])
         self.assertIsNotNone(first.wait(timeout=30), "the old supervisor is still running")
+
+    def test_a_new_version_whose_server_cannot_start_leaves_the_old_one_answering(self):
+        """The reviewer's reproduction: the new version's supervisor starts, takes the
+        lock, and its server fails to import. The old supervisor had already gone; the
+        new one gave up after five crashes, and the next login started the same release
+        again. Now the old one waits for the new server to answer, and takes back."""
+        first = self.start()
+        self.wait_until(lambda: self.version() == OLD)
+        old_pid = supervisor.running()["pid"]
+        install_app.install(self.installed, self.home.root, sys.executable, name=NEW, apply=True, say=lambda line: None)
+        with open(os.path.join(self.installed, "versions", NEW, "tagpup_web.py"), "w", encoding="utf-8") as handle:
+            handle.write("raise ImportError('a broken release')\n")
+        log = os.path.join(self.home.data, "logs", "supervisor.log")
+        self.wait_until(lambda: os.path.exists(log) and "did not take over" in open(log, encoding="utf-8").read())
+        self.wait_until(lambda: self.version() == OLD)
+        self.assertIsNone(first.poll(), "the old supervisor went")
+        self.assertEqual(old_pid, supervisor.running()["pid"])
+        self.assertEqual(OLD, install_app.read_current(self.installed), "the next login would start the broken release")
 
     def test_a_new_version_whose_supervisor_cannot_start_leaves_the_old_one_answering(self):
         self.start()
