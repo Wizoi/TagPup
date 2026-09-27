@@ -90,7 +90,7 @@ describe("TagPup's gear", () => {
     await flush(window);
     assert.ok(!menu.classList.contains("hidden"));
     assert.equal(button.getAttribute("aria-expanded"), "true");
-    assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Settings", "History...", "Open in TagTuner"]);
+    assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Settings", "History...", "Activity...", "Open in TagTuner"]);
     assert.equal(document.activeElement, items(menu)[0], "the focus is not on the first item");
   });
 
@@ -250,7 +250,7 @@ describe("TagTuner's gear", () => {
     assert.ok(button.closest(".app-header"), "the gear is not in the header");
     click(window, button);
     await flush(window);
-    assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Library settings", "History...", "Folders to review...", "Open in TagPup"]);
+    assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Library settings", "History...", "Folders to review...", "Activity...", "Open in TagPup"]);
     const settings = menu.querySelector('[data-action="library-settings"]');
     assert.equal(settings.getAttribute("aria-disabled"), null, "Library settings is still disabled");
     click(window, settings);

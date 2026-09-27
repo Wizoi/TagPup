@@ -104,6 +104,37 @@ class ThisPcOnly(Base):
         self.assertTrue(made.refused, "a library called activity would never be reached")
 
 
+class ThePage(Base):
+    """Served at /activity/ by both apps, its modules beside it and the shared ones at
+    common/, uncached; under no library, whatever the server was started on."""
+
+    def test_the_page_its_modules_and_the_shared_ones(self):
+        for kind in ("tagpup", "tuner"):
+            client = self.client(kind=kind)
+            page = client.get("/activity/")
+            self.assertEqual(200, page.status_code)
+            self.assertIn('<script type="module" src="main.js">', page.get_data(as_text=True))
+            self.assertIn("no-store", page.headers["Cache-Control"])
+            module = client.get("/activity/main.js")
+            self.assertEqual(200, module.status_code)
+            self.assertTrue(module.content_type.startswith("application/javascript"))
+            self.assertEqual(200, client.get("/activity/common/api.js").status_code)
+            self.assertEqual(200, client.get("/activity/style.css").status_code)
+            self.assertIn(client.get("/activity").status_code, (301, 308))
+
+    def test_nothing_else_is_reached(self):
+        client = self.client()
+        for url in ("/activity/nothing.js", "/activity/..%2Fapp.js", "/activity/common/nothing.js"):
+            self.assertEqual(404, client.get(url).status_code, url)
+
+    def test_a_server_started_on_a_library_serves_it_too(self):
+        app = web.create_app("tagpup", startup=self.harbour, ports=PORTS)
+        app.testing = True
+        client = app.test_client()
+        self.assertEqual(200, client.get("/activity/").status_code)
+        self.assertEqual(200, client.get("/api/activity/now").status_code)
+
+
 class Now(Base):
     def test_the_index_queue_the_running_jobs_and_suggest_by_library(self):
         release = threading.Event()

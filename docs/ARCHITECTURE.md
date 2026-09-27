@@ -159,6 +159,7 @@ Each change ships as a migration with a dry run and a backup, and `tools/doctor.
   - `api.js`: library-aware URLs and JSON. It replaced the monkeypatched `fetch` and image `src`.
   - `paths.js`, `vocabulary.js` and `library.js` (the picker and the library the browser remembers). Only what both pages really share lives here: they have no unsaved-edit handling or status line in common.
   - `validate.js` (what may be set, by the rules `/api/rules` publishes), `dom.js` (elements built from text) and `dialog.js` (`dialogOpen()`, which the pages' shortcuts ask before they act).
+- `web/activity/` is the Activity page (phase 8.5): the background work of every library, at `/activity/` under no library, asking through `api.site`, `web/common/api.js`'s form for what covers every library.
 - `web/tagpup/` and `web/tuner/` each have a `main.js` plus one module per feature: folder list, photo details, faces strip, Identify grid, tag tree. Each page keeps its state in one store object, not in 130 to 150 variables at the top of one closure.
 - There is no build step: the browser loads native modules. Tests import the modules directly with `node --test`, and jsdom page loads are kept for whole flows.
 
@@ -445,6 +446,35 @@ A job that keeps each library in step with its folders. Today a row changes only
 
 Exit: after files are added, edited, moved or deleted outside the apps, one sync brings the rows back in step. `tools/doctor.py` finds nothing it would change, except missing files it has reported.
 
+### Phase 8.5: Activity
+One page for the background work of every library *(owner, 2026-09-26)*: what runs, what
+ran, what failed, and the logs -- modelled on Immich's Jobs, Jellyfin's Scheduled Tasks and
+Logs, Hangfire's and Sidekiq's history (failures kept in view, run now) and Home Assistant's
+logs (by source, filtered, raw, downloaded). Done:
+- **The page**, `web/activity/`, served by both apps at `/activity/`, under no library, and
+  to this PC only (`tagpup.web.activity_routes` refuses any other address, 403, beside the
+  loopback bind). Linked from both gears (**Activity...**, a new tab). Sections: Now (asked
+  every 3 s while the page is in view, never while hidden, a poll waiting for the one
+  before), Scheduled jobs (each run's counts, duration, error and run; a failure flagged
+  until a later success; Run now, asked first), Sync & watcher, Snapshots, Always on,
+  Recent activity (one timeline, More reads further back), Logs.
+- **Runs in the logs**: a recurring job's run, a sync and a run of the indexer hold a tag
+  while they run (`tagpup.core.runs`), and every line of a program's log carries the tags
+  of the runs under way on its thread (`tagpup.logs.RunTag`); "Logs for this run" filters
+  by it. The indexer the queue starts writes `data/logs/indexer-<library>.log`, told its
+  run's tags in its environment.
+- **Logs read bounded**: `tagpup.logs.read` reads a log from its end, never more than 2 MB,
+  paged back by offset and followed by offset (a file smaller than the offset has rotated);
+  `tail` gives the raw end (1 MB); the download streams the file. Every log rotates (5 MB,
+  five kept) through `tagpup.logs.to_file`; the server's console output is rotated as it
+  starts; `tests/test_logs_are_bounded.py` fails a file handler made elsewhere and a file
+  appended to for ever.
+- **What it reads**: each library's `job_runs`, `sync_runs` and journal
+  (`tagpup.services.activity`), the jobs layer's state in this process (the index queues'
+  runs, Suggest's runs, the runner's runs, the watcher's roots and last notice), and
+  `data/supervisor.json` without its token. Its reads do not count as somebody using the
+  app, so an open page does not hold an update back from its quiet moment.
+
 ### Phase 9: Library views (planned for October 2026)
 The owner's idea *(2026-09-25)*: TagPup shows the whole library, not only the folder it
 has open -- by folder, by keyword, by person, by date -- as Windows Live Photo Gallery
@@ -640,5 +670,6 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 7.5. A journal for every bulk edit and migration | done, 2026-09-25 |
 | 7.6. Settings in the library, and a gear on each page | done, 2026-09-25 |
 | 8. Sync | done, 2026-09-26 (8a jobs, 8b snapshots, 8c sync with library roots, 8d always on with self-update, the folder watcher and idle memory); installing it at login waits for the owner |
+| 8.5. Activity | done, 2026-09-26 (the page, runs in the logs, the indexer's own log, bounded reads) |
 | 9. Library views | planned for October 2026 *(owner, 2026-09-25)*; design questions open |
 | 10. Family albums from many sources | idea *(owner, 2026-09-25)*, after phase 9; design questions open |

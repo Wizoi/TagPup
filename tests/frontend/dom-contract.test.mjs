@@ -16,7 +16,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, APPS, pageSource } from "./harness.mjs";
+import { REPO_ROOT, PAGES, pageSource } from "./harness.mjs";
 
 /** Ids created by the script itself rather than declared in the markup. */
 const DYNAMIC_IDS = new Set([]);
@@ -25,7 +25,7 @@ const DYNAMIC_IDS = new Set([]);
 function readApp(name) {
   return {
     js: pageSource(name),
-    html: fs.readFileSync(path.join(REPO_ROOT, APPS[name].dir, "index.html"), "utf8"),
+    html: fs.readFileSync(path.join(REPO_ROOT, PAGES[name].dir, "index.html"), "utf8"),
   };
 }
 
@@ -42,7 +42,7 @@ function assignedIds(js) {
   return new Set([...js.matchAll(/\.id\s*=\s*['"]([^'"]+)['"]/g)].map((m) => m[1]));
 }
 
-for (const [name, app] of Object.entries(APPS)) {
+for (const [name, app] of Object.entries(PAGES)) {
   describe(`${name}: DOM contract`, () => {
     test("every element the script looks up exists in the page", () => {
       const { js, html } = readApp(name);

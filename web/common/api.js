@@ -13,6 +13,10 @@
  *     img.src = api.image(`/api/face-crop?id=${id}`)
  *     api.url('/api/people')                            // /kr-track/api/people
  *
+ * What covers every library -- the Activity page's /api/activity/ -- is asked under no
+ * library, whatever the page's URL names: `api.site.json('/api/activity/now')`,
+ * `api.site.fetch(...)`, `api.site.url(...)`.
+ *
  * The library is read from the page's URL at each call, and `fetch` is looked up at
  * each call, so the page tests' stub answers (tests/frontend/harness.mjs).
  *
@@ -33,7 +37,7 @@ const UPDATE_WAIT_MS = 120000;
 const RESTART_RETRY_MS = 1000;
 
 /** First URL parts that are no library's name: the routes (tagpup.core.library.ROUTES). */
-const NOT_A_LIBRARY = ['api', 'common', 'gui', 'gui_tagpup'];
+const NOT_A_LIBRARY = ['activity', 'api', 'common', 'gui', 'gui_tagpup'];
 
 /**
  * The library a page's URL path names, or '' for none: its first part that is neither
@@ -114,6 +118,24 @@ function apiJson(path, options) {
     return apiFetch(path, options).then(res => res.json());
 }
 
+/** '/api/x' under no library: what covers every library. Anything but an /api/ path is refused. */
+function siteUrl(path) {
+    const text = String(path);
+    const route = text.startsWith('api/') ? '/' + text : text;
+    if (!route.startsWith('/api/')) throw new Error(`${text} is not an /api/ path`);
+    return route;
+}
+
+function siteFetch(path, options) {
+    let url;
+    try {
+        url = siteUrl(path);
+    } catch (err) {
+        return Promise.reject(err);
+    }
+    return fetchThroughAnUpdate(url, options);
+}
+
 /** How often a page asks whether the server is back, after an /api/ image failed. */
 const IMAGE_PROBE_MS = 2000;
 
@@ -185,4 +207,9 @@ export const api = Object.freeze({
     image: apiUrl,
     fetch: apiFetch,
     json: apiJson,
+    site: Object.freeze({
+        url: siteUrl,
+        fetch: siteFetch,
+        json: (path, options) => siteFetch(path, options).then(res => res.json()),
+    }),
 });
