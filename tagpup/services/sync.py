@@ -173,10 +173,11 @@ def _pair_moves(conn, by_key, missing, new, exiftool_path, read=True):
     return pairs, ambiguous_rows, ambiguous_files
 
 
-def _sort_new(new, by_key, stops, ignored, ambiguous_files):
+def _sort_new(new, by_key, stops, ignored, ambiguous_files, roots):
     """Where each new file goes: ({indexed folder: new files}, the folders its new files
     are queued for; {folder to review: photos}; photos under an ignored folder; {folder
-    held back: files}). A new file in a folder the library holds photos in is indexed
+    held back: files}; photos in no folder the library holds and under none of `roots`).
+    A new file in a folder the library holds photos in is indexed
     with that folder alone. One in a folder holding none is under a folder to review: the
     topmost above it, below a root (`stops`, keys), that holds no indexed photo at any
     depth -- unless it is under an ignored folder. A folder holding a file that may be a
@@ -191,7 +192,7 @@ def _sort_new(new, by_key, stops, ignored, ambiguous_files):
             if parent == current:
                 break
             current = parent
-    tops, queued, review, held_back, ignored_files = {}, {}, {}, {}, 0
+    tops, queued, review, held_back, ignored_files, outside = {}, {}, {}, {}, 0, 0
     ambiguous_folders = {paths.key(os.path.dirname(new[key][0])) for key in ambiguous_files}
     for key, (path, _mtime, _size) in new.items():
         folder = os.path.dirname(path)
@@ -211,7 +212,11 @@ def _sort_new(new, by_key, stops, ignored, ambiguous_files):
                 top = parent
             tops[folder_key] = top
         top = tops[folder_key]
-        if ignored and _under_any(folder, ignored):
+        if not roots or not _under_any(folder, roots):
+            # Beside a folder the library holds outside every root (a folder indexed by
+            # hand, elsewhere): kept in step itself, and nothing new beside it offered.
+            outside += 1
+        elif ignored and _under_any(folder, ignored):
             ignored_files += 1
         elif any(paths.key(os.path.dirname(new[other][0])) == folder_key or
                  paths.is_under(new[other][0], top) for other in ambiguous_files):
@@ -219,7 +224,7 @@ def _sort_new(new, by_key, stops, ignored, ambiguous_files):
         else:
             review.setdefault(paths.key(top), [top, 0])[1] += 1
     return ({spelling: count for spelling, count in queued.values()},
-            {spelling: count for spelling, count in review.values()}, ignored_files, held_back)
+            {spelling: count for spelling, count in review.values()}, ignored_files, held_back, outside)
 
 
 def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
@@ -292,7 +297,8 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
     moved_edits, occupied = relink_photos.edits_for(library, moves)
     by_folder = _missing_by_folder(missing)
     stops = {paths.key(root) for root in walked + roots}
-    queued, review, ignored_files, held_back = _sort_new(new, by_key, stops, ignored_by_key, ambiguous_files)
+    queued, review, ignored_files, held_back, outside = _sort_new(
+        new, by_key, stops, ignored_by_key, ambiguous_files, {paths.key(r): r for r in roots})
     new_folders = sorted(queued, key=paths.key)
     new_paths = sorted((path for path, _m, _s in new.values()
                         if paths.key(os.path.dirname(path)) in {paths.key(f) for f in queued}), key=paths.key)
@@ -302,7 +308,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
         counts={"rows": len(by_key), "files": len(on_disk), "folders_walked": len(walked) - len(roots_gone),
                 "new": sum(queued.values()), "new_folders": len(new_folders),
                 "review_folders": len(review), "review_photos": sum(review.values()),
-                "ignored_files": ignored_files,
+                "ignored_files": ignored_files, "outside_roots_files": outside,
                 "changed": len(changed), "never_stamped": never_stamped, "to_write": len(to_write),
                 "fields": dict(fields.most_common()), "unreadable": len(unreadable),
                 "moved": len(moves), "moved_faces": sum(m["faces"] for m in moves),
@@ -345,8 +351,9 @@ def review(library, roots=(), ignored=()):
     finally:
         conn.close()
     stops = {paths.key(root) for root in walked + roots}
-    _queued, found, _ignored, _held = _sort_new(new, by_key, stops, {paths.key(f): paths.stored(f) for f in ignored},
-                                                 ambiguous_files)
+    _queued, found, _ignored, _held, _outside = _sort_new(
+        new, by_key, stops, {paths.key(f): paths.stored(f) for f in ignored},
+        ambiguous_files, {paths.key(r): r for r in roots})
     listed = [{"path": top, "photos": found[top]} for top in sorted(found, key=paths.key)]
     return {"folders": listed, "photos": sum(found.values())}
 

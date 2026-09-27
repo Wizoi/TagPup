@@ -1009,6 +1009,52 @@ def _job_libraries(ctx):
     return runtimes.home_libraries(ctx.obj.get("test", False))
 
 
+@cli.group("settings", invoke_without_command=True)
+@click.pass_context
+def settings_command(ctx):
+    """The library's settings (tagpup.services.settings): each key and its value, read
+    without stamping the library. `settings set KEY VALUE` changes one."""
+    if ctx.invoked_subcommand is not None:
+        return
+    library = _existing_library(ctx)
+    found = runtimes.peek_settings(library)
+    for key, value in found.values.items():
+        console.print("%s = %s" % (key, value.replace(chr(10), " | ")), markup=False, soft_wrap=True)
+
+
+@settings_command.command("set")
+@click.argument("key")
+@click.argument("value")
+@click.option("--acknowledge", "acknowledged", multiple=True,
+              help="A locked group whose consequences you accept (clip, faces, exiftool).")
+@click.option("--apply", "apply_", is_flag=True, help="Write the change. Without it, only says what it would change.")
+@click.pass_context
+def settings_set(ctx, key, value, acknowledged, apply_):
+    """Change the setting KEY to VALUE as one journaled change, undoable (`history`,
+    `undo`). Folders (library.roots, library.ignored) are given one a line, or separated
+    by |. Setting the roots also ignores every folder under a new root that holds photos
+    and none indexed. A dry run unless --apply."""
+    library = _existing_library(ctx)
+    if key in (library_settings.ROOTS, library_settings.IGNORED):
+        value = chr(10).join(part.strip() for part in value.replace("|", chr(10)).split(chr(10)) if part.strip())
+    result = library_settings.change(library, {key: value}, acknowledged=list(acknowledged), apply=apply_)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    changed = result.details.get("changed", [])
+    added = result.details.get("ignored_added", 0)
+    if not changed:
+        console.print("%s already holds that value; nothing to change." % key, markup=False)
+        return
+    also = " and %d folder(s) under the new roots added to library.ignored" % added if added else ""
+    if not apply_:
+        console.print("Would change %s%s. Nothing changed. --apply writes it." % (", ".join(changed), also),
+                      markup=False, soft_wrap=True)
+        return
+    console.print("Changed %s%s. %s" % (", ".join(changed), also, maintenance.recorded(result, library.path)),
+                  markup=False, soft_wrap=True)
+
+
 @cli.group(invoke_without_command=True)
 @click.pass_context
 def jobs(ctx):

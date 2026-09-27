@@ -234,7 +234,7 @@ class NewFiles(SyncTestCase):
         self.photo(sub, "IMG_0101.jpg")
         self.indexed(self.photo(self.trip, "IMG_0002.jpg"))
 
-        dry = self.run_sync()
+        dry = self.run_sync(roots=[self.pictures])
         self.assertEqual(1, dry.details["counts"]["new"])
         self.assertEqual(1, dry.details["counts"]["new_folders"])
         # A subfolder holding no indexed photo is a folder to review, not indexed on its own.
@@ -248,7 +248,7 @@ class NewFiles(SyncTestCase):
             asked.append(list(folders))
             return Result(attempted=len(folders), changed=len(folders))
 
-        result = self.run_sync(apply=True, queue=queue)
+        result = self.run_sync(apply=True, queue=queue, roots=[self.pictures])
         self.assertTrue(result.ok, result.message())
         self.assertEqual([[self.trip]], asked)
         self.assertEqual(1, result.details["queued"])
@@ -504,6 +504,29 @@ class Roots(SyncTestCase):
         self.assertEqual((1, 0), (result.details["counts"]["moved"], result.details["counts"]["new"]))
         self.assertEqual(photo_id, self.rows()[new][0])
         self.assertEqual(0, self.reads.sessions)
+
+    def test_a_held_folder_outside_every_root_is_kept_in_step_and_nothing_beside_it_reviewed(self):
+        # A folder indexed by hand elsewhere (C:/localdepot, say): not under a root.
+        depot = os.path.join(self.home.root, "localdepot")
+        os.makedirs(os.path.join(depot, "extras"))
+        kept = self.photo(depot, "IMG_0600.jpg", **{"XMP:Subject": ["Events/Invitational"]})
+        self.indexed(kept)
+        self.photo(depot, "IMG_0600.jpg", body=b"jpeg, edited", **{"XMP:Subject": ["Weather/Rain"]})
+        self.photo(depot, "IMG_0601.jpg")
+        self.photo(os.path.join(depot, "extras"), "IMG_0602.jpg")
+        asked = []
+
+        def queue(folders):
+            asked.extend(folders)
+            return Result(attempted=len(folders), changed=len(folders))
+
+        result = self.run_sync(apply=True, queue=queue, roots=[self.pictures])
+        counts = result.details["counts"]
+        self.assertEqual((1, 1, 0, 1), (counts["changed"], counts["new"], counts["review_folders"],
+                                        counts["outside_roots_files"]))
+        self.assertEqual([depot], asked, "the held folder's new file is indexed, alone")
+        self.assertEqual(["Weather/Rain"], self.rows()[kept][3])
+        self.assertEqual([], sync.review(self.library, [self.pictures])["folders"])
 
     def test_include_queues_a_folder_under_a_root_and_refuses_one_outside(self):
         lights = os.path.join(self.pictures, "2025-12 Harbour Lights")

@@ -113,6 +113,31 @@ class StampedOnce(unittest.TestCase):
         self.assertEqual([folder], settings.of(self.library).ignored)
         self.assertTrue(settings.ignore_folder(self.library, "Scans").refused)
 
+    def test_the_owners_roots_are_taken(self):
+        for value in (path("D:", "Training", "Pictures"),
+                      path("D:", "Training", "Pictures", "Clients or Groups", "Cross Country"),
+                      NL.join([path("D:", "Training", "Pictures"), path("C:", "localdepot")])):
+            self.assertIsNone(settings.validation.problem("setting library.roots", value), value)
+
+    def test_the_cli_sets_roots_as_a_dry_run_then_applied(self):
+        from click.testing import CliRunner
+        from tagpup_cli import cli
+
+        settings.of(self.library)
+        roots = os.path.join(self.home.root, "Training", "Pictures")
+        os.makedirs(roots)
+        dry = CliRunner().invoke(cli, ["--db", self.db_path, "settings", "set", settings.ROOTS, roots])
+        self.assertEqual(0, dry.exit_code, dry.output)
+        self.assertIn("Would change library.roots", dry.output)
+        self.assertNotIn(settings.ROOTS, self.held())
+        applied = CliRunner().invoke(cli, ["--db", self.db_path, "settings", "set", settings.ROOTS, roots, "--apply"])
+        self.assertEqual(0, applied.exit_code, applied.output)
+        self.assertEqual(roots, self.held()[settings.ROOTS])
+        refused = CliRunner().invoke(cli, ["--db", self.db_path, "settings", "set", settings.ROOTS, "Pictures"])
+        self.assertEqual(1, refused.exit_code, refused.output)
+        shown = CliRunner().invoke(cli, ["--db", self.db_path, "settings"])
+        self.assertIn("library.roots = " + roots, shown.output)
+
     def test_folders_are_changed_one_a_line_and_a_drive_is_refused(self):
         settings.of(self.library)
         folders = NL.join([path("D:", "Photos"), path("E:", "Meets")])
