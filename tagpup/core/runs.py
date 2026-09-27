@@ -10,7 +10,9 @@ runs:
 
 and every line logged meanwhile, on that thread, carries it (tagpup.logs puts the tags
 of the running context into each line of a program's log file). Runs nest: a sync the
-daily job runs logs both tags, so the job's lines include its sync's.
+daily job runs logs both tags, so the job's lines include its sync's; and a run of the
+indexer a sync queues carries the sync's tag (and the job's) before its own, as does the
+indexer it starts, so the sync's lines include its indexing's, in the indexer's own log.
 
 A process started for a run -- the CLI's `index`, started by the index queue -- is told
 its tags in its environment (ENV), and every line it logs carries them; LOG_TO tells it
@@ -92,14 +94,20 @@ def current():
 
 
 @contextlib.contextmanager
-def running(run_tag):
-    """Hold `run_tag` while the block runs: every line logged on this thread meanwhile
-    carries it, beside any held already."""
-    token = _current.set(_current.get() + (run_tag,))
+def running(*run_tags):
+    """Hold `run_tags` -- a run's own last, after the runs it is part of -- while the block
+    runs: every line logged on this thread meanwhile carries them, beside any held already."""
+    token = _current.set(_current.get() + tuple(run_tags))
     try:
-        yield run_tag
+        yield run_tags[-1] if run_tags else None
     finally:
         _current.reset(token)
+
+
+def held():
+    """The tags held on this thread (not the process's): the runs something started here is
+    part of -- a run of the indexer a sync queued is the sync's too (tagpup.jobs.indexing)."""
+    return _current.get()
 
 
 def child_environment(env, log_to=None):

@@ -392,6 +392,34 @@ class SyncSnapshotsAndTheTimeline(Base):
         # The logs it wrote in, named by the one owner of the names: its own, then the server's.
         self.assertEqual([logs.run_log("indexer", entries[0]["run"]), logs.SERVER_LOG], entries[0]["logs"])
 
+    def test_a_syncs_logs_include_the_indexing_it_queued(self):
+        """A sync queues its new files' folders; the run of the indexer that indexes them
+        is the sync's too: it carries the sync's tag, its indexer is told both, and the
+        sync's "Logs for this run" includes the indexer's own log."""
+        started = "2026-09-26 09:00:00"
+        sync_tag = runs.sync_tag("harbour", started)
+        sync_runs.record(self.harbour.path, started, whole=True, in_step=True, found={}, changed={})
+        queue = indexing_jobs.queue_for(self.harbour)
+        self.addCleanup(indexing_jobs.forget, self.harbour)
+        seen = {}
+
+        def index(folder, cluster, report):
+            seen["tags"] = runs.current()
+            return Result(attempted=1, changed=1)
+
+        with runs.running(sync_tag):
+            queue.start([self.home.root], index, together=True)
+        queue.wait()
+        self.assertEqual(2, len(seen["tags"]), seen)
+        self.assertEqual(sync_tag, seen["tags"][0])
+        index_tag = seen["tags"][1]
+        self.assertTrue(index_tag.startswith("index:harbour:"))
+        entries = self.get("/api/activity/timeline")["entries"]
+        sync = [entry for entry in entries if entry["kind"] == "sync"][0]
+        self.assertEqual([logs.SERVER_LOG, logs.run_log("indexer", index_tag)], sync["logs"])
+        harbour = [each for each in self.get("/api/activity/sync")["libraries"] if each["name"] == "harbour"][0]
+        self.assertEqual([logs.SERVER_LOG, logs.run_log("indexer", index_tag)], harbour["last_whole"]["logs"])
+
     def test_every_run_says_which_logs_hold_its_lines(self):
         claim = job_runs.claim(self.harbour.path, "snapshots", "harbour", seconds("2026-09-20 12:00:00"))
         job_runs.finish(self.harbour.path, claim.run_id, "done", seconds("2026-09-20 12:00:05"), {})

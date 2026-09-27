@@ -120,6 +120,9 @@ class IndexQueue:
                 valid.append((paths.stored(folder), key))
 
         queued, already = [], []
+        # The runs this start is part of -- a sync queueing its new files' folders: the run
+        # of the indexer that indexes them carries their tags before its own.
+        parents = runs.held()
         with self._lock:
             if valid:
                 waiting = {paths.key(each) for job in self._pending for each in _folders_of(job)}
@@ -129,14 +132,15 @@ class IndexQueue:
                         result.skip(folder, "already waiting or being indexed")
                         continue
                     if not together:
-                        self._pending.append({"folder": folder, "cluster": cluster, "index": index})
+                        self._pending.append({"folder": folder, "cluster": cluster, "index": index,
+                                              "parents": parents})
                     waiting.add(key)
                     self._statuses[key] = {"status": "queued", "percent": 0,
                                            "message": "Waiting to be indexed...", "folder": folder}
                     queued.append(folder)
                 if together and queued:
                     self._pending.append({"folder": queued[0], "folders": list(queued), "cluster": cluster,
-                                          "index": index})
+                                          "index": index, "parents": parents})
                 self._ensure_runner()
             pending = len(self._pending)
 
@@ -211,7 +215,7 @@ class IndexQueue:
 
     def now(self):
         """What the Activity page shows of this queue: the run of the indexer under way --
-        {"run", "started", "folders", "name", "percent", "message"}, or None -- and the jobs
+        {"run", "parents", "started", "folders", "name", "percent", "message"}, or None -- and the jobs
         waiting, each {"name", "folders"} (a batch of sync's is one job, one run)."""
         with self._lock:
             current = dict(self._current) if self._current else None
@@ -262,14 +266,14 @@ class IndexQueue:
                     self._current = {"run": runs.index_tag(self.library),
                                      "started": time.strftime("%Y-%m-%d %H:%M:%S"),
                                      "folders": len(_folders_of(job)), "name": os.path.basename(job["folder"]),
-                                     "status": status}
+                                     "parents": list(job.get("parents") or ()), "status": status}
                     run = self._current["run"]
                     # A batch's folders share one status: they are one run.
                     for each in _folders_of(job):
                         self._statuses[paths.key(each)] = status
                 # Every line the run logs here carries its tag, and the indexer it starts is
                 # told it (tagpup.services.indexing).
-                with runs.running(run):
+                with runs.running(*(job.get("parents") or ()), run):
                     self._index(job, status)
                 self._remember(job, status)
         finally:
@@ -282,7 +286,8 @@ class IndexQueue:
         """Keep what became of a run of the indexer, for the Activity page."""
         with self._lock:
             current, self._current = self._current or {}, None
-            entry = {"run": current.get("run"), "folders": len(_folders_of(job)),
+            entry = {"run": current.get("run"), "parents": current.get("parents", []),
+                     "folders": len(_folders_of(job)),
                      "name": os.path.basename(job["folder"]), "started": current.get("started"),
                      "finished": time.strftime("%Y-%m-%d %H:%M:%S"), "outcome": status.get("status"),
                      "message": status.get("message", "")}

@@ -189,15 +189,28 @@ def _app_url(kind, library_name, query=""):
     return "%s://%s:%d/%s/%s" % (request.scheme, host, port, urllib.parse.quote(library_name), query)
 
 
-def _logs_for(run):
+def _index_runs_of():
+    """{a run's tag: [the runs of the indexer it queued]}, from this process's index queues:
+    a sync's new folders, indexed as part of it (their `parents`)."""
+    found = {}
+    for _name, queue in indexing_jobs.every_queue():
+        running = queue.now()["running"]
+        for run in queue.history() + ([running] if running else []):
+            for parent in run.get("parents") or ():
+                found.setdefault(parent, []).append(run["run"])
+    return found
+
+
+def _logs_for(run, children=None):
     """The logs a run's lines are in, as the page is to read them, the first its own: a run
-    of the indexer's own file, then this server's; any other run, this server's. [] for
+    of the indexer's own file, then this server's; any other run, this server's, then the
+    own files of the runs of the indexer it queued (`children`, _index_runs_of). [] for
     none. Named by tagpup.logs alone: the page never spells a log's name."""
     if not run:
         return []
     if run.startswith("index:"):
         return [logs.run_log(indexing.INDEXER_LOG, run), logs.SERVER_LOG]
-    return [logs.SERVER_LOG]
+    return [logs.SERVER_LOG] + [logs.run_log(indexing.INDEXER_LOG, child) for child in (children or {}).get(run, [])]
 
 
 # ---- Now -----------------------------------------------------------------------------------
@@ -208,6 +221,7 @@ def now():
     every = _libraries()
     queues = {name.lower(): queue for name, queue in indexing_jobs.every_queue() if name}
     suggesting = suggestion_jobs.under_way()
+    children = _index_runs_of()
     found = []
     for library in every:
         queue = queues.get(library.name.lower())
@@ -220,7 +234,7 @@ def now():
                 if last is not None and last.outcome == job_runs.RUNNING:
                     tag = runs.job_tag(last.library, last.id)
                     running.append({"job": job, "run_id": last.id, "started": last.started, "run": tag,
-                                    "logs": _logs_for(tag)})
+                                    "logs": _logs_for(tag, children)})
         except Exception as e:
             logger.warning("Could not read the running jobs of %s: %s", library.name, e)
         found.append({"name": library.name, "indexing": indexed,
@@ -243,13 +257,14 @@ def now():
 def jobs():
     limit = _int_arg("runs", RUNS, MOST_RUNS)
     runner = _task(JOBS)
+    children = _index_runs_of()
     listed = []
     for library in _libraries():
         try:
             listed.append({"name": library.name, "jobs": recurring.overview(library, limit=limit)})
             for job in listed[-1]["jobs"]:
                 for run in job["runs"]:
-                    run["logs"] = _logs_for(run["run"])
+                    run["logs"] = _logs_for(run["run"], children)
         except Exception as e:
             logger.warning("Could not read the jobs of %s: %s", library.name, e)
             listed.append({"name": library.name, "jobs": [], "error": str(e)})
@@ -291,6 +306,7 @@ def run_job():
 def sync_state():
     watcher = _task(WATCHER)
     watching = watcher.status() if watcher is not None and hasattr(watcher, "status") else None
+    children = _index_runs_of()
     listed = []
     for library in _libraries():
         entry = {"name": library.name, "review_url": _app_url("tuner", library.name, "?review=1")}
@@ -298,7 +314,7 @@ def sync_state():
             entry.update(activity.sync_state(library))
             for which in ("last_whole", "last_folder"):
                 if entry.get(which):
-                    entry[which]["logs"] = _logs_for(entry[which]["run"])
+                    entry[which]["logs"] = _logs_for(entry[which]["run"], children)
         except Exception as e:
             logger.warning("Could not read the syncs of %s: %s", library.name, e)
             entry["error"] = str(e)
@@ -382,8 +398,9 @@ def timeline():
     except Exception as e:
         logger.warning("Could not read the supervisor's log: %s", e)
     entries.sort(key=lambda entry: entry["time"] or "", reverse=True)
+    children = _index_runs_of()
     for entry in entries[:limit]:
-        entry["logs"] = _logs_for(entry["run"])
+        entry["logs"] = _logs_for(entry["run"], children)
     return jsonify({"limit": limit, "entries": entries[:limit], "more": len(entries) > limit})
 
 
