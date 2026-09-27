@@ -52,11 +52,14 @@ class Drifted:
             conn.commit()
         finally:
             conn.close()
-        self.indexed, self.with_subfolders = [], []
+        self.indexed, self.with_subfolders, self.runs = [], [], []
 
         def index_folder(library, subfolders=True):
             def index(folder, cluster, report):
-                self.indexed.append(folder)
+                # A batch is handed as a list: one run of the indexer.
+                folders = [folder] if isinstance(folder, str) else list(folder)
+                self.runs.append(folders)
+                self.indexed.extend(folders)
                 self.with_subfolders.append(subfolders)
                 return Result(attempted=1, changed=1)
             return index
@@ -200,6 +203,42 @@ class TheCli(Drifted, unittest.TestCase):
     def last(self):
         from tagpup.services import sync
         return sync.last(Library(self.db_path))
+
+    def test_one_run_of_the_indexer_for_every_folder_of_new_files(self):
+        other = os.path.join(self.home.root, "Harbourview Regatta 2")
+        os.makedirs(other)
+        for name in ("regatta_10.jpg", "regatta_11.jpg"):
+            with open(os.path.join(other, name), "wb") as handle:
+                handle.write(b"jpeg")
+        conn = db.connect(self.db_path)
+        try:
+            photo_rows.add_read(conn, os.path.join(other, "regatta_10.jpg"), {})
+            conn.commit()
+        finally:
+            conn.close()
+        self.run_cli("--apply")
+        self.assertEqual([sorted([self.folder, other])], [sorted(run) for run in self.runs])
+        indexing_jobs.forget(Library(self.db_path))
+
+    def test_a_batch_is_one_job_whose_folders_share_its_status(self):
+        queue = indexing_jobs.IndexQueue()
+        other = os.path.join(self.home.root, "Harbourview Regatta 2")
+        os.makedirs(other)
+        handed = []
+
+        def index(folders, cluster, report):
+            handed.append(folders)
+            return Result(attempted=1, changed=1)
+
+        with mock.patch.object(indexing_jobs.IndexQueue, "_ensure_runner"):
+            started = queue.start([self.folder, other], index, together=True)
+            self.assertEqual(2, started.changed)
+            self.assertEqual(1, len(queue.pending()))
+            self.assertEqual(0, queue.start([other], index, together=True).changed, "queued twice")
+            queue.run_pending()
+        self.assertEqual([[self.folder, other]], handed)
+        self.assertEqual(("completed", "completed"), (queue.status(self.folder)["status"],
+                                                      queue.status(other)["status"]))
 
     def test_jobs_run_sync_waits_for_the_indexing_it_queued(self):
         """The CLI is a process that ends: the index queue it filled is indexed on its

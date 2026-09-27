@@ -130,8 +130,10 @@ def sync(library, folder=None, apply=False, index_new=True):
     if index_new:
         # A folder the library holds is indexed without its subfolders: they may be
         # folders to review, or ignored.
+        # One job, one run of the indexer, for every folder of new files.
         def queue(folders):
-            return indexing_jobs.queue_for(library).start(folders, index_folder(library, subfolders=False))
+            return indexing_jobs.queue_for(library).start(folders, index_folder(library, subfolders=False),
+                                                          together=True)
     return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
                              roots=settings.roots, ignored=settings.ignored)
 

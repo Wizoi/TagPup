@@ -156,14 +156,16 @@ def cli(ctx, db, test):
     ctx.obj["db"] = db
 
 @cli.command()
-@click.argument("directory", type=click.Path(exists=True, file_okay=False))
+@click.argument("directories", nargs=-1, required=True, type=click.Path(exists=True, file_okay=False))
 @click.option("--force-reembed", is_flag=True, help="Force recreation of embeddings.")
 @click.option("--reset", is_flag=True, help="Delete existing index and taxonomy to start fresh.")
 @click.option("--skip-faces", is_flag=True, help="Skip face detection during indexing.")
-@click.option("--no-subfolders", is_flag=True, help="Only the photos directly in DIRECTORY, not in its subfolders.")
+@click.option("--no-subfolders", is_flag=True,
+              help="Only the photos directly in each DIRECTORY, not in its subfolders.")
 @click.pass_context
-def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: bool, no_subfolders: bool = False):
-    """Phase 1: Scan and index a tagged photo library."""
+def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, no_subfolders: bool = False):
+    """Phase 1: Scan and index a tagged photo library: one or more DIRECTORIES, in one run
+    (sync hands it every folder of new files at once, so one indexer loads the models)."""
     runtime = get_runtime()
 
     test_mode = ctx.obj.get("test", False)
@@ -209,8 +211,13 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
 
     embeddings = runtime.embeddings(Library(db_path), photo_index)
 
-    console.print(f"[bold cyan]Scanning directory:[/bold cyan] {directory}")
-    all_images = image_files.photos_in(directory) if no_subfolders else scan_for_images(directory)
+    all_images, seen_images = [], set()
+    for directory in directories:
+        console.print(f"[bold cyan]Scanning directory:[/bold cyan] {directory}")
+        for found in (image_files.photos_in(directory) if no_subfolders else scan_for_images(directory)):
+            if paths.key(found) not in seen_images:
+                seen_images.add(paths.key(found))
+                all_images.append(found)
     console.print(f"Found {len(all_images)} image(s) total.")
 
     if not all_images:

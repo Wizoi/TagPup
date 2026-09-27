@@ -24,6 +24,11 @@ _queues = {}
 _queues_lock = threading.Lock()
 
 
+def _folders_of(job):
+    """The folders a job indexes: one, or a batch's (IndexQueue.start's `together`)."""
+    return job.get("folders") or [job["folder"]]
+
+
 def queue_for(library):
     """This process's queue for a library, made the first time it is asked for."""
     with _queues_lock:
@@ -56,10 +61,11 @@ class IndexQueue:
         #: Folder key -> where that folder has got.
         self._statuses = {}
 
-    def start(self, folders, index, cluster=False):
+    def start(self, folders, index, cluster=False, together=False):
         """Queue folders to be indexed by `index(folder, cluster, report)`, which returns
         a Result and calls `report(message, percent)` as it goes, and start the worker
-        unless it is running.
+        unless it is running. `together`: the folders queued are one job, and `index` is
+        handed their list -- one run of the indexer for them all (sync's new files).
 
         A folder asked for twice, already waiting, or being indexed now is queued once;
         one that is not a folder is reported, not queued. Refused when none is a folder.
@@ -83,17 +89,21 @@ class IndexQueue:
         queued, already = [], []
         with self._lock:
             if valid:
-                waiting = {paths.key(job["folder"]) for job in self._pending}
+                waiting = {paths.key(each) for job in self._pending for each in _folders_of(job)}
                 for folder, key in valid:
                     if key in waiting or self._statuses.get(key, {}).get("status") == "running":
                         already.append(folder)
                         result.skip(folder, "already waiting or being indexed")
                         continue
-                    self._pending.append({"folder": folder, "cluster": cluster, "index": index})
+                    if not together:
+                        self._pending.append({"folder": folder, "cluster": cluster, "index": index})
                     waiting.add(key)
                     self._statuses[key] = {"status": "queued", "percent": 0,
                                            "message": "Waiting to be indexed...", "folder": folder}
                     queued.append(folder)
+                if together and queued:
+                    self._pending.append({"folder": queued[0], "folders": list(queued), "cluster": cluster,
+                                          "index": index})
                 self._ensure_runner()
             pending = len(self._pending)
 
@@ -118,11 +128,13 @@ class IndexQueue:
         with self._lock:
             kept = []
             for job in self._pending:
-                key = paths.key(job["folder"])
-                if everything or key in targets:
-                    cancelled.append(job["folder"])
-                    self._statuses[key] = {"status": "cancelled", "percent": 0,
-                                           "message": "Cancelled.", "folder": job["folder"]}
+                keys = [paths.key(each) for each in _folders_of(job)]
+                if everything or targets.intersection(keys):
+                    # A batch is one run of the indexer: naming one of its folders drops it.
+                    for each, key in zip(_folders_of(job), keys):
+                        cancelled.append(each)
+                        self._statuses[key] = {"status": "cancelled", "percent": 0,
+                                               "message": "Cancelled.", "folder": each}
                 else:
                     kept.append(job)
             self._pending = kept
@@ -191,7 +203,9 @@ class IndexQueue:
                     job = self._pending.pop(0)
                     status = {"status": "running", "percent": 0,
                               "message": "Starting indexing...", "folder": job["folder"]}
-                    self._statuses[paths.key(job["folder"])] = status
+                    # A batch's folders share one status: they are one run.
+                    for each in _folders_of(job):
+                        self._statuses[paths.key(each)] = status
                 self._index(job, status)
         finally:
             # Only this worker's own entry: a newer one may have started already.
@@ -217,7 +231,7 @@ class IndexQueue:
                 status["percent"] = percent
 
         try:
-            result = job["index"](job["folder"], job["cluster"], report)
+            result = job["index"](job["folders"] if "folders" in job else job["folder"], job["cluster"], report)
         except Exception as e:
             logger.exception("Indexing %s failed", job["folder"])
             status.update(status="failed", percent=0, message="Error: %s" % e)

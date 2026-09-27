@@ -91,6 +91,8 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
     its exit code was never read. It is now, and a failure is the Result's error.
 
     details: `message`, what to tell the person; `percent`, where the bar stops.
+    `folder` may be a list of folders, indexed in one run of the indexer.
+
     Refused, and nothing run, for a folder that is not named by its full path
     (tagpup.core.validation). Without `subfolders`, only the photos directly in the
     folder are indexed (`index --no-subfolders`): sync's new files in a folder the library
@@ -98,7 +100,9 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
     """
     report = report or (lambda message=None, percent=None: None)
     result = Result(attempted=1)
-    problem = validation.problem("folder", folder)
+    # Several folders are one run of the indexer: the models are loaded once.
+    folders = [folder] if isinstance(folder, str) else list(folder)
+    problem = validation.first_problem("folder", folders) if folders else validation.problem("folder", None)
     if problem:
         result.refuse(problem)
         result.details["percent"] = 0
@@ -122,9 +126,10 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
         return proc.returncode
 
     # The indexer stores the paths it walks as given, so it is handed the stored form.
-    code = run(["index", paths.stored(folder)] + ([] if subfolders else ["--no-subfolders"]), 0.9)
+    code = run(["index"] + [paths.stored(each) for each in folders] + ([] if subfolders else ["--no-subfolders"]),
+               0.9)
     if code != 0:
-        result.fail(folder, "Indexing failed with exit code %s." % code)
+        result.fail(", ".join(folders), "Indexing failed with exit code %s." % code)
         result.details["percent"] = 0
         return result
 

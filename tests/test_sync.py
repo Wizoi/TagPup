@@ -616,6 +616,12 @@ class Folders(SyncTestCase):
         with mock.patch("subprocess.Popen", return_value=proc) as popen:
             indexing.index_folder(self.library, self.meet, "code", subfolders=False)
         self.assertEqual(["index", self.meet, "--no-subfolders"], popen.call_args[0][0][-3:])
+        # Several folders are one run of the indexer.
+        proc.stdout.readline.side_effect = ["done\n", ""]
+        with mock.patch("subprocess.Popen", return_value=proc) as popen:
+            indexing.index_folder(self.library, [self.meet, self.trip], "code", subfolders=False)
+        self.assertEqual(1, popen.call_count)
+        self.assertEqual(["index", self.meet, self.trip, "--no-subfolders"], popen.call_args[0][0][-4:])
 
     def test_the_walk_stamps_each_photo_as_the_disk_does(self):
         path = self.photo(self.meet, "IMG_0001.jpg", body=b"12345")

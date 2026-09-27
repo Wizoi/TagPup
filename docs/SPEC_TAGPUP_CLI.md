@@ -210,13 +210,13 @@ The `tagpup_cli.py` engine is accessed via `click` subcommands.
 ### Subcommands
 
 #### 1. `index`
-Scans and indexes a photo library recursively.
-- **Usage**: `run.bat [global-options] index <DIRECTORY>`
+Scans and indexes a photo library recursively: one or more directories, in one run (the models are loaded once; sync hands it every folder of new files at once).
+- **Usage**: `run.bat [global-options] index <DIRECTORY> [<DIRECTORY> ...]`
 - **Options**:
   - `--force-reembed`: Force recreation of all CLIP visual embeddings.
   - `--reset`: Delete the existing SQLite database index and taxonomy files to start fresh.
   - `--skip-faces`: Skip MTCNN face detection and FaceNet embedding extraction during indexing.
-  - `--no-subfolders`: Only the photos directly in DIRECTORY (`images.photos_in`): what sync queues for a folder the library holds, whose subfolders may be folders to review or ignored.
+  - `--no-subfolders`: Only the photos directly in each DIRECTORY (`images.photos_in`): what sync queues for a folder the library holds, whose subfolders may be folders to review or ignored.
 
 #### 2. `suggest`
 Analyzes untagged photos and generates tag recommendations.
