@@ -144,12 +144,16 @@ def file_name_for(name):
     return name
 
 
+#: The Activity page's route: its name is the tag root's, and means nothing of it.
+ACTIVITY_PAGE = "activity"
+
 #: The first part of a URL the servers route themselves. A library is reached at
 #: /<its name>/, so one called any of these could be created and never opened: its URL
 #: reaches the route (docs/findings.md, #73). Whatever the case, as file names are.
 #: `common` is where a page opened without a library finds the shared modules
-#: (/common/api.js); gui and gui_tagpup were the pages' folders before web/, kept so
+#: (/common/api.js); `activity` is the Activity page, which covers every library
+#: (tagpup.web.activity_routes); gui and gui_tagpup were the pages' folders before web/, kept so
 #: that no library takes a name an old bookmark or link still reaches for. The
 #: "library name" kind of tagpup.core.validation refuses them.
-ROUTES = frozenset({"api", "common", "gui", "gui_tagpup"})
+ROUTES = frozenset({ACTIVITY_PAGE, "api", "common", "gui", "gui_tagpup"})
 

@@ -34,6 +34,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
+from tagpup.core import runs
 from tagpup.core.result import Result
 from tagpup.services import job_runs
 from tagpup.services import journal as journal_service
@@ -216,6 +217,29 @@ def status(library, registry=JOBS, now=None):
     return listed
 
 
+def overview(library, registry=JOBS, now=None, limit=10):
+    """What the Activity page shows of each job for `library`: status()'s entry, with its
+    last `limit` runs for the library, newest first -- {"id", "started", "finished",
+    "seconds", "outcome", "changed", "error", "run"} (`error`, the note a failed or
+    abandoned run left, which can name a path: for the page that answers this PC alone) --
+    and `failing`: its newest run that ended did not end done. It stays so until a later
+    run is done."""
+    listed = status(library, registry, now)
+    for entry in listed:
+        job = registry.get(entry["name"])
+        wanted = library.name.lower() if job.per_library else None
+        found = [run for run in job_runs.runs(library, job.name, limit * 4)
+                 if (run.library.lower() if run.library else None) == wanted][:limit]
+        entry["runs"] = [{"id": run.id, "started": run.started, "finished": run.finished,
+                          "seconds": (int(max(0, job_runs.seconds(run.finished) - job_runs.seconds(run.started)))
+                                      if run.finished else None),
+                          "outcome": run.outcome, "changed": run.changed, "error": run.note,
+                          "run": runs.job_tag(run.library, run.id)} for run in found]
+        ended = [run for run in found if run.outcome != job_runs.RUNNING]
+        entry["failing"] = bool(ended) and ended[0].outcome != job_runs.DONE
+    return listed
+
+
 # ---- The runner ----------------------------------------------------------------------------
 
 @dataclass
@@ -250,6 +274,8 @@ class Runner:
         #: How many jobs are running now, on any thread: busy() while one is.
         self._running = 0
         self._running_lock = threading.Lock()
+        #: {run id: {"job", "library", "run_id", "started", "forced"}} of the runs under way here.
+        self._current = {}
 
     @property
     def registry(self):
@@ -258,13 +284,16 @@ class Runner:
     def libraries(self):
         return list(self._libraries())
 
-    def run_job(self, job, library=None, libraries=None, force=False):
+    def run_job(self, job, library=None, libraries=None, force=False, claimed=None):
         """Run `job` once, for `library` (a job run per library) or over `libraries` (one
         that is not): when it is due, or when `force`d, unless another run holds it. An
-        Outcome."""
+        Outcome. `claimed(outcome)` is told, once the run is claimed or refused, what the
+        Outcome is so far: Run now's answer (start_job)."""
+        told = claimed or (lambda outcome: None)
         libraries = self.libraries() if libraries is None else libraries
         where, run_for = _record_library(job, library, libraries)
         if where is None:
+            told(Outcome(job.name, run_for, why="no library"))
             return Outcome(job.name, run_for, why="no library")
         now = self._clock()
         try:
@@ -272,22 +301,31 @@ class Runner:
                                    None if force else (lambda last: is_due(job, last, now)))
         except Exception as e:
             logger.error("Could not claim the job %s in %s: %s", job.name, where.name, e)
+            told(Outcome(job.name, run_for, why="unclaimed", error=e))
             return Outcome(job.name, run_for, why="unclaimed", error=e)
         if not claim:
+            told(Outcome(job.name, run_for, why=claim.why))
             return Outcome(job.name, run_for, why=claim.why)
         outcome = Outcome(job.name, run_for, run_id=claim.run_id)
         logger.info("Running the job %s for %s", job.name, run_for or "every library")
         run = Run(now=now, forced=force, given=self._given)
         with self._running_lock:
             self._running += 1
+            self._current[claim.run_id] = {"job": job.name, "library": run_for, "run_id": claim.run_id,
+                                           "started": job_runs.stamp(now), "forced": force,
+                                           "run": runs.job_tag(run_for, claim.run_id)}
+        told(outcome)
         try:
-            outcome.result = job.call(library if job.per_library else libraries, run)
+            # Every line the run logs carries its tag: the Activity page's "Logs for this run".
+            with runs.running(runs.job_tag(run_for, claim.run_id)):
+                outcome.result = job.call(library if job.per_library else libraries, run)
         except Exception as e:
             logger.exception("The job %s for %s failed", job.name, run_for or "every library")
             outcome.error = e
         finally:
             with self._running_lock:
                 self._running -= 1
+                self._current.pop(claim.run_id, None)
         try:
             ended = job_runs.finish(where, claim.run_id, self._clock(), outcome.result, outcome.error)
             if not ended:
@@ -306,6 +344,40 @@ class Runner:
         if not job.per_library:
             return [self.run_job(job, libraries=libraries, force=force)]
         return [self.run_job(job, each, libraries, force=force) for each in ([library] if library else libraries)]
+
+    def start_job(self, name, library=None, wait=10.0):
+        """Run the job `name` now, for `library` (or over every library, for a job not run
+        per library), on a thread of its own: the Activity page's Run now. Returns once the
+        run is claimed or refused, within `wait` seconds: the Outcome so far -- `run_id` when
+        it started, else `why` not ("running": a run holds it) -- or None when neither came in
+        time. KeyError for a name not registered."""
+        job = self._registry.get(name)
+        if job is None:
+            raise KeyError(name)
+        told = threading.Event()
+        box = {}
+
+        def claimed(outcome):
+            box["outcome"] = outcome
+            told.set()
+
+        def work():
+            try:
+                self.run_job(job, library if job.per_library else None, None, force=True, claimed=claimed)
+            except Exception:
+                logger.exception("Running the job %s now failed", name)
+            finally:
+                told.set()
+
+        threading.Thread(target=work, name="RunNowThread", daemon=True).start()
+        told.wait(wait)
+        return box.get("outcome")
+
+    def status(self):
+        """The runs under way in this process: [{"job", "library", "run_id", "started",
+        "forced", "run"}]."""
+        with self._running_lock:
+            return [dict(each) for each in self._current.values()]
 
     def run_due(self):
         """Run every job that is due, for every library. [Outcome], one per job and library

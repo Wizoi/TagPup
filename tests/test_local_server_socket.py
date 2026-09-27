@@ -7,6 +7,9 @@ and waited for Windows to give up. Measured against the running server: 2.05s pe
 request, before any work at all. A grid of 24,000 face crops pays it on every new
 connection. That is the whole finding. It is not a database problem and no amount of
 indexing touches it; it is the listening socket, which tagpup.web.app.bind now makes.
+
+The apps answer this PC only *(owner, 2026-09-26)*: bind listens on 127.0.0.1 and ::1,
+one socket each, and nothing off the machine can connect.
 """
 import os
 import socket
@@ -25,13 +28,20 @@ class Bound:
     """A listening socket on a free port, closed on the way out. A listening socket
     accepts a connection at the TCP level without anyone calling accept()."""
 
+    def __init__(self, port=0):
+        self.wanted = port
+
     def __enter__(self):
-        self.sock = web.bind(0)
-        self.port = self.sock.getsockname()[1]
+        self.sockets = web.bind(self.wanted)
+        self.port = self.sockets[0].getsockname()[1]
         return self
 
+    def families(self):
+        return {sock.family for sock in self.sockets}
+
     def __exit__(self, *exc):
-        self.sock.close()
+        for sock in self.sockets:
+            sock.close()
 
 
 class TestTheServerAnswersOnBothStacks(unittest.TestCase):
@@ -44,8 +54,8 @@ class TestTheServerAnswersOnBothStacks(unittest.TestCase):
     @unittest.skipUnless(socket.has_ipv6, "no IPv6 on this machine")
     def test_it_answers_on_ipv6(self):
         with Bound() as s:
-            if s.sock.family != socket.AF_INET6:
-                self.skipTest("dual-stack socket unavailable; fell back to IPv4")
+            if socket.AF_INET6 not in s.families():
+                self.skipTest("no IPv6 loopback; fell back to IPv4")
             try:
                 socket.create_connection(("::1", s.port), timeout=5).close()
             except OSError as e:
@@ -86,9 +96,42 @@ class TestAPortInUseIsRefused(unittest.TestCase):
                 second = web.bind(s.port)
             except OSError:
                 return
-            second.close()
+            for sock in second:
+                sock.close()
             self.fail("a second server bound port %d while the first was listening"
                       " on it; requests would go to either" % s.port)
+
+
+class TestThisPcOnly(unittest.TestCase):
+    """The apps answer this PC only until phase 10 adds logins *(owner, 2026-09-26)*: they
+    bound every interface ("::" and ""), so anyone on the network could reach a library of
+    photographs of children, stopped only by the Host check."""
+
+    LOOPBACK = {"127.0.0.1", "::1"}
+
+    def test_every_socket_is_bound_to_a_loopback_address(self):
+        with Bound() as s:
+            addresses = {sock.getsockname()[0] for sock in s.sockets}
+            ports = {sock.getsockname()[1] for sock in s.sockets}
+        self.assertTrue(addresses, "bind returned no socket")
+        self.assertLessEqual(addresses, self.LOOPBACK, "a socket listens beyond this PC: %s" % sorted(addresses))
+        self.assertIn("127.0.0.1", addresses)
+        self.assertEqual(len(ports), 1, "the IPv4 and IPv6 sockets must share the port")
+
+    def test_serve_binds_this_pc_by_default(self):
+        import inspect
+        self.assertEqual(web.LOCAL, inspect.signature(web.serve).parameters["listen"].default)
+        self.assertEqual(web.LOCAL, inspect.signature(web.bind).parameters["listen"].default)
+
+    def test_an_unknown_listen_is_refused(self):
+        with self.assertRaises(ValueError):
+            web.bind(0, listen="everywhere")
+
+    def test_the_launcher_listens_locally_unless_told(self):
+        with open(os.path.join(WORKSPACE_DIR, "tagpup_web.py"), encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn('"--listen", choices=web.LISTEN, default=web.LOCAL', source)
+        self.assertIn("listen=args.listen", source)
 
 
 class TestHostParsing(unittest.TestCase):

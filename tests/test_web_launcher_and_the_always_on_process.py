@@ -41,7 +41,7 @@ class AsTheSupervisorsChild(unittest.TestCase):
     def test_it_says_where_it_answers_once_bound_and_forgets_it_after(self):
         seen = []
 
-        def serve(apps, ready=None):
+        def serve(apps, ready=None, **how):
             ready()
             seen.append(supervisor.read_json(supervisor.data_file(supervisor.SERVER_FILE)))
             seen.append(supervisor.TOKEN in os.environ)
@@ -56,7 +56,7 @@ class AsTheSupervisorsChild(unittest.TestCase):
 
     def test_a_server_not_supervised_writes_nothing(self):
         with mock.patch.dict(os.environ), mock.patch.object(tagpup_web.web, "serve",
-                                                            side_effect=lambda apps, ready=None: ready()):
+                                                            side_effect=lambda apps, ready=None, **how: ready()):
             os.environ.pop(supervisor.TOKEN, None)
             self.assertEqual(0, tagpup_web.main(ARGS))
         self.assertFalse(os.path.exists(supervisor.data_file(supervisor.SERVER_FILE)))

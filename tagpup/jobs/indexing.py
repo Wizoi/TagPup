@@ -7,18 +7,27 @@ one action, not a wait beside the machine between each.
 TagTuner had this queue. TagPup started a thread per folder, so two folders asked for
 together were indexed at once. A process has one queue per library, which lasts as long
 as the process: nothing about it is saved yet (docs/ARCHITECTURE.md, the `jobs` table).
+
+Each run of the indexer has a tag (tagpup.core.runs.index_tag), held while it runs, so
+its lines in this process's log and in the indexer's own (the CLI it starts writes
+indexer-<library>-<run>.log) can be shown together; and the queue keeps what became of its last
+HISTORY runs, for the Activity page -- in this process, as the queue itself is.
 """
 import logging
 import os
 import threading
+import time
 
-from tagpup.core import paths
+from tagpup.core import paths, runs
 from tagpup.core.result import Result
 
 logger = logging.getLogger(__name__)
 
 #: What a folder nobody has asked about reports.
 READY = {"status": "completed", "percent": 100, "message": "Ready"}
+
+#: How many ended runs of the indexer each library's queue remembers.
+HISTORY = 50
 
 _queues = {}
 _queues_lock = threading.Lock()
@@ -32,7 +41,16 @@ def _folders_of(job):
 def queue_for(library):
     """This process's queue for a library, made the first time it is asked for."""
     with _queues_lock:
-        return _queues.setdefault(library.key, IndexQueue())
+        queue = _queues.get(library.key)
+        if queue is None:
+            queue = _queues[library.key] = IndexQueue(library.name)
+        return queue
+
+
+def every_queue():
+    """[(library name, queue)] of every library this process has a queue for."""
+    with _queues_lock:
+        return [(queue.library, queue) for queue in _queues.values()]
 
 
 def running():
@@ -61,13 +79,20 @@ class IndexQueue:
     leaving that start's folder with nothing to index it.
     """
 
-    def __init__(self):
+    def __init__(self, library=None):
+        #: The library's name: what its runs' tags and the Activity page name it by.
+        self.library = library
         self._lock = threading.RLock()
         #: {"folder", "cluster", "index"}, in the order they were asked for.
         self._pending = []
         self._runner = None
         #: Folder key -> where that folder has got.
         self._statuses = {}
+        #: The runs of the indexer that ended, newest last: {"run", "folders", "name",
+        #: "started", "finished", "outcome", "message"}.
+        self._history = []
+        #: The run under way: {"run", "started", "folders", "name", "status"}, or None.
+        self._current = None
 
     def start(self, folders, index, cluster=False, together=False):
         """Queue folders to be indexed by `index(folder, cluster, report)`, which returns
@@ -95,6 +120,9 @@ class IndexQueue:
                 valid.append((paths.stored(folder), key))
 
         queued, already = [], []
+        # The runs this start is part of -- a sync queueing its new files' folders: the run
+        # of the indexer that indexes them carries their tags before its own.
+        parents = runs.held()
         with self._lock:
             if valid:
                 waiting = {paths.key(each) for job in self._pending for each in _folders_of(job)}
@@ -104,14 +132,15 @@ class IndexQueue:
                         result.skip(folder, "already waiting or being indexed")
                         continue
                     if not together:
-                        self._pending.append({"folder": folder, "cluster": cluster, "index": index})
+                        self._pending.append({"folder": folder, "cluster": cluster, "index": index,
+                                              "parents": parents})
                     waiting.add(key)
                     self._statuses[key] = {"status": "queued", "percent": 0,
                                            "message": "Waiting to be indexed...", "folder": folder}
                     queued.append(folder)
                 if together and queued:
                     self._pending.append({"folder": queued[0], "folders": list(queued), "cluster": cluster,
-                                          "index": index})
+                                          "index": index, "parents": parents})
                 self._ensure_runner()
             pending = len(self._pending)
 
@@ -184,6 +213,24 @@ class IndexQueue:
         return {"active": running, "queued": waiting, "busy": bool(running or waiting),
                 "remaining": len(running) + len(waiting)}
 
+    def now(self):
+        """What the Activity page shows of this queue: the run of the indexer under way --
+        {"run", "parents", "started", "folders", "name", "percent", "message"}, or None -- and the jobs
+        waiting, each {"name", "folders"} (a batch of sync's is one job, one run)."""
+        with self._lock:
+            current = dict(self._current) if self._current else None
+            waiting = [{"name": os.path.basename(job["folder"]), "folders": len(_folders_of(job))}
+                       for job in self._pending]
+        if current is not None:
+            status = current.pop("status")
+            current.update(percent=status.get("percent", 0), message=status.get("message", ""))
+        return {"running": current, "queued": waiting}
+
+    def history(self):
+        """The runs of the indexer that ended, newest first (at most HISTORY)."""
+        with self._lock:
+            return [dict(entry) for entry in reversed(self._history)]
+
     def wait(self):
         """Return once no worker is indexing: the waiting folders are done. For a program
         that queued folders and must not end before they are indexed (the CLI's `sync`)."""
@@ -216,15 +263,36 @@ class IndexQueue:
                     job = self._pending.pop(0)
                     status = {"status": "running", "percent": 0,
                               "message": "Starting indexing...", "folder": job["folder"]}
+                    self._current = {"run": runs.index_tag(self.library),
+                                     "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                     "folders": len(_folders_of(job)), "name": os.path.basename(job["folder"]),
+                                     "parents": list(job.get("parents") or ()), "status": status}
+                    run = self._current["run"]
                     # A batch's folders share one status: they are one run.
                     for each in _folders_of(job):
                         self._statuses[paths.key(each)] = status
-                self._index(job, status)
+                # Every line the run logs here carries its tag, and the indexer it starts is
+                # told it (tagpup.services.indexing).
+                with runs.running(*(job.get("parents") or ()), run):
+                    self._index(job, status)
+                self._remember(job, status)
         finally:
             # Only this worker's own entry: a newer one may have started already.
             with self._lock:
                 if self._runner is threading.current_thread():
                     self._runner = None
+
+    def _remember(self, job, status):
+        """Keep what became of a run of the indexer, for the Activity page."""
+        with self._lock:
+            current, self._current = self._current or {}, None
+            entry = {"run": current.get("run"), "parents": current.get("parents", []),
+                     "folders": len(_folders_of(job)),
+                     "name": os.path.basename(job["folder"]), "started": current.get("started"),
+                     "finished": time.strftime("%Y-%m-%d %H:%M:%S"), "outcome": status.get("status"),
+                     "message": status.get("message", "")}
+            self._history.append(entry)
+            del self._history[:-HISTORY]
 
     def _ensure_runner(self):
         """Start the worker, unless one is already working through the queue."""

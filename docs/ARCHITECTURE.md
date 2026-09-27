@@ -65,7 +65,7 @@ Imports only go down:
 |---|---|---|---|
 | core | `tagpup.core` | Pure rules: path identity, a library's name and the files that belong to it (`Library`), the tag vocabulary (leaf, root, person), people derivation, suggestion scoring, clustering decisions | nothing but `core` |
 | config | `tagpup.config` | `TAGPUP_HOME` and where the libraries are (its `data/`), which ExifTool the machine has, and the one reading of an old `config.ini`, for stamping a library that holds no settings yet (phase 7.6). A library's settings are its own (`tagpup.services.settings`). Never written by the app (#100) | nothing |
-| logs | `tagpup.logs` | Each program's log file in `data/logs/`. Set up by entry points | `config` |
+| logs | `tagpup.logs` | Each program's log file in `data/logs/`, each line carrying the runs under way (`tagpup.core.runs`), and reading them back, bounded, for the Activity page. Set up by entry points | `core`, `config` |
 | supervisor | `tagpup.supervisor` | The always-on process (phase 8): runs the web server as its child, restarts it, moves it onto a newer installed version once drained, one per home; and the names it shares with the server (the token, `data/server.json`, the exit code for ports another holds), which `tagpup.web` reads | `core`, `config`, `logs` |
 | store | `tagpup.store` | The library database: connections and locks, schema and migrations, generations, one repository per table, caches keyed by generation, backups | `core` |
 | files | `tagpup.files` | The photo files: ExifTool sessions, reading metadata, writing keyword, caption and orientation fields, identities, opening images (upright or as stored), crops and thumbnails | `core` |
@@ -126,7 +126,7 @@ nothing of Flask's), and each mixed module splits along the layers (phase 5.5).
 
 ## Runtime
 
-- **One server, two apps.** One Flask app, served by Waitress, answers on both ports used today: 8090 for TagPup, 8080 for TagTuner. The library comes from the URL as it does now, and becomes a `Library` object for the request. The Host and Origin check is a `before_request` hook.
+- **One server, two apps.** One Flask app, served by Waitress, answers on both ports used today: 8090 for TagPup, 8080 for TagTuner. The library comes from the URL as it does now, and becomes a `Library` object for the request. The Host and Origin check is a `before_request` hook. It listens on this PC only -- 127.0.0.1 and ::1, a socket each (`tagpup.web.app.bind`) -- until phase 10 adds logins; `tagpup_web.py --listen lan` binds every interface, for then.
 - **One composition root.** `tagpup.runtime.Runtime` holds what lives as long as the process: the models, built once from the settings it was given and warmed on a thread, and each library's job runners. The web factory and each CLI command are handed one; nothing below them builds a model or reads a setting. What it and the web keep only while used -- models, vectors, New Person's pool, the Identify Faces and folder-scan caches -- is let go after an idle period (`Runtime.idle`, phase 8).
 - **Background jobs** (indexing, suggestions, clustering, refresh) run through one job runner per library, with status, cancel and persistence. GPU-heavy work runs in a worker process, as indexing does today through the CLI.
 - **The installed copy.** `scripts/install_app.py` copies the code into a version folder under `%LOCALAPPDATA%\TagPup` and writes launchers that run it. `TAGPUP_HOME` names the folder that holds `data/`: the libraries, which hold their own settings, with each library's backups and locks beside them. Updating is a deliberate step, installing again, and the two versions before stay to go back to. The auto-reloader is for development only.
@@ -159,6 +159,7 @@ Each change ships as a migration with a dry run and a backup, and `tools/doctor.
   - `api.js`: library-aware URLs and JSON. It replaced the monkeypatched `fetch` and image `src`.
   - `paths.js`, `vocabulary.js` and `library.js` (the picker and the library the browser remembers). Only what both pages really share lives here: they have no unsaved-edit handling or status line in common.
   - `validate.js` (what may be set, by the rules `/api/rules` publishes), `dom.js` (elements built from text) and `dialog.js` (`dialogOpen()`, which the pages' shortcuts ask before they act).
+- `web/activity/` is the Activity page (phase 8.5): the background work of every library, at `/activity/` under no library, asking through `api.site`, `web/common/api.js`'s form for what covers every library.
 - `web/tagpup/` and `web/tuner/` each have a `main.js` plus one module per feature: folder list, photo details, faces strip, Identify grid, tag tree. Each page keeps its state in one store object, not in 130 to 150 variables at the top of one closure.
 - There is no build step: the browser loads native modules. Tests import the modules directly with `node --test`, and jsdom page loads are kept for whole flows.
 
@@ -445,6 +446,37 @@ A job that keeps each library in step with its folders. Today a row changes only
 
 Exit: after files are added, edited, moved or deleted outside the apps, one sync brings the rows back in step. `tools/doctor.py` finds nothing it would change, except missing files it has reported.
 
+### Phase 8.5: Activity
+One page for the background work of every library *(owner, 2026-09-26)*: what runs, what
+ran, what failed, and the logs -- modelled on Immich's Jobs, Jellyfin's Scheduled Tasks and
+Logs, Hangfire's and Sidekiq's history (failures kept in view, run now) and Home Assistant's
+logs (by source, filtered, raw, downloaded). Done:
+- **The page**, `web/activity/`, served by both apps at `/activity/`, under no library, and
+  to this PC only (`tagpup.web.activity_routes` refuses any other address, 403, beside the
+  loopback bind). Linked from both gears (**Activity...**, a new tab). Sections: Now (asked
+  every 3 s while the page is in view, never while hidden, a poll waiting for the one
+  before), Scheduled jobs (each run's counts, duration, error and run; a failure flagged
+  until a later success; Run now, asked first), Sync & watcher, Snapshots, Always on,
+  Recent activity (one timeline, More reads further back), Logs.
+- **Runs in the logs**: a recurring job's run, a sync and a run of the indexer hold a tag
+  while they run (`tagpup.core.runs`), and every line of a program's log carries the tags
+  of the runs under way on its thread (`tagpup.logs.RunTag`); "Logs for this run" filters
+  by it. The indexer the queue starts writes a log of its run's own,
+  `data/logs/indexer-<library>-<run>.log` (two processes may index one library at once, and
+  one file rotated by two fails on Windows), quietly -- its stderr is the progress bar --
+  told its run's tags in its environment; the oldest beyond 30 go as a run starts.
+- **Logs read bounded**: `tagpup.logs.read` reads a log from its end, never more than 2 MB,
+  paged back by offset and followed by offset (a file smaller than the offset has rotated);
+  `tail` gives the raw end (1 MB); the download streams the file. Every log rotates (5 MB,
+  five kept) through `tagpup.logs.to_file`; the server's console output is rotated as it
+  starts; `tests/test_logs_are_bounded.py` fails a file handler made elsewhere and a file
+  appended to for ever.
+- **What it reads**: each library's `job_runs`, `sync_runs` and journal
+  (`tagpup.services.activity`), the jobs layer's state in this process (the index queues'
+  runs, Suggest's runs, the runner's runs, the watcher's roots and last notice), and
+  `data/supervisor.json` without its token. Its reads do not count as somebody using the
+  app, so an open page does not hold an update back from its quiet moment.
+
 ### Phase 9: Library views (planned for October 2026)
 The owner's idea *(2026-09-25)*: TagPup shows the whole library, not only the folder it
 has open -- by folder, by keyword, by person, by date -- as Windows Live Photo Gallery
@@ -621,6 +653,7 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 2026-09-25 | Recurring operations (snapshots, sync, pruning the journal, compacting) are registered in `tagpup.jobs.recurring` with their periods and run by one runner inside any TagPup process; their runs are recorded in the library. No Windows Task Scheduler *(owner)*. |
 | 2026-09-25 | The server and the jobs runner run as one process started at login from the Startup folder, installed and removed by `scripts/startup.py`; not a Windows service, which has no desktop for the folder dialog and Explorer and may not reach the owner's drives. Idle models are released *(owner asked for always-on; the login process is the recommendation)*. |
 | 2026-09-25 | Input rules have one owner, `tagpup.core.validation`: services refuse on them, the pages check early from the rules the server publishes as data, and shared cases hold any JavaScript twin to the Python rule. Output is escaped by building elements from text; `innerHTML` with a value is refused by a guard *(owner)*. |
+| 2026-09-26 | The server answers this PC only -- it binds 127.0.0.1 and ::1, not every interface -- until phase 10 adds logins; `--listen lan` is for then, off by default *(owner)*. The Activity page and its routes also refuse any request not from loopback, as a second guard. |
 
 ## Progress
 
@@ -639,5 +672,6 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 7.5. A journal for every bulk edit and migration | done, 2026-09-25 |
 | 7.6. Settings in the library, and a gear on each page | done, 2026-09-25 |
 | 8. Sync | done, 2026-09-26 (8a jobs, 8b snapshots, 8c sync with library roots, 8d always on with self-update, the folder watcher and idle memory); installing it at login waits for the owner |
+| 8.5. Activity | done, 2026-09-26 (the page, runs in the logs, the indexer's own log, bounded reads) |
 | 9. Library views | planned for October 2026 *(owner, 2026-09-25)*; design questions open |
 | 10. Family albums from many sources | idea *(owner, 2026-09-25)*, after phase 9; design questions open |

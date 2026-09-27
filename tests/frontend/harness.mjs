@@ -22,6 +22,13 @@ export const APPS = {
   tagtuner: { dir: "web/tuner", defaultDb: "photo_index" },
 };
 
+/** Every page: the two apps' pages, each on a library, and the Activity page, on none
+ *  (it covers every library: tagpup.web.activity_routes). */
+export const PAGES = {
+  ...APPS,
+  activity: { dir: "web/activity", page: "activity" },
+};
+
 // ---- A page's modules, as one script ----------------------------------------------
 //
 // jsdom cannot load ES modules, a bundler is a build step this project does not have,
@@ -221,7 +228,7 @@ export function pageScript(pageDir, commonDir = COMMON_DIR) {
 
 /** Every line of a page's modules, for tests that read the page's source. */
 export function pageSource(appName) {
-  return pageModules(path.join(REPO_ROOT, APPS[appName].dir)).map((m) => m.body).join("\n");
+  return pageModules(path.join(REPO_ROOT, PAGES[appName].dir)).map((m) => m.body).join("\n");
 }
 
 /**
@@ -341,7 +348,7 @@ export function closeAllApps() {
  * @param {{url?: string, server?: FakeServer, t?: object, before?: function}} options
  */
 export async function loadApp(appName, { url, server = new FakeServer(), t, before } = {}) {
-  const app = APPS[appName];
+  const app = PAGES[appName];
   if (!app) throw new Error(`unknown app: ${appName}`);
 
   const appDir = path.join(REPO_ROOT, app.dir);
@@ -355,7 +362,7 @@ export async function loadApp(appName, { url, server = new FakeServer(), t, befo
   virtualConsole.on("error", (...args) => consoleErrors.push(args.join(" ")));
 
   const dom = new JSDOM(html, {
-    url: url || `http://localhost:8090/${app.defaultDb}/`,
+    url: url || `http://localhost:8090/${app.page || app.defaultDb}/`,
     runScripts: "outside-only",
     pretendToBeVisual: true,
     virtualConsole,

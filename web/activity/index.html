@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TagPup - Activity</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="top">
+        <h1>Activity</h1>
+        <nav aria-label="Sections">
+            <a href="#now">Now</a>
+            <a href="#jobs">Scheduled jobs</a>
+            <a href="#sync">Sync &amp; watcher</a>
+            <a href="#snapshots">Snapshots</a>
+            <a href="#server">Always on</a>
+            <a href="#timeline">Recent activity</a>
+            <a href="#logs">Logs</a>
+        </nav>
+        <span id="updated" class="updated"></span>
+    </header>
+    <main>
+        <section id="now" aria-labelledby="now-title">
+            <h2 id="now-title">Now</h2>
+            <div id="now-body" class="body"><p class="none">Asking...</p></div>
+        </section>
+        <section id="jobs" aria-labelledby="jobs-title">
+            <h2 id="jobs-title">Scheduled jobs</h2>
+            <div id="jobs-body" class="body"><p class="none">Asking...</p></div>
+        </section>
+        <section id="sync" aria-labelledby="sync-title">
+            <h2 id="sync-title">Sync &amp; watcher</h2>
+            <div id="sync-body" class="body"><p class="none">Asking...</p></div>
+        </section>
+        <section id="snapshots" aria-labelledby="snapshots-title">
+            <h2 id="snapshots-title">Snapshots</h2>
+            <div id="snapshots-body" class="body"><p class="none">Asking...</p></div>
+        </section>
+        <section id="server" aria-labelledby="server-title">
+            <h2 id="server-title">Always on</h2>
+            <div id="server-body" class="body"><p class="none">Asking...</p></div>
+        </section>
+        <section id="timeline" aria-labelledby="timeline-title">
+            <h2 id="timeline-title">Recent activity</h2>
+            <div id="timeline-body" class="body"><p class="none">Asking...</p></div>
+            <button id="timeline-more" type="button" class="btn" disabled>More</button>
+        </section>
+        <section id="logs" aria-labelledby="logs-title">
+            <h2 id="logs-title">Logs</h2>
+            <div id="log-tabs" class="tabs" role="tablist" aria-label="Logs"></div>
+            <div class="log-controls">
+                <label>Level <select id="log-level"></select></label>
+                <label>Text <input id="log-text" type="search" placeholder="Filter the lines" autocomplete="off"></label>
+                <span id="log-run" class="chip hidden">Run <code id="log-run-tag"></code>
+                    <button id="log-run-clear" type="button" class="link" aria-label="Show every run's lines">x</button></span>
+                <label><input id="log-follow" type="checkbox"> Follow</label>
+                <button id="log-older" type="button" class="btn" disabled>Older</button>
+                <a id="log-raw" class="btn" href="#" target="_blank" rel="noopener">Raw</a>
+                <a id="log-download" class="btn" href="#" download>Download</a>
+                <span id="log-status" class="status"></span>
+            </div>
+            <table class="log-table">
+                <tbody id="log-records"></tbody>
+            </table>
+        </section>
+    </main>
+    <script type="module" src="main.js"></script>
+</body>
+</html>

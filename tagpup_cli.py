@@ -32,6 +32,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger("tagpup_cli")
 
+# Started for a run -- the index queue's indexer (tagpup.services.indexing) -- the CLI
+# also logs to a file of that run's own in data/logs, <kind>-<library>-<run>.log, each line
+# carrying the run's tags (tagpup.core.runs), and quietly: its stdout is its parent's
+# progress bar. Run by hand, to the console alone.
+if os.environ.get("TAGPUP_LOG_TO"):
+    from tagpup import logs as _tagpup_logs
+    from tagpup.core import runs as _tagpup_runs
+    _tagpup_logs.prune_run_logs(os.environ["TAGPUP_LOG_TO"])
+    _tagpup_logs.to_file(_tagpup_logs.run_log(os.environ["TAGPUP_LOG_TO"], _tagpup_runs.current()), quiet=True)
+
 # Suppress verbose faiss loader and huggingface logs
 logging.getLogger("faiss.loader").setLevel(logging.WARNING)
 logging.getLogger("faiss").setLevel(logging.WARNING)

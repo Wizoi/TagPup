@@ -90,6 +90,24 @@ def running():
     return count
 
 
+def under_way():
+    """The suggestion runs under way in this process, for the Activity page: [{"library",
+    "folder" (its name), "status", "completed", "total"}]."""
+    with _runs_lock:
+        every = list(_runs.values())
+    found = []
+    for runs in every:
+        library = os.path.splitext(os.path.basename(runs.db_path))[0]
+        with runs.lock:
+            for key, status in runs.statuses.items():
+                if status.get("status") in ("preparing", "running"):
+                    folder = runs.folders.get(key) or key
+                    found.append({"library": library, "folder": os.path.basename(folder.rstrip("/\\")),
+                                  "status": status["status"], "completed": status.get("completed", 0),
+                                  "total": status.get("total", 0)})
+    return found
+
+
 def forget(library):
     """Drop a library's runs from memory. A run still going finishes into nothing."""
     with _runs_lock:
@@ -126,6 +144,8 @@ class SuggestionRuns:
         #: {folder key: {paths.key of a photo: the path its run was handed}}: the
         #: spelling the page knows each photo by, which the library's row need not share.
         self.spellings = {}
+        #: {folder key: the folder as its run was handed it}: what the Activity page names.
+        self.folders = {}
 
     def _saved(self, folder, photos=None):
         """{photo: entry} of what the library holds for a folder's photos, each under the
@@ -185,6 +205,7 @@ class SuggestionRuns:
             if status and status.get("status") in ("preparing", "running"):
                 return status["status"]
             self.statuses[key] = {"status": "preparing", "completed": done, "total": 0}
+            self.folders[key] = paths.stored(folder)
         threading.Thread(target=self.run, args=(folder, work), name="FolderSuggestionsThread",
                          daemon=True).start()
         return "running"

@@ -62,6 +62,18 @@ EXEMPT = frozenset({STATUS, DRAIN, RESUME})
 CONTROL = (DRAIN, RESUME)
 
 
+#: What only watches the server: the Activity page and its reads (tagpup.web.activity_routes),
+#: which it asks every few seconds while open. Counted in flight like any request, but not
+#: as somebody using the app: an open Activity page would otherwise never leave the
+#: update its quiet moment (the drain's `quiet`), and hold it back for an hour.
+WATCHING = ("/activity/", "/api/activity/")
+
+
+def only_watches(method, path):
+    """Is a request of `method` for `path`, as the gate sees it, a read that only watches?"""
+    return method in ("GET", "HEAD") and path.startswith(WATCHING)
+
+
 def exempt(path):
     """Is `path`, as the gate sees it, answered while draining and not counted as work?"""
     if path in EXEMPT:
@@ -94,6 +106,8 @@ class Lifecycle:
 
     def __init__(self, version=None, token=None, background=None, work=long_work, clock=time.monotonic):
         self.version = version
+        #: When this server started (seconds since the epoch): the Activity page's "running since".
+        self.started = time.time()
         self._token = token or None
         self._background = background
         self._work = work
@@ -109,6 +123,11 @@ class Lifecycle:
         self._draining = False
 
     # ---- What it says ---------------------------------------------------------------
+
+    @property
+    def background(self):
+        """The background tasks this process runs (tagpup.runtime.Background), or None."""
+        return self._background
 
     def busy(self):
         """What runs beside the requests now: [what, ...]."""
@@ -131,19 +150,21 @@ class Lifecycle:
         draining."""
         return _Gate(self, app)
 
-    def _enter(self):
-        """Count a request in; False when it is to be refused."""
+    def _enter(self, watching=False):
+        """Count a request in; False when it is to be refused. One that only `watching`
+        (only_watches) is not a request somebody made: the quiet moment is not reset."""
         with self._changed:
             left = self._closed and self._drained_at is not None and self._clock() - self._drained_at > LEFT_DRAINED
             if not left:
                 if self._closed:
                     return False
                 self._in_flight += 1
-                self._last_request = self._clock()
+                if not watching:
+                    self._last_request = self._clock()
                 return True
         logger.warning("Drained %ds ago and not stopped: taking work again.", LEFT_DRAINED)
         self.resume()
-        return self._enter()
+        return self._enter(watching)
 
     def _leave(self):
         with self._changed:
@@ -232,9 +253,10 @@ class _Gate:
         self.app = app
 
     def __call__(self, environ, start_response):
-        if exempt(environ.get("PATH_INFO") or "/"):
+        path = environ.get("PATH_INFO") or "/"
+        if exempt(path):
             return self.app(environ, start_response)
-        if not self.lifecycle._enter():
+        if not self.lifecycle._enter(only_watches(environ.get("REQUEST_METHOD", "GET"), path)):
             body = ('{"success": false, "updating": true, "error": "%s"}' % UPDATING_MESSAGE).encode("utf-8")
             start_response("503 SERVICE UNAVAILABLE", [
                 ("Content-Type", "application/json"), ("Content-Length", str(len(body))),

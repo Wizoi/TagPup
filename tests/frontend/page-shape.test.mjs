@@ -35,7 +35,7 @@ function functionsOf(pageDir) {
 describe("the pages' shape", () => {
   test("no page module is over about a thousand lines", () => {
     const over = [];
-    for (const dir of [...Object.values(PAGES), path.join(REPO_ROOT, "web", "common")]) {
+    for (const dir of [...Object.values(PAGES), path.join(REPO_ROOT, "web", "common"), path.join(REPO_ROOT, "web", "activity")]) {
       for (const name of fs.readdirSync(dir).filter((n) => n.endsWith(".js"))) {
         const lines = fs.readFileSync(path.join(dir, name), "utf8").split("\n").length;
         if (lines > LIMIT) over.push(`${path.relative(REPO_ROOT, path.join(dir, name))}: ${lines}`);

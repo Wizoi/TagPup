@@ -193,8 +193,12 @@ export function closeReview() {
     if (opener && typeof opener.focus === 'function') opener.focus();
 }
 
-/** The notice opens the dialog; the page asks once how many folders wait. */
+/**
+ * The notice opens the dialog; the page asks once how many folders wait. Opened with
+ * `?review=1` -- the Activity page's link -- the page opens the dialog as it starts.
+ */
 export function wireReview() {
     if (reviewNotice) reviewNotice.addEventListener('click', openReview);
     showReviewNotice();
+    if (new URLSearchParams(window.location.search).get('review') === '1') openReview();
 }

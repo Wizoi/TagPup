@@ -12,6 +12,7 @@ from contextlib import nullcontext
 
 from tagpup.core import paths
 from tagpup.core import processes
+from tagpup.core import runs
 from tagpup.core import validation
 from tagpup.core.result import Result
 
@@ -20,6 +21,9 @@ from tagpup.core.result import Result
 #: The messages named a Recluster button no page has (docs/findings.md, #22).
 CLUSTERING_BUTTON = "Run Identity Resolution Clustering"
 CLUSTER_ELSEWHERE = "%s in TagPup Runner" % CLUSTERING_BUTTON
+
+#: The kind of log the indexer writes, one file a run (tagpup.logs.run_log).
+INDEXER_LOG = "indexer"
 
 _INDEXER_TQDM =re.compile(r"^(.*?):\s*(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
 
@@ -109,6 +113,9 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
         return result
     env = os.environ.copy()
     env["TAGPUP_DB_PATH"] = library.path
+    # The indexer logs to a file of its run's own in data/logs as well as to this pipe, each
+    # line carrying the tags of the run it is part of (tagpup.core.runs).
+    runs.child_environment(env, log_to=INDEXER_LOG)
 
     def run(args, scale):
         proc = processes.start(

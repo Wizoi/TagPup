@@ -338,8 +338,10 @@ class TheRootsANewLibraryIsGiven(unittest.TestCase):
                                                    "Trips/Lakes", "School/Harbour School"], {"people"}))
 
     def test_nobody_else_spells_them(self):
-        # "Location" alone is an HTTP header.
-        spelled = r"[\"'](Activity|School|Trips|Scenic|Albums)/?[\"']|[\"']Location/[\"']|[\"'](activity|school|trips)[\"']"
+        # "Location" alone is an HTTP header; "activity" is also the Activity page's route,
+        # named once (tagpup.core.library.ACTIVITY_PAGE).
+        spelled = (r"[\"'](Activity|School|Trips|Scenic|Albums)/?[\"']|[\"']Location/[\"']"
+                   r"|(?<!ACTIVITY_PAGE = )[\"'](activity|school|trips)[\"']")
         self.assertEqual([], sources_matching(spelled, os.path.join("tagpup", "core", "vocabulary.py")))
 
 

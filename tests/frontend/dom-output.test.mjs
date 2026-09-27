@@ -62,7 +62,7 @@ export function markupWrites(source) {
 /** Every module the server serves the pages. */
 function pageModules() {
   const files = [];
-  for (const dir of ["web/common", "web/tagpup", "web/tuner"]) {
+  for (const dir of ["web/common", "web/tagpup", "web/tuner", "web/activity"]) {
     for (const name of fs.readdirSync(path.join(REPO_ROOT, dir))) {
       if (name.endsWith(".js")) files.push(path.join(REPO_ROOT, dir, name));
     }

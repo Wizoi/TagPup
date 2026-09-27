@@ -13,10 +13,12 @@ its page's files, and log every request slower than a second and every one that
 failed, with its traceback, to the requests log (tagpup.logs). Each app's routes are
 its own blueprint; what both serve alike -- the picker, the tag tree, the rules of what
 may be set, the library's settings, its history of changes, when its recurring jobs ran,
-where each app is, and which version answers -- is a blueprint each registers. Every
+where each app is, which version answers, and the Activity page over every library
+(tagpup.web.activity_routes) -- is a blueprint each registers. Every
 request passes the process's gate (tagpup.web.lifecycle), which counts it while in
 flight and turns it away while the always-on process moves onto a new version.
 """
+import errno
 import logging
 import os
 import socket
@@ -28,8 +30,9 @@ from flask import Blueprint, Flask, Response, abort, current_app, g, jsonify, re
 
 from tagpup import config as tagpup_config
 from tagpup.logs import REQUESTS
-from tagpup.web import (history_routes, jobs_routes, libraries, lifecycle as lifecycles, rules_routes, security,
-                        settings_routes, sync_routes, tagpup_routes, taxonomy_routes, tuner_routes)
+from tagpup.web import (activity_routes, history_routes, jobs_routes, libraries, lifecycle as lifecycles,
+                        rules_routes, security, settings_routes, sync_routes, tagpup_routes, taxonomy_routes,
+                        tuner_routes)
 
 logger = logging.getLogger(__name__)
 requests_log = logging.getLogger(REQUESTS)
@@ -104,6 +107,7 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
     app.register_blueprint(sync_routes.routes)
     app.register_blueprint(jobs_routes.routes)
     app.register_blueprint(lifecycles.routes)
+    app.register_blueprint(activity_routes.routes)
     app.register_blueprint(apps)
     app.register_blueprint(ROUTES[kind])
     _page_routes(app)
@@ -212,9 +216,47 @@ def by_port(apps):
     return dispatch
 
 
-def bind(port):
-    """A listening socket on `port`, IPv4 and IPv6 alike, that fails loudly if the port
-    is in use.
+#: Where the server listens. LOCAL, this PC only, is the default *(owner, 2026-09-26)*: the
+#: apps hold a private photo library and have no logins. LAN, every interface, is for
+#: phase 10, when other people on the home network get logins of their own; nothing
+#: chooses it but `tagpup_web.py --listen lan`.
+LOCAL, LAN = "local", "lan"
+LISTEN = (LOCAL, LAN)
+
+#: The errors that mean this machine has no IPv6 loopback, not that the port is taken:
+#: the server then listens on 127.0.0.1 alone.
+_NO_IPV6 = {errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT, getattr(errno, "WSAEADDRNOTAVAIL", -1),
+            getattr(errno, "WSAEAFNOSUPPORT", -1), 10049, 10047}
+
+
+def _listening(family, host, port, dual_stack=False):
+    """One listening socket on (host, port), bound exclusively where Windows offers it."""
+    exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        if exclusive is not None:
+            sock.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if family == socket.AF_INET6:
+            try:
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0 if dual_stack else 1)
+            except (AttributeError, OSError):
+                pass   # a v6-only platform; localhost pays the fallback
+        sock.bind((host, port))
+        sock.listen(128)
+        return sock
+    except BaseException:
+        sock.close()
+        raise
+
+
+def _no_ipv6(error):
+    return error.errno in _NO_IPV6 or getattr(error, "winerror", None) in _NO_IPV6
+
+
+def bind(port, listen=LOCAL):
+    """The listening sockets for `port` -- a list -- that fail loudly if the port is in use.
 
     Waitress sets SO_REUSEADDR on a socket it binds itself. On POSIX that only skips
     TIME_WAIT, which a restarting server wants; on Windows it lets a second socket bind
@@ -223,38 +265,48 @@ def bind(port):
     server (scripts/localserver.py). So the sockets are bound here, with
     SO_EXCLUSIVEADDRUSE where there is one, and handed to Waitress bound.
 
-    Dual-stack where it can be had: losing IPv6 costs two seconds a request from a
-    browser that tries it first; failing to start costs everything.
+    LOCAL (the default): 127.0.0.1 and ::1, one socket each, so `localhost` answers at
+    once whichever address the browser tries first -- losing IPv6 cost two seconds a
+    request from a browser that tries it first (tests/test_local_server_socket.py) --
+    and nothing off this machine can connect at all. A machine without an IPv6 loopback
+    gets 127.0.0.1 alone; a port another holds on either address is refused.
+
+    LAN: every interface, dual-stack where it can be had (phase 10; off by default).
     """
-    exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
-    for family, host in ((socket.AF_INET6, "::"), (socket.AF_INET, "")):
-        sock = socket.socket(family, socket.SOCK_STREAM)
+    if listen == LAN:
         try:
-            if exclusive is not None:
-                sock.setsockopt(socket.SOL_SOCKET, exclusive, 1)
-            else:
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            if family == socket.AF_INET6:
-                try:
-                    sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
-                except (AttributeError, OSError):
-                    pass   # a v6-only platform; localhost pays the fallback
-            sock.bind((host, port))
-            sock.listen(128)
-            return sock
+            return [_listening(socket.AF_INET6, "::", port, dual_stack=True)]
         except OSError:
-            sock.close()
-            if family == socket.AF_INET:
+            return [_listening(socket.AF_INET, "", port)]
+    if listen != LOCAL:
+        raise ValueError("listen is %s, not %r" % (" or ".join(LISTEN), listen))
+    for _attempt in range(5 if port == 0 else 1):
+        v4 = _listening(socket.AF_INET, "127.0.0.1", port)
+        chosen = v4.getsockname()[1]
+        if not socket.has_ipv6:
+            return [v4]
+        try:
+            return [v4, _listening(socket.AF_INET6, "::1", chosen)]
+        except OSError as e:
+            if _no_ipv6(e):
+                logger.warning("No IPv6 loopback on this machine (%s): listening on 127.0.0.1 only.", e)
+                return [v4]
+            v4.close()
+            if port != 0:
                 raise
-    raise OSError("could not bind port %d" % port)
+            # A free port chosen for IPv4 that another holds on ::1: choose again.
+    raise OSError("could not find a port free on both 127.0.0.1 and ::1")
 
 
-def serve(apps, ready=None, threads=THREADS):
-    """Serve `apps` (port -> app) from this process until stopped. `ready()` is called
-    once the ports are bound and before the first request is answered: what opens the
-    browser, since a page opened before that has nothing to reach."""
-    sockets = [bind(port) for port in apps]
-    logger.info("Serving %s", ", ".join("%s on port %d" % (app.config["APP_KIND"], port) for port, app in apps.items()))
+def serve(apps, ready=None, threads=THREADS, listen=LOCAL):
+    """Serve `apps` (port -> app) from this process until stopped, on this machine's
+    loopback addresses unless `listen` is LAN (bind). `ready()` is called once the ports
+    are bound and before the first request is answered: what opens the browser, since a
+    page opened before that has nothing to reach."""
+    sockets = [sock for port in apps for sock in bind(port, listen)]
+    logger.info("Serving %s, %s", ", ".join("%s on port %d" % (app.config["APP_KIND"], port)
+                                            for port, app in apps.items()),
+                "on this PC only" if listen == LOCAL else "on every interface")
     if ready is not None:
         ready()
     waitress.serve(by_port(apps), sockets=sockets, threads=threads, ident="TagPup", _quiet=True)

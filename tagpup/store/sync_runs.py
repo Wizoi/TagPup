@@ -8,6 +8,10 @@ show, is when the newest sync of the whole library that left it in step finished
 
 A record of runs, not a change of the library: it is not journaled, as `schema_version`
 is not, and undoing a sync (tagpup.services.journal) leaves its record where it is.
+
+The newest KEEP records are kept, and always the newest sync of the whole library and the
+newest that left it in step: the folder watcher records a sync each time a folder
+settles, and the table grew by every one of them for good.
 """
 import json
 import time
@@ -18,6 +22,9 @@ TABLE = "sync_runs"
 
 #: How a record spells a time (the journal's format).
 TIME = journal.TIME
+
+#: How many records are kept, besides the newest whole sync and the newest in step.
+KEEP = 500
 
 #: The columns a record is read back as.
 COLUMNS = ("id", "started", "finished", "whole", "in_step", "found", "changed", "change_id")
@@ -34,11 +41,16 @@ def record(db_path, started, whole, in_step, found, changed, change_id=None):
     schema.ensure(db_path)
 
     def store(conn):
-        return conn.execute(
+        record_id = conn.execute(
             "INSERT INTO sync_runs (started, finished, whole, in_step, found, changed, change_id)"
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
             (started, now(), 1 if whole else 0, 1 if in_step else 0, json.dumps(found, sort_keys=True),
              json.dumps(changed, sort_keys=True), change_id)).lastrowid
+        conn.execute(
+            "DELETE FROM sync_runs WHERE id NOT IN (SELECT id FROM sync_runs ORDER BY id DESC LIMIT ?)"
+            " AND id IS NOT (SELECT MAX(id) FROM sync_runs WHERE whole = 1)"
+            " AND id IS NOT (SELECT MAX(id) FROM sync_runs WHERE whole = 1 AND in_step = 1)", (KEEP,))
+        return record_id
 
     return db.write_with_connection(db_path, store, label="record a sync")
 
@@ -58,6 +70,26 @@ def last_whole(conn):
         return None
     found = conn.execute("SELECT finished FROM sync_runs WHERE whole = 1 ORDER BY id DESC LIMIT 1").fetchone()
     return found[0] if found else None
+
+
+def _has_table(conn):
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (TABLE,)).fetchone() is not None
+
+
+def recent(conn, limit=50):
+    """The newest `limit` records, newest first ([] for a library from before migration 14)."""
+    if not _has_table(conn):
+        return []
+    return [_as_dict(row) for row in conn.execute(
+        "SELECT " + ", ".join(COLUMNS) + " FROM sync_runs ORDER BY id DESC LIMIT ?", (max(0, int(limit)),))]
+
+
+def newest(conn, whole):
+    """The newest record of a sync of the whole library (`whole`) or of one folder, or None."""
+    if not _has_table(conn):
+        return None
+    return _as_dict(conn.execute("SELECT " + ", ".join(COLUMNS) + " FROM sync_runs WHERE whole = ?"
+                                 " ORDER BY id DESC LIMIT 1", (1 if whole else 0,)).fetchone())
 
 
 def last(conn):
