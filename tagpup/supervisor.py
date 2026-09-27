@@ -169,10 +169,15 @@ def write_json(path, value):
 
 
 def remove(path):
+    """Remove `path`: True if it went. One a reader holds past READER_WAIT is left, and
+    logged -- never raised: the supervisor goes on, and its next loop tries again."""
     try:
         _while_read(lambda: os.remove(path), path)
         return True
     except FileNotFoundError:
+        return False
+    except OSError as e:
+        logger.error("Could not remove %s (%s); trying again later.", os.path.basename(path), e)
         return False
 
 

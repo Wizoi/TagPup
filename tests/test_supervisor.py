@@ -289,6 +289,17 @@ class ItsFilesWithAReader(Base):
         self.assertTrue(supervisor.remove(path))
         self.assertFalse(os.path.exists(path))
 
+    def test_one_held_past_the_wait_is_logged_and_left_not_raised(self):
+        """A reader holding server.json longer than READER_WAIT took the supervisor down
+        with it: stop_child raised out of a move."""
+        path = supervisor.data_file(supervisor.SERVER_FILE)
+        supervisor.write_json(path, {"pid": 1})
+        with mock.patch.object(supervisor, "READER_WAIT", 0.2), \
+                mock.patch.object(supervisor.os, "remove", side_effect=PermissionError(32, "in use")), \
+                self.assertLogs("tagpup.supervisor", level="ERROR") as logged:
+            self.assertFalse(supervisor.remove(path))
+        self.assertIn("could not remove", "\n".join(logged.output).lower())
+
     def test_a_file_being_read_is_still_written(self):
         path = supervisor.data_file(supervisor.STATE_FILE)
         supervisor.write_json(path, {"state": "starting"})
