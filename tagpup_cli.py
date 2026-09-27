@@ -1103,6 +1103,13 @@ def jobs_run(ctx, name):
             console.print("%s for %s: not run, %s" % (name, outcome.library or "every library", outcome.why),
                           markup=False)
             failed = True
+    # A job may have filled this process's index queue (sync's new files): the process
+    # ends when this command does, so it waits for them, as `sync --apply` does.
+    for each in ([library] if library else runner.libraries()):
+        queue = indexing_jobs.queue_for(each)
+        if queue.active()["busy"]:
+            console.print("Indexing the new files' folders for %s..." % each.name, markup=False)
+        queue.wait()
     if failed:
         raise SystemExit(1)
 
