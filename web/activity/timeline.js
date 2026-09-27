@@ -6,7 +6,7 @@ import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { ago, counts, duration } from './format.js';
-import { badge, fill, logOf, none, outcomeKind, runLink } from './view.js';
+import { badge, fill, none, outcomeKind, runLinks } from './view.js';
 
 /** How many more entries More asks for. */
 const MORE = 50;
@@ -38,7 +38,7 @@ function entryRow(entry) {
         buildElement('td', { text: counts(entry.counts) }),
         buildElement('td', { text: duration(entry.seconds) }),
         buildElement('td', { className: 'error', text: entry.error || '' }),
-        buildElement('td', {}, [runLink(entry.run, logOf(entry.run, entry.library))]),
+        buildElement('td', {}, runLinks(entry.run, entry.logs)),
     ]);
 }
 

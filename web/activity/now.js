@@ -6,7 +6,7 @@ import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { ago } from './format.js';
-import { badge, fill, logOf, none, runLink } from './view.js';
+import { badge, fill, none, runLinks } from './view.js';
 
 /** Ask what runs now, and show it. */
 export function loadNow() {
@@ -32,7 +32,7 @@ function indexingLines(library) {
             buildElement('progress', { attrs: { max: 100, value: running.percent || 0 },
                                        title: `${running.percent || 0}%` }),
             buildElement('span', { className: 'detail', text: running.message || '' }),
-            runLink(running.run, logOf(running.run, library.name)),
+            ...runLinks(running.run, running.logs),
         ]));
     }
     const queued = indexing.queued || [];
@@ -56,7 +56,7 @@ function indexingLines(library) {
             badge('job', 'busy'),
             buildElement('span', { className: 'what', text: job.job }),
             buildElement('span', { className: 'detail', text: `started ${ago(job.started)}` }),
-            runLink(job.run, 'tagpup_web.log'),
+            ...runLinks(job.run, job.logs),
         ]));
     }
     return lines;

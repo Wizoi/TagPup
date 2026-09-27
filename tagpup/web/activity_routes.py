@@ -40,6 +40,7 @@ from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import recurring
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import activity
+from tagpup.services import indexing
 from tagpup.services import job_runs
 from tagpup.web import responses
 
@@ -188,6 +189,17 @@ def _app_url(kind, library_name, query=""):
     return "%s://%s:%d/%s/%s" % (request.scheme, host, port, urllib.parse.quote(library_name), query)
 
 
+def _logs_for(run):
+    """The logs a run's lines are in, as the page is to read them, the first its own: a run
+    of the indexer's own file, then this server's; any other run, this server's. [] for
+    none. Named by tagpup.logs alone: the page never spells a log's name."""
+    if not run:
+        return []
+    if run.startswith("index:"):
+        return [logs.run_log(indexing.INDEXER_LOG, run), logs.SERVER_LOG]
+    return [logs.SERVER_LOG]
+
+
 # ---- Now -----------------------------------------------------------------------------------
 
 @routes.get("/api/activity/now")
@@ -199,16 +211,19 @@ def now():
     found = []
     for library in every:
         queue = queues.get(library.name.lower())
-        indexing = queue.now() if queue is not None else {"running": None, "queued": []}
+        indexed = queue.now() if queue is not None else {"running": None, "queued": []}
+        if indexed["running"]:
+            indexed["running"]["logs"] = _logs_for(indexed["running"]["run"])
         running = []
         try:
             for (job, _for), (last, _ended) in job_runs.latest(library).items():
                 if last is not None and last.outcome == job_runs.RUNNING:
-                    running.append({"job": job, "run_id": last.id, "started": last.started,
-                                    "run": runs.job_tag(last.library, last.id)})
+                    tag = runs.job_tag(last.library, last.id)
+                    running.append({"job": job, "run_id": last.id, "started": last.started, "run": tag,
+                                    "logs": _logs_for(tag)})
         except Exception as e:
             logger.warning("Could not read the running jobs of %s: %s", library.name, e)
-        found.append({"name": library.name, "indexing": indexing,
+        found.append({"name": library.name, "indexing": indexed,
                       "suggesting": [run for run in suggesting if run["library"].lower() == library.name.lower()],
                       "jobs": running})
     watcher = _task(WATCHER)
@@ -232,6 +247,9 @@ def jobs():
     for library in _libraries():
         try:
             listed.append({"name": library.name, "jobs": recurring.overview(library, limit=limit)})
+            for job in listed[-1]["jobs"]:
+                for run in job["runs"]:
+                    run["logs"] = _logs_for(run["run"])
         except Exception as e:
             logger.warning("Could not read the jobs of %s: %s", library.name, e)
             listed.append({"name": library.name, "jobs": [], "error": str(e)})
@@ -278,6 +296,9 @@ def sync_state():
         entry = {"name": library.name, "review_url": _app_url("tuner", library.name, "?review=1")}
         try:
             entry.update(activity.sync_state(library))
+            for which in ("last_whole", "last_folder"):
+                if entry.get(which):
+                    entry[which]["logs"] = _logs_for(entry[which]["run"])
         except Exception as e:
             logger.warning("Could not read the syncs of %s: %s", library.name, e)
             entry["error"] = str(e)
@@ -361,6 +382,8 @@ def timeline():
     except Exception as e:
         logger.warning("Could not read the supervisor's log: %s", e)
     entries.sort(key=lambda entry: entry["time"] or "", reverse=True)
+    for entry in entries[:limit]:
+        entry["logs"] = _logs_for(entry["run"])
     return jsonify({"limit": limit, "entries": entries[:limit], "more": len(entries) > limit})
 
 
@@ -368,7 +391,8 @@ def timeline():
 
 @routes.get("/api/activity/logs")
 def log_list():
-    return jsonify({"folder": logs.log_dir(), "logs": logs.log_files(), "levels": list(logs.LEVELS)})
+    return jsonify({"folder": logs.log_dir(), "server": logs.SERVER_LOG, "logs": logs.log_files(),
+                    "levels": list(logs.LEVELS)})
 
 
 def _offset(name, value):

@@ -148,7 +148,7 @@ def main(argv=None):
     # The serving process writes the log; the reloader's supervisor only restarts it,
     # and two processes rotating one file fail on Windows.
     if os.environ.get(RELOADER + "_CHILD"):
-        logger.info("Logging to %s", logs.to_file("tagpup_web"))
+        logger.info("Logging to %s", logs.to_file(logs.SERVER_PROGRAM))
 
     ports = {"tagpup": args.tagpup_port, "tuner": args.tuner_port}
     if args.open != "none" and answering(ports[args.open]):

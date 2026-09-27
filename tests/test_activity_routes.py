@@ -170,7 +170,10 @@ class Now(Base):
         self.assertEqual([{"name": "Harbour Walk", "folders": 1}], indexing["queued"])
         self.assertEqual([], by_name["harbour"]["jobs"])
         self.assertEqual([{"job": "snapshots", "run_id": claim.run_id, "started": by_name["regatta"]["jobs"][0]["started"],
-                           "run": "job:regatta:%d" % claim.run_id}], by_name["regatta"]["jobs"])
+                           "run": "job:regatta:%d" % claim.run_id, "logs": [logs.SERVER_LOG]}],
+                         by_name["regatta"]["jobs"])
+        self.assertEqual([logs.run_log("indexer", indexing["running"]["run"]), logs.SERVER_LOG],
+                         indexing["running"]["logs"])
         self.assertIsNone(by_name["regatta"]["indexing"]["running"])
         self.assertTrue(found["server"]["taking_work"])
 
@@ -386,6 +389,22 @@ class SyncSnapshotsAndTheTimeline(Base):
         self.assertEqual(1, len(entries))
         self.assertEqual("completed", entries[0]["outcome"])
         self.assertTrue(entries[0]["run"].startswith("index:harbour:"))
+        # The logs it wrote in, named by the one owner of the names: its own, then the server's.
+        self.assertEqual([logs.run_log("indexer", entries[0]["run"]), logs.SERVER_LOG], entries[0]["logs"])
+
+    def test_every_run_says_which_logs_hold_its_lines(self):
+        claim = job_runs.claim(self.harbour.path, "snapshots", "harbour", seconds("2026-09-20 12:00:00"))
+        job_runs.finish(self.harbour.path, claim.run_id, "done", seconds("2026-09-20 12:00:05"), {})
+        sync_runs.record(self.harbour.path, "2026-09-21 08:00:00", whole=True, in_step=True, found={}, changed={})
+        entries = self.get("/api/activity/timeline")["entries"]
+        for entry in entries:
+            self.assertEqual([logs.SERVER_LOG] if entry["run"] else [], entry["logs"], entry)
+        jobs = self.get("/api/activity/jobs")["libraries"][0]["jobs"]
+        run = [job for job in jobs if job["name"] == "snapshots"][0]["runs"][0]
+        self.assertEqual([logs.SERVER_LOG], run["logs"])
+        harbour = [each for each in self.get("/api/activity/sync")["libraries"] if each["name"] == "harbour"][0]
+        self.assertEqual([logs.SERVER_LOG], harbour["last_whole"]["logs"])
+        self.assertEqual(logs.SERVER_LOG, self.get("/api/activity/logs")["server"])
 
 
 def a_line(stamp, level, message, logger="tagpup.web", run_tags=(), thread="MainThread"):

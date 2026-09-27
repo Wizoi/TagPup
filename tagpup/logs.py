@@ -36,6 +36,11 @@ _UNSAFE = re.compile(r"[^\w.-]")
 #: How many runs' logs of one kind are kept (the indexer's: one a run).
 KEEP_RUN_LOGS = 30
 
+#: The web server's log: its program's name, and the file (tagpup_web.py writes it; the
+#: Activity page is told it, and never spells it).
+SERVER_PROGRAM = "tagpup_web"
+SERVER_LOG = SERVER_PROGRAM + ".log"
+
 #: Where the servers log slow and failed requests.
 REQUESTS = "tagpup.requests"
 

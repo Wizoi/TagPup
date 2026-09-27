@@ -36,8 +36,9 @@ function logQuery(extra = {}) {
 export function loadLogFiles() {
     return api.site.json('/api/activity/logs').then(data => {
         state.logs.files = (data && data.logs) || [];
+        state.logs.server = (data && data.server) || null;
         if (!state.logs.name || !state.logs.files.some(file => file.name === state.logs.name)) {
-            const web = state.logs.files.find(file => file.name === 'tagpup_web.log');
+            const web = state.logs.files.find(file => file.name === state.logs.server);
             state.logs.name = web ? web.name : (state.logs.files[0] || {}).name || null;
         }
         renderLogTabs();
@@ -128,7 +129,7 @@ export function followLog() {
     });
 }
 
-/** "Logs for this run": the log `name`, only the lines of the run `run`, at every level. */
+/** "Logs for this run": the log `name` (as the server named it), only the lines of the run `run`, at every level. */
 export function showRunLogs(run, name) {
     state.logs.run = run;
     state.logs.level = 'DEBUG';
@@ -136,7 +137,7 @@ export function showRunLogs(run, name) {
     if (level) level.value = 'DEBUG';
     const section = document.getElementById('logs');
     if (section && typeof section.scrollIntoView === 'function') section.scrollIntoView();
-    return chooseLog(name || 'tagpup_web.log');
+    return chooseLog(name || state.logs.server);
 }
 
 function say(text) {

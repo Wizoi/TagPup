@@ -17,14 +17,16 @@ const NOW = {
       name: "harbour",
       indexing: {
         running: { run: "index:harbour:20260926T095900-1", started: "2026-09-26 09:59:00", folders: 2,
-                   name: "Regatta 2019", percent: 40, message: "Indexing: 40% (4/10)" },
+                   name: "Regatta 2019", percent: 40, message: "Indexing: 40% (4/10)",
+                   logs: ["indexer-harbour-20260926T095900-4242-1.log", "tagpup_web.log"] },
         queued: [{ name: "Harbour Walk", folders: 1 }],
       },
       suggesting: [{ library: "harbour", folder: "Lakes", status: "running", completed: 3, total: 9 }],
       jobs: [],
     },
     { name: "regatta", indexing: { running: null, queued: [] }, suggesting: [],
-      jobs: [{ job: "snapshots", run_id: 12, started: "2026-09-26 09:58:00", run: "job:regatta:12" }] },
+      jobs: [{ job: "snapshots", run_id: 12, started: "2026-09-26 09:58:00", run: "job:regatta:12",
+               logs: ["tagpup_web.log"] }] },
   ],
   syncing: { library: "harbour", folder: "D:\\Photos\\Regatta", started: "2026-09-26 10:00:01" },
   watching: true,
@@ -46,9 +48,9 @@ const JOBS = {
     { name: "harbour", jobs: [
       job("snapshots", "safety", [
         { id: 9, started: "2026-09-26 09:00:00", finished: "2026-09-26 09:00:11", seconds: 11, outcome: "failed",
-          changed: { errors: 1 }, error: "OSError: the disk is full", run: "job:harbour:9" },
+          changed: { errors: 1 }, error: "OSError: the disk is full", run: "job:harbour:9", logs: ["tagpup_web.log"] },
         { id: 7, started: "2026-09-25 09:00:00", finished: "2026-09-25 09:00:12", seconds: 12, outcome: "done",
-          changed: { changed: 1 }, error: null, run: "job:harbour:7" },
+          changed: { changed: 1 }, error: null, run: "job:harbour:7", logs: ["tagpup_web.log"] },
       ], { failing: true }),
       job("sync", "catch-up", []),
     ] },
@@ -62,7 +64,8 @@ const SYNC = {
     { name: "harbour", last_in_step: "2026-09-26 09:00:00", review_folders: 2,
       review_url: "http://localhost:8080/harbour/?review=1",
       last_whole: { id: 3, started: "2026-09-26 08:59:00", finished: "2026-09-26 09:00:00", seconds: 60, whole: true,
-                    in_step: true, found: {}, changed: { rows: 0 }, change: null, run: "sync:harbour:20260926T085900" },
+                    in_step: true, found: {}, changed: { rows: 0 }, change: null, run: "sync:harbour:20260926T085900",
+                    logs: ["tagpup_web.log"] },
       last_folder: null,
       roots: [{ path: "D:\\Photos", there: true, watched: true }, { path: "E:\\Archive", there: false, watched: false }],
       watches: ["D:\\Photos"], watcher: { last_event: "2026-09-26 09:59:00", pending_folders: 0, whole_pending: false,
@@ -90,17 +93,20 @@ const TIMELINE = {
   limit: 50, more: true,
   entries: [
     { kind: "change", library: "regatta", time: "2026-09-26 09:30:00", finished: "2026-09-26 09:30:00", seconds: null,
-      what: "change settings", outcome: "applied", counts: { rows: 1, files: 0 }, id: 5, run: null, error: null },
+      what: "change settings", outcome: "applied", counts: { rows: 1, files: 0 }, id: 5, run: null, error: null,
+      logs: [] },
     { kind: "index", library: "harbour", time: "2026-09-26 09:10:00", finished: "2026-09-26 09:20:00", seconds: 600,
       what: "index of Regatta 2019", outcome: "completed", counts: { folders: 1 }, id: null,
-      run: "index:harbour:20260926T091000-1", error: null },
+      run: "index:harbour:20260926T091000-1", error: null, logs: ["indexer-harbour.log", "tagpup_web.log"] },
     { kind: "job", library: "harbour", time: "2026-09-26 09:00:00", finished: "2026-09-26 09:00:11", seconds: 11,
-      what: "snapshots", outcome: "failed", counts: { errors: 1 }, id: 9, run: "job:harbour:9", error: "OSError: full" },
+      what: "snapshots", outcome: "failed", counts: { errors: 1 }, id: 9, run: "job:harbour:9", error: "OSError: full",
+      logs: ["tagpup_web.log"] },
   ],
 };
 
 const LOG_FILES = {
   folder: "D:\\TagPup\\data\\logs",
+  server: "tagpup_web.log",
   levels: ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
   logs: [
     { name: "tagpup_web.log", program: "tagpup_web", source: "Web server", bytes: 20480, modified: 1, rotated: [] },
@@ -344,7 +350,7 @@ describe("Logs", () => {
     const fake = server();
     const { document, window } = await open(t, fake);
     await flush(window, 8);
-    const link = document.querySelector('#timeline-body button.run-logs[data-run="index:harbour:20260926T091000-1"]');
+    const link = document.querySelector('#timeline-body button.run-logs[data-run="index:harbour:20260926T091000-1"][data-log="indexer-harbour.log"]');
     assert.ok(link, "no Logs for this run beside the run of the indexer");
     click(window, link);
     await flush(window, 6);
@@ -357,6 +363,31 @@ describe("Logs", () => {
     click(window, document.getElementById("log-run-clear"));
     await flush(window, 6);
     assert.doesNotMatch(fake.urls().at(-1), /run=/);
+  });
+
+  test("a run's log is the one the server names, never one the page spells", async (t) => {
+    // The indexer's log is named from the run's tag, where a library called "Harbour Photos"
+    // is Harbour_Photos (tagpup.logs.run_log); a page spelling it from the library's name
+    // asked for a file there is not.
+    const named = "indexer-Harbour_Photos-20260926T091000-4242-1.log";
+    const timeline = { limit: 50, more: false, entries: [
+      { kind: "index", library: "Harbour Photos", time: "2026-09-26 09:10:00", finished: "2026-09-26 09:20:00",
+        seconds: 600, what: "index of Regatta 2019", outcome: "completed", counts: { folders: 1 }, id: null,
+        run: "index:Harbour_Photos:20260926T091000-4242-1", error: null, logs: [named, "tagpup_web.log"] },
+    ] };
+    const fake = server({ first: [["/api/activity/timeline", timeline]] });
+    const { document, window } = await open(t, fake);
+    await flush(window, 8);
+    const links = [...document.querySelectorAll("#timeline-body button.run-logs")];
+    assert.equal(links.length, 2, "a link for each log the run wrote in");
+    click(window, links[0]);
+    await flush(window, 6);
+    const read = fake.urls().filter((url) => url.includes("/api/activity/logs/") && url.includes("run=")).at(-1);
+    assert.ok(read.startsWith(`/api/activity/logs/${named}?`), read);
+    click(window, links[1]);
+    await flush(window, 6);
+    const second = fake.urls().filter((url) => url.includes("/api/activity/logs/") && url.includes("run=")).at(-1);
+    assert.ok(second.startsWith("/api/activity/logs/tagpup_web.log?"), second);
   });
 
   test("Follow asks only for what was written since, and Older for what came before", async (t) => {

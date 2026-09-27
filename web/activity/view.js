@@ -28,19 +28,18 @@ export function outcomeKind(outcome) {
     return 'quiet';
 }
 
-/** "Logs for this run": a button showing the lines the run `run` logged, in the log `name`. */
-export function runLink(run, name) {
-    if (!run) return null;
-    const button = buildElement('button', {
-        className: 'link run-logs', text: 'Logs for this run', title: run, attrs: { type: 'button' },
-        data: { run },
+/**
+ * "Logs for this run": a button for each log the server says the run `run` logged in
+ * (`logs`, its own first), showing its lines there. The page never spells a log's name.
+ */
+export function runLinks(run, logs) {
+    if (!run || !logs || !logs.length) return [];
+    return logs.map((name, index) => {
+        const button = buildElement('button', {
+            className: 'link run-logs', text: index ? `...in ${name}` : 'Logs for this run', title: `${run} in ${name}`,
+            attrs: { type: 'button' }, data: { run, log: name },
+        });
+        button.addEventListener('click', () => showRunLogs(run, name));
+        return button;
     });
-    button.addEventListener('click', () => showRunLogs(run, name));
-    return button;
-}
-
-/** The log a run's lines are in: the indexer's own for a run of the indexer, else the server's. */
-export function logOf(run, library) {
-    if (run && run.startsWith('index:') && library) return `indexer-${library}.log`;
-    return 'tagpup_web.log';
 }

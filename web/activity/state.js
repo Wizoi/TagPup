@@ -24,6 +24,8 @@ export const state = {
     unfolded: {},
     logs: {
         files: [],
+        //: The web server's own log, as the server names it: the tab chosen first.
+        server: null,
         name: null,
         level: 'WARNING',
         text: '',

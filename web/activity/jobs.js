@@ -6,7 +6,7 @@ import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { ago, counts, duration } from './format.js';
-import { badge, fill, none, outcomeKind, runLink } from './view.js';
+import { badge, fill, none, outcomeKind, runLinks } from './view.js';
 
 /** Read each job's runs, and show them. */
 export function loadJobs() {
@@ -93,7 +93,7 @@ function runRow(run, library) {
         buildElement('td', {}, [badge(run.outcome, outcomeKind(run.outcome))]),
         buildElement('td', { text: counts(run.changed) }),
         buildElement('td', { className: 'error', text: run.error || '' }),
-        buildElement('td', {}, [runLink(run.run, 'tagpup_web.log')]),
+        buildElement('td', {}, runLinks(run.run, run.logs)),
     ]);
 }
 
@@ -125,7 +125,7 @@ function jobRow(job, library) {
             runNowControls(job, library),
             ran ? buildElement('span', { className: ran.ok ? 'said' : 'said bad', text: ran.text }) : null,
             fold,
-            last ? runLink(last.run, 'tagpup_web.log') : null,
+            ...(last ? runLinks(last.run, last.logs) : []),
         ]),
     ])];
     if (unfolded) {

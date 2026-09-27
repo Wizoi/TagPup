@@ -6,7 +6,7 @@ import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { ago, counts } from './format.js';
-import { badge, fill, none, runLink } from './view.js';
+import { badge, fill, none, runLinks } from './view.js';
 
 /** Read each library's syncs, and show them. */
 export function loadSync() {
@@ -26,7 +26,7 @@ function syncLine(label, record) {
         buildElement('span', { text: ago(record.finished), title: record.finished }),
         badge(record.in_step ? 'in step' : 'not in step', record.in_step ? 'ok' : 'busy'),
         buildElement('span', { className: 'detail', text: counts(record.changed) || 'nothing changed' }),
-        runLink(record.run, 'tagpup_web.log'),
+        ...runLinks(record.run, record.logs),
     ]);
 }
 
