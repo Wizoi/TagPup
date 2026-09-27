@@ -283,6 +283,34 @@ describe("Run now is asked first", () => {
     assert.match(document.getElementById("jobs-body").textContent, /Started \(run 13\)/);
   });
 
+  test("a second click while the first is on its way sends nothing, and the first answer stays", async (t) => {
+    let answer;
+    const answered = new Promise((resolve) => { answer = resolve; });
+    const fake = server({ first: [["/api/activity/jobs/run", () => answered]] });
+    const { document, window } = await open(t, fake);
+    await flush(window, 6);
+    const posted = () => fake.calls.filter((call) => call.method === "POST");
+    const runNowButton = () => document.querySelector('.job-card[data-job="sync"] tr.job[data-library="harbour"] button.run-now');
+
+    click(window, runNowButton());
+    await flush(window, 2);
+    const confirm = document.querySelector(".confirm button.confirm-run");
+    click(window, confirm);
+    click(window, confirm);   // a double click: the button is gone from the page, not its listener
+    await flush(window, 2);
+    assert.equal(posted().length, 1, "Run now was sent twice");
+    assert.equal(runNowButton().disabled, true, "Run now is offered again while its run is being asked for");
+    click(window, runNowButton());
+    await flush(window, 2);
+    assert.equal(document.querySelector(".confirm"), null, "a disabled Run now asked again");
+
+    answer({ success: true, started: true, run_id: 13, run: "job:harbour:13" });
+    await flush(window, 8);
+    assert.equal(posted().length, 1);
+    assert.match(document.getElementById("jobs-body").textContent, /Started \(run 13\)/);
+    assert.equal(runNowButton().disabled, false);
+  });
+
   test("a job not started says why", async (t) => {
     const fake = server({ first: [["/api/activity/jobs/run", { success: false, started: false, why: "a run of it is under way already",
                                                                    error: "Not started: a run of it is under way already." }]] });

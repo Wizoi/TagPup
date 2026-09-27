@@ -22,11 +22,19 @@ function jobKey(job, library) {
     return `${job}|${library}`;
 }
 
-/** Run now, once confirmed: the server answers once the run has started or been refused. */
+/**
+ * Run now, once confirmed: the server answers once the run has started or been refused.
+ * Once per click: while its POST is on its way, another for the same job and library sends
+ * nothing, and the first answer is what is shown.
+ */
 export function runNow(job, library) {
+    const key = jobKey(job, library);
+    if (state.asking[key]) return Promise.resolve(null);
+    state.asking[key] = true;
     state.confirming = null;
     state.ranNow = { job, library, text: 'Starting...', ok: true };
     renderJobs();
+    const done = () => { delete state.asking[key]; };
     return api.site.json('/api/activity/jobs/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -36,10 +44,12 @@ export function runNow(job, library) {
         if (answer && answer.started) text = `Started (run ${answer.run_id}).`;
         else if (answer && answer.started === null) text = `Asked: ${answer.why}.`;
         else text = (answer && (answer.error || answer.why)) || 'Could not start it.';
+        done();
         state.ranNow = { job, library, text, ok: !!(answer && answer.success) };
         renderJobs();
         return loadJobs().then(() => answer);
     }).catch(err => {
+        done();
         state.ranNow = { job, library, text: `Could not start it: ${err.message || err}`, ok: false };
         renderJobs();
         return null;
@@ -61,12 +71,15 @@ function runNowControls(job, library) {
             buildElement('span', { text: `Run ${job.name} for ${library} now?` }), yes, no]);
     }
     const button = buildElement('button', {
-        className: 'btn run-now', text: 'Run now', attrs: { type: 'button', disabled: !state.jobs.runs_jobs || job.running },
+        className: 'btn run-now', text: 'Run now',
+        attrs: { type: 'button', disabled: !state.jobs.runs_jobs || job.running || !!state.asking[jobKey(job.name, library)] },
         title: state.jobs.runs_jobs ? `Run ${job.name} for ${library} now, whether or not it is due`
             : 'This server runs no recurring jobs; run it with the CLI (jobs run)',
         data: { job: job.name, library },
     });
     button.addEventListener('click', () => {
+        // A click that reaches a disabled button (one dispatched to it) asks nothing either.
+        if (button.disabled || state.asking[jobKey(job.name, library)]) return;
         state.confirming = { job: job.name, library };
         renderJobs();
     });

@@ -17,6 +17,9 @@ export const state = {
     confirming: null,
     //: The last Run now's answer, shown beside the job: { job, library, text, ok }.
     ranNow: null,
+    //: The Run now whose POST is on its way: "job|library" -> true. Its button is
+    //: disabled, and a second click -- a double click on Run -- sends nothing.
+    asking: {},
     //: Which jobs have their last runs unfolded: "job|library" -> true.
     unfolded: {},
     logs: {
