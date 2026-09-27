@@ -66,8 +66,9 @@ def exempt(path):
     """Is `path`, as the gate sees it, answered while draining and not counted as work?"""
     if path in EXEMPT:
         return True
-    rest = path.split("/", 2)[2] if path.count("/") >= 2 else ""
-    return ("/" + rest) in CONTROL
+    # A URL's path, not a tag: what follows its first part, "/<library>".
+    second = path.find("/", 1)
+    return second > 0 and path[second:] in CONTROL
 
 UPDATING_MESSAGE = "TagPup is moving to a new version; this is sent again in a moment."
 
