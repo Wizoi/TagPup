@@ -274,6 +274,11 @@ class Runtime:
         """The ExifTool program to run for `library`."""
         return tagpup_config.exiftool_path(self.settings(library).exiftool)
 
+    def sync(self, library, folder=None, apply=False):
+        """Sync `library` (the module's sync): what the recurring sync job calls, handed
+        this Runtime by the entry point that runs the jobs."""
+        return sync(library, folder=folder, apply=apply)
+
     def settings_changed(self, library):
         """The library's settings have changed (tagpup.web.settings_routes, after a save):
         what it used and nothing else uses is let go now, not at its next ask -- the

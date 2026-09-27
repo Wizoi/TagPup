@@ -1058,7 +1058,7 @@ def settings_set(ctx, key, value, acknowledged, apply_):
 @cli.group(invoke_without_command=True)
 @click.pass_context
 def jobs(ctx):
-    """The recurring jobs (snapshots, pruning the journal): each one's last run and when
+    """The recurring jobs (snapshots, pruning the journal, sync): each one's last run and when
     it is due next, for the library --db names or every library in the data folder. The
     web server runs them; `jobs run NAME` runs one now, by hand."""
     if ctx.invoked_subcommand is not None:
