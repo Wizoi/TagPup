@@ -270,6 +270,33 @@ class PortsAnotherHolds(Base):
         self.assertEqual([0], ended)
 
 
+class ItsFilesWithAReader(Base):
+    """On Windows a file another process has open cannot be replaced or deleted: the
+    supervisor's state and server.json, read by startup.py status, the launchers and the
+    install, failed its move with PermissionError (seen in a run of this suite)."""
+
+    def hold_open(self, path, seconds):
+        handle = open(path, encoding="utf-8")
+        timer = threading.Timer(seconds, handle.close)
+        timer.start()
+        self.addCleanup(timer.join)
+        self.addCleanup(handle.close)
+
+    def test_a_file_being_read_is_still_removed(self):
+        path = supervisor.data_file(supervisor.SERVER_FILE)
+        supervisor.write_json(path, {"pid": 1})
+        self.hold_open(path, 0.3)
+        self.assertTrue(supervisor.remove(path))
+        self.assertFalse(os.path.exists(path))
+
+    def test_a_file_being_read_is_still_written(self):
+        path = supervisor.data_file(supervisor.STATE_FILE)
+        supervisor.write_json(path, {"state": "starting"})
+        self.hold_open(path, 0.3)
+        supervisor.write_json(path, {"state": "running"})
+        self.assertEqual("running", supervisor.read_json(path)["state"])
+
+
 class OnePerHome(Base):
     def test_a_second_supervisor_is_refused(self):
         holder = processes.start(

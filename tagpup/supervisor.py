@@ -141,17 +141,36 @@ def read_json(path):
         return None
 
 
+#: How long a replace or a delete waits for a reader of the file to let go: on Windows a
+#: file another process has open cannot be replaced or deleted, and these are read by
+#: startup.py status, the launchers and the installer.
+READER_WAIT = 5.0
+
+
+def _while_read(action, path):
+    """`action()`, tried again while a reader holds `path` (PermissionError), for up to
+    READER_WAIT."""
+    deadline = time.monotonic() + READER_WAIT
+    while True:
+        try:
+            return action()
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
 def write_json(path, value):
     """Write `value` whole or not at all: a reader never sees half a file."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path + ".writing", "w", encoding="utf-8") as handle:
         json.dump(value, handle, indent=1)
-    os.replace(path + ".writing", path)
+    _while_read(lambda: os.replace(path + ".writing", path), path)
 
 
 def remove(path):
     try:
-        os.remove(path)
+        _while_read(lambda: os.remove(path), path)
         return True
     except FileNotFoundError:
         return False
