@@ -20,7 +20,10 @@
  * answers a request 503 with X-TagPup-Updating, having done nothing with it, and then
  * answers nothing while it restarts. A request so turned away is sent again after the
  * Retry-After it was given, and again while nothing answers, for up to UPDATE_WAIT_MS:
- * the page waits out the update rather than showing it as an error.
+ * the page waits out the update rather than showing it as an error. An /api/ image has
+ * no such retry: one that fails makes the page ask how the server is, and once it has
+ * seen the server away and answering again, it asks for the image again
+ * (imagesAfterAnUpdate).
  */
 
 /** How long a request waits out a server moving onto a new version. */
@@ -110,6 +113,72 @@ function apiFetch(path, options) {
 function apiJson(path, options) {
     return apiFetch(path, options).then(res => res.json());
 }
+
+/** How often a page asks whether the server is back, after an /api/ image failed. */
+const IMAGE_PROBE_MS = 2000;
+
+/**
+ * Images that failed while the server moved onto a new version, asked for again once it
+ * answers. `watch(document)` listens for an /api/ image's error (once per document; the
+ * module does it for the page's own); `every` is how often it asks, a test's shorter.
+ */
+export const imagesAfterAnUpdate = (() => {
+    const failed = new Set();
+    const watched = new WeakSet();
+    let probing = false;
+    let every = IMAGE_PROBE_MS;
+
+    function again(img) {
+        if (!img.isConnected) return;
+        const src = (img.getAttribute('src') || '').replace(/[?&]_again=\d+$/, '');
+        img.setAttribute('src', src + (src.includes('?') ? '&' : '?') + '_again=' + Date.now());
+    }
+
+    function probe() {
+        if (probing) return;
+        probing = true;
+        const started = Date.now();
+        let away = false;
+        const step = () => fetch(apiUrl('/api/server')).then(
+            res => {
+                if (refusedForAnUpdate(res)) away = true;
+                return !refusedForAnUpdate(res);
+            },
+            () => { away = true; return false; },
+        ).then(back => {
+            if (back || Date.now() - started > UPDATE_WAIT_MS) {
+                probing = false;
+                const images = [...failed];
+                failed.clear();
+                // Only after the server was away: an image that fails with the server
+                // there is broken for its own reasons, and asking again changes nothing.
+                if (back && away) images.forEach(again);
+                return;
+            }
+            setTimeout(step, every);
+        });
+        step();
+    }
+
+    function onError(event) {
+        const target = event.target;
+        if (!target || target.tagName !== 'IMG') return;
+        if (!(target.getAttribute('src') || '').includes('/api/')) return;
+        failed.add(target);
+        probe();
+    }
+
+    return Object.freeze({
+        watch(doc, options = {}) {
+            if (options.every) every = options.every;
+            if (!doc || watched.has(doc)) return;
+            watched.add(doc);
+            doc.addEventListener('error', onError, true);   // an image's error does not bubble
+        },
+    });
+})();
+
+if (typeof document !== 'undefined') imagesAfterAnUpdate.watch(document);
 
 export const api = Object.freeze({
     url: apiUrl,

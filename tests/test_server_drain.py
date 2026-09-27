@@ -168,6 +168,37 @@ class ADrain(Base):
         self.assertEqual(200, self.client().get("/harbour/api/tags").status_code)
 
 
+class AQuietMoment(Base):
+    """The owner (2026-09-26): an update moves "at next available request" -- not in the
+    middle of someone's session. A drain asked to wait for quiet is refused while a
+    request came within that many seconds; the supervisor stops asking for quiet once an
+    update has waited an hour."""
+
+    def drain_quietly(self, quiet):
+        return self.client().post("/api/server/drain", json={"seconds": 5, "quiet": quiet}, headers=HEADERS)
+
+    def test_is_refused_while_someone_is_using_the_app(self):
+        self.lifecycle._clock = self.clock
+        self.assertEqual(200, self.client().get("/harbour/api/tags").status_code)
+        self.clock.now += 30
+        answer = self.drain_quietly(120).get_json()
+        self.assertFalse(answer["drained"])
+        self.assertEqual(["a request 30s ago"], answer["waiting_for"])
+        self.assertTrue(self.lifecycle.status()["taking_work"], "work was turned away")
+        self.clock.now += 91
+        self.assertTrue(self.drain_quietly(120).get_json()["drained"])
+
+    def test_asking_for_none_takes_the_next_moment_with_nothing_in_flight(self):
+        self.lifecycle._clock = self.clock
+        self.client().get("/harbour/api/tags")
+        self.assertTrue(self.drain_quietly(0).get_json()["drained"])
+
+    def test_asking_how_the_server_is_is_not_a_use(self):
+        self.lifecycle._clock = self.clock
+        self.client().get("/api/server")
+        self.assertTrue(self.drain_quietly(120).get_json()["drained"])
+
+
 class OnlyTheSupervisor(Base):
     def test_may_drain_or_resume_the_server(self):
         for headers in ({}, {supervisor.TOKEN_HEADER: "a guess"}):

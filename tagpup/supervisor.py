@@ -19,7 +19,8 @@ It runs the web server (tagpup_web.py) as its child, and:
   exits PORTS_TAKEN (a TagPup started by hand, say);
 - every UPDATE_EVERY, installs the checkout's commit when it is newer and holds no
   uncommitted code (scripts/install_app.py --apply --if-changed: the launchers' rule),
-  and moves the server onto the version current.txt names at the next quiet moment. It
+  and moves the server onto the version current.txt names at the next quiet moment -- no
+  request for QUIET seconds, or, once it has waited PATIENCE, nothing in flight. It
   asks the server to drain (tagpup.web.lifecycle): nothing new is taken, and it is
   stopped only once nothing is in flight and no Suggest run, index or recurring job is
   under way. A drain refused is asked again every RETRY_MOVE, the old version answering
@@ -103,6 +104,12 @@ MAX_UNANSWERED = 3
 #: How long a stop waits for the server to drain before it ends it anyway: the owner
 #: asked, and a Suggest run or an index may run for hours.
 STOP_DRAIN_LIMIT = 30 * 60
+
+#: A move waits for a quiet moment: no request for QUIET seconds -- someone at the app
+#: is not moved under -- until it has waited PATIENCE; then it takes the next moment with
+#: nothing in flight.
+QUIET = 120
+PATIENCE = 60 * 60
 
 #: How long a supervisor started by another, moving onto a new version, waits for the
 #: other to let go of the lock.
@@ -380,7 +387,7 @@ class Supervisor:
                  hand_over=True, backoff=BACKOFF, max_crashes=MAX_CRASHES, crash_window=CRASH_WINDOW, update_every=UPDATE_EVERY,
                  retry_move=RETRY_MOVE, drain_seconds=DRAIN_SECONDS, ports_wait=PORTS_WAIT, tick=1.0,
                  clock=time.monotonic, health_every=HEALTH_EVERY, health_timeout=HEALTH_TIMEOUT,
-                 max_unanswered=MAX_UNANSWERED, stop_drain_limit=STOP_DRAIN_LIMIT):
+                 max_unanswered=MAX_UNANSWERED, stop_drain_limit=STOP_DRAIN_LIMIT, patience=PATIENCE):
         self.installed = installed
         self.code_root = code_root or tagpup_config.CODE_ROOT
         self.own_version = tagpup_config.code_version(self.code_root) if code_root is None else None
@@ -394,6 +401,8 @@ class Supervisor:
         self.ports_wait, self.tick, self._clock = ports_wait, tick, clock
         self.health_every, self.health_timeout, self.max_unanswered = health_every, health_timeout, max_unanswered
         self.stop_drain_limit = stop_drain_limit
+        self.patience = patience
+        self._pending_since = None
         self._next_health = 0
         self._unanswered = 0
         self._stop = threading.Event()
@@ -553,21 +562,22 @@ class Supervisor:
 
     # ---- Draining and moving ----------------------------------------------------------
 
-    def drain(self):
-        """Ask the server to drain: {"drained": bool, "waiting_for": [...]}. A server that
-        is not up yet, or has ended, has nothing in flight."""
+    def drain(self, quiet=0):
+        """Ask the server to drain: {"drained": bool, "waiting_for": [...]}, after `quiet`
+        seconds without a request. A server that is not up yet, or has ended, has
+        nothing in flight."""
         if not self.child_alive():
             return {"drained": True}
         where = server()
         if where is None:
             return {"drained": True, "note": "not serving yet"}
-        return self._drain_at(where, self._token)
+        return self._drain_at(where, self._token, quiet)
 
-    def _drain_at(self, where, token):
+    def _drain_at(self, where, token, quiet=0):
         port = sorted(where.get("ports", {}).values())[0]
         request = urllib.request.Request(
             "http://127.0.0.1:%d/api/server/drain" % port, method="POST",
-            data=json.dumps({"seconds": self.drain_seconds}).encode("utf-8"),
+            data=json.dumps({"seconds": self.drain_seconds, "quiet": quiet}).encode("utf-8"),
             headers={"Content-Type": "application/json", TOKEN_HEADER: token or ""})
         try:
             with urllib.request.urlopen(request, timeout=self.drain_seconds + 30) as reply:
@@ -577,9 +587,9 @@ class Supervisor:
         except (OSError, ValueError) as e:
             return {"drained": False, "waiting_for": ["no answer from the server (%s)" % e]}
 
-    def _drained(self, purpose):
+    def _drained(self, purpose, quiet=0):
         """Drain for `purpose`; True once drained. Logs what it waits for when that changes."""
-        answer = self.drain()
+        answer = self.drain(quiet)
         if answer.get("drained"):
             self._last_wait = None
             return True
@@ -599,6 +609,7 @@ class Supervisor:
         if version and version != self._child_version:
             logger.info("Version %s is installed; the server moves onto it at the next quiet moment.", version)
             self._pending = version
+            self._pending_since = self._clock()
             self._next_move = 0
             self._say("moving", "to %s" % version)
 
@@ -606,7 +617,10 @@ class Supervisor:
         """Move the server onto the pending version once it drains. "moved", "handed over",
         or None while it waits."""
         self._next_move = self._clock() + self.retry_move
-        if not self._drained("The move to %s" % self._pending):
+        # Someone using the app is not moved under, until the update has waited an hour.
+        waited = self._clock() - (self._pending_since if self._pending_since is not None else self._clock())
+        quiet = QUIET if waited < self.patience else 0
+        if not self._drained("The move to %s" % self._pending, quiet):
             return None
         logger.info("The server is drained; moving it from %s to %s.", self._child_version, self._pending)
         version, self._pending = self._pending, None

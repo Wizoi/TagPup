@@ -16,6 +16,7 @@ import threading
 import time
 import unittest
 import urllib.request
+from unittest import mock
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -351,6 +352,19 @@ class MovingOntoANewVersion(Base):
         self.assertEqual(["20260926-090000-aaaaaaa", "20260926-120000-bbbbbbb"], self.starts())
         self.assertIsNone(made._pending)
         self.assertEqual("20260926-120000-bbbbbbb", supervisor.running()["server_version"])
+
+    def test_asks_for_a_quiet_moment_until_the_update_has_waited_its_patience(self):
+        made = self.make_installed([])
+        asked = []
+        made._drain_at = lambda where, token, quiet=0: asked.append(quiet) or {"drained": False, "waiting_for": []}
+        made._child = mock.Mock(poll=lambda: None, pid=1)
+        with mock.patch.object(supervisor, "server", return_value={"ports": {"tagpup": 1}}):
+            made._pending, made._pending_since = "v2", made._clock()
+            made.move()
+            made._pending_since -= made.patience + 1
+            made.move()
+        made._child = None
+        self.assertEqual([supervisor.QUIET, 0], asked)
 
     def test_an_install_the_owner_made_by_hand_is_moved_onto_too(self):
         made = self.make_installed([])

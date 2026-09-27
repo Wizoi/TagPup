@@ -8,8 +8,10 @@ it gave the server (tagpup.supervisor.TOKEN, which tagpup_web hands the Lifecycl
 moves it onto the new version only once the drain says it is done:
 
 - A drain is refused at once, taking nothing away, while work runs beside the requests:
-  a Suggest run, an index, a recurring job (the background tasks' busy(), tagpup.runtime).
-  The supervisor asks again later. An update never interrupts a write.
+  a Suggest run, an index, a recurring job (the background tasks' busy(), tagpup.runtime);
+  and, asked for a quiet moment (`quiet`), while a request came in that many seconds
+  ago -- someone is using the app. The supervisor asks again later. An update never
+  interrupts a write.
 - Otherwise the server stops taking new work: each new request is answered 503 with
   Retry-After, which the pages wait out and send again (web/common/api.js). The
   background tasks are stopped, and the requests already in flight -- a journaled write
@@ -82,6 +84,9 @@ class Lifecycle:
         self._in_flight = 0
         self._closed = False
         self._drained_at = None
+        #: When a request last came in (not the status or the drain): a quiet moment is
+        #: some time after it.
+        self._last_request = None
 
     # ---- What it says ---------------------------------------------------------------
 
@@ -114,6 +119,7 @@ class Lifecycle:
                 if self._closed:
                     return False
                 self._in_flight += 1
+                self._last_request = self._clock()
                 return True
         logger.warning("Drained %ds ago and not stopped: taking work again.", LEFT_DRAINED)
         self.resume()
@@ -126,14 +132,18 @@ class Lifecycle:
 
     # ---- Draining ---------------------------------------------------------------------
 
-    def drain(self, seconds=DRAIN_SECONDS):
+    def drain(self, seconds=DRAIN_SECONDS, quiet=0):
         """Stop taking new work and wait up to `seconds` for what is under way to finish.
         {"drained": True}, or {"drained": False, "waiting_for": [...]}: refused at once,
-        nothing turned away, while work runs beside the requests; or the deadline passed,
-        and the server takes work again."""
+        nothing turned away, while work runs beside the requests or a request came in
+        the last `quiet` seconds (someone is using the app); or the deadline passed, and
+        the server takes work again."""
         deadline = self._clock() + seconds
         with self._changed:
             if not self._closed:
+                since = None if self._last_request is None else self._clock() - self._last_request
+                if quiet and since is not None and since < quiet:
+                    return {"drained": False, "waiting_for": ["a request %ds ago" % since]}
                 busy = self.busy()
                 if busy:
                     logger.info("An update waits: %s under way.", ", ".join(busy))
@@ -255,10 +265,13 @@ def drain():
         return responses.error(403, "Only the process that started this server may drain it")
     body = request.get_json(silent=True) or {}
     seconds = body.get("seconds", DRAIN_SECONDS)
+    quiet = body.get("quiet", 0)
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0 < seconds <= MAX_DRAIN_SECONDS:
         return responses.error(400, "seconds must be a number of seconds, more than 0 and at most %d"
                                % MAX_DRAIN_SECONDS)
-    return jsonify(dict(lifecycle.drain(seconds), success=True))
+    if isinstance(quiet, bool) or not isinstance(quiet, (int, float)) or quiet < 0:
+        return responses.error(400, "quiet must be a number of seconds, 0 or more")
+    return jsonify(dict(lifecycle.drain(seconds, quiet), success=True))
 
 
 @routes.post(RESUME)
