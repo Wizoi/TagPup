@@ -201,7 +201,8 @@ def _folder_watcher_task(runtime):
     if not runs_recurring_jobs():
         return None
     return watching.Watcher(home_libraries, watch_folders,
-                            lambda library, folder: sync(library, folder=folder, apply=True), images.is_photo)
+                            lambda library, folder: sync(library, folder=folder, apply=True), images.is_photo,
+                            recent=lambda library: sync_service.synced_whole_within(library, watching.CATCH_UP_SKIP))
 
 
 def watch_folders(library):

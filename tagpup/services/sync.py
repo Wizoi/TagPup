@@ -46,6 +46,7 @@ over; missing files do not count against it -- which is the pages' "last in step
 """
 import os
 import threading
+import time
 
 from tagpup.core import paths, validation
 from tagpup.core.result import Result
@@ -505,6 +506,23 @@ def watch_folders(library, roots=()):
     finally:
         conn.close()
     return walk_roots([paths.stored(root) for root in roots] + held)
+
+
+def synced_whole_within(library, seconds):
+    """Did a sync of the whole of `library` finish in the last `seconds`? (Its record is
+    kept only for a sync that wrote what it found.)"""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        finished = sync_runs.last_whole(conn)
+    finally:
+        conn.close()
+    if not finished:
+        return False
+    try:
+        at = time.mktime(time.strptime(finished, sync_runs.TIME))
+    except (TypeError, ValueError):
+        return False
+    return time.time() - at < seconds
 
 
 def last(library):

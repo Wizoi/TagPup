@@ -283,6 +283,44 @@ class Stopping(Base):
         self.assertEqual([paths.stored(os.path.join(self.root, "Regatta"))], self.folder_syncs())
 
 
+class TheCatchUpAtStart(Base):
+    """Every start of the server synced each library whole: after a crash restart, or an
+    update, that is photo_index walked again for nothing. It is skipped for a library
+    synced whole in the last CATCH_UP_SKIP."""
+
+    def make_with(self, recent):
+        watcher = watching.Watcher(lambda: [self.library], lambda library: [self.root], self.sync, images.is_photo,
+                                   debounce=0.2, recheck=0.2, tick=0.05, recent=recent)
+        self.addCleanup(watcher.stop, 10)
+        return watcher
+
+    def test_is_skipped_for_a_library_synced_whole_lately(self):
+        watcher = self.make_with(lambda library: True)
+        watcher.start()
+        self.wait_until(lambda: watcher.watched())
+        time.sleep(0.8)
+        self.assertEqual([], self.synced)
+
+    def test_is_made_for_one_that_was_not(self):
+        watcher = self.make_with(lambda library: False)
+        watcher.start()
+        self.wait_until(lambda: self.synced)
+        self.assertEqual([("harbour", None)], self.synced)
+
+    def test_a_whole_sync_is_recent_by_the_librarys_own_record(self):
+        home = own_home.for_test(self, prefix="catch_up_")
+        library = Library(home.library("harbour.db"))
+        schema.ensure(library.path)
+        self.assertFalse(sync_service.synced_whole_within(library, 3600))
+        from tagpup.store import sync_runs
+        sync_runs.record(library.path, sync_runs.now(), whole=False, in_step=True, found={}, changed={})
+        self.assertFalse(sync_service.synced_whole_within(library, 3600), "a folder's sync is not the whole")
+        sync_runs.record(library.path, sync_runs.now(), whole=True, in_step=False, found={}, changed={})
+        self.assertTrue(sync_service.synced_whole_within(library, 3600))
+        with mock.patch.object(sync_service.time, "time", return_value=time.time() + 3601):
+            self.assertFalse(sync_service.synced_whole_within(library, 3600))
+
+
 class WhichProcessWatches(unittest.TestCase):
     def test_the_one_that_runs_the_jobs_and_never_a_tests_unless_it_asks(self):
         with mock.patch.dict(os.environ):

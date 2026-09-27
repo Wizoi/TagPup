@@ -21,7 +21,8 @@ walk of the folder, no file read.
 
 Notifications can be missed, so the whole library is synced
 - when the watcher first starts (a catch-up for what happened while the process was
-  not running);
+  not running), unless the library was synced whole in the last CATCH_UP_SKIP (a crash
+  restart, an update);
 - when Windows says its buffer overflowed, or a watch fails;
 - when a folder that was not there -- a drive unplugged -- is back. A folder that is not
   there is looked for again every RECHECK, and the libraries and their folders are read
@@ -45,6 +46,9 @@ logger = logging.getLogger(__name__)
 
 #: Seconds after the last notification for a folder before it is synced.
 DEBOUNCE = 3.0
+
+#: A library synced whole this lately gets no catch-up when the watcher starts (runtime).
+CATCH_UP_SKIP = 60 * 60
 
 #: How often the libraries, their folders and the folders not there are looked at again.
 RECHECK = 30.0
@@ -113,8 +117,11 @@ class Watcher:
     whether a file matters (a photo). The rest are the timings above, a test's shorter."""
 
     def __init__(self, libraries, folders, sync, concerns, debounce=DEBOUNCE, recheck=RECHECK, tick=TICK,
-                 clock=time.monotonic, observer=make_observer, max_watches=MAX_WATCHES):
+                 clock=time.monotonic, observer=make_observer, max_watches=MAX_WATCHES, recent=None):
         self._libraries, self._folders, self._sync, self._concerns = libraries, folders, sync, concerns
+        #: recent(library): was it synced whole lately? The catch-up at start is skipped
+        #: for one that was -- a crash restart or an update need not walk it again.
+        self._recent = recent or (lambda library: False)
         self.debounce, self.recheck, self.tick, self._clock = debounce, recheck, tick, clock
         self._make_observer, self.max_watches = observer, max_watches
         self._lock = threading.Lock()
@@ -331,7 +338,15 @@ class Watcher:
                 entry = wanted.setdefault(paths.key(folder), [paths.stored(folder), {}])
                 entry[1][library.key] = library
             if catch_up and folders:
-                self._note_whole([library])
+                try:
+                    lately = self._recent(library)
+                except Exception as e:
+                    logger.error("Could not read when %s was last synced: %s", library.name, e)
+                    lately = False
+                if lately:
+                    logger.info("%s was synced whole lately; no catch-up.", library.name)
+                else:
+                    self._note_whole([library])
 
         with self._lock:
             for key in [key for key in self._roots if key not in wanted]:

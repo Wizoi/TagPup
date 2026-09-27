@@ -16,6 +16,9 @@ from tagpup.store import db, journal, schema
 
 TABLE = "sync_runs"
 
+#: How a record spells a time (the journal's format).
+TIME = journal.TIME
+
 #: The columns a record is read back as.
 COLUMNS = ("id", "started", "finished", "whole", "in_step", "found", "changed", "change_id")
 
@@ -47,6 +50,14 @@ def _as_dict(row):
     found["whole"], found["in_step"] = bool(found["whole"]), bool(found["in_step"])
     found["found"], found["changed"] = json.loads(found["found"]), json.loads(found["changed"])
     return found
+
+
+def last_whole(conn):
+    """When the newest sync of the whole library finished (whatever it found), or None."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (TABLE,)).fetchone() is None:
+        return None
+    found = conn.execute("SELECT finished FROM sync_runs WHERE whole = 1 ORDER BY id DESC LIMIT 1").fetchone()
+    return found[0] if found else None
 
 
 def last(conn):
