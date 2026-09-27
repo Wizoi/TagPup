@@ -259,6 +259,26 @@ class NewFiles(SyncTestCase):
         self.assertIsNone(found["last_in_step"])
         self.assertEqual(1, found["last_run"]["changed"]["queued_folders"])
 
+    def test_with_no_roots_a_new_subfolder_of_a_held_folder_is_queued_and_nothing_reviewed(self):
+        """A library whose roots are not set yet keeps its held folders in step as indexing
+        walked them: a new subfolder too."""
+        self.indexed(self.photo(self.trip, "IMG_0002.jpg"))
+        sub = os.path.join(self.trip, "day 2")
+        os.makedirs(sub)
+        self.photo(self.trip, "IMG_0100.jpg")
+        self.photo(sub, "IMG_0101.jpg")
+        asked = []
+
+        def queue(folders):
+            asked.extend(folders)
+            return Result(attempted=len(folders), changed=len(folders))
+
+        result = self.run_sync(apply=True, queue=queue)
+        counts = result.details["counts"]
+        self.assertEqual((2, 0), (counts["new"], counts["review_folders"]))
+        self.assertEqual(sorted([self.trip, sub]), sorted(asked))
+        self.assertEqual([], sync.review(self.library, [])["folders"])
+
     def test_without_a_queue_new_files_are_reported(self):
         self.indexed(self.photo(self.meet, "IMG_0001.jpg"))
         self.photo(self.meet, "IMG_0100.jpg")

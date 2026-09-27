@@ -324,8 +324,8 @@ SETTINGS = {
         "library", "Root folders", "folders", "",
         "The folders the library's photos live under, one a line. Sync walks them: new photos in a "
         "folder already indexed are indexed; a new folder under a root is listed for you to include "
-        "or ignore. Empty is the folders the library holds photos in. First set from the topmost "
-        "folders it holds photos in.",
+        "or ignore. Empty (until you set them) keeps the folders the library holds in step, "
+        "new subfolders included, and offers nothing to review.",
         KINDS["folders"]["rules"]),
     "library.ignored": _setting(
         "library", "Ignored folders", "folders", "",

@@ -1,5 +1,5 @@
 {
- "version": "89077f81c5a0",
+ "version": "656f37b86ace",
  "blank": "\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
  "kinds": {
   "tag": {
@@ -422,7 +422,7 @@
    "label": "Root folders",
    "type": "folders",
    "default": "",
-   "info": "The folders the library's photos live under, one a line. Sync walks them: new photos in a folder already indexed are indexed; a new folder under a root is listed for you to include or ignore. Empty is the folders the library holds photos in. First set from the topmost folders it holds photos in.",
+   "info": "The folders the library's photos live under, one a line. Sync walks them: new photos in a folder already indexed are indexed; a new folder under a root is listed for you to include or ignore. Empty (until you set them) keeps the folders the library holds in step, new subfolders included, and offers nothing to review.",
    "locked": false,
    "consequences": [],
    "rules": [

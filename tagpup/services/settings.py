@@ -28,15 +28,13 @@ it says (`config_ini`, a callable returning {key: value}, or None), and only
 tagpup.runtime hands it (tests/test_config_single_owner.py).
 """
 import os
-import pathlib
 from dataclasses import dataclass
 from typing import Dict
 
 from tagpup.core import paths, validation
 from tagpup.core.result import Result
 from tagpup.services import sync as sync_service
-from tagpup.store import db, journal
-from tagpup.store import photos as store_photos
+from tagpup.store import journal
 from tagpup.store import settings as store_settings
 
 #: The value each setting has when a library does not say: what a new library is stamped with.
@@ -47,20 +45,19 @@ FROM_CONFIG = "stamp settings from config.ini"
 WITH_DEFAULTS = "stamp settings with the defaults"
 FROM_REPLACED = "stamp settings from the library it replaced"
 CHANGE = "change settings"
-ROOTS_FROM_FOLDERS = "stamp library roots from its folders"
 
 #: The library's root folders and the folders it ignores (phase 8's sync).
 ROOTS = "library.roots"
 IGNORED = "library.ignored"
 
-#: What a stamp writes: every setting but the roots, which come from the library's own
-#: folders once it holds photos (stamp_roots).
+#: What a stamp writes: every setting but the roots. A library has no roots until the
+#: owner sets them (`settings set library.roots`, an ordinary change, which can be
+#: undone); nothing sets them on its own (owner, 2026-09-26).
 STAMPED = {key: value for key, value in DEFAULTS.items() if key != ROOTS}
 
 #: The stamps: a library's first settings, which cannot be undone -- undone, the library
 #: held none, and the next read stamped it again, from config.ini if one was still there.
-#: Its roots are stamped on their own, once it holds photos (stamp_roots).
-STAMPS = frozenset({FROM_CONFIG, WITH_DEFAULTS, FROM_REPLACED, ROOTS_FROM_FOLDERS})
+STAMPS = frozenset({FROM_CONFIG, WITH_DEFAULTS, FROM_REPLACED})
 NOT_UNDONE = "A library's first settings cannot be undone; change them instead."
 
 _TRUE = frozenset({"true", "yes", "on", "1"})
@@ -140,39 +137,6 @@ def _folders(text):
     return [_trim(line) for line in str(text).split(validation.FOLDER_SEPARATOR) if _trim(line)]
 
 
-def default_roots(folders):
-    """The root folders a library holding photos in `folders` is first given: for each
-    first-level folder of a drive (or share) that holds any of them, the deepest folder
-    all of those are under -- the topmost common ancestors that are not a drive. A photo
-    directly on a drive's root is under none of them. In the spelling first given,
-    sorted by key."""
-    groups = {}
-    for folder in folders:
-        stored = paths.stored(folder)
-        parts = pathlib.PurePath(stored).parts
-        if len(parts) < 2:
-            continue   # a drive's root is never a library folder
-        groups.setdefault((paths.key(parts[0]), paths.key(os.path.join(parts[0], parts[1]))), []).append(stored)
-    roots = {}
-    for members in groups.values():
-        common = paths.stored(os.path.commonpath(members))
-        roots.setdefault(paths.key(common), common)
-    return [roots[key] for key in sorted(roots)]
-
-
-def roots_from_folders(library):
-    """default_roots of the folders `library` holds photos in, as the settings value (one a
-    line); "" for a library holding none. Reads only."""
-    if not os.path.exists(library.path):
-        return ""
-    conn = db.connect(db.readonly_uri(library.path), uri=True)
-    try:
-        held = [folder for folder, _count in store_photos.folders_held(conn)]
-    finally:
-        conn.close()
-    return validation.FOLDER_SEPARATOR.join(default_roots(held))
-
-
 def excluded_under(library, new_roots, old_roots=(), ignored=()):
     """The folders a change of roots excludes (owner, 2026-09-26: "any folders not added
     assume excluded"): each folder under one of `new_roots`, and under none of
@@ -205,34 +169,6 @@ def _setting_edit(held, key, value):
     return journal.update(store_settings.TABLE, (key,), {"value": held[key]}, {"value": value})
 
 
-def stamp_roots(library):
-    """Give a library that holds no root folders the ones its photos' folders give
-    (roots_from_folders), once, as a journaled stamp -- with, in the same change, every
-    folder under them holding photos and no indexed photo added to the ignored folders
-    (excluded_under). Nothing for a library that holds them already, or holds no photo
-    yet. A Result: `changed` the settings rows written; details["ignored_added"]."""
-    result = Result(attempted=1)
-    held = store_settings.read(library.path)
-    if not held or ROOTS in held:
-        return result
-    roots = roots_from_folders(library)
-    if not roots:
-        return result
-    ignored, added = _with_excluded(library, held, roots)
-    edits = [journal.insert(store_settings.TABLE, {"key": ROOTS, "value": roots})]
-    if added:
-        edits.append(_setting_edit(held, IGNORED, ignored))
-    result.details["ignored_added"] = added
-    try:
-        applied = journal.apply(library.path, ROOTS_FROM_FOLDERS, edits,
-                                summary={"roots": len(_folders(roots)), "ignored_added": added})
-    except journal.Refusal:
-        return result   # stamped by another process meanwhile
-    result.changed = applied.changed
-    result.details["change"] = applied.change_id
-    return result
-
-
 def _as_text(value):
     """A value as the table holds it: text, a boolean as true or false, None as empty."""
     if value is None:
@@ -252,7 +188,6 @@ def _stamping(found):
     """What stamping gives, from `found` -- {key: value} config.ini says, or None when
     the home has none: (values, the keys taken from it, the keys it held a value the
     validator refuses for, left at their default)."""
-    # The roots are stamped from the library's own folders, once it holds photos (stamp_roots).
     values, taken, refused = dict(STAMPED), [], []
     for key, value in (found or {}).items():
         if key not in values:
@@ -275,17 +210,9 @@ def read(library, config_ini=None):
     never stamped -- or not made yet -- what stamping it would give (`stamped` False)."""
     held = store_settings.read_only(library.path) if os.path.exists(library.path) else {}
     if held:
-        values = _filled(held)
-        if ROOTS not in held:
-            # What stamping them would give: the roots, and the folders they exclude.
-            values[ROOTS] = roots_from_folders(library)
-            values[IGNORED] = _with_excluded(library, held, values[ROOTS])[0]
-        return LibrarySettings(values, stamped=True)
+        return LibrarySettings(_filled(held), stamped=True)
     values, _taken, _refused = _stamping(_found(config_ini))
-    values[ROOTS] = roots_from_folders(library)
-    if values[ROOTS]:
-        values[IGNORED] = _with_excluded(library, {IGNORED: values[IGNORED]}, values[ROOTS])[0]
-    return LibrarySettings(values, stamped=False)
+    return LibrarySettings(_filled(values), stamped=False)
 
 
 def of(library, config_ini=None):
@@ -295,8 +222,6 @@ def of(library, config_ini=None):
     held = store_settings.read(library.path)
     if not held:
         stamp(library, _found(config_ini))
-        held = store_settings.read(library.path)
-    if held and ROOTS not in held and stamp_roots(library).changed:
         held = store_settings.read(library.path)
     return LibrarySettings(_filled(held), stamped=bool(held))
 

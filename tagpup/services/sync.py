@@ -177,6 +177,8 @@ def _sort_new(new, by_key, stops, ignored, ambiguous_files, roots):
     """Where each new file goes: ({indexed folder: new files}, the folders its new files
     are queued for; {folder to review: photos}; photos under an ignored folder; {folder
     held back: files}; photos in no folder the library holds and under none of `roots`).
+    With no `roots` (none set yet), a new file under a held folder is queued with its own
+    folder, whether the library holds it or not, and nothing is reviewed.
     A new file in a folder the library holds photos in is indexed
     with that folder alone. One in a folder holding none is under a folder to review: the
     topmost above it, below a root (`stops`, keys), that holds no indexed photo at any
@@ -212,7 +214,15 @@ def _sort_new(new, by_key, stops, ignored, ambiguous_files, roots):
                 top = parent
             tops[folder_key] = top
         top = tops[folder_key]
-        if not roots or not _under_any(folder, roots):
+        if not roots:
+            # A library with no roots (none set yet): every folder under one it holds is
+            # kept in step as indexing walked it -- a new subfolder queued too, each
+            # folder of new files indexed on its own -- and nothing is reviewed.
+            if folder_key in ambiguous_folders:
+                held_back[folder] = held_back.get(folder, 0) + 1
+            else:
+                queued.setdefault(folder_key, [folder, 0])[1] += 1
+        elif not _under_any(folder, roots):
             # Beside a folder the library holds outside every root (a folder indexed by
             # hand, elsewhere): kept in step itself, and nothing new beside it offered.
             outside += 1
