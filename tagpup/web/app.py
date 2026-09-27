@@ -82,6 +82,7 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
     app.config["RUNTIME"] = runtime
     if runtime is not None and getattr(runtime, "idle", None) is not None:
         # What the pages keep only while used, let go on the runtime's idle timer.
+        tagpup_routes.idle_caches(runtime.idle)
         tuner_routes.idle_caches(runtime.idle)
     app.config["PORTS"] = dict(ports or {})
     app.config["LIFECYCLE"] = lifecycle = lifecycle or lifecycles.Lifecycle(version=tagpup_config.code_version())

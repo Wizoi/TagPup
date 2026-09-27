@@ -46,20 +46,33 @@ identify_cache = state.PerLibrary(lambda library: identify_jobs.GridCache())
 #: another thread.
 identify_progress = state.PerLibrary(lambda library: identify_jobs.BuildProgress())
 
-#: The name New Person's pool is kept under in the process's idle registry (idle_caches).
-POOL = "New Person pool"
+#: The names this app's caches are kept under in the process's idle registry (idle_caches).
+POOL, IDENTIFY = "New Person pool", "identify caches"
+
+
+def _building():
+    """Is a grid being built for any library? Its caches are held meanwhile."""
+    for library_key in identify_progress.libraries():
+        progress = identify_progress.held(library_key)
+        if progress is not None and progress.building():
+            return True
+    return False
 
 
 def idle_caches(idle):
     """Register what this app keeps only while it is used in the process's idle registry
     (tagpup.core.idle.IdleCaches, the runtime's): New Person's pool of nameless faces --
-    about 185 MB on photo_index -- read again at its next use."""
+    about 185 MB on photo_index -- and the rest of Identify Faces' caches -- the queue,
+    each grid, the named faces' matrix -- each read again at its next use, never while a
+    grid is being built."""
     def release_pools():
         for library_key in identify_cache.libraries():
             cache = identify_cache.held(library_key)
             if cache is not None:
                 cache.drop("unnamed_faces")
     idle.register(POOL, release_pools)
+    idle.register(IDENTIFY, identify_cache.release, in_use=_building)
+    identify_cache.on_use = lambda: idle.used(IDENTIFY)
 
 
 def _used(name):

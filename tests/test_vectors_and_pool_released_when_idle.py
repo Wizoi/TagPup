@@ -125,7 +125,9 @@ class NewPersonsPool(unittest.TestCase):
             self.assertIn("New Person pool", runtime.release_idle())
             self.assertNotIn("unnamed_faces", cache.keys(), "the pool is still held")
             self.assertEqual(200, client.get("/library/api/face-matches-unmatched?id=1").status_code)
-            self.assertIn("unnamed_faces", cache.keys(), "the pool was not read again")
+            # The library's Identify Faces caches may have gone with it: read what it holds now.
+            self.assertIn("unnamed_faces", tuner_routes.identify_cache.of(library).keys(),
+                          "the pool was not read again")
 
 
 if __name__ == "__main__":

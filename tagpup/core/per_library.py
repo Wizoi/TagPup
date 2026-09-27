@@ -19,8 +19,13 @@ class PerLibrary:
         self._make = make
         self._held = {}
         self._lock = threading.Lock()
+        #: Called at each ask: how a cache in an idle registry says it was used
+        #: (tagpup.core.idle.IdleCaches.used), set when it is registered.
+        self.on_use = None
 
     def of(self, library):
+        if self.on_use is not None:
+            self.on_use()
         with self._lock:
             value = self._held.get(library.key)
             if value is None:
