@@ -1050,6 +1050,9 @@ def settings_set(ctx, key, value, acknowledged, apply_):
     if not apply_:
         console.print("Would change %s%s. Nothing changed. --apply writes it." % (", ".join(changed), also),
                       markup=False, soft_wrap=True)
+        if result.details.get("behind"):
+            console.print("The library is behind this version by %d migration(s); --apply brings it up to date "
+                          "first." % result.details["behind"], markup=False)
         return
     console.print("Changed %s%s. %s" % (", ".join(changed), also, maintenance.recorded(result, library.path)),
                   markup=False, soft_wrap=True)

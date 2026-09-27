@@ -120,6 +120,34 @@ class NoRootsUntilSet(unittest.TestCase):
         self.assertIn("A whole drive", refused.refused)
 
 
+class ADryRunOnALibraryBehind(unittest.TestCase):
+    """`settings set` without --apply writes nothing -- nor migrates a library behind this
+    version, which reading its settings for a change would: it reads them without
+    migrating and says how far behind the library is, as a maintenance dry run does."""
+
+    def test_the_file_is_left_as_it_was(self):
+        from test_migrations import at_version
+        from tagpup.store import schema
+
+        home = own_home.for_test(self)
+        older = home.library("older.db")
+        at_version(older, schema.LATEST - 1)
+        conn = db.connect(older)
+        try:
+            conn.executemany("INSERT INTO settings (key, value) VALUES (?, ?)", sorted(settings.STAMPED.items()))
+            conn.commit()
+        finally:
+            conn.close()
+        with open(older, "rb") as handle:
+            before = handle.read()
+        dry = settings.change(Library(older), {settings.ROOTS: os.path.join(home.root, "Pictures")}, apply=False)
+        with open(older, "rb") as handle:
+            self.assertEqual(before, handle.read(), "a dry run migrated the library")
+        self.assertIsNone(dry.refused)
+        self.assertEqual((True, 1, [settings.ROOTS]), (dry.details["dry_run"], dry.details["behind"],
+                                                         dry.details["changed"]))
+
+
 class FoldersNotAddedAreExcluded(unittest.TestCase):
     """The owner's rule (2026-09-26): "any folders not added assume excluded". When a
     library's roots are first set -- stamped, or changed -- every folder under a new root

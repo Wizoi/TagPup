@@ -34,7 +34,7 @@ from typing import Dict
 from tagpup.core import paths, validation
 from tagpup.core.result import Result
 from tagpup.services import sync as sync_service
-from tagpup.store import journal
+from tagpup.store import journal, schema
 from tagpup.store import settings as store_settings
 
 #: The value each setting has when a library does not say: what a new library is stamped with.
@@ -305,7 +305,8 @@ def change(library, values, acknowledged=(), apply=True):
     A change of the roots (library.roots) adds, in the same change, every folder under a
     new root that holds photos and no indexed photo to the ignored folders
     (excluded_under; owner, 2026-09-26): details["ignored_added"]. Without `apply`, a dry
-    run: the same checks and details, nothing written (details["dry_run"])."""
+    run: the same checks and details, nothing written (details["dry_run"]) -- nor a library
+    behind this version migrated: details["behind"] counts the migrations it lacks."""
     result = Result(attempted=len(values or {}))
     if not isinstance(values, dict) or not values:
         result.refuse("Say which settings to change.")
@@ -325,7 +326,12 @@ def change(library, values, acknowledged=(), apply=True):
             result.refuse(problem)
             return result
         wanted[key] = text
-    held = store_settings.read(library.path)
+    if apply:
+        held = store_settings.read(library.path)
+    else:
+        # A dry run reads without migrating a library behind this version, and says so.
+        held = store_settings.read_only(library.path)
+        result.details["behind"] = len(schema.pending(library.path))
     if not held:
         result.refuse("The library's settings have not been stamped yet: open it first.")
         return result
