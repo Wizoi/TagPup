@@ -110,7 +110,7 @@ class ToFileRotates(unittest.TestCase):
         self.assertGreater(logs.MAX_BYTES, 0)
         self.assertGreater(logs.KEEP, 0)
         with open(os.path.join(ROOT, "tagpup_cli.py"), encoding="utf-8") as handle:
-            self.assertIn("_tagpup_logs.to_file(_tagpup_logs.for_library(", handle.read())
+            self.assertIn("_tagpup_logs.to_file(_tagpup_logs.run_log(", handle.read())
 
 
 if __name__ == "__main__":

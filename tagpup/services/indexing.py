@@ -22,7 +22,7 @@ from tagpup.core.result import Result
 CLUSTERING_BUTTON = "Run Identity Resolution Clustering"
 CLUSTER_ELSEWHERE = "%s in TagPup Runner" % CLUSTERING_BUTTON
 
-#: The log the indexer writes, one per library (tagpup.logs.for_library): indexer-<library>.log.
+#: The kind of log the indexer writes, one file a run (tagpup.logs.run_log).
 INDEXER_LOG = "indexer"
 
 _INDEXER_TQDM =re.compile(r"^(.*?):\s*(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
@@ -113,7 +113,7 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
         return result
     env = os.environ.copy()
     env["TAGPUP_DB_PATH"] = library.path
-    # The indexer logs to data/logs/indexer-<library>.log as well as to this pipe, each
+    # The indexer logs to a file of its run's own in data/logs as well as to this pipe, each
     # line carrying the tags of the run it is part of (tagpup.core.runs).
     runs.child_environment(env, log_to=INDEXER_LOG)
 

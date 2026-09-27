@@ -461,8 +461,10 @@ logs (by source, filtered, raw, downloaded). Done:
 - **Runs in the logs**: a recurring job's run, a sync and a run of the indexer hold a tag
   while they run (`tagpup.core.runs`), and every line of a program's log carries the tags
   of the runs under way on its thread (`tagpup.logs.RunTag`); "Logs for this run" filters
-  by it. The indexer the queue starts writes `data/logs/indexer-<library>.log`, told its
-  run's tags in its environment.
+  by it. The indexer the queue starts writes a log of its run's own,
+  `data/logs/indexer-<library>-<run>.log` (two processes may index one library at once, and
+  one file rotated by two fails on Windows), quietly -- its stderr is the progress bar --
+  told its run's tags in its environment; the oldest beyond 30 go as a run starts.
 - **Logs read bounded**: `tagpup.logs.read` reads a log from its end, never more than 2 MB,
   paged back by offset and followed by offset (a file smaller than the offset has rotated);
   `tail` gives the raw end (1 MB); the download streams the file. Every log rotates (5 MB,

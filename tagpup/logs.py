@@ -10,9 +10,13 @@ servers log every request slower than a second and every request that failed
 Each line carries the tags of the runs under way on its thread -- a recurring job's run,
 a sync, an index (tagpup.core.runs) -- as `[run job:photo_index:12]` after the logger's
 name, so the Activity page can show one run's lines. A process started for a run writes
-its own file, <kind>-<library>.log (for_library): the indexer the index queue starts
-writes indexer-<library>.log, one run at a time per library, so no two processes rotate
-one file.
+a file of that run's own, <kind>-<library>-<run>.log (run_log): the indexer the index
+queue starts writes indexer-<library>-<started>-<pid>-<n>.log. Two processes may index
+one library at once -- the always-on server's queue and a sync run by hand -- and one
+file written and rotated by two fails on Windows; so each run has its own, and the oldest
+beyond KEEP_RUN_LOGS of a kind are removed as a new one starts (prune_run_logs). Such a
+process writes its log quietly (to_file's `quiet`): its stdout and stderr are the pipe
+its parent turns into a progress bar, where logging's "--- Logging error ---" showed.
 """
 import logging
 import logging.handlers
@@ -28,6 +32,9 @@ KEEP = 5
 
 #: What a program's log may be called: letters, digits, `_`, `.` and `-`.
 _UNSAFE = re.compile(r"[^\w.-]")
+
+#: How many runs' logs of one kind are kept (the indexer's: one a run).
+KEEP_RUN_LOGS = 30
 
 #: Where the servers log slow and failed requests.
 REQUESTS = "tagpup.requests"
@@ -47,12 +54,60 @@ class RunTag(logging.Filter):
         return True
 
 
-def for_library(kind, library_name):
-    """The program name of `kind`'s log for one library: `indexer-photo_index`."""
-    return "%s-%s" % (_UNSAFE.sub("_", kind), _UNSAFE.sub("_", library_name or "none"))
+def run_log(kind, tags):
+    """The file a run of `kind` writes: `indexer-photo_index-20260926T101500-4242-1.log`
+    for the run `index:photo_index:20260926T101500-4242-1`. `tags` is a run's tag, or the
+    tags a process was started for (tagpup.core.runs.current), of which the innermost --
+    the last -- is its own run. The one place the name is made: the child writes it, and
+    the Activity page is sent it."""
+    found = [tags] if isinstance(tags, str) else list(tags or ())
+    found = [each for each in found if runs.is_tag(each)]
+    if not found:
+        return "%s-%d.log" % (_UNSAFE.sub("_", kind), os.getpid())
+    _kind, library, ident = found[-1].split(":", 2)
+    return "%s-%s-%s.log" % (_UNSAFE.sub("_", kind), library, ident)
 
 
-def to_file(program, level=logging.INFO):
+def prune_run_logs(kind, keep=None):
+    """Remove the oldest runs' logs of `kind` beyond `keep` (KEEP_RUN_LOGS), each with its
+    rotated copies. One another process still has open is left for the next time."""
+    keep = KEEP_RUN_LOGS if keep is None else keep
+    folder = log_dir()
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return 0
+    pattern = re.compile(r"^%s-.+\.log(?:\.\d+)?$" % re.escape(_UNSAFE.sub("_", kind)))
+    families = {}
+    for name in names:
+        if pattern.match(name):
+            base = name if name.endswith(".log") else name.rsplit(".", 1)[0]
+            try:
+                modified = os.path.getmtime(os.path.join(folder, name))
+            except OSError:
+                continue
+            family = families.setdefault(base, [0.0, []])
+            family[0] = max(family[0], modified)
+            family[1].append(name)
+    removed = 0
+    for _base, (_modified, members) in sorted(families.items(), key=lambda item: -item[1][0])[keep:]:
+        for name in members:
+            try:
+                os.remove(os.path.join(folder, name))
+                removed += 1
+            except OSError:
+                pass
+    return removed
+
+
+class _QuietRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """A log file whose write failures say nothing on stderr (to_file's `quiet`)."""
+
+    def handleError(self, record):
+        pass
+
+
+def to_file(program, level=logging.INFO, quiet=False):
     """Also log to <data_dir>/logs/<program>.log, from this process. Returns the path.
 
     Call it from the process that does the work. Under the reloader that is the child,
@@ -61,14 +116,16 @@ def to_file(program, level=logging.INFO):
     """
     folder = log_dir()
     os.makedirs(folder, exist_ok=True)
-    path = os.path.abspath(os.path.join(folder, program + ".log"))
+    path = os.path.abspath(os.path.join(folder, program if program.endswith(".log") else program + ".log"))
     root = logging.getLogger()
     for handler in root.handlers:
         # A FileHandler keeps os.path.abspath of the name it was given, which is `path`.
         if isinstance(handler, logging.FileHandler) and handler.baseFilename == path:
             return path
-    handler = logging.handlers.RotatingFileHandler(
-        path, maxBytes=MAX_BYTES, backupCount=KEEP, encoding="utf-8", delay=True)
+    # `quiet`: a line that cannot be written is dropped, not reported on stderr -- which, in
+    # a process started for a run, is its parent's progress bar.
+    kind = _QuietRotatingFileHandler if quiet else logging.handlers.RotatingFileHandler
+    handler = kind(path, maxBytes=MAX_BYTES, backupCount=KEEP, encoding="utf-8", delay=True)
     handler.setFormatter(logging.Formatter(FORMAT))
     handler.addFilter(RunTag())
     handler.setLevel(level)
@@ -106,6 +163,7 @@ SOURCES = (
     (re.compile(r"^tagpup_web\.console$"), "Server console"),
     (re.compile(r"^tagpup_web$"), "Web server"),
     (re.compile(r"^supervisor$"), "Always on (supervisor)"),
+    (re.compile(r"^indexer-(.+)-(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)\d\d-\d+-\d+$"), "Indexer ({0}, {2}-{3} {4}:{5})"),
     (re.compile(r"^indexer-(.+)$"), "Indexer ({0})"),
     (re.compile(r"^tagpup_mcp$"), "MCP server"),
     (re.compile(r"^runner$"), "Desktop runner"),

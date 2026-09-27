@@ -1,8 +1,9 @@
 """Each line of a program's log says which run it belongs to (tagpup.core.runs,
 tagpup.logs): a recurring job's run, a sync, a run of the indexer -- so the Activity page's
 "Logs for this run" shows that run's lines and no others. And the indexer the index queue
-starts writes a log of its own, data/logs/indexer-<library>.log, not only the pipe its
-parent reads (phase 8.5).
+starts writes a log of its own, data/logs/indexer-<library>-<run>.log -- one per run, so
+no two processes ever write or rotate one file -- not only the pipe its parent reads, and a
+log it cannot write never says so on that pipe, which is the progress bar (phase 8.5).
 """
 import logging
 import os
@@ -97,6 +98,8 @@ class ALineSaysItsRun(LinesTest):
 
     def test_a_tag_holds_nothing_but_names_and_numbers(self):
         self.assertEqual("job:all:3", runs.job_tag(None, 3))
+        # A run of the indexer names its process: two processes' runs never share a tag.
+        self.assertIn("-%d-" % os.getpid(), runs.index_tag("harbour"))
         self.assertEqual("sync:My_Library:20260926T101500", runs.sync_tag("My Library", "2026-09-26 10:15:00"))
         self.assertTrue(runs.is_tag(runs.index_tag("harbour")))
         self.assertFalse(runs.is_tag("job:harbour:1 - injected"))
@@ -177,22 +180,80 @@ class TheRunsTagTheirLines(LinesTest):
 
 
 class TheIndexerWritesItsOwnLog(unittest.TestCase):
-    """The CLI started for a run writes data/logs/indexer-<library>.log, tagged."""
+    """The CLI started for a run writes a log of that run's own, tagged."""
 
-    def test_the_cli_started_for_a_run_logs_to_its_file(self):
-        home = own_home.for_test(self)
+    def child(self, home, run, message):
         env = dict(os.environ, TAGPUP_HOME=home.root, TAGPUP_DB_PATH=home.library("harbour.db"))
         env[runs.LOG_TO] = "indexer"
-        env[runs.ENV] = "index:harbour:20260926T101500-2"
-        code = ("import logging, tagpup_cli; logging.getLogger('tagpup_cli').warning('from the indexer')")
+        env[runs.ENV] = run
+        code = "import logging, tagpup_cli; logging.getLogger('tagpup_cli').warning(%r)" % message
         done = processes.run([sys.executable, "-c", code], cwd=ROOT, env=env, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT, timeout=120)
+                             stderr=subprocess.STDOUT, timeout=120, text=True)
         self.assertEqual(0, done.returncode, done.stdout)
-        path = os.path.join(home.data, "logs", "indexer-harbour.log")
-        self.assertTrue(os.path.exists(path), "the indexer wrote no log of its own")
-        with open(path, encoding="utf-8") as handle:
-            text = handle.read()
-        self.assertIn("tagpup_cli [run index:harbour:20260926T101500-2] - from the indexer", text)
+        return done.stdout
+
+    def read(self, home, name):
+        with open(os.path.join(home.data, "logs", name), encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_each_run_of_the_indexer_writes_a_file_of_its_own(self):
+        """Two processes indexing one library -- the always-on server's queue and a sync run
+        by hand -- each write their own file: one file rotated by two fails on Windows."""
+        home = own_home.for_test(self)
+        self.child(home, "index:harbour:20260926T101500-4242-1", "from the server's indexer")
+        self.child(home, "index:harbour:20260926T101500-5151-1", "from the hand-run sync's indexer")
+        names = sorted(name for name in os.listdir(os.path.join(home.data, "logs")) if name.startswith("indexer-"))
+        self.assertEqual(["indexer-harbour-20260926T101500-4242-1.log", "indexer-harbour-20260926T101500-5151-1.log"],
+                         names)
+        first = self.read(home, names[0])
+        self.assertIn("tagpup_cli [run index:harbour:20260926T101500-4242-1] - from the server's indexer", first)
+        self.assertNotIn("hand-run", first)
+        self.assertEqual(names[0], logs.run_log("indexer", "index:harbour:20260926T101500-4242-1"))
+
+    def test_the_file_is_named_for_the_innermost_run(self):
+        # A sync's indexer is started for the sync and for its own run: its file is the run's.
+        self.assertEqual("indexer-harbour-20260926T101500-1-3.log",
+                         logs.run_log("indexer", ("sync:harbour:20260926T101400", "index:harbour:20260926T101500-1-3")))
+
+    def test_the_oldest_runs_logs_are_pruned(self):
+        home = own_home.for_test(self)
+        folder = os.path.join(home.data, "logs")
+        os.makedirs(folder)
+        for i in range(8):
+            for name in ("indexer-harbour-2026092%dT000000-1-1.log" % i, "indexer-harbour-2026092%dT000000-1-1.log.1" % i):
+                path = os.path.join(folder, name)
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write("x")
+                os.utime(path, (1000000 + i, 1000000 + i))
+        with open(os.path.join(folder, "tagpup_web.log"), "w", encoding="utf-8") as handle:
+            handle.write("x")
+        logs.prune_run_logs("indexer", keep=3)
+        left = sorted(os.listdir(folder))
+        self.assertEqual(["indexer-harbour-20260925T000000-1-1.log", "indexer-harbour-20260925T000000-1-1.log.1",
+                          "indexer-harbour-20260926T000000-1-1.log", "indexer-harbour-20260926T000000-1-1.log.1",
+                          "indexer-harbour-20260927T000000-1-1.log", "indexer-harbour-20260927T000000-1-1.log.1",
+                          "tagpup_web.log"], left)
+
+    def test_a_log_it_cannot_write_says_nothing_on_the_pipe(self):
+        """The indexer's stdout and stderr are the pipe the parent turns into the progress
+        bar: logging's "--- Logging error ---" and its traceback would show there."""
+        import contextlib
+        import io
+        home = own_home.for_test(self)
+        path = logs.to_file("indexer-harbour-quiet", quiet=True)
+        root = logging.getLogger()
+        handler = [h for h in root.handlers if isinstance(h, logging.FileHandler) and h.baseFilename == path][0]
+        self.addCleanup(lambda: (root.removeHandler(handler), handler.close()))
+
+        def fails(record):
+            raise PermissionError("another process holds the file")
+
+        handler.shouldRollover = fails
+        said = io.StringIO()
+        with contextlib.redirect_stderr(said):
+            logging.getLogger("tests.log_runs.quiet").warning("a line")
+        self.assertEqual("", said.getvalue())
+        self.assertTrue(home)
 
     def test_the_cli_run_by_hand_writes_no_file(self):
         home = own_home.for_test(self)

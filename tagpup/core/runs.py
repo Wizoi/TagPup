@@ -14,7 +14,7 @@ daily job runs logs both tags, so the job's lines include its sync's.
 
 A process started for a run -- the CLI's `index`, started by the index queue -- is told
 its tags in its environment (ENV), and every line it logs carries them; LOG_TO tells it
-which log file to write in data/logs (tagpup.logs.for_library).
+which kind of log to write in data/logs, one file for its run (tagpup.logs.run_log).
 
 A tag names what the Activity page already shows of the run: the library's name, and the
 job run's id, the sync's start or the index's start, so the page can ask for its lines
@@ -31,7 +31,7 @@ import time
 ENV = "TAGPUP_RUN_ID"
 
 #: The environment variable a child process is told which log to write in: its kind
-#: ("indexer"), the file being <kind>-<library>.log (tagpup.logs.for_library).
+#: ("indexer"), the file being <kind>-<library>-<run>.log (tagpup.logs.run_log).
 LOG_TO = "TAGPUP_LOG_TO"
 
 #: What a tag may hold: a library's name holds nothing else (tagpup.core.validation).
@@ -70,9 +70,11 @@ def sync_tag(library, started):
 
 
 def index_tag(library, now=None):
-    """A new run of the indexer for `library`: when it started, and a number no other run
-    of this process shares."""
-    return tag("index", library, "%s-%d" % (time.strftime("%Y%m%dT%H%M%S", time.localtime(now)), next(_counter)))
+    """A new run of the indexer for `library`: when it started, this process, and a number
+    no other run of this process shares -- so no two processes' runs share a tag, nor the
+    log file named for it."""
+    return tag("index", library, "%s-%d-%d" % (time.strftime("%Y%m%dT%H%M%S", time.localtime(now)), os.getpid(),
+                                               next(_counter)))
 
 
 def is_tag(text):

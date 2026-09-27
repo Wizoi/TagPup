@@ -10,7 +10,7 @@ as the process: nothing about it is saved yet (docs/ARCHITECTURE.md, the `jobs` 
 
 Each run of the indexer has a tag (tagpup.core.runs.index_tag), held while it runs, so
 its lines in this process's log and in the indexer's own (the CLI it starts writes
-indexer-<library>.log) can be shown together; and the queue keeps what became of its last
+indexer-<library>-<run>.log) can be shown together; and the queue keeps what became of its last
 HISTORY runs, for the Activity page -- in this process, as the queue itself is.
 """
 import logging
