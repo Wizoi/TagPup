@@ -14,6 +14,10 @@ flask
 waitress
 # The MCP server Claude works with a library through (tagpup.mcp), over stdio.
 mcp
+# The always-on process watches each library's folders (tagpup.jobs.watching). Its Windows
+# emitter is extended there to be told of an overflow, from watchdog's own functions: a
+# major version is checked before it is taken.
+watchdog>=6,<7
 # Drives the real app in a real browser: screenshots, and the end-to-end
 # click-latency measurements in scripts/measure_identify_faces.py.
 playwright

@@ -17,7 +17,8 @@ Run by the always-on process (tagpup.supervisor), which hands it a token in the
 environment, it says where it answers in data/server.json, lets the supervisor drain it
 before an update (tagpup.web.lifecycle), and exits PORTS_TAKEN when another server
 already answers on its ports. Beside its requests it runs the background tasks
-(tagpup.runtime.BACKGROUND): the recurring jobs, and letting idle models go.
+(tagpup.runtime.BACKGROUND): the recurring jobs, letting idle models go, and watching
+each library's folders (tagpup.jobs.watching).
 """
 import argparse
 import logging

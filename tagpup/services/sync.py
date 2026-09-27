@@ -50,7 +50,7 @@ from tagpup.core import paths, validation
 from tagpup.core.result import Result
 from tagpup.files import images
 from tagpup.services import maintenance, refresh_rows, relink_photos
-from tagpup.store import db, sync_runs
+from tagpup.store import db, schema, sync_runs
 from tagpup.store import photos as store_photos
 
 #: What the change is recorded as.
@@ -473,6 +473,21 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, root
         result.details["warnings"].append("The sync was not recorded (%s: %s); the next sync records its own."
                                           % (type(e).__name__, e))
     return result
+
+
+def watch_folders(library, roots=()):
+    """The folders the always-on process watches for `library` (tagpup.jobs.watching): its
+    root folders and every folder it holds photos in, each the topmost of those under it --
+    the folders sync keeps in step. None for a library behind this version's schema: it is
+    left alone until an app opens it and migrates it, as the recurring jobs leave it."""
+    if schema.pending(library.path):
+        return []
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        held = [folder for folder, _count in store_photos.folders_held(conn)]
+    finally:
+        conn.close()
+    return walk_roots([paths.stored(root) for root in roots] + held)
 
 
 def last(library):

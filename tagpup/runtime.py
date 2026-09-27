@@ -28,7 +28,7 @@ module that builds a model anywhere else.
 
 `background(runtime)` is what the web server -- the always-on process -- runs beside its
 requests (docs/ARCHITECTURE.md, phase 8): the recurring jobs, the release of idle models,
-and the watcher sync will add. Each is registered once, in BACKGROUND.
+and the folder watcher (tagpup.jobs.watching). Each is registered once, in BACKGROUND.
 """
 import collections
 import logging
@@ -39,8 +39,9 @@ import time
 from tagpup import config as tagpup_config
 from tagpup.core import library as libraries
 from tagpup.core.library import Library
+from tagpup.files import images
 from tagpup.jobs import indexing as indexing_jobs
-from tagpup.jobs import recurring
+from tagpup.jobs import recurring, watching
 from tagpup.services import file_changes, indexing, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester as suggestions
@@ -71,7 +72,8 @@ def peek_settings(library):
 
 
 #: Set, a process a test started runs the recurring jobs, which it otherwise never does;
-#: set NO_JOBS, no process runs them (a sandbox measuring the app, say).
+#: set NO_JOBS, no process runs them (a sandbox measuring the app, say). The folder watcher
+#: follows the same two: no watcher where no job runs.
 RUN_JOBS = "TAGPUP_RUN_JOBS"
 NO_JOBS = "TAGPUP_NO_JOBS"
 
@@ -184,8 +186,22 @@ def _idle_models_task(runtime):
     return Every("ReleaseIdleModelsThread", runtime.release_idle, max(1.0, min(60.0, runtime.idle_after / 4)))
 
 
-# Sync's watcher (phase 8c) registers here: a task whose start() watches each library's
-# roots and whose busy() is true while a sync it started is writing.
+@background_task("folder watcher")
+def _folder_watcher_task(runtime):
+    """Each library's folders watched, and a folder synced when its notifications settle
+    (tagpup.jobs.watching); the whole library at start. In the process that runs the
+    recurring jobs, and never in one a test started unless it asks (runs_recurring_jobs):
+    NO_JOBS means no watcher either."""
+    if not runs_recurring_jobs():
+        return None
+    return watching.Watcher(home_libraries, watch_folders,
+                            lambda library, folder: sync(library, folder=folder, apply=True), images.is_photo)
+
+
+def watch_folders(library):
+    """The folders to watch for `library`: its roots, from its settings read without
+    stamping them, and the folders it holds photos in (tagpup.services.sync.watch_folders)."""
+    return sync_service.watch_folders(library, peek_settings(library).roots)
 
 
 class Background:
