@@ -88,10 +88,25 @@ class InstallingANewCommitAtStart(InstallCase):
         self.assertTrue(install_app.stale(None, "0dd8402", False))
         self.assertFalse(install_app.stale("20260925-115722-0dd8402", "", False), "no git: leave it")
 
-    def update(self, commit, dirty):
+    def update(self, commit, dirty, newer=True):
         answers = {"rev-parse": commit, "status": " M tagpup/x.py" if dirty else ""}
-        with mock.patch.object(install_app, "git", side_effect=lambda *a: answers[a[0]]):
+        with mock.patch.object(install_app, "git", side_effect=lambda *a: answers[a[0]]), \
+                mock.patch.object(install_app, "is_ancestor", return_value=newer):
             return install_app.update(self.dest, self.home, sys.executable, say=self.said.append)
+
+    def test_an_older_or_unrelated_commit_is_never_installed(self):
+        """A checkout moved back (a branch switched, a bisect) is not newer than what is
+        installed, and the always-on process installs unattended."""
+        first = self.install(name="20260925-115722-0dd8402")[0]
+        self.assertIsNone(self.update("bfeb9b7", False, newer=False))
+        self.assertEqual(first, install_app.read_current(self.dest))
+        self.assertTrue(any("not newer" in line for line in self.said), self.said)
+
+    def test_newer_is_asked_of_git(self):
+        head = install_app.git("rev-parse", "--short", "HEAD")
+        self.assertTrue(install_app.is_ancestor(head), "a commit is its own ancestor")
+        self.assertTrue(install_app.is_ancestor(install_app.git("rev-parse", "--short", "HEAD~1")))
+        self.assertFalse(install_app.is_ancestor("0000000"), "a commit git does not know")
 
     def test_a_new_commit_is_installed_and_the_same_one_is_not(self):
         first = self.install(name="20260925-115722-0dd8402")[0]
@@ -158,6 +173,24 @@ class KeepingVersions(InstallCase):
             self.install(name=name)
         self.assertEqual(install_app.versions(self.dest), names[1:])
         self.assertEqual(install_app.read_current(self.dest), names[-1])
+
+    def test_the_versions_the_always_on_process_runs_are_never_removed(self):
+        """A server running an old version while an update waits (a long index) had its
+        code deleted from under it by the installs after."""
+        from tagpup import supervisor
+        names = ["20260101-000000-a", "20260102-000000-b", "20260103-000000-c"]
+        for name in names:
+            self.install(name=name)
+        me = {"pid": os.getpid(), "started": processes.started(os.getpid())}
+        data = os.path.join(self.home, "data")
+        supervisor.write_json(os.path.join(data, supervisor.SERVER_FILE), dict(me, version=names[0], ports={}))
+        supervisor.write_json(os.path.join(data, supervisor.STATE_FILE),
+                              dict(me, state="running", version=names[1], server_version=names[0]))
+        self.install(name="20260104-000000-d")
+        self.install(name="20260105-000000-e")
+        kept = install_app.versions(self.dest)
+        self.assertIn(names[0], kept, "the server's version was removed")
+        self.assertIn(names[1], kept, "the supervisor's version was removed")
 
     def test_the_version_being_replaced_is_never_removed(self):
         # It is what the running apps were started from.

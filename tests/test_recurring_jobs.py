@@ -396,7 +396,7 @@ class TheWebServersThread(Base):
                 mock.patch.object(recurring.Runner, "start", side_effect=lambda *a, **k: order.append("start")), \
                 mock.patch.object(recurring.Runner, "stop", side_effect=lambda *a, **k: order.append("stop")):
             tagpup_web.main(["--tagpup-port", "1", "--tuner-port", "2"])
-            self.assertEqual(["serve", "stop"], order)
+            self.assertEqual(["serve"], order, "a runner is made only in a process that runs the jobs")
             del order[:]
             with mock.patch.dict(os.environ, {runtimes.RUN_JOBS: "1"}):
                 tagpup_web.main(["--tagpup-port", "1", "--tuner-port", "2"])

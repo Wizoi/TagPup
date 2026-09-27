@@ -68,6 +68,10 @@ class BuildProgress:
         Left behind, a stale entry would keep a progress bar on screen for good."""
         self._by_name.pop(name, None)
 
+    def building(self):
+        """Is a grid being built now?"""
+        return bool(self._by_name)
+
     def of(self, name):
         """The progress the status route answers with: what was reported, or idle."""
         return self._by_name.get(name) or {"name": name, "active": False, "percent": 0}

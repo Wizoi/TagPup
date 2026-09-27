@@ -7,15 +7,25 @@ Each app had a launcher of its own (tagpup_gui.py, tagtuner.py), each starting a
 of its own (docs/ARCHITECTURE.md, phase 5). Started while the server is already
 running, this opens the page in the browser and stops: the installer's TagPup.cmd and
 TagTuner.cmd both run it, so double-clicking either twice reaches the running server
-rather than a second one. `--reload` restarts the process when a .py file is saved,
-for development only (scripts/reloader.py); the installed copy never changes under
-its server.
+rather than a second one; and when the owner has chosen the always-on process
+(scripts/startup.py) and it is not running, they start it rather than a server of their
+own, and open the page once it answers. `--reload` restarts the process when a .py file
+is saved, for development only (scripts/reloader.py); the installed copy never changes
+under its server.
+
+Run by the always-on process (tagpup.supervisor), which hands it a token in the
+environment, it says where it answers in data/server.json, lets the supervisor drain it
+before an update (tagpup.web.lifecycle), and exits PORTS_TAKEN when another server
+already answers on its ports. Beside its requests it runs the background tasks
+(tagpup.runtime.BACKGROUND): the recurring jobs, letting idle models go, and watching
+each library's folders (tagpup.jobs.watching).
 """
 import argparse
 import logging
 import os
 import socket
 import sys
+import time
 import webbrowser
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -24,12 +34,14 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup import logs  # noqa: E402
+from tagpup import supervisor  # noqa: E402
 from tagpup.core import library as libraries  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
+from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
 logger = logging.getLogger("tagpup_web")
 
@@ -40,6 +52,9 @@ PORTS = {"tagpup": 8090, "tuner": 8080}
 #: The reloader's environment variables: `_CHILD` marks the process holding the
 #: server, `_RELOADED` a restart.
 RELOADER = "TAGPUP_WEB_RELOADED"
+
+#: How long a launcher waits for the always-on process it started to answer.
+BACKGROUND_START_SECONDS = 120
 
 
 def page_url(port):
@@ -71,6 +86,23 @@ def open_page(url):
         webbrowser.open(url)
 
 
+def open_on_the_background_server(installed, port):
+    """The launcher's way when the owner chose the always-on process: start it unless it
+    runs, wait for its server to answer on `port`, and open the page. The exit code."""
+    if supervisor.running() is None:
+        logger.info("Starting the always-on process (%s).", supervisor.BACKGROUND_LAUNCHER)
+        supervisor.start_in_background(installed)
+    deadline = time.monotonic() + BACKGROUND_START_SECONDS
+    while time.monotonic() < deadline:
+        if answering(port):
+            open_page(page_url(port))
+            return 0
+        time.sleep(0.5)
+    logger.error("The always-on process did not answer on port %d in %ds; see data/logs/supervisor.log.",
+                 port, BACKGROUND_START_SECONDS)
+    return 1
+
+
 def served_libraries(startup=None):
     """The libraries whose models are warmed at start: the startup library, or else each
     one the picker offers in the data folder, of which the warm-up loads the one set of
@@ -95,6 +127,14 @@ def main(argv=None):
     parser.add_argument("--open", choices=("tagpup", "tuner", "none"), default="none",
                         help="open this app's page in the browser once the server answers")
     parser.add_argument("--reload", action="store_true", help="restart when a .py file is saved (development)")
+    parser.add_argument("--release-models-after", type=float, metavar="MINUTES",
+                        default=runtimes.RELEASE_MODELS_AFTER_MINUTES,
+                        help="let the models go when none has been used for this long; the next Suggest loads "
+                             "them again; 0 keeps them (default: %(default)s)")
+    parser.add_argument("--installed", default=None,
+                        help="the installed app's folder, which the launchers name: with --open, when the "
+                             "owner chose the always-on process there (scripts/startup.py), start it rather "
+                             "than a server of this process's own")
     args = parser.parse_args(argv)
 
     # Without the reloader this process is the server, which is what the child flag
@@ -112,6 +152,18 @@ def main(argv=None):
         logger.info("A server is already answering on port %d; opening its page.", ports[args.open])
         open_page(page_url(ports[args.open]))
         return 0
+    if args.open != "none" and supervisor.always_on(args.installed):
+        return open_on_the_background_server(args.installed, ports[args.open])
+
+    # The always-on process's child: it hands this server a token -- taken out of the
+    # environment, so no program the server starts inherits it -- and waits rather than
+    # counting a crash while another server holds the ports.
+    token = os.environ.pop(supervisor.TOKEN, None)
+    if token:
+        taken = [port for port in ports.values() if answering(port)]
+        if taken:
+            logger.warning("A server is already answering on port %d; this one is not started.", taken[0])
+            return supervisor.PORTS_TAKEN
 
     if args.reload:
         from reloader import start_reloader_thread
@@ -131,26 +183,34 @@ def main(argv=None):
         startup = Library(db_path)
     # The process's models, one per set of settings a library names, given to both apps;
     # one set warmed on a thread of their own -- the startup library's, or the one most
-    # libraries in the data folder share -- never a library held open (#99).
-    runtime = Runtime()
-    apps = {ports[kind]: web.create_app(kind, startup=startup, runtime=runtime, ports=ports)
+    # libraries in the data folder share -- never a library held open (#99) -- and let go
+    # after they have gone unused for a while.
+    idle = args.release_models_after * 60 if args.release_models_after and args.release_models_after > 0 else None
+    runtime = Runtime(idle_after=idle)
+    # What runs beside the requests (tagpup.runtime.BACKGROUND): the recurring jobs --
+    # snapshots, pruning the journal -- of every library in the data folder, in the
+    # process that runs them (none a test started), and letting idle models go
+    # (docs/ARCHITECTURE.md, phase 8).
+    background = runtimes.background(runtime)
+    version = tagpup_config.code_version()
+    lifecycle = Lifecycle(version=version, token=token, background=background)
+    apps = {ports[kind]: web.create_app(kind, startup=startup, runtime=runtime, ports=ports, lifecycle=lifecycle)
             for kind in ("tagpup", "tuner")}
     if not os.environ.get("TAGPUP_WEB_NO_WARMUP"):
         runtime.warm_up_in_background(served_libraries(startup))
-    # The recurring jobs -- snapshots, pruning the journal -- of every library in the
-    # data folder, looked for on a thread of their own while the server runs; none in a
-    # process a test started (docs/ARCHITECTURE.md, phase 8).
-    jobs = runtimes.recurring_jobs(runtime)
-    if runtimes.runs_recurring_jobs():
-        jobs.start()
-    ready = None
-    if args.open != "none":
-        def ready():
+    background.start()
+
+    def ready():
+        if token:
+            supervisor.write_server(ports, version)
+        if args.open != "none":
             open_page(page_url(ports[args.open]))
     try:
         web.serve(apps, ready=ready)
     finally:
-        jobs.stop()
+        background.stop()
+        if token:
+            supervisor.forget_server()
     return 0
 
 

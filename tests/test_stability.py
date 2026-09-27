@@ -121,8 +121,8 @@ class TestStability(unittest.TestCase):
         photo_index.load()
         
         # Verify metadata is loaded
-        self.assertEqual(len(photo_index.metadata), 1, "Photo record should be loaded")
-        meta = photo_index.metadata[0]
+        self.assertEqual(len(photo_index.records()), 1, "Photo record should be loaded")
+        meta = photo_index.records()[0]
         self.assertTrue(meta["has_embedding"], "Photo should report having an embedding")
         
         # Verify face record is present
@@ -135,7 +135,7 @@ class TestStability(unittest.TestCase):
         
         # Reload and verify
         photo_index.load()
-        meta_after = photo_index.metadata[0]
+        meta_after = photo_index.records()[0]
         self.assertFalse(meta_after["has_embedding"], "Photo embedding should be cleared (None)")
         
         faces_after = face_names(photo_index)

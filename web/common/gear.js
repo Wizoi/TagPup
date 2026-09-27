@@ -27,8 +27,13 @@
  * An item with data-app is a link to that app's page on this library. Its address comes
  * from the server (/api/apps): the ports are the process's, and a page that spelled
  * them would go on pointing at the usual port when the launcher had been told another.
+ *
+ * Below the items, not one of them, the menu says which version of TagPup answers
+ * (/api/server, asked at each opening: the always-on process moves onto a new version
+ * while a page stays open).
  */
 import { api } from './api.js';
+import { buildElement } from './dom.js';
 
 /** Each app's page on this library, from the server once: { tagpup: url, tuner: url }. */
 let gearAppUrls = null;
@@ -68,6 +73,24 @@ function fillAppLinks(menu) {
     });
 }
 
+/** What the gear says of the version answering, from /api/server's `version`. */
+export function versionText(status) {
+    if (!status || typeof status !== 'object' || !('version' in status)) return '';
+    return status.version ? `TagPup ${status.version}` : 'TagPup, run from its code folder';
+}
+
+/** Show which version answers, below the menu's items. */
+function fillVersion(menu) {
+    let line = menu.querySelector('.gear-version');
+    if (!line) {
+        line = buildElement('div', { className: 'gear-version', attrs: { role: 'none' } });
+        menu.append(line);
+    }
+    return api.json('/api/server')
+        .then(status => { line.textContent = versionText(status); })
+        .catch(() => { line.textContent = ''; });
+}
+
 /**
  * Make `button` open `menu`. `actions` maps an item's data-action to what it does.
  * Returns { open, close, isOpen, ready }: `ready` settles once the links know where
@@ -100,7 +123,7 @@ export function wireGear(button, menu, actions = {}) {
             button.setAttribute('aria-expanded', 'true');
             document.addEventListener('mousedown', onOutside, true);
         }
-        ready = fillAppLinks(menu);
+        ready = Promise.all([fillAppLinks(menu), fillVersion(menu)]);
         focusItem(focusAt);
         return ready;
     };

@@ -96,6 +96,18 @@ class FolderCache:
 
 folders = state.PerLibrary(lambda library: FolderCache())
 
+#: The name the folder scans are kept under in the process's idle registry.
+FOLDER_SCANS = "folder scans"
+
+
+def idle_caches(idle):
+    """Register the folder scans in the process's idle registry (tagpup.core.idle, the
+    runtime's): each library's scanned folders, let go when unused for the idle period
+    and scanned again at their next open; kept while a Suggest run is under way, which
+    started from a scan."""
+    idle.register(FOLDER_SCANS, folders.release, in_use=lambda: suggestion_jobs.running() > 0)
+    folders.on_use = lambda: idle.used(FOLDER_SCANS)
+
 
 def forget_scans(library):
     """Photos of `library` were rewritten: its cached scans describe them as they were.

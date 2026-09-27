@@ -46,6 +46,41 @@ identify_cache = state.PerLibrary(lambda library: identify_jobs.GridCache())
 #: another thread.
 identify_progress = state.PerLibrary(lambda library: identify_jobs.BuildProgress())
 
+#: The names this app's caches are kept under in the process's idle registry (idle_caches).
+POOL, IDENTIFY = "New Person pool", "identify caches"
+
+
+def _building():
+    """Is a grid being built for any library? Its caches are held meanwhile."""
+    for library_key in identify_progress.libraries():
+        progress = identify_progress.held(library_key)
+        if progress is not None and progress.building():
+            return True
+    return False
+
+
+def idle_caches(idle):
+    """Register what this app keeps only while it is used in the process's idle registry
+    (tagpup.core.idle.IdleCaches, the runtime's): New Person's pool of nameless faces --
+    about 185 MB on photo_index -- and the rest of Identify Faces' caches -- the queue,
+    each grid, the named faces' matrix -- each read again at its next use, never while a
+    grid is being built."""
+    def release_pools():
+        for library_key in identify_cache.libraries():
+            cache = identify_cache.held(library_key)
+            if cache is not None:
+                cache.drop("unnamed_faces")
+    idle.register(POOL, release_pools)
+    idle.register(IDENTIFY, identify_cache.release, in_use=_building)
+    identify_cache.on_use = lambda: idle.used(IDENTIFY)
+
+
+def _used(name):
+    runtime = state.runtime()
+    if runtime is not None and getattr(runtime, "idle", None) is not None:
+        runtime.idle.used(name)
+
+
 #: Set while a library's faces are being clustered. Assignments are refused meanwhile:
 #: clustering rewrites the names they would be setting.
 clustering = state.PerLibrary(lambda library: threading.Event())
@@ -282,6 +317,7 @@ def face_matches_unmatched():
     if not _library_there(library):
         return jsonify({"matches": []})
     try:
+        _used(POOL)
         return jsonify(identify_service.unnamed_like(
             library, face_id, lambda: identify_jobs.unnamed_faces(library, identify_cache.of(library))))
     except NotFound:

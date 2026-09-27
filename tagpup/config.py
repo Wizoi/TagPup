@@ -13,6 +13,8 @@ format and the ExifTool it names. What is left here is the machine's:
   Where the libraries are is not a setting: data/ in the home.
 - Which ExifTool the machine has: where its installer puts it, else the one on PATH.
   A library may name another.
+- `code_version`, the installed version the code is (scripts/install_app.py writes its
+  name beside it), or None for a checkout: what the pages say answers them.
 - `config_ini`, what a home's config.ini says, which tagpup.runtime hands to the
   one-time stamping of a library holding no settings (tagpup.services.settings.of), so
   a library in use keeps the settings it was made with. Nothing else reads the file
@@ -29,6 +31,9 @@ CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: The folder in a home that holds the libraries.
 DATA = "data"
 
+#: The file an installed version holds its name in, first line (scripts/install_app.py).
+VERSION_FILE = "VERSION.txt"
+
 
 def home():
     """The TagPup home: TAGPUP_HOME, else the code folder."""
@@ -38,6 +43,16 @@ def home():
 def data_dir():
     """The folder the libraries are in: data/ in the home."""
     return os.path.join(home(), DATA)
+
+
+def code_version(code_root=None):
+    """The name of the installed version this code is -- `20260926-101500-dc32868` -- or
+    None when it runs from a checkout, which has no VERSION.txt."""
+    try:
+        with open(os.path.join(code_root or CODE_ROOT, VERSION_FILE), encoding="utf-8") as handle:
+            return handle.readline().strip() or None
+    except OSError:
+        return None
 
 
 def library_path(db_name):

@@ -45,12 +45,14 @@ changed, and whether it left the library in step -- nothing new, changed or move
 over; missing files do not count against it -- which is the pages' "last in step".
 """
 import os
+import threading
+import time
 
 from tagpup.core import paths, validation
 from tagpup.core.result import Result
 from tagpup.files import images
 from tagpup.services import maintenance, refresh_rows, relink_photos
-from tagpup.store import db, sync_runs
+from tagpup.store import db, generations, schema, sync_runs
 from tagpup.store import photos as store_photos
 
 #: What the change is recorded as.
@@ -473,6 +475,54 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, root
         result.details["warnings"].append("The sync was not recorded (%s: %s); the next sync records its own."
                                           % (type(e).__name__, e))
     return result
+
+
+#: {library key: (photos generation, the folders it holds photos in)}: watch_folders is
+#: asked every 30 s, and reading every photo's path (68,387 on photo_index) each time for
+#: an answer that changes only with the photos was the watcher's whole cost.
+_held_folders = {}
+_held_lock = threading.Lock()
+
+
+def watch_folders(library, roots=()):
+    """The folders the always-on process watches for `library` (tagpup.jobs.watching): its
+    root folders and every folder it holds photos in, each the topmost of those under it --
+    the folders sync keeps in step. None for a library behind this version's schema: it is
+    left alone until an app opens it and migrates it, as the recurring jobs leave it. The
+    folders held are read again only when the photos generation has moved."""
+    if schema.pending(library.path):
+        return []
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        generation = generations.value(conn, "photos")
+        with _held_lock:
+            cached = _held_folders.get(library.key)
+        if cached is not None and cached[0] == generation:
+            held = cached[1]
+        else:
+            held = [folder for folder, _count in store_photos.folders_held(conn)]
+            with _held_lock:
+                _held_folders[library.key] = (generation, held)
+    finally:
+        conn.close()
+    return walk_roots([paths.stored(root) for root in roots] + held)
+
+
+def synced_whole_within(library, seconds):
+    """Did a sync of the whole of `library` finish in the last `seconds`? (Its record is
+    kept only for a sync that wrote what it found.)"""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        finished = sync_runs.last_whole(conn)
+    finally:
+        conn.close()
+    if not finished:
+        return False
+    try:
+        at = time.mktime(time.strptime(finished, sync_runs.TIME))
+    except (TypeError, ValueError):
+        return False
+    return time.time() - at < seconds
 
 
 def last(library):

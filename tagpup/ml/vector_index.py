@@ -10,6 +10,12 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+#: The OpenMP threads a search runs on: the caller's alone. On photo_index's 68,387
+#: vectors each OpenMP thread of a flat search kept about 128 MB for the process's life --
+#: 2.3 GB after the first search on a 16-thread machine -- and one thread searched as fast
+#: (10 ms against 12.5). Suggest's workers each search on a thread of their own.
+SEARCH_THREADS = 1
+
 
 def _flat_index(dim):
     """A flat inner-product index: on the GPU when there is one, else on the CPU."""
@@ -57,6 +63,8 @@ class VectorIndex:
         k = min(k, self._index.ntotal)
         if k == 0:
             return []
+        # Every search, not once: the setting is the process's, and anything may set it.
+        faiss.omp_set_num_threads(SEARCH_THREADS)
         scores, indices = self._index.search(query, k)
         return [(float(score), self.items[i]) for score, i in zip(scores[0], indices[0])
                 if 0 <= i < len(self.items)]

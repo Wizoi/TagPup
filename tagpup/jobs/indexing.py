@@ -35,6 +35,14 @@ def queue_for(library):
         return _queues.setdefault(library.key, IndexQueue())
 
 
+def running():
+    """How many libraries have folders being indexed or waiting in this process: what an
+    update of the always-on process waits for (tagpup.web.lifecycle)."""
+    with _queues_lock:
+        queues = list(_queues.values())
+    return sum(1 for queue in queues if queue.busy())
+
+
 def forget(library):
     """Drop a library's queue and what became of its folders. A worker still indexing
     one finishes it, into a queue nothing reads."""
@@ -147,6 +155,11 @@ class IndexQueue:
         """Where a folder has got -- queued, running, completed, failed or cancelled --
         or READY, for one nobody has asked about."""
         return dict(self._statuses.get(paths.key(folder), READY))
+
+    def busy(self):
+        """Is a folder being indexed, or waiting to be?"""
+        with self._lock:
+            return bool(self._pending) or (self._runner is not None and self._runner.is_alive())
 
     def pending(self):
         """The folders waiting, in order, as {"folder", "cluster"}."""
