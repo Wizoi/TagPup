@@ -231,6 +231,23 @@ class WhatAStoppedSupervisorLeaves(Base):
         made.stop()
         thread.join(30)
 
+    def test_one_that_ends_by_itself_is_not_waited_for_nor_killed_after(self):
+        """The drain went on to its bound for a server that had gone, then killed its
+        pid -- by then, maybe another process's."""
+        with open(os.path.join(self.work, "busy"), "w", encoding="utf-8"):
+            pass
+        orphan = self.orphan("an-old-token")
+        supervisor.write_json(supervisor.data_file(supervisor.STATE_FILE),
+                              {"pid": 1, "state": "running", "server_token": "an-old-token"})
+        made = self.make("serve", stop_drain_limit=60, retry_move=0.1)
+        end_it = processes.kill_tree   # the test's own, before the supervisor's is watched
+        threading.Timer(0.5, lambda: end_it(orphan.pid)).start()
+        with mock.patch.object(supervisor.processes, "kill_tree", wraps=supervisor.processes.kill_tree) as kill:
+            started = time.monotonic()
+            made.end_orphan()
+        self.assertLess(time.monotonic() - started, 15, "it waited out its bound for a server that was gone")
+        kill.assert_not_called()
+
     def test_one_whose_token_it_does_not_know_is_ended(self):
         orphan = self.orphan("a-token-nobody-kept")
         made = self.make("serve")

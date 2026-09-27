@@ -789,14 +789,16 @@ class Supervisor:
         logger.warning("A server (pid %s) a supervisor before this one left running holds the ports; ending it%s.",
                        where.get("pid"), " once it drains" if token else "")
         give_up = self._clock() + self.stop_drain_limit
-        while token and self._clock() < give_up:
+        while token and self._clock() < give_up and _alive(where):
             answer = self._drain_at(where, token)
             if answer.get("drained"):
                 break
             time.sleep(min(self.retry_move, max(0.0, give_up - self._clock())))
-        processes.kill_tree(where["pid"])
+        # Only the process it was: a pid is soon another's once its process has ended.
+        if _alive(where):
+            processes.kill_tree(where["pid"])
         deadline = time.monotonic() + 30
-        while server() is not None and time.monotonic() < deadline:
+        while _alive(where) and time.monotonic() < deadline:
             time.sleep(0.1)
         remove(data_file(SERVER_FILE))
 
