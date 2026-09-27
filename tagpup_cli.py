@@ -228,7 +228,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # By paths.key: a folder indexed under one spelling and scanned under another is
     # the same photos, and keyed by the raw string every one of them was re-embedded
     # and given a second row.
-    existing_entries = {paths.key(meta["path"]): meta for meta in photo_index.metadata}
+    existing_entries = {paths.key(meta["path"]): meta for meta in photo_index.records()}
     images_to_process = []
     skipped_count = 0
 
@@ -757,13 +757,14 @@ def stats(ctx):
         taxonomy = TagTaxonomy(db_path)
         taxonomy.load()
 
-        total_indexed = len(photo_index.metadata)
+        records = photo_index.records()
+        total_indexed = len(records)
         
         # Tag and people distribution
         tag_counts = {}
         people_counts = {}
         
-        for meta in photo_index.metadata:
+        for meta in records:
             for tag in meta.get("tags", []):
                 tag_counts[tag] = tag_counts.get(tag, 0) + 1
             for person in meta.get("people", []):
@@ -1238,7 +1239,7 @@ def list_index(ctx, folder):
     try:
         # Filter paths and gather metadata
         # paths.is_under, not startswith: C:\Photos2 starts with C:\Photos.
-        matches = [meta for meta in photo_index.metadata
+        matches = [meta for meta in photo_index.records()
                    if not folder or paths.is_under(meta["path"], folder)]
 
         if not matches:
@@ -1291,14 +1292,15 @@ def remove(ctx, path, folder):
 
     try:
         to_remove = set()
+        records = photo_index.records() if (path or folder) else []
         if path:
-            for meta in photo_index.metadata:
+            for meta in records:
                 if paths.same(meta["path"], path):
                     to_remove.add(meta["path"])
 
         if folder:
             # is_under, not startswith: removing C:\Photos must not take C:\Photos2.
-            for meta in photo_index.metadata:
+            for meta in records:
                 if paths.is_under(meta["path"], folder):
                     to_remove.add(meta["path"])
 
@@ -1343,7 +1345,7 @@ def index_faces(ctx, directory: str, force: bool):
         all_images = scan_for_images(directory)
         # Compared by key, and each photo carried forward under its row's spelling so
         # the faces recorded for it name the same path its photos row does.
-        indexed_paths = {paths.key(meta["path"]): meta["path"] for meta in photo_index.metadata}
+        indexed_paths = {paths.key(meta["path"]): meta["path"] for meta in photo_index.records()}
 
         target_images = [indexed_paths[paths.key(img)] for img in all_images
                          if paths.key(img) in indexed_paths]

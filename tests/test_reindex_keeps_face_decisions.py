@@ -186,8 +186,8 @@ class TestBuildOrUpdateWritesInPlace(FaceDecisionCase):
         meta = fake_meta(self.photo)
         meta["tags"] = ["Places/Harbour"]
         index.build_or_update([[0.3] * expected_dim()], [meta], dim=expected_dim())
-        self.assertEqual(len(index.metadata), 1)
-        self.assertEqual(index.metadata[0]["tags"], ["Places/Harbour"])
+        self.assertEqual(len(index.records()), 1)
+        self.assertEqual(index.records()[0]["tags"], ["Places/Harbour"])
         index.close()
         self.assertEqual({box: row[0] for box, row in self.faces().items()}, ids)
 
@@ -215,7 +215,7 @@ class TestResetKeepsHandGivenNames(FaceDecisionCase):
                 ids["[8, 0, 12, 4]"]: None,
             })
             # The photo still lists the person named by hand; not the one clustering named.
-            self.assertEqual(index.metadata[0]["people"], ["Rowan Thackeray"])
+            self.assertEqual(index.records()[0]["people"], ["Rowan Thackeray"])
         finally:
             index.close()
 

@@ -520,10 +520,50 @@ INDEX_COLUMNS = ("path", "mtime", "size", "tags", "people", "captions", "raw_met
 
 def index_rows(conn, model):
     """Every photo row, INDEX_COLUMNS each, with its vector under `model`: the whole
-    library, as PhotoIndex loads it."""
+    library, as the indexer compares it with the files."""
     return conn.execute(
         "SELECT p.path, p.mtime, p.size, p.tags, " + PEOPLE_JSON + ", p.captions, p.raw_metadata, p.year, e.vector"
         " FROM photos p LEFT JOIN embeddings e ON e.photo_id = p.id AND e.model = ?", (model,)).fetchall()
+
+
+def vectors(conn, model):
+    """(photo id, vector bytes) of every photo holding a vector under `model`, by id: all
+    PhotoIndex keeps in memory. Nothing else of the row is read."""
+    return conn.execute("SELECT e.photo_id, e.vector FROM embeddings e JOIN photos p ON p.id = e.photo_id"
+                        " WHERE e.model = ? ORDER BY e.photo_id", (model,)).fetchall()
+
+
+def counts(conn, model):
+    """(photos, photos holding a vector under `model`)."""
+    return conn.execute("SELECT (SELECT COUNT(*) FROM photos),"
+                        " (SELECT COUNT(*) FROM embeddings e JOIN photos p ON p.id = e.photo_id"
+                        " WHERE e.model = ?)", (model,)).fetchone()
+
+
+#: A photo's record as PhotoIndex answers it (records): its id first, then
+#: RECORD_COLUMNS, and whether it holds a vector under the model asked about.
+RECORD_COLUMNS = ("id", "path", "mtime", "size", "tags", "people", "captions", "raw_metadata", "year", "vectored")
+
+#: Ids asked about at once: SQLite's limit on bound values is far above, and a list this
+#: long is one statement's worth.
+CHUNK = 500
+
+
+def records(conn, model, photo_ids=None):
+    """RECORD_COLUMNS of the photos `photo_ids` (in no particular order; an id with no row
+    is left out), or of every photo: what a search answers with, read for its results
+    alone. The vector is not read, only whether there is one."""
+    select = ("SELECT p.id, p.path, p.mtime, p.size, p.tags, " + PEOPLE_JSON + ", p.captions, p.raw_metadata,"
+              " p.year, EXISTS (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?) FROM photos p")
+    if photo_ids is None:
+        return conn.execute(select + " ORDER BY p.id", (model,)).fetchall()
+    photo_ids = list(photo_ids)
+    found = []
+    for start in range(0, len(photo_ids), CHUNK):
+        chunk = photo_ids[start:start + CHUNK]
+        found += conn.execute(select + " WHERE p.id IN (%s)" % ",".join("?" * len(chunk)),
+                              (model,) + tuple(chunk)).fetchall()
+    return found
 
 
 def ensure_row(conn, photo_path):

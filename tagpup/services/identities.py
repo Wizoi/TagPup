@@ -164,7 +164,8 @@ def resolve(photo_index, max_iterations=5):
     # is its photo row's since faces point at photos by id; before, a face could
     # spell its photo apart from the row, and a raw lookup missed it and lost the
     # photo's people tags -- the anchors and votes this whole resolution runs on.
-    meta_by_key = {paths.key(meta["path"]): meta for meta in photo_index.metadata}
+    # Read once for the run: the index keeps no records (PhotoIndex.records).
+    meta_by_key = {paths.key(meta["path"]): meta for meta in photo_index.records()}
 
     # What counts as evidence of who is in a photo: its keywords, and names given
     # to its faces by hand. `people` also holds the names on its faces, and some of

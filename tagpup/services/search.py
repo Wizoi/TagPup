@@ -116,9 +116,31 @@ class PhotoEmbeddings:
         return embedding
 
 
+def _record(row):
+    """A photo's record as the index answers it, from store.photos.records' row: the shape
+    every caller reads -- "path", "mtime", "size", "tags", "people", "captions",
+    "raw_metadata", "year", "has_embedding" -- and its "id"."""
+    photo_id, path, mtime, size, tags_json, people_json, captions_json, raw_json, year, vectored = row
+    try:
+        tags, people = json.loads(tags_json), json.loads(people_json)
+        captions, raw_meta = json.loads(captions_json), json.loads(raw_json)
+    except Exception:
+        tags, people, captions, raw_meta = [], [], [], {}
+    return {"id": photo_id, "path": path, "mtime": mtime, "size": size, "tags": tags, "people": people,
+            "captions": captions, "raw_metadata": raw_meta, "year": year, "has_embedding": bool(vectored)}
+
+
 class PhotoIndex:
-    """A library's photos in memory, with the nearest-neighbour index over their CLIP
-    embeddings under one model, and what indexing writes.
+    """A library's photos as CLIP sees them: the nearest-neighbour index over their vectors
+    under one model, and what indexing writes.
+
+    In memory it keeps only what a search needs: each vector, by its photo's id. What a
+    photo holds -- its path, tags, people, captions, raw_metadata, year -- is read from
+    the library by id, for a search's results alone (search), or for every photo when a
+    caller asks (records). It held every row's record as well, parsed: on photo_index
+    about 230 MB beside the vectors' 270, kept for as long as the library was open
+    (owner, 2026-09-26: "if everything is going to be a database call anyway, can the
+    in-memory cache be minimized when not in use?").
 
     The SQL is tagpup.store's (photos, embeddings, taxonomy) and the vector index
     tagpup.ml.vector_index's; this class joins them. Its faces are the faces store's and
@@ -138,13 +160,17 @@ class PhotoIndex:
         #: loads the photos without vectors, and refuses to write one.
         self.model = model
         self.conn: Optional[sqlite3.Connection] = None
+        #: The vectors, each item its photo's id.
         self.index: Optional[VectorIndex] = None
-        self.metadata: List[Dict[str, Any]] = []
-        self.indexed_metadata: List[Dict[str, Any]] = []
+        #: How many photos the library holds, and how many of them hold a vector.
+        self.count = 0
+        self.indexed = 0
         self.dim = 512  # Default
         # One load at a time. TagPup loads its startup library in a background thread,
         # and a Suggest clicked meanwhile checks for changes on the same index.
         self._load_lock = threading.RLock()
+        # One read at a time on the shared connection: Suggest searches from four threads.
+        self._read_lock = threading.Lock()
 
     def load(self) -> bool:
         """Connect to SQLite database and build in-memory FAISS index."""
@@ -176,52 +202,44 @@ class PhotoIndex:
         except Exception as e:
             index_log.error(f"Error loading SQLite database: {e}", exc_info=True)
             self.index = None
-            self.metadata = []
-            self.indexed_metadata = []
+            self.count = self.indexed = 0
             return False
 
     def _read_rows(self) -> bool:
-        """Read the photos and their vectors on self.conn into memory."""
+        """Read the photos' vectors on self.conn into memory, by photo id."""
         # Taken before the rows: a write landing in between costs one reload
         # later, never a missed one. See reload_if_changed.
         self._signature = self._photos_signature()
-        self.metadata = []
-        self.indexed_metadata = []
-        embeddings = []
-        for path, mtime, size, tags_json, people_json, captions_json, raw_meta_json, year, emb_bytes in (
-                store_photos.index_rows(self.conn, self.model)):
-            try:
-                tags = json.loads(tags_json)
-                people = json.loads(people_json)
-                captions = json.loads(captions_json)
-                raw_meta = json.loads(raw_meta_json)
-            except Exception:
-                tags, people, captions, raw_meta = [], [], [], {}
-            has_emb = (emb_bytes is not None and len(emb_bytes) > 0)
-            meta_item = {
-                "path": path,
-                "mtime": mtime,
-                "size": size,
-                "tags": tags,
-                "people": people,
-                "captions": captions,
-                "raw_metadata": raw_meta,
-                # When it was taken, as the library records it (photos.year).
-                "year": year,
-                "has_embedding": has_emb
-            }
-            self.metadata.append(meta_item)
-            if has_emb:
+        with self._read_lock:
+            self.count, _vectored = store_photos.counts(self.conn, self.model)
+            rows = store_photos.vectors(self.conn, self.model) if self.model is not None else []
+        ids, embeddings = [], []
+        for photo_id, emb_bytes in rows:
+            if emb_bytes:
+                ids.append(photo_id)
                 embeddings.append(np.frombuffer(emb_bytes, dtype=np.float32))
-                self.indexed_metadata.append(meta_item)
-
+        del rows
+        self.indexed = len(ids)
         if embeddings:
             self.dim = len(embeddings[0])
-            self.index = VectorIndex(embeddings, self.indexed_metadata)
-            index_log.info(f"Loaded {len(self.metadata)} index entries from SQLite.")
+            self.index = VectorIndex(embeddings, ids)
+            index_log.info(f"Loaded {len(ids)} vectors of {self.count} photos from SQLite.")
         else:
             self.index = None
         return True
+
+    def records(self, photo_ids=None) -> List[Dict[str, Any]]:
+        """What each photo holds (see _record), read from the library now: of `photo_ids`,
+        in their order and leaving out any with no row, or of every photo. Not kept."""
+        if self.conn is None:
+            return []
+        with self._read_lock:
+            rows = store_photos.records(self.conn, self.model, photo_ids)
+        found = [_record(row) for row in rows]
+        if photo_ids is None:
+            return found
+        by_id = {record["id"]: record for record in found}
+        return [by_id[photo_id] for photo_id in photo_ids if photo_id in by_id]
 
     def build_or_update(self, embeddings: List[List[float]], metas: List[Dict[str, Any]], dim: int = 512, reload: bool = True):
         """Batch insert/update photos inside the SQLite database (transaction-safe)."""
@@ -257,10 +275,14 @@ class PhotoIndex:
             raise e
 
     def search(self, query_vector: List[float], k: int = 15) -> List[Tuple[float, Dict[str, Any]]]:
-        """Search the in-memory FAISS index for the k most similar vectors."""
+        """The `k` photos nearest `query_vector`: [(similarity, record)], nearest first, each
+        record read from the library for this answer (records). A photo removed since the
+        vectors were read is left out."""
         if self.index is None:
             return []
-        return self.index.search(query_vector, k)
+        nearest = self.index.search(query_vector, k)
+        found = {record["id"]: record for record in self.records([photo_id for _sim, photo_id in nearest])}
+        return [(sim, found[photo_id]) for sim, photo_id in nearest if photo_id in found]
 
     def remove_paths(self, paths_to_remove: Set[str]):
         """Remove specific paths from the SQLite database and reload."""

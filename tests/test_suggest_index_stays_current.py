@@ -59,7 +59,7 @@ class IndexReloadsWhenChanged(unittest.TestCase):
     def test_a_photo_indexed_since_is_picked_up(self):
         add_photo(self.db_path, "b.jpg")  # by another connection: the CLI indexer
         self.assertTrue(self.index.reload_if_changed())
-        self.assertEqual(2, len(self.index.metadata))
+        self.assertEqual(2, self.index.count)
         self.assertFalse(self.index.reload_if_changed())
 
     def test_people_named_since_are_picked_up(self):
@@ -80,7 +80,7 @@ class IndexReloadsWhenChanged(unittest.TestCase):
         finally:
             conn.close()
         self.assertTrue(self.index.reload_if_changed())
-        self.assertEqual(["Wren Halloway"], self.index.metadata[0]["people"])
+        self.assertEqual(["Wren Halloway"], self.index.records()[0]["people"])
 
 
 class OneIndexPerLibrary(unittest.TestCase):
@@ -107,10 +107,10 @@ class OneIndexPerLibrary(unittest.TestCase):
 
     def test_a_run_after_indexing_sees_the_new_photos(self):
         first = self.runtime.photo_index(self.library)
-        self.assertEqual(1, len(first.metadata))
+        self.assertEqual(1, first.count)
         add_photo(self.db_path, "b.jpg")
         again = self.runtime.photo_index(self.library)
-        self.assertEqual(2, len(again.metadata))
+        self.assertEqual(2, again.count)
 
     def test_its_vectors_are_the_runtimes_models(self):
         self.assertEqual(self.runtime.model_key(self.library), self.runtime.photo_index(self.library).model)
