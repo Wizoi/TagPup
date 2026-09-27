@@ -479,6 +479,20 @@ class MovingOntoANewVersion(Base):
         made._child = None
         self.assertEqual([supervisor.QUIET, 0], asked)
 
+    def test_after_a_failed_hand_over_it_is_not_pinned_for_ever(self):
+        """Pinned to its own version after one failed hand-over, it read the pin as what
+        was installed, and never looked at current.txt again."""
+        made = self.make_installed([])
+        made._child_version = "20260926-090000-aaaaaaa"
+        self.set_current("20260926-120000-bbbbbbb")
+        made._keep("20260926-090000-aaaaaaa")
+        made.look_for_update()
+        self.assertEqual("20260926-120000-bbbbbbb", made._pending, "current.txt was not read")
+        # And once the patience is over, the server starts from what is installed again.
+        self.assertEqual("20260926-090000-aaaaaaa", made.current()[0])
+        made._pinned_until = made._clock() - 1
+        self.assertEqual("20260926-120000-bbbbbbb", made.current()[0])
+
     def test_an_install_the_owner_made_by_hand_is_moved_onto_too(self):
         made = self.make_installed([])
         thread, _ended = self.in_thread(made)

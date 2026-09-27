@@ -458,6 +458,7 @@ class Supervisor:
         self.hand_over_wait = hand_over_wait
         #: The version to keep running when one to hand over to did not start.
         self._pinned = None
+        self._pinned_until = None
         self._successor = None
         #: The token of the server a supervisor before this one ran, kept until any server
         #: it left running has been seen to (end_orphan): this one's own writes of
@@ -500,7 +501,7 @@ class Supervisor:
     def current(self):
         """(the version to run, its code folder): current.txt's for an installed app, or
         the one kept when a hand-over to current.txt's failed."""
-        if self.installed and self._pinned:
+        if self.installed and self._pinned and self._clock() < (self._pinned_until or 0):
             return self._pinned, os.path.join(self.installed, "versions", self._pinned)
         if self.installed:
             version = read_current(self.installed)
@@ -672,7 +673,8 @@ class Supervisor:
         if not self.installed:
             return
         self._install()
-        version, _code = self.current()
+        # What is installed: current.txt, never the version kept after a failed hand-over.
+        version = read_current(self.installed)
         if version and version != self._child_version:
             logger.info("Version %s is installed; the server moves onto it at the next quiet moment.", version)
             self._pending = version
@@ -737,8 +739,10 @@ class Supervisor:
         return True
 
     def _keep(self, version):
-        """Stay on `version`, and look for a newer one again only after the patience."""
+        """Stay on `version` -- the server started from it, whatever current.txt says --
+        for the patience, and look for a newer one again after it."""
         self._pinned = version
+        self._pinned_until = self._clock() + self.patience
         self._next_update = self._clock() + self.patience
 
     def _resume_server(self):
