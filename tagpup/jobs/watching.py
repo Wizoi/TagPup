@@ -135,6 +135,13 @@ class Watcher:
         self._observer = None
         self._started_before = False
         self._too_many = set()
+        #: For the Activity page (status): each library's name by key, when its folders
+        #: last changed (a notification that concerned it, time.time()), the sync under
+        #: way, and each library's last sync.
+        self._names = {}
+        self._last_event = {}
+        self._current = None
+        self._last_sync = {}
 
     # ---- The background task -----------------------------------------------------------
 
@@ -174,6 +181,26 @@ class Watcher:
         """Is a sync it started running?"""
         with self._lock:
             return self._syncing > 0
+
+    def status(self):
+        """What the Activity page shows: {"running", "roots": [{"path", "watched", "absent",
+        "libraries"}], "libraries": {name: {"last_event", "pending_folders", "whole_pending",
+        "last_sync", "not_watched"}}, "syncing": {"library", "folder", "started"} or None}."""
+        with self._lock:
+            roots = [{"path": root["path"], "watched": root["watch"] is not None, "absent": root["absent"],
+                      "libraries": sorted(library.name for library in root["libraries"].values())}
+                     for root in self._roots.values()]
+            found = {}
+            for key, name in self._names.items():
+                pending = self._pending.get(key) or {"folders": {}, "whole": None}
+                found[name] = {"last_event": self._last_event.get(key),
+                               "pending_folders": len(pending["folders"]),
+                               "whole_pending": pending["whole"] is not None,
+                               "last_sync": dict(self._last_sync[key]) if key in self._last_sync else None,
+                               "not_watched": key in self._too_many}
+            syncing = dict(self._current) if self._current else None
+        return {"running": self._thread is not None, "roots": sorted(roots, key=lambda root: paths.key(root["path"])),
+                "libraries": found, "syncing": syncing}
 
     def watched(self):
         """The folders watched now, as stored: for a test, and the log."""
@@ -226,9 +253,11 @@ class Watcher:
         if not folders:
             return
         now = self._clock()
+        heard = _now()
         with self._lock:
             for library in libraries:
                 pending = self._pending_for(library)
+                self._last_event[library.key] = heard
                 for folder in folders:
                     pending["folders"][paths.key(folder)] = [paths.stored(folder), now]
 
@@ -297,6 +326,8 @@ class Watcher:
     def _run(self, library, folder):
         with self._lock:
             self._syncing += 1
+            self._current = {"library": library.name, "folder": folder, "started": _now()}
+        result = None
         try:
             result = self._sync(library, folder)
             what = folder if folder else "every folder"
@@ -315,6 +346,13 @@ class Watcher:
         finally:
             with self._lock:
                 self._syncing -= 1
+                started = (self._current or {}).get("started")
+                self._current = None
+                details = getattr(result, "details", None) or {}
+                self._last_sync[library.key] = {
+                    "folder": folder, "started": started, "finished": _now(),
+                    "changed": getattr(result, "changed", 0) or 0, "queued": details.get("queued", 0),
+                    "refused": bool(getattr(result, "refused", None)), "failed": result is None}
 
     def _look(self, observer, catch_up=False):
         """Read the libraries and their folders again; watch what is wanted and there, stop
@@ -326,6 +364,8 @@ class Watcher:
             except Exception as e:
                 logger.error("Could not read the folders of %s to watch: %s", library.name, e)
                 continue
+            with self._lock:
+                self._names[library.key] = library.name
             if len(folders) > self.max_watches:
                 if library.key not in self._too_many:
                     logger.warning("%s holds photos in %d separate folders and has no root folders to cover "
@@ -392,6 +432,11 @@ class Watcher:
                 observer.unschedule(watch)
             except Exception:
                 pass
+
+
+def _now():
+    """The time as the Activity page shows it."""
+    return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _emitter_alive(observer, watch):

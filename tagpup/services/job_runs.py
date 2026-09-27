@@ -9,7 +9,7 @@ import numbers
 
 from tagpup.store import job_runs
 
-DONE, FAILED = job_runs.DONE, job_runs.FAILED
+DONE, FAILED, RUNNING = job_runs.DONE, job_runs.FAILED, job_runs.RUNNING
 Run = job_runs.Run
 stamp = job_runs.stamp
 seconds = job_runs.seconds

@@ -13,7 +13,8 @@ its page's files, and log every request slower than a second and every one that
 failed, with its traceback, to the requests log (tagpup.logs). Each app's routes are
 its own blueprint; what both serve alike -- the picker, the tag tree, the rules of what
 may be set, the library's settings, its history of changes, when its recurring jobs ran,
-where each app is, and which version answers -- is a blueprint each registers. Every
+where each app is, which version answers, and the Activity page over every library
+(tagpup.web.activity_routes) -- is a blueprint each registers. Every
 request passes the process's gate (tagpup.web.lifecycle), which counts it while in
 flight and turns it away while the always-on process moves onto a new version.
 """
@@ -29,8 +30,9 @@ from flask import Blueprint, Flask, Response, abort, current_app, g, jsonify, re
 
 from tagpup import config as tagpup_config
 from tagpup.logs import REQUESTS
-from tagpup.web import (history_routes, jobs_routes, libraries, lifecycle as lifecycles, rules_routes, security,
-                        settings_routes, sync_routes, tagpup_routes, taxonomy_routes, tuner_routes)
+from tagpup.web import (activity_routes, history_routes, jobs_routes, libraries, lifecycle as lifecycles,
+                        rules_routes, security, settings_routes, sync_routes, tagpup_routes, taxonomy_routes,
+                        tuner_routes)
 
 logger = logging.getLogger(__name__)
 requests_log = logging.getLogger(REQUESTS)
@@ -105,6 +107,7 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
     app.register_blueprint(sync_routes.routes)
     app.register_blueprint(jobs_routes.routes)
     app.register_blueprint(lifecycles.routes)
+    app.register_blueprint(activity_routes.routes)
     app.register_blueprint(apps)
     app.register_blueprint(ROUTES[kind])
     _page_routes(app)

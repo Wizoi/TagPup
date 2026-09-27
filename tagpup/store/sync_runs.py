@@ -60,6 +60,26 @@ def last_whole(conn):
     return found[0] if found else None
 
 
+def _has_table(conn):
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (TABLE,)).fetchone() is not None
+
+
+def recent(conn, limit=50):
+    """The newest `limit` records, newest first ([] for a library from before migration 14)."""
+    if not _has_table(conn):
+        return []
+    return [_as_dict(row) for row in conn.execute(
+        "SELECT " + ", ".join(COLUMNS) + " FROM sync_runs ORDER BY id DESC LIMIT ?", (max(0, int(limit)),))]
+
+
+def newest(conn, whole):
+    """The newest record of a sync of the whole library (`whole`) or of one folder, or None."""
+    if not _has_table(conn):
+        return None
+    return _as_dict(conn.execute("SELECT " + ", ".join(COLUMNS) + " FROM sync_runs WHERE whole = ?"
+                                 " ORDER BY id DESC LIMIT 1", (1 if whole else 0,)).fetchone())
+
+
 def last(conn):
     """{"last_run": the newest record, or None; "last_in_step": when the newest sync of the
     whole library that left it in step finished, or None} of the library open on `conn`.

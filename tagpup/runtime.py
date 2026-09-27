@@ -220,6 +220,14 @@ class Background:
     def names(self):
         return [name for name, _task in self._tasks]
 
+    def task(self, name):
+        """The task registered as `name` this process runs, or None: the Activity page asks
+        the folder watcher what it watches and the recurring jobs' runner to run a job now."""
+        for each, task in self._tasks:
+            if each == name:
+                return task
+        return None
+
     def start(self):
         for name, task in self._tasks:
             logger.info("Starting %s", name)

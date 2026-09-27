@@ -501,6 +501,9 @@ class Supervisor:
         self._ports_said = False
         self.starts = 0
         self._state = {}
+        #: When this supervisor started, as supervisor.json says it: the Activity page's
+        #: "running since", and, for one that took over, when it moved onto its version.
+        self._began = _now()
 
     # ---- What it says ---------------------------------------------------------------
 
@@ -513,7 +516,9 @@ class Supervisor:
                        # file is the user's, as the libraries are).
                        "server_token": self._token or self._inherited_token,
                        "previous_version": self._predecessor_version,
-                       "update_refused": self._update_refused}
+                       "update_refused": self._update_refused,
+                       "running_since": self._began, "server_starts": self.starts,
+                       "crashes": len(self._crashes), "crash_window_minutes": round(self.crash_window / 60)}
         try:
             write_json(data_file(STATE_FILE), self._state)
         except OSError as e:

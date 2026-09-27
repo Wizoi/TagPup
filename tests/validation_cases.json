@@ -77,6 +77,7 @@
     ["caption", {"repeat": "\u00e9", "times": 1000}, null],
     ["caption", {"repeat": "\u00e9", "times": 1001}, "A caption cannot be longer than 2,000 bytes, the most IPTC keeps."],
     ["library name", "photo_index", null],
+    ["library name", "activity", "'activity' is the name of one of the app's own pages; choose another"],
     ["library name", "kr-track_2", null],
     ["library name", "validation_index", null],
     ["library name", "apiary", null],
