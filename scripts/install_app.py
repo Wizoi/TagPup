@@ -26,9 +26,10 @@ It also makes shortcuts to TagPup and TagTuner, with their icons, on the Desktop
 in the Start menu: a .cmd cannot be pinned to the taskbar or given an icon, and a
 shortcut can.
 
-Each launcher first runs this with --if-changed: when the checkout has moved to
-another commit and holds no uncommitted code, that commit is installed before the app
-starts, so a merge reaches the apps at their next start. A checkout in the middle of
+Each launcher first runs this with --if-changed: when the checkout has moved on to a
+newer commit -- the installed one among its ancestors -- and holds no uncommitted code,
+that commit is installed before the app starts, so a merge reaches the apps at their
+next start. An older or unrelated commit (a branch switched back) is never installed so. A checkout in the middle of
 an edit is never installed; the version already installed starts instead.
 """
 import argparse
@@ -149,6 +150,22 @@ def version_name(now=None):
     return "%s-%s%s" % (stamp, commit, dirty)
 
 
+def is_ancestor(commit):
+    """Is `commit` HEAD or one of its ancestors -- is HEAD the same or newer? False for a
+    commit git does not know."""
+    try:
+        return processes.run(["git", "-C", REPO_ROOT, "merge-base", "--is-ancestor", commit, "HEAD"],
+                             capture_output=True, text=True, timeout=30).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def commit_of(version):
+    """The commit a version's name says it came from, or None."""
+    parts = (version or "").rstrip("+").split("-")
+    return parts[2] if len(parts) >= 3 else None
+
+
 def stale(current, commit, dirty):
     """Should the installed version `current` be replaced by the checkout at `commit`?
     Only when the checkout's code is all committed (not `dirty`) and the version came
@@ -172,6 +189,13 @@ def update(destination, home, python, say=print):
         if dirty and stale(current, commit, False):
             say("TagPup: the checkout has uncommitted changes, so %s was not installed; "
                 "starting the installed version." % commit)
+        return None
+    installed = commit_of(current)
+    if installed and not is_ancestor(installed):
+        # A checkout moved back, or onto an unrelated branch: never installed on its own
+        # -- the always-on process installs unattended. By hand: install_app.py --apply.
+        say("TagPup: the checkout's %s is not newer than the installed %s, so it was not installed; "
+            "starting the installed version." % (commit, installed))
         return None
     say("TagPup: installing %s before starting..." % commit)
     try:

@@ -88,10 +88,25 @@ class InstallingANewCommitAtStart(InstallCase):
         self.assertTrue(install_app.stale(None, "0dd8402", False))
         self.assertFalse(install_app.stale("20260925-115722-0dd8402", "", False), "no git: leave it")
 
-    def update(self, commit, dirty):
+    def update(self, commit, dirty, newer=True):
         answers = {"rev-parse": commit, "status": " M tagpup/x.py" if dirty else ""}
-        with mock.patch.object(install_app, "git", side_effect=lambda *a: answers[a[0]]):
+        with mock.patch.object(install_app, "git", side_effect=lambda *a: answers[a[0]]), \
+                mock.patch.object(install_app, "is_ancestor", return_value=newer):
             return install_app.update(self.dest, self.home, sys.executable, say=self.said.append)
+
+    def test_an_older_or_unrelated_commit_is_never_installed(self):
+        """A checkout moved back (a branch switched, a bisect) is not newer than what is
+        installed, and the always-on process installs unattended."""
+        first = self.install(name="20260925-115722-0dd8402")[0]
+        self.assertIsNone(self.update("bfeb9b7", False, newer=False))
+        self.assertEqual(first, install_app.read_current(self.dest))
+        self.assertTrue(any("not newer" in line for line in self.said), self.said)
+
+    def test_newer_is_asked_of_git(self):
+        head = install_app.git("rev-parse", "--short", "HEAD")
+        self.assertTrue(install_app.is_ancestor(head), "a commit is its own ancestor")
+        self.assertTrue(install_app.is_ancestor(install_app.git("rev-parse", "--short", "HEAD~1")))
+        self.assertFalse(install_app.is_ancestor("0000000"), "a commit git does not know")
 
     def test_a_new_commit_is_installed_and_the_same_one_is_not(self):
         first = self.install(name="20260925-115722-0dd8402")[0]
