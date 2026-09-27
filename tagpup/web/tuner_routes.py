@@ -46,6 +46,28 @@ identify_cache = state.PerLibrary(lambda library: identify_jobs.GridCache())
 #: another thread.
 identify_progress = state.PerLibrary(lambda library: identify_jobs.BuildProgress())
 
+#: The name New Person's pool is kept under in the process's idle registry (idle_caches).
+POOL = "New Person pool"
+
+
+def idle_caches(idle):
+    """Register what this app keeps only while it is used in the process's idle registry
+    (tagpup.core.idle.IdleCaches, the runtime's): New Person's pool of nameless faces --
+    about 185 MB on photo_index -- read again at its next use."""
+    def release_pools():
+        for library_key in identify_cache.libraries():
+            cache = identify_cache.held(library_key)
+            if cache is not None:
+                cache.drop("unnamed_faces")
+    idle.register(POOL, release_pools)
+
+
+def _used(name):
+    runtime = state.runtime()
+    if runtime is not None and getattr(runtime, "idle", None) is not None:
+        runtime.idle.used(name)
+
+
 #: Set while a library's faces are being clustered. Assignments are refused meanwhile:
 #: clustering rewrites the names they would be setting.
 clustering = state.PerLibrary(lambda library: threading.Event())
@@ -282,6 +304,7 @@ def face_matches_unmatched():
     if not _library_there(library):
         return jsonify({"matches": []})
     try:
+        _used(POOL)
         return jsonify(identify_service.unnamed_like(
             library, face_id, lambda: identify_jobs.unnamed_faces(library, identify_cache.of(library))))
     except NotFound:

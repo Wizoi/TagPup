@@ -56,10 +56,10 @@ class IdleModels(unittest.TestCase):
     def test_are_let_go_after_the_idle_period_and_loaded_again_by_the_next_ask(self):
         clip, faces = self.runtime.clip(self.harbour), self.runtime.faces(self.harbour)
         self.clock.now += IDLE - 1
-        self.assertEqual(0, self.runtime.release_idle(), "let go before the idle period was over")
+        self.assertEqual([], self.runtime.release_idle(), "let go before the idle period was over")
         self.assertEqual((0, 0), (clip.unloaded, faces.unloaded))
         self.clock.now += 2
-        self.assertEqual(2, self.runtime.release_idle())
+        self.assertEqual(["models"], self.runtime.release_idle())
         self.assertEqual((1, 1), (clip.unloaded, faces.unloaded))
         again = self.runtime.clip(self.harbour)
         self.assertIsNot(again, clip, "the next ask got the model that was let go")
@@ -70,31 +70,31 @@ class IdleModels(unittest.TestCase):
         self.clock.now += IDLE - 10
         self.runtime.clip(self.harbour)
         self.clock.now += IDLE - 10
-        self.assertEqual(0, self.runtime.release_idle())
+        self.assertEqual([], self.runtime.release_idle())
 
     def test_a_model_a_run_holds_is_kept_however_long_it_runs(self):
         with mock.patch("tagpup.services.suggester.model_for_run", lambda *args: object()):
             run = self.runtime.begin(self.harbour)
         self.clock.now += IDLE * 3
-        self.assertEqual(0, self.runtime.release_idle(), "let go under a running Suggest")
+        self.assertNotIn("models", self.runtime.release_idle(), "let go under a running Suggest")
         run.end()
-        self.assertEqual(0, self.runtime.release_idle(), "the run's end is a use")
+        self.assertEqual([], self.runtime.release_idle(), "the run's end is a use")
         self.clock.now += IDLE + 1
-        self.assertEqual(2, self.runtime.release_idle())
+        self.assertIn("models", self.runtime.release_idle())
 
     def test_a_runtime_without_an_idle_period_keeps_them(self):
         runtime = Runtime(build_clip=self.build, build_faces=self.build, clock=self.clock)
         runtime.clip(self.harbour)
         self.clock.now += IDLE * 100
-        self.assertEqual(0, runtime.release_idle())
+        self.assertEqual([], runtime.release_idle())
         runtime.forget(self.harbour)
 
 
 class TheWebServerLetsThemGo(unittest.TestCase):
     def test_on_a_background_task_given_its_period(self):
         with_period = runtimes.background(Runtime(idle_after=IDLE))
-        self.assertIn("release idle models", with_period.names())
-        self.assertNotIn("release idle models", runtimes.background(Runtime()).names())
+        self.assertIn("release idle caches", with_period.names())
+        self.assertNotIn("release idle caches", runtimes.background(Runtime()).names())
 
 
 if __name__ == "__main__":

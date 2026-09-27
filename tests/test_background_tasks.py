@@ -38,7 +38,7 @@ class Task:
 
 class TheRegistry(unittest.TestCase):
     def test_holds_what_this_phase_runs_and_a_place_for_the_watcher(self):
-        self.assertEqual(["recurring jobs", "release idle models", "folder watcher"], list(runtimes.BACKGROUND))
+        self.assertEqual(["recurring jobs", "release idle caches", "folder watcher"], list(runtimes.BACKGROUND))
 
     def test_refuses_a_name_twice(self):
         with mock.patch.dict(runtimes.BACKGROUND, clear=False):

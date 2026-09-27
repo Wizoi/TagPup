@@ -27,7 +27,7 @@ every ClipEmbedder shared its model through. `tests/test_models_single_owner.py`
 module that builds a model anywhere else.
 
 `background(runtime)` is what the web server -- the always-on process -- runs beside its
-requests (docs/ARCHITECTURE.md, phase 8): the recurring jobs, the release of idle models,
+requests (docs/ARCHITECTURE.md, phase 8): the recurring jobs, the release of idle caches,
 and the folder watcher (tagpup.jobs.watching). Each is registered once, in BACKGROUND.
 """
 import collections
@@ -38,6 +38,7 @@ import time
 
 from tagpup import config as tagpup_config
 from tagpup.core import library as libraries
+from tagpup.core.idle import IdleCaches
 from tagpup.core.library import Library
 from tagpup.files import images
 from tagpup.jobs import indexing as indexing_jobs
@@ -108,9 +109,13 @@ def recurring_jobs(runtime=None, libraries=None, clock=None):
     return recurring.Runner(libraries or home_libraries, clock=clock or time.time, given={"runtime": runtime})
 
 
-#: How long the models may go unused before the web server lets them go (minutes): a
-#: ViT-H-14 keeps a few GB of GPU memory, and the always-on process would hold it all day.
+#: How long the models, the vectors and the other caches may go unused before the web
+#: server lets them go (minutes): a ViT-H-14 keeps a few GB of GPU memory, photo_index's
+#: vectors 270 MB, and the always-on process would hold them all day.
 RELEASE_MODELS_AFTER_MINUTES = 30
+
+#: The runtime's own entries in its idle registry (Runtime.idle).
+MODELS, PHOTO_INDEXES = "models", "photo indexes"
 
 
 # ---- What the always-on process runs beside its requests ---------------------------------
@@ -178,12 +183,13 @@ def _recurring_jobs_task(runtime):
     return recurring_jobs(runtime) if runs_recurring_jobs() else None
 
 
-@background_task("release idle models")
-def _idle_models_task(runtime):
-    """Let the models go once none has been used for the runtime's idle period."""
+@background_task("release idle caches")
+def _idle_caches_task(runtime):
+    """Let go of each cache in the runtime's idle registry -- the models, the vectors, the
+    web's caches -- once unused for the idle period (Runtime.idle)."""
     if runtime is None or not runtime.idle_after:
         return None
-    return Every("ReleaseIdleModelsThread", runtime.release_idle, max(1.0, min(60.0, runtime.idle_after / 4)))
+    return Every("ReleaseIdleCachesThread", runtime.release_idle, max(1.0, min(60.0, runtime.idle_after / 4)))
 
 
 @background_task("folder watcher")
@@ -377,10 +383,13 @@ class Runtime:
     each change. A library's photo index replaced after its model changed is closed when
     the last run holding it ends, never under one.
 
-    `idle_after`, seconds: when no model has been asked for in that long and no run holds
-    one, release_idle() lets them all go, and the next Suggest builds and loads them
-    again. None keeps them for the process's life (the CLI's, which is short). `clock`
-    is time.monotonic, or a test's.
+    `idle_after`, seconds: what the process keeps only while it is used is registered in
+    `idle` (tagpup.core.idle.IdleCaches) -- here the models, let go when none has been
+    asked for in that long and no run holds one, and each library's photo index (its
+    vectors), let go when not asked for in that long and no run holds it -- and
+    release_idle() lets go of each so idle; the next Suggest builds them again. The web
+    registers its own caches in the same `idle`. None keeps everything for the process's
+    life (the CLI's, which is short). `clock` is time.monotonic, or a test's.
     """
 
     def __init__(self, clip=None, faces=None, build_clip=None, build_faces=None, read_only=False,
@@ -391,9 +400,10 @@ class Runtime:
         self._build_faces = build_faces or _build_faces
         self._read_only = read_only
         self.idle_after = idle_after
-        self._clock = clock or time.monotonic
-        #: When a model was last asked for, or a run holding one ended.
-        self._last_used = self._clock()
+        #: What the process keeps only while it is used, and the one timer's registry.
+        self.idle = IdleCaches(idle_after, clock=clock or time.monotonic)
+        self.idle.register(MODELS, self._release_models, in_use=lambda: bool(self._held))
+        self.idle.register(PHOTO_INDEXES, self._release_indexes)
         self._clips = {}
         self._face_models = {}
         #: Guards the models, what each library uses, the indexes and the runs' leases.
@@ -456,8 +466,8 @@ class Runtime:
         if self._clip is not None:
             return self._clip
         settings = settings or self.settings(library)
+        self.idle.used(MODELS)
         with self._lock:
-            self._last_used = self._clock()
             model = self._model(self._clips, self._build_clip, settings.embedder)
             dropped = self._note(library, settings) and self._release()
         _unload(dropped or ())
@@ -469,8 +479,8 @@ class Runtime:
         if self._faces is not None:
             return self._faces
         settings = settings or self.settings(library)
+        self.idle.used(MODELS)
         with self._lock:
-            self._last_used = self._clock()
             model = self._model(self._face_models, self._build_faces, settings.faces)
             dropped = self._note(library, settings) and self._release()
         _unload(dropped or ())
@@ -505,23 +515,37 @@ class Runtime:
         return dropped
 
     def release_idle(self):
-        """Let every model go when none has been asked for in `idle_after` seconds and no
-        run holds one: the always-on process otherwise keeps a few GB of GPU memory all
-        day for a Suggest that may not come. The next ask builds and loads them again.
-        Returns how many were let go."""
-        if not self.idle_after:
-            return 0
+        """Let go of what has not been used for `idle_after` seconds and nothing holds (the
+        `idle` registry): the always-on process otherwise keeps a few GB of GPU memory and
+        each opened library's vectors all day for a Suggest that may not come. The names
+        let go."""
+        released = self.idle.release_idle()
+        if released:
+            logger.info("Let go of %s, unused for %d minutes; the next use makes them again.",
+                        ", ".join(released), round(self.idle_after / 60))
+        return released
+
+    def _release_models(self):
+        """Every model, when no run holds one (the registry asks in_use first). How many."""
         with self._lock:
-            if self._held or self._clock() - self._last_used < self.idle_after:
+            if self._held:
                 return 0
             dropped = list(self._clips.values()) + list(self._face_models.values())
             self._clips.clear()
             self._face_models.clear()
-        if dropped:
-            logger.info("Letting go of %d model(s) unused for %d minutes; the next Suggest loads them again.",
-                        len(dropped), round(self.idle_after / 60))
         _unload(dropped)
         return len(dropped)
+
+    def _release_indexes(self):
+        """Each library's photo index no run holds: closed, its vectors let go; the next
+        ask makes and loads it again. How many."""
+        with self._lock:
+            idle = [(key, index) for key, index in self._indexes.items() if not self._index_runs[id(index)]]
+            for key, _index in idle:
+                del self._indexes[key]
+            for _key, index in idle:
+                self._retire(index)
+        return len(idle)
 
     def warm_up(self, libraries=()):
         """Load the CLIP model and the face models of one set of settings, so the first
@@ -587,6 +611,7 @@ class Runtime:
     def _index(self, library, model_key):
         """The library's photo index under `model_key`, made if it has none or its model
         has changed (the one replaced retired). Under the lock; not loaded here."""
+        self.idle.used(PHOTO_INDEXES)
         index = self._indexes.get(library.key)
         if index is not None and index.model != model_key:
             del self._indexes[library.key]
@@ -662,7 +687,8 @@ class Runtime:
             if lease.ended:
                 return
             lease.ended = True
-            self._last_used = self._clock()
+            self.idle.used(MODELS)
+            self.idle.used(PHOTO_INDEXES)
             for kind, key in (("clip", lease.clip_key), ("faces", lease.faces_key)):
                 self._held[(kind, key)] -= 1
                 if self._held[(kind, key)] <= 0:
