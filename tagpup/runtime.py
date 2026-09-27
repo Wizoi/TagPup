@@ -14,7 +14,9 @@ it has one, else with the defaults. That is the one read of config.ini left
 A Runtime builds each CLIP model and each set of face models once per set of settings,
 the first time a library with those settings asks: two libraries on one model share it,
 and a library on another gets its own. A model no library it serves uses any more, and
-no run holds, is unloaded. It keeps each library's photo index for Suggest, brought up
+no run holds, is unloaded; so is every model none has used for `idle_after` seconds
+(the web server's `--release-models-after`), and the next Suggest loads them again.
+It keeps each library's photo index for Suggest, brought up
 to date when a run begins, and a run keeps the one it began with to its end. Nothing below it builds a model or reads a
 setting: a service that uses a model is given it (docs/ARCHITECTURE.md, "The layers,
 revisited").
@@ -23,6 +25,10 @@ It replaces scripts/suggest_models.py, which the web launcher used to fill a mod
 slot in tagpup.jobs.suggestions with (docs/findings.md, #112), and the class attribute
 every ClipEmbedder shared its model through. `tests/test_models_single_owner.py` fails a
 module that builds a model anywhere else.
+
+`background(runtime)` is what the web server -- the always-on process -- runs beside its
+requests (docs/ARCHITECTURE.md, phase 8): the recurring jobs, the release of idle models,
+and the watcher sync will add. Each is registered once, in BACKGROUND.
 """
 import collections
 import logging
@@ -96,6 +102,126 @@ def recurring_jobs(runtime=None, libraries=None, clock=None):
     callable read at each look -- by default every library in the home's data folder --
     handing each job the process's `runtime`."""
     return recurring.Runner(libraries or home_libraries, clock=clock or time.time, given={"runtime": runtime})
+
+
+#: How long the models may go unused before the web server lets them go (minutes): a
+#: ViT-H-14 keeps a few GB of GPU memory, and the always-on process would hold it all day.
+RELEASE_MODELS_AFTER_MINUTES = 30
+
+
+# ---- What the always-on process runs beside its requests ---------------------------------
+
+class Every:
+    """`call()` every `seconds` on a daemon thread of its own, until stop(): a background
+    task (BACKGROUND). Never busy: what it calls is quick, and an update need not wait."""
+
+    def __init__(self, name, call, seconds):
+        self.name, self._call, self._seconds = name, call, seconds
+        self._stop = threading.Event()
+        self._thread = None
+
+    def start(self):
+        if self._thread is not None:
+            return self._thread
+        stop = self._stop = threading.Event()
+
+        def loop():
+            while not stop.wait(self._seconds):
+                try:
+                    self._call()
+                except Exception:
+                    logger.exception("%s failed", self.name)
+
+        self._thread = threading.Thread(target=loop, name=self.name, daemon=True)
+        self._thread.start()
+        return self._thread
+
+    def stop(self, timeout=30):
+        self._stop.set()
+        thread, self._thread = self._thread, None
+        if thread is None:
+            return True
+        thread.join(timeout)
+        return not thread.is_alive()
+
+    def busy(self):
+        return False
+
+
+#: What the web server runs beside its requests, by name: each is make(runtime) -> a task
+#: with start(), stop(timeout) -> whether it ended, and busy() -> whether it is doing work
+#: an update must let finish; or None when this process runs no such thing. The web
+#: server starts each as it starts and stops each as it stops (tagpup_web.main), and an
+#: update stops them and waits for none to be busy before it moves the server onto a new
+#: version (tagpup.web.lifecycle). One place, so sync's watcher (phase 8c) is one entry.
+BACKGROUND = {}
+
+
+def background_task(name):
+    """Register the function it decorates as the background task `name`: make(runtime)."""
+    def register(make):
+        if name in BACKGROUND:
+            raise ValueError("a background task named %r is registered already" % name)
+        BACKGROUND[name] = make
+        return make
+    return register
+
+
+@background_task("recurring jobs")
+def _recurring_jobs_task(runtime):
+    """The recurring jobs of every library in the data folder (tagpup.jobs.recurring), in
+    the process that runs them (runs_recurring_jobs)."""
+    return recurring_jobs(runtime) if runs_recurring_jobs() else None
+
+
+@background_task("release idle models")
+def _idle_models_task(runtime):
+    """Let the models go once none has been used for the runtime's idle period."""
+    if runtime is None or not runtime.idle_after:
+        return None
+    return Every("ReleaseIdleModelsThread", runtime.release_idle, max(1.0, min(60.0, runtime.idle_after / 4)))
+
+
+# Sync's watcher (phase 8c) registers here: a task whose start() watches each library's
+# roots and whose busy() is true while a sync it started is writing.
+
+
+class Background:
+    """The background tasks one process runs: [(name, task)]."""
+
+    def __init__(self, tasks):
+        self._tasks = list(tasks)
+
+    def names(self):
+        return [name for name, _task in self._tasks]
+
+    def start(self):
+        for name, task in self._tasks:
+            logger.info("Starting %s", name)
+            task.start()
+
+    def stop(self, timeout=30):
+        """Stop each, waiting up to `timeout` for what it is doing. The names of those
+        still running after it."""
+        still = []
+        for name, task in self._tasks:
+            if not task.stop(timeout):
+                still.append(name)
+        return still
+
+    def busy(self):
+        """The names of those doing work now that an update must let finish."""
+        return [name for name, task in self._tasks if task.busy()]
+
+
+def background(runtime, registry=None):
+    """The background tasks this process runs (BACKGROUND, or `registry`), made for `runtime`."""
+    tasks = []
+    for name, make in (BACKGROUND if registry is None else registry).items():
+        task = make(runtime)
+        if task is not None:
+            tasks.append((name, task))
+    return Background(tasks)
 
 
 def exiftool(library, settings=None):
@@ -183,14 +309,24 @@ class Runtime:
     dropped and unloaded -- it used to stay on the GPU beside its successor, one more for
     each change. A library's photo index replaced after its model changed is closed when
     the last run holding it ends, never under one.
+
+    `idle_after`, seconds: when no model has been asked for in that long and no run holds
+    one, release_idle() lets them all go, and the next Suggest builds and loads them
+    again. None keeps them for the process's life (the CLI's, which is short). `clock`
+    is time.monotonic, or a test's.
     """
 
-    def __init__(self, clip=None, faces=None, build_clip=None, build_faces=None, read_only=False):
+    def __init__(self, clip=None, faces=None, build_clip=None, build_faces=None, read_only=False,
+                 idle_after=None, clock=None):
         self._clip = clip
         self._faces = faces
         self._build_clip = build_clip or _build_clip
         self._build_faces = build_faces or _build_faces
         self._read_only = read_only
+        self.idle_after = idle_after
+        self._clock = clock or time.monotonic
+        #: When a model was last asked for, or a run holding one ended.
+        self._last_used = self._clock()
         self._clips = {}
         self._face_models = {}
         #: Guards the models, what each library uses, the indexes and the runs' leases.
@@ -249,6 +385,7 @@ class Runtime:
             return self._clip
         settings = settings or self.settings(library)
         with self._lock:
+            self._last_used = self._clock()
             model = self._model(self._clips, self._build_clip, settings.embedder)
             dropped = self._note(library, settings) and self._release()
         _unload(dropped or ())
@@ -261,6 +398,7 @@ class Runtime:
             return self._faces
         settings = settings or self.settings(library)
         with self._lock:
+            self._last_used = self._clock()
             model = self._model(self._face_models, self._build_faces, settings.faces)
             dropped = self._note(library, settings) and self._release()
         _unload(dropped or ())
@@ -293,6 +431,25 @@ class Runtime:
         if dropped:
             logger.info("Letting go of %d model(s) no library uses any more.", len(dropped))
         return dropped
+
+    def release_idle(self):
+        """Let every model go when none has been asked for in `idle_after` seconds and no
+        run holds one: the always-on process otherwise keeps a few GB of GPU memory all
+        day for a Suggest that may not come. The next ask builds and loads them again.
+        Returns how many were let go."""
+        if not self.idle_after:
+            return 0
+        with self._lock:
+            if self._held or self._clock() - self._last_used < self.idle_after:
+                return 0
+            dropped = list(self._clips.values()) + list(self._face_models.values())
+            self._clips.clear()
+            self._face_models.clear()
+        if dropped:
+            logger.info("Letting go of %d model(s) unused for %d minutes; the next Suggest loads them again.",
+                        len(dropped), round(self.idle_after / 60))
+        _unload(dropped)
+        return len(dropped)
 
     def warm_up(self, libraries=()):
         """Load the CLIP model and the face models of one set of settings, so the first
@@ -433,6 +590,7 @@ class Runtime:
             if lease.ended:
                 return
             lease.ended = True
+            self._last_used = self._clock()
             for kind, key in (("clip", lease.clip_key), ("faces", lease.faces_key)):
                 self._held[(kind, key)] -= 1
                 if self._held[(kind, key)] <= 0:

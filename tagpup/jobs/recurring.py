@@ -237,6 +237,9 @@ class Runner:
         self._given = dict(given or {})
         self._stop = threading.Event()
         self._thread = None
+        #: How many jobs are running now, on any thread: busy() while one is.
+        self._running = 0
+        self._running_lock = threading.Lock()
 
     @property
     def registry(self):
@@ -265,11 +268,16 @@ class Runner:
         outcome = Outcome(job.name, run_for, run_id=claim.run_id)
         logger.info("Running the job %s for %s", job.name, run_for or "every library")
         run = Run(now=now, forced=force, given=self._given)
+        with self._running_lock:
+            self._running += 1
         try:
             outcome.result = job.call(library if job.per_library else libraries, run)
         except Exception as e:
             logger.exception("The job %s for %s failed", job.name, run_for or "every library")
             outcome.error = e
+        finally:
+            with self._running_lock:
+                self._running -= 1
         try:
             ended = job_runs.finish(where, claim.run_id, self._clock(), outcome.result, outcome.error)
             if not ended:
@@ -307,15 +315,24 @@ class Runner:
         except Exception:
             logger.exception("Looking for the recurring jobs that are due failed")
 
+    def busy(self):
+        """Is a job running now? What an update waits for (tagpup.web.lifecycle)."""
+        with self._running_lock:
+            return self._running > 0
+
     def start(self, every=CHECK_EVERY, first_after=FIRST_CHECK_AFTER):
         """Look for what is due every `every` seconds, the first time `first_after` from
-        now, on a daemon thread, until stop()."""
+        now, on a daemon thread, until stop(). Started again after stop() -- an update
+        that could not finish its drain takes work again -- it looks again."""
         if self._thread is not None:
             return self._thread
+        if self._stop.is_set():
+            self._stop = threading.Event()
+        stop = self._stop
 
         def loop():
             wait = first_after
-            while not self._stop.wait(wait):
+            while not stop.wait(wait):
                 self._run_due_logged()
                 wait = every
 
