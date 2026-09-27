@@ -33,10 +33,12 @@ import time
 from tagpup import config as tagpup_config
 from tagpup.core import library as libraries
 from tagpup.core.library import Library
+from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import recurring
-from tagpup.services import file_changes, search
+from tagpup.services import file_changes, indexing, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester as suggestions
+from tagpup.services import sync as sync_service
 from tagpup.store import embeddings as store_embeddings
 
 logger = logging.getLogger(__name__)
@@ -102,6 +104,55 @@ def exiftool(library, settings=None):
     """The ExifTool program to run for `library`: the one it names, else the machine's
     (tagpup.config.exiftool_path)."""
     return tagpup_config.exiftool_path((settings or library_settings(library)).exiftool)
+
+
+def index_folder(library, subfolders=True):
+    """How this process adds a folder to `library` from its index queue: the CLI's `index`
+    in a process of its own, from this code (tagpup.services.indexing.index_folder); with
+    its subfolders unless not `subfolders`."""
+    def index(folder, cluster, report):
+        return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, cluster=cluster, report=report,
+                                     subfolders=subfolders)
+    return index
+
+
+def sync(library, folder=None, apply=False, index_new=True):
+    """Bring `library` in step with its folders, or with `folder` (tagpup.services.sync):
+    a dry run unless `apply`, with the ExifTool the library names. A dry run reads the
+    library's settings without stamping them, and writes nothing. Applied, the folders of
+    new files go on this process's index queue for the library (tagpup.jobs.indexing),
+    unless not `index_new`; they are indexed one at a time, after the sync returns.
+
+    What the entry points call -- the CLI's `sync`, the MCP server's tool, the route --
+    and what a recurring job calls as sync(library, apply=True)."""
+    settings = library_settings(library) if apply else peek_settings(library)
+    queue = None
+    if index_new:
+        # A folder the library holds is indexed without its subfolders: they may be
+        # folders to review, or ignored.
+        # One job, one run of the indexer, for every folder of new files.
+        def queue(folders):
+            return indexing_jobs.queue_for(library).start(folders, index_folder(library, subfolders=False),
+                                                          together=True)
+    return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
+                             roots=settings.roots, ignored=settings.ignored)
+
+
+def review(library):
+    """The folders under the library's roots to review (tagpup.services.sync.review), from
+    its settings, read without stamping them."""
+    settings = peek_settings(library)
+    return sync_service.review(library, settings.roots, settings.ignored)
+
+
+def include(library, folder):
+    """Index a folder to review, with its subfolders, on this process's index queue
+    (tagpup.services.sync.include)."""
+    settings = library_settings(library)
+
+    def queue(folders):
+        return indexing_jobs.queue_for(library).start(folders, index_folder(library))
+    return sync_service.include(library, folder, settings.roots, queue)
 
 
 def _frozen(settings):
@@ -224,6 +275,11 @@ class Runtime:
     def exiftool(self, library):
         """The ExifTool program to run for `library`."""
         return tagpup_config.exiftool_path(self.settings(library).exiftool)
+
+    def sync(self, library, folder=None, apply=False):
+        """Sync `library` (the module's sync): what the recurring sync job calls, handed
+        this Runtime by the entry point that runs the jobs."""
+        return sync(library, folder=folder, apply=apply)
 
     def settings_changed(self, library):
         """The library's settings have changed (tagpup.web.settings_routes, after a save):

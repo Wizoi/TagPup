@@ -58,6 +58,8 @@ from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
 from tagpup.core.result import NotFound
 from tagpup.services import tagging
+from tagpup.services import maintenance
+from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services.search import PhotoIndex, stored_mismatch
 from tagpup.services.suggester import TagSuggester
 from tagpup.store.locks import PathLocker
@@ -154,13 +156,16 @@ def cli(ctx, db, test):
     ctx.obj["db"] = db
 
 @cli.command()
-@click.argument("directory", type=click.Path(exists=True, file_okay=False))
+@click.argument("directories", nargs=-1, required=True, type=click.Path(exists=True, file_okay=False))
 @click.option("--force-reembed", is_flag=True, help="Force recreation of embeddings.")
 @click.option("--reset", is_flag=True, help="Delete existing index and taxonomy to start fresh.")
 @click.option("--skip-faces", is_flag=True, help="Skip face detection during indexing.")
+@click.option("--no-subfolders", is_flag=True,
+              help="Only the photos directly in each DIRECTORY, not in its subfolders.")
 @click.pass_context
-def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: bool):
-    """Phase 1: Scan and index a tagged photo library."""
+def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, no_subfolders: bool = False):
+    """Phase 1: Scan and index a tagged photo library: one or more DIRECTORIES, in one run
+    (sync hands it every folder of new files at once, so one indexer loads the models)."""
     runtime = get_runtime()
 
     test_mode = ctx.obj.get("test", False)
@@ -206,8 +211,13 @@ def index(ctx, directory: str, force_reembed: bool, reset: bool, skip_faces: boo
 
     embeddings = runtime.embeddings(Library(db_path), photo_index)
 
-    console.print(f"[bold cyan]Scanning directory:[/bold cyan] {directory}")
-    all_images = scan_for_images(directory)
+    all_images, seen_images = [], set()
+    for directory in directories:
+        console.print(f"[bold cyan]Scanning directory:[/bold cyan] {directory}")
+        for found in (image_files.photos_in(directory) if no_subfolders else scan_for_images(directory)):
+            if paths.key(found) not in seen_images:
+                seen_images.add(paths.key(found))
+                all_images.append(found)
     console.print(f"Found {len(all_images)} image(s) total.")
 
     if not all_images:
@@ -946,6 +956,59 @@ def prune_journal(ctx, days, apply_):
     console.print("Pruned %d change(s), %d value(s)." % (result.changed, result.details["values"]))
 
 
+#: What `sync` says of each thing it counts.
+SYNC_FOUND = (("new", "new file(s), in %d folder(s)", "new_folders"), ("changed", "changed file(s)", None),
+              ("moved", "moved file(s)", None), ("missing", "missing file(s), in %d folder(s)", "missing_folders"))
+
+
+@cli.command()
+@click.option("--folder", default=None, type=click.Path(file_okay=False),
+              help="Only the photos under this folder. Without it, every folder the library holds photos in.")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write the rows, index the new files, and record the run. Without it, only says what it would do.")
+@click.pass_context
+def sync(ctx, folder, apply_):
+    """Bring the library in step with its folders: rows read again for files changed
+    outside the apps, rows following files that moved, and new files indexed. Missing
+    files are reported, never removed. A dry run unless --apply; counts only."""
+    library = _existing_library(ctx)
+    result = runtimes.sync(library, folder=folder, apply=apply_)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = result.details["counts"]
+    console.print("%d row(s), %d photo file(s) on disk in %d folder(s) walked." % (
+        counts["rows"], counts["files"], counts["folders_walked"]))
+    for what, text, second in SYNC_FOUND:
+        console.print("  %d %s" % (counts[what], text % counts[second] if second else text))
+    if counts["review_folders"]:
+        console.print("  %d folder(s) under the library's roots hold %d photo(s) and no indexed one: to review in"
+                      " TagTuner (gear, Folders to review), never indexed on their own."
+                      % (counts["review_folders"], counts["review_photos"]))
+    if counts["missing"]:
+        console.print("  %d folder(s) wholly gone, %d of them a whole root (an unplugged drive looks the same);"
+                      " their rows are kept." % (counts["folders_gone"], counts["roots_gone"]))
+    if counts["unreadable"]:
+        console.print("  %d changed file(s) could not be read." % counts["unreadable"])
+    if not apply_:
+        console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
+        console.print("In step." if result.details["in_step"] else "Nothing changed. --apply brings it in step.")
+        return
+    changed = result.details["changed"]
+    console.print("Wrote %d row(s): %d read again, %d moved. %s" % (
+        result.changed, changed["from_files"], changed["relinked"], maintenance.recorded(result, library.path)),
+        markup=False, soft_wrap=True)
+    for line in maintenance.skipped(result) + maintenance.failed(result) + result.details["warnings"]:
+        console.print(line, markup=False, soft_wrap=True)
+    if result.details["queued"]:
+        console.print("Indexing %d folder(s) with new files, one at a time..." % result.details["queued"])
+        queue = indexing_jobs.queue_for(library)
+        queue.wait()
+        for folder_path in result.details["reveal"]["new_folders"]:
+            console.print("  %s" % queue.status(folder_path)["message"], markup=False)
+    console.print("In step." if result.details["in_step"] else "Not yet in step: sync again once indexing is done.")
+    if result.errors:
+        raise SystemExit(1)
 def _job_libraries(ctx):
     """The library --db names, or every library in the data folder."""
     if ctx.obj.get("db"):
@@ -953,10 +1016,65 @@ def _job_libraries(ctx):
     return runtimes.home_libraries(ctx.obj.get("test", False))
 
 
+@cli.group("settings", invoke_without_command=True)
+@click.pass_context
+def settings_command(ctx):
+    """The library's settings (tagpup.services.settings): each key and its value, read
+    without stamping the library. `settings set KEY VALUE` changes one."""
+    if ctx.invoked_subcommand is not None:
+        return
+    library = _existing_library(ctx)
+    found = runtimes.peek_settings(library)
+    for key, value in found.values.items():
+        console.print("%s = %s" % (key, value.replace(chr(10), " | ")), markup=False, soft_wrap=True)
+
+
+@settings_command.command("set")
+@click.argument("key")
+@click.argument("value")
+@click.option("--acknowledge", "acknowledged", multiple=True,
+              help="A locked group whose consequences you accept (clip, faces, exiftool).")
+@click.option("--apply", "apply_", is_flag=True, help="Write the change. Without it, only says what it would change.")
+@click.pass_context
+def settings_set(ctx, key, value, acknowledged, apply_):
+    """Change the setting KEY to VALUE as one journaled change, undoable (`history`,
+    `undo`). Folders (library.roots, library.ignored) are given one a line, or separated
+    by |. Setting the roots also ignores every folder under a new root that holds photos
+    and none indexed. A dry run unless --apply."""
+    library = _existing_library(ctx)
+    if key in (library_settings.ROOTS, library_settings.IGNORED):
+        value = chr(10).join(part.strip() for part in value.replace("|", chr(10)).split(chr(10)) if part.strip())
+    result = library_settings.change(library, {key: value}, acknowledged=list(acknowledged), apply=apply_)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    if key == library_settings.ROOTS:
+        # Taken, but said: a root on a drive not plugged in now is walked when it is back.
+        for root in value.split(chr(10)):
+            if root and not os.path.isdir(root):
+                console.print("Warning: %s is not on disk now; sync finds nothing under it until it is." % root,
+                              markup=False, soft_wrap=True)
+    changed = result.details.get("changed", [])
+    added = result.details.get("ignored_added", 0)
+    if not changed:
+        console.print("%s already holds that value; nothing to change." % key, markup=False)
+        return
+    also = " and %d folder(s) under the new roots added to library.ignored" % added if added else ""
+    if not apply_:
+        console.print("Would change %s%s. Nothing changed. --apply writes it." % (", ".join(changed), also),
+                      markup=False, soft_wrap=True)
+        if result.details.get("behind"):
+            console.print("The library is behind this version by %d migration(s); --apply brings it up to date "
+                          "first." % result.details["behind"], markup=False)
+        return
+    console.print("Changed %s%s. %s" % (", ".join(changed), also, maintenance.recorded(result, library.path)),
+                  markup=False, soft_wrap=True)
+
+
 @cli.group(invoke_without_command=True)
 @click.pass_context
 def jobs(ctx):
-    """The recurring jobs (snapshots, pruning the journal): each one's last run and when
+    """The recurring jobs (snapshots, pruning the journal, sync): each one's last run and when
     it is due next, for the library --db names or every library in the data folder. The
     web server runs them; `jobs run NAME` runs one now, by hand."""
     if ctx.invoked_subcommand is not None:
@@ -998,6 +1116,13 @@ def jobs_run(ctx, name):
             console.print("%s for %s: not run, %s" % (name, outcome.library or "every library", outcome.why),
                           markup=False)
             failed = True
+    # A job may have filled this process's index queue (sync's new files): the process
+    # ends when this command does, so it waits for them, as `sync --apply` does.
+    for each in ([library] if library else runner.libraries()):
+        queue = indexing_jobs.queue_for(each)
+        if queue.active()["busy"]:
+            console.print("Indexing the new files' folders for %s..." % each.name, markup=False)
+        queue.wait()
     if failed:
         raise SystemExit(1)
 

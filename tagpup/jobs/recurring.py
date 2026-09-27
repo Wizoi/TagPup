@@ -151,7 +151,17 @@ def _prune_journal(library, run):
     return journal_service.prune(library, apply=True)
 
 
-# Sync (phase 8c) registers here.
+@JOBS.job("sync", DAILY, reason=CATCH_UP)
+def _sync(library, run):
+    """The whole library brought in step with its folders, applied (tagpup.services.sync,
+    through the process's Runtime: the library's ExifTool and its index queue). A catch-up
+    check: the watcher syncs each folder as it changes (owner, 2026-09-26), and this finds
+    what a missed notification left. The Runtime is the entry point's to give; a runner
+    given none cannot sync."""
+    runtime = run.given.get("runtime")
+    if runtime is None:
+        raise RuntimeError("the sync job needs the process's Runtime, which this runner was not given")
+    return runtime.sync(library, apply=True)
 
 
 # ---- When a job is due -----------------------------------------------------------------

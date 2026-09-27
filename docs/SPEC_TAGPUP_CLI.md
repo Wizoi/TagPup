@@ -210,12 +210,13 @@ The `tagpup_cli.py` engine is accessed via `click` subcommands.
 ### Subcommands
 
 #### 1. `index`
-Scans and indexes a photo library recursively.
-- **Usage**: `run.bat [global-options] index <DIRECTORY>`
+Scans and indexes a photo library recursively: one or more directories, in one run (the models are loaded once; sync hands it every folder of new files at once).
+- **Usage**: `run.bat [global-options] index <DIRECTORY> [<DIRECTORY> ...]`
 - **Options**:
   - `--force-reembed`: Force recreation of all CLIP visual embeddings.
   - `--reset`: Delete the existing SQLite database index and taxonomy files to start fresh.
   - `--skip-faces`: Skip MTCNN face detection and FaceNet embedding extraction during indexing.
+  - `--no-subfolders`: Only the photos directly in each DIRECTORY (`images.photos_in`): what sync queues for a folder the library holds, whose subfolders may be folders to review or ignored.
 
 #### 2. `suggest`
 Analyzes untagged photos and generates tag recommendations.
@@ -287,6 +288,12 @@ Undoes change ID of the journal. Without `--apply` it rehearses: undoes the chan
 
 ### `prune-journal [--days N] [--apply]`
 Says how many changes are older than N days (90 by default, `journal.RETENTION_DAYS`); with `--apply`, drops their values and keeps their summaries, and they can no longer be undone. Every apply of a maintenance operation prunes by the default as well.
+
+### `sync [--folder FOLDER] [--apply]`
+Brings the library in step with its folders (`tagpup.runtime.sync`, over `tagpup.services.sync`; ARCHITECTURE.md, phase 8): walks the library's root folders (`library.roots`) and every folder it holds photos in, each once from the topmost, or FOLDER, and compares each file with its row by path, size and modified time. Says how many files are new (and in how many folders), changed, moved and missing, and how many folders are wholly gone -- a whole root among them, as an unplugged drive is. A dry run unless `--apply`, reading only the changed files (and, where a row is missing, the DocumentIDs of the new files its name, size and modified time did not match); nothing is written. With `--apply`: the changed rows are read again from their files, as `refresh_rows` does, and the rows of moved files follow them with their faces, as one change of the journal (`sync`), which `undo` takes back; the folders the library holds that hold new files are indexed, each without its subfolders, one at a time, and the command waits for them; a folder under a root holding no indexed photo is counted as a folder to review, never indexed on its own (TagTuner's gear, Folders to review), and one under an ignored folder (`library.ignored`) is passed over; missing files are never removed. Each applied run is recorded in the library (`sync_runs`), which the pages show as "last in step". Counts only; exit status 1 when refused -- FOLDER not a full path, or holding no photo of the library and under none of its root folders -- or something failed.
+
+### `settings` and `settings set KEY VALUE [--acknowledge GROUP] [--apply]`
+`settings` lists the library's settings, key and value, read without stamping it. `settings set` changes one as one journaled change (`tagpup.services.settings.change`), which `history` lists and `undo` takes back -- a dry run unless `--apply`, saying what would change. A value the validator refuses is refused (exit status 1), as is a locked setting (the CLIP model, face detection, ExifTool) unless its group is named with `--acknowledge`. Folders (`library.roots`, `library.ignored`) are one a line or separated by `|`: `tagpup_cli.py --db photo_index settings set library.roots "D:\Training\Pictures" --apply`. Setting the roots adds every folder under a new root that holds photos and no indexed photo to `library.ignored` in the same change, and says how many; a root not on disk now is taken, with a warning. A dry run reads the settings without migrating a library behind this version, and says how far behind it is.
 
 ### `export-tree OUTPUT`
 Writes the library's tag tree to OUTPUT as JSON (`{"paths": [...]}`): a copy to keep or read. The tree lives in the library; nothing reads this file back.

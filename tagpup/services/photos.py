@@ -399,10 +399,9 @@ def count_photos(folder, recursive=True):
     count, has_subdirs = 0, False
     try:
         if recursive:
-            for root, dirs, files in os.walk(folder):
-                if root == folder and dirs:
-                    has_subdirs = True
-                count += sum(1 for f in files if images.is_photo(f))
+            # The one walk (tagpup.files.images.photo_entries), which goes into no junction.
+            count = sum(1 for _entry in images.photo_entries(folder))
+            has_subdirs = images.has_subfolders(folder)
         else:
             for entry in os.listdir(folder):
                 if os.path.isdir(os.path.join(folder, entry)):

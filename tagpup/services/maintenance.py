@@ -24,7 +24,9 @@ otherwise the whole change is refused, naming the rows -- and undoable afterward
 same terms (tagpup.services.journal). An edit marked skippable (a refresh's) whose row
 changed since is left out instead, and listed in the Result's `skipped`. A dry run is the rehearsal: the change applied and
 undone inside a transaction that is rolled back, which says whether the undo restored
-every row exactly. Nothing is written by it.
+every row exactly. Nothing is written by it -- nor by a dry run on a library behind this
+version's migrations: rehearsing there would migrate it first (journal.rehearse), so the
+plan is reported without a rehearsal, and `behind` says how many migrations it lacks.
 
 The Result's details, in every operation:
 
@@ -36,13 +38,15 @@ The Result's details, in every operation:
     reveal     paths, names, captions: the library is photographs of real people, many
                of them minors, so a tool shows these only when asked (reveal=True)
     remaining  {what: how many} re-read after the write, where the operation offers it
+    behind     of a dry run on a library behind this version: the migrations it lacks,
+               and no rehearsal (the rehearsal runs once an app has opened it)
     pruned     changes whose values the journal's retention took away after the apply
 """
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from tagpup.core.result import Result
-from tagpup.store import journal
+from tagpup.store import journal, schema
 
 
 @dataclass
@@ -80,6 +84,10 @@ def run(library, operation, plan, edits, apply=False, remaining=None, kinds=()):
     wanted = edits(planned)
     summary = {"counts": dict(planned.counts)}
     if not apply:
+        behind = len(schema.pending(library.path))
+        if behind:
+            result.details["behind"] = behind
+            return result
         try:
             rehearsal = journal.rehearse(library.path, operation, wanted, summary)
         except Exception as e:
@@ -119,6 +127,9 @@ def run(library, operation, plan, edits, apply=False, remaining=None, kinds=()):
 def rehearsed(result):
     """What a dry run's rehearsal found, in a line for a person."""
     rehearsal = result.details.get("rehearsal")
+    if result.details.get("behind"):
+        return ("Not rehearsed: the library is behind this version by %d migration(s); the rehearsal runs "
+                "once an app has opened it." % result.details["behind"])
     if not rehearsal:
         return "Nothing to rehearse."
     if rehearsal["refused"]:

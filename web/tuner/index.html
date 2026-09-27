@@ -48,6 +48,10 @@
                         <span class="switch-label">Show Matched Photos</span>
                     </label>
                 </div>
+                <!-- How many folders under the library's roots wait to be included or ignored (review.js). -->
+                <div class="control-group">
+                    <button id="review-notice" type="button" class="btn btn-secondary btn-sm review-notice hidden" title="Folders under the library's roots that hold photos not in it: include or ignore each"></button>
+                </div>
                 <!-- The gear (web/common/gear.js): the tag editor, the library's settings, its history, and TagPup on this library. -->
                 <div class="control-group gear">
                     <button id="btn-gear" class="btn btn-secondary btn-sm" title="Tag editor, library settings, and TagPup on this library" aria-label="Tools" aria-controls="gear-menu">⚙️</button>
@@ -55,6 +59,7 @@
                         <button type="button" role="menuitem" data-action="tag-editor">Tag editor</button>
                         <button type="button" role="menuitem" data-action="library-settings" title="This library's settings: the CLIP model, face detection and ExifTool (Suggest's words and the rename format are in TagPup's gear)">Library settings</button>
                         <button type="button" role="menuitem" data-action="library-history" title="This library's last changes, and Undo beside each that can be undone">History...</button>
+                        <button type="button" role="menuitem" data-action="folders-review" title="Folders under the library's roots that hold photos not in it: include or ignore each">Folders to review...</button>
                         <div class="gear-menu-separator" role="separator"></div>
                         <a role="menuitem" data-app="tagpup" target="_blank" rel="noopener" aria-disabled="true">Open in TagPup</a>
                     </div>

@@ -35,6 +35,10 @@ from tagpup.store import photos as store_photos
 #: What the change is recorded as.
 OPERATION = "relink_renamed_photos"
 
+#: The two fields a dead row is matched to a file by.
+IDENTITY = "XMP-xmpMM:DocumentID"
+PRESERVED = "XMP-xmpMM:PreservedFileName"
+
 
 def stem_of(path):
     return os.path.splitext(os.path.basename(str(path)))[0].strip().lower()
@@ -46,18 +50,18 @@ def dead_rows(conn):
 
 
 def _photos_under(folder):
-    found = []
-    for root, _dirs, files in os.walk(folder):
-        for name in sorted(files):
-            if images.is_photo(name):
-                found.append(os.path.join(root, name))
-    return found
+    # The one walk (tagpup.files.images.photo_entries), which goes into no junction.
+    return [entry.path for entry in images.photo_entries(folder)]
 
 
 def _read(folder, field, exiftool_path):
-    """(SourceFile, row) of every photo under `folder`, read for `field`; a batch that
-    fails is read again a photo at a time."""
-    found = _photos_under(folder)
+    """(SourceFile, row) of every photo under `folder`, read for `field`."""
+    return _read_files(_photos_under(folder), [field], exiftool_path)
+
+
+def _read_files(found, fields, exiftool_path):
+    """(SourceFile, row) of each photo in `found`, read for `fields`; a batch that fails
+    is read again a photo at a time. Only reads."""
     if not found:
         return []
     rows = []
@@ -65,11 +69,11 @@ def _read(folder, field, exiftool_path):
         for i in range(0, len(found), 100):
             batch = found[i:i + 100]
             try:
-                rows += et.get_tags(batch, tags=[field])
+                rows += et.get_tags(batch, tags=list(fields))
             except Exception:
                 for one in batch:
                     try:
-                        rows += et.get_tags([one], tags=[field])
+                        rows += et.get_tags([one], tags=list(fields))
                     except Exception:
                         continue
     return rows
@@ -83,8 +87,14 @@ def identities(folder, exiftool_path=None):
     filename that collides with another photo's original. PreservedFileName only ever
     worked for renames TagPup itself performed.
     """
+    return _by_identity(_read(folder, IDENTITY, exiftool_path))
+
+
+def _by_identity(rows):
+    """{DocumentID: the file claiming it} of what ExifTool answered, an identity two files
+    claim left out."""
     by_id = {}
-    for row in _read(folder, "XMP-xmpMM:DocumentID", exiftool_path):
+    for row in rows:
         doc_id = row.get("XMP:DocumentID") or row.get("XMP-xmpMM:DocumentID")
         source = row.get("SourceFile")
         if not doc_id or not source:
@@ -105,8 +115,14 @@ def preserved_names(folder, exiftool_path=None):
     a renamed file beside it. Keyed by stem alone, the last folder searched won, and
     a row's named faces could be re-pointed at a stranger's photo in another folder.
     """
+    return _by_original(_read(folder, PRESERVED, exiftool_path))
+
+
+def _by_original(rows):
+    """{(folder key, original stem): the file claiming it} of what ExifTool answered, a
+    key two files claim left out."""
     by_original = {}
-    for row in _read(folder, "XMP-xmpMM:PreservedFileName", exiftool_path):
+    for row in rows:
         original = row.get("XMP:PreservedFileName")
         source = row.get("SourceFile")
         if not original or not source:
@@ -131,6 +147,38 @@ def merge_unambiguous(into, found):
             into[key] = path
 
 
+def claims_of(files, exiftool_path=None):
+    """(preserved names, identities) of `files`, as preserved_names and identities give
+    them for a folder, read in one pass: what sync matches its missing rows against among
+    the files it found new (tagpup.services.sync). Only reads."""
+    rows = _read_files(list(files), [IDENTITY, PRESERVED], exiftool_path)
+    return _by_original(rows), _by_identity(rows)
+
+
+def pair(dead, lookup, by_identity, row_identity, live):
+    """([(old, new)], [old unmatched]): each dead row (path as stored) matched to a file,
+    by its identity (`row_identity`, {path: document_id}) in `by_identity`, else by its
+    stem in its own folder in `lookup` (preserved_names). A file a row already names
+    (`live`, their keys) or another dead row has been matched to is not matched again."""
+    pairs, unmatched, claimed = [], [], set()
+    for old in dead:
+        # Identity first: it survives a move and a rename by any tool. The preserved
+        # filename is the fallback, and only ever worked for TagPup's own renames.
+        new = (by_identity.get(row_identity.get(old, ""))
+               or lookup.get((paths.key(os.path.dirname(old)), stem_of(old))))
+        if not new:
+            unmatched.append(old)
+            continue
+        key = paths.key(new)
+        # Never point two rows at one file, and never collide with a row already there.
+        if key in live or key in claimed:
+            unmatched.append(old)
+            continue
+        claimed.add(key)
+        pairs.append((old, new))
+    return pairs, unmatched
+
+
 def plan_for(library, exiftool_path=None):
     """([{from, to, faces, named}] of the dead rows that can be re-pointed, [the dead
     rows that cannot]). Reads only."""
@@ -147,26 +195,19 @@ def plan_for(library, exiftool_path=None):
         row_identity = store_photos.identities(conn)
         live = {paths.key(path) for path in store_photos.all_paths(conn) if path and os.path.exists(path)}
 
-        moves, unmatched, claimed = [], [], set()
-        for old in dead:
-            # Identity first: it survives a move and a rename by any tool. The preserved
-            # filename is the fallback, and only ever worked for TagPup's own renames.
-            new = (by_identity.get(row_identity.get(old, ""))
-                   or lookup.get((paths.key(os.path.dirname(old)), stem_of(old))))
-            if not new:
-                unmatched.append(old)
-                continue
-            key = paths.key(new)
-            # Never point two rows at one file, and never collide with a row already there.
-            if key in live or key in claimed:
-                unmatched.append(old)
-                continue
-            claimed.add(key)
-            faces, named = store_faces.counts_on(conn, old)
-            moves.append({"from": old, "to": new, "faces": faces, "named": named})
-        return moves, unmatched
+        pairs, unmatched = pair(dead, lookup, by_identity, row_identity, live)
+        return moves_with_faces(conn, pairs), unmatched
     finally:
         conn.close()
+
+
+def moves_with_faces(conn, pairs):
+    """[{from, to, faces, named}] of (old, new) pairs: the faces each row takes with it."""
+    moves = []
+    for old, new in pairs:
+        faces, named = store_faces.counts_on(conn, old)
+        moves.append({"from": old, "to": new, "faces": faces, "named": named})
+    return moves
 
 
 def edits_for(library, moves):

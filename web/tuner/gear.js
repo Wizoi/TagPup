@@ -1,12 +1,14 @@
 // TagTuner's page: the gear in its header (web/common/gear.js) -- the tag editor, the
 // library's settings (web/common/settings-dialog.js), its history of changes, each
-// undoable (web/common/history-dialog.js), and TagPup on this library.
+// undoable (web/common/history-dialog.js), the folders to review (review.js), and
+// TagPup on this library.
 import { wireGear } from './common/gear.js';
 import { openHistory } from './common/history-dialog.js';
 import { openSettings } from './common/settings-dialog.js';
 import { wireTagEditor } from './common/tag-editor.js';
 import { fetchKnownPeople } from './shared.js';
 import { refreshSidebarQuietly } from './sidebar.js';
+import { openReview } from './review.js';
 
 /**
  * The tag editor, reading the tree itself each time it opens: this page keeps none.
@@ -24,6 +26,7 @@ export function wireTunerGear() {
     return wireGear(document.getElementById('btn-gear'), document.getElementById('gear-menu'), {
         'tag-editor': editor.open,
         'library-settings': openSettings,
+        'folders-review': openReview,
         // An undo may have put back names and tags: the list beside the photo is read again.
         'library-history': () => openHistory({
             undone: () => {

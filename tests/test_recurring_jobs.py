@@ -163,9 +163,32 @@ class WhatIsDue(Base):
             registry.job("sync", recurring.DAILY, reason=recurring.CATCH_UP)(lambda library, run: Result())
 
     def test_the_registry_holds_the_snapshots_and_pruning_the_journal(self):
-        self.assertEqual({"snapshots": "daily", "prune-journal": "weekly"},
+        self.assertEqual({"snapshots": "daily", "prune-journal": "weekly", "sync": "daily"},
                          {job.name: job.period.name for job in recurring.JOBS})
         self.assertTrue(all(job.per_library for job in recurring.JOBS))
+
+
+class SyncIsTheCatchUp(unittest.TestCase):
+    """Sync is registered as the daily catch-up (phase 8c): the runner hands it the
+    process's Runtime, and it syncs the library, applied; given none, it fails, saying so."""
+
+    def test_it_syncs_through_the_runtime_it_is_given(self):
+        home = own_home.for_test(self, prefix="jobs_")
+        library = Library(home.library("harbour.db"))
+        library_actions.create(library.path)
+        calls = []
+
+        class FakeRuntime:
+            def sync(self, found, folder=None, apply=False):
+                calls.append((found.path, folder, apply))
+                return Result(attempted=0)
+
+        runner = recurring.Runner(lambda: [library], clock=Clock(), given={"runtime": FakeRuntime()})
+        outcome = runner.run("sync", library)[0]
+        self.assertEqual((True, None), (outcome.ran, outcome.error))
+        self.assertEqual([(library.path, None, True)], calls)
+        without = recurring.Runner(lambda: [library], clock=Clock()).run("sync", library)[0]
+        self.assertIsInstance(without.error, RuntimeError)
 
 
 class EachJobSaysWhyItIsScheduled(unittest.TestCase):
@@ -181,7 +204,7 @@ class EachJobSaysWhyItIsScheduled(unittest.TestCase):
         self.assertEqual([], registry.names())
 
     def test_each_registered_job_has_one_and_the_apps_are_told_it(self):
-        self.assertEqual({"snapshots": "safety", "prune-journal": "retention"},
+        self.assertEqual({"snapshots": "safety", "prune-journal": "retention", "sync": "catch-up"},
                          {job.name: job.reason for job in recurring.JOBS})
         self.assertEqual(("safety", "retention", "catch-up"), recurring.REASONS)
         registry = recurring.Registry()
@@ -212,7 +235,7 @@ class ALibraryBehind(unittest.TestCase):
         from tagpup.store import schema
         home = own_home.for_test(self, prefix="jobs_")
         library = Library(home.library("harbour.db"))
-        at_version(library.path, 12)
+        at_version(library.path, schema.LATEST - 1)
         registry = recurring.Registry()
         service = Counting()
         registry.job("tidy", recurring.DAILY, reason=recurring.SAFETY)(service)
@@ -406,8 +429,8 @@ class WhatTheAppsAreTold(unittest.TestCase):
             app, home = web_client.app_for(self, kind)
             library = Library(home.library("library.db"))
             listed = app.test_client().get("/library/api/jobs").get_json()
-            self.assertEqual(["snapshots", "prune-journal"], [job["name"] for job in listed["jobs"]])
-            self.assertEqual([None, None], [job["last"] for job in listed["jobs"]])
+            self.assertEqual(["snapshots", "prune-journal", "sync"], [job["name"] for job in listed["jobs"]])
+            self.assertEqual([None, None, None], [job["last"] for job in listed["jobs"]])
 
             registry = recurring.Registry()
             service = Counting()

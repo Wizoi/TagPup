@@ -78,10 +78,10 @@ class Stamping(ALibrary):
     def test_a_new_library_holds_the_defaults_whatever_config_ini_says(self):
         self.home.write_old_config(OLD_CONFIG)
         library = self.new_library()
-        self.assertEqual(settings_rows(library), settings.DEFAULTS)
+        self.assertEqual(settings_rows(library), settings.STAMPED)
         [stamp] = history(library)
         self.assertEqual(stamp["operation"], settings.WITH_DEFAULTS)
-        self.assertEqual(stamp["rows"], {"settings": {"insert": len(settings.DEFAULTS)}})
+        self.assertEqual(stamp["rows"], {"settings": {"insert": len(settings.STAMPED)}})
 
     def test_a_library_in_use_is_stamped_once_from_config_ini(self):
         self.home.write_old_config(OLD_CONFIG)
@@ -136,7 +136,7 @@ class Stamping(ALibrary):
         library = self.new_library()
         result = settings.stamp(library, {"model.name": "ViT-B-32"})
         self.assertEqual(0, result.changed)
-        self.assertEqual(settings_rows(library), settings.DEFAULTS)
+        self.assertEqual(settings_rows(library), settings.STAMPED)
 
 
 class Changing(ALibrary):
@@ -155,7 +155,7 @@ class Changing(ALibrary):
         self.assertTrue(rehearsal.details["rehearsal"]["exact"], rehearsal.details)
         undone = journal_service.undo(library, result.details["change"], apply=True)
         self.assertIsNone(undone.refused)
-        self.assertEqual(settings_rows(library), settings.DEFAULTS)
+        self.assertEqual(settings_rows(library), settings.STAMPED)
 
     def test_a_locked_setting_says_so(self):
         library = self.new_library()
@@ -210,7 +210,7 @@ class Refusing(ALibrary):
                 result = settings.change(library, values)
                 self.assertEqual(result.refused, message)
                 self.assertEqual(0, result.changed)
-                self.assertEqual(settings_rows(library), settings.DEFAULTS)
+                self.assertEqual(settings_rows(library), settings.STAMPED)
         self.assertEqual(1, len(history(library)), "a refusal was journaled")
 
     def test_a_library_never_stamped(self):
@@ -462,7 +462,7 @@ class TheLockHoldsForEveryCaller(ALibrary):
             for consequence in group["consequences"]:
                 self.assertIn(consequence, result.refused)
         self.assertNotIn(validation.SETTING_GROUPS["exiftool"]["title"], result.refused)
-        self.assertEqual(settings_rows(library), settings.DEFAULTS)
+        self.assertEqual(settings_rows(library), settings.STAMPED)
         self.assertEqual(1, len(history(library)), "a refusal was journaled")
 
     def test_each_touched_group_must_be_acknowledged(self):
@@ -470,7 +470,7 @@ class TheLockHoldsForEveryCaller(ALibrary):
         result = settings.change(library, {"model.name": "ViT-B-32", "faces.min_face_size": "40"},
                                  acknowledged=["clip"])
         self.assertEqual(["faces"], [g["group"] for g in result.details["unacknowledged"]])
-        self.assertEqual(settings_rows(library), settings.DEFAULTS)
+        self.assertEqual(settings_rows(library), settings.STAMPED)
         result = settings.change(library, {"model.name": "ViT-B-32", "faces.min_face_size": "40"},
                                  acknowledged=["clip", "faces"])
         self.assertIsNone(result.refused)
@@ -486,7 +486,7 @@ class TheLockHoldsForEveryCaller(ALibrary):
         library = self.new_library()
         result = settings.change(library, {"model.name": "ViT-B-32"}, acknowledged=["clip", "everything"])
         self.assertEqual(result.refused, "There is no group of settings called everything to acknowledge.")
-        self.assertEqual(settings_rows(library), settings.DEFAULTS)
+        self.assertEqual(settings_rows(library), settings.STAMPED)
 
     def test_unlocked_settings_and_unchanged_locked_ones_need_nothing(self):
         library = self.new_library()
@@ -519,7 +519,7 @@ class AStampIsNotUndone(ALibrary):
         library = self.new_library()
         change = settings.change(library, {"candidates.tags": "Kayak"}).details["change"]
         self.assertIsNone(journal_service.undo(library, change, apply=True).refused)
-        self.assertEqual(settings_rows(library), settings.DEFAULTS)
+        self.assertEqual(settings_rows(library), settings.STAMPED)
 
 
 class TheCliLooksWithoutStamping(ALibrary):

@@ -184,7 +184,7 @@ The journal: one row for each bulk edit applied to the library (`tagpup.store.jo
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | The change; `tagpup_cli.py undo <id>` and the MCP `undo` tool name it. |
-| `operation` | TEXT | NOT NULL | What made it: `merge_duplicate_person_tags`, `dedupe_faces`, `refresh_rows`, `relink_renamed_photos`, `backfill_document_ids`, `change settings`, `stamp settings from config.ini`, `stamp settings with the defaults`, or a migration, `migration 11: photo files in the journal`; and the changes of photo files (`change_files`): `add to all selected`, `apply all suggestions`, `save photo`, `write suggestions`, `time shift`, `smart rename: original names`, `smart rename`, `rename tag`, `remove tag`, `backfill_document_ids: mint`. |
+| `operation` | TEXT | NOT NULL | What made it: `merge_duplicate_person_tags`, `dedupe_faces`, `refresh_rows`, `relink_renamed_photos`, `sync`, `backfill_document_ids`, `change settings`, `stamp settings from config.ini`, `stamp settings with the defaults`, `stamp library roots from its folders`, or a migration, `migration 11: photo files in the journal`; and the changes of photo files (`change_files`): `add to all selected`, `apply all suggestions`, `save photo`, `write suggestions`, `time shift`, `smart rename: original names`, `smart rename`, `rename tag`, `remove tag`, `backfill_document_ids: mint`. |
 | `status` | TEXT | NOT NULL, one of `planned`, `applied`, `derived_pending`, `undone`, `failed`, `pruned` | Where it stands. `planned`: a change of photo files whose files are not all written yet -- or, with `undone` set, not all put back. `failed`: a change of photo files every file was taken out of again, so nothing was written. |
 | `schema_version` | INTEGER | NOT NULL | The migration the library was at when it was made; an undo at another is refused. A migration's change is at the version it made when it recorded rows, and at the one before when it did not, so that it is never undone. |
 | `created` | TEXT | NOT NULL | Local time it was made, `YYYY-MM-DD HH:MM:SS`. |
@@ -212,8 +212,8 @@ The library's settings (`tagpup.store.settings`, `tagpup.services.settings`, mig
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
-| `key` | TEXT | PRIMARY KEY, NOT NULL | The setting, `<section>.<key>` as config.ini named it: `model.name`, `faces.min_face_size`, `candidates.tags`, `renaming.format`, `paths.exiftool` ... A name, not an id: a row put back under it is that setting again (`journal.NAMED`). |
-| `value` | TEXT | NOT NULL | Its value as text, as the validator reads it (`true`/`false`, `0.85`, `0.6, 0.7, 0.7`). An empty `paths.exiftool` is the machine's ExifTool; an empty `model.force_image_size` the model's own size. |
+| `key` | TEXT | PRIMARY KEY, NOT NULL | The setting, `<section>.<key>` as config.ini named it: `model.name`, `faces.min_face_size`, `candidates.tags`, `renaming.format`, `paths.exiftool`, `library.roots`, `library.ignored` ... A name, not an id: a row put back under it is that setting again (`journal.NAMED`). |
+| `value` | TEXT | NOT NULL | Its value as text, as the validator reads it (`true`/`false`, `0.85`, `0.6, 0.7, 0.7`). An empty `paths.exiftool` is the machine's ExifTool; an empty `model.force_image_size` the model's own size. `library.roots` and `library.ignored` are folders, one a line. A stamp writes every setting but `library.roots`: a library has no roots until the owner sets them. Setting the roots adds the folders under a new root holding photos and no indexed photo to `library.ignored` in the same change. |
 
 ### 14. `change_files` Table
 The photo files a change writes, one row each (`tagpup.store.file_journal`, `tagpup.services.file_changes`, migration 11; ARCHITECTURE.md, phase 7.5). A batch of file writes cannot be one transaction, so each file carries its own state, as dpkg's packages do: the plan -- every file's fields before and after -- is committed first, `planned`; a file is marked `writing` before ExifTool writes it and `done` in the transaction that records its row (`photos.follow_fields`, or `photos.move_rows_in` for a rename), and the change is `applied` once every file is done or a conflict. A file found holding neither what the plan read nor what it was to hold is a `conflict`: reported, never overwritten. The first time a process reads a library's settings (`tagpup.runtime.library_settings`), and before each change of photo files, a file a crash left `writing` or `planned` is settled by what it holds: the before, written again; the after, marked done and its row recorded; neither, a conflict. An undo writes each file still holding its after back to its before through the same states, `undone`, and refuses, by photo id, a file that does not. Pruning deletes a change's files with its `change_rows`.
@@ -237,7 +237,7 @@ The runs of each recurring job (`tagpup.store.job_runs`, `tagpup.jobs.recurring`
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | The run. |
-| `job` | TEXT | NOT NULL, INDEXED with `library` | The job's name in the registry: `snapshots`, `prune-journal`. |
+| `job` | TEXT | NOT NULL, INDEXED with `library` | The job's name in the registry: `snapshots`, `prune-journal`, `sync`. |
 | `library` | TEXT | COLLATE NOCASE | The library's name the run was for, compared without case as its file is found (`--db harbour` is `Harbour.db`); NULL for a job not run per library. |
 | `started` | TEXT | NOT NULL | When it began, local time `YYYY-MM-DD HH:MM:SS`, as the journal's times. |
 | `finished` | TEXT | | When it ended; NULL while running. |
@@ -245,6 +245,20 @@ The runs of each recurring job (`tagpup.store.job_runs`, `tagpup.jobs.recurring`
 | `changed` | TEXT | | JSON counts of what it changed, from the service's Result: `{"attempted", "changed", "skipped", "errors"}` and the numbers among its details (a snapshot's `bytes`). No names or paths. |
 | `owner` | TEXT | | While `running`, the process running it, `host:pid:start` as `changes.owner` names one; NULL once it ended. |
 | `note` | TEXT | | Why it failed or was abandoned, for the CLI's `jobs`; can name a path, so never sent to a page. |
+
+### 16. `sync_runs` Table
+Each sync that was applied (`tagpup.store.sync_runs`, `tagpup.services.sync`, migration 14; ARCHITECTURE.md, phase 8): when it ran, whether it looked at the whole library, whether it left it in step with its folders -- nothing new, changed or moved left over; missing files, which are reported and never removed, do not count -- and what it found and changed, as counts. The pages' "last in step" is when the newest sync of the whole library that left it in step finished (`GET /api/sync`, the MCP tool `sync_state`). A record of runs, not a change of the library: not journaled, and undoing a sync's change leaves its record. A dry run records nothing, nor does an apply that was refused or whose write failed.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | The run, in the order they ran. |
+| `started` | TEXT | NOT NULL | Local time it started, `YYYY-MM-DD HH:MM:SS`. |
+| `finished` | TEXT | NOT NULL | Local time it finished, after its write and its queueing. |
+| `whole` | INTEGER | NOT NULL | 1 for every folder of the library, 0 for one folder (`--folder`). Only a whole run can say the library is in step. |
+| `in_step` | INTEGER | NOT NULL | 1 when it left the library in step. |
+| `found` | TEXT | NOT NULL | JSON `{what: count}`: `rows`, `files`, `folders_walked`, `new`, `new_folders`, `review_folders`, `review_photos`, `ignored_files`, `outside_roots_files`, `changed`, `never_stamped`, `to_write`, `unreadable`, `moved`, `moved_faces`, `moved_named`, `moved_changed`, `occupied`, `ambiguous_rows`, `ambiguous_files`, `held_back_folders`, `missing`, `missing_folders`, `folders_gone`, `roots_gone`. Never a path. |
+| `changed` | TEXT | NOT NULL | JSON `{what: count}`: `rows` the change wrote, `from_files` and `relinked` among them, and `queued_folders`, the folders of new files put on the index queue. |
+| `change_id` | INTEGER | | The change of `changes` its rows were written as; NULL when it wrote none. |
 
 ---
 

@@ -706,6 +706,16 @@ def rows_to_check(conn, folder=None):
     return conn.execute(query, params).fetchall()
 
 
+def stamps(conn, folder=None):
+    """(id, path as stored, mtime, size) of every photo, or of those under `folder`: what
+    sync compares with the disk (tagpup.services.sync). Nothing else of the row is read."""
+    query, params = "SELECT id, path, mtime, size FROM photos", ()
+    if folder:
+        where, params = paths.sql_under("path", folder)
+        query += " WHERE " + where
+    return conn.execute(query, params).fetchall()
+
+
 def row_as_recorded(conn, stored_path):
     """(tags, people, captions, raw_metadata, mtime, size, document_id) of the row stored
     under exactly `stored_path`, or None."""

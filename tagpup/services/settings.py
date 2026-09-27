@@ -31,9 +31,10 @@ import os
 from dataclasses import dataclass
 from typing import Dict
 
-from tagpup.core import validation
+from tagpup.core import paths, validation
 from tagpup.core.result import Result
-from tagpup.store import journal
+from tagpup.services import sync as sync_service
+from tagpup.store import journal, schema
 from tagpup.store import settings as store_settings
 
 #: The value each setting has when a library does not say: what a new library is stamped with.
@@ -44,6 +45,15 @@ FROM_CONFIG = "stamp settings from config.ini"
 WITH_DEFAULTS = "stamp settings with the defaults"
 FROM_REPLACED = "stamp settings from the library it replaced"
 CHANGE = "change settings"
+
+#: The library's root folders and the folders it ignores (phase 8's sync).
+ROOTS = "library.roots"
+IGNORED = "library.ignored"
+
+#: What a stamp writes: every setting but the roots. A library has no roots until the
+#: owner sets them (`settings set library.roots`, an ordinary change, which can be
+#: undone); nothing sets them on its own (owner, 2026-09-26).
+STAMPED = {key: value for key, value in DEFAULTS.items() if key != ROOTS}
 
 #: The stamps: a library's first settings, which cannot be undone -- undone, the library
 #: held none, and the next read stamped it again, from config.ini if one was still there.
@@ -107,10 +117,56 @@ class LibrarySettings:
         return self.values["renaming.format"]
 
     @property
+    def roots(self):
+        """The library's root folders, as given, in order; [] for none."""
+        return _folders(self.values[ROOTS])
+
+    @property
+    def ignored(self):
+        """The folders sync never offers to include, as given, in order."""
+        return _folders(self.values[IGNORED])
+
+    @property
     def exiftool(self):
         """The ExifTool program the library names, or "" for the one the machine has
         (tagpup.config.exiftool_path finds it)."""
         return _trim(self.values["paths.exiftool"])
+
+
+def _folders(text):
+    return [_trim(line) for line in str(text).split(validation.FOLDER_SEPARATOR) if _trim(line)]
+
+
+def excluded_under(library, new_roots, old_roots=(), ignored=()):
+    """The folders a change of roots excludes (owner, 2026-09-26: "any folders not added
+    assume excluded"): each folder under one of `new_roots`, and under none of
+    `old_roots`, that holds photos and no indexed photo now, and is not ignored already
+    -- the folders sync would list to review (tagpup.services.sync.review). Only a folder
+    that appears later is offered for review. One walk; reads no file."""
+    if not new_roots:
+        return []
+    found = sync_service.review(library, list(new_roots), list(ignored))["folders"]
+
+    def under(folder, roots):
+        return any(paths.same(folder, root) or paths.is_under(folder, root) for root in roots)
+
+    return [entry["path"] for entry in found if under(entry["path"], new_roots) and not under(entry["path"], old_roots)]
+
+
+def _with_excluded(library, held, roots_text, ignored_text=None):
+    """(the ignored folders' text once the roots are `roots_text`, how many were added):
+    the held ignored folders (or `ignored_text`), and the folders the new roots exclude."""
+    old = _folders(held.get(ROOTS, ""))
+    new = [root for root in _folders(roots_text) if not any(paths.same(root, other) for other in old)]
+    ignored = _folders(held.get(IGNORED, "") if ignored_text is None else ignored_text)
+    added = excluded_under(library, new, old, ignored)
+    return validation.FOLDER_SEPARATOR.join(ignored + added), len(added)
+
+
+def _setting_edit(held, key, value):
+    if key not in held:
+        return journal.insert(store_settings.TABLE, {"key": key, "value": value})
+    return journal.update(store_settings.TABLE, (key,), {"value": held[key]}, {"value": value})
 
 
 def _as_text(value):
@@ -132,9 +188,9 @@ def _stamping(found):
     """What stamping gives, from `found` -- {key: value} config.ini says, or None when
     the home has none: (values, the keys taken from it, the keys it held a value the
     validator refuses for, left at their default)."""
-    values, taken, refused = dict(DEFAULTS), [], []
+    values, taken, refused = dict(STAMPED), [], []
     for key, value in (found or {}).items():
-        if key not in DEFAULTS:
+        if key not in values:
             continue   # data_dir, default_db: where the libraries are is not a setting
         text = _as_text(value)
         if validation.problem(validation.setting_kind(key), text):
@@ -156,7 +212,7 @@ def read(library, config_ini=None):
     if held:
         return LibrarySettings(_filled(held), stamped=True)
     values, _taken, _refused = _stamping(_found(config_ini))
-    return LibrarySettings(values, stamped=False)
+    return LibrarySettings(_filled(values), stamped=False)
 
 
 def of(library, config_ini=None):
@@ -233,7 +289,7 @@ def _lock_refusal(missing):
     return "".join(parts)
 
 
-def change(library, values, acknowledged=()):
+def change(library, values, acknowledged=(), apply=True):
     """Change the settings in `values` ({key: value}) as one journaled change, so it is in
     the library's history and can be undone. Refused, with nothing written, for a key
     that is no setting, a value the validator refuses (its message), a library never
@@ -244,7 +300,13 @@ def change(library, values, acknowledged=()):
     dialog, the CLI, a tool -- names what it acknowledges, as the dialog asks the owner
     to tick each consequence. `changed` is the settings whose value changed;
     details["locked"] says whether any was a locked one, after which what the models
-    made is from the old values."""
+    made is from the old values.
+
+    A change of the roots (library.roots) adds, in the same change, every folder under a
+    new root that holds photos and no indexed photo to the ignored folders
+    (excluded_under; owner, 2026-09-26): details["ignored_added"]. Without `apply`, a dry
+    run: the same checks and details, nothing written (details["dry_run"]) -- nor a library
+    behind this version migrated: details["behind"] counts the migrations it lacks."""
     result = Result(attempted=len(values or {}))
     if not isinstance(values, dict) or not values:
         result.refuse("Say which settings to change.")
@@ -264,10 +326,20 @@ def change(library, values, acknowledged=()):
             result.refuse(problem)
             return result
         wanted[key] = text
-    held = store_settings.read(library.path)
+    if apply:
+        held = store_settings.read(library.path)
+    else:
+        # A dry run reads without migrating a library behind this version, and says so.
+        held = store_settings.read_only(library.path)
+        result.details["behind"] = len(schema.pending(library.path))
     if not held:
         result.refuse("The library's settings have not been stamped yet: open it first.")
         return result
+    if ROOTS in wanted and wanted[ROOTS] != held.get(ROOTS):
+        ignored, added = _with_excluded(library, held, wanted[ROOTS], wanted.get(IGNORED))
+        result.details["ignored_added"] = added
+        if added:
+            wanted[IGNORED] = ignored
     edits, changed = [], []
     for key, text in wanted.items():
         if key not in held:
@@ -283,7 +355,8 @@ def change(library, values, acknowledged=()):
         result.details["unacknowledged"] = missing
         result.refuse(_lock_refusal(missing))
         return result
-    if not edits:
+    result.details["dry_run"] = not apply
+    if not edits or not apply:
         return result
     try:
         applied = journal.apply(library.path, CHANGE, edits, summary={"settings": sorted(changed)})
@@ -293,6 +366,22 @@ def change(library, values, acknowledged=()):
     result.changed = applied.changed
     result.details["change"] = applied.change_id
     return result
+
+
+def ignore_folder(library, folder):
+    """Add `folder` to the library's ignored folders, as a change of its settings, so it is
+    in the library's history and can be undone: Ignore, on a folder sync lists to review.
+    Refused for a folder the rules do not take as one; `changed` 0 for one ignored
+    already."""
+    result = Result(attempted=1)
+    problem = validation.problem("folder", folder)
+    if problem:
+        result.refuse(problem)
+        return result
+    ignored = of(library).ignored
+    if any(paths.same(folder, other) for other in ignored):
+        return result
+    return change(library, {IGNORED: validation.FOLDER_SEPARATOR.join(ignored + [paths.stored(folder)])})
 
 
 def described(settings, app=None):

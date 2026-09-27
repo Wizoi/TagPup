@@ -1,5 +1,5 @@
 {
- "version": "11e857c80d04",
+ "version": "684b784fd659",
  "blank": "\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
  "kinds": {
   "tag": {
@@ -133,6 +133,40 @@
      "rule": "pattern",
      "pattern": "(?:[A-Za-z]:[/\\\\]|[/\\\\]{2}[^/\\\\]|/)[\\s\\S]*",
      "message": "A folder is named by its full path, as in D:/Photos."
+    }
+   ]
+  },
+  "folders": {
+   "rules": [
+    {
+     "rule": "optional"
+    },
+    {
+     "rule": "list",
+     "separator": "\n",
+     "skip_empty": true,
+     "each": [
+      {
+       "rule": "forbid_pattern",
+       "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\ufeff]",
+       "message": "A folder's path cannot contain a tab, a line break or another control character."
+      },
+      {
+       "rule": "pattern",
+       "pattern": "(?:[A-Za-z]:[/\\\\]|[/\\\\]{2}[^/\\\\]|/)[\\s\\S]*",
+       "message": "Each folder is named by its full path, one a line, as in D:/Photos."
+      },
+      {
+       "rule": "forbid_pattern",
+       "pattern": "[\"<>|?*]",
+       "message": "A folder's path cannot contain \" < > | ? or *: Windows allows none of them in a name."
+      },
+      {
+       "rule": "forbid_pattern",
+       "pattern": "^\\s*(?:[A-Za-z]:[/\\\\]?|[/\\\\]{1,2})\\s*$",
+       "message": "A whole drive cannot be one of the library's folders: name a folder on it, as in D:/Photos."
+      }
+     ]
     }
    ]
   },
@@ -385,6 +419,88 @@
      "rule": "forbid_pattern",
      "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\ufeff]",
      "message": "ExifTool's path cannot contain a tab, a line break or another control character."
+    }
+   ]
+  },
+  "setting library.roots": {
+   "group": "library",
+   "label": "Root folders",
+   "type": "folders",
+   "default": "",
+   "info": "The folders the library's photos live under, one a line. Sync walks them: new photos in a folder already indexed are indexed; a new folder under a root is listed for you to include or ignore. Empty (until you set them) keeps the folders the library holds in step, new subfolders included, and offers nothing to review.",
+   "locked": false,
+   "consequences": [],
+   "rules": [
+    {
+     "rule": "optional"
+    },
+    {
+     "rule": "list",
+     "separator": "\n",
+     "skip_empty": true,
+     "each": [
+      {
+       "rule": "forbid_pattern",
+       "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\ufeff]",
+       "message": "A folder's path cannot contain a tab, a line break or another control character."
+      },
+      {
+       "rule": "pattern",
+       "pattern": "(?:[A-Za-z]:[/\\\\]|[/\\\\]{2}[^/\\\\]|/)[\\s\\S]*",
+       "message": "Each folder is named by its full path, one a line, as in D:/Photos."
+      },
+      {
+       "rule": "forbid_pattern",
+       "pattern": "[\"<>|?*]",
+       "message": "A folder's path cannot contain \" < > | ? or *: Windows allows none of them in a name."
+      },
+      {
+       "rule": "forbid_pattern",
+       "pattern": "^\\s*(?:[A-Za-z]:[/\\\\]?|[/\\\\]{1,2})\\s*$",
+       "message": "A whole drive cannot be one of the library's folders: name a folder on it, as in D:/Photos."
+      }
+     ]
+    }
+   ]
+  },
+  "setting library.ignored": {
+   "group": "library",
+   "label": "Ignored folders",
+   "type": "folders",
+   "default": "",
+   "info": "Folders under a root that sync never offers to include, nor any folder under them, one a line. Photos already indexed in one stay in the library, and in step.",
+   "locked": false,
+   "consequences": [],
+   "rules": [
+    {
+     "rule": "optional"
+    },
+    {
+     "rule": "list",
+     "separator": "\n",
+     "skip_empty": true,
+     "each": [
+      {
+       "rule": "forbid_pattern",
+       "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\ufeff]",
+       "message": "A folder's path cannot contain a tab, a line break or another control character."
+      },
+      {
+       "rule": "pattern",
+       "pattern": "(?:[A-Za-z]:[/\\\\]|[/\\\\]{2}[^/\\\\]|/)[\\s\\S]*",
+       "message": "Each folder is named by its full path, one a line, as in D:/Photos."
+      },
+      {
+       "rule": "forbid_pattern",
+       "pattern": "[\"<>|?*]",
+       "message": "A folder's path cannot contain \" < > | ? or *: Windows allows none of them in a name."
+      },
+      {
+       "rule": "forbid_pattern",
+       "pattern": "^\\s*(?:[A-Za-z]:[/\\\\]?|[/\\\\]{1,2})\\s*$",
+       "message": "A whole drive cannot be one of the library's folders: name a folder on it, as in D:/Photos."
+      }
+     ]
     }
    ]
   },
