@@ -15,7 +15,12 @@ to it; the two before it are kept, to go back to by editing current.txt.
 
 Start the apps with the launchers it writes: TagPup.cmd and TagTuner.cmd (one server
 for both; the second started opens its page in the running one), TagPup Runner.cmd,
-and TagPup CLI.cmd for indexing and the other CLI commands.
+and TagPup CLI.cmd for indexing and the other CLI commands. It also writes TagPup
+Background.pyw, the always-on process's launcher (tagpup.supervisor), which the Startup
+shortcut scripts/startup.py makes runs: it reads current.txt, so installing again moves
+the always-on process too -- a running one moves onto the new version at its next
+quiet moment. When the owner has chosen the always-on process, TagPup.cmd and
+TagTuner.cmd start it, if it is not running, rather than a server of their own.
 
 It also makes shortcuts to TagPup and TagTuner, with their icons, on the Desktop and
 in the Start menu: a .cmd cannot be pinned to the taskbar or given an icon, and a
@@ -39,6 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _root  # noqa: E402,F401
 from code_snapshot import REPO_ROOT, copy_code  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
+from tagpup import supervisor  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 
 #: Versions kept: the new one and the two before it.
@@ -46,8 +52,9 @@ KEEP = 3
 
 #: Launcher file -> the program it starts, and its arguments.
 LAUNCHERS = {
-    "TagPup.cmd": ("tagpup_web.py", "--open tagpup"),
-    "TagTuner.cmd": ("tagpup_web.py", "--open tuner"),
+    # --installed: this folder, where scripts/startup.py marks the always-on process chosen.
+    "TagPup.cmd": ("tagpup_web.py", '--open tagpup --installed "%~dp0."'),
+    "TagTuner.cmd": ("tagpup_web.py", '--open tuner --installed "%~dp0."'),
     "TagPup Runner.cmd": ("runner.py", ""),
     "TagPup CLI.cmd": ("tagpup_cli.py", ""),
 }
@@ -64,31 +71,37 @@ LAUNCHER = (
 )
 
 
+#: The always-on process's launcher (supervisor.BACKGROUND_LAUNCHER), with the home: run
+#: by pythonw.exe from the Startup shortcut scripts/startup.py makes, no window. It reads
+#: current.txt, so it always starts the installed version, and the shortcut never names one.
+BACKGROUND = '''"""Written by scripts/install_app.py: starts the installed TagPup's always-on process
+(tagpup.supervisor), hidden, with this home. The Startup shortcut runs it with pythonw.exe."""
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+os.environ["TAGPUP_HOME"] = {home!r}
+with open(os.path.join(HERE, "current.txt"), encoding="utf-8") as handle:
+    CODE = os.path.join(HERE, "versions", handle.read().strip())
+sys.path.insert(0, CODE)
+os.chdir(os.environ["TAGPUP_HOME"])
+
+from tagpup import supervisor  # noqa: E402
+
+sys.exit(supervisor.main(["--installed", HERE] + sys.argv[1:]))
+'''
+
+
 #: Shortcut -> (the launcher it runs, its icon in web/common/icons, what it says).
 SHORTCUTS = {
     "TagPup.lnk": ("TagPup.cmd", "tagpup.ico", "Tag the photos of a folder"),
     "TagTuner.lnk": ("TagTuner.cmd", "tagtuner.ico", "Tune a photo library's tags and faces"),
 }
 
-#: Makes one shortcut; its values come in the environment, so no path is quoted here.
-SHORTCUT_SCRIPT = (
-    "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:TAGPUP_LNK); "
-    "$s.TargetPath = $env:TAGPUP_TARGET; $s.Arguments = $env:TAGPUP_ARGS; "
-    "$s.WorkingDirectory = $env:TAGPUP_WORKDIR; $s.IconLocation = $env:TAGPUP_ICON; "
-    "$s.Description = $env:TAGPUP_DESC; $s.Save()"
-)
-
-
 def shortcut_folders():
     """The Desktop and the Start menu's Programs folder, wherever Windows keeps them
     (a Desktop moved into OneDrive, say)."""
-    script = "[Environment]::GetFolderPath('Desktop'); [Environment]::GetFolderPath('Programs')"
-    try:
-        out = processes.run(["powershell", "-NoProfile", "-Command", script],
-                            capture_output=True, text=True, timeout=60).stdout
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return [line.strip() for line in out.splitlines() if line.strip()]
+    return supervisor.known_folders("Desktop", "Programs")
 
 
 def make_shortcuts(destination, folders, say=print):
@@ -103,16 +116,8 @@ def make_shortcuts(destination, folders, say=print):
     for folder in folders:
         for name, (launcher, icon, description) in SHORTCUTS.items():
             link = os.path.join(folder, name)
-            env = dict(os.environ, TAGPUP_LNK=link, TAGPUP_TARGET=cmd,
-                       TAGPUP_ARGS='/c "%s"' % os.path.join(destination, launcher),
-                       TAGPUP_WORKDIR=destination, TAGPUP_ICON=os.path.join(destination, icon),
-                       TAGPUP_DESC=description)
-            try:
-                processes.run(["powershell", "-NoProfile", "-Command", SHORTCUT_SCRIPT],
-                              env=env, capture_output=True, text=True, timeout=60)
-            except (OSError, subprocess.SubprocessError):
-                pass
-            if os.path.exists(link):
+            if supervisor.make_shortcut(link, cmd, '/c "%s"' % os.path.join(destination, launcher),
+                                        destination, os.path.join(destination, icon), description):
                 made.append(link)
             else:
                 say("could not make the shortcut %s" % link)
@@ -120,13 +125,12 @@ def make_shortcuts(destination, folders, say=print):
 
 
 def default_destination():
-    return os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "TagPup")
+    return supervisor.default_installed()
 
 
 def default_python():
     """The checkout's virtualenv, which has the app's packages; else this interpreter."""
-    venv = os.path.join(REPO_ROOT, ".venv", "Scripts", "python.exe")
-    return venv if os.path.exists(venv) else sys.executable
+    return supervisor.checkout_python(REPO_ROOT)
 
 
 def git(*args):
@@ -226,7 +230,8 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
     say("install      %s" % folder)
     say("home         %s  (data/)" % home)
     say("python       %s" % python)
-    say("launchers    %s" % ", ".join(os.path.join(destination, n) for n in LAUNCHERS))
+    say("launchers    %s" % ", ".join(os.path.join(destination, n)
+                                      for n in list(LAUNCHERS) + [supervisor.BACKGROUND_LAUNCHER]))
     if previous:
         say("replacing    %s" % previous)
     for old in removing:
@@ -254,6 +259,8 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
         # newline="" keeps the CRLFs the template already has: cmd.exe wants them.
         with open(os.path.join(destination, launcher), "w", encoding="utf-8", newline="") as handle:
             handle.write(LAUNCHER.format(home=home, python=python, script=script, args=args))
+    with open(os.path.join(destination, supervisor.BACKGROUND_LAUNCHER), "w", encoding="utf-8") as handle:
+        handle.write(BACKGROUND.format(home=home))
     current = os.path.join(destination, "current.txt")
     with open(current + ".writing", "w", encoding="utf-8") as handle:
         handle.write(name)
