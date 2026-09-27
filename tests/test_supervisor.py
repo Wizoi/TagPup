@@ -498,6 +498,22 @@ class MovingOntoANewVersion(Base):
         made._child = None
         self.assertEqual([supervisor.QUIET, 0], asked)
 
+    def test_an_update_refused_as_not_newer_is_said_in_its_state(self):
+        """A history rewritten upstream: every update is refused, unattended, and nothing
+        but a line in a log said so."""
+        refusal = "TagPup: the checkout's 1a2b3c4 is not newer than the installed 5d6e7f8, so it was not installed; starting the installed version."
+        said = [[refusal], [refusal], []]
+        made = self.make_installed([])
+        made._install = lambda: said.pop(0)
+        made._child_version = "20260926-090000-aaaaaaa"
+        made.look_for_update()
+        first = supervisor.last_state()["update_refused"]
+        self.assertEqual(refusal, first["said"])
+        made.look_for_update()
+        self.assertEqual(first, supervisor.last_state()["update_refused"], "since moved while it stayed refused")
+        made.look_for_update()
+        self.assertIsNone(supervisor.last_state()["update_refused"])
+
     def test_after_a_failed_hand_over_it_is_not_pinned_for_ever(self):
         """Pinned to its own version after one failed hand-over, it read the pin as what
         was installed, and never looked at current.txt again."""

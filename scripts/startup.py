@@ -151,6 +151,9 @@ def status(installed, folder, say=print):
         say("running      no%s" % (" (last: %s, %s%s)" % (last.get("state"), last.get("since"),
                                                             ", %s" % last["why"] if last.get("why") else "")
                                    if last else ""))
+    refused = (running or supervisor.last_state() or {}).get("update_refused")
+    if refused:
+        say("updates      refused since %s: %s" % (refused.get("since"), refused.get("said")))
     where = supervisor.server()
     if where:
         port = sorted(where.get("ports", {}).values())[0]

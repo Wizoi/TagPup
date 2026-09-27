@@ -112,6 +112,21 @@ class Startup(unittest.TestCase):
         self.assertEqual([], os.listdir(self.folder))
         self.assertIn("install it again first", "\n".join(self.said))
 
+    def test_status_says_when_updates_are_refused(self):
+        from tagpup.core import processes as core_processes
+        me = {"pid": os.getpid(), "started": core_processes.started(os.getpid())}
+        # Gone before the cleanup that ends a running supervisor: this "supervisor" is the test.
+        self.addCleanup(supervisor.remove, supervisor.data_file(supervisor.STATE_FILE))
+        supervisor.write_json(supervisor.data_file(supervisor.STATE_FILE), dict(
+            me, state="running", version="v1", since="2026-09-26 10:00:00",
+            update_refused={"said": "TagPup: the checkout's 1a2b3c4 is not newer than the installed 5d6e7f8, so it was not installed; starting the installed version.", "since": "2026-09-26 09:00:00"}))
+        said = []
+        startup.status(self.installed, self.folder, say=said.append)
+        line = [line for line in said if line.startswith("updates")]
+        self.assertEqual(1, len(line), said)
+        self.assertIn("not newer", line[0])
+        self.assertIn("2026-09-26 09:00:00", line[0])
+
     def test_status_says_what_is_there(self):
         said = []
         startup.status(self.installed, self.folder, say=said.append)

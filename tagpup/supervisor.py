@@ -366,20 +366,26 @@ def start_in_background(installed, python=None, handed_over=False, more=()):
 def install_newer(installed, python=None, home=None):
     """Install the checkout's commit into `installed` if it is newer and clean: what each
     launcher runs before its app (scripts/install_app.py --apply --if-changed), with the
-    home's copy of the installer. Logs what it said."""
+    home's copy of the installer. Logs what it said, and returns its lines."""
     home = home or tagpup_config.home()
     script = os.path.join(home, "scripts", "install_app.py")
     if not os.path.exists(script):
-        return
+        return []
     try:
         done = processes.run([console_python(python), script, "--apply", "--if-changed", "--to", installed],
                              cwd=home, capture_output=True, text=True, timeout=600)
     except (OSError, subprocess.SubprocessError) as e:
         logger.error("Could not look for a newer version: %s", e)
-        return
-    for line in (done.stdout or "").splitlines() + (done.stderr or "").splitlines():
-        if line.strip():
-            logger.info("install_app: %s", line.strip())
+        return []
+    said = [line.strip() for line in (done.stdout or "").splitlines() + (done.stderr or "").splitlines()
+            if line.strip()]
+    for line in said:
+        logger.info("install_app: %s", line)
+    return said
+
+
+#: What install_app says when the checkout is not newer than what is installed.
+NOT_NEWER = "not newer"
 
 
 # ---- Windows: the Startup folder and its shortcut ----------------------------------------------
@@ -476,6 +482,9 @@ class Supervisor:
         #: it left running has been seen to (end_orphan): this one's own writes of
         #: supervisor.json must not lose it.
         self._inherited_token = None
+        #: {"said", "since"} while the installer refuses the checkout as not newer (a
+        #: history rewritten, a branch switched back): in supervisor.json, for status.
+        self._update_refused = None
         self._next_health = 0
         self._unanswered = 0
         self._stop = threading.Event()
@@ -503,7 +512,8 @@ class Supervisor:
                        # So the next supervisor can drain a server this one left running (the
                        # file is the user's, as the libraries are).
                        "server_token": self._token or self._inherited_token,
-                       "previous_version": self._predecessor_version}
+                       "previous_version": self._predecessor_version,
+                       "update_refused": self._update_refused}
         try:
             write_json(data_file(STATE_FILE), self._state)
         except OSError as e:
@@ -680,12 +690,25 @@ class Supervisor:
             self._last_wait = waiting
         return False
 
+    def install(self):
+        """Run the installer (install_newer), and keep whether it refused the checkout as
+        not newer, for status to show."""
+        said = self._install() or []
+        refused = next((line for line in said if NOT_NEWER in line), None)
+        before = self._update_refused
+        if refused is None:
+            self._update_refused = None
+        elif before is None or before.get("said") != refused:
+            self._update_refused = {"said": refused, "since": _now()}
+        if self._update_refused != before:
+            self._say(self._state.get("state") or "running", self._state.get("why"))
+
     def look_for_update(self):
         """Install a newer version if there is one; note it to move onto."""
         self._next_update = self._clock() + self.update_every
         if not self.installed:
             return
-        self._install()
+        self.install()
         # What is installed: current.txt, never the version kept after a failed hand-over.
         version = read_current(self.installed)
         if version and version != self._child_version:
@@ -927,7 +950,7 @@ class Supervisor:
                 self.end_orphan()
                 # What a launcher does before it starts its app; and a supervisor started
                 # from an older version hands over to one started from the newer.
-                self._install()
+                self.install()
                 version, _code = self.current()
                 if version and self.own_version and version != self.own_version:
                     logger.info("Version %s is current; handing over to a supervisor started from it.", version)
