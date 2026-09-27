@@ -131,6 +131,9 @@ def main(argv=None):
                         default=runtimes.RELEASE_MODELS_AFTER_MINUTES,
                         help="let the models go when none has been used for this long; the next Suggest loads "
                              "them again; 0 keeps them (default: %(default)s)")
+    parser.add_argument("--listen", choices=web.LISTEN, default=web.LOCAL,
+                        help="local (the default): answer this PC only. lan: every interface, for phase 10, "
+                             "when the apps have logins; until then the apps answer anyone who can reach them")
     parser.add_argument("--installed", default=None,
                         help="the installed app's folder, which the launchers name: with --open, when the "
                              "owner chose the always-on process there (scripts/startup.py), start it rather "
@@ -206,7 +209,7 @@ def main(argv=None):
         if args.open != "none":
             open_page(page_url(ports[args.open]))
     try:
-        web.serve(apps, ready=ready)
+        web.serve(apps, ready=ready, listen=args.listen)
     finally:
         background.stop()
         if token:

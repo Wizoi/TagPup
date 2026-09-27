@@ -199,6 +199,8 @@ to be sitting on `<body>`.
 
 ## Backend APIs
 
+**Who can reach it.** The server listens on this PC only: 127.0.0.1 and ::1, one socket each, so `localhost` answers at once whichever address the browser tries first (`tagpup.web.app.bind`) *(owner, 2026-09-26)*. `tagpup_web.py --listen lan` binds every interface instead; it is for phase 10, when the apps have logins, and off by default. Every request must also name this machine in its Host header and, when it has one, its Origin (`tagpup.web.security`), else 403.
+
 ### `GET` Endpoints
 - `/api/databases`: Returns `{"databases": list}` — the selectable database names (without the `.db` suffix). Test databases and internal ones (validation, startup, embedding-cache) are excluded. Which one was opened last is the browser's to remember: a bare URL goes to it, or shows the picker empty.
 - `/api/folder/index-status?path=<folder_path>`: Returns how far indexing a folder has got, as `{"status": string, "percent": int, "message": string, "folder": string}`. Status values are `queued`, `running`, `completed`, `failed` or `cancelled`. A folder not asked about in this session reports `completed`, with the message `Ready` and no `folder`. The queue belongs to this server's process (`tagpup.jobs.indexing`), so an index started in TagTuner does not show here until one process serves both apps (findings.md, #34).
