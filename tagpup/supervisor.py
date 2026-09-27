@@ -24,8 +24,11 @@ It runs the web server (tagpup_web.py) as its child, and:
   asks the server to drain (tagpup.web.lifecycle): nothing new is taken, and it is
   stopped only once nothing is in flight and no Suggest run, index or recurring job is
   under way. A drain refused is asked again every RETRY_MOVE, the old version answering
-  meanwhile. It then hands over to a supervisor started from the new version, which
-  starts the server; that server settles anything left unfinished, as every start does;
+  meanwhile. It then starts a supervisor from the new version and waits for it to say it
+  is up (HANDOVER_FILE) before it stops the server and lets go of the lock; the new one
+  takes the lock and starts the server, which settles anything left unfinished, as every
+  start does. A new supervisor that does not come up, or does not take the lock, leaves
+  this one running the version it ran, trying again after PATIENCE;
 - stops, draining the server first -- for at most STOP_DRAIN_LIMIT, then it ends it --
   when data/supervisor.stop appears (scripts/startup.py uninstall);
 - logs to data/logs/supervisor.log, the server's own output to
@@ -44,6 +47,7 @@ import json
 import logging
 import os
 import secrets
+import shlex
 import subprocess
 import sys
 import threading
@@ -75,8 +79,14 @@ BACKGROUND_LAUNCHER = "TagPup Background.pyw"
 ALWAYS_ON = "always-on.txt"
 STARTUP_SHORTCUT = "TagPup (always on).lnk"
 
-#: Its files, in the home's data folder.
+#: Its files, in the home's data folder; HANDOVER_FILE is where a supervisor started to
+#: take over says it is up, before it waits for the lock.
 LOCK_FILE, STATE_FILE, STOP_FILE, SERVER_FILE = "supervisor.lock", "supervisor.json", "supervisor.stop", "server.json"
+HANDOVER_FILE = "supervisor.handover.json"
+
+#: What run() returns when a supervisor of the new version is to take over: main() lets
+#: go of the lock, and makes sure it did.
+HANDED_OVER = "handed over"
 CONSOLE_LOG = "tagpup_web.console.log"
 CONSOLE_LOG_MAX = 5 * 1024 * 1024
 
@@ -298,10 +308,11 @@ def windowless_python(python=None):
     return python
 
 
-def start_in_background(installed, python=None, handed_over=False):
+def start_in_background(installed, python=None, handed_over=False, more=()):
     """Start the installed app's always-on process through its stable launcher, detached
-    and without a window. The Popen."""
-    args = [windowless_python(python), os.path.join(installed, BACKGROUND_LAUNCHER)]
+    and without a window, with the arguments `more` (a supervisor's own, passed on). The
+    Popen."""
+    args = [windowless_python(python), os.path.join(installed, BACKGROUND_LAUNCHER)] + list(more)
     if handed_over:
         args.append("--handed-over")
     return processes.start(args, own_group=True, cwd=installed, stdin=subprocess.DEVNULL,
@@ -387,7 +398,8 @@ class Supervisor:
                  hand_over=True, backoff=BACKOFF, max_crashes=MAX_CRASHES, crash_window=CRASH_WINDOW, update_every=UPDATE_EVERY,
                  retry_move=RETRY_MOVE, drain_seconds=DRAIN_SECONDS, ports_wait=PORTS_WAIT, tick=1.0,
                  clock=time.monotonic, health_every=HEALTH_EVERY, health_timeout=HEALTH_TIMEOUT,
-                 max_unanswered=MAX_UNANSWERED, stop_drain_limit=STOP_DRAIN_LIMIT, patience=PATIENCE):
+                 max_unanswered=MAX_UNANSWERED, stop_drain_limit=STOP_DRAIN_LIMIT, patience=PATIENCE,
+                 server_args=(), hand_over_wait=HAND_OVER_WAIT, passed_on=()):
         self.installed = installed
         self.code_root = code_root or tagpup_config.CODE_ROOT
         self.own_version = tagpup_config.code_version(self.code_root) if code_root is None else None
@@ -403,6 +415,14 @@ class Supervisor:
         self.stop_drain_limit = stop_drain_limit
         self.patience = patience
         self._pending_since = None
+        #: More arguments for the server's command line (ports for a sandbox or a test),
+        #: and the supervisor's own to pass on to the one that takes over.
+        self.server_args = list(server_args)
+        self._passed_on = list(passed_on)
+        self.hand_over_wait = hand_over_wait
+        #: The version to keep running when one to hand over to did not start.
+        self._pinned = None
+        self._successor = None
         self._next_health = 0
         self._unanswered = 0
         self._stop = threading.Event()
@@ -438,7 +458,10 @@ class Supervisor:
     # ---- Which code the server runs ---------------------------------------------------
 
     def current(self):
-        """(the version to run, its code folder): current.txt's for an installed app."""
+        """(the version to run, its code folder): current.txt's for an installed app, or
+        the one kept when a hand-over to current.txt's failed."""
+        if self.installed and self._pinned:
+            return self._pinned, os.path.join(self.installed, "versions", self._pinned)
         if self.installed:
             version = read_current(self.installed)
             if version:
@@ -464,7 +487,7 @@ class Supervisor:
         except OSError:
             pass
         with open(log_path, "ab") as output:
-            self._child = processes.start(self._command(code), env=env, cwd=tagpup_config.home(),
+            self._child = processes.start(self._command(code) + self.server_args, env=env, cwd=tagpup_config.home(),
                                           stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
         self._child_version = version
         self._child_started = self._clock()
@@ -624,14 +647,75 @@ class Supervisor:
             return None
         logger.info("The server is drained; moving it from %s to %s.", self._child_version, self._pending)
         version, self._pending = self._pending, None
-        self.stop_child()
         if self.installed and self.hand_over and version != self.own_version:
-            logger.info("Handing over to a supervisor started from %s.", version)
-            self._say("handed over", "to %s" % version)
-            start_in_background(self.installed, self._python, handed_over=True)
-            return "handed over"
+            if self.hand_over_to(version):
+                return HANDED_OVER
+            # The new version's supervisor did not start: this one goes on with the
+            # version it runs, and tries again after its patience.
+            self._keep(self._child_version)
+            self._resume_server()
+            return None
+        self._pinned = None
+        self.stop_child()
         self.start_child()
         return "moved"
+
+    def hand_over_to(self, version):
+        """Start a supervisor from `version` and, once it says it is up, stop the server
+        for it. False, the server left running, when it does not come up."""
+        remove(data_file(HANDOVER_FILE))
+        logger.info("Starting a supervisor from %s to take over.", version)
+        started = start_in_background(self.installed, self._python, handed_over=True, more=self._passed_on)
+        deadline = time.monotonic() + self.hand_over_wait
+        ready = None
+        while time.monotonic() < deadline and started.poll() is None:
+            record = read_json(data_file(HANDOVER_FILE))
+            if record and record.get("version") == version and _alive(record):
+                ready = record
+                break
+            time.sleep(0.1)
+        if ready is None:
+            why = ("it exited with %s" % started.poll() if started.poll() is not None
+                   else "it said nothing in %ds" % self.hand_over_wait)
+            logger.error("The supervisor of %s did not start (%s); staying on %s.", version, why,
+                         self._child_version or self.own_version)
+            if started.poll() is None:
+                processes.kill_tree(started.pid)
+            return False
+        self._successor = ready
+        self.stop_child()
+        self._say("handed over", "to %s (pid %s)" % (version, ready.get("pid")))
+        return True
+
+    def _keep(self, version):
+        """Stay on `version`, and look for a newer one again only after the patience."""
+        self._pinned = version
+        self._next_update = self._clock() + self.patience
+
+    def _resume_server(self):
+        """Tell a drained server to take work again (a move that did not happen)."""
+        where = server()
+        if where is None or not self.child_alive():
+            return
+        port = sorted(where.get("ports", {}).values())[0]
+        request = urllib.request.Request("http://127.0.0.1:%d/api/server/resume" % port, method="POST", data=b"",
+                                         headers={TOKEN_HEADER: self._token or ""})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as reply:
+                reply.read()
+        except (OSError, ValueError) as e:
+            logger.error("Could not tell the server to take work again: %s", e)
+
+    def _taken_over(self):
+        """Did the supervisor handed over to take the lock, after this one let it go?"""
+        successor = self._successor or {}
+        deadline = time.monotonic() + self.hand_over_wait
+        while time.monotonic() < deadline:
+            now = running()
+            if now and now.get("pid") == successor.get("pid"):
+                return True
+            time.sleep(0.1)
+        return False
 
     # ---- Running ----------------------------------------------------------------------
 
@@ -702,12 +786,16 @@ class Supervisor:
             if self._pending is None and self._clock() >= self._next_update:
                 self.look_for_update()
             if self._pending is not None and self._clock() >= self._next_move:
-                if self.move() == "handed over":
-                    return 0
+                if self.move() == HANDED_OVER:
+                    return HANDED_OVER
             self._stop.wait(self.tick)
 
-    def main(self, wait_for_lock=0.0, update_first=True):
-        """Take the home's lock, then run(). ALREADY_RUNNING when another holds it."""
+    def main(self, wait_for_lock=0.0, update_first=True, handed_over=False):
+        """Take the home's lock, then run(). ALREADY_RUNNING when another holds it. Started
+        to take over (`handed_over`), it says it is up before it waits for the lock."""
+        if handed_over:
+            write_json(data_file(HANDOVER_FILE), {"pid": os.getpid(), "started": processes.started(os.getpid()),
+                                                  "version": self.own_version})
         lock = Lock(data_file(LOCK_FILE))
         if not lock.acquire(wait_for_lock):
             other = running() or {}
@@ -724,10 +812,26 @@ class Supervisor:
                 version, _code = self.current()
                 if version and self.own_version and version != self.own_version:
                     logger.info("Version %s is current; handing over to a supervisor started from it.", version)
-                    self._say("handed over", "to %s" % version)
-                    start_in_background(self.installed, self._python, handed_over=True)
+                    if self.hand_over_to(version):
+                        result = HANDED_OVER
+                    else:
+                        self._keep(self.own_version)
+                        result = self.run()
+                else:
+                    result = self.run()
+            else:
+                result = self.run()
+            while result == HANDED_OVER:
+                lock.release()
+                if self._taken_over():
                     return 0
-            return self.run()
+                logger.error("The supervisor handed over to did not take over; starting the server again on %s.",
+                             self._child_version or self.own_version)
+                if not lock.acquire(self.hand_over_wait):
+                    return ALREADY_RUNNING
+                self._keep(self._child_version or self.own_version)
+                result = self.run()
+            return result
         finally:
             # Leaving any other way than by its own stop -- an error -- the server goes
             # with it: nothing would watch it, and the next supervisor would find it
@@ -747,12 +851,25 @@ def main(argv=None):
                              "it the server runs from this code, and is never moved")
     parser.add_argument("--handed-over", action="store_true",
                         help="started by a supervisor moving onto this version: wait for it to let go")
+    parser.add_argument("--server-args", default="",
+                        help="more arguments for the server (ports and a library for a sandbox or a test)")
+    parser.add_argument("--update-every", type=float, default=UPDATE_EVERY, help=argparse.SUPPRESS)
+    parser.add_argument("--hand-over-wait", type=float, default=HAND_OVER_WAIT, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     logs.to_file("supervisor")
+    passed_on = []
+    if args.server_args:
+        passed_on += ["--server-args", args.server_args]
+    if args.update_every != UPDATE_EVERY:
+        passed_on += ["--update-every", str(args.update_every)]
+    if args.hand_over_wait != HAND_OVER_WAIT:
+        passed_on += ["--hand-over-wait", str(args.hand_over_wait)]
     try:
-        supervisor = Supervisor(installed=os.path.abspath(args.installed) if args.installed else None)
-        return supervisor.main(wait_for_lock=HAND_OVER_WAIT if args.handed_over else 0.0,
-                               update_first=not args.handed_over)
+        supervisor = Supervisor(installed=os.path.abspath(args.installed) if args.installed else None,
+                                server_args=shlex.split(args.server_args), update_every=args.update_every,
+                                hand_over_wait=args.hand_over_wait, passed_on=passed_on)
+        return supervisor.main(wait_for_lock=args.hand_over_wait if args.handed_over else 0.0,
+                               update_first=not args.handed_over, handed_over=args.handed_over)
     except Exception:
         # Under pythonw.exe nothing shows an uncaught error; the log is all there is.
         logger.exception("The supervisor failed")
