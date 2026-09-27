@@ -28,7 +28,7 @@ from shipped_sources import LAUNCHERS, ROOT, python_sources  # noqa: E402
 MAY_IMPORT = {
     "core": set(),
     "config": set(),
-    "logs": {"config"},
+    "logs": {"core", "config"},
     "supervisor": {"core", "config", "logs"},
     "store": {"core"},
     "files": {"core"},

@@ -48,7 +48,7 @@ import os
 import threading
 import time
 
-from tagpup.core import paths, validation
+from tagpup.core import paths, runs, validation
 from tagpup.core.result import Result
 from tagpup.files import images
 from tagpup.services import maintenance, refresh_rows, relink_photos
@@ -429,6 +429,13 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, root
     library is in step: for a dry run, as found; applied, after the write.
     """
     started = sync_runs.now()
+    # Every line the sync logs carries its tag, made from what its record keeps (the
+    # library and when it started): the Activity page's "Logs for this run".
+    with runs.running(runs.sync_tag(library.name, started)):
+        return _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
+
+
+def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started):
     held = {}
 
     def plan(found_library):

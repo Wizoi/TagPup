@@ -34,6 +34,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
+from tagpup.core import runs
 from tagpup.core.result import Result
 from tagpup.services import job_runs
 from tagpup.services import journal as journal_service
@@ -281,7 +282,9 @@ class Runner:
         with self._running_lock:
             self._running += 1
         try:
-            outcome.result = job.call(library if job.per_library else libraries, run)
+            # Every line the run logs carries its tag: the Activity page's "Logs for this run".
+            with runs.running(runs.job_tag(run_for, claim.run_id)):
+                outcome.result = job.call(library if job.per_library else libraries, run)
         except Exception as e:
             logger.exception("The job %s for %s failed", job.name, run_for or "every library")
             outcome.error = e

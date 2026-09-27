@@ -65,7 +65,7 @@ Imports only go down:
 |---|---|---|---|
 | core | `tagpup.core` | Pure rules: path identity, a library's name and the files that belong to it (`Library`), the tag vocabulary (leaf, root, person), people derivation, suggestion scoring, clustering decisions | nothing but `core` |
 | config | `tagpup.config` | `TAGPUP_HOME` and where the libraries are (its `data/`), which ExifTool the machine has, and the one reading of an old `config.ini`, for stamping a library that holds no settings yet (phase 7.6). A library's settings are its own (`tagpup.services.settings`). Never written by the app (#100) | nothing |
-| logs | `tagpup.logs` | Each program's log file in `data/logs/`. Set up by entry points | `config` |
+| logs | `tagpup.logs` | Each program's log file in `data/logs/`, each line carrying the runs under way (`tagpup.core.runs`), and reading them back, bounded, for the Activity page. Set up by entry points | `core`, `config` |
 | supervisor | `tagpup.supervisor` | The always-on process (phase 8): runs the web server as its child, restarts it, moves it onto a newer installed version once drained, one per home; and the names it shares with the server (the token, `data/server.json`, the exit code for ports another holds), which `tagpup.web` reads | `core`, `config`, `logs` |
 | store | `tagpup.store` | The library database: connections and locks, schema and migrations, generations, one repository per table, caches keyed by generation, backups | `core` |
 | files | `tagpup.files` | The photo files: ExifTool sessions, reading metadata, writing keyword, caption and orientation fields, identities, opening images (upright or as stored), crops and thumbnails | `core` |
