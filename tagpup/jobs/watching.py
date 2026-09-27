@@ -13,7 +13,9 @@ watchdog threads never sync. A folder whose parent also waits is left to the par
 sync, which walks it too.
 
 Only photos matter (`concerns`, the photo extensions): a notification for any other file
-is dropped. A folder deleted or moved is synced from its parent. The app's own writes
+made or changed is dropped. A folder deleted or moved is synced from its parent -- and so
+is any other name deleted or moved away, since Windows reports a folder gone as a file
+gone (watchdog 6 cannot ask what a name that no longer exists was). The app's own writes
 are notified too, and cost a sync that finds the rows already describe their files: one
 walk of the folder, no file read.
 
@@ -203,6 +205,17 @@ class Watcher:
             for path in (event.src_path, getattr(event, "dest_path", "")):
                 if path and self._concerns(path):
                     folders.append(os.path.dirname(path))
+            if event.event_type in ("deleted", "moved") and not self._concerns(event.src_path):
+                # Windows cannot say what a name that is gone was: a folder deleted or
+                # moved out comes as a file deleted. Its photos' rows are its parent's
+                # sync's to find missing (or moved).
+                if paths.key(event.src_path) == root_key:
+                    self._note_whole(libraries)
+                    return
+                folders.append(os.path.dirname(event.src_path))
+            dest = getattr(event, "dest_path", "")
+            if event.event_type == "moved" and dest and os.path.isdir(dest):
+                folders.append(os.path.dirname(dest))
         if not folders:
             return
         now = self._clock()

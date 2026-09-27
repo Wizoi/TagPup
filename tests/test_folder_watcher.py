@@ -150,6 +150,40 @@ class WhatIsSynced(Base):
                          sorted(self.folder_syncs(), key=paths.key))
 
 
+class AFolderMovedOrDeleted(Base):
+    """Windows says a folder deleted or moved out of the watched one is a file deleted
+    (watchdog 6 cannot ask what it was once it is gone): a name with no photo extension,
+    which the photo filter dropped, so the folder's rows were never found missing."""
+
+    def test_moved_out_of_the_root_syncs_the_folder_it_was_in(self):
+        a_jpeg(os.path.join(self.root, "Regatta", "Buoy.jpg"))
+        self.started(self.make())
+        elsewhere = os.path.join(self.home.root, "Elsewhere")
+        os.makedirs(elsewhere)
+        os.replace(os.path.join(self.root, "Regatta"), os.path.join(elsewhere, "Regatta"))
+        self.wait_until(lambda: self.synced)
+        time.sleep(1)
+        self.assertEqual([paths.stored(self.root)], self.folder_syncs())
+
+    def test_deleted_syncs_the_folder_it_was_in(self):
+        a_jpeg(os.path.join(self.root, "Regatta", "Buoy.jpg"))
+        self.started(self.make())
+        shutil.rmtree(os.path.join(self.root, "Regatta"))
+        self.wait_until(lambda: self.synced)
+        time.sleep(1)
+        self.assertEqual([paths.stored(self.root)], self.folder_syncs())
+
+    def test_a_file_that_is_no_photo_deleted_is_still_no_sync_of_its_own_folder(self):
+        notes = os.path.join(self.root, "Regatta", "notes.txt")
+        with open(notes, "w", encoding="utf-8") as handle:
+            handle.write("race day")
+        self.started(self.make())
+        os.remove(notes)
+        self.wait_until(lambda: self.synced)
+        # Its parent is synced -- it might have been a folder -- never the file's name.
+        self.assertEqual([paths.stored(os.path.join(self.root, "Regatta"))], self.folder_syncs())
+
+
 class WhenNotificationsMayHaveBeenMissed(Base):
     def test_an_overflow_syncs_the_library_whole(self):
         watcher = self.started(self.make())
