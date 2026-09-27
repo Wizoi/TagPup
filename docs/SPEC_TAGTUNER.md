@@ -55,7 +55,7 @@ made with, face detection, the ExifTool program, and the library's folders -- it
 folders, which sync walks, and the folders it ignores, one full path a line, none a whole
 drive (the validator's `folders`); not locked. A library's roots are first the topmost
 folders it holds photos in that are not a drive (`settings.default_roots`), stamped once
-it holds photos (`stamp library roots from its folders`). Suggest's candidate words and the
+it holds photos (`stamp library roots from its folders`). When a library's roots are first set -- stamped, or changed by the owner -- every folder under a new root that holds photos and no indexed photo at that moment is added to the ignored folders in the same journaled change (`settings.excluded_under`; owner, 2026-09-26: "any folders not added assume excluded"): only a folder that appears later is offered for review. Suggest's candidate words and the
 rename format are TagPup's features, and are in TagPup's gear. They are the library's own, kept in it (`tagpup.services.settings`), not the
 machine's. The dialog is made from each setting's one declaration
 (`tagpup.core.validation.SETTINGS`): its label, its type (a checkbox for true or false,

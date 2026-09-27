@@ -112,7 +112,10 @@ class TheRoutes(Drifted, unittest.TestCase):
         client = app.test_client()
         library = Library(home.library("library.db"))
         self.drift(os.path.join(home.root, "tuner"), library.path)
-        # The regatta's folder is the library's root, stamped from the folder it holds.
+        # The regatta's folder is the library's root, stamped from the folder it holds when
+        # the library is first opened; folders made after it are the ones offered.
+        from tagpup.services import settings as settings_service
+        settings_service.of(library)
         found = os.path.join(self.folder, "Quayside")
         ignored = os.path.join(self.folder, "Scans")
         for folder in (found, ignored):

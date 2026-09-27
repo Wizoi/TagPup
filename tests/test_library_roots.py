@@ -122,5 +122,77 @@ class StampedOnce(unittest.TestCase):
         self.assertIn("A whole drive", refused.refused)
 
 
+class FoldersNotAddedAreExcluded(unittest.TestCase):
+    """The owner's rule (2026-09-26): "any folders not added assume excluded". When a
+    library's roots are first set -- stamped, or changed -- every folder under a new root
+    holding photos and no indexed photo is added to the ignored folders in the same
+    journaled change; only a folder that appears later is offered for review."""
+
+    def setUp(self):
+        self.home = own_home.for_test(self)
+        self.db_path = self.home.library("harbour.db")
+        library_actions.create(self.db_path)
+        self.library = Library(self.db_path)
+        self.pictures = os.path.join(self.home.root, "Pictures")
+        self.meet = self.folder("Meets", "2025-10 Invitational")
+        conn = db.connect(self.db_path)
+        try:
+            photo_rows.add_unread(conn, self.photo(self.meet, "IMG_0001.jpg"))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def folder(self, *parts):
+        found = os.path.join(self.pictures, *parts)
+        os.makedirs(found, exist_ok=True)
+        return found
+
+    def photo(self, folder, name):
+        found = os.path.join(folder, name)
+        with open(found, "wb") as handle:
+            handle.write(b"jpeg")
+        return found
+
+    def review(self):
+        found = settings.of(self.library)
+        from tagpup.services import sync
+        return [entry["path"] for entry in sync.review(self.library, found.roots, found.ignored)["folders"]]
+
+    def test_a_folder_there_when_the_roots_are_stamped_is_ignored_and_a_later_one_offered(self):
+        # The stamped root is the one folder held: a folder under it already there is
+        # excluded in the stamp; one made later is offered.
+        warmups = self.folder("Meets", "2025-10 Invitational", "warmups")
+        self.photo(warmups, "IMG_0100.jpg")
+        stamped = settings.of(self.library)
+        self.assertEqual(([self.meet], [warmups]), (stamped.roots, stamped.ignored))
+        later = self.folder("Meets", "2025-10 Invitational", "finals")
+        self.photo(later, "IMG_0200.jpg")
+        self.assertEqual([later], self.review())
+
+    def test_widening_the_roots_ignores_what_is_there_in_the_same_change(self):
+        settings.of(self.library)
+        opener = self.folder("Meets", "2025-09 Opener")
+        self.photo(opener, "IMG_0100.jpg")
+        scans = self.folder("Scans", "1998")
+        self.photo(scans, "IMG_0300.jpg")
+        meets = os.path.join(self.pictures, "Meets")
+        with open(self.db_path, "rb") as handle:
+            before = handle.read()
+        dry = settings.change(self.library, {settings.ROOTS: meets}, apply=False)
+        self.assertEqual((True, 1, 0), (dry.details["dry_run"], dry.details["ignored_added"], dry.changed))
+        with open(self.db_path, "rb") as handle:
+            self.assertEqual(before, handle.read(), "a dry run wrote")
+        applied = settings.change(self.library, {settings.ROOTS: meets})
+        self.assertEqual(2, applied.changed, "the roots and the ignored folders, in one change")
+        found = settings.of(self.library)
+        self.assertEqual([opener], found.ignored)
+        self.assertEqual([], self.review())
+        later = self.folder("Meets", "2025-11 Classic")
+        self.photo(later, "IMG_0400.jpg")
+        self.assertEqual([later], self.review())
+        entry = journal_service.history(self.library, applied.details["change"])["changes"][0]
+        self.assertEqual({"settings": {"update": 2}}, entry["rows"])
+
+
 if __name__ == "__main__":
     unittest.main()

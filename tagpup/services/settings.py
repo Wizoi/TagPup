@@ -34,6 +34,7 @@ from typing import Dict
 
 from tagpup.core import paths, validation
 from tagpup.core.result import Result
+from tagpup.services import sync as sync_service
 from tagpup.store import db, journal
 from tagpup.store import photos as store_photos
 from tagpup.store import settings as store_settings
@@ -172,10 +173,44 @@ def roots_from_folders(library):
     return validation.FOLDER_SEPARATOR.join(default_roots(held))
 
 
+def excluded_under(library, new_roots, old_roots=(), ignored=()):
+    """The folders a change of roots excludes (owner, 2026-09-26: "any folders not added
+    assume excluded"): each folder under one of `new_roots`, and under none of
+    `old_roots`, that holds photos and no indexed photo now, and is not ignored already
+    -- the folders sync would list to review (tagpup.services.sync.review). Only a folder
+    that appears later is offered for review. One walk; reads no file."""
+    if not new_roots:
+        return []
+    found = sync_service.review(library, list(new_roots), list(ignored))["folders"]
+
+    def under(folder, roots):
+        return any(paths.same(folder, root) or paths.is_under(folder, root) for root in roots)
+
+    return [entry["path"] for entry in found if under(entry["path"], new_roots) and not under(entry["path"], old_roots)]
+
+
+def _with_excluded(library, held, roots_text, ignored_text=None):
+    """(the ignored folders' text once the roots are `roots_text`, how many were added):
+    the held ignored folders (or `ignored_text`), and the folders the new roots exclude."""
+    old = _folders(held.get(ROOTS, ""))
+    new = [root for root in _folders(roots_text) if not any(paths.same(root, other) for other in old)]
+    ignored = _folders(held.get(IGNORED, "") if ignored_text is None else ignored_text)
+    added = excluded_under(library, new, old, ignored)
+    return validation.FOLDER_SEPARATOR.join(ignored + added), len(added)
+
+
+def _setting_edit(held, key, value):
+    if key not in held:
+        return journal.insert(store_settings.TABLE, {"key": key, "value": value})
+    return journal.update(store_settings.TABLE, (key,), {"value": held[key]}, {"value": value})
+
+
 def stamp_roots(library):
     """Give a library that holds no root folders the ones its photos' folders give
-    (roots_from_folders), once, as a journaled stamp. Nothing for a library that holds
-    them already, or holds no photo yet. A Result: `changed` 1 when stamped."""
+    (roots_from_folders), once, as a journaled stamp -- with, in the same change, every
+    folder under them holding photos and no indexed photo added to the ignored folders
+    (excluded_under). Nothing for a library that holds them already, or holds no photo
+    yet. A Result: `changed` the settings rows written; details["ignored_added"]."""
     result = Result(attempted=1)
     held = store_settings.read(library.path)
     if not held or ROOTS in held:
@@ -183,10 +218,14 @@ def stamp_roots(library):
     roots = roots_from_folders(library)
     if not roots:
         return result
+    ignored, added = _with_excluded(library, held, roots)
+    edits = [journal.insert(store_settings.TABLE, {"key": ROOTS, "value": roots})]
+    if added:
+        edits.append(_setting_edit(held, IGNORED, ignored))
+    result.details["ignored_added"] = added
     try:
-        applied = journal.apply(library.path, ROOTS_FROM_FOLDERS,
-                                [journal.insert(store_settings.TABLE, {"key": ROOTS, "value": roots})],
-                                summary={"roots": len(_folders(roots))})
+        applied = journal.apply(library.path, ROOTS_FROM_FOLDERS, edits,
+                                summary={"roots": len(_folders(roots)), "ignored_added": added})
     except journal.Refusal:
         return result   # stamped by another process meanwhile
     result.changed = applied.changed
@@ -238,10 +277,14 @@ def read(library, config_ini=None):
     if held:
         values = _filled(held)
         if ROOTS not in held:
+            # What stamping them would give: the roots, and the folders they exclude.
             values[ROOTS] = roots_from_folders(library)
+            values[IGNORED] = _with_excluded(library, held, values[ROOTS])[0]
         return LibrarySettings(values, stamped=True)
     values, _taken, _refused = _stamping(_found(config_ini))
     values[ROOTS] = roots_from_folders(library)
+    if values[ROOTS]:
+        values[IGNORED] = _with_excluded(library, {IGNORED: values[IGNORED]}, values[ROOTS])[0]
     return LibrarySettings(values, stamped=False)
 
 
@@ -321,7 +364,7 @@ def _lock_refusal(missing):
     return "".join(parts)
 
 
-def change(library, values, acknowledged=()):
+def change(library, values, acknowledged=(), apply=True):
     """Change the settings in `values` ({key: value}) as one journaled change, so it is in
     the library's history and can be undone. Refused, with nothing written, for a key
     that is no setting, a value the validator refuses (its message), a library never
@@ -332,7 +375,12 @@ def change(library, values, acknowledged=()):
     dialog, the CLI, a tool -- names what it acknowledges, as the dialog asks the owner
     to tick each consequence. `changed` is the settings whose value changed;
     details["locked"] says whether any was a locked one, after which what the models
-    made is from the old values."""
+    made is from the old values.
+
+    A change of the roots (library.roots) adds, in the same change, every folder under a
+    new root that holds photos and no indexed photo to the ignored folders
+    (excluded_under; owner, 2026-09-26): details["ignored_added"]. Without `apply`, a dry
+    run: the same checks and details, nothing written (details["dry_run"])."""
     result = Result(attempted=len(values or {}))
     if not isinstance(values, dict) or not values:
         result.refuse("Say which settings to change.")
@@ -356,6 +404,11 @@ def change(library, values, acknowledged=()):
     if not held:
         result.refuse("The library's settings have not been stamped yet: open it first.")
         return result
+    if ROOTS in wanted and wanted[ROOTS] != held.get(ROOTS):
+        ignored, added = _with_excluded(library, held, wanted[ROOTS], wanted.get(IGNORED))
+        result.details["ignored_added"] = added
+        if added:
+            wanted[IGNORED] = ignored
     edits, changed = [], []
     for key, text in wanted.items():
         if key not in held:
@@ -371,7 +424,8 @@ def change(library, values, acknowledged=()):
         result.details["unacknowledged"] = missing
         result.refuse(_lock_refusal(missing))
         return result
-    if not edits:
+    result.details["dry_run"] = not apply
+    if not edits or not apply:
         return result
     try:
         applied = journal.apply(library.path, CHANGE, edits, summary={"settings": sorted(changed)})
