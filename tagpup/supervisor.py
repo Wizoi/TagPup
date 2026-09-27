@@ -13,7 +13,8 @@ It runs the web server (tagpup_web.py) as its child, and:
 
 - refuses a second copy of itself: one per home, held by a lock on data/supervisor.lock;
 - restarts the server after a crash, waiting longer after each (BACKOFF), and gives up
-  after MAX_CRASHES in CRASH_WINDOW, saying why in its log;
+  after MAX_CRASHES in CRASH_WINDOW, saying why in its log; a server alive but not
+  answering GET /api/server MAX_UNANSWERED times in a row is ended, and counted a crash;
 - waits, rather than counting crashes, while another server holds the ports: its child
   exits PORTS_TAKEN (a TagPup started by hand, say);
 - every UPDATE_EVERY, installs the checkout's commit when it is newer and holds no
@@ -24,8 +25,8 @@ It runs the web server (tagpup_web.py) as its child, and:
   under way. A drain refused is asked again every RETRY_MOVE, the old version answering
   meanwhile. It then hands over to a supervisor started from the new version, which
   starts the server; that server settles anything left unfinished, as every start does;
-- stops, draining the server first, when data/supervisor.stop appears (scripts/startup.py
-  uninstall);
+- stops, draining the server first -- for at most STOP_DRAIN_LIMIT, then it ends it --
+  when data/supervisor.stop appears (scripts/startup.py uninstall);
 - logs to data/logs/supervisor.log, the server's own output to
   data/logs/tagpup_web.console.log, and says what it is doing in data/supervisor.json,
   which scripts/startup.py status and the launchers read.
@@ -90,6 +91,18 @@ UPDATE_EVERY = 10 * 60
 RETRY_MOVE = 60
 DRAIN_SECONDS = 120
 PORTS_WAIT = 30
+
+#: How often the server is asked how it is (GET /api/server), how long it has to answer,
+#: and how many unanswered in a row mean it hangs: it is ended and counted as a crash. The
+#: status route passes no library and waits on nothing, so only a server whose every
+#: thread is stuck misses three minutes of them.
+HEALTH_EVERY = 60
+HEALTH_TIMEOUT = 20
+MAX_UNANSWERED = 3
+
+#: How long a stop waits for the server to drain before it ends it anyway: the owner
+#: asked, and a Suggest run or an index may run for hours.
+STOP_DRAIN_LIMIT = 30 * 60
 
 #: How long a supervisor started by another, moving onto a new version, waits for the
 #: other to let go of the lock.
@@ -366,7 +379,8 @@ class Supervisor:
     def __init__(self, installed=None, code_root=None, command=None, env=None, install=None, python=None,
                  hand_over=True, backoff=BACKOFF, max_crashes=MAX_CRASHES, crash_window=CRASH_WINDOW, update_every=UPDATE_EVERY,
                  retry_move=RETRY_MOVE, drain_seconds=DRAIN_SECONDS, ports_wait=PORTS_WAIT, tick=1.0,
-                 clock=time.monotonic):
+                 clock=time.monotonic, health_every=HEALTH_EVERY, health_timeout=HEALTH_TIMEOUT,
+                 max_unanswered=MAX_UNANSWERED, stop_drain_limit=STOP_DRAIN_LIMIT):
         self.installed = installed
         self.code_root = code_root or tagpup_config.CODE_ROOT
         self.own_version = tagpup_config.code_version(self.code_root) if code_root is None else None
@@ -378,6 +392,10 @@ class Supervisor:
         self.backoff, self.max_crashes, self.crash_window = tuple(backoff), max_crashes, crash_window
         self.update_every, self.retry_move, self.drain_seconds = update_every, retry_move, drain_seconds
         self.ports_wait, self.tick, self._clock = ports_wait, tick, clock
+        self.health_every, self.health_timeout, self.max_unanswered = health_every, health_timeout, max_unanswered
+        self.stop_drain_limit = stop_drain_limit
+        self._next_health = 0
+        self._unanswered = 0
         self._stop = threading.Event()
         self._child = None
         self._child_version = None
@@ -438,6 +456,8 @@ class Supervisor:
                                           stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
         self._child_version = version
         self._child_started = self._clock()
+        self._next_health = self._child_started + self.health_every
+        self._unanswered = 0
         self._restart_at = None
         self.starts += 1
         logger.info("Started the server (pid %d) from %s.", self._child.pid, version or code)
@@ -486,6 +506,47 @@ class Supervisor:
         self._restart_at = now + delay
         self._say("restarting", "exit code %s" % code)
         return True
+
+    # ---- Is it answering? --------------------------------------------------------------
+
+    def answers(self):
+        """Does the server answer GET /api/server within health_timeout? True for one not
+        serving yet (no server.json): it is starting."""
+        where = server()
+        if where is None:
+            return True
+        port = sorted(where.get("ports", {}).values())[0]
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:%d/api/server" % port, timeout=self.health_timeout) as reply:
+                reply.read()
+            return True
+        except urllib.error.HTTPError:
+            return True   # it answered
+        except (OSError, ValueError):
+            return False
+
+    def check_health(self):
+        """Ask the server how it is; after max_unanswered unanswered in a row, end it and
+        count it as a crash. False when that crash was one too many."""
+        self._next_health = self._clock() + self.health_every
+        if not self.child_alive() or self.answers():
+            self._unanswered = 0
+            return True
+        self._unanswered += 1
+        logger.warning("The server did not answer in %ss (%d of %d).", self.health_timeout, self._unanswered,
+                       self.max_unanswered)
+        if self._unanswered < self.max_unanswered:
+            return True
+        self._unanswered = 0
+        logger.error("The server (pid %d) stopped answering; ending it.", self._child.pid)
+        child = self._child
+        processes.kill_tree(child.pid)
+        try:
+            child.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            logger.error("The server (pid %d) did not end.", child.pid)
+        remove(data_file(SERVER_FILE))
+        return self._child_ended("no answer")
 
     # ---- Draining and moving ----------------------------------------------------------
 
@@ -564,8 +625,13 @@ class Supervisor:
     def _stop_now(self):
         self._say("stopping", "asked to")
         logger.info("Asked to stop: draining the server first.")
+        give_up = self._clock() + self.stop_drain_limit
         while self.child_alive() and not self._drained("Stopping"):
-            time.sleep(self.retry_move)
+            if self._clock() >= give_up:
+                logger.warning("The server did not drain in %d minutes (%s); ending it anyway, as asked.",
+                               round(self.stop_drain_limit / 60), self._last_wait or "no answer")
+                break
+            time.sleep(min(self.retry_move, max(0.0, give_up - self._clock())))
         self.stop_child()
         remove(data_file(STOP_FILE))
         self._say("stopped", "asked to")
@@ -588,6 +654,8 @@ class Supervisor:
                     return GAVE_UP
             if self._child is None and self._restart_at is not None and self._clock() >= self._restart_at:
                 self.start_child()
+            if self._child is not None and self._clock() >= self._next_health and not self.check_health():
+                return GAVE_UP
             if self._pending is None and self._clock() >= self._next_update:
                 self.look_for_update()
             if self._pending is not None and self._clock() >= self._next_move:

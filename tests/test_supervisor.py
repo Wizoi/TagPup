@@ -41,6 +41,7 @@ if mode == "crash" or (mode == "crash-once" and starts == 1):
 if mode == "ports":
     sys.exit(supervisor.PORTS_TAKEN)
 busy = os.path.join(os.path.dirname(record), "busy")
+import time
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def reply(self, status, body):
@@ -52,6 +53,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
+        if mode == "hang":
+            time.sleep(600)   # alive, and answering nothing
         self.reply(200, {"version": version})
 
     def do_POST(self):
@@ -161,6 +164,44 @@ class AfterACrash(Base):
         made.stop()
         thread.join(30)
         self.assertEqual([0], ended)
+
+
+class AServerThatStopsAnswering(Base):
+    def test_is_ended_and_started_again_after_it_misses_its_checks(self):
+        made = self.make("hang", health_every=0.1, health_timeout=0.3, max_unanswered=2, max_crashes=5)
+        with self.assertLogs("tagpup.supervisor", level="WARNING") as logged:
+            thread, ended = self.in_thread(made)
+            self.wait_until(lambda: len(self.starts()) >= 2)
+        said = "\n".join(logged.output)
+        self.assertIn("stopped answering", said)
+        self.assertIn("exit code no answer", said)
+        made.stop()
+        thread.join(30)
+
+    def test_one_that_answers_is_left_alone(self):
+        made = self.make("serve", health_every=0.05, health_timeout=1, max_unanswered=2)
+        thread, ended = self.in_thread(made)
+        self.wait_until(supervisor.server)
+        time.sleep(1)
+        self.assertEqual(1, len(self.starts()))
+        made.stop()
+        thread.join(30)
+        self.assertEqual([0], ended)
+
+
+class StoppingABusyServer(Base):
+    def test_gives_up_on_the_drain_after_its_bound_and_ends_it(self):
+        with open(os.path.join(self.work, "busy"), "w", encoding="utf-8"):
+            pass
+        made = self.make("serve", stop_drain_limit=0.5)
+        thread, ended = self.in_thread(made)
+        self.wait_until(supervisor.server)
+        with self.assertLogs("tagpup.supervisor", level="WARNING") as logged:
+            made.stop()
+            thread.join(30)
+        self.assertEqual([0], ended)
+        self.assertFalse(made.child_alive())
+        self.assertIn("ending it anyway", "\n".join(logged.output))
 
 
 class PortsAnotherHolds(Base):
