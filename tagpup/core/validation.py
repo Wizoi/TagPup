@@ -193,6 +193,8 @@ KINDS = {
             _no_controls("A folder's path"),
             {"rule": "pattern", "pattern": FULL_PATH,
              "message": "Each folder is named by its full path, one a line, as in D:/Photos."},
+            {"rule": "forbid_pattern", "pattern": '["<>|?*]',
+             "message": 'A folder\'s path cannot contain " < > | ? or *: Windows allows none of them in a name.'},
             {"rule": "forbid_pattern", "pattern": DRIVE_ROOT,
              "message": "A whole drive cannot be one of the library's folders: name a folder on it, as in D:/Photos."},
         ]},

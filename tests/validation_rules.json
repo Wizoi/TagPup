@@ -1,5 +1,5 @@
 {
- "version": "656f37b86ace",
+ "version": "684b784fd659",
  "blank": "\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
  "kinds": {
   "tag": {
@@ -155,6 +155,11 @@
        "rule": "pattern",
        "pattern": "(?:[A-Za-z]:[/\\\\]|[/\\\\]{2}[^/\\\\]|/)[\\s\\S]*",
        "message": "Each folder is named by its full path, one a line, as in D:/Photos."
+      },
+      {
+       "rule": "forbid_pattern",
+       "pattern": "[\"<>|?*]",
+       "message": "A folder's path cannot contain \" < > | ? or *: Windows allows none of them in a name."
       },
       {
        "rule": "forbid_pattern",
@@ -446,6 +451,11 @@
       },
       {
        "rule": "forbid_pattern",
+       "pattern": "[\"<>|?*]",
+       "message": "A folder's path cannot contain \" < > | ? or *: Windows allows none of them in a name."
+      },
+      {
+       "rule": "forbid_pattern",
        "pattern": "^\\s*(?:[A-Za-z]:[/\\\\]?|[/\\\\]{1,2})\\s*$",
        "message": "A whole drive cannot be one of the library's folders: name a folder on it, as in D:/Photos."
       }
@@ -479,6 +489,11 @@
        "rule": "pattern",
        "pattern": "(?:[A-Za-z]:[/\\\\]|[/\\\\]{2}[^/\\\\]|/)[\\s\\S]*",
        "message": "Each folder is named by its full path, one a line, as in D:/Photos."
+      },
+      {
+       "rule": "forbid_pattern",
+       "pattern": "[\"<>|?*]",
+       "message": "A folder's path cannot contain \" < > | ? or *: Windows allows none of them in a name."
       },
       {
        "rule": "forbid_pattern",

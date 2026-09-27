@@ -1048,6 +1048,12 @@ def settings_set(ctx, key, value, acknowledged, apply_):
     if result.refused:
         console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
         raise SystemExit(1)
+    if key == library_settings.ROOTS:
+        # Taken, but said: a root on a drive not plugged in now is walked when it is back.
+        for root in value.split(chr(10)):
+            if root and not os.path.isdir(root):
+                console.print("Warning: %s is not on disk now; sync finds nothing under it until it is." % root,
+                              markup=False, soft_wrap=True)
     changed = result.details.get("changed", [])
     added = result.details.get("ignored_added", 0)
     if not changed:
