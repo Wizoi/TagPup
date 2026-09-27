@@ -50,12 +50,8 @@ def dead_rows(conn):
 
 
 def _photos_under(folder):
-    found = []
-    for root, _dirs, files in os.walk(folder):
-        for name in sorted(files):
-            if images.is_photo(name):
-                found.append(os.path.join(root, name))
-    return found
+    # The one walk (tagpup.files.images.photo_entries), which goes into no junction.
+    return [entry.path for entry in images.photo_entries(folder)]
 
 
 def _read(folder, field, exiftool_path):

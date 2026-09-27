@@ -78,7 +78,7 @@ def _walk_into(entry):
     return not attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
 
 
-def _photo_entries(folder):
+def photo_entries(folder):
     """Each photo under `folder`, at any depth, as its folder's listing entry, in the
     order os.walk gives: a folder's photos, then each subfolder in turn. Walked from
     paths.stored(folder); a folder that cannot be listed is passed over."""
@@ -107,7 +107,17 @@ def photos_under(folder):
     paths.stored(folder), as os.walk joins onto whatever it is given, and a folder typed
     D:/Photos gave D:/Photos\\a.jpg. Five walks each had a copy of this, two walking the
     folder as typed. No link or junction to a folder is walked into (_walk_into)."""
-    return [entry.path for entry in _photo_entries(folder)]
+    return [entry.path for entry in photo_entries(folder)]
+
+
+def has_subfolders(folder):
+    """Does `folder` hold a folder the walk would go into (_walk_into): not a link or a
+    junction? False for one that cannot be listed."""
+    try:
+        with os.scandir(paths.stored(folder)) as listing:
+            return any(_walk_into(entry) for entry in listing)
+    except OSError:
+        return False
 
 
 def photos_in(folder):
@@ -128,7 +138,7 @@ def stamps_under(folder):
     On Windows the listing carries both, so no file is opened or looked up on its own: a
     sync that finds nothing costs one walk (docs/ARCHITECTURE.md, phase 8)."""
     found = {}
-    for entry in _photo_entries(folder):
+    for entry in photo_entries(folder):
         try:
             stat_of = entry.stat()
         except OSError:
