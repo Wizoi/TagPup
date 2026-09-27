@@ -43,7 +43,9 @@ READS_THE_FILE = re.compile(r"\.config_ini\b|\bimport\b.*\bconfig_ini\b")
 
 #: What tagpup.config is now: the home, where the libraries are, the machine's ExifTool,
 #: and the one reader of config.ini.
-PUBLIC = {"home", "data_dir", "library_path", "default_exiftool", "exiftool_path", "config_ini"}
+PUBLIC = {"home", "data_dir", "library_path", "default_exiftool", "exiftool_path", "config_ini",
+          # Which installed version the code is (VERSION.txt beside it): not a setting.
+          "code_version"}
 
 
 def _lines(relative):
