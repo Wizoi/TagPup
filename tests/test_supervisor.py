@@ -258,6 +258,29 @@ class WhatAStoppedSupervisorLeaves(Base):
         made.stop()
         thread.join(30)
 
+    def test_at_login_the_orphan_is_seen_to_before_a_hand_over_and_its_token_kept(self):
+        """A supervisor starting at login that handed over at once wrote supervisor.json
+        with no token, and its successor ended the orphan without draining it."""
+        installed = os.path.join(self.work, "installed")
+        os.makedirs(installed)
+        with open(os.path.join(installed, "current.txt"), "w", encoding="utf-8") as handle:
+            handle.write("v2")
+        supervisor.write_json(supervisor.data_file(supervisor.STATE_FILE),
+                              {"pid": 1, "state": "running", "server_token": "an-old-token"})
+        made = supervisor.Supervisor(installed=installed, env=self.env, install=lambda: None)
+        made.own_version = "v1"
+        order = []
+
+        def hand_over_to(version):
+            made._say("handing over")
+            order.append(("hand over", supervisor.last_state().get("server_token")))
+            return True
+        with mock.patch.object(made, "end_orphan", side_effect=lambda: order.append("orphan")), \
+                mock.patch.object(made, "hand_over_to", side_effect=hand_over_to), \
+                mock.patch.object(made, "_taken_over", return_value=True):
+            self.assertEqual(0, made.main())
+        self.assertEqual(["orphan", ("hand over", "an-old-token")], order)
+
     def test_a_supervisor_failing_ends_its_server_with_it(self):
         made = self.make("serve")
 

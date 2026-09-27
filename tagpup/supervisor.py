@@ -459,6 +459,10 @@ class Supervisor:
         #: The version to keep running when one to hand over to did not start.
         self._pinned = None
         self._successor = None
+        #: The token of the server a supervisor before this one ran, kept until any server
+        #: it left running has been seen to (end_orphan): this one's own writes of
+        #: supervisor.json must not lose it.
+        self._inherited_token = None
         self._next_health = 0
         self._unanswered = 0
         self._stop = threading.Event()
@@ -485,7 +489,7 @@ class Supervisor:
                        "server_pid": self._child.pid if self._child is not None else None,
                        # So the next supervisor can drain a server this one left running (the
                        # file is the user's, as the libraries are).
-                       "server_token": self._token}
+                       "server_token": self._token or self._inherited_token}
         try:
             write_json(data_file(STATE_FILE), self._state)
         except OSError as e:
@@ -793,8 +797,9 @@ class Supervisor:
         was kept (data/supervisor.json), for at most STOP_DRAIN_LIMIT; then ended."""
         where = server()
         if where is None:
+            self._inherited_token = None
             return
-        token = (last_state() or {}).get("server_token")
+        token = self._inherited_token or (last_state() or {}).get("server_token")
         logger.warning("A server (pid %s) a supervisor before this one left running holds the ports; ending it%s.",
                        where.get("pid"), " once it drains" if token else "")
         give_up = self._clock() + self.stop_drain_limit
@@ -810,6 +815,7 @@ class Supervisor:
         while _alive(where) and time.monotonic() < deadline:
             time.sleep(0.1)
         remove(data_file(SERVER_FILE))
+        self._inherited_token = None
 
     def run(self):
         """Keep the server running until asked to stop (0), it crashes too often (GAVE_UP),
@@ -843,6 +849,8 @@ class Supervisor:
         if handed_over:
             write_json(data_file(HANDOVER_FILE), {"pid": os.getpid(), "started": processes.started(os.getpid()),
                                                   "version": self.own_version})
+        # Before this one writes supervisor.json: the token of a server left running.
+        self._inherited_token = (last_state() or {}).get("server_token")
         lock = Lock(data_file(LOCK_FILE))
         if not lock.acquire(wait_for_lock):
             other = running() or {}
@@ -853,6 +861,8 @@ class Supervisor:
             logger.info("The supervisor (pid %d) starts, %s.", os.getpid(),
                         "version %s" % self.own_version if self.own_version else "from a checkout")
             if self.installed and update_first:
+                # A server left running is seen to first, with the token kept for it.
+                self.end_orphan()
                 # What a launcher does before it starts its app; and a supervisor started
                 # from an older version hands over to one started from the newer.
                 self._install()
