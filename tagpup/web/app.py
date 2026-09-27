@@ -13,7 +13,9 @@ its page's files, and log every request slower than a second and every one that
 failed, with its traceback, to the requests log (tagpup.logs). Each app's routes are
 its own blueprint; what both serve alike -- the picker, the tag tree, the rules of what
 may be set, the library's settings, its history of changes, when its recurring jobs ran,
-and where each app is -- is a blueprint each registers.
+where each app is, and which version answers -- is a blueprint each registers. Every
+request passes the process's gate (tagpup.web.lifecycle), which counts it while in
+flight and turns it away while the always-on process moves onto a new version.
 """
 import logging
 import os
@@ -26,8 +28,8 @@ from flask import Blueprint, Flask, Response, abort, current_app, g, jsonify, re
 
 from tagpup import config as tagpup_config
 from tagpup.logs import REQUESTS
-from tagpup.web import (history_routes, jobs_routes, libraries, rules_routes, security, settings_routes,
-                        tagpup_routes, taxonomy_routes, tuner_routes)
+from tagpup.web import (history_routes, jobs_routes, libraries, lifecycle as lifecycles, rules_routes, security,
+                        settings_routes, tagpup_routes, taxonomy_routes, tuner_routes)
 
 logger = logging.getLogger(__name__)
 requests_log = logging.getLogger(REQUESTS)
@@ -61,7 +63,7 @@ SLOW_REQUEST_SECONDS = 1.0
 THREADS = 16
 
 
-def create_app(kind, startup=None, pages=None, runtime=None, ports=None):
+def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecycle=None):
     """The Flask app for `kind` ("tagpup" or "tuner"): its page from `pages` (the
     page's folder, by default the one beside the package), `startup`, the Library a
     request naming none is served, and `runtime`, the process's models
@@ -69,7 +71,9 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None):
     made without one answers everything but Suggest. `ports` is {kind: port} for the
     apps the process serves, which the launcher knows (tagpup_web.PORTS, or the ports
     it was told): /api/apps tells a page where the other app is, and an app made
-    without them knows of none."""
+    without them knows of none. `lifecycle` is the process's gate and version
+    (tagpup.web.lifecycle.Lifecycle), one for both apps; an app made without one has
+    its own."""
     if kind not in PAGES:
         raise ValueError("no such app: %r" % (kind,))
     app = Flask("tagpup.web." + kind, static_folder=None)
@@ -77,6 +81,7 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None):
     app.config["STARTUP_LIBRARY"] = startup
     app.config["RUNTIME"] = runtime
     app.config["PORTS"] = dict(ports or {})
+    app.config["LIFECYCLE"] = lifecycle = lifecycle or lifecycles.Lifecycle(version=tagpup_config.code_version())
     app.config["PAGES"] = pages or os.path.join(tagpup_config.CODE_ROOT, PAGES[kind])
     app.config["COMMON"] = os.path.join(os.path.dirname(app.config["PAGES"]), COMMON)
     app.json.sort_keys = False
@@ -93,10 +98,13 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None):
     app.register_blueprint(settings_routes.routes)
     app.register_blueprint(history_routes.routes)
     app.register_blueprint(jobs_routes.routes)
+    app.register_blueprint(lifecycles.routes)
     app.register_blueprint(apps)
     app.register_blueprint(ROUTES[kind])
     _page_routes(app)
-    app.wsgi_app = libraries.LibraryFromUrl(app.wsgi_app, startup)
+    # The gate outside the library's middleware: a request turned away while the server
+    # drains opens no library.
+    app.wsgi_app = lifecycle.wrap(libraries.LibraryFromUrl(app.wsgi_app, startup))
     return app
 
 

@@ -15,7 +15,19 @@
  *
  * The library is read from the page's URL at each call, and `fetch` is looked up at
  * each call, so the page tests' stub answers (tests/frontend/harness.mjs).
+ *
+ * While the always-on process moves onto a new version (tagpup.web.lifecycle) the server
+ * answers a request 503 with X-TagPup-Updating, having done nothing with it, and then
+ * answers nothing while it restarts. A request so turned away is sent again after the
+ * Retry-After it was given, and again while nothing answers, for up to UPDATE_WAIT_MS:
+ * the page waits out the update rather than showing it as an error.
  */
+
+/** How long a request waits out a server moving onto a new version. */
+const UPDATE_WAIT_MS = 120000;
+
+/** How long to wait before sending again when nothing answered. */
+const RESTART_RETRY_MS = 1000;
 
 /** First URL parts that are no library's name: the routes (tagpup.core.library.ROUTES). */
 const NOT_A_LIBRARY = ['api', 'common', 'gui', 'gui_tagpup'];
@@ -50,7 +62,35 @@ function apiUrl(path) {
  * and what a new one may be called (/api/rules).
  */
 function askableWithoutALibrary(route) {
-    return /^\/api\/(?:databases|rules)(?:\/|\?|$)/.test(route);
+    return /^\/api\/(?:databases|rules|server)(?:\/|\?|$)/.test(route);
+}
+
+/** Was `res` a refusal because the server is moving onto a new version? */
+function refusedForAnUpdate(res) {
+    return !!res && res.status === 503 && !!res.headers && typeof res.headers.get === 'function'
+        && !!res.headers.get('X-TagPup-Updating');
+}
+
+function pause(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * fetch(url, options), sent again while the server is moving onto a new version: after
+ * a refusal saying so, and -- once one has said so -- while nothing answers.
+ */
+function fetchThroughAnUpdate(url, options, started = Date.now(), updating = false) {
+    const again = (ms) => pause(ms).then(() => fetchThroughAnUpdate(url, options, started, true));
+    return fetch(url, options).then(res => {
+        if (refusedForAnUpdate(res) && Date.now() - started < UPDATE_WAIT_MS) {
+            const seconds = Number(res.headers.get('Retry-After'));
+            return again(Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : RESTART_RETRY_MS);
+        }
+        return res;
+    }, err => {
+        if (updating && Date.now() - started < UPDATE_WAIT_MS) return again(RESTART_RETRY_MS);
+        throw err;
+    });
 }
 
 /**
@@ -63,7 +103,7 @@ function apiFetch(path, options) {
     if (!pageLibrary() && url.startsWith('/api/') && !askableWithoutALibrary(url)) {
         return Promise.reject(new Error('No library is open'));
     }
-    return fetch(url, options);
+    return fetchThroughAnUpdate(url, options);
 }
 
 /** The reply's JSON, whatever its status: callers read `success` and `error` from it. */

@@ -23,6 +23,19 @@
     z-index: 900;
 }
 
+.gear-menu .gear-version {
+    padding: 6px 12px 2px;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-family: var(--font-body);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.gear-menu .gear-version:empty {
+    display: none;
+}
+
 .gear-menu [role="menuitem"] {
     display: block;
     width: 100%;

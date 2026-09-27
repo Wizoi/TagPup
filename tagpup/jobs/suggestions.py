@@ -77,6 +77,19 @@ def runs_for(library):
         return runs
 
 
+def running():
+    """How many suggestion runs are under way in this process, in any library: what an
+    update of the always-on process waits for (tagpup.web.lifecycle)."""
+    with _runs_lock:
+        every = list(_runs.values())
+    count = 0
+    for runs in every:
+        with runs.lock:
+            count += sum(1 for status in runs.statuses.values()
+                         if status.get("status") in ("preparing", "running"))
+    return count
+
+
 def forget(library):
     """Drop a library's runs from memory. A run still going finishes into nothing."""
     with _runs_lock:
