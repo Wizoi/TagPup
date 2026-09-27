@@ -204,6 +204,55 @@ class StoppingABusyServer(Base):
         self.assertIn("ending it anyway", "\n".join(logged.output))
 
 
+class WhatAStoppedSupervisorLeaves(Base):
+    def orphan(self, token):
+        """A server its supervisor left running: started with `token`, serving."""
+        env = dict(self.env, **{supervisor.TOKEN: token})
+        orphan = processes.start([sys.executable, self.fake, "serve", "orphan", self.record], env=env,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: orphan.poll() is None and processes.kill_tree(orphan.pid))
+        self.wait_until(supervisor.server)
+        return orphan
+
+    def test_a_server_whose_token_it_knows_is_drained_and_ended_before_its_own_starts(self):
+        orphan = self.orphan("an-old-token")
+        supervisor.write_json(supervisor.data_file(supervisor.STATE_FILE),
+                              {"pid": 1, "state": "running", "server_token": "an-old-token"})
+        made = self.make("serve")
+        with self.assertLogs("tagpup.supervisor", level="WARNING") as logged:
+            thread, ended = self.in_thread(made)
+            self.wait_until(lambda: len(self.starts()) == 2 and supervisor.server()
+                            and supervisor.server()["version"] != "orphan")
+        self.assertIsNotNone(orphan.wait(timeout=30), "the orphan is still running")
+        said = "\n".join(logged.output)
+        self.assertIn("left running", said)
+        self.assertIn("once it drains", said)
+        made.stop()
+        thread.join(30)
+
+    def test_one_whose_token_it_does_not_know_is_ended(self):
+        orphan = self.orphan("a-token-nobody-kept")
+        made = self.make("serve")
+        thread, ended = self.in_thread(made)
+        self.wait_until(lambda: len(self.starts()) == 2 and supervisor.server()
+                        and supervisor.server()["version"] != "orphan")
+        self.assertIsNotNone(orphan.wait(timeout=30))
+        made.stop()
+        thread.join(30)
+
+    def test_a_supervisor_failing_ends_its_server_with_it(self):
+        made = self.make("serve")
+
+        def fail():
+            raise RuntimeError("a bug")
+        made.look_for_update = fail
+        made.update_every = 0
+        with self.assertRaises(RuntimeError):
+            made.main()
+        self.assertFalse(made.child_alive(), "its server outlived it")
+        self.assertIsNone(supervisor.server())
+
+
 class PortsAnotherHolds(Base):
     def test_are_waited_for_not_counted_as_crashes(self):
         made = self.make("ports", max_crashes=2)

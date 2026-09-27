@@ -417,7 +417,10 @@ class Supervisor:
         self._state = {"pid": os.getpid(), "started": processes.started(os.getpid()), "home": tagpup_config.home(),
                        "installed": self.installed, "version": self.own_version, "state": state, "why": why,
                        "since": _now(), "server_version": self._child_version,
-                       "server_pid": self._child.pid if self._child is not None else None}
+                       "server_pid": self._child.pid if self._child is not None else None,
+                       # So the next supervisor can drain a server this one left running (the
+                       # file is the user's, as the libraries are).
+                       "server_token": self._token}
         try:
             write_json(data_file(STATE_FILE), self._state)
         except OSError as e:
@@ -558,11 +561,14 @@ class Supervisor:
         where = server()
         if where is None:
             return {"drained": True, "note": "not serving yet"}
+        return self._drain_at(where, self._token)
+
+    def _drain_at(self, where, token):
         port = sorted(where.get("ports", {}).values())[0]
         request = urllib.request.Request(
             "http://127.0.0.1:%d/api/server/drain" % port, method="POST",
             data=json.dumps({"seconds": self.drain_seconds}).encode("utf-8"),
-            headers={"Content-Type": "application/json", TOKEN_HEADER: self._token or ""})
+            headers={"Content-Type": "application/json", TOKEN_HEADER: token or ""})
         try:
             with urllib.request.urlopen(request, timeout=self.drain_seconds + 30) as reply:
                 return json.loads(reply.read().decode("utf-8"))
@@ -638,10 +644,33 @@ class Supervisor:
         logger.info("Stopped.")
         return 0
 
+    def end_orphan(self):
+        """A server a supervisor before this one left running -- it died, was ended, or
+        crashed -- holds the ports, and nothing watches it. Drained first when its token
+        was kept (data/supervisor.json), for at most STOP_DRAIN_LIMIT; then ended."""
+        where = server()
+        if where is None:
+            return
+        token = (last_state() or {}).get("server_token")
+        logger.warning("A server (pid %s) a supervisor before this one left running holds the ports; ending it%s.",
+                       where.get("pid"), " once it drains" if token else "")
+        give_up = self._clock() + self.stop_drain_limit
+        while token and self._clock() < give_up:
+            answer = self._drain_at(where, token)
+            if answer.get("drained"):
+                break
+            time.sleep(min(self.retry_move, max(0.0, give_up - self._clock())))
+        processes.kill_tree(where["pid"])
+        deadline = time.monotonic() + 30
+        while server() is not None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        remove(data_file(SERVER_FILE))
+
     def run(self):
         """Keep the server running until asked to stop (0), it crashes too often (GAVE_UP),
         or a new version's supervisor takes over (0)."""
         remove(data_file(STOP_FILE))
+        self.end_orphan()
         self._say("starting")
         self._next_update = self._clock() + self.update_every
         self.start_child()
@@ -686,6 +715,13 @@ class Supervisor:
                     return 0
             return self.run()
         finally:
+            # Leaving any other way than by its own stop -- an error -- the server goes
+            # with it: nothing would watch it, and the next supervisor would find it
+            # holding the ports.
+            if self.child_alive():
+                logger.error("The supervisor is ending unexpectedly; ending its server (pid %d) too.",
+                             self._child.pid)
+                self.stop_child()
             lock.release()
 
 
