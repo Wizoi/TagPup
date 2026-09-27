@@ -48,9 +48,26 @@ MAX_DRAIN_SECONDS = 1800
 LEFT_DRAINED = 180
 
 #: The paths answered while draining, and not counted as work: asking how the server
-#: is, and the drain itself.
+#: is, and the drain itself -- as the gate sees them, before the library's middleware
+#: takes /<library> off the path.
+#:
+#: The bare status (/api/server) is the supervisor's and startup.py's. The pages ask it
+#: under their library's address (/<library>/api/server: the gear's version, and
+#: api.js's probe after an /api/ image failed), and that one is NOT exempt, on purpose:
+#: while the server drains it is turned away 503 with X-TagPup-Updating, which is how the
+#: probe learns the server is away. The drain and the resume are exempt under any
+#: library's address too: counted, a drain would wait for itself.
 STATUS, DRAIN, RESUME = "/api/server", "/api/server/drain", "/api/server/resume"
 EXEMPT = frozenset({STATUS, DRAIN, RESUME})
+CONTROL = (DRAIN, RESUME)
+
+
+def exempt(path):
+    """Is `path`, as the gate sees it, answered while draining and not counted as work?"""
+    if path in EXEMPT:
+        return True
+    rest = path.split("/", 2)[2] if path.count("/") >= 2 else ""
+    return ("/" + rest) in CONTROL
 
 UPDATING_MESSAGE = "TagPup is moving to a new version; this is sent again in a moment."
 
@@ -214,7 +231,7 @@ class _Gate:
         self.app = app
 
     def __call__(self, environ, start_response):
-        if (environ.get("PATH_INFO") or "/") in EXEMPT:
+        if exempt(environ.get("PATH_INFO") or "/"):
             return self.app(environ, start_response)
         if not self.lifecycle._enter():
             body = ('{"success": false, "updating": true, "error": "%s"}' % UPDATING_MESSAGE).encode("utf-8")

@@ -168,6 +168,33 @@ class ADrain(Base):
         self.assertEqual(200, self.client().get("/harbour/api/tags").status_code)
 
 
+class ThroughALibrarysAddress(Base):
+    """The pages ask /<library>/api/server: the gear for its version, and a page whose
+    image failed, to learn whether the server is away (web/common/api.js). That probe is
+    turned away while the server drains -- what tells the page it is -- where the bare
+    /api/server is answered. A drain through a library's address was counted as its own
+    request in flight, and waited out its deadline for itself."""
+
+    def test_the_status_answers_while_open_and_is_turned_away_while_draining(self):
+        status = self.client().get("/harbour/api/server")
+        self.assertEqual(200, status.status_code)
+        self.assertEqual("20260926-101500-abc1234", status.get_json()["version"])
+        self.assertTrue(self.drain().get_json()["drained"])
+        refused = self.client().get("/harbour/api/server")
+        self.assertEqual(503, refused.status_code)
+        self.assertEqual("1", refused.headers[lifecycles.UPDATING_HEADER])
+        self.assertEqual(200, self.client().get("/api/server").status_code)
+
+    def test_a_drain_and_a_resume_through_it_do_not_wait_for_themselves(self):
+        started = time.monotonic()
+        answer = self.client().post("/harbour/api/server/drain", json={"seconds": 3}, headers=HEADERS)
+        self.assertTrue(answer.get_json()["drained"], answer.get_json())
+        self.assertLess(time.monotonic() - started, 2, "the drain waited for itself")
+        resumed = self.client().post("/harbour/api/server/resume", headers=HEADERS)
+        self.assertEqual(200, resumed.status_code)
+        self.assertTrue(resumed.get_json()["resumed"])
+
+
 class OneDrainAtATime(Base):
     def test_a_second_drain_joins_the_first(self):
         writing, _wrote = self.in_thread(self.write)
