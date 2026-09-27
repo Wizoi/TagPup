@@ -26,7 +26,7 @@ class TestServerStartup(unittest.TestCase):
         proc = processes.start(
             [sys.executable, os.path.join(PROJECT_ROOT, "tagpup_web.py"),
              "--tagpup-port", str(tagpup_port), "--tuner-port", str(tuner_port)],
-            env=dict(os.environ, TAGPUP_HOME=home.root, TAGPUP_NO_MODEL_WEIGHTS="1"),
+            env=dict(os.environ, TAGPUP_HOME=home.root, TAGPUP_NO_MODEL_WEIGHTS="1", TAGPUP_NO_JOBS="1"),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT)
         try:
             deadline = time.time() + 60

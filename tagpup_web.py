@@ -26,6 +26,7 @@ from tagpup import config as tagpup_config  # noqa: E402
 from tagpup import logs  # noqa: E402
 from tagpup.core import library as libraries  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
@@ -136,11 +137,20 @@ def main(argv=None):
             for kind in ("tagpup", "tuner")}
     if not os.environ.get("TAGPUP_WEB_NO_WARMUP"):
         runtime.warm_up_in_background(served_libraries(startup))
+    # The recurring jobs -- snapshots, pruning the journal -- of every library in the
+    # data folder, looked for on a thread of their own while the server runs; none in a
+    # process a test started (docs/ARCHITECTURE.md, phase 8).
+    jobs = runtimes.recurring_jobs(runtime)
+    if runtimes.runs_recurring_jobs():
+        jobs.start()
     ready = None
     if args.open != "none":
         def ready():
             open_page(page_url(ports[args.open]))
-    web.serve(apps, ready=ready)
+    try:
+        web.serve(apps, ready=ready)
+    finally:
+        jobs.stop()
     return 0
 
 

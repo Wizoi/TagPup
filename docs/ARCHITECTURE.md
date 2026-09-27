@@ -422,18 +422,19 @@ Exit: `config.ini` is gone; every setting a library depends on is in the library
 
 ### Phase 8: Sync
 A job that keeps each library in step with its folders. Today a row changes only when an app writes the photo or someone indexes its folder again, so the library drifts: files added outside the apps are missing, a deleted folder leaves its rows and face work behind (#42 and #47 in findings.md), and a file edited elsewhere keeps a row describing what it used to hold. It needs photo ids (phase 4), which let a moved or renamed file keep its row, and its faces with it.
-- **Recurring jobs** *(owner, 2026-09-25)*: `tagpup.jobs.recurring`, a registry where each recurring operation declares its name, its period (daily, weekly, monthly, every N hours), whether it runs per library, and the service it calls -- the snapshots, sync, pruning the journal, compacting. A job's runs are recorded in its library (a `job_runs` table: job, started, finished, outcome, what it changed), so any TagPup process knows what is due and the apps can show when each last ran. One runner runs what is due: a missed period runs once, not once per period missed, and a lock per job and library keeps two processes from running the same job at once. It runs inside whatever TagPup process is up -- the web server checks periodically, the CLI and the MCP server when they start. No Windows Task Scheduler.
+- **Event-driven first** *(owner, 2026-09-26)*: work that follows from an event -- a file added or changed outside, a user's edit, a photo indexed -- is done right away or put on a queue for processing when the event happens, never left for a schedule to find: sync reacts to the roots' change notifications, thumbnails and derived tables are made when a photo is indexed or changes. A schedule is only for what no event announces: the snapshots (safety), the journal's retention, and a catch-up check in case an event was missed. A new recurring job says which of these it is.
+- **Recurring jobs** *(owner, 2026-09-25)*: `tagpup.jobs.recurring`, a registry where each recurring operation declares its name, its period (daily, weekly, monthly, every N hours), why it is scheduled (`safety`, `retention` or `catch-up`: one without a reason is refused as it is registered), whether it runs per library, and the service it calls -- the snapshots, sync, pruning the journal, compacting. A job's runs are recorded in its library (a `job_runs` table: job, started, finished, outcome, what it changed), so any TagPup process knows what is due and the apps can show when each last ran. One runner runs what is due: a missed period runs once, not once per period missed, and a lock per job and library keeps two processes from running the same job at once. It runs in the web server alone -- the always-on process, which checks periodically; the CLI lists the jobs and runs one by hand (`jobs run`), and neither it nor the MCP server runs what is due as it starts *(owner, 2026-09-26)*. No Windows Task Scheduler.
 - **Always on, from login** *(owner, 2026-09-25)*: one background process -- the web server and the recurring-jobs runner together -- started at login from a shortcut in the owner's Startup folder, hidden, so both apps answer and the jobs run whenever the owner is logged in. It refuses a second copy of itself (the server already answering), restarts after a crash through a small supervisor, and logs to `data/logs`; `TagPup.cmd` and `TagTuner.cmd` then open the browser on it. A Windows service was weighed and not chosen: it runs outside the login session, with no desktop, so the folder dialog, Open in Explorer and Open photo would do nothing, photos on network drives or under the profile may be out of its reach, and keeping a Python program alive as a service needs pywin32's service host or a wrapper. `scripts/startup.py install|uninstall` (a dry run unless `--apply`) makes or removes the shortcut, starts or stops the process, and says what it did; installing the app again repoints it at the new version. The models it keeps loaded (ViT-H-14 takes a few GB of GPU memory) are released after an idle period and loaded again by the next Suggest.
 - **Updating itself** *(owner, 2026-09-26)*: the launchers install a new commit when an app starts (`install_app.py --if-changed`), but an always-on process rarely starts. It notices when a newer committed version is available (the checkout's HEAD is not the installed one and holds no uncommitted code: the launchers' rule), installs it, and moves onto it at the next request: it stops taking new work, lets the requests and jobs already running finish (a Suggest run, an index, a journaled write), then restarts on the new version, which settles anything left unfinished as the journal already does at startup. What it did goes to `data/logs`, and the pages say which version answers. An update never interrupts a write.
 - **Moving or removing people by tag** *(owner, 2026-09-26)*: nothing new in this phase. TagTuner's Tags view already renames, merges or retires a tag across every photo, journaled (e.g. `People/<Name>` to `Friends/...`); browsing by keyword is phase 9's.
 - `tagpup.jobs.sync`: for each indexed folder, compare what is on disk with the rows, by path, size and modified time. Content identity (the DocumentID) links a file that moved.
 - What it finds, sorted: new files (indexed through the indexing job's queue), changed files (their rows re-read from the file, as `refresh_rows_from_files.py` does now), moved files (the row follows the file), and missing files.
 - A missing file is reported, never removed on its own: a folder on an unplugged drive looks the same as a deleted one. Removing rows stays the owner's choice, and the report says which folders are wholly gone.
-- It runs when a library opens and when asked, and may watch the indexed folders while an app runs. A scan that finds nothing costs one directory walk and no file reads.
+- **Watching, with the schedule as the safety net** *(owner, 2026-09-26)*: the always-on process watches each library's root folders for changes (Windows' directory-change notifications, through the `watchdog` package, one recursive watch per root) and syncs just the folder that changed, a few seconds after the changes stop (a copy of 500 photos is one sync, not 500). The app's own writes are not taken for outside ones: the journal records the stamp each write leaves, so a notification for a file that already describes its row changes nothing. Notifications can be missed -- the process was not running, a network drive, the buffer overflowed, a drive was plugged back in -- so a whole-library sync also runs when the process starts and once a day, as a check in case something was missed; a scan that finds nothing costs one directory walk (about 1.4 s on photo_index) and no file reads. It also runs when asked.
 - Each run reports what it changed, not what it looked at, and leaves a record the apps can show ("last in step: ...").
-- Done (8c): `tagpup.services.sync` (`sync`, `look`, `last`), on the maintenance scaffold -- a service, not `tagpup.jobs.sync`, since it is given its ExifTool and its queue; `tagpup.runtime.sync(library, folder=None, apply=False, index_new=True)` fills both in (the library's ExifTool; this process's index queue, `tagpup.jobs.indexing`, running the CLI's `index`), and is what a recurring job calls, `runtime.sync(library, apply=True)`. The walk is one `os.scandir` pass per topmost folder the library holds photos in (`tagpup.files.images.stamps_under`), against `store.photos.stamps`; changed rows are re-read with `refresh_rows.reread`/`edits_for`, moved rows matched first by name, size and modified time (`sync.pair_by_stamp`, one-to-one only: most rows hold no DocumentID; a match that is not one-to-one is reported as ambiguous and its files' folders are not queued), then with `relink_photos.claims_of`/`pair` for what that left (DocumentIDs read only from those new files, and only when a row is missing) and written with `relink_photos.edits_for`, both as one change, `sync`. Missing files are counted by folder, `folders_gone` and `roots_gone` (a whole walk root not there: an unplugged drive), and never removed. The record is `sync_runs` (migration 14, `tagpup.store.sync_runs`; 13 is the jobs branch's `job_runs`). Entry points: the CLI's `sync [--folder] [--apply]` (waits for the indexing it queued), the MCP tools `sync` (counts the new files, queues nothing) and `sync_state`, and `GET`/`POST /api/sync` on both apps (`tagpup.web.sync_routes`). Not yet: running when a library opens, and watching the folders.
+- Done (8c): `tagpup.services.sync` (`sync`, `look`, `last`), on the maintenance scaffold -- a service, not `tagpup.jobs.sync`, since it is given its ExifTool and its queue; `tagpup.runtime.sync(library, folder=None, apply=False, index_new=True)` fills both in (the library's ExifTool; this process's index queue, `tagpup.jobs.indexing`, running the CLI's `index`), and is what a recurring job calls, `runtime.sync(library, apply=True)`. The walk is one `os.scandir` pass per topmost folder the library holds photos in (`tagpup.files.images.stamps_under`), against `store.photos.stamps`; changed rows are re-read with `refresh_rows.reread`/`edits_for`, moved rows matched first by name, size and modified time (`sync.pair_by_stamp`, one-to-one only: most rows hold no DocumentID; a match that is not one-to-one is reported as ambiguous and its files' folders are not queued), then with `relink_photos.claims_of`/`pair` for what that left (DocumentIDs read only from those new files, and only when a row is missing) and written with `relink_photos.edits_for`, both as one change, `sync`. Missing files are counted by folder, `folders_gone` and `roots_gone` (a whole walk root not there: an unplugged drive), and never removed. The record is `sync_runs` (migration 14, `tagpup.store.sync_runs`). Entry points: the CLI's `sync [--folder] [--apply]` (waits for the indexing it queued), the MCP tools `sync` (counts the new files, queues nothing) and `sync_state`, and `GET`/`POST /api/sync` on both apps (`tagpup.web.sync_routes`). Not yet: running when a library opens, and watching the folders.
 - **Library roots, and folders to review** *(owner, 2026-09-26)*. Done: each library has root folders and ignored folders, two settings (`library.roots`, `library.ignored`; the validator's `folders`: full paths, one a line, none a whole drive), in TagTuner's Library settings. A library's roots are first the topmost folders it holds photos in that are not a drive (`settings.default_roots`), stamped once it holds photos (`stamp library roots from its folders`). Sync walks the roots and every folder the library holds photos in, each once from the topmost. New files in a folder the library holds are queued with that folder alone (`index --no-subfolders`); a folder under a root that holds photos and no indexed photo, not under an ignored folder, is not indexed on its own: it is a folder to review (`sync.review`, `GET /api/sync/review`), listed as the topmost such folder below a root with its photo count, and TagTuner offers each with Include (indexed with its subfolders, `sync.include`) or Ignore (added to the ignored folders, a journaled change of the settings) -- a dialog from the gear, Folders to review, and a notice with their number. A folder-limited sync (the watcher's, 8d) also keeps the row of a file moved in from another folder, looking only at the rows with its name and size.
-- **Snapshots of each library, as its backup** *(owner, 2026-09-25)*: three dailies, one weekly and one monthly, in `data/backups/<library>/daily|weekly|monthly`, apart from the one-off copies phase 7.5 mostly retires. A daily is taken when the newest is more than a day old; the weekly and the monthly are refreshed from that same copy when they are more than 7 or 30 days old, so the library is read once, not three times. Each is taken with the library held against writers (SQLite's backup restarts whenever another connection writes), written under a temporary name, checked (`PRAGMA quick_check`), and only then renamed into place; an old snapshot is removed only after its replacement has passed, so a failed night never leaves fewer good copies. A daily job in the recurring registry, so it is taken by whichever TagPup process is up, or by the background runner. A tool lists them (date, size, the journal's changes since) and restores one: a dry run by default, saying how many journaled changes since the snapshot would be lost, and snapshotting the current file first so a restore can itself be undone. Sync's report gives the disk the snapshots take (photo_index is about 1.4 GB, so about 7 GB for five).
+- **Snapshots of each library, as its backup** *(owner, 2026-09-25)*: three dailies, one weekly and one monthly, in `data/backups/<library>/daily|weekly|monthly`, apart from the one-off copies phase 7.5 mostly retires. A daily is taken when the newest is more than a day old; the weekly and the monthly are refreshed from that same copy when they are more than 7 or 30 days old, so the library is read once, not three times. Each is taken in one step of SQLite's backup API, one read transaction, so it is the library as it stood when the step began while writers go on (a backup in several steps restarts whenever another connection writes; holding the writers back only stalled the app's saves for the copy), written under a temporary name, checked (`PRAGMA quick_check`), and only then renamed into place; an old snapshot is removed only after its replacement has passed, so a failed night never leaves fewer good copies. A daily job in the recurring registry, so it is taken by whichever TagPup process is up, or by the background runner. A tool lists them (date, size, the journal's changes since) and restores one: a dry run by default, saying how many journaled changes since the snapshot would be lost, and snapshotting the current file first so a restore can itself be undone. Sync's report gives the disk the snapshots take (photo_index is about 1.4 GB, so about 7 GB for five).
 
 Exit: after files are added, edited, moved or deleted outside the apps, one sync brings the rows back in step. `tools/doctor.py` finds nothing it would change, except missing files it has reported.
 
@@ -472,11 +473,71 @@ The design, to be settled before it starts:
   time) and a grid that renders only what is on screen -- the Identify Faces work showed
   what rebuilding tens of thousands of cards costs.
 
-Open questions for the owner: sources beyond folder, keyword, person and date (ratings,
-saved searches such as "Trips/ and a person, 2019"); bulk edits across folders from a
-library view (they go through the same journaled writes, so they can be undone); which
-of Photo Gallery's habits to keep (the date slider, the tag pane with counts, the info
-pane).
+The owner's answers *(2026-09-26)*:
+- **The tag pane is there already**: the folder view's details panel and bulk tags are
+  what Photo Gallery's tag pane was used for. A library view gets the same panel.
+- **What is missing is the left navigation over the whole library**: by date (year, then
+  month) and by tag (the tag tree), as Photo Gallery's navigation pane did.
+- **Search, as Photo Gallery's**, with results shown as a folder view is. Photo Gallery
+  searched file name, tags, caption, author and camera for the words typed, within what
+  the navigation pane had selected; tags picked in the pane with Ctrl were OR (any of
+  them), the words in the search box were AND (all of them); it had no way to leave a
+  tag out ([Find your photos 2](https://ludwigkeck.wordpress.com/2009/09/21/find-your-photos-2-%E2%80%93-windows-live-photo-gallery/)).
+  2011's Find tab filtered by people, descriptive tags, date, place, folder, rating or
+  flag, in any combination. The owner wants more than that: three family members and
+  not a fourth -- *all of*, *any of* and *none of*, over tags and people, with text.
+- **Albums are folders**, here and in phase 10: no album entity.
+- **The thumbnail cache is not bounded.**
+- **Libraries are always distinct**: a view shows one library.
+
+**Where the code stands** *(2026-09-26)*: the grid (`web/tagpup/grid.js`, `folder.js`)
+builds a card for every photo of the folder it has open, keyed by path; nothing renders
+only what is on screen. A thumbnail is made on every request (`files.images.smaller_copy`,
+Pillow, `size=300`), never kept. Keywords are JSON in `photos.tags`; there is no
+`photo_tags` table. Folders under a folder are an index range now (#168); Remove Folder
+already lists the library's folders with counts (#47). `photos.taken` and `photos.year`
+exist. The journal, History and sync (phase 8) are what a library view's edits and
+staleness stand on.
+
+**Stages**, each reviewed and merged on its own; the performance ones measured as the
+click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
+- **9a. What views stand on (server only).** A derived `photo_tags(photo_id, tag)` table,
+  indexed on tag, kept by the writes that keep `photo_people` and rebuilt from
+  `photos.tags` by a migration; "a keyword and everything under it" is a range on it. A
+  thumbnail cache on disk: derived, keyed by photo id and the file's size and modified
+  time, under `data/cache/<library>/thumbs`, made when a photo is indexed or its file
+  changes (queued, phase 8's events) and on first ask, dropped when its stamp changes or it
+  leaves the library -- never by a schedule; not bounded
+  *(owner)*: about 20-40 KB a 300 px thumbnail, 1.5-3 GB for photo_index, measured. One query
+  service, `tagpup.services.library_view`: a source (folder and subfolders, keyword and
+  everything under it, person, year or month) to an ordered page of photo ids and the
+  total; and the navigator's counts (folder tree, tag tree, people, years and months),
+  each one query. Routes and specs; EXPLAIN QUERY PLAN on photo_index for each.
+- **9b. One grid on photo ids.** The grid, the details panel, the selection and the bulk
+  edits take a source and work on photo ids; today's folder view becomes the "folder on
+  disk" source through the same components. Only the cards on screen (and a screen
+  either side) exist in the DOM. Exit: a 20,000-photo keyword scrolls without a stall,
+  measured; the folder view's behaviour and tests unchanged.
+- **9c. The navigator and the move between views.** Folders, Keywords, People and Dates
+  beside the grid, with counts; the header and the URL name the source, so Back and a
+  bookmark work; "Show in library" from a disk folder; a banner where the disk holds
+  files the library does not (offering to index them, through sync); staleness marks on
+  the cards on screen (size and modified time, no ExifTool) and a missing photo shown
+  but not editable; "last in step" from sync.
+- **9d. Editing from a library view.** Bulk edits on a selection that spans folders,
+  through the same journaled writes (History lists and undoes them); a file changed
+  outside while an edit is planned is a conflict for sync to settle, never overwritten.
+- **9e. Search.** A search is a source: *all of* these tags or people, *any of* those,
+  *none of* these, and words matched against file name, tags, captions and people (as
+  Photo Gallery's search box did), optionally within the folder, tag or date the
+  navigator has selected. Built on `photo_tags` and `photo_people` as set operations in
+  one query; its results open in the same grid, panel and bulk edits as a folder, and
+  the URL holds the search so it can be bookmarked or opened again. A picker that
+  completes tag and person names (the tag editor's vocabulary) builds the three lists.
+
+Exit: the owner can open the whole library by folder, keyword, person or date, move
+between a disk folder and its library view without losing place, and edit from either,
+with every edit undoable and nothing overwritten that changed outside.
 
 ### Phase 10: Family albums from many sources (idea, after phase 9)
 The owner's idea *(2026-09-25)*: once the local folders, the views and their management
@@ -509,9 +570,10 @@ Design questions, to be settled before it starts:
   information"). An importer per source, behind one interface, and an export archive as
   the fallback that always works. Checked against each service's terms when the phase
   starts, not from memory.
-- **Albums and groups.** An album is a set of photos, possibly from many folders and
-  sources (a library view of phase 9 whose source is "album"); a group is the people who
-  may see and add to an album. Albums live in the library, journaled like any edit.
+- **Albums and groups.** An album is a folder *(owner, 2026-09-26)*: an event's photos,
+  from whatever source, are copied into one folder under the common root, and that
+  folder is the album -- no album entity, nothing a folder view cannot already show. A
+  group is the people who may see and add to a folder.
 - **People beyond this PC.** At first the home network: the apps already serve pages;
   another person on the network needs a login of their own and what they may do
   (view, add, tag, delete). Remote family members need the server reachable from outside
@@ -548,7 +610,7 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 2026-09-25 | The MCP server names a library in every tool call; it has no library of its own (#100). Its reads are a read-only service, `tagpup.services.inspect`, since an entry point may not import `store`; its writes are the maintenance scripts' operations, moved into services the scripts call too. |
 | 2026-09-25 | Bulk edits and migrations are recorded in a journal in the library, per changed column, applied and undone only where the rows are what the change expects, and rehearsed by a dry run that applies and undoes inside a rolled-back transaction. SQLite's session extension was weighed and its semantics copied, not the library: it needs APSW, a second owner of the database beside `tagpup.store.db`. Full backups remain only for migrations that destroy information. |
 | 2026-09-25 | A library's settings live in the library and are changed from TagTuner's gear, through the journal; `config.ini` is retired *(owner)*. The data folder is fixed (`TAGPUP_HOME/data`), not a setting. Settings with consequences are locked behind a Change... that asks for each consequence to be acknowledged. |
-| 2026-09-25 | Each library keeps three daily, one weekly and one monthly snapshot, taken under the write lock, checked before an old one is removed, and restorable with the journal's changes since counted *(owner)*. |
+| 2026-09-25 | Each library keeps three daily, one weekly and one monthly snapshot, taken under the write lock, checked before an old one is removed, and restorable with the journal's changes since counted *(owner)*. *Amended 2026-09-26: a snapshot is one read transaction and holds no writer back (cf00823); consistent without the lock.* |
 | 2026-09-25 | Recurring operations (snapshots, sync, pruning the journal, compacting) are registered in `tagpup.jobs.recurring` with their periods and run by one runner inside any TagPup process; their runs are recorded in the library. No Windows Task Scheduler *(owner)*. |
 | 2026-09-25 | The server and the jobs runner run as one process started at login from the Startup folder, installed and removed by `scripts/startup.py`; not a Windows service, which has no desktop for the folder dialog and Explorer and may not reach the owner's drives. Idle models are released *(owner asked for always-on; the login process is the recommendation)*. |
 | 2026-09-25 | Input rules have one owner, `tagpup.core.validation`: services refuse on them, the pages check early from the rules the server publishes as data, and shared cases hold any JavaScript twin to the Python rule. Output is escaped by building elements from text; `innerHTML` with a value is refused by a guard *(owner)*. |
