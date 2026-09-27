@@ -287,6 +287,41 @@ class PortsAnotherHolds(Base):
         self.assertEqual([0], ended)
 
 
+class AServerThatWillNotEnd(Base):
+    """A hand-over finished with the old server still running, and nothing watching it."""
+
+    def stuck(self):
+        child = mock.Mock(pid=4242)
+        child.poll.return_value = None
+        child.wait.side_effect = subprocess.TimeoutExpired("server", 30)
+        return child
+
+    def test_is_kept_by_the_supervisor(self):
+        made = self.make("serve")
+        made._child = self.stuck()
+        with mock.patch.object(supervisor.processes, "kill_tree"):
+            self.assertFalse(made.stop_child())
+        self.assertIsNotNone(made._child, "let go of a server still running")
+
+    def test_abandons_the_hand_over(self):
+        installed = os.path.join(self.work, "installed")
+        os.makedirs(installed)
+        made = supervisor.Supervisor(installed=installed, env=self.env, command=lambda code: ["x"], hand_over_wait=5)
+        made._child = self.stuck()
+        successor = mock.Mock(pid=5151)
+        successor.poll.return_value = None
+        me = {"pid": os.getpid(), "started": processes.started(os.getpid()), "version": "v2"}
+        supervisor.write_json(supervisor.data_file(supervisor.HANDOVER_FILE), me)
+        with mock.patch.object(supervisor, "start_in_background", return_value=successor), \
+                mock.patch.object(supervisor, "remove"), \
+                mock.patch.object(supervisor.processes, "kill_tree") as kill, \
+                self.assertLogs("tagpup.supervisor", level="ERROR"):
+            self.assertFalse(made.hand_over_to("v2"))
+        self.assertIn(mock.call(5151), kill.call_args_list, "the new supervisor was left running")
+        self.assertIsNotNone(made._child)
+        made._child = None
+
+
 class ItsFilesWithAReader(Base):
     """On Windows a file another process has open cannot be replaced or deleted: the
     supervisor's state and server.json, read by startup.py status, the launchers and the

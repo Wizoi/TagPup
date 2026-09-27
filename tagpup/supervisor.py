@@ -535,18 +535,22 @@ class Supervisor:
         self._say("running")
 
     def stop_child(self):
-        """End the server and what it started. Only once it is drained, or not serving."""
-        child, self._child = self._child, None
+        """End the server and what it started. Only once it is drained, or not serving.
+        True when it has ended; one that did not is kept, still watched."""
+        child = self._child
         if child is None:
-            return
+            return True
         if child.poll() is None:
             processes.kill_tree(child.pid)
             try:
                 child.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 logger.error("The server (pid %d) did not end.", child.pid)
+                return False
+        self._child = None
         remove(data_file(SERVER_FILE))
         logger.info("Stopped the server (pid %d).", child.pid)
+        return True
 
     def _child_ended(self, code):
         """The server ended without being asked. False when it has crashed too often."""
@@ -718,8 +722,13 @@ class Supervisor:
             if started.poll() is None:
                 processes.kill_tree(started.pid)
             return False
+        if not self.stop_child():
+            # Never a hand-over with the old server still running and nothing watching it.
+            logger.error("The server would not end; the supervisor of %s is stopped, and this one stays.", version)
+            processes.kill_tree(started.pid)
+            self._resume_server()
+            return False
         self._successor = ready
-        self.stop_child()
         self._say("handed over", "to %s (pid %s)" % (version, ready.get("pid")))
         return True
 
