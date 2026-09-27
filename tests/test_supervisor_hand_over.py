@@ -81,6 +81,8 @@ class HandingOver(unittest.TestCase):
         self.assertNotEqual(old_pid, now["pid"])
         self.assertEqual(NEW, now["version"])
         self.assertIsNotNone(first.wait(timeout=30), "the old supervisor is still running")
+        self.assertFalse(os.path.exists(supervisor.data_file(supervisor.HANDOVER_FILE)),
+                         "the hand-over's note was left behind")
 
     def test_a_new_version_whose_server_cannot_start_leaves_the_old_one_answering(self):
         """The reviewer's reproduction: the new version's supervisor starts, takes the

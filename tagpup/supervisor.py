@@ -946,6 +946,7 @@ class Supervisor:
                 lock.release()
                 taken, why = self._taken_over(target)
                 if taken:
+                    remove(data_file(HANDOVER_FILE))
                     return 0
                 logger.error("The supervisor of %s did not take over (%s); ending it, and starting the server "
                              "again on %s.", target, why, ours)
