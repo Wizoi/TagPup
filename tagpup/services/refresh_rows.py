@@ -225,10 +225,35 @@ def differences(conn, path, record, stored=None):
     return changed, json.loads(captions or "[]"), (mtime, size)
 
 
+def reread(conn, stale, exiftool_path, examples=0, progress=None):
+    """What the files of the rows named in `stale` (paths as stored) hold, against their
+    rows, on `conn`: (records, {path: what its file holds}; to_write, the paths whose row
+    differs; fields, a Counter of the fields that differ; unreadable, the paths whose file
+    could not be read; shown, up to `examples` (path, old captions, new captions);
+    identities, {path: the row's document_id} of those to write). Reads the files; writes
+    nothing. The refresh's and sync's (tagpup.services.sync) one reading of stale rows."""
+    records, to_write, fields, unreadable, shown, identities = {}, [], Counter(), [], [], {}
+    if stale:
+        records = read_files(conn, sorted(stale), exiftool_path, progress)
+    for path in sorted(stale):
+        record = records.get(path)
+        if record is None or not record.get("raw_metadata"):
+            unreadable.append(path)
+            continue
+        stored = store_photos.row_as_recorded(conn, path)
+        changed, old_captions, _now = differences(conn, path, record, stored)
+        if changed:
+            to_write.append(path)
+            identities[path] = stored[6]
+            fields.update(changed)
+            if "captions" in changed and len(shown) < examples:
+                shown.append((path, old_captions, record["captions"]))
+    return records, to_write, fields, unreadable, shown, identities
+
+
 def _planner(exiftool_path, folder, examples, progress):
     def plan(library):
-        records, to_write, fields, unreadable, shown, ids = {}, [], Counter(), [], [], {}
-        found, identities = {}, {}
+        ids, found = {}, {}
         conn = db.connect(db.readonly_uri(library.path), uri=True)
         try:
             stale, captions_only = find_stale(conn, folder, ids=ids, found=found)
@@ -236,21 +261,8 @@ def _planner(exiftool_path, folder, examples, progress):
             if progress is not None:
                 progress("found", {"stale": len(stale), "reasons": reasons,
                                    "captions_only": len(captions_only)})
-            if stale:
-                records = read_files(conn, sorted(stale), exiftool_path, progress)
-            for path in sorted(stale):
-                record = records.get(path)
-                if record is None or not record.get("raw_metadata"):
-                    unreadable.append(path)
-                    continue
-                stored = store_photos.row_as_recorded(conn, path)
-                changed, old_captions, _now = differences(conn, path, record, stored)
-                if changed:
-                    to_write.append(path)
-                    identities[path] = stored[6]
-                    fields.update(changed)
-                    if "captions" in changed and len(shown) < examples:
-                        shown.append((path, old_captions, record["captions"]))
+            records, to_write, fields, unreadable, shown, identities = reread(
+                conn, stale, exiftool_path, examples, progress)
         finally:
             conn.close()
         return maintenance.Plan(
@@ -267,7 +279,14 @@ def _planner(exiftool_path, folder, examples, progress):
 
 
 def _edits(planned):
-    """Both kinds of fix, as one change.
+    return edits_for(*planned.work)
+
+
+def edits_for(records, to_write, captions_only, found, identities, ids):
+    """Both kinds of fix, as one change: each row in `to_write` from its file's `records`,
+    each in `captions_only` from its own captions. `found` is each row as the plan read
+    it ({"mtime", "size", "tags", "captions", "raw_metadata"}), `identities` each row's
+    document_id, `ids` each row's id, all by path as stored.
 
     Each row is written only while it still has what the plan found before the files were
     read (`found`): one the app saved while this run was reading already describes
@@ -278,7 +297,6 @@ def _edits(planned):
     the skipped row again. The DocumentID is recorded only where the row has none, as the
     indexer does.
     """
-    records, to_write, captions_only, found, identities, ids = planned.work
     edits = []
     for path in to_write:
         record, before = records[path], found[path]

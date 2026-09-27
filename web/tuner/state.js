@@ -58,6 +58,10 @@ export const state = {
     pickerFolders: [],
     pickerSelected: new Set(),
 
+    // Folders to review (review.js): those /api/sync/review lists, whether an Include or
+    // Ignore is on its way, and the dialog's parts, built the first time it opens.
+    review: { folders: [], busy: false, modal: null, body: null, status: null, opener: null },
+
     // Remove Folder: the library's folders (/api/folder/indexed), and the one chosen.
     removeFolders: [],
     removeFolderChosen: null,

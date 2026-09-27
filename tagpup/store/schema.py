@@ -591,6 +591,22 @@ def _job_runs(conn):
                  " owner TEXT,"
                  " note TEXT)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_job_runs_job ON job_runs(job, library, id)")
+def _sync_runs(conn):
+    """Each sync that was applied: `sync_runs`, when it started and finished, whether it
+    looked at the whole library, whether it left it in step, what it found and what it
+    changed, as counts (tagpup.store.sync_runs, tagpup.services.sync; docs/ARCHITECTURE.md,
+    phase 8). The pages show "last in step" from it. Only adds a table, so it needs no
+    backup.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS sync_runs ("
+                 " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                 " started TEXT NOT NULL,"
+                 " finished TEXT NOT NULL,"
+                 " whole INTEGER NOT NULL,"
+                 " in_step INTEGER NOT NULL,"
+                 " found TEXT NOT NULL,"
+                 " changed TEXT NOT NULL,"
+                 " change_id INTEGER)")
 
 
 # ---- What a migration holds true before it commits ----------------------------------------
@@ -1066,6 +1082,10 @@ MIGRATIONS = (
     Migration(13, "the runs of recurring jobs", _job_runs, ADDITIVE,
               "adds the job_runs table, empty",
               ("job_runs",),
+              (RowsKept(),) + STANDARD),
+    Migration(14, "when the library was last in step", _sync_runs, ADDITIVE,
+              "adds the sync_runs table, empty",
+              ("sync_runs",),
               (RowsKept(),) + STANDARD),
 )
 

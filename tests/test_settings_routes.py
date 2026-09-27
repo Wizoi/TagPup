@@ -62,8 +62,9 @@ class TheSettingsRoutes(unittest.TestCase):
                                      "another library's value")
                 groups = {g["name"]: g for g in answer["groups"]}
                 if kind == "tuner":
-                    self.assertEqual(set(groups), {"clip", "faces", "exiftool"})
-                    self.assertTrue(all(g["locked"] for g in groups.values()))
+                    self.assertEqual(set(groups), {"clip", "faces", "exiftool", "library"})
+                    # The library's folders change nothing already made: not locked.
+                    self.assertEqual({name for name, g in groups.items() if g["locked"]}, {"clip", "faces", "exiftool"})
                 else:
                     self.assertEqual(set(groups), {"suggest", "renaming"})
                     self.assertFalse(any(g["locked"] for g in groups.values()))
@@ -79,7 +80,7 @@ class TheSettingsRoutes(unittest.TestCase):
                 self.assertEqual((answer["success"], answer["changed"], answer["locked"]), (True, 2, True))
                 meadow = Library(home.library("meadow.db"))
                 self.assertEqual(rows(meadow.path)["model.name"], "ViT-B-32")
-                self.assertEqual(rows(home.library("library.db")), settings.DEFAULTS)
+                self.assertEqual(rows(home.library("library.db")), settings.STAMPED)
                 newest = journal_service.history(meadow)["changes"][0]
                 self.assertEqual((newest["id"], newest["operation"]), (answer["change"], settings.CHANGE))
 
@@ -92,7 +93,7 @@ class TheSettingsRoutes(unittest.TestCase):
                 self.assertEqual(400, client.post("/meadow/api/settings", json={"faces": 1}).status_code)
                 self.assertEqual(400, client.post("/meadow/api/settings",
                                                   json={"values": {"paths.data_dir": "x"}}).status_code)
-                self.assertEqual(rows(home.library("meadow.db")), settings.DEFAULTS)
+                self.assertEqual(rows(home.library("meadow.db")), settings.STAMPED)
                 self.assertEqual(1, len(journal_service.history(Library(home.library("meadow.db")))["changes"]))
 
     def test_a_locked_change_is_refused_unless_the_body_acknowledges_its_group(self):
@@ -105,7 +106,7 @@ class TheSettingsRoutes(unittest.TestCase):
                 error = reply.get_json()["error"]
                 self.assertIn(validation.SETTING_GROUPS["clip"]["title"], error)
                 self.assertIn(validation.SETTING_GROUPS["clip"]["consequences"][0], error)
-                self.assertEqual(rows(home.library("meadow.db")), settings.DEFAULTS)
+                self.assertEqual(rows(home.library("meadow.db")), settings.STAMPED)
                 self.assertEqual(400, client.post("/meadow/api/settings", json={
                     "values": {"model.name": "ViT-B-32"}, "acknowledged": "clip, faces"}).status_code)
                 self.assertEqual(1, len(journal_service.history(Library(home.library("meadow.db")))["changes"]))

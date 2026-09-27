@@ -133,7 +133,8 @@ class TheSettings(unittest.TestCase):
     #: libraries are (paths.data_dir) is not one.
     HELD = {"paths.exiftool", "model.name", "model.pretrained", "model.preserve_full_frame",
             "model.max_aspect_ratio", "model.force_image_size", "candidates.tags", "faces.min_face_size",
-            "faces.confidence_threshold", "faces.mtcnn_thresholds", "renaming.format"}
+            "faces.confidence_threshold", "faces.mtcnn_thresholds", "renaming.format", "library.roots",
+            "library.ignored"}
 
     def test_every_setting_is_declared(self):
         self.assertEqual(set(validation.SETTINGS), self.HELD)
@@ -146,7 +147,7 @@ class TheSettings(unittest.TestCase):
     def test_each_has_a_type_a_label_and_info(self):
         for key, declared in validation.SETTINGS.items():
             with self.subTest(setting=key):
-                self.assertIn(declared["type"], ("text", "path", "boolean", "integer", "number", "list"))
+                self.assertIn(declared["type"], ("text", "path", "boolean", "integer", "number", "list", "folders"))
                 self.assertTrue(declared["label"].strip())
                 self.assertTrue(declared["info"].strip())
                 self.assertIn(declared["group"], validation.SETTING_GROUPS)
