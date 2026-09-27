@@ -182,6 +182,18 @@ def server():
     return record if _alive(record) else None
 
 
+def versions_in_use(home):
+    """The installed versions a live supervisor or server of `home` runs from: what an
+    install must not remove (scripts/install_app.py)."""
+    found = set()
+    data = os.path.join(home, tagpup_config.DATA)
+    for name, keys in ((STATE_FILE, ("version", "server_version")), (SERVER_FILE, ("version",))):
+        record = read_json(os.path.join(data, name))
+        if _alive(record):
+            found.update(record[key] for key in keys if record.get(key))
+    return found
+
+
 def write_server(ports, version):
     """The server's, once its ports are bound: where it answers, for its supervisor."""
     write_json(data_file(SERVER_FILE), {"pid": os.getpid(), "started": processes.started(os.getpid()),

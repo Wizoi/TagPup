@@ -234,10 +234,11 @@ def versions(destination):
                   if os.path.isdir(os.path.join(folder, name)))
 
 
-def to_remove(existing, new, previous):
-    """The versions to delete: all but the newest KEEP, never the new or the previous one."""
+def to_remove(existing, new, previous, in_use=()):
+    """The versions to delete: all but the newest KEEP, never the new or the previous one,
+    nor one a running server or supervisor runs from (`in_use`)."""
     ordered = sorted(set(existing) | {new})
-    return [name for name in ordered[:-KEEP] if name not in (new, previous)]
+    return [name for name in ordered[:-KEEP] if name not in (new, previous) and name not in set(in_use)]
 
 
 def install(destination, home, python, name=None, apply=False, say=print, shortcuts_in=()):
@@ -249,7 +250,8 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
         name += "+"
         folder = os.path.join(destination, "versions", name)
     previous = read_current(destination)
-    removing = to_remove(versions(destination), name, previous)
+    # The always-on process may still run an older one: a move waiting for a long index.
+    removing = to_remove(versions(destination), name, previous, supervisor.versions_in_use(home))
 
     say("install      %s" % folder)
     say("home         %s  (data/)" % home)

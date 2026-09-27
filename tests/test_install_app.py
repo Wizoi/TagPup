@@ -174,6 +174,24 @@ class KeepingVersions(InstallCase):
         self.assertEqual(install_app.versions(self.dest), names[1:])
         self.assertEqual(install_app.read_current(self.dest), names[-1])
 
+    def test_the_versions_the_always_on_process_runs_are_never_removed(self):
+        """A server running an old version while an update waits (a long index) had its
+        code deleted from under it by the installs after."""
+        from tagpup import supervisor
+        names = ["20260101-000000-a", "20260102-000000-b", "20260103-000000-c"]
+        for name in names:
+            self.install(name=name)
+        me = {"pid": os.getpid(), "started": processes.started(os.getpid())}
+        data = os.path.join(self.home, "data")
+        supervisor.write_json(os.path.join(data, supervisor.SERVER_FILE), dict(me, version=names[0], ports={}))
+        supervisor.write_json(os.path.join(data, supervisor.STATE_FILE),
+                              dict(me, state="running", version=names[1], server_version=names[0]))
+        self.install(name="20260104-000000-d")
+        self.install(name="20260105-000000-e")
+        kept = install_app.versions(self.dest)
+        self.assertIn(names[0], kept, "the server's version was removed")
+        self.assertIn(names[1], kept, "the supervisor's version was removed")
+
     def test_the_version_being_replaced_is_never_removed(self):
         # It is what the running apps were started from.
         self.assertEqual(install_app.to_remove(["a", "b", "c", "d"], "e", "a"), ["b"])
