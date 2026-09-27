@@ -638,6 +638,6 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 7. MCP | done, 2026-09-25 |
 | 7.5. A journal for every bulk edit and migration | done, 2026-09-25 |
 | 7.6. Settings in the library, and a gear on each page | done, 2026-09-25 |
-| 8. Sync | in progress: recurring jobs (8a), snapshots (8b), sync (8c), always on and the folder watcher (8d) done |
+| 8. Sync | done, 2026-09-26 (8a jobs, 8b snapshots, 8c sync with library roots, 8d always on with self-update, the folder watcher and idle memory); installing it at login waits for the owner |
 | 9. Library views | planned for October 2026 *(owner, 2026-09-25)*; design questions open |
 | 10. Family albums from many sources | idea *(owner, 2026-09-25)*, after phase 9; design questions open |
