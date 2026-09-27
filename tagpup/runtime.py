@@ -225,11 +225,12 @@ class Background:
             task.start()
 
     def stop(self, timeout=30):
-        """Stop each, waiting up to `timeout` for what it is doing. The names of those
-        still running after it."""
+        """Stop each, waiting up to `timeout` in all -- one deadline, not one per task, so
+        a drain's waits add up to what it was given. The names of those still running."""
+        deadline = time.monotonic() + timeout
         still = []
         for name, task in self._tasks:
-            if not task.stop(timeout):
+            if not task.stop(max(0.0, deadline - time.monotonic())):
                 still.append(name)
         return still
 

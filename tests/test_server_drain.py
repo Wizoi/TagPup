@@ -168,6 +168,35 @@ class ADrain(Base):
         self.assertEqual(200, self.client().get("/harbour/api/tags").status_code)
 
 
+class OneDrainAtATime(Base):
+    def test_a_second_drain_joins_the_first(self):
+        writing, _wrote = self.in_thread(self.write)
+        self.assertTrue(self.entered.wait(10))
+        first, first_answer = self.in_thread(self.drain)
+        self.wait_until(lambda: not self.lifecycle.status()["taking_work"])
+        second, second_answer = self.in_thread(self.drain)
+        time.sleep(0.3)
+        self.assertTrue(second.is_alive(), "the second drain did not wait for the first")
+        self.release.set()
+        for thread in (writing, first, second):
+            thread.join(10)
+        self.assertEqual([True, True], [first_answer[0].get_json()["drained"], second_answer[0].get_json()["drained"]])
+        self.assertEqual(["stop"], self.background.calls, "the background was stopped twice")
+
+    def test_a_drain_taken_back_while_it_waits_says_so_at_once(self):
+        writing, _wrote = self.in_thread(self.write)
+        self.assertTrue(self.entered.wait(10))
+        draining, answer = self.in_thread(lambda: self.drain(seconds=30))
+        self.wait_until(lambda: not self.lifecycle.status()["taking_work"])
+        started = time.monotonic()
+        self.lifecycle.resume()
+        draining.join(10)
+        self.assertLess(time.monotonic() - started, 2, "the drain went on waiting after it was taken back")
+        self.assertFalse(answer[0].get_json()["drained"])
+        self.release.set()
+        writing.join(10)
+
+
 class AQuietMoment(Base):
     """The owner (2026-09-26): an update moves "at next available request" -- not in the
     middle of someone's session. A drain asked to wait for quiet is refused while a

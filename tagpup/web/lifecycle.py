@@ -87,6 +87,8 @@ class Lifecycle:
         #: When a request last came in (not the status or the drain): a quiet moment is
         #: some time after it.
         self._last_request = None
+        #: A drain is under way: a second joins it.
+        self._draining = False
 
     # ---- What it says ---------------------------------------------------------------
 
@@ -140,6 +142,13 @@ class Lifecycle:
         the server takes work again."""
         deadline = self._clock() + seconds
         with self._changed:
+            if self._draining:
+                # One at a time: this one waits for that one, and says how it ended.
+                while self._draining and self._clock() < deadline:
+                    self._changed.wait(min(0.2, max(0.0, deadline - self._clock())))
+                if self._closed and self._drained_at is not None:
+                    return {"drained": True}
+                return {"drained": False, "waiting_for": ["another drain"]}
             if not self._closed:
                 since = None if self._last_request is None else self._clock() - self._last_request
                 if quiet and since is not None and since < quiet:
@@ -151,11 +160,23 @@ class Lifecycle:
                 self._closed = True
                 self._drained_at = None
             in_flight = self._in_flight
+            self._draining = True
+        try:
+            return self._drain_until(deadline, seconds, in_flight)
+        finally:
+            with self._changed:
+                self._draining = False
+                self._changed.notify_all()
+
+    def _drain_until(self, deadline, seconds, in_flight):
         logger.info("Draining for an update: taking no new work; %d request(s) in flight.", in_flight)
         if self._background is not None:
             self._background.stop(timeout=max(0.0, deadline - self._clock()))
         while True:
             with self._changed:
+                if not self._closed:
+                    # Taken back while it waited (a resume, or left drained too long).
+                    return {"drained": False, "waiting_for": ["taken back"]}
                 waiting = (["%d request(s)" % self._in_flight] if self._in_flight else []) + self.busy()
                 if not waiting:
                     self._drained_at = self._clock()
