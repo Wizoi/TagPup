@@ -321,6 +321,28 @@ class WhichFoldersALibraryHas(unittest.TestCase):
         self.assertEqual(sorted([paths.stored(root), paths.stored(outside)], key=paths.key),
                          sorted(found, key=paths.key))
 
+    def test_each_photo_path_is_read_again_only_when_the_photos_change(self):
+        """The watcher asks every 30 s; on photo_index each ask read 68,387 paths."""
+        home = own_home.for_test(self, prefix="watch_folders_")
+        library = Library(home.library("harbour.db"))
+        schema.ensure(library.path)
+        root = os.path.join(home.root, "Photos")
+        os.makedirs(os.path.join(root, "Regatta"))
+        seed(library.path, a_jpeg(os.path.join(root, "Regatta", "one.jpg")))
+        with mock.patch.object(sync_service.store_photos, "folders_held",
+                               wraps=sync_service.store_photos.folders_held) as read:
+            first = sync_service.watch_folders(library, [])
+            self.assertEqual(first, sync_service.watch_folders(library, []))
+            self.assertEqual(1, read.call_count, "every path read again with nothing changed")
+            self.assertEqual([paths.stored(root)], sync_service.watch_folders(library, [root]),
+                             "a change of roots is seen at once")
+            self.assertEqual(1, read.call_count)
+            elsewhere = os.path.join(home.root, "Elsewhere")
+            os.makedirs(elsewhere)
+            seed(library.path, a_jpeg(os.path.join(elsewhere, "two.jpg")))
+            self.assertIn(paths.stored(elsewhere), sync_service.watch_folders(library, [root]))
+            self.assertEqual(2, read.call_count)
+
     def test_none_for_a_library_behind_this_version(self):
         home = own_home.for_test(self, prefix="watch_folders_")
         library = Library(home.library("harbour.db"))
