@@ -289,6 +289,12 @@ def _entry(each):
             "found": each.found, "seen": each.seen, "run": each.run}
 
 
+def current(library):
+    """[store.damaged_files.Record] of the records whose file still has the stamp it was
+    found with: what every list counts (_current)."""
+    return _current(records(library))
+
+
 def listed(library, folder=None):
     """The damaged photos of `library` -- under `folder`, at any depth, when given -- whose
     file still has the stamp it was found with, as the pages show them: each {"path",

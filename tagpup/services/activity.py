@@ -12,6 +12,7 @@ import numbers
 import time
 
 from tagpup.core import runs
+from tagpup.services import damaged_photos
 from tagpup.store import damaged_files, db, job_runs, journal, snapshots, sync_runs
 
 #: The most entries a timeline gathers from each record.
@@ -86,8 +87,8 @@ def _plural(count, one, many):
 def found_damaged(records):
     """The timeline's entries for damaged photos found (store.damaged_files): one for each
     run of the indexer that found some -- or, found outside a run, each moment -- saying
-    how many, as {"time", "what", "counts", "run"}. What is recorded now: a photo replaced
-    since and forgotten is no longer counted."""
+    how many, as {"time", "what", "counts", "run"}. What the lists count: a photo replaced
+    or changed since is no longer counted (damaged_photos.current)."""
     groups = {}
     for each in records:
         key = each.run or each.found
@@ -116,9 +117,9 @@ def timeline(library, limit=50):
     conn = _look(library)
     try:
         syncs = sync_runs.recent(conn, limit)
-        damaged = damaged_files.every(conn)
     finally:
         conn.close()
+    damaged = damaged_photos.current(library)
     for found in found_damaged(damaged):
         entries.append({"kind": "found", "library": library.name, "time": found["time"], "finished": None,
                         "seconds": None, "what": found["what"], "outcome": "needs attention",

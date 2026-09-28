@@ -78,10 +78,13 @@ class TheFolderNotice(Case):
         self.assertTrue(shown["copy stopped.jpg"]["indexed"])
         self.assertEqual(os.path.getsize(self.cut), shown["cut short.jpg"]["size"])
 
-    def test_this_pc_only(self):
+    def test_their_paths_to_this_pc_only_and_quietly(self):
+        # The page asks as every folder opens: from another address, an empty list, not
+        # an error in its console.
         reply = self.client().get("/harbour/api/folder/damaged?path=" + urllib.parse.quote(self.folder),
                                   environ_base=ELSEWHERE)
-        self.assertEqual(403, reply.status_code)
+        self.assertEqual(200, reply.status_code)
+        self.assertEqual([], reply.get_json()["photos"])
 
 
 class NothingIsWrittenToThem(Case):
@@ -194,6 +197,13 @@ class TheActivityPage(Case):
         self.assertEqual("found 2 unreadable photos and 1 possibly incomplete copy", found[0]["what"])
         self.assertEqual("index:harbour:20260928T100000-1", found[0]["run"])
         self.assertEqual({"unreadable": 2, "incomplete": 1}, found[0]["counts"])
+
+    def test_the_timeline_counts_what_the_lists_count(self):
+        # A photo replaced since leaves the lists at once, and the timeline's count with them.
+        damaged_photos.whole_jpeg(self.cut, seed=3)
+        found = [entry for entry in self.get("/api/activity/timeline")["entries"] if entry["kind"] == "found"]
+        self.assertEqual({"unreadable": 1, "incomplete": 1}, found[0]["counts"])
+        self.assertEqual(1, self.get("/harbour/api/damaged-photos")["unreadable"])
 
 
 if __name__ == "__main__":

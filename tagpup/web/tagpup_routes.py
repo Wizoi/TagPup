@@ -229,13 +229,14 @@ def folder_scan():
 def folder_damaged():
     """The photos under the folder, at any depth, found damaged and not replaced since
     (tagpup.services.damaged_photos), with their paths and why: the folder's notice and
-    its cards' marks. This PC only, as the Activity page."""
-    if request.remote_addr not in activity_routes.LOOPBACK:
-        return responses.error(403, "The damaged photos are listed to this PC only")
+    its cards' marks. Their paths to this PC only, as the Activity page: another address is
+    answered an empty list, quietly -- the page asks as every folder opens."""
     library = state.require()
     folder = _wanted_path()
     if not folder:
         return responses.error(400, "Missing 'path' parameter")
+    if request.remote_addr not in activity_routes.LOOPBACK:
+        return jsonify({"folder": paths.stored(folder), "photos": []})
     return jsonify({"folder": paths.stored(folder), "photos": damaged_photos.listed(library, paths.stored(folder))})
 
 
