@@ -491,7 +491,17 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
         # and nothing is recorded.
         result.details["in_step"] = False
         return result
-    new_folders = planned.work["new_folders"] if planned is not None and planned.work else []
+    new_folders = list(planned.work["new_folders"]) if planned is not None and planned.work else []
+    try:
+        # A damaged photo replaced, changed or deleted is no longer one (damaged_photos): a
+        # changed one is indexed again for real, its folder queued with the new files'.
+        pruned = damaged_photos.prune(library)
+        result.details["damaged_forgotten"] = pruned["forgotten"]
+        known = {paths.key(folder) for folder in new_folders}
+        new_folders += [folder for folder in pruned["folders"] if paths.key(folder) not in known]
+    except Exception as e:
+        result.details["warnings"].append("The damaged photos found before were not checked (%s: %s)."
+                                          % (type(e).__name__, e))
     queued = 0
     if new_folders and queue is not None:
         try:
@@ -503,12 +513,6 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
             result.fail("queueing the new files' folders", "%s: %s" % (type(e).__name__, e))
     result.details["queued"] = queued
     result.details["in_step"] = in_step(counts, result)
-    try:
-        # A damaged photo replaced, changed or deleted is no longer one (damaged_photos).
-        result.details["damaged_forgotten"] = damaged_photos.prune(library)
-    except Exception as e:
-        result.details["warnings"].append("The damaged photos found before were not checked (%s: %s)."
-                                          % (type(e).__name__, e))
     try:
         result.details["record"] = sync_runs.record(
             library.path, started, whole=folder is None, in_step=result.details["in_step"],

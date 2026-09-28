@@ -365,8 +365,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # when it was read -- and only a file that kept it while it was read: one still being
     # copied is read again when it has settled. A photo recorded before and read whole now
     # is forgotten.
-    recorded_before = {paths.key(each.path) for each in damaged_before}
-    read_whole = []
+    recorded_before = {paths.key(each.path): each for each in damaged_before}
     found_by = (run_tags.current() or (None,))[-1]
 
     def found_damaged(path, stamp, kind, detail, zeros):
@@ -401,7 +400,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 try:
                     # Reads the file once and decodes the whole picture; a vector kept from
                     # the file as it is was made by such a decode.
-                    emb = embeddings.of(path, force_recompute=force_reembed, seen=lambda picture: read.update(
+                    # A photo recorded damaged is embedded again whatever vector is kept: it
+                    # may have been made from the damaged file, its stamp restored since.
+                    emb = embeddings.of(path, force_recompute=force_reembed or paths.key(path) in recorded_before,
+                                        seen=lambda picture: read.update(
                         zeros=picture.info.get(image_files.ZERO_TAIL_INFO, 0)))
                 except image_files.Unreadable as damaged:
                     # Nothing is written into it: no identity, no row.
@@ -423,7 +425,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     # takes the stamp the write left, and the vector with it.
                     identity_writer.give(meta, decoded=True)
                     if paths.key(path) in recorded_before:
-                        read_whole.append(path)
+                        # Read whole now: forgotten, and what was made of the damaged file
+                        # taken away -- its vectors, its faces unless decided -- before this
+                        # run records the photo afresh.
+                        damaged_photos.forget_to_reindex(Library(db_path), [recorded_before[paths.key(path)]])
                 
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved)
                 if face_processor:
@@ -523,11 +528,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         identity_writer.close()
         locker.release_all()
         photo_index.close()
-        if read_whole:
-            try:
-                damaged_photos.forget(Library(db_path), read_whole)
-            except Exception as e:
-                logger.error(f"Could not forget {len(read_whole)} damaged photo(s) now read whole: {e}")
 
     # Print taxonomy stats
     roots = taxonomy.get_root_categories()

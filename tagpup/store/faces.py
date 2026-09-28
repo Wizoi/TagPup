@@ -200,6 +200,14 @@ def count_for_photo(conn, photo_path):
     return conn.execute("SELECT COUNT(*) FROM faces WHERE " + where, params).fetchone()[0]
 
 
+def decided_for_photo(conn, photo_path):
+    """How many of a photo's faces carry a decision: a name, a "nobody" given by hand, an
+    exclusion. Re-detecting the photo's faces would lose them."""
+    where, params = _on_photo(photo_path)
+    return conn.execute("SELECT COUNT(*) FROM faces WHERE " + where
+                        + " AND (name IS NOT NULL OR name_source = 'manual' OR excluded = 1)", params).fetchone()[0]
+
+
 def _photos_of(conn, face_ids):
     """The ids of the photos the faces among `face_ids` are in."""
     found = set()

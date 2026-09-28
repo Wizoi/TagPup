@@ -146,7 +146,7 @@ class TheRecords(Case):
         os.remove(self.half)
         os.remove(away)
         os.rmdir(os.path.dirname(away))    # a drive unplugged: the folder is not there
-        self.assertEqual(2, damaged.prune(self.library))
+        self.assertEqual(2, damaged.prune(self.library)["forgotten"])
         self.assertEqual([away], [each.path for each in damaged.records(self.library)])
 
     def test_removing_a_folder_from_the_library_forgets_its_records(self):

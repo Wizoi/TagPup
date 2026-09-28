@@ -85,6 +85,12 @@ def forget_as_found(conn, found):
     return removed
 
 
+def forget_one_as_found(conn, found):
+    """Forget `found`, a Record, while it holds the stamp it was read with. True when it was
+    forgotten. The caller commits."""
+    return forget_as_found(conn, [found]) == 1
+
+
 def forget_under(conn, folder):
     """Forget the records of the files at or under `folder`: it is taken out of the
     library. Returns records removed. The caller commits."""

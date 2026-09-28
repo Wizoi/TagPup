@@ -12,6 +12,13 @@ there is forgotten by the next sync; one in a folder that is not there (a drive
 unplugged, a share offline) is kept, and not shown.
 
 Found once, a photo is logged at WARNING once: found again with the same stamp, it is not.
+
+A record forgotten because its file changed, or reads whole now, takes with it what was
+made of the damaged file (forget_to_reindex): a photo that may have been an incomplete
+copy was indexed from a picture grey below a line, so its vectors go, and its faces --
+unless one carries a decision (a name, a "nobody", an exclusion), when they are kept and
+not detected again, and it is said so -- and its folder is to be indexed again. No path
+re-detects a photo's faces keeping the decided ones by where they are.
 """
 import logging
 import os
@@ -19,6 +26,8 @@ import os
 from tagpup.core import paths
 from tagpup.files import images
 from tagpup.store import damaged_files, db
+from tagpup.store import embeddings as store_embeddings
+from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
 
 logger = logging.getLogger(__name__)
@@ -101,6 +110,45 @@ def forget(library, photo_paths):
                                     label="damaged photos read whole")
 
 
+def forget_to_reindex(library, found):
+    """Forget each of `found` ([Record], each as it was read: a record made again meanwhile
+    is kept) -- its file changed since, or reads whole now -- and take from the photo what
+    was made of the damaged file: its vectors, and its faces unless one carries a decision.
+    Returns {"forgotten", "vectors", "faces", "kept": [paths whose decided faces were kept],
+    "folders": [the folders of the photos forgotten, to be indexed again]}."""
+    there = [each for each in found if _stamp(each.path) is not None]
+    gone = [each for each in found if each not in there]
+
+    def write(conn):
+        done = {"forgotten": damaged_files.forget_as_found(conn, gone), "vectors": 0, "faces": 0,
+                "kept": [], "folders": []}
+        for each in there:
+            if not damaged_files.forget_one_as_found(conn, each):
+                continue
+            done["forgotten"] += 1
+            done["folders"].append(os.path.dirname(each.path))
+            done["vectors"] += store_embeddings.forget(conn, each.path)
+            if not store_faces.count_for_photo(conn, each.path):
+                continue
+            if store_faces.decided_for_photo(conn, each.path):
+                done["kept"].append(each.path)
+            else:
+                done["faces"] += store_faces.remove_for_photo(conn, each.path)
+        return done
+
+    if not found:
+        return {"forgotten": 0, "vectors": 0, "faces": 0, "kept": [], "folders": []}
+    done = db.write_with_connection(library.path, write, label="damaged photos to index again")
+    for path in done["kept"]:
+        logger.info("%s is indexed again, and its faces are kept, not detected again: one carries a name or "
+                    "a decision. They were found in the damaged copy.", path)
+    folders = {}
+    for folder in done["folders"]:
+        folders.setdefault(paths.key(folder), folder)
+    done["folders"] = sorted(folders.values(), key=paths.key)
+    return done
+
+
 def _entry(each):
     """A record as the pages show it, with `reason`."""
     return {"path": each.path, "name": os.path.basename(each.path), "folder": os.path.dirname(each.path),
@@ -133,7 +181,8 @@ def counts(library):
 def prune(library):
     """Forget the records that no longer describe a file: one changed since it was found,
     or gone from a folder that is still there. A file in a folder that is not there -- a
-    drive unplugged, a share offline -- keeps its record. Returns records removed."""
+    drive unplugged, a share offline -- keeps its record. A changed file's photo is to be
+    indexed again for real (forget_to_reindex). Returns forget_to_reindex's answer."""
     stale = []
     for each in records(library):
         stamp = _stamp(each.path)
@@ -142,7 +191,4 @@ def prune(library):
                 stale.append(each)
         elif not describes((each.mtime, each.size), stamp):
             stale.append(each)
-    if not stale:
-        return 0
-    return db.write_with_connection(library.path, lambda conn: damaged_files.forget_as_found(conn, stale),
-                                    label="damaged photos changed or gone")
+    return forget_to_reindex(library, stale)
