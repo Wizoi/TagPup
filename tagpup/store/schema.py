@@ -622,6 +622,24 @@ def _added_folders(conn):
                  " added TEXT NOT NULL)" % paths.COLLATE)
 
 
+def _damaged_files(conn):
+    """The photo files found damaged: `damaged_files`, each file's path, the stamp it had
+    when found, how it is damaged, and when (tagpup.store.damaged_files; docs/findings.md,
+    #407). A photo that does not decode is not queued for the indexer again until its
+    file changes. Only adds a table, so it needs no backup.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS damaged_files ("
+                 " path TEXT PRIMARY KEY COLLATE %s,"
+                 " mtime REAL NOT NULL,"
+                 " size INTEGER NOT NULL,"
+                 " kind TEXT NOT NULL,"
+                 " detail TEXT NOT NULL,"
+                 " zero_tail INTEGER NOT NULL DEFAULT 0,"
+                 " found TEXT NOT NULL,"
+                 " seen TEXT NOT NULL,"
+                 " run TEXT)" % paths.COLLATE)
+
+
 # ---- What a migration holds true before it commits ----------------------------------------
 
 #: The runner's own tables: it writes them as it records each migration.
@@ -1103,6 +1121,10 @@ MIGRATIONS = (
     Migration(15, "the folders asked to be added", _added_folders, ADDITIVE,
               "adds the added_folders table, empty",
               ("added_folders",),
+              (RowsKept(),) + STANDARD),
+    Migration(16, "the photo files found damaged", _damaged_files, ADDITIVE,
+              "adds the damaged_files table, empty",
+              ("damaged_files",),
               (RowsKept(),) + STANDARD),
 )
 

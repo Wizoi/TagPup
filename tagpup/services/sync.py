@@ -51,7 +51,7 @@ import time
 from tagpup.core import paths, runs, validation
 from tagpup.core.result import Result
 from tagpup.files import images
-from tagpup.services import maintenance, refresh_rows, relink_photos
+from tagpup.services import damaged_photos, maintenance, refresh_rows, relink_photos
 from tagpup.store import db, generations, schema, sync_runs
 from tagpup.store import folders as store_folders
 from tagpup.store import photos as store_photos
@@ -486,6 +486,12 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
             result.fail("queueing the new files' folders", "%s: %s" % (type(e).__name__, e))
     result.details["queued"] = queued
     result.details["in_step"] = in_step(counts, result)
+    try:
+        # A damaged photo replaced, changed or deleted is no longer one (damaged_photos).
+        result.details["damaged_forgotten"] = damaged_photos.prune(library)
+    except Exception as e:
+        result.details["warnings"].append("The damaged photos found before were not checked (%s: %s)."
+                                          % (type(e).__name__, e))
     try:
         result.details["record"] = sync_runs.record(
             library.path, started, whole=folder is None, in_step=result.details["in_step"],

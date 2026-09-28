@@ -65,6 +65,8 @@ from tagpup.services import settings as library_settings
 from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
 from tagpup.services import identities
+from tagpup.services import damaged_photos
+from tagpup.core import runs as run_tags
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
 from tagpup.core.result import NotFound
@@ -88,6 +90,14 @@ def get_runtime(read_only=False):
     search): it reads the library's settings without stamping one that holds none, as
     the MCP server's inspections and the doctor do -- a look was a journaled change."""
     return Runtime(read_only=read_only)
+
+def _stamp(path):
+    """(mtime, size) of the file now, or None when it cannot be read."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return (stat.st_mtime, stat.st_size)
 
 def library_index(runtime, db_path, read_only=False):
     """The library's photos, with their vectors under its CLIP model. `read_only` for a
@@ -267,6 +277,22 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     pass
             images_to_process.append(path)
 
+    # A photo found damaged before, and unchanged since, is not read again: it would fail
+    # again (docs/findings.md, #407). Replaced or changed, it is read at once.
+    damaged_before = [] if force_reembed else damaged_photos.records(Library(db_path))
+    passed_over = damaged_photos.unreadable(damaged_before)
+    if passed_over:
+        still = []
+        for path in images_to_process:
+            stamp_then = passed_over.get(paths.key(path))
+            if stamp_then is not None and _stamp(path) == stamp_then:
+                continue
+            still.append(path)
+        if len(still) < len(images_to_process):
+            console.print(f"[yellow]Passed over {len(images_to_process) - len(still)} photo(s) found damaged before "
+                          f"and unchanged since; restore them from a backup (the Activity page lists them).[/yellow]")
+        images_to_process = still
+
     if skipped_count > 0:
         console.print(f"[green]Skipped {skipped_count} unchanged image(s) already present in the index.[/green]")
 
@@ -334,6 +360,19 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # photo's picture has decoded in full, never before (IdentityWriter).
     identity_writer = IdentityWriter(exiftool_path)
     unreadable, incomplete = [], []
+    # Recorded as found (tagpup.services.damaged_photos), each with the stamp its file had
+    # when it was read -- and only a file that kept it while it was read: one still being
+    # copied is read again when it has settled. A photo recorded before and read whole now
+    # is forgotten.
+    recorded_before = {paths.key(each.path) for each in damaged_before}
+    read_whole = []
+    found_by = (run_tags.current() or (None,))[-1]
+
+    def found_damaged(path, stamp, kind, detail, zeros):
+        if stamp is None or _stamp(path) != stamp:
+            logger.info(f"{path} changed while it was read; it is read again once it has settled.")
+            return
+        damaged_photos.remember(Library(db_path), [(path, stamp, kind, detail, zeros)], run=found_by)
     
     try:
         # Generate Embeddings with incremental saving (batches of 100) to protect against halts/crashes
@@ -357,6 +396,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 
             try:
                 read = {}
+                stamp = _stamp(path)
                 try:
                     # Reads the file once and decodes the whole picture; a vector kept from
                     # the file as it is was made by such a decode.
@@ -365,19 +405,24 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 except image_files.Unreadable as damaged:
                     # Nothing is written into it: no identity, no row.
                     unreadable.append((path, damaged))
-                    logger.warning(f"Not indexed, and not written to: {path} does not decode: {damaged}")
+                    logger.info(f"Not indexed, and not written to: {path} does not decode: {damaged}")
+                    found_damaged(path, stamp, damaged.kind, damaged.detail, damaged.zero_tail)
                     locker.release(path)
                     continue
                 zeros = read["zeros"] if "zeros" in read else image_files.zero_tail_of(path)
                 if zeros >= image_files.ZERO_TAIL:
                     # It decodes, perhaps grey below a line: indexed, and left as it is.
                     incomplete.append((path, zeros))
-                    logger.warning(f"Possibly an incomplete copy, indexed and not written to: {path} ends in "
-                                   f"{zeros} zero bytes")
+                    logger.info(f"Possibly an incomplete copy, indexed and not written to: {path} ends in "
+                                f"{zeros} zero bytes")
+                    found_damaged(path, stamp, damaged_photos.INCOMPLETE,
+                                  "the last %d bytes are zeros" % zeros, zeros)
                 else:
                     # Decoded: only now may the photo be written to. The row recorded below
                     # takes the stamp the write left, and the vector with it.
                     identity_writer.give(meta, decoded=True)
+                    if paths.key(path) in recorded_before:
+                        read_whole.append(path)
                 
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved)
                 if face_processor:
@@ -477,6 +522,11 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         identity_writer.close()
         locker.release_all()
         photo_index.close()
+        if read_whole:
+            try:
+                damaged_photos.forget(Library(db_path), read_whole)
+            except Exception as e:
+                logger.error(f"Could not forget {len(read_whole)} damaged photo(s) now read whole: {e}")
 
     # Print taxonomy stats
     roots = taxonomy.get_root_categories()

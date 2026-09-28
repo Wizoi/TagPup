@@ -45,6 +45,7 @@ KINDS = {
     13: schema.ADDITIVE,     # job_runs
     14: schema.ADDITIVE,     # the sync_runs table
     15: schema.ADDITIVE,     # the added_folders table
+    16: schema.ADDITIVE,     # the damaged_files table
 }
 
 
@@ -540,11 +541,12 @@ class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
         with mock.patch.object(schema, "_count", side_effect=count):
             self.assertEqual(["photo files in the journal", "the stamp of each file before its write",
                               "the runs of recurring jobs", "when the library was last in step",
-                              "the folders asked to be added"], schema.ensure(path))
+                              "the folders asked to be added", "the photo files found damaged"], schema.ensure(path))
         # What it touches: change_files, which it makes, and changes, the runner's own;
-        # migration 12 touches change_files alone, 13 job_runs, 14 sync_runs and 15
-        # added_folders, which they make.
-        self.assertLessEqual(set(counted), {"change_files", "changes", "job_runs", "sync_runs", "added_folders"})
+        # migration 12 touches change_files alone, 13 job_runs, 14 sync_runs, 15
+        # added_folders and 16 damaged_files, which they make.
+        self.assertLessEqual(set(counted), {"change_files", "changes", "job_runs", "sync_runs", "added_folders",
+                                            "damaged_files"})
 
 
 class ANewLibrary(unittest.TestCase):

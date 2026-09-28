@@ -11,7 +11,7 @@ import os
 
 from tagpup.core import dates, fields, paths, vocabulary
 from tagpup.core.result import NotHeld
-from tagpup.store import added_folders, db, embeddings, faces, folders, people
+from tagpup.store import added_folders, damaged_files, db, embeddings, faces, folders, people
 from tagpup.store.people import PEOPLE_JSON
 
 logger = logging.getLogger(__name__)
@@ -681,6 +681,7 @@ def remove_under(conn, folder):
     # Out of the library: what was asked to be added there goes too, or a Suggest would
     # make it the library's again unasked.
     added_folders.forget_under(conn, folder)
+    damaged_files.forget_under(conn, folder)
     return dict(photos_removed=photos_removed, faces_removed=faces_removed,
                 manual_lost=manual, excluded_lost=excluded)
 

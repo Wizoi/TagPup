@@ -269,6 +269,21 @@ The folders the library was asked to add (`tagpup.store.added_folders`, migratio
 | `subfolders` | INTEGER | NOT NULL | 1 when the folders under it were added with it, which covers every folder below; 0 when the folder alone was, which covers none of them: `index --no-subfolders`, which sync runs for the new files of a folder the library holds. A later add with its subfolders sets it to 1; one without never sets it back. |
 | `added` | TEXT | NOT NULL | Local time it was added, `YYYY-MM-DD HH:MM:SS`. |
 
+### 18. `damaged_files` Table
+The photo files the indexer found damaged (`tagpup.store.damaged_files`, `tagpup.services.damaged_photos`, migration 16; findings #407). The indexer decodes a photo's whole picture before it writes anything into it; one that does not decode -- a file cut short, one of zero bytes -- is not indexed and has no row, so sync saw it as new each time and queued the indexer for it again. Recorded here with the stamp its file had when it was read, it is not queued or read again while the file keeps that stamp; replaced or changed, it is read at once, and forgotten when it reads whole. A photo that decodes but ends in 64 KiB or more of zero bytes, possibly an incomplete copy, is indexed and recorded as `incomplete`. The pages list a record only while its file has its stamp. An applied sync forgets the records of files changed since, or gone from a folder still there; removing a folder from the library forgets those under it. A record of what was found, not journaled, as indexing is not.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `path` | TEXT | PRIMARY KEY, compared as paths are (`NOCASE` on Windows) | The file, as stored (`paths.stored`). |
+| `mtime` | REAL | NOT NULL | The file's modified time when it was read and found damaged. |
+| `size` | INTEGER | NOT NULL | The file's size then, in bytes. |
+| `kind` | TEXT | NOT NULL | How: `truncated`, `zero-filled`, `all zeros`, `empty`, `not an image`, `damaged` (the picture does not decode; `tagpup.files.images.DAMAGE`), or `incomplete` (it decodes, and ends in zero bytes). |
+| `detail` | TEXT | NOT NULL | What the decoder said, without the path. |
+| `zero_tail` | INTEGER | NOT NULL, DEFAULT 0 | How many zero bytes the file ends in, when 64 KiB or more. |
+| `found` | TEXT | NOT NULL | Local time it was first found with this stamp, `YYYY-MM-DD HH:MM:SS`. |
+| `seen` | TEXT | NOT NULL | Local time it was last found so. |
+| `run` | TEXT | | The run of the indexer that found it (`tagpup.core.runs`), or NULL. |
+
 ---
 
 ## Entity-Relationship (ER) Diagram
