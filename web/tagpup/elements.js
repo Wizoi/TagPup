@@ -5,6 +5,8 @@
 export const dbSelect = document.getElementById('db-select');
 export const btnCreateDb = document.getElementById('btn-create-db');
 export const btnChangeDb = document.getElementById('btn-change-db');
+// The library the page works in, in the header (membership.js)
+export const libraryNameBadge = document.getElementById('library-name');
 
 // DOM Elements
 export const folderPathInput = document.getElementById('folder-path-input');
@@ -118,3 +120,16 @@ export const btnCloseDateModal = document.getElementById('btn-close-date-modal')
 export const btnCancelDateModal = document.getElementById('btn-cancel-date-modal');
 export const btnSaveDateModal = document.getElementById('btn-save-date-modal');
 export const inputDateTaken = document.getElementById('input-date-taken');
+
+// Add this folder to the library? (membership.js)
+export const addFolderModal = document.getElementById('add-folder-modal');
+export const addFolderTitle = document.getElementById('add-folder-title');
+export const addFolderLibrary = document.getElementById('add-folder-library');
+export const addFolderPath = document.getElementById('add-folder-path');
+export const addFolderFacts = document.getElementById('add-folder-facts');
+export const btnAddFolder = document.getElementById('btn-add-folder');
+export const btnJustLook = document.getElementById('btn-just-look');
+export const btnOpenInOtherLibrary = document.getElementById('btn-open-in-other-library');
+export const justLookingNote = document.getElementById('just-looking-note');
+export const justLookingText = document.getElementById('just-looking-text');
+export const btnAddFolderFromNote = document.getElementById('btn-add-folder-from-note');

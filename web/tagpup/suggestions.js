@@ -1,6 +1,7 @@
 // TagPup's page: suggestions -- asking for them, following their progress and an index's,
 // showing them for a photo, and applying them.
 import { api } from './common/api.js';
+import { samePath } from './common/paths.js';
 import { leafOf, photoAlreadyHas } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
@@ -24,6 +25,11 @@ export function updateSuggestButtonState(status = null) {
         return;
     }
     if (status === 'preparing' || status === 'running') {
+        btnSuggestTags.disabled = true;
+        return;
+    }
+    // Just looking at a folder the library does not hold (membership.js).
+    if (state.justLooking && samePath(state.justLooking, state.scannedFolder)) {
         btnSuggestTags.disabled = true;
         return;
     }

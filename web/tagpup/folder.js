@@ -37,6 +37,7 @@ export function closeFolderForDogPark() {
     state.scannedFolder = null;
     state.folderPhotos = [];
     state.folderSuggestions = {};
+    upper.checkFolderMembership(null);
     folderPathInput.value = '';
     const url = new URL(window.location);
     url.searchParams.delete('path');
@@ -240,6 +241,7 @@ export function scanFolder(forceRefresh = false) {
                     window.history.replaceState({}, '', url);
                     
                     upper.checkSuggestionsStatus(path);
+                    upper.checkFolderMembership(path);
                     
                     // If active photo path is set, reload its data
                     if (state.activePhotoPath) {
@@ -339,6 +341,8 @@ export function showScannedFolder(path, data) {
 
     // Start tracking background progress check
     upper.checkSuggestionsStatus(path);
+    // Does the library hold it? If not, ask before anything is added (membership.js).
+    upper.checkFolderMembership(path);
 
     // If active photo path is set, reload its data
     if (state.activePhotoPath) {

@@ -53,4 +53,10 @@ export const state = {
     searchTimeout: null,
 
     indexProgressTimer: null,
+
+    // What the library holds of the open folder (GET /api/folder/membership), and the
+    // folder being looked at without adding it, if any: Suggest and every change are
+    // held back there until it is added (membership.js).
+    folderMembership: null,
+    justLooking: null,
 };
