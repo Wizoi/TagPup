@@ -20,6 +20,8 @@
             <div class="logo-container">
                 <span class="logo-icon">🐶</span>
                 <h1>TagPup GUI</h1>
+                <!-- The library every change on this page goes to (web/tagpup/membership.js). -->
+                <span id="library-name" class="library-name" aria-label="Library"></span>
             </div>
             <div class="header-actions" style="margin-left: auto; margin-right: 20px; display: flex; align-items: center; gap: 15px;">
                 <div class="db-selector-container" style="display: flex; align-items: center; gap: 8px;">
@@ -62,6 +64,11 @@
                          is in the input above and in every photo's details; what is
                          wanted at a glance is which shoot this is. -->
                     <div id="current-folder-name" class="current-folder-name hidden"></div>
+                    <!-- A folder the library does not hold, looked at without adding it. -->
+                    <div id="just-looking-note" class="just-looking-note hidden" role="status">
+                        <span id="just-looking-text"></span>
+                        <button id="btn-add-folder-from-note" class="btn btn-accent btn-sm">Add</button>
+                    </div>
                     <div class="folder-action-buttons" style="display: flex; gap: 8px;">
                         <button id="btn-suggest-tags" class="btn btn-accent" style="flex: 1;" disabled>Start Photo Analysis</button>
                     </div>
@@ -416,6 +423,26 @@
         </div>
     </div>
     
+    <!-- Add this folder to the library? Asked when a folder opened holds photos in folders
+         the library does not hold, before anything can make them its own
+         (web/tagpup/membership.js). Escape is Just look. -->
+    <div id="add-folder-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="add-folder-title">
+        <div class="modal-container add-folder-container">
+            <div class="modal-header">
+                <h2 id="add-folder-title">Add this folder to <span id="add-folder-library" class="add-folder-library"></span>?</h2>
+            </div>
+            <div class="modal-body add-folder-body">
+                <div id="add-folder-path" class="add-folder-path"></div>
+                <ul id="add-folder-facts" class="add-folder-facts"></ul>
+            </div>
+            <div class="modal-footer add-folder-footer">
+                <button class="btn btn-secondary" id="btn-just-look" title="Show its photos without adding it: Suggest and every change stay off">Just look</button>
+                <button class="btn btn-secondary hidden" id="btn-open-in-other-library" title="Open this folder in the library that holds it"></button>
+                <button class="btn btn-primary" id="btn-add-folder">Add</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Zoom: the open photo as large as the window allows. Click or Escape closes. -->
     <div id="image-zoom" class="image-zoom-overlay hidden" title="Click or press Escape to close">
         <img id="image-zoom-img" alt="">

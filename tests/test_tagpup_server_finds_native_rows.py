@@ -268,7 +268,7 @@ class TestTheFolderScanReadsARowWithNoStamp(HandlerCase):
         photo = self.make_file("IMG_0001.jpg")
         conn = tagpup_db.connect(self.db_path)
         try:
-            store_photos.ensure_row(conn, photo)
+            store_photos.ensure_row(conn, photo, admit=True)   # in a folder added
             conn.commit()
         finally:
             conn.close()
@@ -325,6 +325,7 @@ class TestSmartRenameNumbersByDateTaken(HandlerCase):
 class TestTimeShiftKeepsTheRealPaths(HandlerCase):
     def test_a_cold_folder_is_walked_and_returned_in_its_own_case(self):
         photo = self.make_file("IMG_0001.jpg")
+        self.lib.hold(self.folder)
         extractor = fake_extractor({"EXIF:Model": "Test Camera"})
         # ExifTool answers the shift's read with the photo's date, in the spelling it
         # answers every path in, and keeps what the shift writes, as the file would.
@@ -353,6 +354,8 @@ class TestSavedSuggestionsSurviveTheNewKeys(HandlerCase):
         photo = os.path.abspath(os.path.join(self.folder, "IMG_0001.jpg"))
         conn = tagpup_db.connect(self.db_path)
         try:
+            from tagpup.store import added_folders
+            added_folders.record(conn, os.path.dirname(photo), subfolders=False)   # Suggest ran there: the folder was added
             saved_suggestions.put(conn, photo, {"tags": [], "people": [], "title": None})
             conn.commit()
         finally:

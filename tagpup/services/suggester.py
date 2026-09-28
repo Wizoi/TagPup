@@ -345,8 +345,8 @@ class TagSuggester:
                 # part of this whole pipeline, and they were previously discarded when the
                 # request ended -- so a photo could be suggested for repeatedly and never
                 # contribute a single face to the database. Recording them means ordinary
-                # tagging feeds TagTuner's identify queue, and an unindexed folder still
-                # accumulates face data. Strictly additive: photos that already have face
+                # tagging feeds TagTuner's identify queue, and a folder added but not yet
+                # indexed still accumulates face data. Strictly additive: photos that already have face
                 # rows are left untouched, so manual names and exclusions are safe.
                 if detected_faces and self.index is not None:
                     try:

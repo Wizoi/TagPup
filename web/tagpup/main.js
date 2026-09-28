@@ -19,6 +19,7 @@ import {
     wireChangeDogPark, wireFolderPathInput, wireSidebarResizer
 } from './folder.js';
 import { wireTagPupGear } from './gear.js';
+import { checkFolderMembership, wireMembership } from './membership.js';
 import {
     carryTagsForward, deleteActivePhoto, openPhotoInDefaultApp, renderTags, rotatePhoto,
     saveSingleAddPerson, saveSingleAddTag, saveSingleTitle, selectPhoto,
@@ -45,7 +46,7 @@ import {
 
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
-    applySuggestedTagDirect, checkSuggestionsStatus, populateCameraModelsDropdown, recordUndo,
+    applySuggestedTagDirect, checkFolderMembership, checkSuggestionsStatus, populateCameraModelsDropdown, recordUndo,
     renderFileList, renderSuggestionsPanel, renderTags, renderThumbnails, selectPhoto,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
@@ -63,6 +64,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     wireChangeDogPark();
+
+    // The library's name in the header, and asking before a folder it does not hold is
+    // added to it (membership.js).
+    wireMembership();
 
     // Load Datalists on Startup
     fetchKnownTagsAndPeople();

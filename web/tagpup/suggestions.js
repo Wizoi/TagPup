@@ -28,6 +28,11 @@ export function updateSuggestButtonState(status = null) {
         btnSuggestTags.disabled = true;
         return;
     }
+    // Just looking at a folder the library does not hold (membership.js).
+    if (state.justLooking && samePath(state.justLooking, state.scannedFolder)) {
+        btnSuggestTags.disabled = true;
+        return;
+    }
     const hasUnprocessed = state.folderPhotos.some(photo => !state.folderSuggestions[photo.path]);
     btnSuggestTags.disabled = !hasUnprocessed;
 }

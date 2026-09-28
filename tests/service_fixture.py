@@ -45,6 +45,20 @@ class TempLibrary:
         self.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
                      " VALUES (?, ?, ?, ?, '[]', '{}')", (path, mtime, size, json.dumps(list(tags))))
 
+    def hold(self, *folders):
+        """Make each folder this library's, as indexing it did (photo_rows.hold): a photo
+        is written only through a library that holds its folder."""
+        import photo_rows
+        db.write_with_connection(self.library.path, lambda conn: [photo_rows.hold(conn, f) for f in folders])
+
+    def add_folder(self, *photo_paths):
+        """Add the folders of `photo_paths` to the library, as Add to <library> records
+        them (tagpup.store.added_folders), on disk or not. Suggest keeps what it finds only
+        in a folder the library holds or was given."""
+        from tagpup.store import added_folders
+        return db.write_with_connection(self.library.path, lambda conn: sum(
+            added_folders.record(conn, folder) for folder in sorted({os.path.dirname(p) for p in photo_paths})))
+
     def add_face(self, path, box, name=None, crop=b"crop"):
         """A face in the photo at `path`, which gets a row holding only the path if it
         has none. Returns the face's id."""

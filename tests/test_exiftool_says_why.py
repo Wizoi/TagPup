@@ -34,6 +34,7 @@ def in_the_way(photo):
 class AFailedWrite(unittest.TestCase):
     def setUp(self):
         self.lib = Library(self)
+        self.lib.hold(self.lib.photos)
         self.photo = make_photo(os.path.join(self.lib.photos, "Rowan at the quay.jpg"))
         in_the_way(self.photo)
 

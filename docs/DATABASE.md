@@ -75,7 +75,7 @@ Stores details of faces detected within photos, including face crop coordinates,
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | Unique face crop identifier. |
-| `photo_id` | INTEGER | NOT NULL, FOREIGN KEY, INDEXED | The photo the face is in. References `photos(id)` with `ON DELETE CASCADE`; the store deletes faces explicitly too, since most connections leave foreign keys off. A face found in a photo never indexed -- the suggester records the faces it detects -- first gets its photo a row holding only the path (`photos.ensure_row`), its `mtime` and `size` empty so the scan reads the file. |
+| `photo_id` | INTEGER | NOT NULL, FOREIGN KEY, INDEXED | The photo the face is in. References `photos(id)` with `ON DELETE CASCADE`; the store deletes faces explicitly too, since most connections leave foreign keys off. A face found in a photo never indexed -- the suggester records the faces it detects -- first gets its photo a row holding only the path (`photos.ensure_row`), its `mtime` and `size` empty so the scan reads the file: only in a folder the library holds a photo directly in, or one it was asked to add (`added_folders`, through `tagpup.services.libraries.add` and the indexer); in any other folder `ensure_row` raises `NotHeld` and makes nothing. |
 | `box` | TEXT | | JSON-serialized bounding box coordinates `[x1, y1, x2, y2]`. |
 | `embedding` | BLOB | | 512-dimensional face embedding vector (binary representation of float32 array). |
 | `name` | TEXT | | The resolved name of the person (or `NULL` if unmatched). |
@@ -157,7 +157,7 @@ What Suggest offered each photo (`tagpup/store/suggestions.py`), read by TagPup'
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
-| `photo_id` | INTEGER | PRIMARY KEY, FOREIGN KEY | The photo, `photos(id)`. A photo Suggest saw that was never indexed gets a row holding only its path (`photos.ensure_row`). |
+| `photo_id` | INTEGER | PRIMARY KEY, FOREIGN KEY | The photo, `photos(id)`. A photo Suggest saw that was never indexed gets a row holding only its path (`photos.ensure_row`), in a folder the library holds or was asked to add. |
 | `tags` | TEXT | | JSON list of `{tag, score}` offered, after the folder's consensus. |
 | `people` | TEXT | | JSON list of `{name, score}` offered. |
 | `title` | TEXT | | The caption offered. |
@@ -259,6 +259,15 @@ Each sync that was applied (`tagpup.store.sync_runs`, `tagpup.services.sync`, mi
 | `found` | TEXT | NOT NULL | JSON `{what: count}`: `rows`, `files`, `folders_walked`, `new`, `new_folders`, `review_folders`, `review_photos`, `ignored_files`, `outside_roots_files`, `changed`, `never_stamped`, `to_write`, `unreadable`, `moved`, `moved_faces`, `moved_named`, `moved_changed`, `occupied`, `ambiguous_rows`, `ambiguous_files`, `held_back_folders`, `missing`, `missing_folders`, `folders_gone`, `roots_gone`. Never a path. |
 | `changed` | TEXT | NOT NULL | JSON `{what: count}`: `rows` the change wrote, `from_files` and `relinked` among them, and `queued_folders`, the folders of new files put on the index queue. |
 | `change_id` | INTEGER | | The change of `changes` its rows were written as; NULL when it wrote none. |
+
+### 17. `added_folders` Table
+The folders the library was asked to add (`tagpup.store.added_folders`, migration 15): TagPup's Add to <library>, TagTuner's Add Folder, the CLI's `index`. A folder is the library's when it holds a photo directly in it, or when it -- or a folder above it added with its subfolders -- is here: Suggest may start in it before the index has read a photo, and a row is made for a photo as it is used (`photos.ensure_row`). Adding made a row for every photo under the folder instead, tens of thousands for a large tree, which sync then read again. A record of what was asked, not journaled, as indexing is not; removing a folder from the library forgets what was added at or under it.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `path` | TEXT | PRIMARY KEY, compared as paths are (`NOCASE` on Windows) | The folder, as stored (`paths.stored`). |
+| `subfolders` | INTEGER | NOT NULL | 1 when the folders under it were added with it, which covers every folder below; 0 when the folder alone was, which covers none of them: `index --no-subfolders`, which sync runs for the new files of a folder the library holds. A later add with its subfolders sets it to 1; one without never sets it back. |
+| `added` | TEXT | NOT NULL | Local time it was added, `YYYY-MM-DD HH:MM:SS`. |
 
 ---
 

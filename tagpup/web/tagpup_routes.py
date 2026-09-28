@@ -21,18 +21,22 @@ import threading
 from flask import Blueprint, jsonify, request
 
 from tagpup import config as tagpup_config
+from tagpup import runtime as runtimes
 from tagpup.core import fields, paths, suggesting, vocabulary
+from tagpup.core.library import picker_name
 from tagpup.core.result import NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import faces as face_actions
 from tagpup.services import file_changes
 from tagpup.services import indexing
+from tagpup.services import libraries as library_actions
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.services import tagging as tagging_actions
 from tagpup.services import tags as tags_service
 from tagpup.web import desktop, responses, state
+from tagpup.web import libraries as web_libraries
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +224,22 @@ def folder_scan():
     return jsonify(_sorted(photos))
 
 
+@routes.get("/api/folder/membership")
+def folder_membership():
+    """What this library holds of a folder, and which other libraries of the home hold
+    photos in it (tagpup.services.libraries.membership): what the page asks as a folder
+    opens, to ask before adding one the library does not hold."""
+    library = state.require()
+    folder = _wanted_path()
+    if not folder:
+        return responses.error(400, "Missing 'path' parameter")
+    if not os.path.isdir(folder):
+        return responses.error(400, "Path is not a valid directory: %s" % folder)
+    settings = runtimes.peek_settings(library)
+    return jsonify(library_actions.membership(library, folder, settings.roots, settings.ignored,
+                                              web_libraries.home_libraries()))
+
+
 @routes.get("/api/folder/index-status")
 def folder_index_status():
     library = state.require()
@@ -231,17 +251,36 @@ def folder_index_status():
 
 @routes.post("/api/folder/index-start")
 def folder_index_start():
-    """Queue a folder to be added to this library (tagpup.jobs.indexing). The page no
-    longer asks: adding folders is TagTuner's (docs/findings.md, #34). Clustering
-    re-derives every face name in the library, not only this folder's, and can discard
-    manual corrections, so it is opt-in."""
+    """Queue a folder to be added to this library (tagpup.services.libraries.add, through
+    tagpup.jobs.indexing). The page asks /api/folder/add instead. Clustering re-derives
+    every face name in the library, not only this folder's, and can discard manual
+    corrections, so it is opt-in."""
     library = state.require()
     body = request.get_json(silent=True) or {}
-    result = indexing_jobs.queue_for(library).start(
-        [body.get("folder_path")], _folder_indexer(library), cluster=bool(body.get("cluster", False)))
+    cluster = bool(body.get("cluster", False))
+    result = library_actions.add(library, [body.get("folder_path")], lambda folders: indexing_jobs.queue_for(
+        library).start(folders, _folder_indexer(library), cluster=cluster))
     if result.refused:
         return responses.error(400, result.message())
     return jsonify({"success": True, "status": "running", **result.details})
+
+
+@routes.post("/api/folder/add")
+def folder_add():
+    """Add a folder to this library, as the person asked: "Add to <library>"
+    (tagpup.services.libraries.add). It is the library's at once -- Suggest may start --
+    and it is queued to be indexed, with its subfolders, behind any other."""
+    library = state.require()
+    body = request.get_json(silent=True) or {}
+    folder = body.get("folder_path")
+    if not folder or not isinstance(folder, str) or not os.path.isdir(folder):
+        return responses.error(400, "Path is not a valid directory: %s" % folder)
+    result = library_actions.add(library, [folder], lambda folders: indexing_jobs.queue_for(library).start(
+        folders, _folder_indexer(library)))
+    if result.refused:
+        return responses.error(400, result.message())
+    return jsonify({"success": result.ok, "status": "running", "library": picker_name(os.path.basename(library.path)),
+                    "folder": paths.stored(folder), **result.details})
 
 
 @routes.get("/api/folder/suggest-status")
@@ -263,7 +302,18 @@ def folder_suggest_start():
     if not folder or not os.path.isdir(folder):
         return responses.error(400, "Invalid folder path")
     folder = paths.stored(folder)
-    work = suggestion_jobs.work_for(library, lambda: _folder_photos(library, folder), state.runtime())
+    # Suggest makes rows -- faces, vectors, what it offered -- for every photo it looks at:
+    # only in the folders the library holds; the page asks to add one first (/api/folder/add).
+    # Its ignored folders are passed over, as sync passes them (not held, not offered).
+    ignored = runtimes.peek_settings(library).ignored
+    refusal = library_actions.not_in(library, folder, ignored)
+    if refusal:
+        return responses.error(409, refusal)
+
+    def photos():
+        return {key: meta for key, meta in _folder_photos(library, folder).items()
+                if not library_actions.is_ignored(meta["path"], ignored)}
+    work = suggestion_jobs.work_for(library, photos, state.runtime())
     return jsonify({"success": True, "status": suggestion_jobs.runs_for(library).start(folder, work)})
 
 
@@ -292,7 +342,7 @@ def folder_auto_apply():
         with file_changes.exclusively():
             result = tagging_actions.add_tags(library, additions, state.exiftool(library))
             if result.refused:
-                return responses.error(400, result.refused)
+                return responses.refused(result)
             _records_written(library, result)
     except Exception as e:
         logger.error("Error auto-applying suggestions: %s", e)
@@ -335,7 +385,7 @@ def folder_time_shift():
     try:
         result = photo_actions.shift_date_taken(library, targets, shift_minutes, state.exiftool(library))
         if result.refused:
-            return responses.error(400, result.refused)
+            return responses.refused(result)
         if not result.ok:
             raise RuntimeError(result.message())
         for meta in result.details["records"]:
@@ -386,7 +436,7 @@ def folder_rename_photos():
             library, sorted(photo_paths, key=taken), grouping, state.rename_format(library),
             state.exiftool(library))
         if result.refused:
-            return responses.error(400, result.refused)
+            return responses.refused(result)
         if not result.ok:
             return responses.error(500, result.message())
         # Their saved suggestions are kept by the photo's id, and went with the rows.
@@ -494,7 +544,7 @@ def photo_rotate():
         # "rotate direction" kind's message, rather than taken for a right turn.
         result = photo_actions.rotate(library, photo_path, direction, state.exiftool(library))
         if result.refused:
-            return responses.error(400, result.refused)
+            return responses.refused(result)
         if not result.ok:
             logger.error("Error rotating image %s: %s", photo_path, result.message())
             return responses.error(500, result.message())
@@ -518,6 +568,8 @@ def photo_delete():
         return responses.error(400, "Invalid file path")
     try:
         result = photo_actions.delete(library, photo_path)
+        if result.refused:
+            return responses.refused(result)
         if not result.ok:
             return responses.error(500, result.message())
         for held, _record in folders.of(library).entries_for(photo_path):
@@ -543,7 +595,7 @@ def photo_save_metadata():
         result = tagging_actions.save_photo(library, photo_path, title, tags, date_taken,
                                             state.exiftool(library), state.rename_format(library))
         if result.refused:
-            return responses.error(400, result.refused)
+            return responses.refused(result)
         new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
         # Every folder map holding the photo, found under the name it had (a rename
         # stays in the same directory).
@@ -585,7 +637,7 @@ def photos_bulk_tags():
             result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
                                                  state.exiftool(library))
             if result.refused:
-                return responses.error(400, result.refused)
+                return responses.refused(result)
             _records_written(library, result)
     except Exception as e:
         logger.error("Error in bulk tags write: %s", e)

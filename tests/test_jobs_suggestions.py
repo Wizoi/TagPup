@@ -48,6 +48,8 @@ class RunsCase(unittest.TestCase):
         self.folder = os.path.join(self.lib.photos, "Regatta")
         self.photos = {paths.key(os.path.join(self.folder, n)): {"path": os.path.join(self.folder, n)}
                        for n in ("a.jpg", "b.jpg")}
+        # A folder Suggest may work in: the library was asked to add it.
+        self.lib.add_folder(*[meta["path"] for meta in self.photos.values()])
 
     def wait_for(self, status, timeout=10):
         deadline = time.time() + timeout

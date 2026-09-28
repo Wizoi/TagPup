@@ -45,6 +45,7 @@ def at_once(*calls):
 class TwoBulkWritesAtOnce(unittest.TestCase):
     def setUp(self):
         self.lib = Library(self)
+        self.lib.hold(self.lib.photos)
         self.photos = [make_photo(os.path.join(self.lib.photos, "p%d.jpg" % n)) for n in range(3)]
 
     def post(self, body):
@@ -80,6 +81,7 @@ class ASaveAndABulkWriteAtOnce(unittest.TestCase):
 
     def setUp(self):
         self.lib = Library(self)
+        self.lib.hold(self.lib.photos)
         self.photo = make_photo(os.path.join(self.lib.photos, "a.jpg"))
 
     def test_the_bulk_write_waits_for_the_save(self):

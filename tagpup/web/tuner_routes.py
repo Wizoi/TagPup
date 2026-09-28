@@ -28,6 +28,7 @@ from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services import faces as faces_service
 from tagpup.services import identify as identify_service
 from tagpup.services import indexing
+from tagpup.services import libraries as library_actions
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.services import tags as tags_service
@@ -596,8 +597,10 @@ def folder_index_start():
         requested = [body.get("folder_path")] if body.get("folder_path") else []
     if not isinstance(requested, list):
         _refuse(400, "folder_paths must be a list")
-    result = indexing_jobs.queue_for(library).start(
-        requested, folder_indexer(library), cluster=bool(body.get("cluster", False)))
+    cluster = bool(body.get("cluster", False))
+    # Adding a folder, as TagPup's Add does (tagpup.services.libraries.add).
+    result = library_actions.add(library, requested, lambda folders: indexing_jobs.queue_for(library).start(
+        folders, folder_indexer(library), cluster=cluster))
     if result.refused:
         _refuse(400, result.message())
     return jsonify({"success": True, "status": "running", **result.details})

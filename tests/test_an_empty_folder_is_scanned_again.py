@@ -34,6 +34,9 @@ class AnEmptyFolder(unittest.TestCase):
     def test_a_time_shift_finds_them_too(self):
         self.assertEqual([], self.scan())
         Image.new("RGB", (8, 8)).save(os.path.join(self.folder, "a.jpg"), "JPEG")
+        from tagpup.store import db
+        import photo_rows
+        db.write_with_connection(self.home.library("library.db"), lambda conn: photo_rows.hold(conn, self.folder))
         reply = self.client.post("/library/api/folder/time-shift",
                                  json={"folder_path": self.folder, "camera_model": "All Cameras", "shift_minutes": 30})
         self.assertEqual(200, reply.status_code, reply.data)

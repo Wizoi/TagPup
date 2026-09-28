@@ -73,14 +73,23 @@ class Library:
         """This library's suggestion runs (tagpup.jobs.suggestions)."""
         return suggestion_jobs.runs_for(self.library)
 
+    def hold(self, *folders):
+        """Make each folder this library's, as indexing it did (photo_rows.hold): a photo
+        is written only through a library that holds its folder."""
+        import photo_rows
+        tagpup_db.write_with_connection(self.db_path, lambda conn: [photo_rows.hold(conn, f) for f in folders])
+
     def save_suggestions(self, found):
         """Keep {photo: entry} as what Suggest offered each photo, in this library
-        (tagpup.store.suggestions) -- where the page's Apply All reads it."""
+        (tagpup.store.suggestions) -- where the page's Apply All reads it. Suggest ran in
+        a folder the library holds or was given (tagpup.services.libraries.add)."""
+        from tagpup.store import added_folders
         from tagpup.store import suggestions as saved
 
         conn = tagpup_db.connect(self.db_path)
         try:
             for photo, entry in found.items():
+                added_folders.record(conn, os.path.dirname(photo), subfolders=False)
                 saved.put(conn, photo, entry)
             conn.commit()
         finally:

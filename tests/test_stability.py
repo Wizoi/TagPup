@@ -803,6 +803,7 @@ class TestPhotoActions(unittest.TestCase):
         temp_dir = tempfile.mkdtemp(dir=self.lib.root)
         img_path = os.path.join(temp_dir, "test_shift.jpg")
         Image.new("RGB", (10, 10), color="blue").save(img_path, "JPEG")
+        self.lib.hold(temp_dir)
 
         self.cache(temp_dir, {
             paths.key(img_path): {
@@ -833,6 +834,7 @@ class TestPhotoActions(unittest.TestCase):
         os.makedirs(temp_dir)
         img_path = os.path.join(temp_dir, "IMG_Shift.jpg")
         Image.new("RGB", (10, 10), color="blue").save(img_path, "JPEG")
+        self.lib.hold(temp_dir)
 
         data = self.post("/api/folder/time-shift", {
             "folder_path": temp_dir, "camera_model": "All Cameras", "shift_minutes": 30})

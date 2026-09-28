@@ -1,7 +1,7 @@
 """A face is never recorded for a photo the library has no row for.
 
-Suggest detects faces in photos it was shown but that were never indexed, and recorded
-them against a path no row had: 859 such faces in photo_index, on 95 photos
+Suggest detects faces in photos it was shown but that were never indexed -- in a folder
+the library holds, or was asked to add -- and recorded them against a path no row had: 859 such faces in photo_index, on 95 photos
 (docs/findings.md, #42, #48). Phase 4 points faces at photos by id, which needs every
 photo a face is on to have a row. The row made for it holds the path and nothing read
 from the file: its mtime and size stay empty, so the folder scan and the refresh read
@@ -16,7 +16,9 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import photo_rows  # noqa: E402
 from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.store import checks, db  # noqa: E402
@@ -33,6 +35,9 @@ class EveryFaceHasAPhotoRow(unittest.TestCase):
         self.photo = os.path.join(self.dir, "never indexed.jpg")
         with open(self.photo, "wb") as f:
             f.write(b"photo")
+        # The folder is the library's: a photo beside it was indexed.
+        self.indexed = os.path.join(self.dir, "indexed.jpg")
+        db.write_with_connection(self.db_path, lambda conn: photo_rows.add_read(conn, self.indexed, {}))
 
     def face(self):
         return {"box": [0, 0, 10, 10], "embedding": np.ones(8, dtype=np.float32), "prob": 0.99}
@@ -40,7 +45,7 @@ class EveryFaceHasAPhotoRow(unittest.TestCase):
     def rows(self):
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
         try:
-            return conn.execute("SELECT path, mtime, size FROM photos").fetchall()
+            return conn.execute("SELECT path, mtime, size FROM photos WHERE path != ?", (self.indexed,)).fetchall()
         finally:
             conn.close()
 

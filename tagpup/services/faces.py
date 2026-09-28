@@ -17,9 +17,10 @@ import os
 
 import numpy as np
 
-from tagpup.core import clustering, validation, vocabulary
+from tagpup.core import clustering, paths, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Result
 from tagpup.store import db, faces, photos
+from tagpup.store import folders as store_folders
 
 logger = logging.getLogger(__name__)
 
@@ -242,8 +243,14 @@ def remove_folder(library, folder):
     The photo files are never touched. This does discard face work for those photos,
     manual names and exclusions included, so the Result says what it cost.
 
-    details: `photos_removed`, `faces_removed`, `manual_lost`, `excluded_lost`.
+    A folder a parent's add still covers (added with its subfolders: tagpup.store.folders)
+    would stay the library's, and the next Suggest there would make it so again: it is put
+    in the library's ignored folders, a journaled change of its settings, as the owner's
+    own Ignore is (tagpup.services.settings.change). details["ignored"] says whether it was.
+
+    details: `photos_removed`, `faces_removed`, `manual_lost`, `excluded_lost`, `ignored`.
     """
+    from tagpup.services import settings   # settings reaches sync, which reaches the faces
     result = Result(attempted=1)
 
     def remove(conn):
@@ -251,6 +258,20 @@ def remove_folder(library, folder):
 
     result.details.update(db.write_with_connection(library.path, remove, label="remove a folder"))
     result.changed = result.details["photos_removed"]
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        still = store_folders.holds(conn, folder)
+    finally:
+        conn.close()
+    result.details["ignored"] = False
+    if still:
+        ignored = settings.of(library).ignored + [paths.stored(folder)]
+        change = settings.change(library, {settings.IGNORED: validation.FOLDER_SEPARATOR.join(ignored)})
+        if change.ok:
+            result.details["ignored"] = True
+        else:
+            result.fail(folder, "Removed, but a folder above it was added with its subfolders and it could not "
+                                "be put in the ignored folders: %s" % change.message())
     logger.info("Removed %d photo(s) and %d face(s) under %s",
                 result.details["photos_removed"], result.details["faces_removed"], folder)
     return result

@@ -22,6 +22,7 @@ from tagpup.core import paths
 class StoppedPartWay(unittest.TestCase):
     def setUp(self):
         self.lib = Library(self)
+        self.lib.hold(self.lib.photos)
         self.first = make_photo(os.path.join(self.lib.photos, "a.jpg"))
         self.second = make_photo(os.path.join(self.lib.photos, "b.jpg"))
         with open(self.second + "_exiftool_tmp", "wb") as handle:

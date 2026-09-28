@@ -62,6 +62,7 @@ from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
 from tagpup.runtime import Runtime
 from tagpup.services import settings as library_settings
+from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
 from tagpup.services import identities
 from tagpup.services import journal as library_journal
@@ -233,6 +234,13 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     if not all_images:
         console.print("[yellow]No supported images found. Exiting.[/yellow]")
         return
+
+    # Indexing a folder is adding it (tagpup.services.libraries.record_added): the vectors
+    # kept as each photo is embedded, before its row is recorded, make its row, which
+    # tagpup.store.photos.ensure_row does only in a folder the library holds or was given.
+    # As the index stores it: a folder typed as "." is no full path, and was not added.
+    library_actions.record_added(Library(db_path), [paths.stored(d) for d in directories],
+                                 subfolders=not no_subfolders)
 
     # Check for unchanged files using modification time and size
     # By paths.key: a folder indexed under one spelling and scanned under another is
@@ -441,8 +449,11 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 @click.option("--min-sim", default=0.35, type=float, help="Cosine similarity cutoff.")
 @click.option("--output", default=None,
               help="Path to write the suggestions JSON file (default: <library>_suggestions.json beside the library).")
+@click.option("--add", "add_folder", is_flag=True,
+              help="Add the folder to the library first when it does not hold it: each photo gets its row, as "
+                   "TagPup's Add does. Without it, a folder the library does not hold is refused.")
 @click.pass_context
-def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
+def suggest(ctx, directory: str, k: int, min_sim: float, output: str, add_folder: bool = False):
     """Phase 2: Suggest tags for untagged photos."""
     runtime = get_runtime()
 
@@ -452,7 +463,16 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
     db_path = get_db_path(test_mode, cli_db)
     output = output or default_suggestions_file(db_path)
     library = Library(db_path)
+    # Suggest records faces and vectors for every photo it looks at, each on its row: only
+    # in the folders the library holds (tagpup.services.libraries.not_in).
     settings = runtime.settings(library)
+    refusal = library_actions.not_in(library, directory, settings.ignored)
+    if refusal and not add_folder:
+        console.print(f"[bold red]Error:[/bold red] {refusal} (--add adds it; `index` adds and reads it)")
+        ctx.exit(1)
+    if refusal:
+        library_actions.record_added(library, [directory])
+        console.print(f"Added the folder to {library.name}; `index` reads its photos into it.")
     model_name = settings.embedder["model_name"]
 
     photo_index = library_index(runtime, db_path)
@@ -685,6 +705,9 @@ def write_suggestions_file(suggestions_file, db_path, exiftool_path, live=False,
     except Exception as e:
         writer_log.error(f"ExifTool writer error: {e}", exc_info=True)
         return False
+    if result.refused:
+        # Nothing was written: a folder the library does not hold, say.
+        raise click.ClickException(result.refused)
     for path, error in result.errors:
         writer_log.error(f"Failed to write metadata to {path}: {error}")
 

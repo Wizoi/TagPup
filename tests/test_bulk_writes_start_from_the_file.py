@@ -54,6 +54,7 @@ class TestTheFileIsTheStartingPoint(unittest.TestCase):
 
     def setUp(self):
         self.lib = Library(self)
+        self.lib.hold(self.lib.photos)
         self.photo = make_photo(os.path.join(self.lib.photos, "a.jpg"))
 
     def test_bulk_add_keeps_the_keywords_already_in_the_file(self):
@@ -92,6 +93,7 @@ class TestASubfolderPhotoIsFoundInTheCache(unittest.TestCase):
     def setUp(self):
         self.lib = Library(self)
         self.photo = make_photo(os.path.join(self.lib.photos, "Day 1", "a.jpg"))
+        self.lib.hold(os.path.dirname(self.photo))
         status, reply = self.lib.get("/api/folder/scan", {"path": self.lib.photos})
         self.assertEqual(status, 200, reply)
         self.assertEqual(len(reply), 1)

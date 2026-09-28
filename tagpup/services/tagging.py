@@ -7,7 +7,7 @@ from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, metadata, names
-from tagpup.services import file_changes
+from tagpup.services import file_changes, libraries
 from tagpup.store import photos, taxonomy
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     rows.
     """
     result = Result(attempted=1)
+    if libraries.refuse_writes(result, library, [photo_path]):
+        return result
     wanted = fields.caption_fields(title or "")
     if date_taken:
         wanted.update(fields.date_taken_fields(date_taken))
@@ -121,6 +123,9 @@ def change_tags(library, photo_paths, add, remove, exiftool_path):
     problem = validation.first_problem("tag", add)
     if problem:
         return _refused(len(photo_paths), problem)
+    refused = _refused(len(photo_paths), None)
+    if libraries.refuse_writes(refused, library, photo_paths):
+        return refused
     add = [vocabulary.normalize(tag) for tag in add]
     return _change_each(library, [(path, add, remove) for path in photo_paths], exiftool_path,
                         "add to all selected")
@@ -134,6 +139,9 @@ def add_tags(library, additions, exiftool_path):
     problem = validation.first_problem("tag", dict.fromkeys(t for tags in additions.values() for t in tags))
     if problem:
         return _refused(len(additions), problem)
+    refused = _refused(len(additions), None)
+    if libraries.refuse_writes(refused, library, [path for path, tags in additions.items() if tags]):
+        return refused
     return _change_each(library, [(path, tags, ()) for path, tags in additions.items() if tags],
                         exiftool_path, "apply all suggestions")
 
@@ -142,7 +150,8 @@ def _refused(attempted, problem):
     """A bulk change refused before anything was written; `written` is empty."""
     result = Result(attempted=attempted)
     result.details["written"] = {}
-    result.refuse(problem)
+    if problem:
+        result.refuse(problem)
     return result
 
 
@@ -290,6 +299,8 @@ def write_suggestions(library, writes, exiftool_path, nobackup=False):
                or validation.first_problem("caption", (caption for _, _, caption in writes if caption)))
     if problem:
         result.refuse(problem)
+        return result
+    if libraries.refuse_writes(result, library, [path for path, _tags, _caption in writes]):
         return result
     # Who a bare name means, read once for the run, not once per photo.
     people = taxonomy.people_paths(library.path)

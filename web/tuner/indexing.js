@@ -437,6 +437,11 @@ function removeChosenFolder() {
             msg += `\n\nThat included ${data.manual_lost} manually assigned name(s) ` +
                    `and ${data.excluded_lost} exclusion(s).`;
         }
+        if (data.ignored) {
+            msg += `\n\nA folder above it was added with its subfolders, so it was put in the ` +
+                   `library's ignored folders (Library settings; History can undo it): it is no ` +
+                   `longer the library's.`;
+        }
         alert(msg);
         fetchPhotos();
     })

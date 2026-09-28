@@ -448,7 +448,7 @@ def _suggestions(conn):
     except (OSError, ValueError) as e:
         logger.warning("Saved suggestions in %s could not be read, and were not taken in: %s", path, e)
         return
-    from tagpup.store import suggestions   # the store imports this module
+    from tagpup.store import photos, suggestions   # the store imports this module
     ids = {paths.key(p): i for i, p in conn.execute("SELECT id, path FROM photos")}
     succeeded = set()
     taken = left = 0
@@ -466,7 +466,8 @@ def _suggestions(conn):
             if photo_id is not None:
                 suggestions.put_for(conn, photo_id, found)
             elif os.path.exists(photo):
-                suggestions.put(conn, photo, found)
+                # As Suggest made rows when this migration was written: in any folder.
+                suggestions.put_for(conn, photos.ensure_row(conn, photo, admit=True), found)
             else:
                 left += 1
                 continue
@@ -607,6 +608,18 @@ def _sync_runs(conn):
                  " found TEXT NOT NULL,"
                  " changed TEXT NOT NULL,"
                  " change_id INTEGER)")
+
+
+def _added_folders(conn):
+    """The folders a library was asked to add: `added_folders`, each folder's path, whether
+    its subfolders were added with it, and when (tagpup.store.added_folders). A folder
+    added is the library's before the index has read a photo of it: adding made a row for
+    every photo under it at once. Only adds a table, so it needs no backup.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS added_folders ("
+                 " path TEXT PRIMARY KEY COLLATE %s,"
+                 " subfolders INTEGER NOT NULL,"
+                 " added TEXT NOT NULL)" % paths.COLLATE)
 
 
 # ---- What a migration holds true before it commits ----------------------------------------
@@ -1086,6 +1099,10 @@ MIGRATIONS = (
     Migration(14, "when the library was last in step", _sync_runs, ADDITIVE,
               "adds the sync_runs table, empty",
               ("sync_runs",),
+              (RowsKept(),) + STANDARD),
+    Migration(15, "the folders asked to be added", _added_folders, ADDITIVE,
+              "adds the added_folders table, empty",
+              ("added_folders",),
               (RowsKept(),) + STANDARD),
 )
 

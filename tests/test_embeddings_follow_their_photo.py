@@ -165,6 +165,7 @@ class AnEmbedding(unittest.TestCase):
         lib = TempLibrary(self)
         photo = os.path.join(lib.photos, "turned.jpg")
         Image.new("RGB", (8, 8)).save(photo)
+        lib.add_folder(photo)
         opened = embeddings.stamp_of(photo)
         index = mock.Mock(conn=True, write_on_own_connection=lambda op, label: db.write_with_connection(
             lib.library.path, op, label=label))

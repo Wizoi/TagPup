@@ -6,8 +6,9 @@ import os
 from tagpup.core import dates, fields, paths, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
 from tagpup.files import images, metadata, names, recycle_bin
-from tagpup.services import file_changes
+from tagpup.services import file_changes, libraries
 from tagpup.store import db, embeddings, faces, photos, taxonomy
+from tagpup.store import folders as store_folders
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +244,8 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     if problem:
         result.refuse(problem)
         return result
+    if libraries.refuse_writes(result, library, photo_paths):
+        return result
     grouping = validation.trim(grouping)
     width = len(str(len(photo_paths)))
     present = [p for p in photo_paths if os.path.exists(p)]
@@ -303,6 +306,9 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
         result = Result(attempted=len(photo_paths))
         result.refuse(problem)
         return result
+    refused = Result(attempted=len(photo_paths))
+    if libraries.refuse_writes(refused, library, photo_paths):
+        return refused
 
     def plan_one(_path, held):
         after = {}
@@ -341,6 +347,8 @@ def delete(library, photo_path):
     details: `removed`, the rows removed from each table.
     """
     result = Result(attempted=1)
+    if libraries.refuse_writes(result, library, [photo_path]):
+        return result
     try:
         moved = recycle_bin.send_to_recycle_bin(photo_path)
     except Exception as e:
@@ -373,6 +381,8 @@ def rotate(library, photo_path, direction, exiftool_path):
     refused = validation.problem("rotate direction", direction)
     if refused:
         result.refuse(refused)
+        return result
+    if libraries.refuse_writes(result, library, [photo_path]):
         return result
     # The row is stamped only if it described the file just before the turn (#249).
     before = embeddings.stamp_of(photo_path)
@@ -416,15 +426,16 @@ def count_photos(folder, recursive=True):
 
 
 def indexed_by_folder(library):
-    """{paths.key of a folder: photos the library holds directly in it}. Lets the folder
-    picker show what is already in rather than offering it as if new; a library that
-    cannot be read just now counts as holding nothing."""
+    """{paths.key of a folder: photos the library holds directly in it}, each folder of
+    the library (tagpup.store.folders): one added and not read yet holds 0. Lets the
+    folder picker show what is already in rather than offering it as if new; a library
+    that cannot be read just now counts as holding nothing."""
     try:
         conn = db.connect(db.readonly_uri(library.path), uri=True)
     except Exception:
         return {}
     try:
-        return photos.folder_counts(conn)
+        return {paths.key(folder): count for folder, count in store_folders.of(conn).listed()}
     except Exception:
         return {}
     finally:
@@ -439,10 +450,11 @@ def indexed_folders(library):
     {"path" (as stored), "photos" (every photo under it: what removing it takes),
     "own_photos" (those directly in it; 0 for a folder above), "on_disk"}. TagTuner
     offers these rather than the disk's folders, so a folder deleted from disk can still
-    be taken out (#47)."""
+    be taken out (#47). The library's folders are tagpup.store.folders': a folder added
+    and not read yet is listed, holding none, and can be removed."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        held = photos.folders_held(conn)
+        held = store_folders.of(conn).listed()
     finally:
         conn.close()
     # {key: [spelling, photos under it, photos directly in it]}

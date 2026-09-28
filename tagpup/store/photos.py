@@ -10,7 +10,8 @@ import logging
 import os
 
 from tagpup.core import dates, fields, paths, vocabulary
-from tagpup.store import db, embeddings, faces, people
+from tagpup.core.result import NotHeld
+from tagpup.store import added_folders, db, embeddings, faces, folders, people
 from tagpup.store.people import PEOPLE_JSON
 
 logger = logging.getLogger(__name__)
@@ -566,21 +567,40 @@ def records(conn, model, photo_ids=None):
     return found
 
 
-def ensure_row(conn, photo_path):
-    """The id of a photo's row, making the row if it has none.
+def _row_id(conn, photo_path):
+    clause, params = paths.sql_equals("path", photo_path)
+    row = conn.execute("SELECT id FROM photos WHERE " + clause + " LIMIT 1", params).fetchone()
+    return row[0] if row else None
+
+
+def _unread_row(conn, photo_path):
+    return conn.execute("INSERT INTO photos (path, tags, captions, raw_metadata)"
+                        " VALUES (?, '[]', '[]', '{}')", (paths.stored(photo_path),)).lastrowid
+
+
+def ensure_row(conn, photo_path, admit=False):
+    """The id of a photo's row, making the row if it has none -- only in a folder the
+    library holds or was asked to add (tagpup.store.folders.holds), unless `admit` (a migration that
+    kept what an older version made). Raises NotHeld, and makes nothing, for a photo in
+    any other folder.
 
     Every photo a face or an embedding is recorded for has a row (docs/findings.md,
     #48): Suggest detects faces in photos never indexed, and they were recorded against
-    a path no row had. A row made here holds the path and nothing read from the file:
-    its mtime and size stay empty, so the folder scan and the refresh read the file
-    rather than trust it. The caller commits.
+    a path no row had. But a row makes its folder the library's: sync keeps the folder in
+    step, the watcher watches it, and its new files are indexed and grow the tag tree
+    from their tags. Suggest in a folder of another library's made 25 rows in kr-track
+    that way, without asking (2026-09-28). A row made here holds the path and nothing
+    read from the file: its mtime and size stay empty, so the folder scan and the refresh
+    read the file rather than trust it. The caller commits.
     """
-    clause, params = paths.sql_equals("path", photo_path)
-    row = conn.execute("SELECT id FROM photos WHERE " + clause + " LIMIT 1", params).fetchone()
-    if row:
-        return row[0]
-    photo_id = conn.execute("INSERT INTO photos (path, tags, captions, raw_metadata)"
-                            " VALUES (?, '[]', '[]', '{}')", (paths.stored(photo_path),)).lastrowid
+    photo_id = _row_id(conn, photo_path)
+    if photo_id is not None:
+        return photo_id
+    if not admit:
+        folder = os.path.dirname(paths.stored(photo_path))
+        if not folders.holds(conn, folder):
+            raise NotHeld(folder)
+    photo_id = _unread_row(conn, photo_path)
     date_photos(conn, [photo_id])
     return photo_id
 
@@ -658,6 +678,9 @@ def remove_under(conn, folder):
                             + " AND excluded = 1", faces_params).fetchone()[0]
     faces_removed = conn.execute("DELETE FROM faces WHERE " + faces_where, faces_params).rowcount
     photos_removed = conn.execute("DELETE FROM photos WHERE " + photos_where, photos_params).rowcount
+    # Out of the library: what was asked to be added there goes too, or a Suggest would
+    # make it the library's again unasked.
+    added_folders.forget_under(conn, folder)
     return dict(photos_removed=photos_removed, faces_removed=faces_removed,
                 manual_lost=manual, excluded_lost=excluded)
 
@@ -695,26 +718,10 @@ def with_tag(conn, tag):
     return found
 
 
-def folder_counts(conn):
-    """{paths.key of a folder: photos the library holds directly in it}."""
-    counts = {}
-    for (photo_path,) in conn.execute("SELECT path FROM photos"):
-        folder = paths.key(os.path.dirname(photo_path))
-        counts[folder] = counts.get(folder, 0) + 1
-    return counts
-
-
-def folders_held(conn):
-    """[(folder, photos the library holds directly in it)], the folder spelled as the
-    library stores it (tagpup.core.paths.stored), so it can be sent back to name the
-    folder. Spellings differing only in case are one folder, under the first seen."""
-    held, spelling = {}, {}
-    for (photo_path,) in conn.execute("SELECT path FROM photos"):
-        folder = os.path.dirname(photo_path)
-        key = paths.key(folder)
-        spelling.setdefault(key, folder)
-        held[key] = held.get(key, 0) + 1
-    return [(spelling[key], count) for key, count in held.items()]
+def count_under(conn, folder):
+    """How many photos under `folder`, at any depth, the library holds."""
+    where, params = paths.sql_under("path", folder)
+    return conn.execute("SELECT COUNT(*) FROM photos WHERE " + where, params).fetchone()[0]
 
 
 def rows_under(conn, folder):

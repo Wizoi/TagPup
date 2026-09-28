@@ -141,6 +141,19 @@ def list_libraries():
     return jsonify({"databases": sorted(libraries.picker_names(files, _test_mode()))})
 
 
+def home_libraries():
+    """Every library of this home the picker offers that is on disk, as Libraries: what a
+    folder's membership (GET /api/folder/membership) asks the others of."""
+    data_dir = tagpup_config.data_dir()
+    files = os.listdir(data_dir) if os.path.exists(data_dir) else []
+    found = []
+    for name in libraries.picker_names(files, _test_mode()):
+        library = Library(tagpup_config.library_path(libraries.for_mode(name + ".db", _test_mode())))
+        if os.path.exists(library.path):
+            found.append(library)
+    return found
+
+
 @picker.post("/api/databases/create")
 def create_library():
     """Make the library named, unless it is there already. Its name is the service's

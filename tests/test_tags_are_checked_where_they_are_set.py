@@ -60,6 +60,7 @@ class TagPupCase(unittest.TestCase):
     def setUp(self):
         self.lib = Library(self, "rules")
         self.db_path = self.lib.db_path
+        self.lib.hold(self.lib.root)
         self.photo = os.path.join(self.lib.root, "IMG_0100.jpg")
         with open(self.photo, "wb") as f:
             f.write(b"not really a jpeg")
@@ -182,6 +183,7 @@ class TunerCase(unittest.TestCase):
     def setUp(self):
         self.lib = Library(self, "rules")
         self.db_path = self.lib.db_path
+        self.lib.hold(self.lib.root)
         self.photo = os.path.join(self.lib.root, "IMG_0100.jpg")
         with open(self.photo, "wb") as f:
             f.write(b"not really a jpeg")
