@@ -10,6 +10,7 @@ import { state } from './state.js';
 import { btnSaveDetails, inputAddPerson, inputAddTag, inputPhotoTitle } from './elements.js';
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
+import { markEntry, pendingWrites, queueEntry } from './write-queue.js';
 import {
     fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson, updateTagsDatalist
 } from './tags.js';
@@ -89,8 +90,9 @@ export function wireUnsavedEdits() {
         if (hasUnsavedEdits()) saveDetailEdits();
     }, true);
 
+    // Closing the tab asks while a write waits or is under way too: it is lost.
     window.addEventListener('beforeunload', (e) => {
-        if (!hasUnsavedEdits()) return;
+        if (!hasUnsavedEdits() && !pendingWrites()) return;
         e.preventDefault();
         e.returnValue = '';
     });
@@ -119,9 +121,9 @@ export function saveDetailEdits(fields = { title: true, tags: true, people: true
  * for (openPhotoWrite). A bulk write is queued without one, and leaving waits for none:
  * an arrow key waited for a slow bulk write on a network share to finish.
  */
-export function queueWriteOf(path, job) {
+export function queueWriteOf(path, job, label = `Save photo ${baseName(path)}`) {
     const key = pathKey(path);
-    const run = queuePhotoWrite(job).finally(() => {
+    const run = queuePhotoWrite(job, label).finally(() => {
         if (state.photoWrites[key] === run) delete state.photoWrites[key];
         updateSaveButton();
     });
@@ -154,13 +156,26 @@ export function openPhotoWrite() {
  * Resolves to the job's
  * result, or false if it threw; the queue carries on either way.
  */
-export function queuePhotoWrite(job) {
+export function queuePhotoWrite(job, label = 'Save a photo') {
+    // An entry of the queue's status (write-queue.js): `label` says what it does, and
+    // the job is given it, to put a failure's reason in `error`. A job that resolves
+    // false failed; Retry queues it again.
+    const entry = queueEntry(label);
+    entry.retry = () => queuePhotoWrite(job, label);
     const before = state.detailSaveInFlight || Promise.resolve();
-    const run = before.then(() => job()).catch(err => {
+    const run = before.then(() => {
+        markEntry(entry, 'writing');
+        return job(entry);
+    }).then(result => {
+        markEntry(entry, result === false ? 'failed' : 'done');
+        return result;
+    }, err => {
         // Resolving a name can fail too (the taxonomy write); that is a failed
         // save like any other, and the text stays where it is.
         console.error(err);
         setStatus('error', `Not saved: ${err.message}`, { transient: false });
+        entry.error = entry.error || err.message;
+        markEntry(entry, 'failed');
         return false;
     }).finally(() => {
         if (state.detailSaveInFlight === run) state.detailSaveInFlight = null;

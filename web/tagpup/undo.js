@@ -42,7 +42,7 @@ export function undoLastOperation() {
     const entry = state.lastUndoable;
     state.lastUndoable = null;
     updateUndoButton();
-    return queuePhotoWrite(() => undoEntry(entry));
+    return queuePhotoWrite((queued) => undoEntry(entry, queued), `Undo: ${entry.label}`);
 }
 
 /** The photos of `entry` grouped by what undoing it adds and takes off. */
@@ -61,7 +61,7 @@ export function undoGroups(entry) {
     return [...groups.values()];
 }
 
-async function undoEntry(entry) {
+async function undoEntry(entry, queued) {
     setStatus('busy', `Undoing: ${entry.label}...`);
     let restored = 0;
     let failed = 0;
@@ -89,7 +89,10 @@ async function undoEntry(entry) {
             const kept = (photo.tags || []).filter(t => !group.added.includes(t));
             photo.tags = kept.concat(group.removed.filter(t => !kept.includes(t)));
         }
-        if (!data.success) console.error('Undo:', data.error);
+        if (!data.success) {
+            console.error('Undo:', data.error);
+            queued.error = data.error;
+        }
     }
     renderFileList();
     renderThumbnails();

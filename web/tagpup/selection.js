@@ -309,8 +309,8 @@ export function applyTagToAllSelected(tag, isPerson) {
  * one in an alert -- and the next goes on either way. `targets` are the photos as
  * they were when it was clicked. Resolves true when written.
  */
-function queueBulkTags({ busy, failed, targets, add = [], remove = [], written, datalist = updateTagsDatalist }) {
-    return queuePhotoWrite(() => {
+function queueBulkTags({ label, busy, failed, targets, add = [], remove = [], written, datalist = updateTagsDatalist }) {
+    return queuePhotoWrite((entry) => {
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = busy;
         return api.json('/api/photos/bulk-tags', {
@@ -353,10 +353,11 @@ function queueBulkTags({ busy, failed, targets, add = [], remove = [], written, 
             console.error(err);
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = 'Error';
+            entry.error = err.message;
             alert(`${failed}: ${err.message}`);
             return false;
         });
-    });
+    }, label);
 }
 
 /**
@@ -369,6 +370,7 @@ export function applyTagToPhotos(tag, isPerson, paths) {
     const targets = (paths || []).filter(Boolean);
     if (targets.length === 0) return;
     return queueBulkTags({
+        label: `Add ${tag} to ${targets.length} photo(s)`,
         busy: 'Applying tag...',
         failed: 'Error applying tag selection',
         targets,
@@ -399,6 +401,7 @@ export function removeTagFromAllSelected(tagOrTags, isPerson) {
     if (tags.length === 0) return;
     const leaves = tags.map(t => leafOf(t).toLowerCase());
     return queueBulkTags({
+        label: `Remove ${tags.join(', ')} from ${state.selectedThumbnails.length} photo(s)`,
         busy: 'Removing tag...',
         failed: 'Error removing tag selection',
         targets: state.selectedThumbnails.slice(),
@@ -438,6 +441,7 @@ export async function bulkAddPeopleToSelection() {
     if (resolvedPeople.length === 0) return;
 
     const done = await queueBulkTags({
+        label: `Add ${resolvedPeople.join(', ')} to ${targets.length} photo(s)`,
         busy: 'Adding people...',
         failed: 'Error bulk adding people',
         targets,
@@ -482,6 +486,7 @@ export async function bulkAddTagsToSelection() {
     if (resolvedTags.length === 0) return;
 
     const done = await queueBulkTags({
+        label: `Add ${resolvedTags.join(', ')} to ${targets.length} photo(s)`,
         busy: 'Adding tags...',
         failed: 'Error bulk adding tags',
         targets,

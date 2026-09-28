@@ -404,7 +404,7 @@ export function applyFolderSuggestionsLevel() {
     // (edits.js) behind every write clicked before it, as a bulk tag write does
     // (selection.js), and the photos are snapshotted for undo as those left them.
     const targets = state.selectedThumbnails.slice();
-    return queuePhotoWrite(() => {
+    return queuePhotoWrite((entry) => {
         const before = snapshotPhotos(targets);
         setStatus('busy', `Applying suggestions to ${targets.length} photo(s)...`);
         return api.json('/api/folder/auto-apply', {
@@ -444,10 +444,11 @@ export function applyFolderSuggestionsLevel() {
             scanFolder(true);
             // A failure that would otherwise pass unnoticed still earns a modal.
             setStatus('error', 'Applying suggestions failed', { transient: false });
+            entry.error = err.message;
             alert("Error applying suggestions: " + err.message);
             return false;
         });
-    });
+    }, `Apply All suggestions (${targets.length} photos)`);
 }
 
 export function updateFolderAutoApplyState() {

@@ -32,6 +32,10 @@ export const state = {
     // The last write queued for one photo, by pathKey: what leaving that photo waits
     // for, where detailSaveInFlight, the tail of the whole queue, has bulk writes too.
     photoWrites: {},
+    // The photo write queue's entries, for its status (write-queue.js): each
+    // { id, label, status: waiting | writing | done | failed, error, at, retry }.
+    // batchTotal and batchSettled count the writes since the queue was last empty.
+    writeQueue: { entries: [], nextId: 1, batchTotal: 0, batchSettled: 0, open: false },
 
     // The title showPhoto last put in the field, and for which photo. A refresh shows
     // the same photo again; if the field no longer holds what was put there, somebody
