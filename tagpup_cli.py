@@ -703,6 +703,9 @@ def write_suggestions_file(suggestions_file, db_path, exiftool_path, live=False,
     except Exception as e:
         writer_log.error(f"ExifTool writer error: {e}", exc_info=True)
         return False
+    if result.refused:
+        # Nothing was written: a folder the library does not hold, say.
+        raise click.ClickException(result.refused)
     for path, error in result.errors:
         writer_log.error(f"Failed to write metadata to {path}: {error}")
 

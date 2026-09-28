@@ -6,7 +6,7 @@ import os
 from tagpup.core import dates, fields, paths, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
 from tagpup.files import images, metadata, names, recycle_bin
-from tagpup.services import file_changes
+from tagpup.services import file_changes, libraries
 from tagpup.store import db, embeddings, faces, photos, taxonomy
 
 logger = logging.getLogger(__name__)
@@ -243,6 +243,8 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     if problem:
         result.refuse(problem)
         return result
+    if libraries.refuse_writes(result, library, photo_paths):
+        return result
     grouping = validation.trim(grouping)
     width = len(str(len(photo_paths)))
     present = [p for p in photo_paths if os.path.exists(p)]
@@ -303,6 +305,9 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
         result = Result(attempted=len(photo_paths))
         result.refuse(problem)
         return result
+    refused = Result(attempted=len(photo_paths))
+    if libraries.refuse_writes(refused, library, photo_paths):
+        return refused
 
     def plan_one(_path, held):
         after = {}
@@ -341,6 +346,8 @@ def delete(library, photo_path):
     details: `removed`, the rows removed from each table.
     """
     result = Result(attempted=1)
+    if libraries.refuse_writes(result, library, [photo_path]):
+        return result
     try:
         moved = recycle_bin.send_to_recycle_bin(photo_path)
     except Exception as e:
@@ -373,6 +380,8 @@ def rotate(library, photo_path, direction, exiftool_path):
     refused = validation.problem("rotate direction", direction)
     if refused:
         result.refuse(refused)
+        return result
+    if libraries.refuse_writes(result, library, [photo_path]):
         return result
     # The row is stamped only if it described the file just before the turn (#249).
     before = embeddings.stamp_of(photo_path)

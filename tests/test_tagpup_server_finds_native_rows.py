@@ -325,6 +325,7 @@ class TestSmartRenameNumbersByDateTaken(HandlerCase):
 class TestTimeShiftKeepsTheRealPaths(HandlerCase):
     def test_a_cold_folder_is_walked_and_returned_in_its_own_case(self):
         photo = self.make_file("IMG_0001.jpg")
+        self.lib.hold(self.folder)
         extractor = fake_extractor({"EXIF:Model": "Test Camera"})
         # ExifTool answers the shift's read with the photo's date, in the spelling it
         # answers every path in, and keeps what the shift writes, as the file would.

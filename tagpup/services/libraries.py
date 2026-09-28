@@ -12,7 +12,7 @@ import os
 
 from tagpup.core import paths, validation
 from tagpup.core.library import Library, picker_name
-from tagpup.core.result import Result
+from tagpup.core.result import NOT_IN_LIBRARY, Result
 from tagpup.files import images
 from tagpup.services import settings
 from tagpup.store import db, photos, schema, taxonomy
@@ -151,6 +151,24 @@ def not_in(library, folder):
         return "%s is not in %s. Add it to %s first." % (folder, name, name)
     return ("%d folder(s) under %s are not in %s, %s first. Add the folder to %s first."
             % (len(unheld), folder, name, unheld[0], name))
+
+
+def refuse_writes(result, library, photo_paths):
+    """Refuse `result` -- a write of photo files, nothing written yet -- when the library
+    does not hold the folder of any photo of `photo_paths`: "<folder> is not in
+    <library>. Add it to <library> first." Returns True when refused. The one check every
+    write of a photo makes (tagging, rotating, renaming, a time shift, a delete): writing
+    kr-track's tags into the photos of a folder photo_index holds, through kr-track, was
+    the same mistake as Suggest making rows there. `details[NOT_IN_LIBRARY]` holds the
+    folders, which a web route answers with 409."""
+    unheld = not_held(library, photo_paths)
+    if not unheld:
+        return False
+    name = picker_name(os.path.basename(library.path))
+    more = "" if len(unheld) == 1 else " (and %d more folder(s))" % (len(unheld) - 1)
+    result.refuse("%s is not in %s%s. Add it to %s first." % (unheld[0], name, more, name))
+    result.details[NOT_IN_LIBRARY] = unheld
+    return True
 
 
 def admit(library, photo_paths):

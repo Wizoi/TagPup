@@ -336,7 +336,7 @@ def folder_auto_apply():
         with file_changes.exclusively():
             result = tagging_actions.add_tags(library, additions, state.exiftool(library))
             if result.refused:
-                return responses.error(400, result.refused)
+                return responses.refused(result)
             _records_written(library, result)
     except Exception as e:
         logger.error("Error auto-applying suggestions: %s", e)
@@ -379,7 +379,7 @@ def folder_time_shift():
     try:
         result = photo_actions.shift_date_taken(library, targets, shift_minutes, state.exiftool(library))
         if result.refused:
-            return responses.error(400, result.refused)
+            return responses.refused(result)
         if not result.ok:
             raise RuntimeError(result.message())
         for meta in result.details["records"]:
@@ -430,7 +430,7 @@ def folder_rename_photos():
             library, sorted(photo_paths, key=taken), grouping, state.rename_format(library),
             state.exiftool(library))
         if result.refused:
-            return responses.error(400, result.refused)
+            return responses.refused(result)
         if not result.ok:
             return responses.error(500, result.message())
         # Their saved suggestions are kept by the photo's id, and went with the rows.
@@ -538,7 +538,7 @@ def photo_rotate():
         # "rotate direction" kind's message, rather than taken for a right turn.
         result = photo_actions.rotate(library, photo_path, direction, state.exiftool(library))
         if result.refused:
-            return responses.error(400, result.refused)
+            return responses.refused(result)
         if not result.ok:
             logger.error("Error rotating image %s: %s", photo_path, result.message())
             return responses.error(500, result.message())
@@ -562,6 +562,8 @@ def photo_delete():
         return responses.error(400, "Invalid file path")
     try:
         result = photo_actions.delete(library, photo_path)
+        if result.refused:
+            return responses.refused(result)
         if not result.ok:
             return responses.error(500, result.message())
         for held, _record in folders.of(library).entries_for(photo_path):
@@ -587,7 +589,7 @@ def photo_save_metadata():
         result = tagging_actions.save_photo(library, photo_path, title, tags, date_taken,
                                             state.exiftool(library), state.rename_format(library))
         if result.refused:
-            return responses.error(400, result.refused)
+            return responses.refused(result)
         new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
         # Every folder map holding the photo, found under the name it had (a rename
         # stays in the same directory).
@@ -629,7 +631,7 @@ def photos_bulk_tags():
             result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
                                                  state.exiftool(library))
             if result.refused:
-                return responses.error(400, result.refused)
+                return responses.refused(result)
             _records_written(library, result)
     except Exception as e:
         logger.error("Error in bulk tags write: %s", e)

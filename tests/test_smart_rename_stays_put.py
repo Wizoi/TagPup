@@ -35,6 +35,7 @@ class SmartRenameStaysPut(HandlerCase):
         os.makedirs(os.path.join(self.folder, "Heats"))
         top = self.make_file("a.jpg")
         inner = self.make_file(os.path.join("Heats", "b.jpg"))
+        self.lib.hold(self.folder, os.path.dirname(inner))
 
         renamed = self.rename([top, inner])["updated_paths"]
 

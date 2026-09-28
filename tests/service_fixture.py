@@ -45,6 +45,12 @@ class TempLibrary:
         self.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
                      " VALUES (?, ?, ?, ?, '[]', '{}')", (path, mtime, size, json.dumps(list(tags))))
 
+    def hold(self, *folders):
+        """Make each folder this library's, as indexing it did (photo_rows.hold): a photo
+        is written only through a library that holds its folder."""
+        import photo_rows
+        db.write_with_connection(self.library.path, lambda conn: [photo_rows.hold(conn, f) for f in folders])
+
     def add_folder(self, *photo_paths):
         """Add the folders of `photo_paths` to the library, as Add to <library> does
         (tagpup.services.libraries.admit): each photo a row holding its path alone. Suggest

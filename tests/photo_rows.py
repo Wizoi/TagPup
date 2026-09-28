@@ -6,6 +6,8 @@ copies -- and the tests passed on the bug. Here a row is what the indexer record
 read (MetadataExtractor._structure, then store.photos.record_indexed), or what Suggest
 makes of a photo it has never read (store.photos.ensure_row, in a folder added to the library).
 """
+import os
+
 from tagpup.files.metadata import MetadataExtractor
 from tagpup.store import photos
 
@@ -29,3 +31,17 @@ def add_unread(conn, photo_path):
     else -- in a folder added to the library (store.photos.admit), and return its id.
     The caller commits."""
     return photos.ensure_row(conn, photo_path, admit=True)
+
+
+#: The photo hold() records: one indexed before and gone from disk since, whose row
+#: stays until the owner removes it (sync reports a missing file, never removes it).
+HELD_BY = "indexed earlier.jpg"
+
+
+def hold(conn, folder):
+    """Make `folder` the library's (store.photos.holds_folder), as indexing it did: the
+    row of a photo indexed there before and deleted since, so that no photo on disk --
+    nothing a scan, a rename or a count sees -- is added. A photo is written only
+    through a library that holds its folder (tagpup.services.libraries.refuse_writes).
+    The caller commits."""
+    return add_read(conn, os.path.join(folder, HELD_BY), {})

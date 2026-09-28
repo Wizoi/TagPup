@@ -228,6 +228,7 @@ Analyzes untagged photos and generates tag recommendations.
   - `--add`: Add DIRECTORY to the library first when the library does not hold every folder of photos under it: each photo gets its row, the path and nothing read, as TagPup's Add does (`index` then reads them). Without it such a folder is refused, exit code 1, with a message naming the folder and the library: Suggest records faces and vectors on each photo's row, and a row makes its folder the library's -- kept in step, watched, its new files indexed (`tagpup.services.libraries.not_in`).
 
 #### 3. `write`
+Refused, exit code 1 and nothing written, when the library does not hold the folder of a photo the file names (`tagpup.services.libraries.refuse_writes`): "<folder> is not in <library>. Add it to <library> first."
 Writes suggested tags and descriptions back to photo file metadata using ExifTool.
 - **Usage**: `run.bat [global-options] write <SUGGESTIONS_FILE>`
 - **Options**:

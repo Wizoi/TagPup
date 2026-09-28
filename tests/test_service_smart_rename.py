@@ -34,6 +34,7 @@ class SmartRenaming(unittest.TestCase):
 
     def test_photos_are_numbered_in_the_order_given_and_named_for_their_captions(self):
         c, a, b = (self.lib.photo(n) for n in ("c.jpg", "a.jpg", "b.jpg"))
+        self.lib.hold(self.lib.photos)   # photos are renamed only in a folder the library holds
         result = self.rename([c, a, b], {c: "Start", b: "Finish"})
         self.assertEqual(self.names(), ["Regatta - 1 - Start.jpg", "Regatta - 2.jpg",
                                         "Regatta - 3 - Finish.jpg"])
@@ -46,6 +47,7 @@ class SmartRenaming(unittest.TestCase):
         MCP server, a script) put a double space before every photo's number. Found in
         review of the settings."""
         a, b = self.lib.photo("a.jpg"), self.lib.photo("b.jpg")
+        self.lib.hold(self.lib.photos)
         result = self.rename([a, b], {a: "Start"}, grouping=chr(0x2003) + "Harbour Day " + chr(0xFEFF))
         self.assertIsNone(result.refused)
         self.assertEqual(self.names(), ["Harbour Day - 1 - Start.jpg", "Harbour Day - 2.jpg"])
@@ -77,6 +79,7 @@ class SmartRenaming(unittest.TestCase):
 
     def test_a_photo_no_longer_on_disk_keeps_its_number_unused(self):
         a, b = self.lib.photo("a.jpg"), self.lib.photo("b.jpg")
+        self.lib.hold(self.lib.photos)
         gone = os.path.join(self.lib.photos, "gone.jpg")
         self.rename([a, gone, b], {})
         self.assertEqual(self.names(), ["Regatta - 1.jpg", "Regatta - 3.jpg"])

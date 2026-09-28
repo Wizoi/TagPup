@@ -48,6 +48,12 @@ class Result:
         return "; ".join(error for _, error in self.errors)
 
 
+#: The detail a Result carries when it was refused because the library does not hold
+#: the folder of a photo it was asked to write (tagpup.services.libraries.refuse_writes):
+#: the folders, which a web route answers with 409.
+NOT_IN_LIBRARY = "not_in_library"
+
+
 class NotFound(Exception):
     """What a read or a write was asked about is not there. A web route answers it
     with 404."""
