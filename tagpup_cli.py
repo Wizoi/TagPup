@@ -463,14 +463,14 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str, add_folder
     library = Library(db_path)
     # Suggest records faces and vectors for every photo it looks at, each on its row: only
     # in the folders the library holds (tagpup.services.libraries.not_in).
-    refusal = library_actions.not_in(library, directory)
+    settings = runtime.settings(library)
+    refusal = library_actions.not_in(library, directory, settings.ignored)
     if refusal and not add_folder:
         console.print(f"[bold red]Error:[/bold red] {refusal} (--add adds it; `index` adds and reads it)")
         ctx.exit(1)
     if refusal:
         made = library_actions.admit(library, image_files.photos_under(directory))
         console.print(f"Added {made} photo(s) to {library.name}; `index` reads them into it.")
-    settings = runtime.settings(library)
     model_name = settings.embedder["model_name"]
 
     photo_index = library_index(runtime, db_path)

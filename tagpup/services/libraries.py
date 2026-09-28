@@ -78,14 +78,21 @@ def _read(db_path, read, default):
         conn.close()
 
 
-def not_held(library, photo_paths):
+def not_held(library, photo_paths, ignored=()):
     """The folders of `photo_paths` the library holds no photo directly in, each once, as
     stored, in path order: those it must be asked to add before any row is made for their
-    photos (tagpup.store.photos.ensure_row). One query a folder, not a photo."""
+    photos (tagpup.store.photos.ensure_row). One query a folder, not a photo.
+
+    A folder that is one of `ignored` or under one -- the library's ignored folders -- is
+    left out: neither held nor to be offered, as sync passes it over
+    (tagpup.services.sync). Writes pass none: a photo there is not the library's to
+    write (refuse_writes)."""
     folders = {}
     for photo_path in photo_paths:
         folder = os.path.dirname(paths.stored(photo_path))
         folders.setdefault(paths.key(folder), folder)
+    if ignored:
+        folders = {key: folder for key, folder in folders.items() if not _under_any(folder, ignored)}
     if not folders:
         return []
     ordered = [folders[key] for key in sorted(folders)]
@@ -101,11 +108,18 @@ def _under_any(folder, folders):
     return any(paths.same(folder, other) or paths.is_under(folder, other) for other in folders)
 
 
+def is_ignored(photo_path, ignored):
+    """Is the photo in one of the library's `ignored` folders, or under one?"""
+    return bool(ignored) and _under_any(os.path.dirname(paths.stored(photo_path)), ignored)
+
+
 def membership(library, folder, roots=(), ignored=(), others=()):
     """What `library` holds of `folder`, for the page to say before anything is done in it:
     {"library" (its name, as the address bar has it), "folder" (as stored), "photos" (on
     disk under it, at any depth), "photos_held" (the library's rows under it),
-    "photos_not_held" (photos in folders under it the library holds none directly in),
+    "photos_ignored" (photos in its ignored folders, never offered),
+    "photos_not_held" (photos in folders under it the library holds none directly in,
+    ignored folders left out),
     "folders_not_held", "first_not_held" (the first such folder, or None), "has_roots",
     "under_roots" (the folder is one of `roots` or under one), "ignored" (likewise, of
     `ignored`), "others": [{"library", "photos"}] -- each library of `others` holding
@@ -113,7 +127,7 @@ def membership(library, folder, roots=(), ignored=(), others=()):
     libraries are only read."""
     folder = paths.stored(folder)
     on_disk = images.photos_under(folder)
-    unheld = not_held(library, on_disk)
+    unheld = not_held(library, on_disk, ignored)
     unheld_keys = {paths.key(each) for each in unheld}
     elsewhere = []
     for other in others:
@@ -127,6 +141,7 @@ def membership(library, folder, roots=(), ignored=(), others=()):
         "folder": folder,
         "photos": len(on_disk),
         "photos_held": held_under(library, folder),
+        "photos_ignored": sum(1 for p in on_disk if is_ignored(p, ignored)),
         "photos_not_held": sum(1 for p in on_disk if paths.key(os.path.dirname(p)) in unheld_keys),
         "folders_not_held": len(unheld),
         "first_not_held": unheld[0] if unheld else None,
@@ -137,12 +152,13 @@ def membership(library, folder, roots=(), ignored=(), others=()):
     }
 
 
-def not_in(library, folder):
+def not_in(library, folder, ignored=()):
     """Why nothing that makes rows -- Suggest, whose faces, vectors and suggestions each
     need their photo's row -- may be done in `folder` for `library`, or None when the
-    library holds every folder of photos under it. "<folder> is not in <library>", for
-    a person to read. One walk of the folder, no file read."""
-    unheld = not_held(library, images.photos_under(folder))
+    library holds every folder of photos under it but its `ignored` folders, which the
+    work leaves out. "<folder> is not in <library>", for a person to read. One walk of
+    the folder, no file read."""
+    unheld = not_held(library, images.photos_under(folder), ignored)
     if not unheld:
         return None
     folder = paths.stored(folder)

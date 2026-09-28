@@ -304,10 +304,16 @@ def folder_suggest_start():
     folder = paths.stored(folder)
     # Suggest makes rows -- faces, vectors, what it offered -- for every photo it looks at:
     # only in the folders the library holds; the page asks to add one first (/api/folder/add).
-    refusal = library_actions.not_in(library, folder)
+    # Its ignored folders are passed over, as sync passes them (not held, not offered).
+    ignored = runtimes.peek_settings(library).ignored
+    refusal = library_actions.not_in(library, folder, ignored)
     if refusal:
         return responses.error(409, refusal)
-    work = suggestion_jobs.work_for(library, lambda: _folder_photos(library, folder), state.runtime())
+
+    def photos():
+        return {key: meta for key, meta in _folder_photos(library, folder).items()
+                if not library_actions.is_ignored(meta["path"], ignored)}
+    work = suggestion_jobs.work_for(library, photos, state.runtime())
     return jsonify({"success": True, "status": suggestion_jobs.runs_for(library).start(folder, work)})
 
 

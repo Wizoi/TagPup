@@ -139,6 +139,10 @@ export function askToAdd(found) {
     if (found.has_roots && !found.under_roots) {
         fact(`Outside ${name}'s root folders.`, 'add-folder-warning');
     }
+    if (found.photos_ignored > 0) {
+        fact(`${plural(found.photos_ignored, 'photo', 'photos')} in folders ${name} ignores stay out.`,
+            'add-folder-note');
+    }
     if (found.ignored) {
         fact(`${name}'s settings ignore this folder; adding it keeps it in step all the same.`, 'add-folder-warning');
     }

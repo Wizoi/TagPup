@@ -110,17 +110,23 @@ class Membership(Libraries, unittest.TestCase):
         found = library_actions.membership(self.harbour, self.lighthouse, roots=[os.path.dirname(self.regatta)],
                                            others=[self.harbour, self.quayside])
         self.assertEqual({
-            "library": "harbour", "folder": self.lighthouse, "photos": 3, "photos_held": 0,
+            "library": "harbour", "folder": self.lighthouse, "photos": 3, "photos_held": 0, "photos_ignored": 0,
             "photos_not_held": 3, "folders_not_held": 1, "first_not_held": self.lighthouse,
             "has_roots": True, "under_roots": False, "ignored": False,
             "others": [{"library": "quayside", "photos": 3}],
         }, found)
 
     def test_a_held_folder_with_a_subfolder_not_held(self):
-        found = library_actions.membership(self.harbour, self.regatta, roots=[self.regatta], ignored=[self.scans],
-                                           others=[self.quayside])
+        found = library_actions.membership(self.harbour, self.regatta, roots=[self.regatta], others=[self.quayside])
         self.assertEqual((3, 2, 1, 1, self.scans), (found["photos"], found["photos_held"], found["photos_not_held"],
                                                    found["folders_not_held"], found["first_not_held"]))
+
+    def test_its_ignored_subfolder_is_neither_held_nor_offered(self):
+        found = library_actions.membership(self.harbour, self.regatta, roots=[self.regatta], ignored=[self.scans],
+                                           others=[self.quayside])
+        self.assertEqual((3, 2, 1, 0, 0, None), (found["photos"], found["photos_held"], found["photos_ignored"],
+                                                 found["photos_not_held"], found["folders_not_held"],
+                                                 found["first_not_held"]))
         self.assertEqual((True, True, False, []), (found["has_roots"], found["under_roots"], found["ignored"],
                                                   found["others"]))
 
@@ -169,6 +175,56 @@ class TheRoute(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(before, os.path.getmtime(path))
+
+
+class IgnoredFolders(unittest.TestCase):
+    """A folder the library's settings ignore is neither held nor offered, as sync passes
+    it over (tagpup.services.sync._sort_new). A root holding a held folder and an ignored
+    one asked "Add the rest of this folder?", and Suggest on the root answered 409: four
+    ignored folders of photo_index, 188 photos, sat under folders the owner opens."""
+
+    def setUp(self):
+        from tagpup.services import settings as settings_service
+        from unittest import mock
+        self.app, self.home = web_client.app_for(self, "tagpup", runtime=mock.Mock())
+        self.client = self.app.test_client()
+        self.library = Library(self.home.library("library.db"))
+        self.root = os.path.join(self.home.root, "Pictures")
+        self.held = os.path.join(self.root, "Regatta")
+        self.scans = os.path.join(self.root, "Scans")
+        index(self.library.path, make_photos(self.held, "regatta_01.jpg"))
+        make_photos(self.scans, "scan_01.jpg", "scan_02.jpg")
+        settings_service.of(self.library)
+        self.assertTrue(settings_service.change(self.library, {settings_service.ROOTS: self.root,
+                                                               settings_service.IGNORED: self.scans}).ok)
+        from tagpup.jobs import suggestions as suggestion_jobs
+        from tagpup.web import tagpup_routes
+        self.addCleanup(suggestion_jobs.forget, self.library)
+        self.addCleanup(tagpup_routes.folders.forget, self.library)
+        self.started = []
+        patcher = mock.patch.object(suggestion_jobs.SuggestionRuns, "start",
+                                    lambda runs, folder, work: self.started.append(work) or "running")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_root_asks_nothing(self):
+        found = self.client.get("/library/api/folder/membership", query_string={"path": self.root}).get_json()
+        self.assertEqual((0, 0, None, 2), (found["photos_not_held"], found["folders_not_held"],
+                                           found["first_not_held"], found["photos_ignored"]))
+
+    def test_suggest_starts_on_the_root_without_the_ignored_photos(self):
+        from tagpup.core import paths
+        from tagpup.web import tagpup_routes
+        scanned = [os.path.join(self.held, "regatta_01.jpg"), os.path.join(self.scans, "scan_01.jpg")]
+        tagpup_routes.folders.of(self.library).put(self.root, {paths.key(p): {"path": p} for p in scanned})
+        reply = self.client.post("/library/api/folder/suggest-start", json={"folder_path": self.root})
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual(1, len(self.started))
+        # The run is handed the folder's photos but those of the ignored folder.
+        self.assertEqual([scanned[0]], [meta["path"] for meta in self.started[0].photos().values()])
+
+    def test_the_ignored_folder_itself_is_still_not_the_librarys(self):
+        self.assertIsNotNone(library_actions.not_in(self.library, self.scans, ignored=[]))
 
 
 if __name__ == "__main__":
