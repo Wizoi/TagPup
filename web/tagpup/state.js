@@ -29,6 +29,9 @@ export const state = {
     // reaches selectPhoto and showFolderView, which read both.
     detailSaveInFlight: null,
     leavePrompt: null,
+    // The last write queued for one photo, by pathKey: what leaving that photo waits
+    // for, where detailSaveInFlight, the tail of the whole queue, has bulk writes too.
+    photoWrites: {},
 
     // The title showPhoto last put in the field, and for which photo. A refresh shows
     // the same photo again; if the field no longer holds what was put there, somebody

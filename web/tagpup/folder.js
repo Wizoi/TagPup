@@ -13,7 +13,7 @@ import {
 import { flagField } from './status.js';
 import { CACHE_TTL_MS, folderCacheKey, saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
-import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen } from './edits.js';
+import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 
 export function wireChangeDogPark() {
     if (btnChangeDb) {
@@ -188,7 +188,7 @@ export function scanFolder(forceRefresh = false) {
     // Opening a folder, or refreshing this one, repopulates the panel from what
     // was scanned -- so it asks first, like any other way off the photo. Staying
     // puts the open folder back in the box rather than leave it naming another.
-    if (hasUnsavedEdits() || state.detailSaveInFlight) {
+    if (hasUnsavedEdits() || openPhotoWrite()) {
         leavePhotoThen(() => scanFolder(forceRefresh), {
             onStay: () => { if (state.scannedFolder) folderPathInput.value = state.scannedFolder; },
         });

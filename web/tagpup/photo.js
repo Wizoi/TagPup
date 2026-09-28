@@ -21,7 +21,7 @@ import {
 } from './format.js';
 import { namesAPerson, updateTagsDatalist } from './tags.js';
 import {
-    leavePhotoThen, postPhotoMetadata, queuePhotoWrite, redrawIfShowing, saveDetailEdits,
+    leavePhotoThen, postPhotoMetadata, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
 } from './edits.js';
 import { renderFileList, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
@@ -261,7 +261,7 @@ export function carryTagsForward() {
         return;
     }
 
-    return queuePhotoWrite(async () => {
+    return queueWriteOf(path, async () => {
         // What is missing now, not when the key was pressed: a write queued
         // ahead of this one may have added some of it, or removed others.
         const before = (photo.tags || []).slice();
@@ -465,7 +465,7 @@ export function deletePhotoTag(tagToRemove) {
     const photo = state.folderPhotos.find(p => p.path === path);
     if (!photo) return;
 
-    return queuePhotoWrite(async () => {
+    return queueWriteOf(path, async () => {
         // From the tags as they are when this runs: two pills clicked in quick
         // succession each used to write "all but mine", and the later one put
         // the other back.
@@ -671,7 +671,7 @@ export function wireDateTakenModal() {
 
             // In the photo write queue with every other write: it sends the tags and
             // title too, and those are read when it runs, not when Save was clicked.
-            queuePhotoWrite(async () => {
+            queueWriteOf(photo.path, async () => {
                 setStatus('busy', 'Saving date taken...');
                 try {
                     await postPhotoMetadata(photo, { date_taken: newDateVal });

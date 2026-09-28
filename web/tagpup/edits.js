@@ -3,7 +3,7 @@
 import { api } from './common/api.js';
 import { dialogOpen } from './common/dialog.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { baseName } from './common/paths.js';
+import { baseName, pathKey } from './common/paths.js';
 import { leafOf, photoAlreadyHas, tagProblem, textProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -42,7 +42,7 @@ export function hasUnsavedEdits() {
 
 export function updateSaveButton() {
     if (!btnSaveDetails) return;
-    btnSaveDetails.disabled = Boolean(state.detailSaveInFlight) || !hasUnsavedEdits();
+    btnSaveDetails.disabled = Boolean(openPhotoWrite()) || !hasUnsavedEdits();
 }
 
 /** Put the panel back to what the photo holds. */
@@ -111,7 +111,29 @@ export function saveDetailEdits(fields = { title: true, tags: true, people: true
     const path = state.activePhotoPath;
     // The fields belong to the photo they were typed on. Leaving waits for the
     // queue, so this should always hold; if it does not, the text is not ours.
-    return queuePhotoWrite(() => (state.activePhotoPath === path ? writeDetailEdits(fields) : true));
+    return queueWriteOf(path, () => (state.activePhotoPath === path ? writeDetailEdits(fields) : true));
+}
+
+/**
+ * queuePhotoWrite, for a write of one photo, `path`: the one leaving that photo waits
+ * for (openPhotoWrite). A bulk write is queued without one, and leaving waits for none:
+ * an arrow key waited for a slow bulk write on a network share to finish.
+ */
+export function queueWriteOf(path, job) {
+    const key = pathKey(path);
+    const run = queuePhotoWrite(job).finally(() => {
+        if (state.photoWrites[key] === run) delete state.photoWrites[key];
+        updateSaveButton();
+    });
+    state.photoWrites[key] = run;
+    updateSaveButton();
+    return run;
+}
+
+/** The write of the open photo queued or under way, if any: what leaving it waits for. */
+export function openPhotoWrite() {
+    const path = state.activePhotoPath;
+    return (path && state.photoWrites[pathKey(path)]) || null;
 }
 
 /**
@@ -127,8 +149,9 @@ export function saveDetailEdits(fields = { title: true, tags: true, people: true
  *
  * So a job runs only after every write queued before it, and computes what it
  * writes from the photo's tags as they are then. It redraws only when its photo
- * is still the one shown (redrawIfShowing), and detailSaveInFlight is the tail of
- * the whole queue, which is what leaving a photo waits for. Resolves to the job's
+ * is still the one shown (redrawIfShowing). detailSaveInFlight is the tail of the
+ * whole queue; leaving a photo waits only for that photo's writes (queueWriteOf).
+ * Resolves to the job's
  * result, or false if it threw; the queue carries on either way.
  */
 export function queuePhotoWrite(job) {
@@ -311,10 +334,10 @@ export function splitTyped(text) {
  * under way is waited for rather than asked about.
  */
 export async function confirmLeavingPhoto() {
-    // The whole queue, not just the write that was running when this began: one
+    // Every write of this photo, not just the one running when this began: one
     // queued behind it may be about to write the very text the question below
-    // would offer to discard.
-    while (state.detailSaveInFlight) await state.detailSaveInFlight;
+    // would offer to discard. Not the bulk writes: they write no typed text.
+    while (openPhotoWrite()) await openPhotoWrite();
     if (!hasUnsavedEdits()) return true;
     if (state.leavePrompt) return false;   // already asking; this route waits its turn
 
@@ -343,7 +366,7 @@ export async function confirmLeavingPhoto() {
  * answered, if the answer allows it.
  */
 export function leavePhotoThen(move, { onStay } = {}) {
-    if (!hasUnsavedEdits() && !state.detailSaveInFlight) {
+    if (!hasUnsavedEdits() && !openPhotoWrite()) {
         move();
         return true;
     }

@@ -45,6 +45,8 @@ function build() {
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photos/bulk-tags", hold)
     .on("/api/folder/auto-apply", hold)
+    .on("/api/photo/save-metadata", { success: true })
+    .on("/api/taxonomy/create", { success: true })
     .on("/api/folder/suggest-status", SUGGESTIONS);
   return { server, held };
 }
@@ -173,6 +175,40 @@ describe("Ctrl+Z while a later write is out", () => {
     assert.deepEqual(undo.add_tags, []);
     assert.ok(!undo.remove_tags.includes("Kentridge"), "undo took off the later write's tag");
     await answer(ctx, { success: true, written: {} });
+  });
+});
+
+describe("moving on while a bulk write is out", () => {
+  const key = (ctx, name, target) => (target || ctx.document).dispatchEvent(
+    new ctx.window.KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true }));
+  const openPath = (ctx) => {
+    const el = ctx.document.querySelector(".photo-item-file.active");
+    return el && el.getAttribute("data-path");
+  };
+
+  test("an arrow key moves at once, and a save then lands after it, holding its tag", async (t) => {
+    const ctx = await loadSelected(t);
+    click(ctx.window, chip(ctx, "Cross Country"));
+    await flush(ctx.window, 8);
+    key(ctx, "ArrowDown");
+    await flush(ctx.window, 8);
+    assert.equal(openPath(ctx), PHOTOS[0].path, "the arrow key waited for the bulk write");
+
+    const input = ctx.document.getElementById("input-add-tag");
+    input.focus();
+    input.value = "Places/Beach";
+    input.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+    assert.equal(ctx.document.getElementById("btn-save-details").disabled, false,
+      "Save is held back by another photo's bulk write");
+    key(ctx, "Enter", input);
+    await flush(ctx.window, 8);
+    const saves = () => ctx.server.calls.filter((c) => c.url.includes("save-metadata"));
+    assert.equal(saves().length, 0, "the save went beside the bulk write");
+
+    await answer(ctx, { success: true, written: {} });
+    for (let i = 0; i < 20 && !saves().length; i++) await flush(ctx.window, 2);
+    assert.equal(saves().length, 1);
+    assert.deepEqual(saves()[0].body.tags, ["Cross Country", "Places/Beach"]);
   });
 });
 

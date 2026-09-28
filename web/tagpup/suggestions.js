@@ -13,7 +13,7 @@ import {
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson } from './tags.js';
-import { postPhotoMetadata, queuePhotoWrite, redrawIfShowing } from './edits.js';
+import { postPhotoMetadata, queuePhotoWrite, queueWriteOf, redrawIfShowing } from './edits.js';
 import { isPhotoTagged, renderFileList, scanFolder } from './folder.js';
 import { saveSingleTitle } from './photo.js';
 import { recordUndo, snapshotPhotos } from './undo.js';
@@ -281,7 +281,7 @@ export function applySuggestedTagDirect(tagName, isPerson, forPath = state.activ
     const photo = state.folderPhotos.find(p => p.path === path);
     if (!photo) return;
 
-    return queuePhotoWrite(async () => {
+    return queueWriteOf(path, async () => {
         const resolved = await resolveTagOrPerson(tagName, isPerson);
         if (!resolved) return true;
 
@@ -334,7 +334,7 @@ export async function applyAllSingleSuggestions() {
     const sugg = state.folderSuggestions[path];
     if (!photo || !sugg) return;
 
-    return queuePhotoWrite(async () => {
+    return queueWriteOf(path, async () => {
         // Resolve each suggestion to the tag it is filed under before writing it,
         // and skip anyone the photo already names -- as it is now, after whatever
         // was queued ahead. Applying the list raw wrote bare leaves.
