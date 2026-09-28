@@ -59,9 +59,18 @@ def reason(kind):
 SHARE_WAIT = 1.0
 SHARE_AWAY = 30.0
 
-#: {folder key: when it did not answer in time (time.monotonic)}: a share away.
+#: {share key: when it did not answer in time (time.monotonic)}: a share away, by its
+#: root (the server and the share), whichever of its folders was asked.
 _away = {}
+#: {share key: the thread still reading it}: a share that has not answered is not asked
+#: again, on another thread, while the first still waits.
+_reading = {}
 _away_lock = threading.Lock()
+
+
+def _share_of(folder):
+    """The key of the share `folder` is on: its root, the server and the share."""
+    return paths.key(os.path.splitdrive(paths.stored(folder))[0] or folder)
 
 
 def _on_a_share(path):
@@ -92,24 +101,27 @@ def _folder_stamps(folder):
     request never waits on a share gone away."""
     if not _on_a_share(folder):
         return _stamps_in(folder)
-    key = paths.key(folder)
+    key = _share_of(folder)
     with _away_lock:
         since = _away.get(key)
-    if since is not None and time.monotonic() - since < SHARE_AWAY:
-        return None
-    answer = {}
-    reader = threading.Thread(target=lambda: answer.update(found=_stamps_in(folder)),
-                              name="DamagedPhotosShareRead", daemon=True)
+        still = _reading.get(key)
+        if (since is not None and time.monotonic() - since < SHARE_AWAY) or (still is not None and still.is_alive()):
+            return None
+        answer = {}
+        reader = threading.Thread(target=lambda: answer.update(found=_stamps_in(folder)),
+                                  name="DamagedPhotosShareRead", daemon=True)
+        _reading[key] = reader
     reader.start()
     reader.join(SHARE_WAIT)
     if "found" not in answer:
-        logger.info("%s did not answer within %s s; its damaged photos are not shown for %s s.",
+        logger.info("The share of %s did not answer within %s s; its damaged photos are not shown for %s s.",
                     folder, SHARE_WAIT, SHARE_AWAY)
         with _away_lock:
             _away[key] = time.monotonic()
         return None
     with _away_lock:
         _away.pop(key, None)
+        _reading.pop(key, None)
     return answer["found"]
 
 

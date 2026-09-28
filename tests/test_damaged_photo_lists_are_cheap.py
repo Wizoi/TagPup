@@ -38,6 +38,9 @@ class Case(unittest.TestCase):
             self.found(os.path.join(self.unplugged, "gone %d.jpg" % n), os.stat(self.here[0]))
         damaged._away.clear()
         self.addCleanup(damaged._away.clear)
+        if hasattr(damaged, "_reading"):
+            damaged._reading.clear()
+            self.addCleanup(damaged._reading.clear)
 
     def found(self, path, stat):
         damaged.remember(self.library, [(path, (stat.st_mtime, stat.st_size), "truncated", "found", 0)])
@@ -84,6 +87,30 @@ class AShareGoneAway(Case):
         self.assertLess(waited, 2.0)
         self.assertLess(again, 0.2, "the share gone away was waited on again")
         self.assertEqual(3, len(first), "the photos on disk were not listed")
+
+    def test_two_folders_of_one_share_cost_one_wait_and_one_thread(self):
+        share = SHARE.rsplit(chr(92), 1)[0]
+        for folder in ("Regatta", "Jetty"):
+            self.found(share + chr(92) + folder + chr(92) + "far.jpg", os.stat(self.here[0]))
+        hung = threading.Event()
+        self.addCleanup(hung.set)
+        asked = []
+        real = damaged._stamps_in
+
+        def listing(folder):
+            if folder.startswith(chr(92) * 2):
+                asked.append(folder)
+                hung.wait(10)
+                return {}
+            return real(folder)
+
+        with mock.patch.object(damaged, "_stamps_in", side_effect=listing), \
+                mock.patch.object(damaged, "SHARE_WAIT", 0.3):
+            started = time.monotonic()
+            damaged.listed(self.library)
+            waited = time.monotonic() - started
+        self.assertEqual(1, len(asked), "each folder of the share was waited on, on a thread of its own")
+        self.assertLess(waited, 0.55)
 
 
 if __name__ == "__main__":
