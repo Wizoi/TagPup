@@ -27,6 +27,7 @@ from tagpup.core.library import picker_name
 from tagpup.core.result import NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
+from tagpup.services import damaged_photos
 from tagpup.services import faces as face_actions
 from tagpup.services import file_changes
 from tagpup.services import indexing
@@ -35,7 +36,7 @@ from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.services import tagging as tagging_actions
 from tagpup.services import tags as tags_service
-from tagpup.web import desktop, responses, state
+from tagpup.web import activity_routes, desktop, responses, state
 from tagpup.web import libraries as web_libraries
 
 logger = logging.getLogger(__name__)
@@ -222,6 +223,20 @@ def folder_scan():
         photos = photo_actions.scan_folder(library, folder, state.exiftool(library))
         cache.put(folder, photos)
     return jsonify(_sorted(photos))
+
+
+@routes.get("/api/folder/damaged")
+def folder_damaged():
+    """The photos under the folder, at any depth, found damaged and not replaced since
+    (tagpup.services.damaged_photos), with their paths and why: the folder's notice and
+    its cards' marks. This PC only, as the Activity page."""
+    if request.remote_addr not in activity_routes.LOOPBACK:
+        return responses.error(403, "The damaged photos are listed to this PC only")
+    library = state.require()
+    folder = _wanted_path()
+    if not folder:
+        return responses.error(400, "Missing 'path' parameter")
+    return jsonify({"folder": paths.stored(folder), "photos": damaged_photos.listed(library, paths.stored(folder))})
 
 
 @routes.get("/api/folder/membership")

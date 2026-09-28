@@ -25,6 +25,7 @@ import {
     updateSaveButton
 } from './edits.js';
 import { renderFileList, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
+import { damageOf, showPhotoDamage } from './damaged.js';
 
 // ---- Detected faces ----------------------------------------------------
 // Face recognition already ran for this photo -- the suggester needs it to propose
@@ -188,10 +189,12 @@ export function showPhoto(path) {
 
     // Fetch photo data from local array
     const photo = state.folderPhotos.find(p => p.path === path);
+    showPhotoDamage(photo ? photo.path : null);
     if (!photo) return;
 
-    // Render values
-    mainImage.src = photoFileUrl(photo, 800);
+    // Render values. A photo that cannot be read has no picture to ask for (damaged.js).
+    const damage = damageOf(photo.path);
+    mainImage.src = damage && !damage.indexed ? '' : photoFileUrl(photo, 800);
     detailPath.textContent = photo.path;
     let dateVal = "Unknown";
     const shownDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));

@@ -22,6 +22,8 @@
                 <h1>TagPup GUI</h1>
                 <!-- The library every change on this page goes to (web/tagpup/membership.js). -->
                 <span id="library-name" class="library-name" aria-label="Library"></span>
+                <!-- How many of the library's photos were found damaged (web/common/damaged-count.js). -->
+                <a id="damaged-badge" class="damaged-badge hidden" href="/activity/#attention" target="_blank" rel="noopener"></a>
             </div>
             <div class="header-actions" style="margin-left: auto; margin-right: 20px; display: flex; align-items: center; gap: 15px;">
                 <div class="db-selector-container" style="display: flex; align-items: center; gap: 8px;">
@@ -130,6 +132,8 @@
                                 <button id="btn-delete-photo" class="btn btn-danger btn-sm" title="Delete Photo (Move to Recycle Bin)">🗑️ Delete</button>
                             </div>
                         </div>
+                        <!-- Why, when this photo was found damaged (web/tagpup/damaged.js). -->
+                        <p id="photo-damaged-note" class="photo-damaged-note hidden" role="alert"></p>
                         <div class="image-viewer">
                             <img id="main-image" src="" alt="Selected Photo">
                         </div>
@@ -255,6 +259,9 @@
                                 <button id="btn-toggle-rename" class="btn btn-secondary btn-sm" title="Smart Rename Files" disabled>🏷️ Smart Rename</button>
                             </div>
                         </div>
+
+                        <!-- The folder's photos found damaged (web/tagpup/damaged.js). -->
+                        <div id="damaged-notice" class="damaged-notice hidden" role="alert"></div>
 
                         <!-- Smart Rename Panel -->
                         <div class="folder-view-timeshift-card hidden" id="rename-panel" style="margin-bottom: 16px;">

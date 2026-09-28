@@ -66,4 +66,10 @@ export const state = {
     // held back there until it is added (membership.js).
     folderMembership: null,
     justLooking: null,
+
+    // The open folder's photos found damaged, by pathKey (GET /api/folder/damaged), and
+    // how many times it was asked, so an older answer does not overwrite a newer
+    // (damaged.js).
+    damagedPhotos: {},
+    damagedAsked: 0,
 };

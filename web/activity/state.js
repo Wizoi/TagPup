@@ -7,6 +7,7 @@ export const state = {
     every: 3000,
     slowEvery: 30000,
     //: What each section last read, as the server answered it.
+    attention: null,
     now: null,
     jobs: null,
     sync: null,

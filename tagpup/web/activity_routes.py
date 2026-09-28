@@ -16,6 +16,8 @@ raw, downloaded) show background work. What it asks:
   due; POST /api/activity/jobs/run runs one now, on the recurring jobs' runner.
 - GET /api/activity/sync, /snapshots, /server, /timeline: each library's syncs and
   watched folders, its snapshots, the always-on process, and one timeline of what was done.
+- GET /api/activity/attention: what needs the owner -- each library's photos found damaged
+  (tagpup.services.damaged_photos), with their paths and TagPup's page on each folder.
 - GET /api/activity/logs and /api/activity/logs/<name>[/raw|/download]: the logs in
   data/logs, read from the end and never whole (tagpup.logs.read).
 
@@ -40,6 +42,7 @@ from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import recurring
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import activity
+from tagpup.services import damaged_photos
 from tagpup.services import indexing
 from tagpup.services import job_runs
 from tagpup.web import responses
@@ -332,6 +335,27 @@ def sync_state():
         entry["watcher"] = (watching or {}).get("libraries", {}).get(library.name)
         listed.append(entry)
     return jsonify({"watching": bool(watching and watching["running"]), "libraries": listed})
+
+
+# ---- Needs attention ---------------------------------------------------------------------
+
+@routes.get("/api/activity/attention")
+def attention():
+    """Every library's photos found damaged and not replaced since, with their paths: the
+    files the owner is to restore, and TagPup's page on the folder of each."""
+    listed, totals = [], {"unreadable": 0, "incomplete": 0}
+    for library in _libraries():
+        try:
+            photos = damaged_photos.listed(library)
+        except Exception as e:
+            logger.warning("Could not read the damaged photos of %s: %s", library.name, e)
+            listed.append({"name": library.name, "photos": [], "error": str(e)})
+            continue
+        for photo in photos:
+            photo["folder_url"] = _app_url("tagpup", library.name, "?path=" + urllib.parse.quote(photo["folder"]))
+            totals["incomplete" if photo["indexed"] else "unreadable"] += 1
+        listed.append({"name": library.name, "photos": photos})
+    return jsonify({"libraries": listed, **totals})
 
 
 # ---- Snapshots ----------------------------------------------------------------------------

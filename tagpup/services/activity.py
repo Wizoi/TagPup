@@ -3,7 +3,7 @@ phase 8.5): its syncs, its snapshots, and one timeline of what was done in it --
 journal's changes, the recurring jobs' runs and the syncs -- newest first.
 
 Counts, times and run tags (tagpup.core.runs), from the library's own records: `changes`
-(tagpup.store.journal), `job_runs` and `sync_runs`. A job run's note -- why it failed --
+(tagpup.store.journal), `job_runs`, `sync_runs` and `damaged_files`. A job run's note -- why it failed --
 is given as its `error`: the page that asks answers this PC alone (tagpup.web.
 activity_routes), and says what went wrong, which a count cannot. A library behind this
 version's schema reads as holding none of what it lacks; nothing is migrated by a look.
@@ -12,7 +12,7 @@ import numbers
 import time
 
 from tagpup.core import runs
-from tagpup.store import db, job_runs, journal, snapshots, sync_runs
+from tagpup.store import damaged_files, db, job_runs, journal, snapshots, sync_runs
 
 #: The most entries a timeline gathers from each record.
 MOST = 500
@@ -79,18 +79,50 @@ def snapshot_list(library, now=None):
             "bytes": sum(each.size for each in found)}
 
 
+def _plural(count, one, many):
+    return "%d %s" % (count, one if count == 1 else many)
+
+
+def found_damaged(records):
+    """The timeline's entries for damaged photos found (store.damaged_files): one for each
+    run of the indexer that found some -- or, found outside a run, each moment -- saying
+    how many, as {"time", "what", "counts", "run"}. What is recorded now: a photo replaced
+    since and forgotten is no longer counted."""
+    groups = {}
+    for each in records:
+        key = each.run or each.found
+        group = groups.setdefault(key, {"time": each.found, "unreadable": 0, "incomplete": 0, "run": each.run})
+        group["time"] = min(group["time"], each.found)
+        group["incomplete" if each.kind == damaged_files.INCOMPLETE else "unreadable"] += 1
+    found = []
+    for group in groups.values():
+        said = []
+        if group["unreadable"]:
+            said.append(_plural(group["unreadable"], "unreadable photo", "unreadable photos"))
+        if group["incomplete"]:
+            said.append(_plural(group["incomplete"], "possibly incomplete copy", "possibly incomplete copies"))
+        found.append({"time": group["time"], "what": "found " + " and ".join(said), "run": group["run"],
+                      "counts": {"unreadable": group["unreadable"], "incomplete": group["incomplete"]}})
+    return found
+
+
 def timeline(library, limit=50):
     """What was done in `library`, newest first, at most `limit` entries: each
-    {"kind": "change" | "job" | "sync", "library", "time", "finished", "seconds", "what",
-    "outcome", "counts", "id", "run", "error"}. A sync's change of the journal is its sync's
-    entry, not one of its own."""
+    {"kind": "change" | "job" | "sync" | "found", "library", "time", "finished", "seconds",
+    "what", "outcome", "counts", "id", "run", "error"}. A sync's change of the journal is its
+    sync's entry, not one of its own; "found" is damaged photos found (found_damaged)."""
     limit = max(1, min(int(limit), MOST))
     entries = []
     conn = _look(library)
     try:
         syncs = sync_runs.recent(conn, limit)
+        damaged = damaged_files.every(conn)
     finally:
         conn.close()
+    for found in found_damaged(damaged):
+        entries.append({"kind": "found", "library": library.name, "time": found["time"], "finished": None,
+                        "seconds": None, "what": found["what"], "outcome": "needs attention",
+                        "counts": found["counts"], "id": None, "run": found["run"], "error": None})
     sync_changes = set()
     for record in syncs:
         entry = _sync_entry(library, record)

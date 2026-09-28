@@ -7,6 +7,7 @@
 // back up the page goes through here. main.js fills it in before anything runs.
 export const upper = {
     applySuggestedTagDirect: null,
+    checkDamagedPhotos: null,
     checkFolderMembership: null,
     checkSuggestionsStatus: null,
     populateCameraModelsDropdown: null,

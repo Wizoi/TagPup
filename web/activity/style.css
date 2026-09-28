@@ -133,3 +133,21 @@ td.actions { white-space: nowrap; }
 .log-table pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; }
 .record.level-warning td.level { color: var(--busy); }
 .record.level-error td.level, .record.level-critical td.level { color: var(--bad); }
+
+/* Needs attention (attention.js). */
+.attention-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.attention-table th,
+.attention-table td {
+    padding: 4px 8px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.attention-table td.path {
+    word-break: break-all;
+}

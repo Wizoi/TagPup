@@ -9,6 +9,10 @@ journal, the new files' folders go on this process's index queue (TagTuner's ind
 panel shows them), and the run is recorded. After an apply that changed rows, the folder
 scans TagPup keeps are let go, as after any rewrite of photos.
 
+How many photos the library has found damaged -- not decoding, or possibly an incomplete
+copy -- is GET /api/damaged-photos, a count for the pages' headers; which they are is the
+Activity page's to list, and TagPup's folder notice's for the open folder.
+
 The folders to review -- under the library's roots, holding photos and no indexed photo,
 not ignored -- are GET /api/sync/review, with their paths: the page that asks lists them,
 as Remove Folder's list does. Include indexes one with its subfolders on this process's
@@ -20,6 +24,7 @@ import logging
 from flask import Blueprint, jsonify, request
 
 from tagpup import runtime as runtimes
+from tagpup.services import damaged_photos
 from tagpup.services import settings as settings_service
 from tagpup.services import sync as sync_service
 from tagpup.web import responses, state, tagpup_routes
@@ -63,6 +68,18 @@ def sync_library():
         answer["error"] = result.message()
     # Refused, nothing was written: 400, as every route answers a refusal.
     return jsonify(answer), (400 if result.refused else 200)
+
+
+@routes.get("/api/damaged-photos")
+def damaged_photo_count():
+    """How many of the library's photos were found damaged and not replaced since: counts,
+    never a path."""
+    library = state.require()
+    try:
+        found = damaged_photos.counts(library)
+    except Exception as e:
+        return responses.error(500, str(e))
+    return jsonify({"library": library.name, **found})
 
 
 @routes.get("/api/sync/review")
