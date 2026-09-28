@@ -134,7 +134,7 @@ class LibrarySettings:
 
 
 def _folders(text):
-    return [_trim(line) for line in str(text).split(validation.FOLDER_SEPARATOR) if _trim(line)]
+    return validation.folder_list(text)
 
 
 def excluded_under(library, new_roots, old_roots=(), ignored=()):

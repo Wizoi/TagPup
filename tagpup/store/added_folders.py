@@ -1,7 +1,7 @@
 """The folders a library was asked to add: `added_folders` (migration 15).
 
-A folder is a library's when it holds one of its photos (tagpup.store.photos.holds_folder)
--- or when the owner asked to add it, before the index has read a photo of it: "Add to
+A folder is a library's when it holds one of its photos (tagpup.store.folders, which says
+so for every consumer) -- or when the owner asked to add it, before the index has read a photo of it: "Add to
 kr-track" in TagPup, TagTuner's Add Folder, the CLI's `index`. Adding made a row for every
 photo under the folder at once, the path and nothing read, so Suggest could start before
 the index reached it; a large tree was tens of thousands of unstamped rows in one request,
@@ -42,6 +42,13 @@ def record(conn, folder, subfolders=True):
     conn.execute("INSERT INTO added_folders (path, subfolders, added) VALUES (?, ?, ?)",
                  (stored, 1 if subfolders else 0, time.strftime(TIME)))
     return 1
+
+
+def every(conn):
+    """[(folder, with its subfolders)] of every folder added."""
+    if not _there(conn):
+        return []
+    return [(path, bool(subfolders)) for path, subfolders in conn.execute("SELECT path, subfolders FROM added_folders")]
 
 
 def covers(conn, folder):

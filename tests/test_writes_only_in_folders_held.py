@@ -115,7 +115,7 @@ class ALibraryThatCannotBeRead(WriteCase):
 
     def unreadable(self):
         import sqlite3
-        return mock.patch("tagpup.store.photos.holds_folder",
+        return mock.patch("tagpup.store.folders.holds",
                           side_effect=sqlite3.OperationalError("database is locked"))
 
     def test_the_question_fails(self):

@@ -11,7 +11,7 @@ import os
 
 from tagpup.core import dates, fields, paths, vocabulary
 from tagpup.core.result import NotHeld
-from tagpup.store import added_folders, db, embeddings, faces, people
+from tagpup.store import added_folders, db, embeddings, faces, folders, people
 from tagpup.store.people import PEOPLE_JSON
 
 logger = logging.getLogger(__name__)
@@ -580,7 +580,7 @@ def _unread_row(conn, photo_path):
 
 def ensure_row(conn, photo_path, admit=False):
     """The id of a photo's row, making the row if it has none -- only in a folder the
-    library holds or was asked to add (holds_folder), unless `admit` (a migration that
+    library holds or was asked to add (tagpup.store.folders.holds), unless `admit` (a migration that
     kept what an older version made). Raises NotHeld, and makes nothing, for a photo in
     any other folder.
 
@@ -598,7 +598,7 @@ def ensure_row(conn, photo_path, admit=False):
         return photo_id
     if not admit:
         folder = os.path.dirname(paths.stored(photo_path))
-        if not holds_folder(conn, folder):
+        if not folders.holds(conn, folder):
             raise NotHeld(folder)
     photo_id = _unread_row(conn, photo_path)
     date_photos(conn, [photo_id])
@@ -716,38 +716,6 @@ def with_tag(conn, tag):
         if tag in tags:
             found.append((path, tags, mtime))
     return found
-
-
-def folder_counts(conn):
-    """{paths.key of a folder: photos the library holds directly in it}."""
-    counts = {}
-    for (photo_path,) in conn.execute("SELECT path FROM photos"):
-        folder = paths.key(os.path.dirname(photo_path))
-        counts[folder] = counts.get(folder, 0) + 1
-    return counts
-
-
-def folders_held(conn):
-    """[(folder, photos the library holds directly in it)], the folder spelled as the
-    library stores it (tagpup.core.paths.stored), so it can be sent back to name the
-    folder. Spellings differing only in case are one folder, under the first seen."""
-    held, spelling = {}, {}
-    for (photo_path,) in conn.execute("SELECT path FROM photos"):
-        folder = os.path.dirname(photo_path)
-        key = paths.key(folder)
-        spelling.setdefault(key, folder)
-        held[key] = held.get(key, 0) + 1
-    return [(spelling[key], count) for key, count in held.items()]
-
-
-def holds_folder(conn, folder):
-    """Is `folder` the library's: does it hold a photo directly in it, or was the folder
-    added (tagpup.store.added_folders) -- asked for, before the index read a photo of it?
-    The one answer to "is this folder in this library" (tagpup.services.libraries)."""
-    where, params = paths.sql_in("path", folder)
-    if conn.execute("SELECT 1 FROM photos WHERE " + where + " LIMIT 1", params).fetchone() is not None:
-        return True
-    return added_folders.covers(conn, folder)
 
 
 def count_under(conn, folder):

@@ -53,6 +53,7 @@ from tagpup.core.result import Result
 from tagpup.files import images
 from tagpup.services import maintenance, refresh_rows, relink_photos
 from tagpup.store import db, generations, schema, sync_runs
+from tagpup.store import folders as store_folders
 from tagpup.store import photos as store_photos
 
 #: What the change is recorded as.
@@ -123,16 +124,16 @@ def _under_any(folder, folders):
     return key in folders or any(paths.is_under(folder, other) for other in folders.values())
 
 
-def _scan(conn, folder, roots):
+def _scan(conn, folder, roots, library_folders):
     """What is on disk against the rows: (by_key {key: (id, path, mtime, size)} of the rows
     looked at, on_disk {key: (path, mtime, size)}, the folders walked, those not there).
-    The whole library walks every root and every folder it holds photos in, each once
+    The whole library walks every root and every folder of the library's
+    (`library_folders`, tagpup.store.folders: those with rows, and those added), each once
     from the topmost; a folder, that folder alone."""
     by_key = {}
     for photo_id, path, mtime, size in store_photos.stamps(conn, folder):
         by_key.setdefault(paths.key(path), (photo_id, path, mtime, size))
-    walked = [paths.stored(folder)] if folder else walk_roots(
-        set(roots) | {os.path.dirname(path) for _id, path, _m, _s in by_key.values()})
+    walked = [paths.stored(folder)] if folder else walk_roots(set(roots) | set(library_folders.walked()))
     on_disk, gone = {}, []
     for root in walked:
         if os.path.isdir(root):
@@ -175,7 +176,7 @@ def _pair_moves(conn, by_key, missing, new, exiftool_path, read=True):
     return pairs, ambiguous_rows, ambiguous_files
 
 
-def _sort_new(new, by_key, stops, ignored, ambiguous_files, roots):
+def _sort_new(new, by_key, stops, ignored, ambiguous_files, roots, library_folders):
     """Where each new file goes: ({indexed folder: new files}, the folders its new files
     are queued for; {folder to review: photos}; photos under an ignored folder; {folder
     held back: files}; photos in no folder the library holds and under none of `roots`).
@@ -185,11 +186,22 @@ def _sort_new(new, by_key, stops, ignored, ambiguous_files, roots):
     with that folder alone. One in a folder holding none is under a folder to review: the
     topmost above it, below a root (`stops`, keys), that holds no indexed photo at any
     depth -- unless it is under an ignored folder. A folder holding a file that may be a
-    copy of a missing photo (`ambiguous_files`) is held back from both."""
-    held = {paths.key(os.path.dirname(path)) for _id, path, _m, _s in by_key.values()}
+    copy of a missing photo (`ambiguous_files`) is held back from both.
+
+    Which folders the library holds is `library_folders`' (tagpup.store.folders): those
+    with rows and those added -- a new subfolder of a folder added with its subfolders is
+    the library's, queued, not to review -- but never an ignored one."""
+    held_by_key = {}
+
+    def is_held(folder):
+        key = paths.key(folder)
+        if key not in held_by_key:
+            held_by_key[key] = library_folders.holds(folder)
+        return held_by_key[key]
+
     holding = set()
-    for _id, path, _m, _s in by_key.values():
-        current = os.path.dirname(path)
+    for folder in library_folders.walked():
+        current = folder
         while paths.key(current) not in holding:
             holding.add(paths.key(current))
             parent = os.path.dirname(current)
@@ -201,7 +213,7 @@ def _sort_new(new, by_key, stops, ignored, ambiguous_files, roots):
     for key, (path, _mtime, _size) in new.items():
         folder = os.path.dirname(path)
         folder_key = paths.key(folder)
-        if folder_key in held:
+        if is_held(folder):
             if folder_key in ambiguous_folders:
                 held_back[folder] = held_back.get(folder, 0) + 1
             else:
@@ -260,8 +272,10 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
             return maintenance.Plan(refused=problem)
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        by_key, on_disk, walked, roots_gone = _scan(conn, folder, roots)
-        if folder is not None and not by_key and not _under_any(folder, {paths.key(r): r for r in roots}):
+        library_folders = store_folders.of(conn, list(ignored_by_key.values()))
+        by_key, on_disk, walked, roots_gone = _scan(conn, folder, roots, library_folders)
+        if (folder is not None and not by_key and not library_folders.holds(folder)
+                and not _under_any(folder, {paths.key(r): r for r in roots})):
             return maintenance.Plan(refused=(
                 "The library holds no photo under that folder, and it is under none of the library's root "
                 "folders: sync keeps the library's folders in step. To add it, add a root folder or index it."))
@@ -310,7 +324,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
     by_folder = _missing_by_folder(missing)
     stops = {paths.key(root) for root in walked + roots}
     queued, review, ignored_files, held_back, outside = _sort_new(
-        new, by_key, stops, ignored_by_key, ambiguous_files, {paths.key(r): r for r in roots})
+        new, by_key, stops, ignored_by_key, ambiguous_files, {paths.key(r): r for r in roots}, library_folders)
     new_folders = sorted(queued, key=paths.key)
     new_paths = sorted((path for path, _m, _s in new.values()
                         if paths.key(os.path.dirname(path)) in {paths.key(f) for f in queued}), key=paths.key)
@@ -351,7 +365,8 @@ def review(library, roots=(), ignored=()):
     roots = [paths.stored(root) for root in roots]
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        by_key, on_disk, walked, _gone = _scan(conn, None, roots)
+        library_folders = store_folders.of(conn, [paths.stored(f) for f in ignored])
+        by_key, on_disk, walked, _gone = _scan(conn, None, roots, library_folders)
         missing = [(photo_id, path, mtime, size) for key, (photo_id, path, mtime, size) in by_key.items()
                    if key not in on_disk]
         new = {key: stamp for key, stamp in on_disk.items() if key not in by_key}
@@ -365,7 +380,7 @@ def review(library, roots=(), ignored=()):
     stops = {paths.key(root) for root in walked + roots}
     _queued, found, _ignored, _held, _outside = _sort_new(
         new, by_key, stops, {paths.key(f): paths.stored(f) for f in ignored},
-        ambiguous_files, {paths.key(r): r for r in roots})
+        ambiguous_files, {paths.key(r): r for r in roots}, library_folders)
     listed = [{"path": top, "photos": found[top]} for top in sorted(found, key=paths.key)]
     return {"folders": listed, "photos": sum(found.values())}
 
@@ -493,10 +508,11 @@ _held_lock = threading.Lock()
 
 def watch_folders(library, roots=()):
     """The folders the always-on process watches for `library` (tagpup.jobs.watching): its
-    root folders and every folder it holds photos in, each the topmost of those under it --
-    the folders sync keeps in step. None for a library behind this version's schema: it is
-    left alone until an app opens it and migrates it, as the recurring jobs leave it. The
-    folders held are read again only when the photos generation has moved."""
+    root folders and every folder of the library's (tagpup.store.folders: with rows, or
+    added), each the topmost of those under it -- the folders sync keeps in step. None for
+    a library behind this version's schema: it is left alone until an app opens it and
+    migrates it, as the recurring jobs leave it. The folders with rows are read again only
+    when the photos generation has moved; the added and ignored ones, a handful, each time."""
     if schema.pending(library.path):
         return []
     conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -505,11 +521,12 @@ def watch_folders(library, roots=()):
         with _held_lock:
             cached = _held_folders.get(library.key)
         if cached is not None and cached[0] == generation:
-            held = cached[1]
+            rows = cached[1]
         else:
-            held = [folder for folder, _count in store_photos.folders_held(conn)]
+            rows = store_folders.with_rows(conn)
             with _held_lock:
-                _held_folders[library.key] = (generation, held)
+                _held_folders[library.key] = (generation, rows)
+        held = store_folders.of(conn, rows=rows).walked()
     finally:
         conn.close()
     return walk_roots([paths.stored(root) for root in roots] + held)

@@ -17,6 +17,7 @@ from tagpup.core.result import NOT_IN_LIBRARY, Result
 from tagpup.files import images
 from tagpup.services import settings
 from tagpup.store import added_folders, db, photos, schema, taxonomy
+from tagpup.store import folders as store_folders
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +59,8 @@ def create(db_path):
 # The owner opened a folder of another library's in TagPup with kr-track selected, and
 # Suggest made 25 rows for its photos in kr-track without asking; the folder watcher then
 # kept the folder in step, read its tags and grew kr-track's tag tree from them
-# (2026-09-28). A folder is a library's when the library holds a photo directly in it
-# (tagpup.store.photos.holds_folder); these say which folders are, for a page to ask
-# before anything is done in one.
+# (2026-09-28). Which folders are the library's is tagpup.store.folders' to say; these
+# ask it, for a page to ask before anything is done in one.
 
 def _read(db_path, read, default):
     """`read(conn)` on a read-only connection to the library at `db_path`, or `default`
@@ -76,25 +76,32 @@ def _read(db_path, read, default):
         conn.close()
 
 
-def not_held(library, photo_paths, ignored=()):
-    """The folders of `photo_paths` the library holds no photo directly in, each once, as
-    stored, in path order: those it must be asked to add before any row is made for their
-    photos (tagpup.store.photos.ensure_row). One query a folder, not a photo.
+def not_held(library, photo_paths, ignored=None, leave_out_ignored=True):
+    """The folders of `photo_paths` that are not the library's (tagpup.store.folders),
+    each once, as stored, in path order: those it must be asked to add before any row is
+    made for their photos (tagpup.store.photos.ensure_row). One query a folder, not a
+    photo.
 
-    A folder that is one of `ignored` or under one -- the library's ignored folders -- is
-    left out: neither held nor to be offered, as sync passes it over
-    (tagpup.services.sync). Writes pass none: a photo there is not the library's to
-    write (refuse_writes)."""
-    folders = {}
+    `ignored` are the library's ignored folders, read from its settings unless given. An
+    ignored folder is never the library's; unless not `leave_out_ignored` it is left out
+    here too -- not to be offered, as sync passes it over (tagpup.services.sync). Writes
+    keep them (refuse_writes): a photo there is not the library's to write."""
+    wanted = {}
     for photo_path in photo_paths:
         folder = os.path.dirname(paths.stored(photo_path))
-        folders.setdefault(paths.key(folder), folder)
-    if ignored:
-        folders = {key: folder for key, folder in folders.items() if not _under_any(folder, ignored)}
-    if not folders:
+        wanted.setdefault(paths.key(folder), folder)
+    if not wanted:
         return []
-    ordered = [folders[key] for key in sorted(folders)]
-    return _read(library.path, lambda conn: [f for f in ordered if not photos.holds_folder(conn, f)], ordered)
+    ordered = [wanted[key] for key in sorted(wanted)]
+
+    def read(conn):
+        found = store_folders.ignored(conn) if ignored is None else list(ignored)
+        return [folder for folder in ordered
+                if not (leave_out_ignored and store_folders.is_ignored(folder, found))
+                and not store_folders.holds(conn, folder, found)]
+
+    there = [f for f in ordered if not (leave_out_ignored and ignored and store_folders.is_ignored(f, ignored))]
+    return _read(library.path, read, there)
 
 
 def held_under(library, folder):
@@ -108,7 +115,7 @@ def _under_any(folder, folders):
 
 def is_ignored(photo_path, ignored):
     """Is the photo in one of the library's `ignored` folders, or under one?"""
-    return bool(ignored) and _under_any(os.path.dirname(paths.stored(photo_path)), ignored)
+    return store_folders.is_ignored(os.path.dirname(paths.stored(photo_path)), ignored)
 
 
 def membership(library, folder, roots=(), ignored=(), others=()):
@@ -180,7 +187,7 @@ def refuse_writes(result, library, photo_paths):
     kr-track's tags into the photos of a folder photo_index holds, through kr-track, was
     the same mistake as Suggest making rows there. `details[NOT_IN_LIBRARY]` holds the
     folders, which a web route answers with 409."""
-    unheld = not_held(library, photo_paths)
+    unheld = not_held(library, photo_paths, leave_out_ignored=False)
     if not unheld:
         return False
     name = picker_name(os.path.basename(library.path))

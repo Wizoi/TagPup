@@ -367,8 +367,8 @@ class WhichFoldersALibraryHas(unittest.TestCase):
         root = os.path.join(home.root, "Photos")
         os.makedirs(os.path.join(root, "Regatta"))
         seed(library.path, a_jpeg(os.path.join(root, "Regatta", "one.jpg")))
-        with mock.patch.object(sync_service.store_photos, "folders_held",
-                               wraps=sync_service.store_photos.folders_held) as read:
+        with mock.patch.object(sync_service.store_folders, "with_rows",
+                               wraps=sync_service.store_folders.with_rows) as read:
             first = sync_service.watch_folders(library, [])
             self.assertEqual(first, sync_service.watch_folders(library, []))
             self.assertEqual(1, read.call_count, "every path read again with nothing changed")

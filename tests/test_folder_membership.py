@@ -8,7 +8,7 @@ library's roots, and which other library already holds them. This is what it ask
 tagpup.services.libraries.membership, and GET /api/folder/membership.
 
 A folder is a library's when the library holds a photo directly in it
-(tagpup.store.photos.holds_folder): a photo in a folder under it does not make it so.
+(tagpup.store.folders.holds): a photo in a folder under it does not make it so.
 """
 import os
 import sys
@@ -22,7 +22,7 @@ import web_client  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
-from tagpup.store import photos as store_photos  # noqa: E402
+from tagpup.store import folders as store_folders  # noqa: E402
 
 
 def make_photos(folder, *names):
@@ -74,7 +74,7 @@ class AFolderIsHeld(Libraries, unittest.TestCase):
     def holds(self, library, folder):
         conn = db.connect(db.readonly_uri(library.path), uri=True)
         try:
-            return store_photos.holds_folder(conn, folder)
+            return store_folders.holds(conn, folder)
         finally:
             conn.close()
 

@@ -108,6 +108,12 @@ def trim(text):
     return text.strip(BLANK)
 
 
+def folder_list(text):
+    """The folders a `folders` setting holds (library.roots, library.ignored): one a line,
+    each trimmed as the rules trim it, blank lines left out."""
+    return [trim(line) for line in str(text).split(FOLDER_SEPARATOR) if trim(line)]
+
+
 def _text_rules(what, levels):
     """A tag's rules (`levels`), or a name's: one level of a tag."""
     rules = [{"rule": "forbid_pattern", "pattern": CONTROL,
