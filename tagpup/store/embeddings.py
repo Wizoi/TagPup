@@ -57,17 +57,15 @@ def put(conn, photo_path, model, mtime, size, vector):
 
 def stamps_by_path(conn, photo_paths):
     """{paths.key(path): {(mtime, size)}} of the vectors kept for `photo_paths`, under any
-    model: the files as they were when each was made. One read of the vectors' stamps
-    and their photos' paths, however many are asked about."""
-    wanted = {paths.key(path) for path in photo_paths}
+    model: the files as they were when each was made. One indexed lookup a photo, as
+    photos.rows_of: a scan of every vector took 3 s on photo_index."""
     found = {}
-    if not wanted:
-        return found
-    for path, mtime, size in conn.execute(
-            "SELECT p.path, e.mtime, e.size FROM embeddings e JOIN photos p ON p.id = e.photo_id"):
-        key = paths.key(path)
-        if key in wanted:
-            found.setdefault(key, set()).add((mtime, size))
+    for photo_path in photo_paths:
+        where, params = paths.sql_equals("p.path", photo_path)
+        stamps = {(mtime, size) for mtime, size in conn.execute(
+            "SELECT e.mtime, e.size FROM photos p JOIN embeddings e ON e.photo_id = p.id WHERE " + where, params)}
+        if stamps:
+            found[paths.key(photo_path)] = stamps
     return found
 
 
