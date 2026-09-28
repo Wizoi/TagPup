@@ -36,7 +36,19 @@ not change and a copy does not share. The renames of one edit go together (tagpu
 
 Files are named by their photo's id in what is reported, never by path: a Smart Rename
 puts a caption, and so a name, in a file's name.
+
+**One at a time** (exclusively). Two changes of the same files at once each planned from
+the files as they were before the other, and ExifTool's second write to a file it was
+writing failed ("Error creating file: <file>_exiftool_tmp"): Add to all selected clicked
+three times quickly wrote one set of tags, reported "wrote 0 file(s)" for another, and
+lost the third. So every change of photo files in this process -- plan, write and read
+back -- holds one lock, and a second waits for the first and plans from the files as it
+left them. One lock for the process, not one per library: two libraries can hold the
+same folder, and their writes race the same way. Another process (the CLI) is not held
+by it.
 """
+import contextlib
+import functools
 import logging
 import os
 import threading
@@ -74,8 +86,36 @@ def skip(why):
     return Plan(skip=why)
 
 
+#: Held by every change of photo files in this process (the module's docstring). Re-entrant:
+#: a save holds it around its read and the write it makes of what it read.
+_one_at_a_time = threading.RLock()
+
+
+@contextlib.contextmanager
+def exclusively():
+    """Hold the one lock of changes of photo files: around the reads a change is planned
+    from and its writes. A second waits for the first. Also a decorator:
+    `@file_changes.exclusively()`."""
+    if not _one_at_a_time.acquire(blocking=False):
+        logger.info("A change of photo files waits for the one under way to finish")
+        _one_at_a_time.acquire()
+    try:
+        yield
+    finally:
+        _one_at_a_time.release()
+
+
+def _exclusive(function):
+    @functools.wraps(function)
+    def held(*args, **kwargs):
+        with exclusively():
+            return function(*args, **kwargs)
+    return held
+
+
 # ---- Forward ---------------------------------------------------------------------------
 
+@_exclusive
 def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one, summary=None,
                  unreadable="fail", stop_at_first_error=False, et=None, held=None, read_back_also=()):
     """Write fields into many photos as one change named `operation` (see the module's
@@ -412,6 +452,7 @@ def _holds(path, row):
     return now is not None and all(now.get(key) == value for key, value in row.before.items())
 
 
+@_exclusive
 def rename(library, operation, renames, aside, exiftool_path=None, summary=None):
     """Rename photos -- `renames`, old -> new, and first the files in the way, `aside`
     (tagpup.files.names.aside_for) -- as one change named `operation`: planned and
@@ -543,6 +584,7 @@ def _settle_renames(library, rows, forward, redo):
 
 # ---- Settling at start -------------------------------------------------------------------
 
+@_exclusive
 def settle(library, exiftool_path):
     """Finish every change of photo files that a process no longer running -- or an error
     in this one -- left half done: each file it left planned or writing is settled by
@@ -657,6 +699,7 @@ def _undoable(library, change_id, exiftool_path):
     return change, ready, refused
 
 
+@_exclusive
 def rehearse_undo(library, change_id, exiftool_path):
     """What undoing change `change_id` would do, reading every file and writing none. A
     Result like tagpup.services.journal.rehearse's: details["rehearsal"] has `rows` (the
@@ -681,6 +724,7 @@ def rehearse_undo(library, change_id, exiftool_path):
     return result
 
 
+@_exclusive
 def undo(library, change_id, exiftool_path, apply=False):
     """Undo change `change_id`: a rehearsal unless `apply` (rehearse_undo). Applied, each
     file that still holds what the change left is written back to what it held, its row

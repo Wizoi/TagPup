@@ -13,6 +13,7 @@ from tagpup.store import photos, taxonomy
 logger = logging.getLogger(__name__)
 
 
+@file_changes.exclusively()
 def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rename_format):
     """Save one photo's caption, tags and Date Taken -- the photo panel -- and rename it
     after its new caption if Smart Rename named it.
@@ -32,7 +33,9 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
 
     A rename moves the photo's index row -- embedding, faces and all -- rather than
     leaving them behind; then the row gets what the file holds now. A failure recording
-    it is logged, not raised: the file is written either way.
+    it is logged, not raised: the file is written either way. The read, the write and the
+    rename hold the lock of changes of photo files (file_changes.exclusively): a write
+    between the read and the write was overwritten.
 
     details: `new_path`, `renamed`, `tags` as written, `flat` and `hierarchical` as
     written, `change`, and `index_warning` when the renamed photo's new name already had

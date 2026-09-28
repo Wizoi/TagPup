@@ -24,17 +24,27 @@ back as "Ã¼", and a photo named with a character outside cp1252 could not be p
 at all. `-charset filename=utf8` tells ExifTool on Windows that file names arrive,
 and are to be reported, in UTF-8 too.
 
+A command ExifTool fails raises ExifToolFailed, which says what ExifTool said. pyexiftool's
+error says only "execute returned a non-zero exit status: 1", and that was all a page and
+the log had of "Error creating file: <file>_exiftool_tmp" when two writes met. The
+message names no photo -- a file's name can hold a caption, and so a name -- and the
+whole of what ExifTool said is logged.
+
 Everything else -- get_tags, set_tags, check_execute, auto-start -- is ExifToolHelper's.
 """
+import logging
 import os
 import random
+import re
 import threading
 import time
 
 import exiftool
-from exiftool.exceptions import ExifToolNotRunning, ExifToolVersionError
+from exiftool.exceptions import ExifToolExecuteError, ExifToolNotRunning, ExifToolVersionError
 
-__all__ = ["ExifToolSession", "ExifToolTimeout", "DEFAULT_TIMEOUT"]
+__all__ = ["ExifToolSession", "ExifToolTimeout", "ExifToolFailed", "DEFAULT_TIMEOUT"]
+
+logger = logging.getLogger(__name__)
 
 #: Seconds one ExifTool command may take. A batch of a hundred photos reads in a few
 #: seconds; this is generous enough for a slow disk and still ends a stall the same
@@ -49,7 +59,68 @@ DEFAULT_COMMON_ARGS = ("-G", "-n")
 
 
 class ExifToolTimeout(RuntimeError):
-    """ExifTool did not answer one command in time; its process has been killed."""
+    """ExifTool did not answer one command in time; its process has been killed. Its
+    message names no photo, as ExifToolFailed's names none: it reaches the journal's
+    conflict text, which History shows without revealing paths."""
+
+
+#: Lines of what ExifTool said that go in ExifToolFailed's message; the rest is logged.
+SAID_LINES = 2
+
+
+class ExifToolFailed(ExifToolExecuteError):
+    """ExifTool ran a command and failed it: pyexiftool's error, its message saying what
+    ExifTool said (its first SAID_LINES error lines, each photo named "<file>")."""
+
+    def __init__(self, exit_status, cmd_stdout, cmd_stderr, params):
+        super().__init__(exit_status, cmd_stdout, cmd_stderr, params)
+        said = said_briefly(cmd_stderr, params)
+        if said:
+            self.args = ("ExifTool: %s (exit status %s)" % (said, exit_status),) + self.args[1:]
+
+    def __str__(self):
+        return str(self.args[0])
+
+
+def _text(value):
+    if isinstance(value, bytes):
+        return value.decode(ENCODING, "replace")
+    return str(value or "")
+
+
+def said_briefly(stderr, params=()):
+    """ExifTool's first SAID_LINES lines of `stderr` (errors before warnings), each file
+    of the command, `params`, named "<file>": ExifTool spells a path with forward
+    slashes, whichever it was given."""
+    lines = [line.strip() for line in _text(stderr).splitlines() if line.strip()]
+    lines = [line for line in lines if not line.startswith("Warning")] + \
+        [line for line in lines if line.startswith("Warning")]
+    return unnamed("; ".join(lines[:SAID_LINES]), params)
+
+
+def _files(params):
+    return [_text(p) for p in params if _text(p) and not _text(p).startswith("-")]
+
+
+def unnamed(text, params=()):
+    """`text` with each file of the command, `params`, named "<file>": as given or with
+    forward slashes, as ExifTool spells a path whichever it was given, and then by its
+    name alone."""
+    for name in _files(params):
+        if len(name) < 3:
+            continue
+        pattern = "".join("[\\\\/]" if c in "\\/" else re.escape(c) for c in name)
+        text = re.sub(pattern, "<file>", text, flags=re.IGNORECASE)
+        leaf = re.split(r"[\\/]", name)[-1]
+        if len(leaf) >= 3:
+            text = re.sub(re.escape(leaf), "<file>", text, flags=re.IGNORECASE)
+    return text
+
+
+def _counted(params):
+    """How many files a command was about, for a message that names none."""
+    n = len(_files(params))
+    return "no files" if not n else "1 file" if n == 1 else "%d files" % n
 
 
 def _read_until(fd, sentinel, sink):
@@ -154,9 +225,11 @@ class _DrainingExifTool(exiftool.ExifTool):
                 reason = "did not answer within %gs" % self.timeout
             else:
                 reason = "exited in the middle of a command"
-            message = "ExifTool %s (%s); its process was killed." % (reason, _describe(params))
+            logger.warning("ExifTool %s (%s); its process was killed.%s", reason, _describe(params),
+                           " Last stderr: %s" % partial if partial else "")
+            message = "ExifTool %s (%s); its process was killed." % (reason, _counted(params))
             if partial:
-                message += " Last stderr: %s" % partial[-500:]
+                message += " Last stderr: %s" % unnamed(partial, params)[-500:]
             raise ExifToolTimeout(message)
 
         raw_stdout, raw_stderr = out["data"], err["data"]
@@ -216,3 +289,15 @@ class ExifToolSession(exiftool.ExifToolHelper, _DrainingExifTool):
         if not any(str(a).lower().startswith("filename=") for a in common_args):
             common_args += ["-charset", "filename=utf8"]
         super().__init__(*args, encoding=encoding, common_args=common_args, **kwargs)
+
+    def execute(self, *params, **kwargs):
+        """ExifToolHelper's, raising ExifToolFailed, which says what ExifTool said, for a
+        command ExifTool failed; logged in full."""
+        try:
+            return super().execute(*params, **kwargs)
+        except ExifToolExecuteError as e:
+            if isinstance(e, ExifToolFailed):
+                raise
+            logger.warning("ExifTool failed a command (exit status %s, %s): %s", e.returncode,
+                           _describe(e.cmd), _text(e.stderr).strip() or "it said nothing")
+            raise ExifToolFailed(e.returncode, e.stdout, e.stderr, e.cmd) from None

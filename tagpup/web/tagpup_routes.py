@@ -26,6 +26,7 @@ from tagpup.core.result import NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import faces as face_actions
+from tagpup.services import file_changes
 from tagpup.services import indexing
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
@@ -287,16 +288,19 @@ def folder_auto_apply():
     # Apply exactly what the panel offered (tagpup.core.suggesting.offered_tags).
     additions = {path: suggesting.offered_tags(entry, threshold) for path, entry in suggestions.items()}
     try:
-        result = tagging_actions.add_tags(library, additions, state.exiftool(library))
-        if result.refused:
-            return responses.error(400, result.refused)
-        _records_written(library, result)
-        if not result.ok:
-            raise RuntimeError(result.message())
+        # The page's records are told in the order the files were written.
+        with file_changes.exclusively():
+            result = tagging_actions.add_tags(library, additions, state.exiftool(library))
+            if result.refused:
+                return responses.error(400, result.refused)
+            _records_written(library, result)
     except Exception as e:
         logger.error("Error auto-applying suggestions: %s", e)
         return responses.error(500, str(e))
-    return jsonify({"success": True})
+    if not result.ok:
+        logger.error("Error auto-applying suggestions: %s", result.message())
+        return responses.error(500, result.message(), written=_written_tags(result))
+    return jsonify({"success": True, "written": _written_tags(result)})
 
 
 @routes.post("/api/folder/time-shift")
@@ -575,18 +579,29 @@ def photos_bulk_tags():
     if not photo_paths:
         return responses.error(400, "Missing paths list")
     try:
-        # What is added is checked, not what is removed (tagpup.services.tagging).
-        result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
-                                             state.exiftool(library))
-        if result.refused:
-            return responses.error(400, result.refused)
-        _records_written(library, result)
-        if not result.ok:
-            raise RuntimeError(result.message())
+        # What is added is checked, not what is removed (tagpup.services.tagging). The
+        # page's records are told in the order the files were written.
+        with file_changes.exclusively():
+            result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
+                                                 state.exiftool(library))
+            if result.refused:
+                return responses.error(400, result.refused)
+            _records_written(library, result)
     except Exception as e:
         logger.error("Error in bulk tags write: %s", e)
         return responses.error(500, str(e))
-    return jsonify({"success": True})
+    if not result.ok:
+        # The photos before the one that failed are written: the page is told which,
+        # so that its records say what the files hold.
+        logger.error("Error in bulk tags write: %s", result.message())
+        return responses.error(500, result.message(), written=_written_tags(result))
+    return jsonify({"success": True, "written": _written_tags(result)})
+
+
+def _written_tags(result):
+    """{path: the tags it holds now} of each photo a bulk write wrote, or found holding
+    them already (`written` in its details), for the page."""
+    return {path: list(tags) for path, (tags, _flat, _hierarchical) in result.details["written"].items()}
 
 
 def _records_written(library, result):

@@ -2,7 +2,7 @@
 import { state } from './state.js';
 import { dialogOpen } from './common/dialog.js';
 import { photoList, photoSearch } from './elements.js';
-import { hasUnsavedEdits, leavePhotoThen } from './edits.js';
+import { hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 import { carryTagsForward, selectPhoto } from './photo.js';
 import { undoLastOperation } from './undo.js';
 
@@ -16,7 +16,7 @@ import { undoLastOperation } from './undo.js';
 export function stepPhoto(delta) {
     // Ask before working out where to go, so the list does not scroll to a
     // photo you then decide not to leave for.
-    if (hasUnsavedEdits() || state.detailSaveInFlight) {
+    if (hasUnsavedEdits() || openPhotoWrite()) {
         leavePhotoThen(() => stepPhoto(delta));
         return false;
     }
