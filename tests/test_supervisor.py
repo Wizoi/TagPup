@@ -112,7 +112,10 @@ class Base(unittest.TestCase):
         self.addCleanup(made.stop)
         return thread, found
 
-    def wait_until(self, check, seconds=30):
+    def wait_until(self, check, seconds=90):
+        # A ceiling, not a delay: it returns as soon as `check` holds. Moving onto a new
+        # version starts real server processes, and under a full run (8 test processes)
+        # that took just over 30 s three times (docs/findings.md).
         deadline = time.time() + seconds
         while True:
             found = check()
