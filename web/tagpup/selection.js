@@ -20,6 +20,7 @@ import {
 } from './tags.js';
 import { renderFileList } from './folder.js';
 import { renderThumbnails } from './grid.js';
+import { queuePhotoWrite } from './edits.js';
 
 export function updateSelectedThumbnailsCount() {
     selectedThumbnailsCount.textContent = `Selected: ${state.selectedThumbnails.length}`;
@@ -296,6 +297,52 @@ export function applyTagToAllSelected(tag, isPerson) {
 }
 
 /**
+ * One write of tags to many photos, in the photo write queue (edits.js): after every
+ * write clicked before it, never beside it.
+ *
+ * Each click posted at once, so three quick clicks were three writes of the same
+ * files at the same time on the server. Each planned from the files as they were
+ * before the others, ExifTool refused a file another write had open, and one set of
+ * tags was reported written, one failed, and one was gone from the files without a
+ * word. In the queue they go in the order clicked, each says how it went -- a failed
+ * one in an alert -- and the next goes on either way. `targets` are the photos as
+ * they were when it was clicked. Resolves true when written.
+ */
+function queueBulkTags({ busy, failed, targets, add = [], remove = [], written, datalist = updateTagsDatalist }) {
+    return queuePhotoWrite(() => {
+        statusDot.className = 'status-indicator-dot busy';
+        statusText.textContent = busy;
+        return api.json('/api/photos/bulk-tags', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paths: targets, add_tags: add, remove_tags: remove })
+        })
+        .then(data => {
+            if (!data.success) throw new Error(data.error);
+            targets.forEach(path => {
+                const photo = state.folderPhotos.find(p => p.path === path);
+                if (photo) written(photo);
+            });
+            updateSelectedThumbnailsCount();
+            renderFileList();
+            renderThumbnails();
+            datalist();
+            saveToLocalStorageCache();
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Ready';
+            return true;
+        })
+        .catch(err => {
+            console.error(err);
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Error';
+            alert(`${failed}: ${err.message}`);
+            return false;
+        });
+    });
+}
+
+/**
  * Apply a tag to a given set of photos.
  *
  * A suggestion belongs to the photos that produced it, not to whatever happens to
@@ -304,50 +351,20 @@ export function applyTagToAllSelected(tag, isPerson) {
 export function applyTagToPhotos(tag, isPerson, paths) {
     const targets = (paths || []).filter(Boolean);
     if (targets.length === 0) return;
-    
-    statusDot.className = 'status-indicator-dot busy';
-    statusText.textContent = 'Applying tag...';
-    
-    api.json('/api/photos/bulk-tags', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths: targets, add_tags: [tag], remove_tags: [] })
-    })
-    .then(data => {
-        if (data.success) {
-            // Update tags in cache
-            targets.forEach(path => {
-                const photo = state.folderPhotos.find(p => p.path === path);
-                if (photo) {
-                    if (!photo.tags.includes(tag)) {
-                        photo.tags.push(tag);
-                    }
-                    if (isPerson) {
-                        // photo.people holds leaf names, not paths.
-                        const leaf = leafOf(tag);
-                        if (!photo.people) photo.people = [];
-                        if (!photo.people.includes(leaf)) photo.people.push(leaf);
-                    }
-                }
-            });
-            
-            updateSelectedThumbnailsCount();
-            renderFileList();
-            renderThumbnails();
-            updateTagsDatalist();
-            saveToLocalStorageCache();
-            
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Ready';
-        } else {
-            throw new Error(data.error);
-        }
-    })
-    .catch(err => {
-        console.error(err);
-        statusDot.className = 'status-indicator-dot';
-        statusText.textContent = 'Error';
-        alert("Error applying tag selection: " + err.message);
+    return queueBulkTags({
+        busy: 'Applying tag...',
+        failed: 'Error applying tag selection',
+        targets,
+        add: [tag],
+        written: photo => {
+            if (!photo.tags.includes(tag)) photo.tags.push(tag);
+            if (isPerson) {
+                // photo.people holds leaf names, not paths.
+                const leaf = leafOf(tag);
+                if (!photo.people) photo.people = [];
+                if (!photo.people.includes(leaf)) photo.people.push(leaf);
+            }
+        },
     });
 }
 
@@ -364,46 +381,17 @@ export function removeTagFromAllSelected(tagOrTags, isPerson) {
     const tags = Array.isArray(tagOrTags) ? tagOrTags : [tagOrTags];
     if (tags.length === 0) return;
     const leaves = tags.map(t => leafOf(t).toLowerCase());
-
-    statusDot.className = 'status-indicator-dot busy';
-    statusText.textContent = 'Removing tag...';
-
-    api.json('/api/photos/bulk-tags', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths: state.selectedThumbnails, add_tags: [], remove_tags: tags })
-    })
-    .then(data => {
-        if (data.success) {
-            // Update tags in cache
-            state.selectedThumbnails.forEach(path => {
-                const photo = state.folderPhotos.find(p => p.path === path);
-                if (photo) {
-                    photo.tags = photo.tags.filter(t => !tags.includes(t));
-                    if (isPerson && photo.people) {
-                        photo.people = photo.people.filter(
-                            p => !leaves.includes(leafOf(p).toLowerCase()));
-                    }
-                }
-            });
-            
-            updateSelectedThumbnailsCount();
-            renderFileList();
-            renderThumbnails();
-            updateTagsDatalist();
-            saveToLocalStorageCache();
-            
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Ready';
-        } else {
-            throw new Error(data.error);
-        }
-    })
-    .catch(err => {
-        console.error(err);
-        statusDot.className = 'status-indicator-dot';
-        statusText.textContent = 'Error';
-        alert("Error removing tag selection: " + err.message);
+    return queueBulkTags({
+        busy: 'Removing tag...',
+        failed: 'Error removing tag selection',
+        targets: state.selectedThumbnails.slice(),
+        remove: tags,
+        written: photo => {
+            photo.tags = photo.tags.filter(t => !tags.includes(t));
+            if (isPerson && photo.people) {
+                photo.people = photo.people.filter(p => !leaves.includes(leafOf(p).toLowerCase()));
+            }
+        },
     });
 }
 
@@ -412,7 +400,7 @@ export async function bulkAddPeopleToSelection() {
     if (state.selectedThumbnails.length === 0) return;
     const val = bulkAddPeopleInput.value.trim();
     if (!val) return;
-    
+
     const peopleList = val.split(',').map(p => p.trim()).filter(p => p);
     if (peopleList.length === 0) return;
     // All or nothing, and the text stays to be corrected.
@@ -421,6 +409,7 @@ export async function bulkAddPeopleToSelection() {
         alert(refused);
         return;
     }
+    const targets = state.selectedThumbnails.slice();
 
     const resolvedPeople = [];
     for (const p of peopleList) {
@@ -431,54 +420,31 @@ export async function bulkAddPeopleToSelection() {
     }
     if (resolvedPeople.length === 0) return;
 
-    statusDot.className = 'status-indicator-dot busy';
-    statusText.textContent = 'Adding people...';
-
-    api.json('/api/photos/bulk-tags', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths: state.selectedThumbnails, add_tags: resolvedPeople, remove_tags: [] })
-    })
-    .then(data => {
-        if (data.success) {
-            state.selectedThumbnails.forEach(path => {
-                const photo = state.folderPhotos.find(p => p.path === path);
-                if (photo) {
-                    if (!photo.people) photo.people = [];
-                    resolvedPeople.forEach(p => {
-                        if (!photo.tags.includes(p)) photo.tags.push(p);
-                        const leaf = leafOf(p);
-                        if (!photo.people.includes(leaf)) photo.people.push(leaf);
-                    });
-                }
+    const done = await queueBulkTags({
+        busy: 'Adding people...',
+        failed: 'Error bulk adding people',
+        targets,
+        add: resolvedPeople,
+        written: photo => {
+            if (!photo.people) photo.people = [];
+            resolvedPeople.forEach(p => {
+                if (!photo.tags.includes(p)) photo.tags.push(p);
+                const leaf = leafOf(p);
+                if (!photo.people.includes(leaf)) photo.people.push(leaf);
             });
-
-            bulkAddPeopleInput.value = '';
-            updateSelectedThumbnailsCount();
-            renderFileList();
-            renderThumbnails();
-            updatePeopleDatalist();
-            saveToLocalStorageCache();
-
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Ready';
-        } else {
-            throw new Error(data.error);
-        }
-    })
-    .catch(err => {
-        console.error(err);
-        statusDot.className = 'status-indicator-dot';
-        statusText.textContent = 'Error';
-        alert("Error bulk adding people: " + err.message);
+        },
+        datalist: updatePeopleDatalist,
     });
+    // Only the text that was written: what was typed since stays.
+    if (done && bulkAddPeopleInput.value.trim() === val) bulkAddPeopleInput.value = '';
+    return done;
 }
 
 export async function bulkAddTagsToSelection() {
     if (state.selectedThumbnails.length === 0) return;
     const val = bulkAddTagsInput.value.trim();
     if (!val) return;
-    
+
     const tagsList = val.split(',').map(t => t.trim()).filter(t => t);
     if (tagsList.length === 0) return;
     // All or nothing, and the text stays to be corrected.
@@ -487,6 +453,7 @@ export async function bulkAddTagsToSelection() {
         alert(refused);
         return;
     }
+    const targets = state.selectedThumbnails.slice();
 
     const resolvedTags = [];
     for (const t of tagsList) {
@@ -497,44 +464,20 @@ export async function bulkAddTagsToSelection() {
     }
     if (resolvedTags.length === 0) return;
 
-    statusDot.className = 'status-indicator-dot busy';
-    statusText.textContent = 'Adding tags...';
-
-    api.json('/api/photos/bulk-tags', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths: state.selectedThumbnails, add_tags: resolvedTags, remove_tags: [] })
-    })
-    .then(data => {
-        if (data.success) {
-            state.selectedThumbnails.forEach(path => {
-                const photo = state.folderPhotos.find(p => p.path === path);
-                if (photo) {
-                    resolvedTags.forEach(t => {
-                        if (!photo.tags.includes(t)) photo.tags.push(t);
-                    });
-                }
+    const done = await queueBulkTags({
+        busy: 'Adding tags...',
+        failed: 'Error bulk adding tags',
+        targets,
+        add: resolvedTags,
+        written: photo => {
+            resolvedTags.forEach(t => {
+                if (!photo.tags.includes(t)) photo.tags.push(t);
             });
-
-            bulkAddTagsInput.value = '';
-            updateSelectedThumbnailsCount();
-            renderFileList();
-            renderThumbnails();
-            updateTagsDatalist();
-            saveToLocalStorageCache();
-
-            statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Ready';
-        } else {
-            throw new Error(data.error);
-        }
-    })
-    .catch(err => {
-        console.error(err);
-        statusDot.className = 'status-indicator-dot';
-        statusText.textContent = 'Error';
-        alert("Error bulk adding tags: " + err.message);
+        },
     });
+    // Only the text that was written: what was typed since stays.
+    if (done && bulkAddTagsInput.value.trim() === val) bulkAddTagsInput.value = '';
+    return done;
 }
 
 

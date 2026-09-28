@@ -115,7 +115,10 @@ export function saveDetailEdits(fields = { title: true, tags: true, people: true
 }
 
 /**
- * Every write to a photo's metadata from this page, one at a time, in order.
+ * Every write to a photo's metadata from this page, one at a time, in order: a
+ * bulk tag write (selection.js) and Apply All (suggestions.js) too, which posted at
+ * once and met on the server, each planned from the files as they were before the
+ * others wrote.
  *
  * Each writer used to post its own snapshot of the whole tag list, taken when it
  * was clicked, and redraw whichever photo was open when the server answered. Two

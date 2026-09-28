@@ -399,24 +399,28 @@ export function applyFolderSuggestionsLevel() {
     ].join('\n');
     if (!confirm(scope)) return;
 
-    const before = snapshotPhotos(state.selectedThumbnails);
-    setStatus('busy', `Applying suggestions to ${state.selectedThumbnails.length} photo(s)...`);
-
-    api.json('/api/folder/auto-apply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            folder_path: folder, 
-            photo_paths: state.selectedThumbnails,
-            // Apply everything the panel is showing. A button called Apply All
-            // that applied 141 of 153 suggestions and left 12 on screen read as
-            // a failure, and the 12 it skipped were indistinguishable from the
-            // ones it wrote. What is offered is what gets applied.
-            threshold: 0.0 
+    // The photos selected when it was clicked. It waits in the photo write queue
+    // (edits.js) behind every write clicked before it, as a bulk tag write does
+    // (selection.js), and the photos are snapshotted for undo as those left them.
+    const targets = state.selectedThumbnails.slice();
+    return queuePhotoWrite(() => {
+        const before = snapshotPhotos(targets);
+        setStatus('busy', `Applying suggestions to ${targets.length} photo(s)...`);
+        return api.json('/api/folder/auto-apply', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                folder_path: folder,
+                photo_paths: targets,
+                // Apply everything the panel is showing. A button called Apply All
+                // that applied 141 of 153 suggestions and left 12 on screen read as
+                // a failure, and the 12 it skipped were indistinguishable from the
+                // ones it wrote. What is offered is what gets applied.
+                threshold: 0.0
+            })
         })
-    })
-    .then(data => {
-        if (data.success) {
+        .then(data => {
+            if (!data.success) throw new Error(data.error);
             recordUndo({
                 label: `auto-apply to ${before.length} photo(s)`,
                 photos: before,
@@ -424,15 +428,15 @@ export function applyFolderSuggestionsLevel() {
             setStatus('ready',
                 `Suggestions applied to ${before.length} photo(s) \u2014 Ctrl+Z to undo`);
             scanFolder(true); // Rescan folder to load updated tags
-        } else {
-            throw new Error(data.error);
-        }
-    })
-    .catch(err => {
-        console.error(err);
-        // A failure that would otherwise pass unnoticed still earns a modal.
-        setStatus('error', 'Applying suggestions failed', { transient: false });
-        alert("Error applying suggestions: " + err.message);
+            return true;
+        })
+        .catch(err => {
+            console.error(err);
+            // A failure that would otherwise pass unnoticed still earns a modal.
+            setStatus('error', 'Applying suggestions failed', { transient: false });
+            alert("Error applying suggestions: " + err.message);
+            return false;
+        });
     });
 }
 
