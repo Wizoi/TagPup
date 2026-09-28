@@ -294,12 +294,13 @@ def folder_auto_apply():
             if result.refused:
                 return responses.error(400, result.refused)
             _records_written(library, result)
-        if not result.ok:
-            raise RuntimeError(result.message())
     except Exception as e:
         logger.error("Error auto-applying suggestions: %s", e)
         return responses.error(500, str(e))
-    return jsonify({"success": True})
+    if not result.ok:
+        logger.error("Error auto-applying suggestions: %s", result.message())
+        return responses.error(500, result.message(), written=_written_tags(result))
+    return jsonify({"success": True, "written": _written_tags(result)})
 
 
 @routes.post("/api/folder/time-shift")
@@ -586,12 +587,21 @@ def photos_bulk_tags():
             if result.refused:
                 return responses.error(400, result.refused)
             _records_written(library, result)
-        if not result.ok:
-            raise RuntimeError(result.message())
     except Exception as e:
         logger.error("Error in bulk tags write: %s", e)
         return responses.error(500, str(e))
-    return jsonify({"success": True})
+    if not result.ok:
+        # The photos before the one that failed are written: the page is told which,
+        # so that its records say what the files hold.
+        logger.error("Error in bulk tags write: %s", result.message())
+        return responses.error(500, result.message(), written=_written_tags(result))
+    return jsonify({"success": True, "written": _written_tags(result)})
+
+
+def _written_tags(result):
+    """{path: the tags it holds now} of each photo a bulk write wrote, or found holding
+    them already (`written` in its details), for the page."""
+    return {path: list(tags) for path, (tags, _flat, _hierarchical) in result.details["written"].items()}
 
 
 def _records_written(library, result):

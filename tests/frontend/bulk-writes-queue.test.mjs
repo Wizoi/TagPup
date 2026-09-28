@@ -126,6 +126,24 @@ describe("tags clicked quickly on a selection", () => {
   });
 });
 
+describe("a bulk write that stops part-way", () => {
+  test("the photos it wrote show the tag, the rest do not", async (t) => {
+    const ctx = await loadSelected(t);
+    click(ctx.window, chip(ctx, "Cross Country"));
+    await flush(ctx.window, 8);
+    await answer(ctx, {
+      success: false,
+      error: "ExifTool: Error: Temporary file already exists: <file>_exiftool_tmp (exit status 1)",
+      written: { [PHOTOS[0].path]: ["Cross Country"] },
+    });
+    assert.equal(ctx.alerts.length, 1, "the failure was not reported");
+    const held = [...ctx.document.querySelectorAll("#selection-tags-list .selection-summary-chip")]
+      .map((c) => c.textContent);
+    assert.ok(held.some((c) => c.includes("Cross Country (1)")),
+      `the photo written is not shown holding it: ${held}`);
+  });
+});
+
 describe("Apply All after a tag clicked", () => {
   test("waits for the tag's write", async (t) => {
     const ctx = await loadSelected(t);

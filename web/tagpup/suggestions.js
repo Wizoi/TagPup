@@ -432,6 +432,9 @@ export function applyFolderSuggestionsLevel() {
         })
         .catch(err => {
             console.error(err);
+            // Some photos may have been written before the one that failed: the
+            // folder is read again, so the page's records say what the files hold.
+            scanFolder(true);
             // A failure that would otherwise pass unnoticed still earns a modal.
             setStatus('error', 'Applying suggestions failed', { transient: false });
             alert("Error applying suggestions: " + err.message);

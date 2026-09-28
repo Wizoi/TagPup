@@ -1,6 +1,7 @@
 // TagPup's page: what the selected photos hold, and tagging them all at once.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
+import { samePath } from './common/paths.js';
 import { leafOf, photoAlreadyHas, samePerson, tagProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -318,7 +319,23 @@ function queueBulkTags({ busy, failed, targets, add = [], remove = [], written, 
             body: JSON.stringify({ paths: targets, add_tags: add, remove_tags: remove })
         })
         .then(data => {
-            if (!data.success) throw new Error(data.error);
+            if (!data.success) {
+                // Stopped part-way: the photos before the one that failed are written,
+                // and the page's records must say so.
+                const done = Object.keys(data.written || {});
+                if (done.length) {
+                    targets.filter(path => done.some(d => samePath(d, path))).forEach(path => {
+                        const photo = state.folderPhotos.find(p => p.path === path);
+                        if (photo) written(photo);
+                    });
+                    updateSelectedThumbnailsCount();
+                    renderFileList();
+                    renderThumbnails();
+                    datalist();
+                    saveToLocalStorageCache();
+                }
+                throw new Error(data.error);
+            }
             targets.forEach(path => {
                 const photo = state.folderPhotos.find(p => p.path === path);
                 if (photo) written(photo);

@@ -14,11 +14,12 @@ from tagpup.services import photos as photo_actions
 logger = logging.getLogger(__name__)
 
 
-def error(status, message):
+def error(status, message, **extra):
     """The JSON error both pages read: {"success": false, "error": message}, with
     `status`. TagTuner's page reads `data.success` on every reply, refusals included,
-    and TagPup's treats the key missing as false; one shape, so neither has to know."""
-    return jsonify({"success": False, "error": message}), status
+    and TagPup's treats the key missing as false; one shape, so neither has to know.
+    `extra` goes in beside them (a bulk write's `written`)."""
+    return jsonify({"success": False, "error": message, **extra}), status
 
 
 def image(content, content_type, cache_seconds=None):
