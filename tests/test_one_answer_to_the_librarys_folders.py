@@ -116,5 +116,44 @@ class AnAddedFolder(unittest.TestCase):
         self.assertEqual([], library_actions.not_held(self.library, [os.path.join(self.trip, "IMG_0001.jpg")]))
 
 
+class RemovingAFolderCoveredByAnAdd(unittest.TestCase):
+    """Pictures was added with its subfolders. Removing Pictures\\2019\\Scans took its rows
+    and its own add, and left it the library's all the same: the parent's add covers it,
+    and the next Suggest there made it the library's again. It goes into the library's
+    ignored folders now, as a journaled change of the settings, and the reply says so."""
+
+    def setUp(self):
+        import web_client
+        self.app, self.home = web_client.app_for(self, "tuner")
+        self.library = Library(self.home.library("library.db"))
+        self.pictures = os.path.join(self.home.root, "Pictures")
+        self.scans = os.path.join(self.pictures, "2019", "Scans")
+        self.photo = make_photos(self.scans, "scan_01.jpg")[0]
+        make_photos(os.path.join(self.pictures, "2019"), "IMG_0001.jpg")
+        settings_service.of(self.library)
+        library_actions.record_added(self.library, [self.pictures])
+        db.write_with_connection(self.library.path, lambda conn: photo_rows.add_read(conn, self.photo, {}))
+
+    def test_it_is_ignored_and_no_longer_the_librarys(self):
+        reply = self.app.test_client().post("/library/api/folder/remove", json={"folder_path": self.scans})
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual((1, True), (reply.get_json()["photos_removed"], reply.get_json()["ignored"]))
+        self.assertIn(paths.stored(self.scans), settings_service.of(self.library).ignored)
+        self.assertEqual([self.scans], library_actions.not_held(self.library, [self.photo], leave_out_ignored=False))
+        self.assertIsNotNone(library_actions.not_in(self.library, self.scans), "Suggest would start there")
+        with self.assertRaises(NotHeld):
+            db.write_with_connection(self.library.path, lambda conn: store_photos.ensure_row(conn, self.photo))
+        # The rest of Pictures stays the library's.
+        self.assertEqual([], library_actions.not_held(self.library, [os.path.join(self.pictures, "2019", "x.jpg")]))
+
+    def test_a_folder_no_add_covers_is_only_removed(self):
+        other = os.path.join(self.home.root, "Elsewhere")
+        photo = make_photos(other, "a.jpg")[0]
+        db.write_with_connection(self.library.path, lambda conn: photo_rows.add_read(conn, photo, {}))
+        reply = self.app.test_client().post("/library/api/folder/remove", json={"folder_path": other})
+        self.assertEqual((200, False), (reply.status_code, reply.get_json()["ignored"]))
+        self.assertEqual([], settings_service.of(self.library).ignored)
+
+
 if __name__ == "__main__":
     unittest.main()
