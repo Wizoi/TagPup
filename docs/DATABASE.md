@@ -266,7 +266,7 @@ The folders the library was asked to add (`tagpup.store.added_folders`, migratio
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `path` | TEXT | PRIMARY KEY, compared as paths are (`NOCASE` on Windows) | The folder, as stored (`paths.stored`). |
-| `subfolders` | INTEGER | NOT NULL | 1 when the folders under it were added with it; 0 for the folder alone (`index --no-subfolders`, sync's new files in a folder). |
+| `subfolders` | INTEGER | NOT NULL | 1 when the folders under it were added with it, which covers every folder below; 0 when the folder alone was, which covers none of them: `index --no-subfolders`, which sync runs for the new files of a folder the library holds. A later add with its subfolders sets it to 1; one without never sets it back. |
 | `added` | TEXT | NOT NULL | Local time it was added, `YYYY-MM-DD HH:MM:SS`. |
 
 ---
