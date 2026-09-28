@@ -19,6 +19,7 @@ import os
 from tagpup.core import paths
 from tagpup.files import images
 from tagpup.store import damaged_files, db
+from tagpup.store import photos as store_photos
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,13 @@ def _stamp(photo_path):
     except OSError:
         return None
     return (stat.st_mtime, stat.st_size)
+
+
+def describes(record, stamp):
+    """Does `record` (mtime, size), as found, describe a file whose stamp is `stamp`? As a
+    row describes its file (store.photos.describes): the size, and the time within the
+    folder scan's tolerance. A walk and a stat need not spell a time alike to the last bit."""
+    return store_photos.describes(record[0], record[1], stamp)
 
 
 def records(library):
@@ -111,7 +119,7 @@ def listed(library, folder=None):
         found = damaged_files.under(conn, folder) if folder else damaged_files.every(conn)
     finally:
         conn.close()
-    return [_entry(each) for each in found if _stamp(each.path) == (each.mtime, each.size)]
+    return [_entry(each) for each in found if describes((each.mtime, each.size), _stamp(each.path))]
 
 
 def counts(library):
@@ -132,7 +140,7 @@ def prune(library):
         if stamp is None:
             if os.path.isdir(os.path.dirname(each.path)):
                 stale.append(each)
-        elif stamp != (each.mtime, each.size):
+        elif not describes((each.mtime, each.size), stamp):
             stale.append(each)
     if not stale:
         return 0

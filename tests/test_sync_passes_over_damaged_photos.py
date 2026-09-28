@@ -142,6 +142,17 @@ class NoIndexerIsStarted(Case):
         self.assertEqual(0, result.details["queued"])
         start.assert_not_called()
 
+    def test_nor_when_the_walk_spells_its_time_a_little_differently(self):
+        # A record's stamp is held to the file's as every row's is (store.photos.describes,
+        # 0.1 s): a walk and a stat -- on a network share above all -- need not agree to
+        # the last bit, and an exact comparison queued the indexer again.
+        stat = os.stat(self.cut)
+        damaged.remember(self.library, [(self.cut, (stat.st_mtime + 0.05, stat.st_size), "truncated", "found", 0)])
+        result, start = self.sync()
+        self.assertEqual(1, result.details["counts"]["unreadable_files"])
+        start.assert_not_called()
+        self.assertEqual(["cut short.jpg"], [each["name"] for each in damaged.listed(self.library)])
+
     def test_but_one_is_when_it_is_not_known(self):
         result, start = self.sync()
         self.assertEqual(1, result.details["queued"])

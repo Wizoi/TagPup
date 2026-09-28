@@ -52,7 +52,8 @@ def record(conn, photo_path, stamp, kind, detail, zero_tail=0, run=None, now=Non
     stored = paths.stored(photo_path)
     where, params = paths.sql_equals("path", stored)
     held = conn.execute("SELECT mtime, size, kind FROM damaged_files WHERE " + where, params).fetchone()
-    if held is not None and (held[0], held[1], held[2]) == (stamp[0], stamp[1], kind):
+    from tagpup.store import photos   # photos imports this module
+    if held is not None and held[2] == kind and photos.describes(held[0], held[1], stamp):
         conn.execute("UPDATE damaged_files SET seen = ?, detail = ? WHERE " + where, (now, detail) + params)
         return False
     conn.execute("INSERT INTO damaged_files (" + _COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"

@@ -153,7 +153,8 @@ def _pass_over_damaged(conn, new):
     """(the new files but those found not to decode and unchanged since, {key: path} of
     those). One read of the records: a handful."""
     known = damaged_photos.unreadable(damaged_files.every(conn))
-    damaged = {key: path for key, (path, mtime, size) in new.items() if known.get(key) == (mtime, size)}
+    damaged = {key: path for key, (path, mtime, size) in new.items()
+               if key in known and damaged_photos.describes(known[key], (mtime, size))}
     return {key: stamp for key, stamp in new.items() if key not in damaged}, damaged
 
 

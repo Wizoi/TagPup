@@ -286,7 +286,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         still = []
         for path in images_to_process:
             stamp_then = passed_over.get(paths.key(path))
-            if stamp_then is not None and _stamp(path) == stamp_then:
+            if stamp_then is not None and damaged_photos.describes(stamp_then, _stamp(path)):
                 continue
             still.append(path)
         if len(still) < len(images_to_process):
