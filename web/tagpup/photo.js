@@ -283,7 +283,7 @@ export function carryTagsForward() {
         photo.tags = updatedTags;
         upper.recordUndo({
             label: `carry ${missing.length} tag(s) from ${from}`,
-            photos: [{ path: photo.path, tags: before, title: photo.title }],
+            photos: [{ path: photo.path, before, after: updatedTags }],
         });
         redrawIfShowing(photo);
         renderFileList();

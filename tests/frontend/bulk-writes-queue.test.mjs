@@ -144,6 +144,38 @@ describe("a bulk write that stops part-way", () => {
   });
 });
 
+describe("Ctrl+Z while a later write is out", () => {
+  test("takes back only what Apply All added, after it, and the later tag stays", async (t) => {
+    const ctx = await loadSelected(t);
+    click(ctx.window, chip(ctx, "Cross Country"));
+    ctx.document.getElementById("btn-folder-auto-apply").click();
+    await flush(ctx.window, 8);
+    await answer(ctx, { success: true, written: {} });
+    // Apply All added Harbourside to both.
+    const both = ["Cross Country", "Harbourside"];
+    await answer(ctx, { success: true, written: Object.fromEntries(PHOTOS.map((p) => [p.path, both])) });
+    for (let i = 0; i < 50 && !chip(ctx, "Kentridge"); i++) await flush(ctx.window, 2);
+
+    click(ctx.window, chip(ctx, "Kentridge"));
+    await flush(ctx.window, 8);
+    ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", {
+      key: "z", ctrlKey: true, bubbles: true, cancelable: true,
+    }));
+    await flush(ctx.window, 8);
+    assert.equal(ctx.server.calls.filter((c) => c.url.includes("save-metadata")).length, 0,
+      "undo posted whole tag lists");
+    assert.equal(writes(ctx).length, 3, "undo was sent while the later write was still out");
+
+    await answer(ctx, { success: true, written: {} });
+    assert.equal(writes(ctx).length, 4);
+    const undo = writes(ctx).at(-1).body;
+    assert.deepEqual(undo.remove_tags, ["Harbourside"]);
+    assert.deepEqual(undo.add_tags, []);
+    assert.ok(!undo.remove_tags.includes("Kentridge"), "undo took off the later write's tag");
+    await answer(ctx, { success: true, written: {} });
+  });
+});
+
 describe("Apply All after a tag clicked", () => {
   test("waits for the tag's write", async (t) => {
     const ctx = await loadSelected(t);

@@ -1,6 +1,7 @@
 // TagPup's page: suggestions -- asking for them, following their progress and an index's,
 // showing them for a photo, and applying them.
 import { api } from './common/api.js';
+import { samePath } from './common/paths.js';
 import { leafOf, photoAlreadyHas } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
@@ -421,9 +422,15 @@ export function applyFolderSuggestionsLevel() {
         })
         .then(data => {
             if (!data.success) throw new Error(data.error);
+            // Each photo as the server says it holds it now: undo takes back the
+            // difference (undo.js).
+            const written = Object.entries(data.written || {});
             recordUndo({
                 label: `auto-apply to ${before.length} photo(s)`,
-                photos: before,
+                photos: before.map(photo => {
+                    const now = written.find(([path]) => samePath(path, photo.path));
+                    return { ...photo, after: now ? now[1] : photo.before };
+                }),
             });
             setStatus('ready',
                 `Suggestions applied to ${before.length} photo(s) \u2014 Ctrl+Z to undo`);
