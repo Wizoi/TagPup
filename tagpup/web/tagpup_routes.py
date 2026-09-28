@@ -21,17 +21,20 @@ import threading
 from flask import Blueprint, jsonify, request
 
 from tagpup import config as tagpup_config
+from tagpup import runtime as runtimes
 from tagpup.core import fields, paths, suggesting, vocabulary
 from tagpup.core.result import NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import faces as face_actions
 from tagpup.services import indexing
+from tagpup.services import libraries as library_actions
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.services import tagging as tagging_actions
 from tagpup.services import tags as tags_service
 from tagpup.web import desktop, responses, state
+from tagpup.web import libraries as web_libraries
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +220,22 @@ def folder_scan():
         photos = photo_actions.scan_folder(library, folder, state.exiftool(library))
         cache.put(folder, photos)
     return jsonify(_sorted(photos))
+
+
+@routes.get("/api/folder/membership")
+def folder_membership():
+    """What this library holds of a folder, and which other libraries of the home hold
+    photos in it (tagpup.services.libraries.membership): what the page asks as a folder
+    opens, to ask before adding one the library does not hold."""
+    library = state.require()
+    folder = _wanted_path()
+    if not folder:
+        return responses.error(400, "Missing 'path' parameter")
+    if not os.path.isdir(folder):
+        return responses.error(400, "Path is not a valid directory: %s" % folder)
+    settings = runtimes.peek_settings(library)
+    return jsonify(library_actions.membership(library, folder, settings.roots, settings.ignored,
+                                              web_libraries.home_libraries()))
 
 
 @routes.get("/api/folder/index-status")

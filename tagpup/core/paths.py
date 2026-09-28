@@ -27,7 +27,7 @@ tests/test_paths_single_owner.py fails the build on anything that does.
 """
 import os
 
-__all__ = ["stored", "key", "same", "is_under", "sql_equals", "sql_under", "COLLATE"]
+__all__ = ["stored", "key", "same", "is_under", "sql_equals", "sql_under", "sql_in", "COLLATE"]
 
 #: Does this filesystem ignore case? normcase says so on Windows and not elsewhere.
 CASE_INSENSITIVE = os.path.normcase("A") == "a"
@@ -123,3 +123,13 @@ def sql_under(column, folder):
     upper = prefix[:-1] + chr(ord(prefix[-1]) + 1)
     return ("%s >= ? COLLATE %s AND %s < ? COLLATE %s" % (column, COLLATE, column, COLLATE),
             (prefix, upper))
+
+
+def sql_in(column, folder):
+    """(clause, params) matching rows whose `column` is directly in `folder`, not in a
+    folder under it: sql_under's range, which the path index seeks, and of what it finds
+    only the paths holding no separator past the folder's. A folder holds a photo when a
+    row is directly in it (tagpup.store.photos.holds_folder)."""
+    clause, params = sql_under(column, folder)
+    prefix = _as_folder(stored(folder))
+    return (clause + " AND instr(substr(%s, ?), ?) = 0" % column, params + (len(prefix) + 1, os.sep))

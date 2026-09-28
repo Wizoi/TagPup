@@ -717,6 +717,20 @@ def folders_held(conn):
     return [(spelling[key], count) for key, count in held.items()]
 
 
+def holds_folder(conn, folder):
+    """Does the library hold a photo directly in `folder`? A folder is the library's when
+    it holds one of its photos: indexing it, or adding it, put a row there. The one
+    answer to "is this folder in this library" (tagpup.services.libraries)."""
+    where, params = paths.sql_in("path", folder)
+    return conn.execute("SELECT 1 FROM photos WHERE " + where + " LIMIT 1", params).fetchone() is not None
+
+
+def count_under(conn, folder):
+    """How many photos under `folder`, at any depth, the library holds."""
+    where, params = paths.sql_under("path", folder)
+    return conn.execute("SELECT COUNT(*) FROM photos WHERE " + where, params).fetchone()[0]
+
+
 def rows_under(conn, folder):
     """(path, mtime, size, tags JSON, people JSON, captions JSON, raw_metadata JSON) of
     each photo under a folder, at any depth."""
