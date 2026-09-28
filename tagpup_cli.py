@@ -235,6 +235,13 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         console.print("[yellow]No supported images found. Exiting.[/yellow]")
         return
 
+    # Indexing a folder is adding it (tagpup.services.libraries.record_added): the vectors
+    # kept as each photo is embedded, before its row is recorded, make its row, which
+    # tagpup.store.photos.ensure_row does only in a folder the library holds or was given.
+    # As the index stores it: a folder typed as "." is no full path, and was not added.
+    library_actions.record_added(Library(db_path), [paths.stored(d) for d in directories],
+                                 subfolders=not no_subfolders)
+
     # Check for unchanged files using modification time and size
     # By paths.key: a folder indexed under one spelling and scanned under another is
     # the same photos, and keyed by the raw string every one of them was re-embedded
@@ -319,11 +326,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             console.print("[yellow]No photos found to index.[/yellow]")
         photo_index.close()
         return
-
-    # Indexing a folder is adding it (tagpup.services.libraries.record_added): the vectors
-    # kept as each photo is embedded, before its row is recorded, make its row, which
-    # tagpup.store.photos.ensure_row does only in a folder the library holds or was given.
-    library_actions.record_added(Library(db_path), directories, subfolders=not no_subfolders)
 
     # Per-photo write locks, shared with every other indexer of the libraries in this
     # folder, wherever each was started from.
