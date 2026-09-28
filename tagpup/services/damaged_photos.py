@@ -28,6 +28,8 @@ re-detects a photo's faces keeping the decided ones by where they are.
 """
 import logging
 import os
+import threading
+import time
 
 from tagpup.core import paths
 from tagpup.files import images
@@ -49,6 +51,82 @@ INCOMPLETE_REASON = ("possibly an incomplete copy: the file ends in zero bytes, 
 def reason(kind):
     """What the owner is told of a photo recorded as `kind`."""
     return INCOMPLETE_REASON if kind == INCOMPLETE else images.DAMAGE.get(kind, kind)
+
+
+#: How long a request waits to hear from a folder on a network share (a UNC path),
+#: in seconds, and how long a share that did not answer in time is taken as not there.
+SHARE_WAIT = 1.0
+SHARE_AWAY = 30.0
+
+#: {folder key: when it did not answer in time (time.monotonic)}: a share away.
+_away = {}
+_away_lock = threading.Lock()
+
+
+def _on_a_share(path):
+    return str(path).startswith(("\\\\", "//"))
+
+
+def _stamps_in(folder):
+    """{paths.key(file): (mtime, size)} of the files directly in `folder`, one listing of it
+    (the stamps come with the listing on Windows), or None when it is not there."""
+    try:
+        with os.scandir(folder) as entries:
+            found = {}
+            for entry in entries:
+                try:
+                    if entry.is_file():
+                        stat = entry.stat()
+                        found[paths.key(entry.path)] = (stat.st_mtime, stat.st_size)
+                except OSError:
+                    continue
+            return found
+    except OSError:
+        return None
+
+
+def _folder_stamps(folder):
+    """_stamps_in(folder) -- within SHARE_WAIT for a folder on a network share, which is
+    taken as not there (None) for SHARE_AWAY when it did not answer in time: a page's
+    request never waits on a share gone away."""
+    if not _on_a_share(folder):
+        return _stamps_in(folder)
+    key = paths.key(folder)
+    with _away_lock:
+        since = _away.get(key)
+    if since is not None and time.monotonic() - since < SHARE_AWAY:
+        return None
+    answer = {}
+    reader = threading.Thread(target=lambda: answer.update(found=_stamps_in(folder)),
+                              name="DamagedPhotosShareRead", daemon=True)
+    reader.start()
+    reader.join(SHARE_WAIT)
+    if "found" not in answer:
+        logger.info("%s did not answer within %s s; its damaged photos are not shown for %s s.",
+                    folder, SHARE_WAIT, SHARE_AWAY)
+        with _away_lock:
+            _away[key] = time.monotonic()
+        return None
+    with _away_lock:
+        _away.pop(key, None)
+    return answer["found"]
+
+
+def _current(found):
+    """The records of `found` whose file still has the stamp it was found with: each
+    record's folder listed once -- a folder that is not there, or a share that does not
+    answer in time, passes over its records without looking at each."""
+    by_folder = {}
+    for each in found:
+        by_folder.setdefault(paths.key(os.path.dirname(each.path)), []).append(each)
+    current = []
+    for held in by_folder.values():
+        stamps = _folder_stamps(os.path.dirname(held[0].path))
+        if stamps is None:
+            continue
+        current += [each for each in held
+                    if describes((each.mtime, each.size), stamps.get(paths.key(each.path)))]
+    return sorted(current, key=lambda each: paths.key(each.path))
 
 
 def _look(library):
@@ -215,24 +293,23 @@ def listed(library, folder=None):
     """The damaged photos of `library` -- under `folder`, at any depth, when given -- whose
     file still has the stamp it was found with, as the pages show them: each {"path",
     "name", "folder", "kind", "reason", "detail", "zero_tail", "indexed", "size", "mtime",
-    "found", "seen", "run"}, by path. A stat of each file recorded: a handful."""
+    "found", "seen", "run"}, by path. One listing of each folder holding one (_current)."""
     conn = _look(library)
     try:
         found = damaged_files.under(conn, folder) if folder else damaged_files.every(conn)
     finally:
         conn.close()
-    return [_entry(each) for each in found if describes((each.mtime, each.size), _stamp(each.path))]
+    return [_entry(each) for each in _current(found)]
 
 
 def among(library, photo_paths):
     """The photos of `photo_paths` recorded damaged or possibly incomplete whose files still
     have the stamp they were found with, as listed() gives each. One read of the records
-    (a handful), and a stat of each that is asked about."""
+    (a handful), and a listing of the folder of each that is asked about."""
     wanted = {paths.key(path) for path in photo_paths}
     if not wanted:
         return []
-    return [_entry(each) for each in records(library)
-            if paths.key(each.path) in wanted and describes((each.mtime, each.size), _stamp(each.path))]
+    return [_entry(each) for each in _current([each for each in records(library) if paths.key(each.path) in wanted])]
 
 
 def counts(library):
