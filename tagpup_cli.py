@@ -1116,6 +1116,9 @@ def sync(ctx, folder, apply_):
                       " their rows are kept." % (counts["folders_gone"], counts["roots_gone"]))
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
+    if counts.get("unreadable_files"):
+        console.print("  %d photo(s) found damaged before, unchanged since, passed over: restore them from a"
+                      " backup (the Activity page lists them)." % counts["unreadable_files"])
     if not apply_:
         console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
         console.print("In step." if result.details["in_step"] else "Nothing changed. --apply brings it in step.")
