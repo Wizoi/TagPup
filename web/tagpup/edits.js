@@ -1,9 +1,9 @@
 // TagPup's page: Image Details' unsaved edits, saving them, and the queue every write to
 // a photo goes through.
-import { api } from './common/api.js';
+import { api, libraryIn } from './common/api.js';
 import { dialogOpen } from './common/dialog.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { baseName, pathKey } from './common/paths.js';
+import { baseName, pathKey, samePath } from './common/paths.js';
 import { leafOf, photoAlreadyHas, tagProblem, textProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -156,7 +156,22 @@ export function openPhotoWrite() {
  * Resolves to the job's
  * result, or false if it threw; the queue carries on either way.
  */
+/**
+ * Are writes held back: the folder open is one the library does not hold, looked at
+ * without adding it (membership.js)? Then nothing goes on the queue -- an undo or a
+ * Retry, which no dimmed control stands in front of, included -- and the status says
+ * why. Returns true when held back.
+ */
+export function writesHeldBack() {
+    if (!(state.justLooking && state.scannedFolder && samePath(state.justLooking, state.scannedFolder))) return false;
+    const name = libraryIn(window.location.pathname);
+    setStatus('error', `Not saved: ${name} does not hold this folder. Add it to ${name} first.`, { transient: false });
+    return true;
+}
+
 export function queuePhotoWrite(job, label = 'Save a photo') {
+    // Not queued, so the queue's status never counts it (write-queue.js).
+    if (writesHeldBack()) return Promise.resolve(false);
     // An entry of the queue's status (write-queue.js): `label` says what it does, and
     // the job is given it, to put a failure's reason in `error`. A job that resolves
     // false failed; Retry queues it again.

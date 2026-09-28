@@ -29,7 +29,8 @@ const NOT_HELD = {
 const HELD = { ...NOT_HELD, photos_held: 25, photos_not_held: 0, folders_not_held: 0, first_not_held: null,
   under_roots: true, others: [] };
 
-function server(membership, indexing = { status: "completed", percent: 100, message: "Ready" }) {
+function server(membership, indexing = { status: "completed", percent: 100, message: "Ready" },
+  scanned = [photoRecord({ filename: "IMG_0001.jpg" }), photoRecord({ filename: "IMG_0002.jpg" })]) {
   return new FakeServer()
     .on("/api/tags", [])
     .on("/api/people", [])
@@ -44,7 +45,7 @@ function server(membership, indexing = { status: "completed", percent: 100, mess
     .on("/api/photos/bulk-tags", { success: true })
     .on("/api/photo/save-metadata", { success: true })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/folder/scan", [photoRecord({ filename: "IMG_0001.jpg" }), photoRecord({ filename: "IMG_0002.jpg" })]);
+    .on("/api/folder/scan", scanned);
 }
 
 async function open(t, membership = NOT_HELD, indexing = undefined) {
@@ -162,6 +163,47 @@ describe("a folder the library does not hold", () => {
     assert.equal(ctx.$("add-folder-title").textContent, "Add the rest of this folder to kr-track?");
     assert.match(ctx.$("add-folder-facts").textContent, /kr-track holds 25 of its 30 photos/);
     assert.ok(ctx.$("btn-open-in-other-library").classList.contains("hidden"));
+  });
+});
+
+describe("the write queue while just looking", () => {
+  const HELD_FOLDER = "D:/Library/2020";
+
+  test("takes no write -- an undo of an earlier one waits -- and counts none", async (t) => {
+    // Undo and a failed write's Retry reach the queue without a control the page
+    // dims; the queue itself holds them back, and they are not shown as saving.
+    const photos = [photoRecord({ filename: "a.jpg", tags: ["Beach"] }), photoRecord({ filename: "b.jpg" })];
+    const s = server((url) => (url.includes(encodeURIComponent(HELD_FOLDER)) ? HELD : NOT_HELD), undefined, photos);
+    const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/kr-track/", server: s });
+    ctx.window.alert = () => {};
+    const $ = (id) => ctx.document.getElementById(id);
+    await openFolder(ctx, HELD_FOLDER);
+    assert.ok(!$("add-folder-modal").classList.contains("active"));
+    const press = (key, mods = {}) => ctx.document.dispatchEvent(
+      new ctx.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...mods }));
+    press("ArrowDown");
+    press("ArrowDown");
+    click(ctx.window, $("btn-carry-forward"));
+    await flush(ctx.window, 8);
+    const writes = () => s.calls.filter((c) => c.method === "POST"
+      && (c.url.includes("/api/photos/bulk-tags") || c.url.includes("/api/photo/save-metadata"))).length;
+    const before = writes();
+    assert.equal(before, 1, "the carried tags were not written");
+    assert.ok(!$("btn-undo").disabled);
+    const entries = () => $("write-queue").querySelectorAll(".write-queue-entry").length;
+    const queued = entries();
+
+    await openFolder(ctx, FOLDER);
+    click(ctx.window, $("btn-just-look"));
+    await flush(ctx.window);
+    click(ctx.window, $("btn-undo"));
+    press("z", { ctrlKey: true });
+    await flush(ctx.window, 8);
+    assert.equal(writes(), before, "a write was sent while just looking");
+    assert.equal(entries(), queued, "a write held back was put on the queue");
+    assert.doesNotMatch($("write-queue").textContent, /Saving|failed/);
+    assert.ok(!$("btn-undo").disabled, "the undo was lost instead of waiting");
+    assert.match($("status-text").textContent, /kr-track does not hold this folder/);
   });
 });
 
