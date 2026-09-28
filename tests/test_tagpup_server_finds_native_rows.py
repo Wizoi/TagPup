@@ -354,8 +354,8 @@ class TestSavedSuggestionsSurviveTheNewKeys(HandlerCase):
         photo = os.path.abspath(os.path.join(self.folder, "IMG_0001.jpg"))
         conn = tagpup_db.connect(self.db_path)
         try:
-            from tagpup.store import photos as store_photos
-            store_photos.admit(conn, [photo])   # Suggest ran there: the folder was added
+            from tagpup.store import added_folders
+            added_folders.record(conn, os.path.dirname(photo), subfolders=False)   # Suggest ran there: the folder was added
             saved_suggestions.put(conn, photo, {"tags": [], "people": [], "title": None})
             conn.commit()
         finally:

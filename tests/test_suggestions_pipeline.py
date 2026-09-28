@@ -63,7 +63,8 @@ class _LibraryFixture(unittest.TestCase):
             for i in range(count)
         }
         # A folder Suggest may work in: the library was asked to add it.
-        library_actions.admit(self.library, [meta["path"] for meta in photos.values()])
+        os.makedirs(folder, exist_ok=True)
+        library_actions.record_added(self.library, [folder])
         return folder, photos
 
 

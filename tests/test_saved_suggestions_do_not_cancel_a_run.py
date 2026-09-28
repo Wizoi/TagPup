@@ -20,14 +20,14 @@ from service_fixture import TempLibrary  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.jobs.suggestions import SuggestionRuns  # noqa: E402
 from tagpup.store import db  # noqa: E402
-from tagpup.store import photos as store_photos  # noqa: E402
+from tagpup.store import added_folders  # noqa: E402
 from tagpup.store import suggestions as saved  # noqa: E402
 
 
 def save(library_path, photo):
     conn = db.connect(library_path)
     try:
-        store_photos.admit(conn, [photo])   # Suggest ran there: its folder was added
+        added_folders.record(conn, os.path.dirname(photo), subfolders=False)   # Suggest ran there: its folder was added
         saved.put(conn, photo, {"tags": [], "people": [], "title": None,
                                 "raw_suggestions": {"suggested_tags": []}, "raw_before_consensus": True})
         conn.commit()

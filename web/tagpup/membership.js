@@ -224,12 +224,11 @@ export function addFolderToLibrary() {
             if (state.folderMembership) {
                 state.folderMembership = {
                     ...state.folderMembership,
-                    photos_held: (state.folderMembership.photos_held || 0) + (data.added || 0),
                     photos_not_held: 0, folders_not_held: 0, first_not_held: null,
                 };
             }
             applyJustLooking();
-            setStatus('ready', `Added to ${name}: ${plural(data.added || 0, 'photo', 'photos')}; indexing it now.`);
+            setStatus('ready', `Added to ${name}; indexing it now.`);
             checkIndexingStatus(folder);
             return data;
         })

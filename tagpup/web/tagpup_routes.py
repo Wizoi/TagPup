@@ -268,8 +268,8 @@ def folder_index_start():
 @routes.post("/api/folder/add")
 def folder_add():
     """Add a folder to this library, as the person asked: "Add to <library>"
-    (tagpup.services.libraries.add). Its photos are the library's at once -- Suggest may
-    start -- and it is queued to be indexed, with its subfolders, behind any other."""
+    (tagpup.services.libraries.add). It is the library's at once -- Suggest may start --
+    and it is queued to be indexed, with its subfolders, behind any other."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     folder = body.get("folder_path")
@@ -280,7 +280,7 @@ def folder_add():
     if result.refused:
         return responses.error(400, result.message())
     return jsonify({"success": result.ok, "status": "running", "library": picker_name(os.path.basename(library.path)),
-                    "folder": paths.stored(folder), "added": result.changed, **result.details})
+                    "folder": paths.stored(folder), **result.details})
 
 
 @routes.get("/api/folder/suggest-status")

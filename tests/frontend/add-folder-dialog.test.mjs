@@ -39,8 +39,8 @@ function server(membership, indexing = { status: "completed", percent: 100, mess
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/index-status", indexing)
     .on("/api/folder/membership", membership)
-    .on("/api/folder/add", { success: true, status: "running", library: "kr-track", folder: FOLDER, added: 25,
-      admitted: 25, photos: 25, queued: [FOLDER], already_queued: [], invalid: [], pending: 1 })
+    .on("/api/folder/add", { success: true, status: "running", library: "kr-track", folder: FOLDER, added: 1,
+      queued: [FOLDER], already_queued: [], invalid: [], pending: 1 })
     .on("/api/folder/suggest-start", { success: true, status: "running" })
     .on("/api/photos/bulk-tags", { success: true })
     .on("/api/photo/save-metadata", { success: true })
@@ -97,7 +97,7 @@ describe("a folder the library does not hold", () => {
     assert.deepEqual(added[0].body, { folder_path: FOLDER });
     assert.ok(!ctx.document.body.classList.contains("just-looking"));
     assert.ok(!ctx.$("btn-suggest-tags").disabled, "Suggest stayed off after adding");
-    assert.match(ctx.$("status-text").textContent, /Added to kr-track: 25 photos/);
+    assert.match(ctx.$("status-text").textContent, /Added to kr-track; indexing it now/);
   });
 
   test("Open in the other library goes there, with the folder", async (t) => {

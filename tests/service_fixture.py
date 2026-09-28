@@ -52,11 +52,12 @@ class TempLibrary:
         db.write_with_connection(self.library.path, lambda conn: [photo_rows.hold(conn, f) for f in folders])
 
     def add_folder(self, *photo_paths):
-        """Add the folders of `photo_paths` to the library, as Add to <library> does
-        (tagpup.services.libraries.admit): each photo a row holding its path alone. Suggest
-        keeps what it finds only in a folder the library holds. Returns the rows made."""
-        from tagpup.services import libraries
-        return libraries.admit(self.library, photo_paths)
+        """Add the folders of `photo_paths` to the library, as Add to <library> records
+        them (tagpup.store.added_folders), on disk or not. Suggest keeps what it finds only
+        in a folder the library holds or was given."""
+        from tagpup.store import added_folders
+        return db.write_with_connection(self.library.path, lambda conn: sum(
+            added_folders.record(conn, folder) for folder in sorted({os.path.dirname(p) for p in photo_paths})))
 
     def add_face(self, path, box, name=None, crop=b"crop"):
         """A face in the photo at `path`, which gets a row holding only the path if it

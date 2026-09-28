@@ -320,10 +320,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         photo_index.close()
         return
 
-    # Indexing a folder is adding it: every photo about to be read gets its row first, so
-    # the vectors kept as each is embedded, before its row is recorded, have one to go to
-    # (tagpup.store.photos.ensure_row makes none in a folder the library does not hold).
-    library_actions.admit(Library(db_path), [meta["path"] for meta in to_index_meta])
+    # Indexing a folder is adding it (tagpup.services.libraries.record_added): the vectors
+    # kept as each photo is embedded, before its row is recorded, make its row, which
+    # tagpup.store.photos.ensure_row does only in a folder the library holds or was given.
+    library_actions.record_added(Library(db_path), directories, subfolders=not no_subfolders)
 
     # Per-photo write locks, shared with every other indexer of the libraries in this
     # folder, wherever each was started from.
@@ -469,8 +469,8 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str, add_folder
         console.print(f"[bold red]Error:[/bold red] {refusal} (--add adds it; `index` adds and reads it)")
         ctx.exit(1)
     if refusal:
-        made = library_actions.admit(library, image_files.photos_under(directory))
-        console.print(f"Added {made} photo(s) to {library.name}; `index` reads them into it.")
+        library_actions.record_added(library, [directory])
+        console.print(f"Added the folder to {library.name}; `index` reads its photos into it.")
     model_name = settings.embedder["model_name"]
 
     photo_index = library_index(runtime, db_path)

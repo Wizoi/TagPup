@@ -610,6 +610,18 @@ def _sync_runs(conn):
                  " change_id INTEGER)")
 
 
+def _added_folders(conn):
+    """The folders a library was asked to add: `added_folders`, each folder's path, whether
+    its subfolders were added with it, and when (tagpup.store.added_folders). A folder
+    added is the library's before the index has read a photo of it: adding made a row for
+    every photo under it at once. Only adds a table, so it needs no backup.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS added_folders ("
+                 " path TEXT PRIMARY KEY COLLATE %s,"
+                 " subfolders INTEGER NOT NULL,"
+                 " added TEXT NOT NULL)" % paths.COLLATE)
+
+
 # ---- What a migration holds true before it commits ----------------------------------------
 
 #: The runner's own tables: it writes them as it records each migration.
@@ -1087,6 +1099,10 @@ MIGRATIONS = (
     Migration(14, "when the library was last in step", _sync_runs, ADDITIVE,
               "adds the sync_runs table, empty",
               ("sync_runs",),
+              (RowsKept(),) + STANDARD),
+    Migration(15, "the folders asked to be added", _added_folders, ADDITIVE,
+              "adds the added_folders table, empty",
+              ("added_folders",),
               (RowsKept(),) + STANDARD),
 )
 

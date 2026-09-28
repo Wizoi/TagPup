@@ -16,12 +16,10 @@ from tagpup.core.library import Library, picker_name
 from tagpup.core.result import NOT_IN_LIBRARY, Result
 from tagpup.files import images
 from tagpup.services import settings
-from tagpup.store import db, photos, schema, taxonomy
+from tagpup.store import added_folders, db, photos, schema, taxonomy
 
 logger = logging.getLogger(__name__)
 
-#: Photos made rows for in one write when a folder is added.
-ADMIT_BATCH = 2000
 
 
 def bring_up_to_date(db_path):
@@ -192,42 +190,41 @@ def refuse_writes(result, library, photo_paths):
     return True
 
 
-def admit(library, photo_paths):
-    """Make a row for each photo of `photo_paths` that has none, the path and nothing read
-    (tagpup.store.photos.admit): their folders become the library's. Returns the rows made."""
-    photo_paths = list(photo_paths)
-    made = 0
-    for start in range(0, len(photo_paths), ADMIT_BATCH):
-        batch = photo_paths[start:start + ADMIT_BATCH]
-        made += db.write_with_connection(library.path, lambda conn, batch=batch: photos.admit(conn, batch),
-                                         label="add %d photo(s)" % len(batch))
-    return made
+def record_added(library, folders, subfolders=True):
+    """Record each of `folders` that is a full path on disk as added to the library, with
+    its subfolders unless not `subfolders` (tagpup.store.added_folders): the library's from
+    now on, before the index has read a photo of it. No row is made: Suggest makes one for
+    a photo it keeps something of, the indexer as it reads each. Returns how many were not
+    added before."""
+    wanted = [paths.stored(folder) for folder in folders
+              if isinstance(folder, str) and not validation.problem("folder", folder) and os.path.isdir(folder)]
+    if not wanted:
+        return 0
+    return db.write_with_connection(
+        library.path, lambda conn: sum(added_folders.record(conn, folder, subfolders) for folder in wanted),
+        label="add %d folder(s)" % len(wanted))
 
 
 def add(library, folders, queue):
     """Add `folders` to the library, as asked: "Add to <library>" in TagPup, TagTuner's Add
-    Folder. Each folder's photos, at any depth, get a row at once -- the path and nothing
-    read -- so the folder is the library's from then on, and Suggest may work in it before
-    the index reaches it; then `queue(folders)` (the index queue's start) indexes them
-    with their subfolders, reading each row from its file. The only way, beside the
-    indexer itself, that a row is made in a folder the library did not hold.
+    Folder. Each folder is recorded as added, with its subfolders (record_added), so it is
+    the library's at once and Suggest may start before the index reaches it; then
+    `queue(folders)` (the index queue's start) indexes them, the indexer making each row
+    as it reads the photo. No row is made here: making one for every photo up front made
+    tens of thousands of unstamped rows for a large tree, which sync read again while the
+    indexer read them too.
 
-    A folder that is no full path or not on disk gets no rows, and is handed on for the
-    queue to report. A Result: `changed`, the rows made; details, the queue's (`queued`,
-    `already_queued`, `invalid`, `pending`), `admitted`, the rows made, and `photos`, the
-    photos found; refused as the queue refuses, and then nothing is made."""
+    A folder that is no full path or not on disk is not recorded, and is handed on for the
+    queue to report. A Result: `changed`, the folders not added before; details, the
+    queue's (`queued`, `already_queued`, `invalid`, `pending`) and `added`, the same count;
+    refused as the queue refuses."""
     result = Result(attempted=len(folders))
-    found = []
-    for folder in folders:
-        if isinstance(folder, str) and not validation.problem("folder", folder) and os.path.isdir(folder):
-            found += images.photos_under(folder)
     # Before the queue: its worker may start at once, and a Suggest asked for as soon as
-    # this returns must find the folder the library's. The queue refuses only when no
-    # folder is on disk, when none was walked and nothing is made.
-    made = admit(library, found)
+    # this returns must find the folder the library's.
+    made = record_added(library, folders)
     outcome = queue(folders)
     result.details.update(outcome.details)
-    result.details.update(admitted=made, photos=len(found))
+    result.details.update(added=made)
     result.changed = made
     for what, why in outcome.skipped:
         result.skip(what, why)

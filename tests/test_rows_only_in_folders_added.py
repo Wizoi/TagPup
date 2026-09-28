@@ -132,13 +132,26 @@ class TheStore(Folders, unittest.TestCase):
             saved_suggestions.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
         self.assertEqual(0, rows_under(self.db_path, self.lighthouse))
 
-    def test_a_folder_added_gets_its_rows_at_once(self):
-        made = library_actions.admit(Library(self.db_path), self.shared + self.held)
-        self.assertEqual(3, made, "a row was made again for a photo that had one")
-        self.assertEqual(2, rows_under(self.db_path, self.lighthouse))
-        self.assertEqual(0, library_actions.admit(Library(self.db_path), self.shared))
-        # Then Suggest may keep what it found there.
+    def test_a_folder_added_gets_no_rows_until_one_is_used(self):
+        self.assertEqual(1, library_actions.record_added(Library(self.db_path), [self.lighthouse]))
+        self.assertEqual(0, library_actions.record_added(Library(self.db_path), [self.lighthouse]), "added twice")
+        self.assertEqual(0, rows_under(self.db_path, self.lighthouse), "the add made rows")
+        # Then Suggest may keep what it found there: that photo's row, and no other.
         saved_suggestions.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
+        self.assertEqual(1, rows_under(self.db_path, self.lighthouse))
+
+    def test_a_folder_added_with_its_subfolders_covers_them(self):
+        below = make_photos(os.path.join(self.lighthouse, "Keepers"), "IMG_0100.jpg")[0]
+        library_actions.record_added(Library(self.db_path), [self.lighthouse])
+        saved_suggestions.keep(self.db_path, below, {"tags": ["Family/Work"]})
+        self.assertEqual(1, rows_under(self.db_path, self.lighthouse))
+
+    def test_removing_the_folder_forgets_the_add(self):
+        from tagpup.services import faces as face_actions
+        library_actions.record_added(Library(self.db_path), [self.lighthouse])
+        face_actions.remove_folder(Library(self.db_path), self.lighthouse)
+        with self.assertRaises(Conflict):
+            saved_suggestions.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
 
 
 class FakeIndex:
@@ -200,16 +213,10 @@ class TheSuggestRoute(Folders, unittest.TestCase):
         reply = self.client.post("/library/api/folder/add", json={"folder_path": self.lighthouse})
         self.assertEqual(200, reply.status_code, reply.data)
         answer = reply.get_json()
-        self.assertEqual((True, "library", self.lighthouse, 2, 2, [self.lighthouse]),
-                         (answer["success"], answer["library"], answer["folder"], answer["added"], answer["photos"],
-                          answer["queued"]))
-        # The rows hold the path and nothing read: the index reads each from its file.
-        conn = db.connect(db.readonly_uri(self.library.path), uri=True)
-        try:
-            unread = conn.execute("SELECT COUNT(*) FROM photos WHERE mtime IS NULL").fetchone()[0]
-        finally:
-            conn.close()
-        self.assertEqual(2, unread)
+        self.assertEqual((True, "library", self.lighthouse, 1, [self.lighthouse]),
+                         (answer["success"], answer["library"], answer["folder"], answer["added"], answer["queued"]))
+        # No row is made by the add: the indexer makes each as it reads the photo.
+        self.assertEqual(1, all_rows(self.library.path))
         indexing_jobs.queue_for(self.library).wait()
         self.assertEqual([self.lighthouse], self.indexed.folders)
         reply = self.suggest(self.lighthouse)
@@ -223,9 +230,9 @@ class TheSuggestRoute(Folders, unittest.TestCase):
 
 
 class TagTunersAddFolder(Folders, unittest.TestCase):
-    """TagTuner's Add Folder adds as TagPup's Add does: the rows first, then the index."""
+    """TagTuner's Add Folder adds as TagPup's Add does: recorded, then indexed."""
 
-    def test_makes_the_rows_and_queues_the_folder(self):
+    def test_records_and_queues_the_folder(self):
         app, self.home = web_client.app_for(self, "tuner")
         library = Library(self.home.library("library.db"))
         self.make(self.home.root, library.path)
@@ -235,8 +242,9 @@ class TagTunersAddFolder(Folders, unittest.TestCase):
             reply = app.test_client().post("/library/api/folder/index-start", json={"folder_paths": [self.lighthouse]})
             self.assertEqual(200, reply.status_code, reply.data)
             indexing_jobs.queue_for(library).wait()
-        self.assertEqual(([self.lighthouse], 2), (reply.get_json()["queued"], reply.get_json()["admitted"]))
-        self.assertEqual(2, rows_under(library.path, self.lighthouse))
+        self.assertEqual(([self.lighthouse], 1), (reply.get_json()["queued"], reply.get_json()["added"]))
+        self.assertEqual(0, rows_under(library.path, self.lighthouse))
+        self.assertIsNone(library_actions.not_in(library, self.lighthouse))
         self.assertEqual([self.lighthouse], indexed.folders)
 
 
@@ -258,8 +266,9 @@ class TheCli(Folders, unittest.TestCase):
         with mock.patch("tagpup_cli.library_index", side_effect=SystemExit(0)):
             result = CliRunner().invoke(cli, ["--db", self.db_path, "suggest", self.lighthouse, "--add"])
         self.assertEqual(0, result.exit_code, result.output)
-        self.assertIn("Added 2 photo(s) to harbour", result.output)
-        self.assertEqual(2, rows_under(self.db_path, self.lighthouse))
+        self.assertIn("Added the folder to harbour", " ".join(result.output.split()))
+        self.assertEqual(0, rows_under(self.db_path, self.lighthouse))
+        self.assertIsNone(library_actions.not_in(Library(self.db_path), self.lighthouse))
 
 
 class TheMcpWriteTools(Folders, unittest.TestCase):

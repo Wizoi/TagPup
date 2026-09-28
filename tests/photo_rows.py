@@ -9,7 +9,7 @@ makes of a photo it has never read (store.photos.ensure_row, in a folder added t
 import os
 
 from tagpup.files.metadata import MetadataExtractor
-from tagpup.store import photos
+from tagpup.store import added_folders, photos
 
 
 def as_read(photo_path, fields, people=None):
@@ -28,9 +28,10 @@ def add_read(conn, photo_path, fields, people=None):
 
 def add_unread(conn, photo_path):
     """The row Suggest makes for a photo the index never read -- the path and nothing
-    else -- in a folder added to the library (store.photos.admit), and return its id.
+    else -- in a folder added to the library (store.added_folders), and return its id.
     The caller commits."""
-    return photos.ensure_row(conn, photo_path, admit=True)
+    added_folders.record(conn, os.path.dirname(photo_path), subfolders=False)
+    return photos.ensure_row(conn, photo_path)
 
 
 #: The photo hold() records: one indexed before and gone from disk since, whose row

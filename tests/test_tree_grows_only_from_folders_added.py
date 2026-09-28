@@ -122,10 +122,20 @@ class TheTreeStaysTheLibrarys(unittest.TestCase):
         self.assert_left_alone()
 
     def test_once_added_its_new_files_are_the_librarys_to_index(self):
-        # The other side: a folder added is held, and sync keeps it in step.
-        library_actions.admit(self.library, self.shared[:1])
+        # The other side: a folder added, where Suggest kept something, is held, and sync
+        # keeps it in step.
+        library_actions.record_added(self.library, [self.lighthouse])
+        saved_suggestions.keep(self.library.path, self.shared[0], {"tags": ["Family/Work"]})
         self.sync()
         self.assertTrue(any(paths.same(folder, self.lighthouse) for folder in self.queued))
+
+    def test_adding_it_gives_sync_nothing_new_to_read(self):
+        # The add made a row for every photo, unstamped, which sync then read again with
+        # ExifTool while the indexer read them too. It makes none now.
+        library_actions.record_added(self.library, [self.lighthouse])
+        found = self.sync().details["counts"]
+        self.assertEqual((0, 0, 0), (found["changed"], found["never_stamped"], found["to_write"]))
+        self.assert_left_alone()
 
 
 if __name__ == "__main__":

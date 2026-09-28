@@ -11,7 +11,7 @@ import os
 
 from tagpup.core import dates, fields, paths, vocabulary
 from tagpup.core.result import NotHeld
-from tagpup.store import db, embeddings, faces, people
+from tagpup.store import added_folders, db, embeddings, faces, people
 from tagpup.store.people import PEOPLE_JSON
 
 logger = logging.getLogger(__name__)
@@ -580,8 +580,9 @@ def _unread_row(conn, photo_path):
 
 def ensure_row(conn, photo_path, admit=False):
     """The id of a photo's row, making the row if it has none -- only in a folder the
-    library holds (holds_folder), unless `admit`: the folder is being added to it
-    (admit). Raises NotHeld, and makes nothing, for a photo in any other folder.
+    library holds or was asked to add (holds_folder), unless `admit` (a migration that
+    kept what an older version made). Raises NotHeld, and makes nothing, for a photo in
+    any other folder.
 
     Every photo a face or an embedding is recorded for has a row (docs/findings.md,
     #48): Suggest detects faces in photos never indexed, and they were recorded against
@@ -602,19 +603,6 @@ def ensure_row(conn, photo_path, admit=False):
     photo_id = _unread_row(conn, photo_path)
     date_photos(conn, [photo_id])
     return photo_id
-
-
-def admit(conn, photo_paths):
-    """Make a row for each photo of `photo_paths` that has none, the path and nothing read
-    (ensure_row): their folders are added to the library, the one way a row is made in a
-    folder it does not hold (tagpup.services.libraries.add, and the indexer). Returns how
-    many rows were made. The caller commits."""
-    made = []
-    for photo_path in photo_paths:
-        if _row_id(conn, photo_path) is None:
-            made.append(_unread_row(conn, photo_path))
-    date_photos(conn, made)
-    return len(made)
 
 
 def stored_spelling(conn, photo_path):
@@ -690,6 +678,9 @@ def remove_under(conn, folder):
                             + " AND excluded = 1", faces_params).fetchone()[0]
     faces_removed = conn.execute("DELETE FROM faces WHERE " + faces_where, faces_params).rowcount
     photos_removed = conn.execute("DELETE FROM photos WHERE " + photos_where, photos_params).rowcount
+    # Out of the library: what was asked to be added there goes too, or a Suggest would
+    # make it the library's again unasked.
+    added_folders.forget_under(conn, folder)
     return dict(photos_removed=photos_removed, faces_removed=faces_removed,
                 manual_lost=manual, excluded_lost=excluded)
 
@@ -750,11 +741,13 @@ def folders_held(conn):
 
 
 def holds_folder(conn, folder):
-    """Does the library hold a photo directly in `folder`? A folder is the library's when
-    it holds one of its photos: indexing it, or adding it, put a row there. The one
-    answer to "is this folder in this library" (tagpup.services.libraries)."""
+    """Is `folder` the library's: does it hold a photo directly in it, or was the folder
+    added (tagpup.store.added_folders) -- asked for, before the index read a photo of it?
+    The one answer to "is this folder in this library" (tagpup.services.libraries)."""
     where, params = paths.sql_in("path", folder)
-    return conn.execute("SELECT 1 FROM photos WHERE " + where + " LIMIT 1", params).fetchone() is not None
+    if conn.execute("SELECT 1 FROM photos WHERE " + where + " LIMIT 1", params).fetchone() is not None:
+        return True
+    return added_folders.covers(conn, folder)
 
 
 def count_under(conn, folder):
