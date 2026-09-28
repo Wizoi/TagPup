@@ -61,10 +61,10 @@ class Photos(unittest.TestCase):
         os.makedirs(self.folder)
 
     def suggested(self, path):
-        """The row Suggest makes for a photo the index never read."""
+        """The row Suggest makes for a photo the index never read, in a folder added."""
         conn = db.connect(self.db_path)
         try:
-            store_photos.ensure_row(conn, path)
+            store_photos.ensure_row(conn, path, admit=True)
             conn.commit()
         finally:
             conn.close()

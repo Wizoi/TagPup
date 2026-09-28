@@ -47,7 +47,8 @@ class SuggestWithoutAnOutput(unittest.TestCase):
             with mock.patch.object(tagpup_cli, "get_runtime", return_value=runtime), \
                     mock.patch.object(tagpup_cli, "TagSuggester", return_value=suggester), \
                     mock.patch.object(tagpup_cli, "MetadataExtractor"):
-                result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "suggest", self.photos] + list(options))
+                result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "suggest", self.photos, "--add"]
+                                            + list(options))
         finally:
             os.chdir(here)
         self.assertEqual(0, result.exit_code, result.output)

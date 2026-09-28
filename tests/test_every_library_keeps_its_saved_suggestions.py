@@ -65,6 +65,8 @@ class TestASecondLibrary(unittest.TestCase):
     def test_a_run_there_keeps_the_folders_saved_before(self):
         # A run in this session, on another folder, saves as it goes.
         runs = self.other.suggestion_runs()
+        from tagpup.services import libraries as library_actions
+        library_actions.admit(self.other.library, [FIELD])   # the folder was added: Suggest may work in it
         runs.run(NEW_FOLDER, Work(FIELD))
         self.assertEqual(runs.status(NEW_FOLDER)["status"], "completed")
 

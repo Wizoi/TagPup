@@ -10,6 +10,7 @@ import logging
 import os
 
 from tagpup.core import dates, fields, paths, vocabulary
+from tagpup.core.result import NotHeld
 from tagpup.store import db, embeddings, faces, people
 from tagpup.store.people import PEOPLE_JSON
 
@@ -566,23 +567,54 @@ def records(conn, model, photo_ids=None):
     return found
 
 
-def ensure_row(conn, photo_path):
-    """The id of a photo's row, making the row if it has none.
+def _row_id(conn, photo_path):
+    clause, params = paths.sql_equals("path", photo_path)
+    row = conn.execute("SELECT id FROM photos WHERE " + clause + " LIMIT 1", params).fetchone()
+    return row[0] if row else None
+
+
+def _unread_row(conn, photo_path):
+    return conn.execute("INSERT INTO photos (path, tags, captions, raw_metadata)"
+                        " VALUES (?, '[]', '[]', '{}')", (paths.stored(photo_path),)).lastrowid
+
+
+def ensure_row(conn, photo_path, admit=False):
+    """The id of a photo's row, making the row if it has none -- only in a folder the
+    library holds (holds_folder), unless `admit`: the folder is being added to it
+    (admit). Raises NotHeld, and makes nothing, for a photo in any other folder.
 
     Every photo a face or an embedding is recorded for has a row (docs/findings.md,
     #48): Suggest detects faces in photos never indexed, and they were recorded against
-    a path no row had. A row made here holds the path and nothing read from the file:
-    its mtime and size stay empty, so the folder scan and the refresh read the file
-    rather than trust it. The caller commits.
+    a path no row had. But a row makes its folder the library's: sync keeps the folder in
+    step, the watcher watches it, and its new files are indexed and grow the tag tree
+    from their tags. Suggest in a folder of another library's made 25 rows in kr-track
+    that way, without asking (2026-09-28). A row made here holds the path and nothing
+    read from the file: its mtime and size stay empty, so the folder scan and the refresh
+    read the file rather than trust it. The caller commits.
     """
-    clause, params = paths.sql_equals("path", photo_path)
-    row = conn.execute("SELECT id FROM photos WHERE " + clause + " LIMIT 1", params).fetchone()
-    if row:
-        return row[0]
-    photo_id = conn.execute("INSERT INTO photos (path, tags, captions, raw_metadata)"
-                            " VALUES (?, '[]', '[]', '{}')", (paths.stored(photo_path),)).lastrowid
+    photo_id = _row_id(conn, photo_path)
+    if photo_id is not None:
+        return photo_id
+    if not admit:
+        folder = os.path.dirname(paths.stored(photo_path))
+        if not holds_folder(conn, folder):
+            raise NotHeld(folder)
+    photo_id = _unread_row(conn, photo_path)
     date_photos(conn, [photo_id])
     return photo_id
+
+
+def admit(conn, photo_paths):
+    """Make a row for each photo of `photo_paths` that has none, the path and nothing read
+    (ensure_row): their folders are added to the library, the one way a row is made in a
+    folder it does not hold (tagpup.services.libraries.add, and the indexer). Returns how
+    many rows were made. The caller commits."""
+    made = []
+    for photo_path in photo_paths:
+        if _row_id(conn, photo_path) is None:
+            made.append(_unread_row(conn, photo_path))
+    date_photos(conn, made)
+    return len(made)
 
 
 def stored_spelling(conn, photo_path):

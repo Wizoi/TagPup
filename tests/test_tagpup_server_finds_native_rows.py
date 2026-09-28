@@ -268,7 +268,7 @@ class TestTheFolderScanReadsARowWithNoStamp(HandlerCase):
         photo = self.make_file("IMG_0001.jpg")
         conn = tagpup_db.connect(self.db_path)
         try:
-            store_photos.ensure_row(conn, photo)
+            store_photos.ensure_row(conn, photo, admit=True)   # in a folder added
             conn.commit()
         finally:
             conn.close()
@@ -353,6 +353,8 @@ class TestSavedSuggestionsSurviveTheNewKeys(HandlerCase):
         photo = os.path.abspath(os.path.join(self.folder, "IMG_0001.jpg"))
         conn = tagpup_db.connect(self.db_path)
         try:
+            from tagpup.store import photos as store_photos
+            store_photos.admit(conn, [photo])   # Suggest ran there: the folder was added
             saved_suggestions.put(conn, photo, {"tags": [], "people": [], "title": None})
             conn.commit()
         finally:

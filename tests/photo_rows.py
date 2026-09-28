@@ -4,7 +4,7 @@ A row a test writes by hand agrees with the test, not with the library. #247's
 fixtures held raw_metadata no read ever makes -- grouped names without their bare
 copies -- and the tests passed on the bug. Here a row is what the indexer records of a
 read (MetadataExtractor._structure, then store.photos.record_indexed), or what Suggest
-makes of a photo it has never read (store.photos.ensure_row).
+makes of a photo it has never read (store.photos.ensure_row, in a folder added to the library).
 """
 from tagpup.files.metadata import MetadataExtractor
 from tagpup.store import photos
@@ -26,5 +26,6 @@ def add_read(conn, photo_path, fields, people=None):
 
 def add_unread(conn, photo_path):
     """The row Suggest makes for a photo the index never read -- the path and nothing
-    else -- and return its id. The caller commits."""
-    return photos.ensure_row(conn, photo_path)
+    else -- in a folder added to the library (store.photos.admit), and return its id.
+    The caller commits."""
+    return photos.ensure_row(conn, photo_path, admit=True)

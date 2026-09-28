@@ -58,6 +58,15 @@ class Conflict(Exception):
     been excluded, say. A web route answers it with 409."""
 
 
+class NotHeld(Conflict):
+    """A row asked for in a folder the library does not hold, and was not asked to add
+    (tagpup.store.photos.ensure_row). `folder` is the folder, as stored."""
+
+    def __init__(self, folder):
+        self.folder = folder
+        super().__init__("%s is not in this library: add the folder to it first" % folder)
+
+
 class Refused(Exception):
     """A read that will not be answered: a file type the servers do not send, say. A web
     route answers it with 400, as it does a Result that was refused."""

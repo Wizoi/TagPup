@@ -32,6 +32,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shipped_sources import python_sources  # noqa: E402
 
+from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
@@ -57,10 +58,13 @@ class _LibraryFixture(unittest.TestCase):
 
     def _folder(self, name, count):
         folder = paths.key(os.path.join(self.dir, "Meets", name))
-        return folder, {
+        photos = {
             f"{folder}/img_{i:03d}.jpg": {"path": f"{folder}/img_{i:03d}.jpg"}
             for i in range(count)
         }
+        # A folder Suggest may work in: the library was asked to add it.
+        library_actions.admit(self.library, [meta["path"] for meta in photos.values()])
+        return folder, photos
 
 
 class _FakeIndex:

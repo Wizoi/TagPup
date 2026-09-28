@@ -75,13 +75,15 @@ class Library:
 
     def save_suggestions(self, found):
         """Keep {photo: entry} as what Suggest offered each photo, in this library
-        (tagpup.store.suggestions) -- where the page's Apply All reads it."""
+        (tagpup.store.suggestions) -- where the page's Apply All reads it. Suggest ran in
+        a folder the library holds or was given (tagpup.services.libraries.add)."""
+        from tagpup.store import photos as store_photos
         from tagpup.store import suggestions as saved
 
         conn = tagpup_db.connect(self.db_path)
         try:
             for photo, entry in found.items():
-                saved.put(conn, photo, entry)
+                saved.put_for(conn, store_photos.ensure_row(conn, photo, admit=True), entry)
             conn.commit()
         finally:
             conn.close()

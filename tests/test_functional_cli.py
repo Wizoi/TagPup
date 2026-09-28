@@ -170,7 +170,11 @@ class TestFunctionalCLI(unittest.TestCase):
         create_dummy_jpeg(target_photo)
 
         suggestions_file = os.path.join(self.workspace_path, "test_suggestions.json")
+        # A folder the library does not hold is added only when asked (--add).
         result = runner.invoke(cli, ["suggest", target_dir, "--output", suggestions_file])
+        self.assertEqual(1, result.exit_code, result.output)
+        self.assertIn("is not in", result.output)
+        result = runner.invoke(cli, ["suggest", target_dir, "--output", suggestions_file, "--add"])
         self.assertEqual(result.exit_code, 0, f"suggest command failed: {result.output}")
         self.assertTrue(os.path.exists(suggestions_file), "Suggestions file was not generated")
 

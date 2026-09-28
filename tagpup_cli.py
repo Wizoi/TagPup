@@ -62,6 +62,7 @@ from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
 from tagpup.runtime import Runtime
 from tagpup.services import settings as library_settings
+from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
 from tagpup.services import identities
 from tagpup.services import journal as library_journal
@@ -319,6 +320,11 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         photo_index.close()
         return
 
+    # Indexing a folder is adding it: every photo about to be read gets its row first, so
+    # the vectors kept as each is embedded, before its row is recorded, have one to go to
+    # (tagpup.store.photos.ensure_row makes none in a folder the library does not hold).
+    library_actions.admit(Library(db_path), [meta["path"] for meta in to_index_meta])
+
     # Per-photo write locks, shared with every other indexer of the libraries in this
     # folder, wherever each was started from.
     locker = PathLocker(lock_dir=Library(db_path).locks)
@@ -441,8 +447,11 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 @click.option("--min-sim", default=0.35, type=float, help="Cosine similarity cutoff.")
 @click.option("--output", default=None,
               help="Path to write the suggestions JSON file (default: <library>_suggestions.json beside the library).")
+@click.option("--add", "add_folder", is_flag=True,
+              help="Add the folder to the library first when it does not hold it: each photo gets its row, as "
+                   "TagPup's Add does. Without it, a folder the library does not hold is refused.")
 @click.pass_context
-def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
+def suggest(ctx, directory: str, k: int, min_sim: float, output: str, add_folder: bool = False):
     """Phase 2: Suggest tags for untagged photos."""
     runtime = get_runtime()
 
@@ -452,6 +461,15 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str):
     db_path = get_db_path(test_mode, cli_db)
     output = output or default_suggestions_file(db_path)
     library = Library(db_path)
+    # Suggest records faces and vectors for every photo it looks at, each on its row: only
+    # in the folders the library holds (tagpup.services.libraries.not_in).
+    refusal = library_actions.not_in(library, directory)
+    if refusal and not add_folder:
+        console.print(f"[bold red]Error:[/bold red] {refusal} (--add adds it; `index` adds and reads it)")
+        ctx.exit(1)
+    if refusal:
+        made = library_actions.admit(library, image_files.photos_under(directory))
+        console.print(f"Added {made} photo(s) to {library.name}; `index` reads them into it.")
     settings = runtime.settings(library)
     model_name = settings.embedder["model_name"]
 

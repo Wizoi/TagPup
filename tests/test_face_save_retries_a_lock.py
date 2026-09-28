@@ -17,6 +17,8 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
 import _root  # noqa: E402,F401
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
@@ -32,6 +34,9 @@ class FaceSaveRetriesALock(unittest.TestCase):
         self.index = PhotoIndex(os.path.join(self.dir, "lib.db"))
         self.index.load()
         self.addCleanup(self.index.close)
+        # The regatta's folder is the library's: a photo of it was indexed.
+        tagpup_db.write_with_connection(self.index.db_path, lambda conn: photo_rows.add_read(
+            conn, os.path.join(os.path.dirname(PHOTO), "finish.jpg"), {}))
 
     def test_a_lock_once_is_waited_out(self):
         real_connect = tagpup_db.connect

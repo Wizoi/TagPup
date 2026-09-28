@@ -17,6 +17,9 @@ from tagpup.files import images
 from tagpup.services import settings
 from tagpup.store import db, photos, schema, taxonomy
 
+#: Photos made rows for in one write when a folder is added.
+ADMIT_BATCH = 2000
+
 
 def bring_up_to_date(db_path):
     """The library's tables, made or migrated (tagpup.store.schema.ensure). Returns the
@@ -132,3 +135,65 @@ def membership(library, folder, roots=(), ignored=(), others=()):
         "ignored": _under_any(folder, ignored),
         "others": elsewhere,
     }
+
+
+def not_in(library, folder):
+    """Why nothing that makes rows -- Suggest, whose faces, vectors and suggestions each
+    need their photo's row -- may be done in `folder` for `library`, or None when the
+    library holds every folder of photos under it. "<folder> is not in <library>", for
+    a person to read. One walk of the folder, no file read."""
+    unheld = not_held(library, images.photos_under(folder))
+    if not unheld:
+        return None
+    folder = paths.stored(folder)
+    name = picker_name(os.path.basename(library.path))
+    if len(unheld) == 1 and paths.same(unheld[0], folder):
+        return "%s is not in %s. Add it to %s first." % (folder, name, name)
+    return ("%d folder(s) under %s are not in %s, %s first. Add the folder to %s first."
+            % (len(unheld), folder, name, unheld[0], name))
+
+
+def admit(library, photo_paths):
+    """Make a row for each photo of `photo_paths` that has none, the path and nothing read
+    (tagpup.store.photos.admit): their folders become the library's. Returns the rows made."""
+    photo_paths = list(photo_paths)
+    made = 0
+    for start in range(0, len(photo_paths), ADMIT_BATCH):
+        batch = photo_paths[start:start + ADMIT_BATCH]
+        made += db.write_with_connection(library.path, lambda conn, batch=batch: photos.admit(conn, batch),
+                                         label="add %d photo(s)" % len(batch))
+    return made
+
+
+def add(library, folders, queue):
+    """Add `folders` to the library, as asked: "Add to <library>" in TagPup, TagTuner's Add
+    Folder. Each folder's photos, at any depth, get a row at once -- the path and nothing
+    read -- so the folder is the library's from then on, and Suggest may work in it before
+    the index reaches it; then `queue(folders)` (the index queue's start) indexes them
+    with their subfolders, reading each row from its file. The only way, beside the
+    indexer itself, that a row is made in a folder the library did not hold.
+
+    A folder that is no full path or not on disk gets no rows, and is handed on for the
+    queue to report. A Result: `changed`, the rows made; details, the queue's (`queued`,
+    `already_queued`, `invalid`, `pending`), `admitted`, the rows made, and `photos`, the
+    photos found; refused as the queue refuses, and then nothing is made."""
+    result = Result(attempted=len(folders))
+    found = []
+    for folder in folders:
+        if isinstance(folder, str) and not validation.problem("folder", folder) and os.path.isdir(folder):
+            found += images.photos_under(folder)
+    # Before the queue: its worker may start at once, and a Suggest asked for as soon as
+    # this returns must find the folder the library's. The queue refuses only when no
+    # folder is on disk, when none was walked and nothing is made.
+    made = admit(library, found)
+    outcome = queue(folders)
+    result.details.update(outcome.details)
+    result.details.update(admitted=made, photos=len(found))
+    result.changed = made
+    for what, why in outcome.skipped:
+        result.skip(what, why)
+    for what, why in outcome.errors:
+        result.fail(what, why)
+    if outcome.refused:
+        result.refuse(outcome.refused)
+    return result

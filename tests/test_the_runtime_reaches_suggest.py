@@ -34,6 +34,8 @@ class TheRuntimeReachesSuggest(unittest.TestCase):
         self.folder = os.path.join(self.home.root, "Photos", "Harbour Walk")
         os.makedirs(self.folder)
         Image.new("RGB", (8, 8)).save(os.path.join(self.folder, "jetty.jpg"), "JPEG")
+        # A folder Suggest may work in: the library was asked to add it.
+        library_actions.admit(Library(self.home.library("library.db")), [os.path.join(self.folder, "jetty.jpg")])
 
     def test_the_app_keeps_it(self):
         self.assertIs(self.runtime, self.app.config["RUNTIME"])

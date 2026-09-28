@@ -89,6 +89,7 @@ class Suggestions(unittest.TestCase):
         other = os.path.join(below, "c.jpg")
         with open(other, "wb") as f:
             f.write(b"photo")
+        self.lib.add_folder(other)   # a folder Suggest may work in: the page asks first
         SuggestionRuns(self.lib.library.path).run(self.lib.photos, Work([self.a, self.b, other]))
         self.assertIn(other, self.saved()["suggestions"])
 
@@ -116,6 +117,7 @@ class TheRunsTheirSelves(unittest.TestCase):
         self.lib = TempLibrary(self)
         self.a = self.lib.photo("a.jpg")
         self.b = self.lib.photo("b.jpg")
+        self.lib.add_folder(self.a)
         self.runs = SuggestionRuns(self.lib.library.path)
         self.runs.run(self.lib.photos, Work([self.a, self.b]))
 

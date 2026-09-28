@@ -448,7 +448,7 @@ def _suggestions(conn):
     except (OSError, ValueError) as e:
         logger.warning("Saved suggestions in %s could not be read, and were not taken in: %s", path, e)
         return
-    from tagpup.store import suggestions   # the store imports this module
+    from tagpup.store import photos, suggestions   # the store imports this module
     ids = {paths.key(p): i for i, p in conn.execute("SELECT id, path FROM photos")}
     succeeded = set()
     taken = left = 0
@@ -466,7 +466,8 @@ def _suggestions(conn):
             if photo_id is not None:
                 suggestions.put_for(conn, photo_id, found)
             elif os.path.exists(photo):
-                suggestions.put(conn, photo, found)
+                # As Suggest made rows when this migration was written: in any folder.
+                suggestions.put_for(conn, photos.ensure_row(conn, photo, admit=True), found)
             else:
                 left += 1
                 continue

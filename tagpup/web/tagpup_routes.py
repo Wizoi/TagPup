@@ -23,6 +23,7 @@ from flask import Blueprint, jsonify, request
 from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
 from tagpup.core import fields, paths, suggesting, vocabulary
+from tagpup.core.library import picker_name
 from tagpup.core.result import NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
@@ -249,17 +250,36 @@ def folder_index_status():
 
 @routes.post("/api/folder/index-start")
 def folder_index_start():
-    """Queue a folder to be added to this library (tagpup.jobs.indexing). The page no
-    longer asks: adding folders is TagTuner's (docs/findings.md, #34). Clustering
-    re-derives every face name in the library, not only this folder's, and can discard
-    manual corrections, so it is opt-in."""
+    """Queue a folder to be added to this library (tagpup.services.libraries.add, through
+    tagpup.jobs.indexing). The page asks /api/folder/add instead. Clustering re-derives
+    every face name in the library, not only this folder's, and can discard manual
+    corrections, so it is opt-in."""
     library = state.require()
     body = request.get_json(silent=True) or {}
-    result = indexing_jobs.queue_for(library).start(
-        [body.get("folder_path")], _folder_indexer(library), cluster=bool(body.get("cluster", False)))
+    cluster = bool(body.get("cluster", False))
+    result = library_actions.add(library, [body.get("folder_path")], lambda folders: indexing_jobs.queue_for(
+        library).start(folders, _folder_indexer(library), cluster=cluster))
     if result.refused:
         return responses.error(400, result.message())
     return jsonify({"success": True, "status": "running", **result.details})
+
+
+@routes.post("/api/folder/add")
+def folder_add():
+    """Add a folder to this library, as the person asked: "Add to <library>"
+    (tagpup.services.libraries.add). Its photos are the library's at once -- Suggest may
+    start -- and it is queued to be indexed, with its subfolders, behind any other."""
+    library = state.require()
+    body = request.get_json(silent=True) or {}
+    folder = body.get("folder_path")
+    if not folder or not isinstance(folder, str) or not os.path.isdir(folder):
+        return responses.error(400, "Path is not a valid directory: %s" % folder)
+    result = library_actions.add(library, [folder], lambda folders: indexing_jobs.queue_for(library).start(
+        folders, _folder_indexer(library)))
+    if result.refused:
+        return responses.error(400, result.message())
+    return jsonify({"success": result.ok, "status": "running", "library": picker_name(os.path.basename(library.path)),
+                    "folder": paths.stored(folder), "added": result.changed, **result.details})
 
 
 @routes.get("/api/folder/suggest-status")
@@ -281,6 +301,11 @@ def folder_suggest_start():
     if not folder or not os.path.isdir(folder):
         return responses.error(400, "Invalid folder path")
     folder = paths.stored(folder)
+    # Suggest makes rows -- faces, vectors, what it offered -- for every photo it looks at:
+    # only in the folders the library holds; the page asks to add one first (/api/folder/add).
+    refusal = library_actions.not_in(library, folder)
+    if refusal:
+        return responses.error(409, refusal)
     work = suggestion_jobs.work_for(library, lambda: _folder_photos(library, folder), state.runtime())
     return jsonify({"success": True, "status": suggestion_jobs.runs_for(library).start(folder, work)})
 

@@ -210,7 +210,7 @@ The `tagpup_cli.py` engine is accessed via `click` subcommands.
 ### Subcommands
 
 #### 1. `index`
-Scans and indexes a photo library recursively: one or more directories, in one run (the models are loaded once; sync hands it every folder of new files at once).
+Scans and indexes a photo library recursively: one or more directories, in one run (the models are loaded once; sync hands it every folder of new files at once). Indexing a folder adds it to the library: each photo it is about to read gets its row first (`tagpup.services.libraries.admit`), as TagPup's Add and TagTuner's Add Folder do.
 - **Usage**: `run.bat [global-options] index <DIRECTORY> [<DIRECTORY> ...]`
 - **Options**:
   - `--force-reembed`: Force recreation of all CLIP visual embeddings.
@@ -225,6 +225,7 @@ Analyzes untagged photos and generates tag recommendations.
   - `--k INTEGER`: Number of nearest neighbors to consider (default: `15`).
   - `--min-sim FLOAT`: Cosine similarity cutoff (default: `0.35`).
   - `--output TEXT`: Path to write the output suggestions JSON file (default: `<library>_suggestions.json` beside the library, e.g. `data/photo_index_suggestions.json`; never the working folder).
+  - `--add`: Add DIRECTORY to the library first when the library does not hold every folder of photos under it: each photo gets its row, the path and nothing read, as TagPup's Add does (`index` then reads them). Without it such a folder is refused, exit code 1, with a message naming the folder and the library: Suggest records faces and vectors on each photo's row, and a row makes its folder the library's -- kept in step, watched, its new files indexed (`tagpup.services.libraries.not_in`).
 
 #### 3. `write`
 Writes suggested tags and descriptions back to photo file metadata using ExifTool.
