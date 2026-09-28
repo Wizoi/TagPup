@@ -279,8 +279,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
     # A photo found damaged before, and unchanged since, is not read again: it would fail
     # again (docs/findings.md, #407). Replaced or changed, it is read at once.
-    damaged_before = [] if force_reembed else damaged_photos.records(Library(db_path))
-    passed_over = damaged_photos.unreadable(damaged_before)
+    # --force-reembed reads them again all the same.
+    damaged_before = damaged_photos.records(Library(db_path))
+    passed_over = {} if force_reembed else damaged_photos.unreadable(damaged_before)
     if passed_over:
         still = []
         for path in images_to_process:
