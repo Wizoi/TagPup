@@ -244,8 +244,12 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     if problem:
         result.refuse(problem)
         return result
-    if libraries.refuse_writes(result, library, photo_paths):
+    if libraries.refuse_writes(result, library, photo_paths, damaged_ok=True):
         return result
+    # A damaged photo is skipped, keeping its name; the rest are renamed and numbered.
+    photo_paths, left = libraries.leave_out_damaged(library, photo_paths)
+    result.attempted -= len(left)
+    libraries.with_skipped(result, left)
     grouping = validation.trim(grouping)
     width = len(str(len(photo_paths)))
     present = [p for p in photo_paths if os.path.exists(p)]
@@ -307,8 +311,10 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
         result.refuse(problem)
         return result
     refused = Result(attempted=len(photo_paths))
-    if libraries.refuse_writes(refused, library, photo_paths):
+    if libraries.refuse_writes(refused, library, photo_paths, damaged_ok=True):
         return refused
+    # A damaged photo is skipped, the rest shifted (libraries.leave_out_damaged).
+    photo_paths, left = libraries.leave_out_damaged(library, photo_paths)
 
     def plan_one(_path, held):
         after = {}
@@ -330,6 +336,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
         result.fail("time shift", e)
         return result
     result.details.pop("written", None)
+    libraries.with_skipped(result, left)
     # Only reading, for the page: minting a DocumentID here would write the files again.
     result.details["records"] = metadata.MetadataExtractor(exiftool_path=exiftool_path
                                                            ).batch_read(photo_paths,

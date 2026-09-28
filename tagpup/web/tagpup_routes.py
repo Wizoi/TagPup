@@ -366,7 +366,7 @@ def folder_auto_apply():
     if not result.ok:
         logger.error("Error auto-applying suggestions: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
-    return jsonify({"success": True, "written": _written_tags(result)})
+    return jsonify({"success": True, "written": _written_tags(result), **_skipped_damaged(result)})
 
 
 @routes.post("/api/folder/time-shift")
@@ -416,7 +416,8 @@ def folder_time_shift():
         logger.error("Error applying time shift to %s: %s", folder, e)
         return responses.error(500, str(e))
     return jsonify({"success": True, "updated_photos": list(photos.values()),
-                    "updated_count": result.changed, "requested_count": result.attempted})
+                    "updated_count": result.changed, "requested_count": result.attempted,
+                    **_skipped_damaged(result)})
 
 
 @routes.post("/api/folder/rename-photos")
@@ -469,6 +470,7 @@ def folder_rename_photos():
         "updated_photos": _sorted(photos),
         "index_rows_moved": result.details["index_rows_moved"],
         "index_skipped": [new for _, new in result.details["index_skipped"]],
+        **_skipped_damaged(result),
     })
 
 
@@ -663,7 +665,16 @@ def photos_bulk_tags():
         # so that its records say what the files hold.
         logger.error("Error in bulk tags write: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
-    return jsonify({"success": True, "written": _written_tags(result)})
+    return jsonify({"success": True, "written": _written_tags(result), **_skipped_damaged(result)})
+
+
+def _skipped_damaged(result):
+    """What a bulk write's reply says of the photos it skipped as damaged
+    (tagpup.services.libraries.leave_out_damaged): {"skipped_damaged": n, "skipped":
+    [{"path", "why"}]}, the photos the page shows."""
+    count = result.details.get(library_actions.SKIPPED_DAMAGED, 0)
+    return {"skipped_damaged": count,
+            "skipped": [{"path": what, "why": why} for what, why in result.skipped[-count:]] if count else []}
 
 
 def _written_tags(result):

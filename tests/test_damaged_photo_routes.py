@@ -115,10 +115,33 @@ class NothingIsWrittenToThem(Case):
         self.assertIn("nothing is written to it", reply.get_json()["error"])
         self.unchanged()
 
-    def test_a_bulk_tag_that_names_one_is_refused(self):
+    @unittest.skipIf(own_home.installed_exiftool() is None, "ExifTool not installed")
+    def test_a_bulk_tag_skips_it_and_writes_the_rest(self):
+        import photo_rows
+        from tagpup.store import db
+        whole = os.path.join(os.path.dirname(self.half), "jetty.jpg")
+        damaged_photos.whole_jpeg(whole)
+        conn = db.connect(self.db_path)
+        try:
+            photo_rows.add_read(conn, whole, {})
+            conn.commit()
+        finally:
+            conn.close()
+        reply = self.client().post("/harbour/api/photos/bulk-tags",
+                                   json={"paths": [whole, self.half], "add_tags": ["Places/Harbour"], "remove_tags": []})
+        self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
+        found = reply.get_json()
+        self.assertEqual(1, found["skipped_damaged"])
+        self.assertEqual([self.half], [each["path"] for each in found["skipped"]])
+        self.assertIn("damaged", found["skipped"][0]["why"])
+        self.assertEqual({whole: ["Places/Harbour"]}, found["written"])
+        self.unchanged()
+
+    def test_a_bulk_tag_of_only_damaged_photos_writes_nothing(self):
         reply = self.client().post("/harbour/api/photos/bulk-tags",
                                    json={"paths": [self.half], "add_tags": ["Places/Harbour"], "remove_tags": []})
-        self.assertEqual(409, reply.status_code, reply.get_data(as_text=True))
+        self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
+        self.assertEqual((1, {}), (reply.get_json()["skipped_damaged"], reply.get_json()["written"]))
         self.unchanged()
 
 

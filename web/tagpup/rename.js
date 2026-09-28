@@ -94,7 +94,8 @@ export function wireRenameAndTimeShift() {
             updateSelectedThumbnailsCount();
             saveToLocalStorageCache();
             
-            setStatus('ready', `Renamed ${renamedCount} photo(s)`);
+            const skipped = data.skipped_damaged || 0;
+            setStatus('ready', `Renamed ${renamedCount} photo(s)` + (skipped ? `; ${skipped} skipped: damaged` : ''));
         })
         .catch(err => {
             console.error(err);
@@ -207,13 +208,16 @@ export function applyTimeShift() {
             
             // What ExifTool wrote, not what was asked: a photo it could not
             // write keeps its old time, and saying so is the only way to know.
+            // A photo found damaged is skipped, nothing written to it: said, not a failure.
+            const skipped = data.skipped_damaged || 0;
             const done = data.updated_count ?? 0;
-            const asked = data.requested_count ?? affected;
+            const asked = (data.requested_count ?? affected) - skipped;
+            const also = skipped ? `; ${skipped} skipped: damaged` : '';
             if (done < asked) {
-                setStatus('error', `Time shift applied to ${done} of ${asked} photo(s); ${asked - done} could not be written`,
+                setStatus('error', `Time shift applied to ${done} of ${asked} photo(s); ${asked - done} could not be written${also}`,
                     { transient: false });
             } else {
-                setStatus('ready', `Time shift applied to ${done} photo(s)`);
+                setStatus('ready', `Time shift applied to ${done} photo(s)${also}`);
             }
 
             renderFileList();

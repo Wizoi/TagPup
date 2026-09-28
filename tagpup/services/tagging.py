@@ -124,11 +124,13 @@ def change_tags(library, photo_paths, add, remove, exiftool_path):
     if problem:
         return _refused(len(photo_paths), problem)
     refused = _refused(len(photo_paths), None)
-    if libraries.refuse_writes(refused, library, photo_paths):
+    if libraries.refuse_writes(refused, library, photo_paths, damaged_ok=True):
         return refused
+    # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
+    photo_paths, left = libraries.leave_out_damaged(library, photo_paths)
     add = [vocabulary.normalize(tag) for tag in add]
-    return _change_each(library, [(path, add, remove) for path in photo_paths], exiftool_path,
-                        "add to all selected")
+    return libraries.with_skipped(_change_each(library, [(path, add, remove) for path in photo_paths],
+                                               exiftool_path, "add to all selected"), left)
 
 
 def add_tags(library, additions, exiftool_path):
@@ -140,10 +142,12 @@ def add_tags(library, additions, exiftool_path):
     if problem:
         return _refused(len(additions), problem)
     refused = _refused(len(additions), None)
-    if libraries.refuse_writes(refused, library, [path for path, tags in additions.items() if tags]):
+    if libraries.refuse_writes(refused, library, [path for path, tags in additions.items() if tags], damaged_ok=True):
         return refused
-    return _change_each(library, [(path, tags, ()) for path, tags in additions.items() if tags],
-                        exiftool_path, "apply all suggestions")
+    # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
+    kept, left = libraries.leave_out_damaged(library, [path for path, tags in additions.items() if tags])
+    return libraries.with_skipped(_change_each(library, [(path, additions[path], ()) for path in kept],
+                                               exiftool_path, "apply all suggestions"), left)
 
 
 def _refused(attempted, problem):
@@ -300,8 +304,15 @@ def write_suggestions(library, writes, exiftool_path, nobackup=False):
     if problem:
         result.refuse(problem)
         return result
-    if libraries.refuse_writes(result, library, [path for path, _tags, _caption in writes]):
+    if libraries.refuse_writes(result, library, [path for path, _tags, _caption in writes], damaged_ok=True):
         return result
+    # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
+    kept, left = libraries.leave_out_damaged(library, [path for path, _tags, _caption in writes])
+    if left:
+        kept = {paths.key(path) for path in kept}
+        writes = [write for write in writes if paths.key(write[0]) in kept]
+        result.attempted -= len(left)
+        libraries.with_skipped(result, left)
     # Who a bare name means, read once for the run, not once per photo.
     people = taxonomy.people_paths(library.path)
     # A photo named twice in the file is written once, with the tags of both.

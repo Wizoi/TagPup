@@ -217,6 +217,32 @@ def refuse_writes(result, library, photo_paths, damaged_ok=False):
     return True
 
 
+#: What a Result's details count of the photos a bulk write skipped as damaged.
+SKIPPED_DAMAGED = "skipped_damaged"
+
+
+def leave_out_damaged(library, photo_paths):
+    """(`photo_paths` but the photos recorded damaged or possibly incomplete and unchanged
+    since, [(path, why)] of those left out). A bulk write skips them and writes the rest;
+    a write of one photo is refused instead (refuse_writes)."""
+    found = damaged_photos.among(library, photo_paths)
+    if not found:
+        return list(photo_paths), []
+    out = {paths.key(each["path"]) for each in found}
+    return ([path for path in photo_paths if paths.key(path) not in out],
+            [(each["path"], "damaged, nothing is written to it: %s" % each["reason"]) for each in found])
+
+
+def with_skipped(result, left):
+    """`result`, with the photos `left` out as damaged (leave_out_damaged) skipped and
+    counted: details[SKIPPED_DAMAGED]."""
+    result.attempted += len(left)
+    for what, why in left:
+        result.skip(what, why)
+    result.details[SKIPPED_DAMAGED] = len(left)
+    return result
+
+
 def record_added(library, folders, subfolders=True):
     """Record each of `folders` that is a full path on disk as added to the library, with
     its subfolders unless not `subfolders` (tagpup.store.added_folders): the library's from
