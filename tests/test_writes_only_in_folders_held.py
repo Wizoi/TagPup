@@ -41,7 +41,7 @@ def stamp(path):
     return (stat.st_mtime_ns, stat.st_size)
 
 
-class TheWriteRoutes(unittest.TestCase):
+class WriteCase(unittest.TestCase):
     def setUp(self):
         self.app, self.home = web_client.app_for(self, "tagpup")
         self.client = self.app.test_client()
@@ -70,6 +70,8 @@ class TheWriteRoutes(unittest.TestCase):
     def post(self, route, body):
         return self.client.post("/library/api" + route, json=body)
 
+
+class TheWriteRoutes(WriteCase):
     def test_saving_one_photo(self):
         self.assert_refused(self.post("/photo/save-metadata", {"path": self.photo, "title": "Lighthouse",
                                                               "tags": ["Trips/Lighthouse"]}))
@@ -104,6 +106,36 @@ class TheWriteRoutes(unittest.TestCase):
         held = os.path.join(self.regatta, "regatta_01.jpg")
         reply = self.post("/photo/rotate", {"path": held, "direction": "left"})
         self.assertEqual(200, reply.status_code, reply.data)
+
+
+class ALibraryThatCannotBeRead(WriteCase):
+    """Is the folder held? A library that cannot be read just now does not say no: the
+    question fails, and the write or the Suggest with it -- never a 409 sending the owner
+    to Add a folder the library holds. The read took any failure for "held nowhere"."""
+
+    def unreadable(self):
+        import sqlite3
+        return mock.patch("tagpup.store.photos.holds_folder",
+                          side_effect=sqlite3.OperationalError("database is locked"))
+
+    def test_the_question_fails(self):
+        import sqlite3
+        with self.unreadable(), self.assertRaises(sqlite3.OperationalError):
+            library_actions.not_held(self.library, [self.photo])
+
+    def test_a_write_fails_not_refused(self):
+        held = os.path.join(self.regatta, "regatta_01.jpg")
+        before = stamp(held)
+        with self.unreadable():
+            reply = self.post("/photo/rotate", {"path": held, "direction": "left"})
+        self.assertEqual(500, reply.status_code, reply.data)
+        self.assertEqual(before, stamp(held))
+
+    def test_suggest_fails_not_refused(self):
+        import sqlite3
+        with self.unreadable(), self.assertRaises(sqlite3.OperationalError):
+            # The app is in testing mode: a route that raises, raises (a 500 served).
+            self.post("/folder/suggest-start", {"folder_path": self.regatta})
 
 
 class TheCliWrite(unittest.TestCase):

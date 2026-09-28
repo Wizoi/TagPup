@@ -8,6 +8,7 @@ library's tables come from tagpup.store.schema, its first nodes -- one face root
 People -- from tagpup.store.taxonomy.seed, and its settings, the defaults, from
 tagpup.services.settings.
 """
+import logging
 import os
 
 from tagpup.core import paths, validation
@@ -16,6 +17,8 @@ from tagpup.core.result import NOT_IN_LIBRARY, Result
 from tagpup.files import images
 from tagpup.services import settings
 from tagpup.store import db, photos, schema, taxonomy
+
+logger = logging.getLogger(__name__)
 
 #: Photos made rows for in one write when a folder is added.
 ADMIT_BATCH = 2000
@@ -63,17 +66,14 @@ def create(db_path):
 
 def _read(db_path, read, default):
     """`read(conn)` on a read-only connection to the library at `db_path`, or `default`
-    for one that is not there or cannot be read just now."""
+    for one that is not there, which holds nothing. A library that is there and cannot
+    be read just now raises: taken for one holding nothing, a moment's lock answered a
+    write or a Suggest in a folder it holds with 409, sending the owner to Add it."""
     if not os.path.exists(db_path):
         return default
-    try:
-        conn = db.connect(db.readonly_uri(db_path), uri=True)
-    except Exception:
-        return default
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         return read(conn)
-    except Exception:
-        return default
     finally:
         conn.close()
 
@@ -133,7 +133,12 @@ def membership(library, folder, roots=(), ignored=(), others=()):
     for other in others:
         if other == library:
             continue
-        count = held_under(other, folder)
+        try:
+            count = held_under(other, folder)
+        except Exception as e:
+            # Another library's count is for the dialog's information only.
+            logger.warning("Could not read %s to count its photos under a folder: %s", other.name, e)
+            continue
         if count:
             elsewhere.append({"library": picker_name(os.path.basename(other.path)), "photos": count})
     return {
