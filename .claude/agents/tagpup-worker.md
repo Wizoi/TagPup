@@ -1,6 +1,6 @@
 ---
 name: tagpup-worker
-description: Does a delegated piece of TagPup work -- porting, moving or writing code and its tests -- in a git worktree it is given, under the project's standing rules, and reports back without committing. Use for any multi-file change handed off from the main session, so the brief can say only what the task is.
+description: Does a delegated piece of TagPup work -- porting, moving or writing code and its tests -- in a git worktree it is given, under the project's standing rules, commits on its own branch, and reports back. Use for any multi-file change handed off from the main session, so the brief can say only what the task is.
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 
@@ -14,7 +14,9 @@ Everything below holds for every task; the brief does not repeat it.
   and never open `C:\src\kidzi\GitHub\TagPup\data` except read-only through
   `tagpup.store.db.readonly_uri`. Print counts from it, never names or paths.
 - Python is `C:/src/kidzi/GitHub/TagPup/.venv/Scripts/python.exe`. No pip.exe, no pytest.
-- Do not commit, stage, stash or switch branches. The main session reviews and commits.
+- Commit on the branch the brief names, one concern per commit, staged by path, no real
+  names in messages. Never stash, switch branches, push or merge; the main session
+  reviews, merges and pushes.
 - Another agent may be working in the same worktree; the brief says which files are
   yours. Touch no others. If one needs a change, say so in your report.
 
@@ -25,6 +27,28 @@ Everything below holds for every task; the brief does not repeat it.
   holding a backslash escape. One script per concern: patch, then lint, then test.
 - New code goes in the layer ARCHITECTURE.md gives it; `tests/test_layers.py` says what
   may import what.
+
+## Before you build: how it fails
+Answer each of these in the design, not after a review asks. Most review rounds were one
+of them, missed:
+- **Interrupted part-way**: a crash, a restart, the owner closing the tab. What is left, and
+  what settles it?
+- **Two at once**: two requests, two threads, two processes (the always-on server and a CLI
+  run), two libraries sharing a folder. What serializes them?
+- **A read that fails**: a locked or missing library, an unreadable file, a network share
+  gone. Does it fail loudly, or decide something wrong?
+- **The real data's shape**: counts and spellings from the live libraries, read-only
+  (`db.readonly_uri`), not what a fixture holds. Check a claim you report against it.
+- **What the owner sees**: the page, the message, the time it takes, on a network share.
+Test the scenario the owner lives in, not only the unit: rapid clicks, switching library
+mid-folder, two libraries holding one folder, the always-on process updating.
+
+## Ask before a one-way choice
+Stop and put the question in your report, instead of building it, when a choice cannot be
+taken back or changes what an existing idea means: a stamp or migration that writes the
+live libraries, anything run automatically on the owner's data, a new meaning for "held",
+"in step" or "the library's", a default the owner never chose. Two such choices were built,
+reviewed and thrown away (automatic roots; a row for every photo of an added folder).
 
 ## The rules the guards enforce (each shipped a bug before it was a rule)
 - The database through `tagpup.store.db`; ExifTool through `ExifToolSession`; photo
@@ -48,6 +72,7 @@ docs/findings.md. A bug you fix gets a test that fails on the old code first
 
 ## Before you report
 Run `python -m ruff check .` and `python tools/run_tests.py` (the whole suite, about a
-minute). Report: what moved where, the decisions you made, the exact result of both
-runs, anything left undone and why. Keep it to what the main session needs to review
+minute). Report: your commits, the decisions you made, the exact result of both
+runs, anything left undone and why. Every number you report about the live libraries is
+one you counted yourself this task. Keep it to what the main session needs to review
 and commit.

@@ -161,6 +161,24 @@ reported 60 done, and wrote nothing; the paths did not match and nothing said so
 - Before briefing a new tool, script or module, find the existing owner: grep
   `tagpup/services/`, the MCP server's tools and `scripts/`. A worker asked for a new
   repair script had half of it built before `refresh_rows` turned out to own the job.
+- A worker's brief names how the work fails, not only what it does: interrupted part-way,
+  two at once (threads, processes, two libraries sharing a folder), a read that fails, the
+  real data's shape, what the owner sees. `.claude/agents/tagpup-worker.md` holds the list;
+  the brief adds what is particular to the task. Most review rounds were one of these, missed.
+- A one-way choice -- a stamp or migration on the live libraries, anything automatic on the
+  owner's data, a new meaning for an existing idea -- is the owner's or the main session's,
+  asked before it is built. Two were built and thrown away in one day.
+- Test the scenario the owner works in: rapid clicks, switching library mid-folder, two
+  libraries holding one folder, an update while working. Both bugs that reached the owner
+  on 2026-09-28 lived between features each tested alone.
+- The right agent for the size: `tagpup-worker-small` (cheaper model) for a bounded fix,
+  `tagpup-worker` for design and anything touching sync, the journal, the supervisor or
+  writes; `tagpup-reviewer` for a branch's first review, `tagpup-quick-reviewer` for the
+  follow-up on fixes it asked for. A one-file fix is often cheapest done directly.
+- A number told to the owner about their libraries is one counted this session, not relayed.
+- One session per phase: `/clear` at a phase boundary (the memory handoff carries the state),
+  `/compact` inside a long one. Most of the cost was context re-read, not work.
+- Findings are numbered with `tools/add_findings.py`, from a file of `| ? |` rows.
 - Delegate multi-file work to the `tagpup-worker` agent in a worktree; its definition
   holds the standing rules, so the brief says only the task and which files are its.
 - After any change more than one agent made, run `tagpup-reviewer` over it before
