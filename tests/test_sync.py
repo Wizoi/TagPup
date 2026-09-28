@@ -43,7 +43,6 @@ class Reads:
         self.read, self.sessions = [], 0
 
     def batch_read(self, extractor, file_paths, people=None):
-        assert not extractor.mint_identities, "sync must never write to a photo"
         self.read.extend(file_paths)
         return [MetadataExtractor._structure(extractor, path, dict(self.truth.get(os.path.basename(path), {})),
                                              people) for path in file_paths]

@@ -331,7 +331,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
         return result
     result.details.pop("written", None)
     # Only reading, for the page: minting a DocumentID here would write the files again.
-    result.details["records"] = metadata.MetadataExtractor(exiftool_path=exiftool_path, mint_identities=False
+    result.details["records"] = metadata.MetadataExtractor(exiftool_path=exiftool_path
                                                            ).batch_read(photo_paths,
                                                                         people=taxonomy.people_vocabulary(library.path))
     return result

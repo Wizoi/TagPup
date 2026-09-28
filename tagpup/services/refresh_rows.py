@@ -187,7 +187,7 @@ def read_files(conn, photo_paths, exiftool_path, progress=None):
     ExifTool is not there every file read as unreadable and nothing was refreshed. The
     library's people are read once for the run; they were read again for every photo.
     """
-    extractor = MetadataExtractor(exiftool_path=exiftool_path, mint_identities=False)
+    extractor = MetadataExtractor(exiftool_path=exiftool_path)
     known = store_taxonomy.people_vocabulary(conn=conn)
     records = {}
     for start in range(0, len(photo_paths), BATCH):

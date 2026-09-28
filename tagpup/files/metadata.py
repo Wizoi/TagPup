@@ -60,17 +60,16 @@ def structured(meta):
     return cleaned
 
 
+#: Where ExifTool puts an error about a file in what it answers.
+READ_ERROR_KEYS = ("ExifTool:Error", "Error")
+
+
 class MetadataExtractor:
-    def __init__(self, exiftool_path: Optional[str] = None, mint_identities: bool = False):
+    """Reads photos' metadata; never writes into a photo. Giving a photo an identity is
+    IdentityWriter's, after its picture has decoded."""
+
+    def __init__(self, exiftool_path: Optional[str] = None):
         self.exiftool_path = exiftool_path
-        #: Write an identity into photos that lack one, as they are read.
-        #:
-        #: Only the indexer asks for this, because it records what it read -- the
-        #: identity, and the file's new mtime and size -- in the index. Without an
-        #: identity a renamed photo strands its row, and the row holds the faces
-        #: somebody named by hand. It used to be on for every reader, so opening a
-        #: folder wrote into its photos and the index rows then looked out of date.
-        self.mint_identities = mint_identities
 
     def batch_read(self, file_paths: List[str],
                    people: Optional[vocabulary.PeopleVocabulary] = None) -> List[Dict[str, Any]]:
@@ -100,9 +99,6 @@ class MetadataExtractor:
                 # Check mapping to return formatted info
                 for path, meta in zip(file_paths, batch_meta):
                     results.append(self._structure(path, meta, people))
-
-                if self.mint_identities:
-                    self._give_identities(et, results)
         except Exception as e:
             # ExifTool exits non-zero if *any* file in the batch is unreadable, and
             # pyexiftool raises on that status, so a single corrupt or unsupported
@@ -130,7 +126,7 @@ class MetadataExtractor:
         except Exception:
             mtime, size = 0.0, 0
 
-        return {
+        record = {
             "path": path,
             "mtime": mtime,
             "size": size,
@@ -140,36 +136,10 @@ class MetadataExtractor:
             "raw_metadata": cleaned,
             "document_id": read_document_id(cleaned),
         }
-
-    def _give_identities(self, et, records):
-        """Write an identity into any photo that has none.
-
-        A path is a bad name for a photo: rename it and the index describes something
-        that no longer exists, while the photo looks unindexed. DocumentID is the XMP
-        standard's per-document identifier and most photos already carry one, so this
-        writes to very few files -- 54 of 1,129 in this library. Those that already
-        have one are not touched.
-
-        Failures are per-file and logged, never raised: an identity is an improvement
-        on knowing only the path, and a photo that cannot take one indexes perfectly
-        well without it.
-        """
-        for record in records:
-            if record.get("document_id"):
-                continue
-            minted = ensure_document_id(et, record["path"], record.get("raw_metadata"))
-            if not minted:
-                continue
-            record["document_id"] = minted
-            record.setdefault("raw_metadata", {})["XMP:DocumentID"] = minted
-            # The file changed, so the stats recorded for change detection must be the
-            # ones it has now -- otherwise the next pass sees a modified file and
-            # re-indexes it for a write this pass made.
-            try:
-                stat = os.stat(record["path"])
-                record["mtime"], record["size"] = stat.st_mtime, stat.st_size
-            except Exception:
-                pass
+        error = next((meta[key] for key in READ_ERROR_KEYS if meta.get(key)), None)
+        if error:
+            record["read_error"] = str(error)
+        return record
 
     def _read_one_by_one(self, file_paths, executable, people):
         """Fallback for a failed batch: read each file on its own.
@@ -184,7 +154,7 @@ class MetadataExtractor:
             et.run()
         except Exception as e:
             logger.error(f"Could not start ExifTool for the per-file retry: {e}")
-            return [self._empty(path) for path in file_paths]
+            return [self._empty(path, e) for path in file_paths]
 
         try:
             for path in file_paths:
@@ -193,7 +163,7 @@ class MetadataExtractor:
                     results.append(self._structure(path, meta[0], people))
                 except Exception as e:
                     logger.error(f"Unreadable metadata, indexing without it: {path} ({e})")
-                    results.append(self._empty(path))
+                    results.append(self._empty(path, e))
         finally:
             try:
                 et.terminate()
@@ -202,7 +172,9 @@ class MetadataExtractor:
         return results
 
     @staticmethod
-    def _empty(path):
+    def _empty(path, error):
+        """The record of a file ExifTool could not read: nothing read, and `read_error`,
+        why -- so nothing is written into it (IdentityWriter)."""
         try:
             stat = os.stat(path)
             mtime, size = stat.st_mtime, stat.st_size
@@ -216,7 +188,85 @@ class MetadataExtractor:
             "people": [],
             "captions": [],
             "raw_metadata": {},
+            "read_error": str(error) or type(error).__name__,
         }
+
+
+class IdentityWriter:
+    """Gives photos that have none an identity (tagpup.files.identity), one at a time, as
+    the indexer reads them -- the one writer of a minted identity at index time.
+
+    A path is a bad name for a photo: rename it and the index describes something that
+    no longer exists, while the photo looks unindexed. DocumentID is the XMP standard's
+    per-document identifier and most photos already carry one, so this writes to few
+    files. Only the indexer mints, because it records what it read -- the identity, and
+    the file's new mtime and size -- in the index; opening a folder once wrote into its
+    photos and the rows then looked out of date.
+
+    Never into a photo whose picture did not decode in full (`decoded`: the caller's to
+    say, and false for a file that may be an incomplete copy, tagpup.files.images.
+    ZERO_TAIL), nor one ExifTool reported an error reading (`read_error`): a truncated file
+    took an identity, which changed its modified time, which the folder watcher saw,
+    which queued the indexer for it again (docs/findings.md, #407). Minting used to
+    happen as the batch was read, before any picture was decoded.
+
+    Failures are per-file and logged, never raised: an identity is an improvement on
+    knowing only the path, and a photo that cannot take one indexes without it. The
+    ExifTool session is started for the first photo that needs one; close() ends it.
+    """
+
+    def __init__(self, exiftool_path: Optional[str] = None):
+        executable = exiftool_path
+        if executable and not os.path.isabs(executable):
+            executable = os.path.abspath(executable)
+        self.executable = executable
+        self._et = None
+        self._failed = False
+        #: Photos given an identity.
+        self.minted = 0
+
+    def give(self, record, decoded):
+        """Write an identity into the photo of `record` (MetadataExtractor's) if it has
+        none, it `decoded`, and ExifTool read it without an error; update the record --
+        its identity, and the file's mtime and size after the write, or the next pass
+        would see a modified file and index it again for a write this pass made. The
+        identity minted, or None."""
+        if record.get("document_id") or not decoded or record.get("read_error"):
+            return None
+        et = self._session()
+        if et is None:
+            return None
+        minted = ensure_document_id(et, record["path"], record.get("raw_metadata"))
+        if not minted:
+            return None
+        self.minted += 1
+        record["document_id"] = minted
+        record.setdefault("raw_metadata", {})["XMP:DocumentID"] = minted
+        try:
+            stat = os.stat(record["path"])
+            record["mtime"], record["size"] = stat.st_mtime, stat.st_size
+        except OSError:
+            pass
+        return minted
+
+    def _session(self):
+        if self._et is None and not self._failed:
+            try:
+                et = ExifToolSession(executable=self.executable)
+                et.run()
+                self._et = et
+            except Exception as e:
+                self._failed = True
+                logger.error(f"Could not start ExifTool to give photos an identity: {e}")
+        return self._et
+
+    def close(self):
+        et, self._et = self._et, None
+        if et is not None:
+            try:
+                et.terminate()
+            except Exception:
+                pass
 
 
 #: The EXIF Orientation a photo has after a quarter turn, by the one it had before.

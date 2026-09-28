@@ -212,10 +212,13 @@ embeddings, then the embedding cache — because each site had its own settings.
 rename it and the index row describes something that no longer exists, while the photo
 looks unindexed. `tagpup/files/identity.py` reads `XMP-xmpMM:DocumentID`, which most photos
 already carry (1,075 of 1,129 sampled here), and mints `xmp.did:<uuid>` into the few
-that do not. That means a normal index pass *writes* to some files, which is new: pass
-`MetadataExtractor(mint_identities=False)` where that must not happen. A minted
-identity also re-reads the file's mtime and size, or the next pass would see a file
-modified since indexing and re-index it for a write the last pass made.
+that do not. That means a normal index pass *writes* to some files: only the indexer
+does, through `IdentityWriter` (`tagpup/files/metadata.py`), and only into a photo whose
+picture has decoded in full and whose metadata ExifTool read without an error -- a
+truncated file took an identity, which changed its modified time, which queued it for
+indexing again (#407). `MetadataExtractor` only reads. A minted identity also re-reads
+the file's mtime and size, or the next pass would see a file modified since indexing and
+re-index it for a write the last pass made.
 
 **ExifTool treats an empty list as "no change".** Clearing a photo's last keyword has to
 be an explicit `-TAG=` deletion, which is what `write_keyword_fields()` does. Assigning

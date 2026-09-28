@@ -103,27 +103,19 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
     def test_a_structured_record_reports_the_identity(self):
         from tagpup.files.metadata import MetadataExtractor
 
-        extractor = MetadataExtractor(mint_identities=False)
+        extractor = MetadataExtractor()
         record = extractor._structure(
             "D:/a.jpg", {"XMP:DocumentID": "xmp.did:abc", "XMP:Subject": ["Beach"]}, None)
         self.assertEqual(record["document_id"], "xmp.did:abc")
 
-    def test_minting_is_asked_for_not_assumed(self):
-        # Reading a folder to show it used to write an identity into every photo that
-        # had none, and nothing told the index -- whose rows then looked out of date.
-        # The indexer, which records what it read, asks for minting; nothing else does.
-        from tagpup.files.metadata import MetadataExtractor
-
-        self.assertFalse(MetadataExtractor().mint_identities,
-                         "reading a photo writes to it")
-        self.assertTrue(MetadataExtractor(mint_identities=True).mint_identities)
-
     def test_the_indexer_mints_and_nothing_else_does(self):
         """Indexing records what it read, so it may write an identity; a scan may not.
 
-        Without minting at index time renames still strand rows, so the indexer has to
-        ask for it. Every other reader -- the folder scans in both servers, suggest,
-        inspect -- must not.
+        Reading a folder to show it used to write an identity into every photo that had
+        none, and nothing told the index -- whose rows then looked out of date. Without
+        minting at index time renames still strand rows, so the indexer makes the one
+        writer, IdentityWriter (MetadataExtractor only reads). Every other reader -- the
+        folder scans, suggest, inspect -- must not.
         """
         import ast
 
@@ -134,9 +126,7 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
             for func in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
                 for call in (n for n in ast.walk(func) if isinstance(n, ast.Call)):
                     name = getattr(call.func, "id", getattr(call.func, "attr", None))
-                    if name == "MetadataExtractor" and any(
-                            k.arg == "mint_identities" and getattr(k.value, "value", None) is True
-                            for k in call.keywords):
+                    if name == "IdentityWriter":
                         found.append(func.name)
             return found
 
@@ -158,14 +148,13 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
         expensive work, and it would look like the indexer never finishing.
         """
         import tempfile
-        from tagpup.files.metadata import MetadataExtractor
+        from tagpup.files.metadata import IdentityWriter
 
         fd, path = tempfile.mkstemp(suffix=".jpg")
         os.write(fd, b"not really a jpeg")
         os.close(fd)
         self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
 
-        extractor = MetadataExtractor()
         record = {"path": path, "mtime": 0.0, "size": 0, "raw_metadata": {}}
 
         class GrowingExifTool(FakeExifTool):
@@ -174,22 +163,27 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
                 with open(path, "ab") as f:
                     f.write(b"  ")   # the write an identity would cause
 
-        extractor._give_identities(GrowingExifTool(), [record])
+        writer = IdentityWriter("exiftool")
+        writer._session = GrowingExifTool
+        writer.give(record, decoded=True)
 
         self.assertTrue(record["document_id"].startswith("xmp.did:"))
         self.assertEqual(record["size"], os.path.getsize(path),
                          "the size recorded predates the identity write")
         self.assertGreater(record["mtime"], 0.0)
 
-    def test_a_photo_that_already_has_one_is_left_alone_in_a_batch(self):
-        from tagpup.files.metadata import MetadataExtractor
+    def test_a_photo_that_already_has_one_is_left_alone(self):
+        from tagpup.files.metadata import IdentityWriter
 
         et = FakeExifTool()
         records = [
             {"path": "D:/a.jpg", "document_id": "xmp.did:already", "raw_metadata": {}},
             {"path": "D:/b.jpg", "document_id": None, "raw_metadata": {}},
         ]
-        MetadataExtractor()._give_identities(et, records)
+        writer = IdentityWriter("exiftool")
+        writer._session = lambda: et
+        for record in records:
+            writer.give(record, decoded=True)
         self.assertEqual([p for p, _ in et.writes], [["D:/b.jpg"]])
 
 

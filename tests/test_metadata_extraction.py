@@ -497,11 +497,7 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
 
         fake.get_tags = counting
         good_only = [self.paths[0], self.paths[2]]
-        # Minting an identity is a write per photo that lacks one, and these fixtures
-        # lack them all. That is a separate concern from whether the *read* was
-        # retried, which is what this test is about; tests/test_photo_identity.py
-        # covers the minting.
-        reader = metadata.MetadataExtractor(mint_identities=False)
+        reader = metadata.MetadataExtractor()
         with mock.patch("tagpup.files.metadata.ExifToolSession", fake):
             results = reader.batch_read(good_only)
 

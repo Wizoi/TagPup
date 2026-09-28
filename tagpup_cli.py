@@ -54,7 +54,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="huggingface_hub"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 # Load components
-from tagpup.files.metadata import MetadataExtractor
+from tagpup.files.metadata import IdentityWriter, MetadataExtractor
 from tagpup.store.taxonomy import TagTaxonomy
 from tagpup.core import paths
 from tagpup.store import db as tagpup_db
@@ -283,9 +283,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
     # Extract metadata in batches of 500
     console.print(f"[bold cyan]Reading metadata in batches for {len(images_to_process)} image(s)...[/bold cyan]")
-    # The indexer records what it reads, so it may give a photo its identity as it
-    # goes; see MetadataExtractor.mint_identities.
-    extractor = MetadataExtractor(exiftool_path=exiftool_path, mint_identities=True)
+    # Read only: a photo is given its identity below, once its picture has decoded.
+    extractor = MetadataExtractor(exiftool_path=exiftool_path)
 
     batch_size = 500
     all_metadata = []
@@ -331,6 +330,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # folder, wherever each was started from.
     locker = PathLocker(lock_dir=Library(db_path).locks)
     face_processor = runtime.faces(Library(db_path), settings) if not skip_faces else None
+    # The indexer records what it reads, so it may give a photo its identity -- after the
+    # photo's picture has decoded in full, never before (IdentityWriter).
+    identity_writer = IdentityWriter(exiftool_path)
+    unreadable, incomplete = [], []
     
     try:
         # Generate Embeddings with incremental saving (batches of 100) to protect against halts/crashes
@@ -353,7 +356,28 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 continue
                 
             try:
-                emb = embeddings.of(path, force_recompute=force_reembed)
+                read = {}
+                try:
+                    # Reads the file once and decodes the whole picture; a vector kept from
+                    # the file as it is was made by such a decode.
+                    emb = embeddings.of(path, force_recompute=force_reembed, seen=lambda picture: read.update(
+                        zeros=picture.info.get(image_files.ZERO_TAIL_INFO, 0)))
+                except image_files.Unreadable as damaged:
+                    # Nothing is written into it: no identity, no row.
+                    unreadable.append((path, damaged))
+                    logger.warning(f"Not indexed, and not written to: {path} does not decode: {damaged}")
+                    locker.release(path)
+                    continue
+                zeros = read["zeros"] if "zeros" in read else image_files.zero_tail_of(path)
+                if zeros >= image_files.ZERO_TAIL:
+                    # It decodes, perhaps grey below a line: indexed, and left as it is.
+                    incomplete.append((path, zeros))
+                    logger.warning(f"Possibly an incomplete copy, indexed and not written to: {path} ends in "
+                                   f"{zeros} zero bytes")
+                else:
+                    # Decoded: only now may the photo be written to. The row recorded below
+                    # takes the stamp the write left, and the vector with it.
+                    identity_writer.give(meta, decoded=True)
                 
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved)
                 if face_processor:
@@ -432,7 +456,25 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             console.print("[bold green]Indexing successfully completed![/bold green]")
         else:
             console.print("[yellow]No new embeddings generated.[/yellow]")
+        if unreadable:
+            console.print(
+                f"[bold yellow]{len(unreadable)} photo(s) could not be read: the file is damaged.[/bold yellow] "
+                f"They are NOT in the index, and nothing was written to them. Restore them from a backup.")
+            for p, damaged in unreadable[:5]:
+                console.print(f"  [yellow]-[/yellow] {p}: {damaged}")
+            if len(unreadable) > 5:
+                console.print(f"  [dim]... and {len(unreadable) - 5} more[/dim]")
+        if incomplete:
+            console.print(
+                f"[bold yellow]{len(incomplete)} photo(s) may be incomplete copies:[/bold yellow] each ends in "
+                f"zero bytes, as an interrupted copy leaves a file. They are indexed, and nothing was written "
+                f"to them. Compare them with a backup.")
+            for p, zeros in incomplete[:5]:
+                console.print(f"  [yellow]-[/yellow] {p}: the last {zeros:,} bytes are zeros")
+            if len(incomplete) > 5:
+                console.print(f"  [dim]... and {len(incomplete) - 5} more[/dim]")
     finally:
+        identity_writer.close()
         locker.release_all()
         photo_index.close()
 
