@@ -75,7 +75,7 @@ Stores details of faces detected within photos, including face crop coordinates,
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | Unique face crop identifier. |
-| `photo_id` | INTEGER | NOT NULL, FOREIGN KEY, INDEXED | The photo the face is in. References `photos(id)` with `ON DELETE CASCADE`; the store deletes faces explicitly too, since most connections leave foreign keys off. A face found in a photo never indexed -- the suggester records the faces it detects -- first gets its photo a row holding only the path (`photos.ensure_row`), its `mtime` and `size` empty so the scan reads the file. |
+| `photo_id` | INTEGER | NOT NULL, FOREIGN KEY, INDEXED | The photo the face is in. References `photos(id)` with `ON DELETE CASCADE`; the store deletes faces explicitly too, since most connections leave foreign keys off. A face found in a photo never indexed -- the suggester records the faces it detects -- first gets its photo a row holding only the path (`photos.ensure_row`), its `mtime` and `size` empty so the scan reads the file: only in a folder the library holds a photo directly in, or one being added to it (`photos.admit`, through `tagpup.services.libraries.add` and the indexer); in any other folder `ensure_row` raises `NotHeld` and makes nothing. |
 | `box` | TEXT | | JSON-serialized bounding box coordinates `[x1, y1, x2, y2]`. |
 | `embedding` | BLOB | | 512-dimensional face embedding vector (binary representation of float32 array). |
 | `name` | TEXT | | The resolved name of the person (or `NULL` if unmatched). |
@@ -157,7 +157,7 @@ What Suggest offered each photo (`tagpup/store/suggestions.py`), read by TagPup'
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
-| `photo_id` | INTEGER | PRIMARY KEY, FOREIGN KEY | The photo, `photos(id)`. A photo Suggest saw that was never indexed gets a row holding only its path (`photos.ensure_row`). |
+| `photo_id` | INTEGER | PRIMARY KEY, FOREIGN KEY | The photo, `photos(id)`. A photo Suggest saw that was never indexed gets a row holding only its path (`photos.ensure_row`), in a folder the library holds or was asked to add. |
 | `tags` | TEXT | | JSON list of `{tag, score}` offered, after the folder's consensus. |
 | `people` | TEXT | | JSON list of `{name, score}` offered. |
 | `title` | TEXT | | The caption offered. |
