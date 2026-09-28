@@ -26,6 +26,7 @@ from tagpup.core.result import NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import faces as face_actions
+from tagpup.services import file_changes
 from tagpup.services import indexing
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
@@ -287,10 +288,12 @@ def folder_auto_apply():
     # Apply exactly what the panel offered (tagpup.core.suggesting.offered_tags).
     additions = {path: suggesting.offered_tags(entry, threshold) for path, entry in suggestions.items()}
     try:
-        result = tagging_actions.add_tags(library, additions, state.exiftool(library))
-        if result.refused:
-            return responses.error(400, result.refused)
-        _records_written(library, result)
+        # The page's records are told in the order the files were written.
+        with file_changes.exclusively():
+            result = tagging_actions.add_tags(library, additions, state.exiftool(library))
+            if result.refused:
+                return responses.error(400, result.refused)
+            _records_written(library, result)
         if not result.ok:
             raise RuntimeError(result.message())
     except Exception as e:
@@ -575,12 +578,14 @@ def photos_bulk_tags():
     if not photo_paths:
         return responses.error(400, "Missing paths list")
     try:
-        # What is added is checked, not what is removed (tagpup.services.tagging).
-        result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
-                                             state.exiftool(library))
-        if result.refused:
-            return responses.error(400, result.refused)
-        _records_written(library, result)
+        # What is added is checked, not what is removed (tagpup.services.tagging). The
+        # page's records are told in the order the files were written.
+        with file_changes.exclusively():
+            result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
+                                                 state.exiftool(library))
+            if result.refused:
+                return responses.error(400, result.refused)
+            _records_written(library, result)
         if not result.ok:
             raise RuntimeError(result.message())
     except Exception as e:
