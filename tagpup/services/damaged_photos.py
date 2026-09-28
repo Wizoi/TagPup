@@ -170,6 +170,17 @@ def listed(library, folder=None):
     return [_entry(each) for each in found if describes((each.mtime, each.size), _stamp(each.path))]
 
 
+def among(library, photo_paths):
+    """The photos of `photo_paths` recorded damaged or possibly incomplete whose files still
+    have the stamp they were found with, as listed() gives each. One read of the records
+    (a handful), and a stat of each that is asked about."""
+    wanted = {paths.key(path) for path in photo_paths}
+    if not wanted:
+        return []
+    return [_entry(each) for each in records(library)
+            if paths.key(each.path) in wanted and describes((each.mtime, each.size), _stamp(each.path))]
+
+
 def counts(library):
     """{"unreadable", "incomplete"}: how many photos listed do not decode, and how many
     may be incomplete copies."""

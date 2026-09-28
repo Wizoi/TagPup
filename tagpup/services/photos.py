@@ -347,7 +347,8 @@ def delete(library, photo_path):
     details: `removed`, the rows removed from each table.
     """
     result = Result(attempted=1)
-    if libraries.refuse_writes(result, library, [photo_path]):
+    # A damaged photo may be deleted: nothing is written into it.
+    if libraries.refuse_writes(result, library, [photo_path], damaged_ok=True):
         return result
     try:
         moved = recycle_bin.send_to_recycle_bin(photo_path)

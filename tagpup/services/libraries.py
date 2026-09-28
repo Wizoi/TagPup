@@ -13,9 +13,9 @@ import os
 
 from tagpup.core import paths, validation
 from tagpup.core.library import Library, picker_name
-from tagpup.core.result import NOT_IN_LIBRARY, Result
+from tagpup.core.result import DAMAGED_PHOTOS, NOT_IN_LIBRARY, Result
 from tagpup.files import images
-from tagpup.services import settings
+from tagpup.services import damaged_photos, settings
 from tagpup.store import added_folders, db, photos, schema, taxonomy
 from tagpup.store import folders as store_folders
 
@@ -185,17 +185,31 @@ def not_in(library, folder, ignored=None):
             % (len(unheld), folder, name, unheld[0], name))
 
 
-def refuse_writes(result, library, photo_paths):
+def refuse_writes(result, library, photo_paths, damaged_ok=False):
     """Refuse `result` -- a write of photo files, nothing written yet -- when the library
     does not hold the folder of any photo of `photo_paths`: "<folder> is not in
     <library>. Add it to <library> first." Returns True when refused. The one check every
     write of a photo makes (tagging, rotating, renaming, a time shift, a delete): writing
     kr-track's tags into the photos of a folder photo_index holds, through kr-track, was
     the same mistake as Suggest making rows there. `details[NOT_IN_LIBRARY]` holds the
-    folders, which a web route answers with 409."""
+    folders, which a web route answers with 409.
+
+    Refused too, unless `damaged_ok` (a delete), when a photo of `photo_paths` was found
+    damaged or possibly an incomplete copy (tagpup.services.damaged_photos) and is
+    unchanged since: nothing is written into it, as the page tells the owner.
+    `details[DAMAGED_PHOTOS]` holds them, answered 409 as well."""
     unheld = not_held(library, photo_paths, leave_out_ignored=False)
     if not unheld:
-        return False
+        if damaged_ok:
+            return False
+        found = damaged_photos.among(library, photo_paths)
+        if not found:
+            return False
+        more = "" if len(found) == 1 else " (and %d more)" % (len(found) - 1)
+        result.refuse("%s%s was found damaged -- %s -- and nothing is written to it. Restore it from a backup, "
+                      "then Check again." % (found[0]["name"], more, found[0]["reason"]))
+        result.details[DAMAGED_PHOTOS] = [each["path"] for each in found]
+        return True
     name = picker_name(os.path.basename(library.path))
     more = "" if len(unheld) == 1 else " (and %d more folder(s))" % (len(unheld) - 1)
     result.refuse("%s is not in %s%s. Add it to %s first." % (unheld[0], name, more, name))

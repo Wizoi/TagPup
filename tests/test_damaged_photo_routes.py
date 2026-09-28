@@ -84,6 +84,41 @@ class TheFolderNotice(Case):
         self.assertEqual(403, reply.status_code)
 
 
+class NothingIsWrittenToThem(Case):
+    """The card note says nothing was written to a damaged photo: a page's write to one is
+    refused, 409, and the file is left as it is."""
+
+    def setUp(self):
+        super().setUp()
+        import photo_rows
+        from tagpup.store import db
+        conn = db.connect(self.db_path)
+        try:   # the incomplete copy was indexed, as the indexer indexes one
+            photo_rows.add_read(conn, self.half, {})
+            conn.commit()
+        finally:
+            conn.close()
+        with open(self.half, "rb") as handle:
+            self.before = (handle.read(), os.stat(self.half).st_mtime_ns)
+
+    def unchanged(self):
+        with open(self.half, "rb") as handle:
+            self.assertEqual(self.before, (handle.read(), os.stat(self.half).st_mtime_ns))
+
+    def test_saving_a_title_or_tags_is_refused(self):
+        reply = self.client().post("/harbour/api/photo/save-metadata",
+                                   json={"path": self.half, "title": "Jetty", "tags": ["Places/Harbour"]})
+        self.assertEqual(409, reply.status_code, reply.get_data(as_text=True))
+        self.assertIn("nothing is written to it", reply.get_json()["error"])
+        self.unchanged()
+
+    def test_a_bulk_tag_that_names_one_is_refused(self):
+        reply = self.client().post("/harbour/api/photos/bulk-tags",
+                                   json={"paths": [self.half], "add_tags": ["Places/Harbour"], "remove_tags": []})
+        self.assertEqual(409, reply.status_code, reply.get_data(as_text=True))
+        self.unchanged()
+
+
 class TheActivityPage(Case):
     def test_needs_attention_lists_every_damaged_photo_with_its_folder(self):
         found = self.get("/api/activity/attention")

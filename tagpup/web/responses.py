@@ -8,7 +8,7 @@ import logging
 
 from flask import Response, abort, jsonify
 
-from tagpup.core.result import NOT_IN_LIBRARY, NotFound, Refused
+from tagpup.core.result import DAMAGED_PHOTOS, NOT_IN_LIBRARY, NotFound, Refused
 from tagpup.services import photos as photo_actions
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,8 @@ def error(status, message, **extra):
 def refused(result, **extra):
     """A refused Result's JSON error: 409 when the library does not hold the folder of a
     photo it was asked to write (tagpup.services.libraries.refuse_writes), else 400."""
-    return error(409 if result.details.get(NOT_IN_LIBRARY) else 400, result.refused, **extra)
+    conflict = result.details.get(NOT_IN_LIBRARY) or result.details.get(DAMAGED_PHOTOS)
+    return error(409 if conflict else 400, result.refused, **extra)
 
 
 def image(content, content_type, cache_seconds=None):
