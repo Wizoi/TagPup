@@ -2055,3 +2055,7 @@ select {
 .review-count { opacity: 0.7; white-space: nowrap; }
 .review-about { margin: 0 1.5rem; opacity: 0.8; }
 .review-footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+
+/* Show matched: a photo whose faces are all named stays listed, quieter. */
+.photo-item.all-matched { opacity: 0.6; }
+.photo-item.all-matched .photo-badge.unmatched { display: none; }

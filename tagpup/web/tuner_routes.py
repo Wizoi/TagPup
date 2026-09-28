@@ -158,13 +158,14 @@ def refuse_writes_while_clustering():
 
 @routes.get("/api/photos")
 def photos():
-    """The photos with a face still unnamed. `show_matched` is sent by the page and not
-    read (docs/SPEC_TAGTUNER.md, Matched Photos Toggle)."""
+    """The photos with a face still unnamed; with `show_matched=true` (the Show matched
+    toggle), the photos whose faces are all named as well."""
     library = state.require()
     mode = request.args.get("mode", "folder-match")
     if not _library_there(library) or mode not in ("folder-match", "unmatched"):
         return jsonify([])
-    return jsonify(identify_service.photos_waiting(library))
+    show_matched = request.args.get("show_matched") == "true"
+    return jsonify(identify_service.photos_waiting(library, show_matched=show_matched))
 
 
 @routes.get("/api/photo-details")

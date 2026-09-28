@@ -495,16 +495,18 @@ def in_photo_with_names(conn, photo_path):
     return conn.execute("SELECT id, box, name, embedding FROM faces WHERE " + where, params).fetchall()
 
 
-def photos_with_unnamed(conn):
+def photos_with_unnamed(conn, every=False):
     """(photo_path, unnamed faces, named faces, mtime, year) of every photo
-    with a face still unnamed, newest first."""
+    with a face still unnamed, newest first; with `every`, of every photo with a face,
+    those whose faces are all named too (TagTuner's Show matched)."""
     return conn.execute(
         "SELECT p.path,"
         " SUM(CASE WHEN f.name IS NULL THEN 1 ELSE 0 END) AS unmatched,"
         " SUM(CASE WHEN f.name IS NOT NULL THEN 1 ELSE 0 END) AS matched,"
         " p.mtime, p.year"
         " FROM faces f" + PHOTO
-        + " GROUP BY f.photo_id HAVING unmatched > 0 ORDER BY p.mtime DESC").fetchall()
+        + " GROUP BY f.photo_id" + ("" if every else " HAVING unmatched > 0")
+        + " ORDER BY p.mtime DESC").fetchall()
 
 
 def count_named(conn, person_name):

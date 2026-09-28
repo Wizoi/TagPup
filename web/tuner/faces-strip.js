@@ -4,7 +4,7 @@ import { buildElement, replaceContent } from './common/dom.js';
 import { samePath } from './common/paths.js';
 import { nameProblem, samePerson } from './common/vocabulary.js';
 import { state } from './state.js';
-import { emptyState, modeSelect, panelContent, photoList } from './elements.js';
+import { emptyState, modeSelect, panelContent, photoList, showMatchedToggle } from './elements.js';
 import { UNKNOWN_YEAR } from './rules.js';
 import { personExists, updateURLParams } from './shared.js';
 import { openNewPersonModal } from './new-person.js';
@@ -554,8 +554,11 @@ export function postFolderAutoMatch(folderGroup, btn) {
                     p.badgeMatchedEl.textContent = `${p.matched_count} matched`;
                 }
                 if (p.unmatched_count === 0 && p.liEl) {
-                    if (modeSelect.value === 'folder-match') {
+                    // Show matched keeps a finished photo in the list, marked done.
+                    if (modeSelect.value === 'folder-match' && !(showMatchedToggle && showMatchedToggle.checked)) {
                         p.liEl.style.display = 'none';
+                    } else {
+                        p.liEl.classList.add('all-matched');
                     }
                 }
             });
@@ -565,7 +568,7 @@ export function postFolderAutoMatch(folderGroup, btn) {
                 folderGroup.countEl.textContent = ` (${totalUnmatched})`;
             }
 
-            if (totalUnmatched === 0 && folderGroup.btnEl) {
+            if (totalUnmatched === 0 && folderGroup.btnEl && !(showMatchedToggle && showMatchedToggle.checked)) {
                 folderGroup.btnEl.style.display = 'none';
             }
 

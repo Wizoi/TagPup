@@ -177,6 +177,25 @@ class TunerAPITestBase(unittest.TestCase):
         return listed
 
 
+class TestShowMatched(TunerAPITestBase):
+    """Folder-match's Show matched toggle: a photo whose faces are all named is listed
+    only when the page asks for it. The toggle was sent and never read."""
+
+    def test_a_finished_photo_is_listed_only_with_show_matched(self):
+        waiting = self.make_photo_file("waiting.jpg")
+        finished = self.make_photo_file("finished.jpg")
+        self.add_photo(waiting)
+        self.add_photo(finished)
+        vector = np.zeros(512, dtype=np.float32)
+        self.add_face(waiting, vector)
+        self.add_face(finished, vector, name="Rowan Thackeray")
+        listed = {os.path.basename(p["path"]): p for p in self.get("/api/photos?mode=folder-match&show_matched=false")}
+        self.assertEqual(["waiting.jpg"], sorted(listed))
+        listed = {os.path.basename(p["path"]): p for p in self.get("/api/photos?mode=folder-match&show_matched=true")}
+        self.assertEqual(["finished.jpg", "waiting.jpg"], sorted(listed))
+        self.assertEqual(0, listed["finished.jpg"]["unmatched_count"])
+
+
 class TestPhotoDetails(TunerAPITestBase):
     def test_returns_metadata_and_faces(self):
         photo = self.make_photo_file("a.jpg")
@@ -623,29 +642,6 @@ class TestPhotosListing(TunerAPITestBase):
         rows = self.get("/api/photos?mode=folder-match")
         self.assertNotIn(photo, {r["path"] for r in rows})
 
-    def test_show_matched_parameter_is_currently_ignored(self):
-        """Pins a known limitation: the UI's toggle has no effect on the response.
-
-        The endpoint's query excludes fully-matched photos unconditionally, so passing
-        show_matched=true returns the same rows as show_matched=false. If this endpoint
-        ever learns to honour the parameter, this test should fail and be replaced by one
-        asserting that matched photos ARE returned -- and the Matched Photos Toggle note
-        in docs/SPEC_TAGTUNER.md should be removed at the same time.
-        """
-        matched = self.add_photo(self.make_photo_file("matched.jpg"), people=["Jane Doe"])
-        self.add_face(matched, unit_vector(112), name="Jane Doe")
-        unmatched = self.add_photo(self.make_photo_file("unmatched.jpg"))
-        self.add_face(unmatched, unit_vector(113), name=None)
-
-        with_flag = self.get("/api/photos?mode=folder-match&show_matched=true")
-        without_flag = self.get("/api/photos?mode=folder-match&show_matched=false")
-
-        self.assertEqual(
-            {r["path"] for r in with_flag},
-            {r["path"] for r in without_flag},
-            "show_matched now changes the response -- update this test and the spec",
-        )
-        self.assertNotIn(matched, {r["path"] for r in with_flag})
 
 
 class TestIdentifyFacesQueue(TunerAPITestBase):
