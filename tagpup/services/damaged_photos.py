@@ -13,6 +13,12 @@ unplugged, a share offline) is kept, and not shown.
 
 Found once, a photo is logged at WARNING once: found again with the same stamp, it is not.
 
+The stamp alone cannot say a damaged file was replaced: a copy that keeps the modified
+time (robocopy, Explorer) over a zero-filled file of the same size leaves the stamp as it
+was. So a recorded photo is read again, whatever its stamp, when the folder watcher is
+told its file was written (tagpup.jobs.watching), and when the owner asks, Check again
+(check_again): read whole, it is forgotten and indexed again.
+
 A record forgotten because its file changed, or reads whole now, takes with it what was
 made of the damaged file (forget_to_reindex): a photo that may have been an incomplete
 copy was indexed from a picture grey below a line, so its vectors go, and its faces --
@@ -147,6 +153,47 @@ def forget_to_reindex(library, found):
         folders.setdefault(paths.key(folder), folder)
     done["folders"] = sorted(folders.values(), key=paths.key)
     return done
+
+
+def check_again(library, photo_paths=None):
+    """Read the photos recorded damaged -- those of `photo_paths` that are, or every one --
+    again now, decoding each whole picture whatever its stamp says. One that reads whole
+    is forgotten and indexed again (forget_to_reindex); one that does not stays recorded,
+    with its file's stamp now; one that cannot be reached is left as it is. Returns
+    {"checked", "whole": [paths], "still": [paths], "unreachable", "folders": [the
+    folders to index], "kept": [paths whose decided faces were kept]}."""
+    found = records(library)
+    if photo_paths is not None:
+        wanted = {paths.key(path) for path in photo_paths}
+        found = [each for each in found if paths.key(each.path) in wanted]
+    whole, still, again, unreachable = [], [], [], 0
+    for each in found:
+        stamp = _stamp(each.path)
+        if stamp is None:
+            unreachable += 1
+            continue
+        try:
+            zeros = images.opened(each.path, upright=False).info.get(images.ZERO_TAIL_INFO, 0)
+        except images.Unreadable as damage:
+            still.append(each.path)
+            if (damage.kind, stamp) != (each.kind, (each.mtime, each.size)):
+                again.append((each.path, stamp, damage.kind, damage.detail, damage.zero_tail))
+            continue
+        except OSError:
+            unreachable += 1
+            continue
+        if zeros >= images.ZERO_TAIL and each.kind == INCOMPLETE:
+            still.append(each.path)
+            if stamp != (each.mtime, each.size):
+                again.append((each.path, stamp, INCOMPLETE, "the last %d bytes are zeros" % zeros, zeros))
+            continue
+        # Whole -- or, recorded as not decoding, decoding now: the indexer flags it again
+        # if it may be an incomplete copy.
+        whole.append(each)
+    remember(library, again)
+    done = forget_to_reindex(library, whole)
+    return {"checked": len(found), "whole": [each.path for each in whole], "still": still,
+            "unreachable": unreachable, "folders": done["folders"], "kept": done["kept"]}
 
 
 def _entry(each):
