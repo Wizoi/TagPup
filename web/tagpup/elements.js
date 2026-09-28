@@ -85,6 +85,7 @@ export const detailDateTaken = document.getElementById('detail-date-taken');
 export const inputPhotoTitle = document.getElementById('input-photo-title');
 export const btnSaveTitle = document.getElementById('btn-save-title');
 export const btnSaveDetails = document.getElementById('btn-save-details');
+export const writeQueueBox = document.getElementById('write-queue');
 export const detailPeople = document.getElementById('detail-people');
 export const inputAddPerson = document.getElementById('input-add-person');
 export const btnAddPerson = document.getElementById('btn-add-person');

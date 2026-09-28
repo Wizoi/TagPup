@@ -13,7 +13,7 @@ import {
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson } from './tags.js';
-import { postPhotoMetadata, queuePhotoWrite, redrawIfShowing } from './edits.js';
+import { postPhotoMetadata, queuePhotoWrite, queueWriteOf, redrawIfShowing } from './edits.js';
 import { isPhotoTagged, renderFileList, scanFolder } from './folder.js';
 import { saveSingleTitle } from './photo.js';
 import { recordUndo, snapshotPhotos } from './undo.js';
@@ -286,7 +286,7 @@ export function applySuggestedTagDirect(tagName, isPerson, forPath = state.activ
     const photo = state.folderPhotos.find(p => p.path === path);
     if (!photo) return;
 
-    return queuePhotoWrite(async () => {
+    return queueWriteOf(path, async () => {
         const resolved = await resolveTagOrPerson(tagName, isPerson);
         if (!resolved) return true;
 
@@ -339,7 +339,7 @@ export async function applyAllSingleSuggestions() {
     const sugg = state.folderSuggestions[path];
     if (!photo || !sugg) return;
 
-    return queuePhotoWrite(async () => {
+    return queueWriteOf(path, async () => {
         // Resolve each suggestion to the tag it is filed under before writing it,
         // and skip anyone the photo already names -- as it is now, after whatever
         // was queued ahead. Applying the list raw wrote bare leaves.
@@ -405,41 +405,55 @@ export function applyFolderSuggestionsLevel() {
     ].join('\n');
     if (!confirm(scope)) return;
 
-    const before = snapshotPhotos(state.selectedThumbnails);
-    setStatus('busy', `Applying suggestions to ${state.selectedThumbnails.length} photo(s)...`);
-
-    api.json('/api/folder/auto-apply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            folder_path: folder, 
-            photo_paths: state.selectedThumbnails,
-            // Apply everything the panel is showing. A button called Apply All
-            // that applied 141 of 153 suggestions and left 12 on screen read as
-            // a failure, and the 12 it skipped were indistinguishable from the
-            // ones it wrote. What is offered is what gets applied.
-            threshold: 0.0 
+    // The photos selected when it was clicked. It waits in the photo write queue
+    // (edits.js) behind every write clicked before it, as a bulk tag write does
+    // (selection.js), and the photos are snapshotted for undo as those left them.
+    const targets = state.selectedThumbnails.slice();
+    return queuePhotoWrite((entry) => {
+        const before = snapshotPhotos(targets);
+        setStatus('busy', `Applying suggestions to ${targets.length} photo(s)...`);
+        return api.json('/api/folder/auto-apply', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                folder_path: folder,
+                photo_paths: targets,
+                // Apply everything the panel is showing. A button called Apply All
+                // that applied 141 of 153 suggestions and left 12 on screen read as
+                // a failure, and the 12 it skipped were indistinguishable from the
+                // ones it wrote. What is offered is what gets applied.
+                threshold: 0.0
+            })
         })
-    })
-    .then(data => {
-        if (data.success) {
+        .then(data => {
+            if (!data.success) throw new Error(data.error);
+            // Each photo as the server says it holds it now: undo takes back the
+            // difference (undo.js).
+            const written = Object.entries(data.written || {});
             recordUndo({
                 label: `auto-apply to ${before.length} photo(s)`,
-                photos: before,
+                photos: before.map(photo => {
+                    const now = written.find(([path]) => samePath(path, photo.path));
+                    return { ...photo, after: now ? now[1] : photo.before };
+                }),
             });
             setStatus('ready',
                 `Suggestions applied to ${before.length} photo(s) \u2014 Ctrl+Z to undo`);
             scanFolder(true); // Rescan folder to load updated tags
-        } else {
-            throw new Error(data.error);
-        }
-    })
-    .catch(err => {
-        console.error(err);
-        // A failure that would otherwise pass unnoticed still earns a modal.
-        setStatus('error', 'Applying suggestions failed', { transient: false });
-        alert("Error applying suggestions: " + err.message);
-    });
+            return true;
+        })
+        .catch(err => {
+            console.error(err);
+            // Some photos may have been written before the one that failed: the
+            // folder is read again, so the page's records say what the files hold.
+            scanFolder(true);
+            // A failure that would otherwise pass unnoticed still earns a modal.
+            setStatus('error', 'Applying suggestions failed', { transient: false });
+            entry.error = err.message;
+            alert("Error applying suggestions: " + err.message);
+            return false;
+        });
+    }, `Apply All suggestions (${targets.length} photos)`);
 }
 
 export function updateFolderAutoApplyState() {

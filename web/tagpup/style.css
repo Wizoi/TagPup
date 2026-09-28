@@ -1903,3 +1903,74 @@ select {
     color: var(--text-primary);
     pointer-events: none;
 }
+
+/* The photo write queue's status, bottom right (write-queue.js): quiet when all is
+   saved, clear when something failed, its entries on hover, focus or a click. */
+.write-queue {
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    z-index: 900;
+    font-size: 12px;
+    font-family: var(--font-body);
+    color: var(--text-secondary);
+    transition: opacity 0.6s ease;
+}
+.write-queue[hidden] { display: none; }
+.write-queue-idle { opacity: 0.55; }
+.write-queue:hover, .write-queue:focus-within, .write-queue.open { opacity: 1; }
+.write-queue-status {
+    background: var(--bg-secondary);
+    color: inherit;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font: inherit;
+    cursor: pointer;
+}
+.write-queue-busy .write-queue-status { color: var(--text-primary); }
+.write-queue-failed .write-queue-status {
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.6);
+    font-weight: 600;
+}
+.write-queue-panel {
+    display: none;
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 6px);
+    width: 340px;
+    max-height: 50vh;
+    overflow-y: auto;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: var(--card-shadow);
+}
+.write-queue:hover .write-queue-panel,
+.write-queue:focus-within .write-queue-panel,
+.write-queue.open .write-queue-panel { display: block; }
+.write-queue-list { list-style: none; margin: 0; padding: 4px 0; }
+.write-queue-entry {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-color);
+}
+.write-queue-entry:last-child { border-bottom: none; }
+.write-queue-label { color: var(--text-primary); overflow-wrap: anywhere; }
+.write-queue-time { color: var(--text-muted); text-align: right; }
+.write-queue-state { grid-column: 1 / -1; color: var(--text-muted); overflow-wrap: anywhere; }
+.write-queue-entry[data-status="writing"] .write-queue-state { color: var(--accent); }
+.write-queue-entry[data-status="failed"] .write-queue-state { color: #ef4444; }
+.write-queue-actions { grid-column: 1 / -1; display: flex; gap: 6px; }
+.write-queue-actions button {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font: inherit;
+    cursor: pointer;
+}

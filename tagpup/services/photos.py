@@ -211,6 +211,7 @@ def preserve_names(library, photo_paths, exiftool_path):
                                      unreadable="skip")
 
 
+@file_changes.exclusively()
 def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     """Number photos in the order given and name each for it: "<grouping> - <index> -
     <caption>" in `rename_format`, the caption being the one on the photo. Smart Rename.
@@ -353,6 +354,7 @@ def delete(library, photo_path):
     return result
 
 
+@file_changes.exclusively()
 def rotate(library, photo_path, direction, exiftool_path):
     """Turn a photo a quarter left or right. Clicking Rotate Left or Rotate Right.
 

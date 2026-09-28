@@ -249,8 +249,11 @@ describe("taking it back", () => {
     assert.equal(document.getElementById("btn-undo").disabled, false);
   });
 
-  test("undo writes back the tags the photo had before", async (t) => {
-    const { document, window, server: s } = await scanned(t);
+  test("undo takes off the tags the write added", async (t) => {
+    // As a difference, through the bulk write, which starts from the file: posting the
+    // whole list from before overwrote a write queued after the one undone.
+    const s = server().on("/api/photos/bulk-tags", { success: true });
+    const { document, window } = await scanned(t, s);
     press(document, "ArrowDown");
     press(document, "ArrowDown");
     document.getElementById("btn-carry-forward").click();
@@ -259,9 +262,10 @@ describe("taking it back", () => {
     document.getElementById("btn-undo").click();
     await new Promise((r) => window.setTimeout(r, 30));
 
-    const body = s.lastBody("save-metadata");
-    assert.equal(body.path, "D:\\p\\b.jpg");
-    assert.deepEqual(body.tags, [], "b.jpg was not restored to having no tags");
+    const body = s.lastBody("bulk-tags");
+    assert.deepEqual(body.paths, ["D:\\p\\b.jpg"]);
+    assert.deepEqual(body.remove_tags, ["Beach"], "b.jpg was not restored to having no tags");
+    assert.deepEqual(body.add_tags, []);
   });
 
   test("undo empties itself, so it cannot be applied twice", async (t) => {

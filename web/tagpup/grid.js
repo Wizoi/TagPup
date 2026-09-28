@@ -13,7 +13,7 @@ import { saveToLocalStorageCache } from './cache.js';
 import {
     formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
-import { queuePhotoWrite } from './edits.js';
+import { queueWriteOf } from './edits.js';
 import { renderFileList, visiblePhotos } from './folder.js';
 import { photoFileUrl, selectPhoto } from './photo.js';
 
@@ -243,7 +243,7 @@ export function renderThumbnails() {
                 
                 // Queued with every other write to a photo, so the tags it sends
                 // are the photo's tags when it runs, not a copy from before.
-                queuePhotoWrite(() => api.json('/api/photo/save-metadata', {
+                queueWriteOf(photo.path, () => api.json('/api/photo/save-metadata', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path: photo.path, title: newTitle, tags: photo.tags })
