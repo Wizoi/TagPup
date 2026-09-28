@@ -22,8 +22,9 @@ told its file was written (tagpup.jobs.watching), and when the owner asks, Check
 A record forgotten because its file changed, or reads whole now, takes with it what was
 made of the damaged file (forget_to_reindex): a photo that may have been an incomplete
 copy was indexed from a picture grey below a line, so its vectors go, and its faces --
-unless one carries a decision (a name, a "nobody", an exclusion), when they are kept and
-not detected again, and it is said so -- and its folder is to be indexed again. No path
+unless one carries a decision somebody made (a name or "nobody" given by hand, an
+exclusion; a name clustering gave is revisable), when they are kept and not detected
+again, and it is said so -- and its folder is to be indexed again. No path
 re-detects a photo's faces keeping the decided ones by where they are.
 """
 import logging

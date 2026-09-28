@@ -119,6 +119,19 @@ class ReplacedAndSynced(Case):
         self.assertNotEqual(self.first, self.vector())
         self.assertTrue(any("faces are kept" in line for line in said.output), said.output)
 
+    def test_a_name_clustering_gave_is_no_decision(self):
+        # Clustering's names are revised whenever it runs again (clear_automatic_names):
+        # the face found in half a picture goes, and the whole photo's is detected.
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("UPDATE faces SET name = ?, name_source = NULL", ("Imogen Vale",))
+            conn.commit()
+        finally:
+            conn.close()
+        self.replace_with_the_whole_photo()
+        sync.sync(self.library, apply=True, exiftool_path=EXIFTOOL, queue=self.index)
+        self.assertEqual([("[30, 30, 60, 60]", None)], self.faces())
+
 
 class ReplacedAndIndexed(Case):
     def test_the_indexer_makes_them_again_too(self):
