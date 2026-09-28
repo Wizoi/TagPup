@@ -96,11 +96,12 @@ def named_faces(library):
 
 # ---- The photos, and one photo ----------------------------------------------------------
 
-def photos_waiting(library):
-    """Every photo with a face still unnamed, newest first, as the sidebar lists them."""
+def photos_waiting(library, show_matched=False):
+    """Every photo with a face still unnamed, newest first, as the sidebar lists them;
+    with `show_matched`, the photos whose faces are all named as well."""
     conn = _reading(library)
     try:
-        rows = faces.photos_with_unnamed(conn)
+        rows = faces.photos_with_unnamed(conn, every=show_matched)
     finally:
         conn.close()
     listed = []

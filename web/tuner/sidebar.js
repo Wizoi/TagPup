@@ -269,6 +269,7 @@ function renderPhotoList() {
             folderGroup.photos.forEach(photo => {
                 const li = document.createElement('li');
                 li.className = 'photo-item folder-photo-item';
+                if (photo.unmatched_count === 0) li.classList.add('all-matched');
                 li.photo = photo;
                 
                 if (samePath(photo.path, state.activePhotoPath)) {
