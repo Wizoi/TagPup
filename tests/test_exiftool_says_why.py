@@ -58,7 +58,40 @@ class AFailedWrite(unittest.TestCase):
         self.assertNotIn("non-zero exit status", reply["error"])
 
 
+@requires_exiftool
+class ACommandThatTimesOut(unittest.TestCase):
+    """A timeout's message named the command's files, and it reaches the journal's
+    conflict text ("could not be read: ..."), which History and the MCP server's history
+    show without revealing paths. "-" makes ExifTool wait on its command pipe for an
+    image that never comes (test_exiftool_session.py)."""
+
+    def test_it_says_how_many_files_and_names_none(self):
+        photo = os.path.join(own_folder(self), "Rowan Thackeray at the quay.jpg")
+        et = ExifToolSession(executable=EXIFTOOL, timeout=3)
+        self.addCleanup(lambda: et.terminate() if et.running else None)
+        with self.assertLogs(exiftool_session.logger, logging.WARNING) as logged:
+            with self.assertRaises(exiftool_session.ExifToolTimeout) as raised:
+                et.execute("-j", photo, "-")
+        said = str(raised.exception)
+        self.assertIn("1 file", said)
+        self.assertNotIn("Rowan", said)
+        self.assertTrue(any("Rowan Thackeray at the quay.jpg" in line for line in logged.output), logged.output)
+
+
+def own_folder(testcase):
+    import tempfile
+    import shutil
+
+    folder = tempfile.mkdtemp(prefix="says_why_")
+    testcase.addCleanup(shutil.rmtree, folder, True)
+    return folder
+
+
 class SaidBriefly(unittest.TestCase):
+    def test_a_file_named_by_its_name_alone_is_named_the_same(self):
+        said = exiftool_session.unnamed("Warning: [minor] Rowan.jpg has a bad XMP", ["D:\\Photos\\Rowan.jpg"])
+        self.assertEqual("Warning: [minor] <file> has a bad XMP", said)
+
     def test_the_first_errors_before_warnings_each_file_named_the_same(self):
         stderr = ("Warning: IPTCDigest is not current - D:/Photos/Rowan.jpg\r\n"
                   "Error: Error creating file: D:/Photos/Rowan.jpg_exiftool_tmp - D:/Photos/Rowan.jpg\r\n"

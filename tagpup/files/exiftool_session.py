@@ -59,7 +59,9 @@ DEFAULT_COMMON_ARGS = ("-G", "-n")
 
 
 class ExifToolTimeout(RuntimeError):
-    """ExifTool did not answer one command in time; its process has been killed."""
+    """ExifTool did not answer one command in time; its process has been killed. Its
+    message names no photo, as ExifToolFailed's names none: it reaches the journal's
+    conflict text, which History shows without revealing paths."""
 
 
 #: Lines of what ExifTool said that go in ExifToolFailed's message; the rest is logged.
@@ -93,14 +95,32 @@ def said_briefly(stderr, params=()):
     lines = [line.strip() for line in _text(stderr).splitlines() if line.strip()]
     lines = [line for line in lines if not line.startswith("Warning")] + \
         [line for line in lines if line.startswith("Warning")]
-    said = "; ".join(lines[:SAID_LINES])
-    for param in params:
-        name = _text(param)
-        if not name or name.startswith("-") or len(name) < 3:
+    return unnamed("; ".join(lines[:SAID_LINES]), params)
+
+
+def _files(params):
+    return [_text(p) for p in params if _text(p) and not _text(p).startswith("-")]
+
+
+def unnamed(text, params=()):
+    """`text` with each file of the command, `params`, named "<file>": as given or with
+    forward slashes, as ExifTool spells a path whichever it was given, and then by its
+    name alone."""
+    for name in _files(params):
+        if len(name) < 3:
             continue
         pattern = "".join("[\\\\/]" if c in "\\/" else re.escape(c) for c in name)
-        said = re.sub(pattern, "<file>", said, flags=re.IGNORECASE)
-    return said
+        text = re.sub(pattern, "<file>", text, flags=re.IGNORECASE)
+        leaf = re.split(r"[\\/]", name)[-1]
+        if len(leaf) >= 3:
+            text = re.sub(re.escape(leaf), "<file>", text, flags=re.IGNORECASE)
+    return text
+
+
+def _counted(params):
+    """How many files a command was about, for a message that names none."""
+    n = len(_files(params))
+    return "no files" if not n else "1 file" if n == 1 else "%d files" % n
 
 
 def _read_until(fd, sentinel, sink):
@@ -205,9 +225,11 @@ class _DrainingExifTool(exiftool.ExifTool):
                 reason = "did not answer within %gs" % self.timeout
             else:
                 reason = "exited in the middle of a command"
-            message = "ExifTool %s (%s); its process was killed." % (reason, _describe(params))
+            logger.warning("ExifTool %s (%s); its process was killed.%s", reason, _describe(params),
+                           " Last stderr: %s" % partial if partial else "")
+            message = "ExifTool %s (%s); its process was killed." % (reason, _counted(params))
             if partial:
-                message += " Last stderr: %s" % partial[-500:]
+                message += " Last stderr: %s" % unnamed(partial, params)[-500:]
             raise ExifToolTimeout(message)
 
         raw_stdout, raw_stderr = out["data"], err["data"]
