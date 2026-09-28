@@ -14,6 +14,7 @@ import { pathKey, samePath } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { damagedBadge, damagedNotice, photoDamagedNote, thumbnailsGrid } from './elements.js';
+import { setStatus } from './status.js';
 
 function plural(count, one, many) {
     return `${count} ${count === 1 ? one : many}`;
@@ -63,6 +64,52 @@ function showDamage() {
     showPhotoDamage(state.activePhotoPath);
 }
 
+function checkButton(text, title, photoPaths) {
+    const button = buildElement('button', {
+        className: 'btn btn-secondary btn-sm damaged-check', text, title,
+        attrs: { type: 'button', disabled: state.damagedChecking },
+    });
+    button.addEventListener('click', () => checkAgain(photoPaths));
+    return button;
+}
+
+/**
+ * Check again: read these photos (every one listed, without) again now, whatever their
+ * stamp says -- a good copy laid over a damaged one can keep its time and size. One that
+ * reads whole leaves the list and is indexed again (POST /api/damaged-photos/check).
+ */
+export function checkAgain(photoPaths) {
+    if (state.damagedChecking) return Promise.resolve(null);
+    const folder = state.scannedFolder;
+    const asked = photoPaths || Object.values(state.damagedPhotos).map(photo => photo.path);
+    state.damagedChecking = true;
+    renderDamagedNotice();
+    setStatus('busy', 'Checking again...', { transient: false });
+    return api.json('/api/damaged-photos/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: asked }),
+    }).then(done => {
+        if (!done || done.success === false) throw new Error((done && done.error) || 'Check again failed');
+        const parts = [];
+        if (done.whole) parts.push(`${plural(done.whole, 'photo reads', 'photos read')} whole now, and ${done.whole === 1
+            ? 'is' : 'are'} being indexed again`);
+        if (done.still) parts.push(`${plural(done.still, 'is', 'are')} still damaged`);
+        if (done.unreachable) parts.push(`${plural(done.unreachable, 'could', 'could')} not be reached`);
+        setStatus('ready', parts.length ? `${parts.join('; ')}.` : 'Nothing to check.');
+        return done;
+    }).catch(err => {
+        console.error('Could not check the damaged photos again:', err);
+        setStatus('error', `Check again failed: ${err.message}`, { transient: false });
+        return null;
+    }).then(done => {
+        state.damagedChecking = false;
+        if (folder && state.scannedFolder && samePath(folder, state.scannedFolder)) return checkDamagedPhotos(folder);
+        renderDamagedNotice();
+        return done;
+    });
+}
+
 function listItem(photo) {
     const name = buildElement('button', {
         className: 'link damaged-notice-name', text: photo.name, title: 'Open this photo',
@@ -73,7 +120,8 @@ function listItem(photo) {
     });
     return buildElement('li', { data: { path: photo.path } }, [
         name, buildElement('span', {
-            className: 'damaged-notice-reason', text: ` — ${photo.indexed ? photo.detail : photo.reason}` }),
+            className: 'damaged-notice-reason', text: ` — ${photo.indexed ? photo.detail : photo.reason} ` }),
+        checkButton('Check again', 'Read this photo again now: replaced by a good copy, it is indexed', [photo.path]),
     ]);
 }
 
@@ -106,6 +154,10 @@ export function renderDamagedNotice() {
         }));
         lines.push(buildElement('ul', { className: 'damaged-notice-list' }, incomplete.map(listItem)));
     }
+    lines.push(buildElement('p', { className: 'damaged-notice-actions' }, [
+        checkButton(all.length === 1 ? 'Check again' : 'Check all again',
+                    'Restored them? Read them again now, whatever their modified time says', null),
+    ]));
     replaceContent(damagedNotice, ...lines);
     damagedNotice.classList.remove('hidden');
 }

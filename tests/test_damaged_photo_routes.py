@@ -119,6 +119,59 @@ class NothingIsWrittenToThem(Case):
         self.unchanged()
 
 
+class FakeIndexer:
+    def __init__(self, *args, **kwargs):
+        import io
+        self.stdout = io.StringIO("")
+        self.returncode = 0
+
+    def wait(self):
+        return 0
+
+
+class CheckAgain(Case):
+    """The reviewer's case, from each page: the possibly incomplete copy restored from a
+    backup that kept its modified time, so its stamp is the one recorded."""
+
+    def setUp(self):
+        super().setUp()
+        from unittest import mock
+        from tagpup.jobs import indexing as indexing_jobs
+        stamp = os.stat(self.half)
+        damaged_photos.whole_jpeg(self.half, seed=13, size=(480, 360))
+        os.utime(self.half, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        self.addCleanup(indexing_jobs.forget, self.library)
+        started = mock.patch("tagpup.core.processes.start", side_effect=FakeIndexer)
+        self.start = started.start()
+        self.addCleanup(started.stop)
+
+    def settled(self):
+        from tagpup.jobs import indexing as indexing_jobs
+        indexing_jobs.queue_for(self.library).wait()
+
+    def test_tagpups_check_again_of_one_photo(self):
+        reply = self.client().post("/harbour/api/damaged-photos/check", json={"paths": [self.half]})
+        self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
+        found = reply.get_json()
+        self.settled()
+        self.assertEqual((1, 1, 0, 1), (found["checked"], found["whole"], found["still"], found["queued"]))
+        self.assertEqual(1, self.start.call_count, "no indexer was started for it")
+        self.assertEqual({"cut short.jpg", "far.jpg"}, {each["name"] for each in damaged.listed(self.library)})
+
+    def test_needs_attentions_check_all_again(self):
+        reply = self.client().post("/api/activity/attention/check", json={"library": "harbour"})
+        self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
+        self.settled()
+        harbour = reply.get_json()["libraries"][0]
+        self.assertEqual((3, 1, 2), (harbour["checked"], harbour["whole"], harbour["still"]))
+        self.assertNotIn("copy stopped.jpg", {each["name"] for each in damaged.listed(self.library)})
+
+    def test_needs_attention_answers_this_pc_only_and_names_a_library_there_is(self):
+        client = self.client()
+        self.assertEqual(403, client.post("/api/activity/attention/check", json={}, environ_base=ELSEWHERE).status_code)
+        self.assertEqual(404, client.post("/api/activity/attention/check", json={"library": "regatta"}).status_code)
+
+
 class TheActivityPage(Case):
     def test_needs_attention_lists_every_damaged_photo_with_its_folder(self):
         found = self.get("/api/activity/attention")

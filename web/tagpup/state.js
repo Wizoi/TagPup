@@ -72,4 +72,6 @@ export const state = {
     // (damaged.js).
     damagedPhotos: {},
     damagedAsked: 0,
+    // Check again under way: its button is disabled, and a second click sends nothing.
+    damagedChecking: false,
 };

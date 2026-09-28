@@ -100,6 +100,29 @@ describe("TagPup's folder", () => {
     assert.ok(document.getElementById("damaged-badge").classList.contains("hidden"));
   });
 
+  test("Check again reads a photo again, and the list is asked again", async (t) => {
+    let asked = 0;
+    const fake = server();
+    fake.routes.unshift({ match: "/api/folder/damaged", status: 200,
+                          body: () => (++asked === 1 ? DAMAGED : { folder: FOLDER, photos: [DAMAGED.photos[1]] }) });
+    fake.routes.unshift({ match: "/api/damaged-photos/check", status: 200,
+                          body: { success: true, checked: 1, whole: 1, still: 0, unreachable: 0, queued: 1 } });
+    const { window, document } = await loadApp("tagpup", { server: fake, t });
+    await openFolder({ document, window }, FOLDER);
+    await settle(window, 60);
+    const item = document.querySelector(`#damaged-notice li[data-path="${window.CSS.escape(CUT.path)}"]`);
+    click(window, item.querySelector("button.damaged-check"));
+    click(window, item.querySelector("button.damaged-check"));      // a double click sends one
+    await settle(window, 80);
+    const posts = fake.calls.filter((c) => c.url.includes("/api/damaged-photos/check"));
+    assert.equal(posts.length, 1);
+    assert.deepEqual(posts[0].body, { paths: [CUT.path] });
+    assert.equal(asked, 2, "the list was not asked again");
+    assert.match(document.getElementById("status-text").textContent, /1 photo reads whole now, and is being indexed again/);
+    assert.ok(!card(document, CUT).classList.contains("damaged"), "the photo read whole is still marked");
+    assert.doesNotMatch(document.getElementById("damaged-notice").textContent, /can't be read/);
+  });
+
   test("an answer for a folder left since is not shown in the next", async (t) => {
     let release;
     const late = new Promise((resolve) => { release = resolve; });
@@ -165,6 +188,22 @@ describe("the Activity page's Needs attention", () => {
     assert.equal(link.getAttribute("href"), "http://localhost:8090/harbour/?path=D%3A%5CLibrary%5C2020");
     assert.equal(document.querySelector('a[href="#attention"]').textContent, "Needs attention (1)");
     assert.equal(body.querySelectorAll('.card[data-library="regatta"]').length, 0, "a library with nothing is quiet");
+  });
+
+  test("Check all again reads a library's photos again and says what it found", async (t) => {
+    const fake = new FakeServer()
+      .on("/api/activity/attention/check", { success: true, libraries: [{ name: "harbour", checked: 1, whole: 1, still: 0 }] })
+      .on("/api/activity/attention", ATTENTION);
+    const { window, document } = await loadApp("activity", { t, server: fake, url: "http://localhost:8090/activity/?every=5000" });
+    await flush(window, 6);
+    const button = [...document.querySelectorAll("#attention-body button.check-again")]
+      .find((b) => b.textContent === "Check again" && !b.closest("tr"));
+    click(window, button);
+    await flush(window, 8);
+    const post = fake.calls.find((c) => c.url.includes("/api/activity/attention/check"));
+    assert.equal(post.url, "/api/activity/attention/check", "asked under a library, or not at all");
+    assert.deepEqual(post.body, { library: "harbour" });
+    assert.match(document.getElementById("attention-body").textContent, /1 photo reads whole now, and is being indexed again/);
   });
 
   test("says so, once, when nothing needs attention", async (t) => {

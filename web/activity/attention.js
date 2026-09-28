@@ -29,7 +29,50 @@ function modified(seconds) {
         + `${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`;
 }
 
-function photoRow(photo) {
+function plural(count, one, many) {
+    return `${count} ${count === 1 ? one : many}`;
+}
+
+/**
+ * Check again: read the damaged photos again now, whatever their stamp -- `library`'s, or
+ * only `path` -- and read the list again (POST /api/activity/attention/check).
+ */
+export function checkAgain(library, path) {
+    if (state.attentionChecking) return Promise.resolve(null);
+    state.attentionChecking = true;
+    renderAttention();
+    return api.site.json('/api/activity/attention/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(path ? { library, path } : { library }),
+    }).then(done => {
+        const found = (done && done.libraries) || [];
+        const whole = found.reduce((sum, each) => sum + (each.whole || 0), 0);
+        const still = found.reduce((sum, each) => sum + (each.still || 0), 0);
+        const parts = [];
+        if (whole) parts.push(`${plural(whole, 'photo reads', 'photos read')} whole now, and ${whole === 1 ? 'is' : 'are'}`
+            + ' being indexed again');
+        if (still) parts.push(`${plural(still, 'is', 'are')} still damaged`);
+        state.attentionChecked = { text: parts.length ? `${parts.join('; ')}.` : 'Nothing to check.', ok: true };
+        return done;
+    }).catch(err => {
+        state.attentionChecked = { text: `Check again failed: ${err.message}`, ok: false };
+        return null;
+    }).then(done => {
+        state.attentionChecking = false;
+        return loadAttention().then(() => done);
+    });
+}
+
+function checkButton(text, title, library, path) {
+    const button = buildElement('button', {
+        className: 'btn check-again', text, title, attrs: { type: 'button', disabled: state.attentionChecking },
+    });
+    button.addEventListener('click', () => checkAgain(library, path));
+    return button;
+}
+
+function photoRow(photo, library) {
     return buildElement('tr', { className: 'damaged-photo', data: { kind: photo.kind } }, [
         buildElement('td', { className: 'path', text: photo.path }),
         buildElement('td', {}, [badge(photo.indexed ? 'possibly incomplete' : "can't be read",
@@ -41,6 +84,8 @@ function photoRow(photo) {
         buildElement('td', {}, [photo.folder_url ? buildElement('a', {
             className: 'link', text: 'Open the folder in TagPup',
             attrs: { href: photo.folder_url, target: '_blank', rel: 'noopener' } }) : null]),
+        buildElement('td', {}, [checkButton('Check again', 'Read this photo again now: replaced by a good copy, '
+            + 'it is indexed', library, photo.path)]),
     ]);
 }
 
@@ -51,10 +96,12 @@ function libraryCard(library) {
         buildElement('p', { className: 'detail', text: 'Restore each from a backup; nothing was written to them. '
             + 'A photo replaced by a good copy leaves this list by itself, and is indexed.' }),
         buildElement('table', { className: 'attention-table' }, [
-            buildElement('thead', {}, [buildElement('tr', {}, ['Photo', '', 'Why', 'First found', 'Size', 'Modified', '']
+            buildElement('thead', {}, [buildElement('tr', {}, ['Photo', '', 'Why', 'First found', 'Size', 'Modified', '', '']
                 .map(text => buildElement('th', { text })))]),
-            buildElement('tbody', {}, photos.map(photoRow)),
+            buildElement('tbody', {}, photos.map(photo => photoRow(photo, library.name))),
         ]),
+        checkButton(photos.length === 1 ? 'Check again' : 'Check all again',
+                    'Restored them? Read them again now, whatever their modified time says', library.name, null),
         library.error ? buildElement('p', { className: 'error', text: library.error }) : null,
     ]);
 }
@@ -68,5 +115,9 @@ export function renderAttention() {
     const count = (data.unreadable || 0) + (data.incomplete || 0);
     const link = document.querySelector('a[href="#attention"]');
     if (link) link.textContent = count ? `Needs attention (${count})` : 'Needs attention';
-    fill(document.getElementById('attention-body'), ...(cards.length ? cards : [none('Nothing needs attention.')]));
+    const checked = state.attentionChecked
+        ? buildElement('p', { className: state.attentionChecked.ok ? 'detail' : 'error', text: state.attentionChecked.text })
+        : null;
+    fill(document.getElementById('attention-body'), checked,
+         ...(cards.length ? cards : [none('Nothing needs attention.')]));
 }

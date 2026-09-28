@@ -17,7 +17,8 @@ raw, downloaded) show background work. What it asks:
 - GET /api/activity/sync, /snapshots, /server, /timeline: each library's syncs and
   watched folders, its snapshots, the always-on process, and one timeline of what was done.
 - GET /api/activity/attention: what needs the owner -- each library's photos found damaged
-  (tagpup.services.damaged_photos), with their paths and TagPup's page on each folder.
+  (tagpup.services.damaged_photos), with their paths and TagPup's page on each folder;
+  POST /api/activity/attention/check reads them again now (Check again).
 - GET /api/activity/logs and /api/activity/logs/<name>[/raw|/download]: the logs in
   data/logs, read from the end and never whole (tagpup.logs.read).
 
@@ -356,6 +357,33 @@ def attention():
             totals["incomplete" if photo["indexed"] else "unreadable"] += 1
         listed.append({"name": library.name, "photos": photos})
     return jsonify({"libraries": listed, **totals})
+
+
+@routes.post("/api/activity/attention/check")
+def attention_check():
+    """Check again: read the photos recorded damaged again now, whatever their stamp -- of
+    `library`, or of every library; only `path`, when given (tagpup.runtime.check_damaged).
+    One that reads whole is forgotten and indexed again for real."""
+    body = request.get_json(silent=True) or {}
+    name, path = body.get("library"), body.get("path")
+    if path is not None and not isinstance(path, str):
+        return responses.error(400, "path is a photo's path")
+    if name is not None:
+        library = _library_named(name)
+        if library is None:
+            return responses.error(404, "There is no library called %s" % (name,))
+        every = [library]
+    else:
+        every = _libraries()
+    listed = []
+    for library in every:
+        try:
+            done = runtimes.check_damaged(library, [path] if path else None)
+            listed.append({"name": library.name, **damaged_photos.checked_counts(done)})
+        except Exception as e:
+            logger.warning("Could not check the damaged photos of %s again: %s", library.name, e)
+            listed.append({"name": library.name, "error": str(e)})
+    return jsonify({"success": True, "libraries": listed})
 
 
 # ---- Snapshots ----------------------------------------------------------------------------

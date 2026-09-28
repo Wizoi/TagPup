@@ -196,6 +196,13 @@ def check_again(library, photo_paths=None):
             "unreachable": unreachable, "folders": done["folders"], "kept": done["kept"]}
 
 
+def checked_counts(done):
+    """What Check again answers of check_again's answer (with the runtime's `queued`):
+    counts, never a path."""
+    return {"checked": done["checked"], "whole": len(done["whole"]), "still": len(done["still"]),
+            "unreachable": done["unreachable"], "queued": done.get("queued", 0), "kept_faces": len(done["kept"])}
+
+
 def _entry(each):
     """A record as the pages show it, with `reason`."""
     return {"path": each.path, "name": os.path.basename(each.path), "folder": os.path.dirname(each.path),

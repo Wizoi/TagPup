@@ -82,6 +82,24 @@ def damaged_photo_count():
     return jsonify({"library": library.name, **found})
 
 
+@routes.post("/api/damaged-photos/check")
+def damaged_photo_check():
+    """Check again: read the library's photos recorded damaged -- those of `paths`, or every
+    one -- again now, whatever their stamp; one that reads whole is forgotten and indexed
+    again for real (tagpup.runtime.check_damaged)."""
+    library = state.require()
+    body = request.get_json(silent=True) or {}
+    wanted = body.get("paths")
+    if wanted is not None and (not isinstance(wanted, list) or not all(isinstance(each, str) for each in wanted)):
+        return responses.error(400, "paths is a list of photos")
+    try:
+        done = runtimes.check_damaged(library, wanted)
+    except Exception as e:
+        logger.error("Could not check the damaged photos of %s again: %s", library.name, e, exc_info=True)
+        return responses.error(500, str(e))
+    return jsonify({"success": True, "library": library.name, **damaged_photos.checked_counts(done)})
+
+
 @routes.get("/api/sync/review")
 def sync_review():
     library = state.require()
