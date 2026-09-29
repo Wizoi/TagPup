@@ -106,8 +106,17 @@ def _folder_stamps(folder):
     with _away_lock:
         since = _away.get(key)
         still = _reading.get(key)
-        if (since is not None and time.monotonic() - since < SHARE_AWAY) or (still is not None and still.is_alive()):
+    if since is not None and time.monotonic() - since < SHARE_AWAY:
+        return None
+    if still is not None and still.is_alive():
+        # Another folder of the share is being listed: wait for it, as long as for any --
+        # only a wait that timed out makes the share away; one that answered does not.
+        still.join(SHARE_WAIT)
+        if still.is_alive():
+            with _away_lock:
+                _away.setdefault(key, time.monotonic())
             return None
+    with _away_lock:
         answer = {}
         reader = threading.Thread(target=lambda: answer.update(found=_stamps_in(folder)),
                                   name="DamagedPhotosShareRead", daemon=True)
@@ -122,7 +131,8 @@ def _folder_stamps(folder):
         return None
     with _away_lock:
         _away.pop(key, None)
-        _reading.pop(key, None)
+        if _reading.get(key) is reader:
+            _reading.pop(key, None)
     return answer["found"]
 
 
@@ -332,14 +342,47 @@ def listed(library, folder=None):
     return [_entry(each) for each in _current(found)]
 
 
-def among(library, photo_paths):
-    """The photos of `photo_paths` recorded damaged or possibly incomplete whose files still
-    have the stamp they were found with, as listed() gives each. One read of the records
-    (a handful), and a listing of the folder of each that is asked about."""
+#: What _stamp_within answers for a file on a share that did not answer in time.
+UNANSWERED = object()
+
+
+def _stamp_within(photo_path):
+    """_stamp(photo_path) -- within SHARE_WAIT for a file on a network share, UNANSWERED when
+    it did not answer in time."""
+    if not _on_a_share(photo_path):
+        return _stamp(photo_path)
+    answer = {}
+    reader = threading.Thread(target=lambda: answer.update(stamp=_stamp(photo_path)),
+                              name="DamagedPhotosShareStat", daemon=True)
+    reader.start()
+    reader.join(SHARE_WAIT)
+    return answer["stamp"] if "stamp" in answer else UNANSWERED
+
+
+def for_write(library, photo_paths):
+    """([the photos of `photo_paths` recorded damaged or possibly incomplete whose files
+    still have the stamp they were found with, as listed() gives each], [the shares that did
+    not answer]), for a write about to be made. Never from the lists' shared listing, whose
+    idea of a share away could let a write through: each record asked about is its own
+    file's stat, a share's within SHARE_WAIT, and a share that does not answer is named,
+    for the write to be refused, not taken as nothing damaged. One read of the records (a
+    handful); photos with none are not looked at."""
     wanted = {paths.key(path) for path in photo_paths}
     if not wanted:
-        return []
-    return [_entry(each) for each in _current([each for each in records(library) if paths.key(each.path) in wanted])]
+        return [], []
+    found, unanswered = [], {}
+    for each in records(library):
+        if paths.key(each.path) not in wanted:
+            continue
+        share = os.path.splitdrive(each.path)[0] if _on_a_share(each.path) else None
+        if share is not None and paths.key(share) in unanswered:
+            continue
+        stamp = _stamp_within(each.path)
+        if stamp is UNANSWERED:
+            unanswered[paths.key(share)] = share
+        elif describes((each.mtime, each.size), stamp):
+            found.append(_entry(each))
+    return found, sorted(unanswered.values(), key=paths.key)
 
 
 def counts(library):

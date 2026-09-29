@@ -202,7 +202,9 @@ def refuse_writes(result, library, photo_paths, damaged_ok=False):
     if not unheld:
         if damaged_ok:
             return False
-        found = damaged_photos.among(library, photo_paths)
+        found, unanswered = damaged_photos.for_write(library, photo_paths)
+        if refuse_unchecked(result, unanswered, photo_paths):
+            return True
         if not found:
             return False
         more = "" if len(found) == 1 else " (and %d more)" % (len(found) - 1)
@@ -221,11 +223,27 @@ def refuse_writes(result, library, photo_paths, damaged_ok=False):
 SKIPPED_DAMAGED = "skipped_damaged"
 
 
-def leave_out_damaged(library, photo_paths):
+def refuse_unchecked(result, unanswered, photo_paths):
+    """Refuse `result` when a share holding a photo recorded damaged did not answer
+    (damaged_photos.for_write): whether the photo is still damaged cannot be told, and a
+    write is never let through on that. Returns True when refused."""
+    if not unanswered:
+        return False
+    result.refuse("Can't check %s: try again. A photo there was found damaged, and whether it still is could not "
+                  "be told." % ", ".join(unanswered))
+    result.details[DAMAGED_PHOTOS] = [path for path in photo_paths
+                                      if any(paths.is_under(path, share) for share in unanswered)]
+    return True
+
+
+def leave_out_damaged(result, library, photo_paths):
     """(`photo_paths` but the photos recorded damaged or possibly incomplete and unchanged
     since, [(path, why)] of those left out). A bulk write skips them and writes the rest;
-    a write of one photo is refused instead (refuse_writes)."""
-    found = damaged_photos.among(library, photo_paths)
+    a write of one photo is refused instead (refuse_writes). (None, None), and `result`
+    refused, when a share holding one did not answer (refuse_unchecked)."""
+    found, unanswered = damaged_photos.for_write(library, photo_paths)
+    if refuse_unchecked(result, unanswered, photo_paths):
+        return None, None
     if not found:
         return list(photo_paths), []
     out = {paths.key(each["path"]) for each in found}

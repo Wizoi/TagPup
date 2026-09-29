@@ -127,7 +127,9 @@ def change_tags(library, photo_paths, add, remove, exiftool_path):
     if libraries.refuse_writes(refused, library, photo_paths, damaged_ok=True):
         return refused
     # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
-    photo_paths, left = libraries.leave_out_damaged(library, photo_paths)
+    photo_paths, left = libraries.leave_out_damaged(refused, library, photo_paths)
+    if photo_paths is None:
+        return refused
     add = [vocabulary.normalize(tag) for tag in add]
     return libraries.with_skipped(_change_each(library, [(path, add, remove) for path in photo_paths],
                                                exiftool_path, "add to all selected"), left)
@@ -145,7 +147,9 @@ def add_tags(library, additions, exiftool_path):
     if libraries.refuse_writes(refused, library, [path for path, tags in additions.items() if tags], damaged_ok=True):
         return refused
     # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
-    kept, left = libraries.leave_out_damaged(library, [path for path, tags in additions.items() if tags])
+    kept, left = libraries.leave_out_damaged(refused, library, [path for path, tags in additions.items() if tags])
+    if kept is None:
+        return refused
     return libraries.with_skipped(_change_each(library, [(path, additions[path], ()) for path in kept],
                                                exiftool_path, "apply all suggestions"), left)
 
@@ -307,7 +311,9 @@ def write_suggestions(library, writes, exiftool_path, nobackup=False):
     if libraries.refuse_writes(result, library, [path for path, _tags, _caption in writes], damaged_ok=True):
         return result
     # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
-    kept, left = libraries.leave_out_damaged(library, [path for path, _tags, _caption in writes])
+    kept, left = libraries.leave_out_damaged(result, library, [path for path, _tags, _caption in writes])
+    if kept is None:
+        return result
     if left:
         kept = {paths.key(path) for path in kept}
         writes = [write for write in writes if paths.key(write[0]) in kept]
