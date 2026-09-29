@@ -41,10 +41,15 @@ def mark(conn, photo_path, now=None):
     return 1
 
 
+def _none(conn):
+    """Is no photo marked -- the common case, answered by one look at the table's first row?"""
+    return not _there(conn) or conn.execute("SELECT 1 FROM faces_pending LIMIT 1").fetchone() is None
+
+
 def clear(conn, photo_paths):
     """Clear the marks of `photo_paths`: their faces were detected. Nothing is looked up
     while no photo is marked, the common case. Returns marks cleared. The caller commits."""
-    if not _there(conn) or conn.execute("SELECT 1 FROM faces_pending LIMIT 1").fetchone() is None:
+    if _none(conn):
         return 0
     cleared = 0
     for photo_path in photo_paths:
@@ -55,15 +60,16 @@ def clear(conn, photo_paths):
 
 
 def pending(conn):
-    """The paths, as stored, of the photos marked, by path."""
-    if not _there(conn):
+    """The paths, as stored, of the photos marked, by path. At once when none is."""
+    if _none(conn):
         return []
     return sorted((path for (path,) in conn.execute(
         "SELECT p.path FROM faces_pending f JOIN photos p ON p.id = f.photo_id")), key=paths.key)
 
 
 def count(conn):
-    """How many photos are marked (whose rows are there)."""
-    if not _there(conn):
+    """How many photos are marked (whose rows are there). At once when none is: each page's
+    Needs attention and each index ask."""
+    if _none(conn):
         return 0
     return conn.execute("SELECT COUNT(*) FROM faces_pending f JOIN photos p ON p.id = f.photo_id").fetchone()[0]

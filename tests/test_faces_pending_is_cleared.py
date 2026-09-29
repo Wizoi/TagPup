@@ -58,5 +58,22 @@ class Replacing(Case):
         self.assertEqual(0, self.marked())
 
 
+class NoneMarked(unittest.TestCase):
+    """count() and pending() are asked by every index and every Needs attention: with no
+    photo marked -- the common case -- they answer from one look at the table, joining
+    nothing to the photos."""
+
+    def test_they_answer_at_once(self):
+        lib = TempLibrary(self)
+        conn = db.connect(db.readonly_uri(lib.library.path), uri=True)
+        asked = []
+        conn.set_trace_callback(asked.append)
+        try:
+            self.assertEqual((0, []), (faces_pending.count(conn), faces_pending.pending(conn)))
+        finally:
+            conn.close()
+        self.assertEqual([], [sql for sql in asked if "JOIN" in sql.upper()], "the photos were read for no mark")
+
+
 if __name__ == "__main__":
     unittest.main()
