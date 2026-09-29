@@ -37,6 +37,7 @@ from tagpup.files import images
 from tagpup.store import damaged_files, db
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import faces as store_faces
+from tagpup.store import faces_pending
 from tagpup.store import photos as store_photos
 
 logger = logging.getLogger(__name__)
@@ -211,30 +212,31 @@ def forget_to_reindex(library, found):
     """Forget each of `found` ([Record], each as it was read: a record made again meanwhile
     is kept) -- its file changed since, or reads whole now -- and take from the photo what
     was made of the damaged file: its vectors, and its faces unless one carries a decision.
-    Returns {"forgotten", "vectors", "faces", "kept": [paths whose decided faces were kept],
-    "folders": [the folders of the photos forgotten, to be indexed again]}."""
+    A photo whose faces are to be detected again is marked so (store.faces_pending): the
+    indexer detects them whether or not a vector was made meanwhile -- Suggest makes one.
+    Returns {"forgotten", "vectors", "faces", "pending", "kept": [paths whose decided faces
+    were kept], "folders": [the folders of the photos forgotten, to be indexed again]}."""
     there = [each for each in found if _stamp(each.path) is not None]
     gone = [each for each in found if each not in there]
 
     def write(conn):
         done = {"forgotten": damaged_files.forget_as_found(conn, gone), "vectors": 0, "faces": 0,
-                "kept": [], "folders": []}
+                "pending": 0, "kept": [], "folders": []}
         for each in there:
             if not damaged_files.forget_one_as_found(conn, each):
                 continue
             done["forgotten"] += 1
             done["folders"].append(os.path.dirname(each.path))
             done["vectors"] += store_embeddings.forget(conn, each.path)
-            if not store_faces.count_for_photo(conn, each.path):
-                continue
-            if store_faces.decided_for_photo(conn, each.path):
+            if store_faces.count_for_photo(conn, each.path) and store_faces.decided_for_photo(conn, each.path):
                 done["kept"].append(each.path)
-            else:
-                done["faces"] += store_faces.remove_for_photo(conn, each.path)
+                continue
+            done["faces"] += store_faces.remove_for_photo(conn, each.path)
+            done["pending"] += faces_pending.mark(conn, each.path)
         return done
 
     if not found:
-        return {"forgotten": 0, "vectors": 0, "faces": 0, "kept": [], "folders": []}
+        return {"forgotten": 0, "vectors": 0, "faces": 0, "pending": 0, "kept": [], "folders": []}
     done = db.write_with_connection(library.path, write, label="damaged photos to index again")
     for path in done["kept"]:
         logger.info("%s is indexed again, and its faces are kept, not detected again: one carries a name or "
@@ -244,6 +246,15 @@ def forget_to_reindex(library, found):
         folders.setdefault(paths.key(folder), folder)
     done["folders"] = sorted(folders.values(), key=paths.key)
     return done
+
+
+def faces_to_detect(library):
+    """The paths of the photos whose faces are still to be detected (store.faces_pending)."""
+    conn = _look(library)
+    try:
+        return faces_pending.pending(conn)
+    finally:
+        conn.close()
 
 
 def check_again(library, photo_paths=None):
@@ -337,6 +348,15 @@ def counts(library):
     shown = listed(library)
     incomplete = sum(1 for each in shown if each["kind"] == INCOMPLETE)
     return {"unreadable": len(shown) - incomplete, "incomplete": incomplete}
+
+
+def faces_to_detect_count(library):
+    """How many photos have faces still to be detected (store.faces_pending)."""
+    conn = _look(library)
+    try:
+        return faces_pending.count(conn)
+    finally:
+        conn.close()
 
 
 def prune(library):

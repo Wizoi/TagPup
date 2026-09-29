@@ -284,6 +284,14 @@ The photo files the indexer found damaged (`tagpup.store.damaged_files`, `tagpup
 | `seen` | TEXT | NOT NULL | Local time it was last found so. |
 | `run` | TEXT | | The run of the indexer that found it (`tagpup.core.runs`), or NULL. |
 
+### 19. `faces_pending` Table
+The photos whose faces are still to be detected (`tagpup.store.faces_pending`, migration 17; findings #407). A photo indexed from a damaged file -- a possibly incomplete copy -- has its vectors and its undecided faces taken away once its file reads whole, and is marked here: the indexer detects its faces whether or not it has a vector by then (Suggest makes one), where it would otherwise pass over a photo whose row describes its file and that has a vector. Recording the faces detected in it -- by the indexer or by Suggest -- clears the mark; a mark whose photo is gone is read as none (a photo's id is never handed out again), so deleting a photo takes nothing the journal must account for. `tools/doctor.py` and the Activity page count the marks, so one no index has cleared -- a sync that queued nothing -- is seen. Not journaled, as indexing is not.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `photo_id` | INTEGER | PRIMARY KEY | The photo (`photos.id`). No foreign key: a mark whose photo is gone is read as none. |
+| `since` | TEXT | NOT NULL | Local time it was marked, `YYYY-MM-DD HH:MM:SS`. |
+
 ---
 
 ## Entity-Relationship (ER) Diagram

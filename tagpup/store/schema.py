@@ -640,6 +640,18 @@ def _damaged_files(conn):
                  " run TEXT)" % paths.COLLATE)
 
 
+def _faces_pending(conn):
+    """The photos whose faces are still to be detected: `faces_pending`, each photo's id and
+    since when (tagpup.store.faces_pending; docs/findings.md, #407). No foreign key and no
+    trigger: a mark whose photo is gone is read as none -- a photo's id is AUTOINCREMENT,
+    never handed out again -- so deleting a photo takes nothing the journal must account
+    for. Only adds a table, so it needs no backup.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS faces_pending ("
+                 " photo_id INTEGER PRIMARY KEY,"
+                 " since TEXT NOT NULL)")
+
+
 # ---- What a migration holds true before it commits ----------------------------------------
 
 #: The runner's own tables: it writes them as it records each migration.
@@ -1125,6 +1137,10 @@ MIGRATIONS = (
     Migration(16, "the photo files found damaged", _damaged_files, ADDITIVE,
               "adds the damaged_files table, empty",
               ("damaged_files",),
+              (RowsKept(),) + STANDARD),
+    Migration(17, "the photos whose faces are to be detected", _faces_pending, ADDITIVE,
+              "adds the faces_pending table, empty",
+              ("faces_pending",),
               (RowsKept(),) + STANDARD),
 )
 

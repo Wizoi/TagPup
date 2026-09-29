@@ -102,6 +102,10 @@ function libraryCard(library) {
         ]),
         checkButton(photos.length === 1 ? 'Check again' : 'Check all again',
                     'Restored them? Read them again now, whatever their modified time says', library.name, null),
+        library.faces_to_detect ? buildElement('p', { className: 'detail faces-to-detect', text:
+            `${plural(library.faces_to_detect, 'photo waits', 'photos wait')} for ${library.faces_to_detect === 1 ? 'its'
+                : 'their'} faces to be detected again: indexed from a damaged copy, whole now. `
+            + 'The next index of their folders detects them.' }) : null,
         library.error ? buildElement('p', { className: 'error', text: library.error }) : null,
     ]);
 }
@@ -110,7 +114,8 @@ function libraryCard(library) {
 export function renderAttention() {
     const data = state.attention;
     if (!data) return;
-    const cards = (data.libraries || []).filter(library => (library.photos || []).length || library.error)
+    const cards = (data.libraries || [])
+        .filter(library => (library.photos || []).length || library.faces_to_detect || library.error)
         .map(libraryCard);
     const count = (data.unreadable || 0) + (data.incomplete || 0);
     const link = document.querySelector('a[href="#attention"]');

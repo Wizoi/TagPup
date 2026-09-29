@@ -206,6 +206,15 @@ describe("the Activity page's Needs attention", () => {
     assert.match(document.getElementById("attention-body").textContent, /1 photo reads whole now, and is being indexed again/);
   });
 
+  test("says how many photos wait for their faces to be detected again", async (t) => {
+    const { window, document } = await open(t, { unreadable: 0, incomplete: 0,
+      libraries: [{ name: "harbour", photos: [], faces_to_detect: 2 }] });
+    await flush(window, 6);
+    const card = document.querySelector('#attention-body .card[data-library="harbour"]');
+    assert.ok(card, "a library with faces to detect is not shown");
+    assert.match(card.querySelector(".faces-to-detect").textContent, /2 photos wait for their faces to be detected again/);
+  });
+
   test("says so, once, when nothing needs attention", async (t) => {
     const { window, document } = await open(t, { unreadable: 0, incomplete: 0, libraries: [{ name: "harbour", photos: [] }] });
     await flush(window, 6);

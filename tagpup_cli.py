@@ -294,6 +294,24 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                           f"and unchanged since; restore them from a backup (the Activity page lists them).[/yellow]")
         images_to_process = still
 
+    # A photo whose faces are still to be detected -- indexed from a damaged file, whole
+    # now -- is indexed even with a vector: Suggest may have made one since
+    # (tagpup.store.faces_pending).
+    if not skip_faces:
+        chosen = {paths.key(path) for path in images_to_process}
+        again = []
+        for path in damaged_photos.faces_to_detect(Library(db_path)):
+            if paths.key(path) in chosen or not os.path.exists(path):
+                continue
+            if any(paths.same(os.path.dirname(path), directory)
+                   or (not no_subfolders and paths.is_under(path, directory)) for directory in directories):
+                again.append(path)
+        if again:
+            console.print(f"[cyan]Detecting the faces of {len(again)} photo(s) again: each was indexed from a "
+                          f"damaged copy.[/cyan]")
+            images_to_process += again
+            skipped_count -= len(again)
+
     if skipped_count > 0:
         console.print(f"[green]Skipped {skipped_count} unchanged image(s) already present in the index.[/green]")
 

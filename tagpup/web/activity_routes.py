@@ -355,7 +355,12 @@ def attention():
         for photo in photos:
             photo["folder_url"] = _app_url("tagpup", library.name, "?path=" + urllib.parse.quote(photo["folder"]))
             totals["incomplete" if photo["indexed"] else "unreadable"] += 1
-        listed.append({"name": library.name, "photos": photos})
+        try:
+            to_detect = damaged_photos.faces_to_detect_count(library)
+        except Exception as e:
+            logger.warning("Could not count the photos of %s whose faces are to be detected: %s", library.name, e)
+            to_detect = 0
+        listed.append({"name": library.name, "photos": photos, "faces_to_detect": to_detect})
     return jsonify({"libraries": listed, **totals})
 
 

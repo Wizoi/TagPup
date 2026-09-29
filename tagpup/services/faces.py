@@ -19,7 +19,7 @@ import numpy as np
 
 from tagpup.core import clustering, paths, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Result
-from tagpup.store import db, faces, photos
+from tagpup.store import db, faces, faces_pending, photos
 from tagpup.store import folders as store_folders
 
 logger = logging.getLogger(__name__)
@@ -437,6 +437,9 @@ def record_detected(db_path, photo_path, detected):
                 continue
             _insert_detected(conn, photo_path, face)
             inserted += 1
+        if inserted:
+            # Its faces are detected: no longer still to detect (store.faces_pending).
+            faces_pending.clear(conn, [photo_path])
         return inserted
 
     try:
@@ -465,6 +468,7 @@ def replace_detected(conn, photo_path, detected):
         faces.remove_for_photo(conn, photo_path)
         for face in detected:
             _insert_detected(conn, photo_path, face, name=face.get("name"))
+        faces_pending.clear(conn, [photo_path])
         conn.commit()
     except Exception as e:
         logger.error(f"Error saving faces for {photo_path}: {e}")
@@ -493,6 +497,8 @@ def record_batch(conn, batch, overwrite=False):
             faces.remove_for_photo(conn, photo_path)
             for face in detected:
                 _insert_detected(conn, photo_path, face, name=face.get("name"))
+        # Detection ran on each photo of the batch: none is still to detect (store.faces_pending).
+        faces_pending.clear(conn, list(batch))
         conn.commit()
     except Exception as e:
         logger.error(f"Error saving faces batch to SQLite: {e}")
