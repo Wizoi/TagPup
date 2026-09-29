@@ -317,8 +317,6 @@ def write_suggestions(library, writes, exiftool_path, nobackup=False):
     if left:
         kept = {paths.key(path) for path in kept}
         writes = [write for write in writes if paths.key(write[0]) in kept]
-        result.attempted -= len(left)
-        libraries.with_skipped(result, left)
     # Who a bare name means, read once for the run, not once per photo.
     people = taxonomy.people_paths(library.path)
     # A photo named twice in the file is written once, with the tags of both.
@@ -337,6 +335,7 @@ def write_suggestions(library, writes, exiftool_path, nobackup=False):
             after.update(fields.caption_fields(caption))
         return file_changes.Plan(after=after, detail=(tags, caption))
 
-    return file_changes.write_fields(library, "write suggestions", exiftool_path,
-                                     [path for path, _tags, _caption in wanted.values()], SUGGESTION_READ,
-                                     plan_one, summary={"photos": len(wanted)})
+    # What was skipped as damaged is in the Result returned: its skips, and skipped_damaged.
+    return libraries.with_skipped(file_changes.write_fields(
+        library, "write suggestions", exiftool_path, [path for path, _tags, _caption in wanted.values()],
+        SUGGESTION_READ, plan_one, summary={"photos": len(wanted)}), left)

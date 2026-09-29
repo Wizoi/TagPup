@@ -823,6 +823,11 @@ def write_suggestions_file(suggestions_file, db_path, exiftool_path, live=False,
         writer_log.error(f"Failed to write metadata to {path}: {error}")
 
     print(f"Finished writing metadata. Success: {result.changed}, Errors: {len(result.errors)}")
+    skipped = result.details.get(library_actions.SKIPPED_DAMAGED, 0)
+    if skipped:
+        print(f"Skipped {skipped} photo(s) found damaged; nothing was written to them. Restore them from a backup:")
+        for path, why in result.skipped[-skipped:]:
+            print(f"  {path}: {why}")
     change = result.details.get("change")
     if change:
         print(f"Recorded as change {change}; `undo {change}` shows what undoing it would put back.")
