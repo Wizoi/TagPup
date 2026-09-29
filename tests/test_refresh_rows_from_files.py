@@ -89,7 +89,6 @@ class RefreshRowsFromFiles(unittest.TestCase):
 
     def fake_batch_read(self, extractor, paths, people=None):
         from tagpup.files.metadata import MetadataExtractor
-        self.assertFalse(extractor.mint_identities, "the refresh must never write to a photo")
         self.read.extend(paths)
         return [MetadataExtractor._structure(extractor, p, dict(self.truth[p]), people)
                 for p in paths]

@@ -29,9 +29,10 @@ from tagpup.core import paths
 from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, identity
+from tagpup.files import exiftool_session, identity, images
 from tagpup.services import file_changes, maintenance
 from tagpup.store import db, journal
+from tagpup.store import embeddings as store_embeddings
 from tagpup.store import photos as store_photos
 
 #: What the two changes are recorded as.
@@ -134,6 +135,39 @@ def record(library, found, minted=()):
     return journal.apply(library.path, RECORD, edits, {"counts": {"identities": len(found)}}).changed
 
 
+def decoding(library, photo_paths):
+    """(those of `photo_paths` whose picture decodes, [(path, why)] of those that do not).
+    An identity is written only into a photo that decodes (tagpup.files.metadata's
+    IdentityWriter; docs/findings.md, #407). A photo holding a vector made from the file as
+    it is now was decoded in full to make it (store.embeddings), so only the rest are
+    decoded here, each once. A file that cannot be read at all is left out as well, and
+    one that may be an incomplete copy (images.ZERO_TAIL)."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        vectored = store_embeddings.stamps_by_path(conn, photo_paths)
+    finally:
+        conn.close()
+    readable, damaged = [], []
+    for path in photo_paths:
+        stamp = store_embeddings.stamp_of(path)
+        try:
+            if stamp is not None and stamp in vectored.get(paths.key(path), ()):
+                zeros = images.zero_tail_of(path)
+            else:
+                zeros = images.opened(path, upright=False).info.get(images.ZERO_TAIL_INFO, 0)
+        except images.Unreadable as e:
+            damaged.append((path, "does not decode: %s" % e))
+            continue
+        except OSError as e:
+            damaged.append((path, "could not be read: %s" % (e.strerror or type(e).__name__)))
+            continue
+        if zeros >= images.ZERO_TAIL:
+            damaged.append((path, "possibly an incomplete copy: it ends in %d zero bytes" % zeros))
+            continue
+        readable.append(path)
+    return readable, damaged
+
+
 def _mint(library, photo_paths, exiftool_path):
     """Write a new identity into each photo, as one change of photo files."""
     def plan_one(_path, held):
@@ -173,6 +207,12 @@ def backfill(library, exiftool_path=None, apply=False, limit=0, batch_size=200, 
     result.errors += recorded.errors
     if recorded.refused:
         result.refuse(recorded.refused)
+    if apply and lacking and not recorded.refused:
+        # Never into a photo that does not decode (#407): skipped, and said why.
+        lacking, damaged = decoding(library, lacking)
+        result.details["counts"]["damaged"] = len(damaged)
+        for path, why in damaged:
+            result.skip(path, why)
     if apply and lacking and not recorded.refused:
         minted = _mint(library, lacking, exiftool_path)
         result.details["mint"] = {"change": minted.details.get("change"), "changed": minted.changed,

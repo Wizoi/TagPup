@@ -20,6 +20,12 @@ folder scan's rule), and sorts what differs:
   reported as ambiguous, never guessed, and the folders of its files are not queued.
   What that leaves is matched by the DocumentID (or, renamed in its folder by TagPup,
   the PreservedFileName) read from those new files alone (relink_photos.claims_of, pair);
+- damaged files -- a new file the indexer found does not decode, whose file still has
+  the stamp it had then (tagpup.services.damaged_photos): not new, and not queued. Queued,
+  it failed again, and each run loaded the photo index and CLIP for nothing -- the watcher
+  and the catch-up sync queued it over and over (docs/findings.md, #407). Counted as
+  `unreadable_files`, and the library is in step all the same: restoring the file is the
+  owner's, and once the file changes it is new again;
 - missing files -- a row whose file is gone and was not found elsewhere: reported, never
   removed. A folder on an unplugged drive looks the same as a deleted one, so removing
   rows stays the owner's choice (TagTuner's Remove Folder), and the report says which
@@ -51,8 +57,8 @@ import time
 from tagpup.core import paths, runs, validation
 from tagpup.core.result import Result
 from tagpup.files import images
-from tagpup.services import maintenance, refresh_rows, relink_photos
-from tagpup.store import db, generations, schema, sync_runs
+from tagpup.services import damaged_photos, maintenance, refresh_rows, relink_photos
+from tagpup.store import damaged_files, db, generations, schema, sync_runs
 from tagpup.store import folders as store_folders
 from tagpup.store import photos as store_photos
 
@@ -141,6 +147,15 @@ def _scan(conn, folder, roots, library_folders):
         else:
             gone.append(root)
     return by_key, on_disk, walked, gone
+
+
+def _pass_over_damaged(conn, new):
+    """(the new files but those found not to decode and unchanged since, {key: path} of
+    those). One read of the records: a handful."""
+    known = damaged_photos.unreadable(damaged_files.every(conn))
+    damaged = {key: path for key, (path, mtime, size) in new.items()
+               if key in known and damaged_photos.describes(known[key], (mtime, size))}
+    return {key: stamp for key, stamp in new.items() if key not in damaged}, damaged
 
 
 def _missing_elsewhere(conn, by_key, new):
@@ -288,7 +303,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
             elif not store_photos.describes(mtime, size, stamp[1:]):
                 changed[path] = photo_id
                 never_stamped += mtime is None or size is None
-        new = {key: stamp for key, stamp in on_disk.items() if key not in by_key}
+        new, damaged = _pass_over_damaged(conn, {key: stamp for key, stamp in on_disk.items() if key not in by_key})
 
         # Moved: a missing row whose file turns up among the new ones. A folder alone also
         # looks for the rows of files moved in from elsewhere.
@@ -341,6 +356,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 "moved_named": sum(m["named"] for m in moves), "moved_changed": moved_changed,
                 "occupied": len(occupied), "ambiguous_rows": len(ambiguous_rows),
                 "ambiguous_files": len(ambiguous_files), "held_back_folders": len(held_back),
+                "unreadable_files": len(damaged),
                 "missing": len(missing), "missing_folders": len(by_folder),
                 "folders_gone": sum(1 for _f, _n, gone in by_folder if gone), "roots_gone": len(roots_gone)},
         ids={"changed": sorted(changed.values()), "to_write": sorted(changed[p] for p in to_write),
@@ -353,7 +369,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 "ambiguous": {"rows": ambiguous_rows, "files": sorted(new[key][0] for key in ambiguous_files),
                               "held_back_folders": sorted(held_back, key=paths.key)},
                 "missing_folders": [{"folder": f, "rows": n, "gone": gone} for f, n, gone in by_folder],
-                "roots_gone": roots_gone},
+                "roots_gone": roots_gone, "unreadable_files": sorted(damaged.values(), key=paths.key)},
         work={"edits": edits + moved_edits, "new_folders": new_folders})
 
 
@@ -369,7 +385,7 @@ def review(library, roots=(), ignored=()):
         by_key, on_disk, walked, _gone = _scan(conn, None, roots, library_folders)
         missing = [(photo_id, path, mtime, size) for key, (photo_id, path, mtime, size) in by_key.items()
                    if key not in on_disk]
-        new = {key: stamp for key, stamp in on_disk.items() if key not in by_key}
+        new, _damaged = _pass_over_damaged(conn, {key: stamp for key, stamp in on_disk.items() if key not in by_key})
         ambiguous_files = set()
         if missing and new:
             pairs, _rows, ambiguous_files = _pair_moves(conn, by_key, missing, new, None, read=False)
@@ -414,7 +430,8 @@ def in_step(counts, result=None):
     """Is the library in step with its folders by what a sync found (`counts`) and, once
     applied, did (`result`)? Nothing new, nothing changed or moved left unwritten, nothing
     unreadable. Missing files do not count: they are reported, and removing their rows is
-    the owner's choice. A sync refused found nothing to say so."""
+    the owner's choice; nor do damaged files passed over (`unreadable_files`): restoring
+    them is. A sync refused found nothing to say so."""
     if not counts:
         return False
     if (counts.get("new") or counts.get("unreadable") or counts.get("moved_changed") or counts.get("occupied")
@@ -474,7 +491,17 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
         # and nothing is recorded.
         result.details["in_step"] = False
         return result
-    new_folders = planned.work["new_folders"] if planned is not None and planned.work else []
+    new_folders = list(planned.work["new_folders"]) if planned is not None and planned.work else []
+    try:
+        # A damaged photo replaced, changed or deleted is no longer one (damaged_photos): a
+        # changed one is indexed again for real, its folder queued with the new files'.
+        pruned = damaged_photos.prune(library)
+        result.details["damaged_forgotten"] = pruned["forgotten"]
+        known = {paths.key(folder) for folder in new_folders}
+        new_folders += [folder for folder in pruned["folders"] if paths.key(folder) not in known]
+    except Exception as e:
+        result.details["warnings"].append("The damaged photos found before were not checked (%s: %s)."
+                                          % (type(e).__name__, e))
     queued = 0
     if new_folders and queue is not None:
         try:

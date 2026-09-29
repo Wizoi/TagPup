@@ -53,6 +53,10 @@ class Result:
 #: the folders, which a web route answers with 409.
 NOT_IN_LIBRARY = "not_in_library"
 
+#: Where a Result refused for photos found damaged (tagpup.services.libraries.refuse_writes)
+#: names them: nothing is written into a photo recorded damaged or possibly incomplete.
+DAMAGED_PHOTOS = "damaged_photos"
+
 
 class NotFound(Exception):
     """What a read or a write was asked about is not there. A web route answers it

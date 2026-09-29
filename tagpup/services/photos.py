@@ -244,6 +244,8 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     if problem:
         result.refuse(problem)
         return result
+    # A photo found damaged refuses the whole rename, nothing moved: skipped, it kept a name
+    # the numbering gave another photo, which moved it aside and lost its record.
     if libraries.refuse_writes(result, library, photo_paths):
         return result
     grouping = validation.trim(grouping)
@@ -307,6 +309,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
         result.refuse(problem)
         return result
     refused = Result(attempted=len(photo_paths))
+    # A photo found damaged refuses the whole shift, nothing written, as it refuses a rename.
     if libraries.refuse_writes(refused, library, photo_paths):
         return refused
 
@@ -331,7 +334,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
         return result
     result.details.pop("written", None)
     # Only reading, for the page: minting a DocumentID here would write the files again.
-    result.details["records"] = metadata.MetadataExtractor(exiftool_path=exiftool_path, mint_identities=False
+    result.details["records"] = metadata.MetadataExtractor(exiftool_path=exiftool_path
                                                            ).batch_read(photo_paths,
                                                                         people=taxonomy.people_vocabulary(library.path))
     return result
@@ -347,7 +350,8 @@ def delete(library, photo_path):
     details: `removed`, the rows removed from each table.
     """
     result = Result(attempted=1)
-    if libraries.refuse_writes(result, library, [photo_path]):
+    # A damaged photo may be deleted: nothing is written into it.
+    if libraries.refuse_writes(result, library, [photo_path], damaged_ok=True):
         return result
     try:
         moved = recycle_bin.send_to_recycle_bin(photo_path)

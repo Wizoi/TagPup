@@ -1,6 +1,7 @@
 // The TagTuner page: start-up and wiring. Each feature is a module beside this one,
 // its state in state.js; every request goes through api.js, which puts the library
 // in front of it (web/common/api.js).
+import { showDamagedCount } from './common/damaged-count.js';
 import { initDatabaseSelector } from './common/library.js';
 import { loadRules } from './common/validate.js';
 import { state } from './state.js';
@@ -75,4 +76,6 @@ document.addEventListener('DOMContentLoaded', () => {
     wireTunerGear();
     // How many folders under the library's roots wait to be included or ignored.
     wireReview();
+    // How many of the library's photos were found damaged, in the header.
+    showDamagedCount(document.getElementById('damaged-badge'));
 });

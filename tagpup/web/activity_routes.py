@@ -16,6 +16,9 @@ raw, downloaded) show background work. What it asks:
   due; POST /api/activity/jobs/run runs one now, on the recurring jobs' runner.
 - GET /api/activity/sync, /snapshots, /server, /timeline: each library's syncs and
   watched folders, its snapshots, the always-on process, and one timeline of what was done.
+- GET /api/activity/attention: what needs the owner -- each library's photos found damaged
+  (tagpup.services.damaged_photos), with their paths and TagPup's page on each folder;
+  POST /api/activity/attention/check reads them again now (Check again).
 - GET /api/activity/logs and /api/activity/logs/<name>[/raw|/download]: the logs in
   data/logs, read from the end and never whole (tagpup.logs.read).
 
@@ -40,6 +43,7 @@ from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import recurring
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import activity
+from tagpup.services import damaged_photos
 from tagpup.services import indexing
 from tagpup.services import job_runs
 from tagpup.web import responses
@@ -332,6 +336,59 @@ def sync_state():
         entry["watcher"] = (watching or {}).get("libraries", {}).get(library.name)
         listed.append(entry)
     return jsonify({"watching": bool(watching and watching["running"]), "libraries": listed})
+
+
+# ---- Needs attention ---------------------------------------------------------------------
+
+@routes.get("/api/activity/attention")
+def attention():
+    """Every library's photos found damaged and not replaced since, with their paths: the
+    files the owner is to restore, and TagPup's page on the folder of each."""
+    listed, totals = [], {"unreadable": 0, "incomplete": 0}
+    for library in _libraries():
+        try:
+            photos = damaged_photos.listed(library)
+        except Exception as e:
+            logger.warning("Could not read the damaged photos of %s: %s", library.name, e)
+            listed.append({"name": library.name, "photos": [], "error": str(e)})
+            continue
+        for photo in photos:
+            photo["folder_url"] = _app_url("tagpup", library.name, "?path=" + urllib.parse.quote(photo["folder"]))
+            totals["incomplete" if photo["indexed"] else "unreadable"] += 1
+        try:
+            to_detect = damaged_photos.faces_to_detect_count(library)
+        except Exception as e:
+            logger.warning("Could not count the photos of %s whose faces are to be detected: %s", library.name, e)
+            to_detect = 0
+        listed.append({"name": library.name, "photos": photos, "faces_to_detect": to_detect})
+    return jsonify({"libraries": listed, **totals})
+
+
+@routes.post("/api/activity/attention/check")
+def attention_check():
+    """Check again: read the photos recorded damaged again now, whatever their stamp -- of
+    `library`, or of every library; only `path`, when given (tagpup.runtime.check_damaged).
+    One that reads whole is forgotten and indexed again for real."""
+    body = request.get_json(silent=True) or {}
+    name, path = body.get("library"), body.get("path")
+    if path is not None and not isinstance(path, str):
+        return responses.error(400, "path is a photo's path")
+    if name is not None:
+        library = _library_named(name)
+        if library is None:
+            return responses.error(404, "There is no library called %s" % (name,))
+        every = [library]
+    else:
+        every = _libraries()
+    listed = []
+    for library in every:
+        try:
+            done = runtimes.check_damaged(library, [path] if path else None)
+            listed.append({"name": library.name, **damaged_photos.checked_counts(done)})
+        except Exception as e:
+            logger.warning("Could not check the damaged photos of %s again: %s", library.name, e)
+            listed.append({"name": library.name, "error": str(e)})
+    return jsonify({"success": True, "libraries": listed})
 
 
 # ---- Snapshots ----------------------------------------------------------------------------

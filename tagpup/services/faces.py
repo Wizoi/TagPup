@@ -19,7 +19,7 @@ import numpy as np
 
 from tagpup.core import clustering, paths, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Result
-from tagpup.store import db, faces, photos
+from tagpup.store import db, faces, faces_pending, photos
 from tagpup.store import folders as store_folders
 
 logger = logging.getLogger(__name__)
@@ -426,9 +426,21 @@ def record_detected(db_path, photo_path, detected):
     for good.
     """
     if not detected:
+        # Detection ran and found no face: nothing to record, and no longer anything still
+        # to detect (store.faces_pending). Written only when a photo is marked at all.
+        conn = db.connect(db.readonly_uri(db_path), uri=True)
+        try:
+            marked = faces_pending.count(conn)
+        finally:
+            conn.close()
+        if marked:
+            db.write_with_connection(db_path, lambda conn: faces_pending.clear(conn, [photo_path]),
+                                     label="faces detected in %s" % os.path.basename(photo_path))
         return 0
 
     def insert(conn):
+        # Detection ran: the photo's faces are no longer still to detect (store.faces_pending).
+        faces_pending.clear(conn, [photo_path])
         if faces.count_for_photo(conn, photo_path) > 0:
             return 0  # already recorded; leave it alone
         inserted = 0
@@ -465,6 +477,7 @@ def replace_detected(conn, photo_path, detected):
         faces.remove_for_photo(conn, photo_path)
         for face in detected:
             _insert_detected(conn, photo_path, face, name=face.get("name"))
+        faces_pending.clear(conn, [photo_path])
         conn.commit()
     except Exception as e:
         logger.error(f"Error saving faces for {photo_path}: {e}")
@@ -493,6 +506,8 @@ def record_batch(conn, batch, overwrite=False):
             faces.remove_for_photo(conn, photo_path)
             for face in detected:
                 _insert_detected(conn, photo_path, face, name=face.get("name"))
+        # Detection ran on each photo of the batch: none is still to detect (store.faces_pending).
+        faces_pending.clear(conn, list(batch))
         conn.commit()
     except Exception as e:
         logger.error(f"Error saving faces batch to SQLite: {e}")

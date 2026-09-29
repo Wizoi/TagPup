@@ -38,6 +38,103 @@ PHOTO_EXTENSIONS = frozenset(PHOTO_TYPES)
 CROP_SIZE = 256
 CROP_QUALITY = 90
 
+#: How a picture that does not decode is damaged, as the owner is told it.
+DAMAGE = {
+    "empty": "the file is empty",
+    "all zeros": "the file holds nothing but zero bytes",
+    "zero-filled": "the file ends in zero bytes where the picture should go on, as an interrupted copy leaves it",
+    "truncated": "the file ends before the picture does",
+    "not an image": "the file is not a picture that can be read",
+    "damaged": "the picture's data is damaged",
+}
+
+#: A file that ends in this many zero bytes or more is possibly an incomplete copy: a copy
+#: interrupted after the file was given its size leaves the rest of it zeros, and the
+#: decoder may read them as picture data -- the photo loads, grey below a line. Copies
+#: move data in blocks of 64 KiB and more (the owner's stopped at a MiB boundary). Of
+#: the 68,661 photo files under photo_index's folders (2026-09-28), 18 end in zero bytes,
+#: 16 at most -- padding some cameras write after the picture -- and one, damaged, in
+#: over 1 MiB of them; nothing in between.
+ZERO_TAIL = 64 * 1024
+
+#: What `opened` marks a picture with in its `info`: how many zero bytes its file ends in.
+ZERO_TAIL_INFO = "zero_tail"
+
+
+class Unreadable(OSError):
+    """A photo whose picture does not decode: the file is there and was read, and what
+    it holds is not a whole picture. `kind` is one of DAMAGE, `detail` what the decoder
+    said, without the path; `zero_tail`, the zero bytes the file ends in. Never a
+    missing, locked or unreachable file: those raise the OSError the system raised (it
+    has an errno; the decoder's own have none), since a network share gone for a moment
+    is no reason to call a photo damaged."""
+
+    def __init__(self, kind, detail, zero_tail=0):
+        super().__init__("%s (%s)" % (DAMAGE.get(kind, kind), detail))
+        self.kind, self.detail, self.zero_tail = kind, detail, zero_tail
+
+
+def zero_tail(data):
+    """How many zero bytes `data`, a file's bytes, ends in. Counted in full only when
+    there are ZERO_TAIL of them: short padding is only looked at."""
+    if not data or data[-1] != 0:
+        return 0
+    tail = data[-ZERO_TAIL:]
+    run = len(tail) - len(tail.rstrip(bytes(1)))
+    if run < len(tail):
+        return run
+    return len(data) - len(data.rstrip(bytes(1)))
+
+
+def zero_tail_of(photo_path):
+    """How many zero bytes the file at `photo_path` ends in, when ZERO_TAIL or more; else
+    0. Reads the file's end only -- for a photo whose picture was not decoded now (its
+    vector was kept from the file as it is)."""
+    with open(photo_path, "rb") as handle:
+        size = os.fstat(handle.fileno()).st_size
+        if size < ZERO_TAIL:
+            return 0
+        handle.seek(size - ZERO_TAIL)
+        if handle.read(ZERO_TAIL).count(0) != ZERO_TAIL:
+            return 0
+        end = size - ZERO_TAIL
+        while end > 0:
+            start = max(0, end - (1 << 20))
+            handle.seek(start)
+            kept = len(handle.read(end - start).rstrip(bytes(1)))
+            if kept:
+                return size - (start + kept)
+            end = start
+        return size
+
+
+def damage(data, error):
+    """The Unreadable that Pillow's `error` decoding a file of `data` means: how the file
+    is damaged, by its bytes."""
+    if isinstance(error, Image.UnidentifiedImageError):
+        detail = "cannot identify image file"
+    else:
+        detail = str(error) or type(error).__name__
+    zeros = zero_tail(data)
+    if not data:
+        return Unreadable("empty", detail)
+    if zeros == len(data):
+        return Unreadable("all zeros", detail, zeros)
+    if zeros >= ZERO_TAIL:
+        return Unreadable("zero-filled", detail, zeros)
+    if isinstance(error, Image.UnidentifiedImageError):
+        return Unreadable("not an image", detail, zeros)
+    if "truncated" in detail:
+        return Unreadable("truncated", detail, zeros)
+    return Unreadable("damaged", detail, zeros)
+
+
+def _decoder_failed(error):
+    """Did decoding fail on what the file holds, rather than on reading it?"""
+    if isinstance(error, OSError):
+        return error.errno is None and not isinstance(error, Unreadable)
+    return isinstance(error, (SyntaxError, ValueError, EOFError))
+
 
 def shown_size(photo_path):
     """(width, height, oriented): the size Pillow shows a photo at, and whether it
@@ -176,14 +273,29 @@ def opened(photo_path, upright):
     `upright` turns it by its Orientation, as a person sees it -- what CLIP is shown.
     Without, it is the pixels as Pillow shows them, the coordinates face boxes are in
     (shown_size).
+
+    The file is read once, and decoded from what was read. Its `info[ZERO_TAIL_INFO]`
+    is how many zero bytes the file ends in (zero_tail): ZERO_TAIL or more, and the
+    picture may be an incomplete copy's, grey below a line. Raises Unreadable when the
+    picture does not decode (damage): a truncated file, one of zero bytes, one that is
+    no picture. A file that cannot be opened or read at all raises what the system
+    raised.
     """
-    with Image.open(photo_path) as img:
-        if upright:
-            img = ImageOps.exif_transpose(img)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        img.load()
-        return img
+    with open(photo_path, "rb") as handle:
+        data = handle.read()
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            if upright:
+                img = ImageOps.exif_transpose(img)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.load()
+    except Exception as error:
+        if not _decoder_failed(error):
+            raise
+        raise damage(data, error) from error
+    img.info[ZERO_TAIL_INFO] = zero_tail(data)
+    return img
 
 
 def pad_to_square(image, background_color=(0, 0, 0)):

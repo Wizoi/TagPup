@@ -7,6 +7,11 @@ export const state = {
     every: 3000,
     slowEvery: 30000,
     //: What each section last read, as the server answered it.
+    attention: null,
+    //: Check again under way (its buttons disabled), and what the last one found, shown
+    //: above the list: { text, ok } or null.
+    attentionChecking: false,
+    attentionChecked: null,
     now: null,
     jobs: null,
     sync: null,

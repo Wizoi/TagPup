@@ -35,7 +35,8 @@ export const state = {
     // The photo write queue's entries, for its status (write-queue.js): each
     // { id, label, status: waiting | writing | done | failed, error, at, retry }.
     // batchTotal and batchSettled count the writes since the queue was last empty.
-    writeQueue: { entries: [], nextId: 1, batchTotal: 0, batchSettled: 0, open: false },
+    // batchSkipped counts the photos those writes skipped as damaged (write-queue.js).
+    writeQueue: { entries: [], nextId: 1, batchTotal: 0, batchSettled: 0, batchSkipped: 0, open: false },
 
     // The title showPhoto last put in the field, and for which photo. A refresh shows
     // the same photo again; if the field no longer holds what was put there, somebody
@@ -66,4 +67,12 @@ export const state = {
     // held back there until it is added (membership.js).
     folderMembership: null,
     justLooking: null,
+
+    // The open folder's photos found damaged, by pathKey (GET /api/folder/damaged), and
+    // how many times it was asked, so an older answer does not overwrite a newer
+    // (damaged.js).
+    damagedPhotos: {},
+    damagedAsked: 0,
+    // Check again under way: its button is disabled, and a second click sends nothing.
+    damagedChecking: false,
 };

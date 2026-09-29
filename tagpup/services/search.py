@@ -103,15 +103,17 @@ class PhotoEmbeddings:
         except Exception as e:
             logger.warning(f"Failed to write cache for {file_path}: {e}")
 
-    def of(self, file_path, force_recompute=False):
-        """A photo's vector: the one kept, unless `force_recompute`; else made and kept."""
+    def of(self, file_path, force_recompute=False, seen=None):
+        """A photo's vector: the one kept, unless `force_recompute`; else made and kept.
+        Made, the picture decoded to make it is handed to `seen` when given
+        (ClipModel.embed_image): what the indexer knows of the file from that read."""
         if not force_recompute:
             cached = self.cached(file_path)
             if cached is not None:
                 return cached
         # Before the file is opened: see keep.
         stamp = store_embeddings.stamp_of(file_path)
-        embedding = self.embed(file_path)
+        embedding = self.embed(file_path, seen=seen) if seen is not None else self.embed(file_path)
         self.keep(file_path, embedding, stamp)
         return embedding
 

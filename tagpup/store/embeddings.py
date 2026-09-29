@@ -55,6 +55,20 @@ def put(conn, photo_path, model, mtime, size, vector):
                  " VALUES (?, ?, ?, ?, ?)", (photo_id, model, mtime, size, vector))
 
 
+def stamps_by_path(conn, photo_paths):
+    """{paths.key(path): {(mtime, size)}} of the vectors kept for `photo_paths`, under any
+    model: the files as they were when each was made. One indexed lookup a photo, as
+    photos.rows_of: a scan of every vector took 3 s on photo_index."""
+    found = {}
+    for photo_path in photo_paths:
+        where, params = paths.sql_equals("p.path", photo_path)
+        stamps = {(mtime, size) for mtime, size in conn.execute(
+            "SELECT e.mtime, e.size FROM photos p JOIN embeddings e ON e.photo_id = p.id WHERE " + where, params)}
+        if stamps:
+            found[paths.key(photo_path)] = stamps
+    return found
+
+
 def stamp_of(photo_path):
     """(mtime, size) of the file now, or None when it cannot be read: what a writer takes
     just before it writes, to carry the photo's vectors over its write."""

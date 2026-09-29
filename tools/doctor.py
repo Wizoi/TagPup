@@ -37,6 +37,7 @@ def report(db_path, show=0, out=print):
         results = checks.run(conn)
         missing = checks.missing_files(conn)
         unembedded = checks.without_a_vector(conn, model)
+        undetected = checks.faces_to_detect(conn)
     finally:
         conn.close()
 
@@ -53,6 +54,8 @@ def report(db_path, show=0, out=print):
     out("")
     out("photos without a vector for the configured model: %d (the next index of their folders "
         "computes them)" % unembedded)
+    out("photos whose faces are still to be detected: %d (indexed from a damaged copy; the next index "
+        "of their folders detects them)" % undetected)
     rows = sum(count for _folder, count, _there in missing)
     gone = [(folder, count) for folder, count, there in missing if not there]
     out("rows whose file is not on disk: %d, in %d folder(s); %d folder(s) are gone entirely"

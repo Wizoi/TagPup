@@ -200,6 +200,16 @@ def count_for_photo(conn, photo_path):
     return conn.execute("SELECT COUNT(*) FROM faces WHERE " + where, params).fetchone()[0]
 
 
+def decided_for_photo(conn, photo_path):
+    """How many of a photo's faces carry a decision somebody made: a name or a "nobody"
+    given by hand (name_source 'manual'), an exclusion. Re-detecting the photo's faces
+    would lose them. A name clustering gave is not one: it is revised whenever clustering
+    runs again (clear_automatic_names)."""
+    where, params = _on_photo(photo_path)
+    return conn.execute("SELECT COUNT(*) FROM faces WHERE " + where
+                        + " AND (name_source = 'manual' OR excluded = 1)", params).fetchone()[0]
+
+
 def _photos_of(conn, face_ids):
     """The ids of the photos the faces among `face_ids` are in."""
     found = set()

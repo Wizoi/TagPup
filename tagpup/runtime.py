@@ -43,7 +43,7 @@ from tagpup.core.library import Library
 from tagpup.files import images
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import recurring, watching
-from tagpup.services import file_changes, indexing, search
+from tagpup.services import damaged_photos, file_changes, indexing, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester as suggestions
 from tagpup.services import sync as sync_service
@@ -202,7 +202,8 @@ def _folder_watcher_task(runtime):
         return None
     return watching.Watcher(home_libraries, watch_folders,
                             lambda library, folder: sync(library, folder=folder, apply=True), images.is_photo,
-                            recent=lambda library: sync_service.synced_whole_within(library, watching.CATCH_UP_SKIP))
+                            recent=lambda library: sync_service.synced_whole_within(library, watching.CATCH_UP_SKIP),
+                            written=check_damaged)
 
 
 def watch_folders(library):
@@ -294,6 +295,20 @@ def sync(library, folder=None, apply=False, index_new=True):
                                                           together=True)
     return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
                              roots=settings.roots, ignored=settings.ignored)
+
+
+def check_damaged(library, photo_paths=None):
+    """Read `library`'s photos recorded damaged -- those of `photo_paths`, or every one --
+    again now (tagpup.services.damaged_photos.check_again), and index again, on this
+    process's index queue, the folders of those that read whole. check_again's answer, with
+    `queued`, the folders queued."""
+    done = damaged_photos.check_again(library, photo_paths)
+    done["queued"] = 0
+    if done["folders"]:
+        outcome = indexing_jobs.queue_for(library).start(done["folders"], index_folder(library, subfolders=False),
+                                                        together=True)
+        done["queued"] = outcome.changed
+    return done
 
 
 def review(library):

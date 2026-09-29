@@ -27,6 +27,7 @@ from tagpup.core.library import picker_name
 from tagpup.core.result import NotFound
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
+from tagpup.services import damaged_photos
 from tagpup.services import faces as face_actions
 from tagpup.services import file_changes
 from tagpup.services import indexing
@@ -35,7 +36,7 @@ from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.services import tagging as tagging_actions
 from tagpup.services import tags as tags_service
-from tagpup.web import desktop, responses, state
+from tagpup.web import activity_routes, desktop, responses, state
 from tagpup.web import libraries as web_libraries
 
 logger = logging.getLogger(__name__)
@@ -224,6 +225,21 @@ def folder_scan():
     return jsonify(_sorted(photos))
 
 
+@routes.get("/api/folder/damaged")
+def folder_damaged():
+    """The photos under the folder, at any depth, found damaged and not replaced since
+    (tagpup.services.damaged_photos), with their paths and why: the folder's notice and
+    its cards' marks. Their paths to this PC only, as the Activity page: another address is
+    answered an empty list, quietly -- the page asks as every folder opens."""
+    library = state.require()
+    folder = _wanted_path()
+    if not folder:
+        return responses.error(400, "Missing 'path' parameter")
+    if request.remote_addr not in activity_routes.LOOPBACK:
+        return jsonify({"folder": paths.stored(folder), "photos": []})
+    return jsonify({"folder": paths.stored(folder), "photos": damaged_photos.listed(library, paths.stored(folder))})
+
+
 @routes.get("/api/folder/membership")
 def folder_membership():
     """What this library holds of a folder, and which other libraries of the home hold
@@ -350,7 +366,7 @@ def folder_auto_apply():
     if not result.ok:
         logger.error("Error auto-applying suggestions: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
-    return jsonify({"success": True, "written": _written_tags(result)})
+    return jsonify({"success": True, "written": _written_tags(result), **_skipped_damaged(result)})
 
 
 @routes.post("/api/folder/time-shift")
@@ -400,7 +416,8 @@ def folder_time_shift():
         logger.error("Error applying time shift to %s: %s", folder, e)
         return responses.error(500, str(e))
     return jsonify({"success": True, "updated_photos": list(photos.values()),
-                    "updated_count": result.changed, "requested_count": result.attempted})
+                    "updated_count": result.changed, "requested_count": result.attempted,
+                    **_skipped_damaged(result)})
 
 
 @routes.post("/api/folder/rename-photos")
@@ -453,6 +470,7 @@ def folder_rename_photos():
         "updated_photos": _sorted(photos),
         "index_rows_moved": result.details["index_rows_moved"],
         "index_skipped": [new for _, new in result.details["index_skipped"]],
+        **_skipped_damaged(result),
     })
 
 
@@ -647,7 +665,16 @@ def photos_bulk_tags():
         # so that its records say what the files hold.
         logger.error("Error in bulk tags write: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
-    return jsonify({"success": True, "written": _written_tags(result)})
+    return jsonify({"success": True, "written": _written_tags(result), **_skipped_damaged(result)})
+
+
+def _skipped_damaged(result):
+    """What a bulk write's reply says of the photos it skipped as damaged
+    (tagpup.services.libraries.leave_out_damaged): {"skipped_damaged": n, "skipped":
+    [{"path", "why"}]}, the photos the page shows."""
+    count = result.details.get(library_actions.SKIPPED_DAMAGED, 0)
+    return {"skipped_damaged": count,
+            "skipped": [{"path": what, "why": why} for what, why in result.skipped[-count:]] if count else []}
 
 
 def _written_tags(result):

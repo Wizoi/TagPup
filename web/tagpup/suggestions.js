@@ -17,6 +17,7 @@ import { postPhotoMetadata, queuePhotoWrite, queueWriteOf, redrawIfShowing } fro
 import { isPhotoTagged, renderFileList, scanFolder } from './folder.js';
 import { saveSingleTitle } from './photo.js';
 import { recordUndo, snapshotPhotos } from './undo.js';
+import { noteSkipped } from './write-queue.js';
 import { updateSelectedThumbnailsCount } from './selection.js';
 
 export function updateSuggestButtonState(status = null) {
@@ -437,8 +438,11 @@ export function applyFolderSuggestionsLevel() {
                     return { ...photo, after: now ? now[1] : photo.before };
                 }),
             });
-            setStatus('ready',
-                `Suggestions applied to ${before.length} photo(s) \u2014 Ctrl+Z to undo`);
+            // A photo found damaged was skipped, nothing written to it (write-queue.js).
+            const skipped = data.skipped_damaged || 0;
+            noteSkipped(entry, skipped);
+            setStatus('ready', `Suggestions applied to ${before.length - skipped} photo(s)`
+                + (skipped ? `, ${skipped} skipped: damaged` : '') + ' \u2014 Ctrl+Z to undo');
             scanFolder(true); // Rescan folder to load updated tags
             return true;
         })

@@ -14,6 +14,7 @@ import {
     formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
 import { queueWriteOf } from './edits.js';
+import { damageOf, markCard } from './damaged.js';
 import { renderFileList, visiblePhotos } from './folder.js';
 import { photoFileUrl, selectPhoto } from './photo.js';
 
@@ -185,12 +186,17 @@ export function renderThumbnails() {
             imgWrapper.appendChild(aiBadge);
         }
 
-        const img = document.createElement('img');
-        img.src = photoFileUrl(photo, 300);
-        img.loading = 'lazy';
-        img.alt = photo.filename;
-        imgWrapper.appendChild(img);
+        // A photo that cannot be read has no picture to ask for: its card says why (damaged.js).
+        const damage = damageOf(photo.path);
+        if (!damage || damage.indexed) {
+            const img = document.createElement('img');
+            img.src = photoFileUrl(photo, 300);
+            img.loading = 'lazy';
+            img.alt = photo.filename;
+            imgWrapper.appendChild(img);
+        }
         card.appendChild(imgWrapper);
+        if (damage) markCard(card, damage);
 
         const infoRow = document.createElement('div');
         infoRow.className = 'thumbnail-info-row';

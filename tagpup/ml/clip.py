@@ -121,36 +121,46 @@ class ClipModel:
                 logger.error(f"Failed to load CLIP model: {e}", exc_info=True)
                 raise e
 
-    def embed_image(self, file_path):
-        """Embed one photo as it is now. Nothing is kept: see PhotoEmbeddings."""
+    def embed_image(self, file_path, seen=None):
+        """Embed one photo as it is now. Nothing is kept: see PhotoEmbeddings.
+
+        The picture is decoded in full first (tagpup.files.images.opened), and handed to
+        `seen` when given; a photo whose picture does not decode raises
+        images.Unreadable, as it is: the indexer writes nothing into a photo this has not
+        read (tagpup_cli.py's index)."""
         self._init_model()
-
+        # Upright, as the photo is seen. A camera turned on its side stores the
+        # pixels sideways with an Orientation tag, and so does Rotate now; CLIP
+        # was describing the sideways picture.
+        img = images.opened(file_path, upright=True)
+        if seen is not None:
+            seen(img)
         try:
-            # Upright, as the photo is seen. A camera turned on its side stores the
-            # pixels sideways with an Orientation tag, and so does Rotate now; CLIP
-            # was describing the sideways picture.
-            img = images.opened(file_path, upright=True)
-
-            # Pad to square to preserve full frame if configured and within aspect ratio limit
-            if self.preserve_full_frame:
-                width, height = img.size
-                aspect = max(width, height) / min(width, height)
-                if aspect <= self.max_aspect_ratio:
-                    img = images.pad_to_square(img)
-
-            image_input = self.preprocess(img).unsqueeze(0).to(self.device)
-            if self.device == "cuda":
-                image_input = image_input.half()
-
-            with self.model_lock:
-                with torch.no_grad():
-                    image_features = self.model.encode_image(image_input)
-                    # L2 normalize the features
-                    image_features /= image_features.norm(dim=-1, keepdim=True)
-                    return image_features[0].cpu().numpy().tolist()
+            return self.embed_picture(img)
         except Exception as e:
             logger.error(f"Error embedding image {file_path}: {e}")
             raise e
+
+    def embed_picture(self, img):
+        """Embed a decoded picture: an RGB Pillow image, upright."""
+        self._init_model()
+        # Pad to square to preserve full frame if configured and within aspect ratio limit
+        if self.preserve_full_frame:
+            width, height = img.size
+            aspect = max(width, height) / min(width, height)
+            if aspect <= self.max_aspect_ratio:
+                img = images.pad_to_square(img)
+
+        image_input = self.preprocess(img).unsqueeze(0).to(self.device)
+        if self.device == "cuda":
+            image_input = image_input.half()
+
+        with self.model_lock:
+            with torch.no_grad():
+                image_features = self.model.encode_image(image_input)
+                # L2 normalize the features
+                image_features /= image_features.norm(dim=-1, keepdim=True)
+                return image_features[0].cpu().numpy().tolist()
 
     def embed_text(self, text):
         """Embed a text query for semantic search."""

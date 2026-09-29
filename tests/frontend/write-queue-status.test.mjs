@@ -103,6 +103,22 @@ describe("the status", () => {
     assert.equal(said(ctx), "All changes saved");
     assert.ok(box(ctx).classList.contains("write-queue-idle"));
   });
+
+  test("says how many photos a bulk write skipped as damaged, and marks none of them", async (t) => {
+    // Nothing is written into a photo found damaged: the server skips it and writes the
+    // rest (tagpup.services.libraries.leave_out_damaged).
+    const ctx = await loadSelected(t);
+    click(ctx.window, chip(ctx, "Cross Country"));
+    await flush(ctx.window, 8);
+    const body = ctx.server.lastBody("/api/photos/bulk-tags");
+    assert.equal(body.paths.length, 2);
+    await answer(ctx, { success: true, written: { [PHOTOS[0].path]: ["Cross Country"] }, skipped_damaged: 1,
+                        skipped: [{ path: PHOTOS[1].path, why: "damaged, nothing is written to it" }] });
+    assert.equal(said(ctx), "All changes saved; 1 skipped: damaged");
+    assert.match(rows(ctx)[0].textContent, /done, 1 skipped: damaged/);
+    // The photo skipped is not shown holding the tag: the chip still offers it there.
+    assert.ok(chip(ctx, "Cross Country"), "the skipped photo was recorded as holding the tag");
+  });
 });
 
 describe("the list", () => {

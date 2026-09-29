@@ -4,6 +4,7 @@
 // in view, the rest every half minute, and nothing while the page is hidden (poll.js).
 import { state } from './state.js';
 import { pauseWhenHidden, poller } from './poll.js';
+import { loadAttention } from './attention.js';
 import { loadNow } from './now.js';
 import { loadJobs } from './jobs.js';
 import { loadSync } from './sync.js';
@@ -28,7 +29,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Now, while the page is in view; the logs followed, when asked; the rest now and then.
     poller(loadNow, state.every).start();
     poller(followLog, state.every).start();
-    poller(() => Promise.all([loadJobs(), loadSync(), loadServer(), loadTimeline()]), state.slowEvery).start();
+    poller(() => Promise.all([loadAttention(), loadJobs(), loadSync(), loadServer(), loadTimeline()]),
+           state.slowEvery).start();
     poller(loadSnapshots, state.slowEvery * 4).start();
     loadLogFiles().then(() => readLog());
 });

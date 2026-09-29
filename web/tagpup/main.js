@@ -20,6 +20,7 @@ import {
 } from './folder.js';
 import { wireTagPupGear } from './gear.js';
 import { checkFolderMembership, wireMembership } from './membership.js';
+import { checkDamagedPhotos, showLibraryDamage } from './damaged.js';
 import {
     carryTagsForward, deleteActivePhoto, openPhotoInDefaultApp, renderTags, rotatePhoto,
     saveSingleAddPerson, saveSingleAddTag, saveSingleTitle, selectPhoto,
@@ -46,7 +47,7 @@ import {
 
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
-    applySuggestedTagDirect, checkFolderMembership, checkSuggestionsStatus, populateCameraModelsDropdown, recordUndo,
+    applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, populateCameraModelsDropdown, recordUndo,
     renderFileList, renderSuggestionsPanel, renderTags, renderThumbnails, selectPhoto,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
@@ -145,6 +146,8 @@ document.addEventListener('DOMContentLoaded', () => {
     //
     // Nothing runs the app before this point. tests/frontend/tag-vocabulary.test.mjs
     // keeps it that way.
+    // How many of the library's photos were found damaged, in the header (damaged.js).
+    showLibraryDamage();
     const params = new URLSearchParams(window.location.search);
     const initialPath = params.get('path');
     if (initialPath) {

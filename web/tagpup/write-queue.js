@@ -22,6 +22,7 @@ export function queueEntry(label) {
         // A new run of writes: "Saving 1 of 1" again, not "Saving 7 of 7".
         queue.batchTotal = 0;
         queue.batchSettled = 0;
+        queue.batchSkipped = 0;
     }
     queue.batchTotal += 1;
     const entry = { id: queue.nextId++, label, status: 'waiting', error: '', at: new Date() };
@@ -41,6 +42,17 @@ export function markEntry(entry, status) {
         const dropped = new Set(done.slice(0, done.length - KEEP_DONE));
         queue.entries = queue.entries.filter(e => !dropped.has(e));
     }
+    renderWriteQueue();
+}
+
+/**
+ * A bulk write skipped `count` photos as damaged: nothing is written into a photo found
+ * damaged (the server's libraries.leave_out_damaged). Said on the entry and in the status.
+ */
+export function noteSkipped(entry, count) {
+    if (!entry || !count) return;
+    entry.note = `${count} skipped: damaged`;
+    state.writeQueue.batchSkipped += count;
     renderWriteQueue();
 }
 
@@ -73,7 +85,8 @@ export function writeQueueText() {
     }
     const failed = failedEntries().length;
     if (failed) return `${failed} failed`;
-    return 'All changes saved';
+    const skipped = queue.batchSkipped;
+    return skipped ? `All changes saved; ${skipped} skipped: damaged` : 'All changes saved';
 }
 
 const STATE_WORDS = { waiting: 'waiting', writing: 'writing', done: 'done', failed: 'failed' };
@@ -81,7 +94,7 @@ const STATE_WORDS = { waiting: 'waiting', writing: 'writing', done: 'done', fail
 function entryRow(entry) {
     const said = entry.status === 'failed' && entry.error
         ? `failed: ${entry.error}`
-        : STATE_WORDS[entry.status];
+        : entry.note ? `${STATE_WORDS[entry.status]}, ${entry.note}` : STATE_WORDS[entry.status];
     const row = buildElement('li', { className: 'write-queue-entry', data: { status: entry.status } }, [
         buildElement('span', { className: 'write-queue-label', text: entry.label }),
         buildElement('span', { className: 'write-queue-state', text: said }),

@@ -256,7 +256,7 @@ Each sync that was applied (`tagpup.store.sync_runs`, `tagpup.services.sync`, mi
 | `finished` | TEXT | NOT NULL | Local time it finished, after its write and its queueing. |
 | `whole` | INTEGER | NOT NULL | 1 for every folder of the library, 0 for one folder (`--folder`). Only a whole run can say the library is in step. |
 | `in_step` | INTEGER | NOT NULL | 1 when it left the library in step. |
-| `found` | TEXT | NOT NULL | JSON `{what: count}`: `rows`, `files`, `folders_walked`, `new`, `new_folders`, `review_folders`, `review_photos`, `ignored_files`, `outside_roots_files`, `changed`, `never_stamped`, `to_write`, `unreadable`, `moved`, `moved_faces`, `moved_named`, `moved_changed`, `occupied`, `ambiguous_rows`, `ambiguous_files`, `held_back_folders`, `missing`, `missing_folders`, `folders_gone`, `roots_gone`. Never a path. |
+| `found` | TEXT | NOT NULL | JSON `{what: count}`: `rows`, `files`, `folders_walked`, `new`, `new_folders`, `review_folders`, `review_photos`, `ignored_files`, `outside_roots_files`, `changed`, `never_stamped`, `to_write`, `unreadable`, `moved`, `moved_faces`, `moved_named`, `moved_changed`, `occupied`, `ambiguous_rows`, `ambiguous_files`, `held_back_folders`, `unreadable_files`, `missing`, `missing_folders`, `folders_gone`, `roots_gone`. Never a path. |
 | `changed` | TEXT | NOT NULL | JSON `{what: count}`: `rows` the change wrote, `from_files` and `relinked` among them, and `queued_folders`, the folders of new files put on the index queue. |
 | `change_id` | INTEGER | | The change of `changes` its rows were written as; NULL when it wrote none. |
 
@@ -268,6 +268,29 @@ The folders the library was asked to add (`tagpup.store.added_folders`, migratio
 | `path` | TEXT | PRIMARY KEY, compared as paths are (`NOCASE` on Windows) | The folder, as stored (`paths.stored`). |
 | `subfolders` | INTEGER | NOT NULL | 1 when the folders under it were added with it, which covers every folder below; 0 when the folder alone was, which covers none of them: `index --no-subfolders`, which sync runs for the new files of a folder the library holds. A later add with its subfolders sets it to 1; one without never sets it back. |
 | `added` | TEXT | NOT NULL | Local time it was added, `YYYY-MM-DD HH:MM:SS`. |
+
+### 18. `damaged_files` Table
+The photo files the indexer found damaged (`tagpup.store.damaged_files`, `tagpup.services.damaged_photos`, migration 16; findings #407). The indexer decodes a photo's whole picture before it writes anything into it; one that does not decode -- a file cut short, one of zero bytes -- is not indexed and has no row, so sync saw it as new each time and queued the indexer for it again. Recorded here with the stamp its file had when it was read, it is not queued or read again while the file keeps that stamp; replaced or changed, it is read at once, and forgotten when it reads whole. A photo that decodes but ends in 64 KiB or more of zero bytes, possibly an incomplete copy, is indexed and recorded as `incomplete`. The pages list a record only while its file has its stamp. An applied sync forgets the records of files changed since, or gone from a folder still there; removing a folder from the library forgets those under it. A record of what was found, not journaled, as indexing is not.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `path` | TEXT | PRIMARY KEY, compared as paths are (`NOCASE` on Windows) | The file, as stored (`paths.stored`). |
+| `mtime` | REAL | NOT NULL | The file's modified time when it was read and found damaged. |
+| `size` | INTEGER | NOT NULL | The file's size then, in bytes. |
+| `kind` | TEXT | NOT NULL | How: `truncated`, `zero-filled`, `all zeros`, `empty`, `not an image`, `damaged` (the picture does not decode; `tagpup.files.images.DAMAGE`), or `incomplete` (it decodes, and ends in zero bytes). |
+| `detail` | TEXT | NOT NULL | What the decoder said, without the path. |
+| `zero_tail` | INTEGER | NOT NULL, DEFAULT 0 | How many zero bytes the file ends in, when 64 KiB or more. |
+| `found` | TEXT | NOT NULL | Local time it was first found with this stamp, `YYYY-MM-DD HH:MM:SS`. |
+| `seen` | TEXT | NOT NULL | Local time it was last found so. |
+| `run` | TEXT | | The run of the indexer that found it (`tagpup.core.runs`), or NULL. |
+
+### 19. `faces_pending` Table
+The photos whose faces are still to be detected (`tagpup.store.faces_pending`, migration 17; findings #407). A photo indexed from a damaged file -- a possibly incomplete copy -- has its vectors and its undecided faces taken away once its file reads whole, and is marked here: the indexer detects its faces whether or not it has a vector by then (Suggest makes one), where it would otherwise pass over a photo whose row describes its file and that has a vector. Recording the faces detected in it -- by the indexer or by Suggest -- clears the mark; a mark whose photo is gone is read as none (a photo's id is never handed out again), so deleting a photo takes nothing the journal must account for. `tools/doctor.py` and the Activity page count the marks, so one no index has cleared -- a sync that queued nothing -- is seen. Not journaled, as indexing is not.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `photo_id` | INTEGER | PRIMARY KEY | The photo (`photos.id`). No foreign key: a mark whose photo is gone is read as none. |
+| `since` | TEXT | NOT NULL | Local time it was marked, `YYYY-MM-DD HH:MM:SS`. |
 
 ---
 

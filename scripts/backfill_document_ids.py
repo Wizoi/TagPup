@@ -96,6 +96,9 @@ def main(argv=None):
     if minted and minted["change"] is not None:
         print("Minted into %d file(s) as change %d; to undo it: tagpup_cli.py --db \"%s\" undo %d --apply"
               % (minted["changed"], minted["change"], args.db, minted["change"]))
+    if counts.get("damaged"):
+        print("Not written, damaged or possibly an incomplete copy: %d file(s); compare them with a backup."
+              % counts["damaged"])
     for what, why in (result.skipped + result.errors)[:5]:
         print("   %s: %s" % (os.path.basename(what), why))
     print("photos on disk still without an identity: %d" % result.details["remaining"])

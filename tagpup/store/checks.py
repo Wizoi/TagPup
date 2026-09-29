@@ -157,6 +157,13 @@ def without_a_vector(conn, model):
                         (model,)).fetchone()[0]
 
 
+def faces_to_detect(conn):
+    """How many photos have faces still to be detected (tagpup.store.faces_pending).
+    Reported, not broken: the next index of their folders detects them."""
+    from tagpup.store import faces_pending
+    return faces_pending.count(conn)
+
+
 def missing_files(conn):
     """Rows whose file is not on disk, as (folder, rows, whether the folder is there).
     Reported, not broken: a folder on an unplugged drive looks the same as a deleted one

@@ -12,6 +12,7 @@ import {
     selectionSummaryCount, selectionSummaryScroll, selectionTagsList, statusDot, statusText
 } from './elements.js';
 import { saveToLocalStorageCache } from './cache.js';
+import { noteSkipped } from './write-queue.js';
 import {
     formatFriendlyDateRange, formatFriendlyDateSingle, getFolderDateStats,
     parseExifDateToLocalDate, takenOf
@@ -336,10 +337,13 @@ function queueBulkTags({ label, busy, failed, targets, add = [], remove = [], wr
                 }
                 throw new Error(data.error);
             }
-            targets.forEach(path => {
+            // A photo found damaged was skipped, nothing written to it: its record stays.
+            const skipped = (data.skipped || []).map(each => each.path);
+            targets.filter(path => !skipped.some(s => samePath(s, path))).forEach(path => {
                 const photo = state.folderPhotos.find(p => p.path === path);
                 if (photo) written(photo);
             });
+            noteSkipped(entry, data.skipped_damaged);
             updateSelectedThumbnailsCount();
             renderFileList();
             renderThumbnails();
