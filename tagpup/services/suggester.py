@@ -348,7 +348,9 @@ class TagSuggester:
                 # tagging feeds TagTuner's identify queue, and a folder added but not yet
                 # indexed still accumulates face data. Strictly additive: photos that already have face
                 # rows are left untouched, so manual names and exclusions are safe.
-                if detected_faces and self.index is not None:
+                # Found none, detection still ran: a photo marked as having faces still to
+                # detect (store.faces_pending) is marked no longer.
+                if self.index is not None:
                     try:
                         saved = face_records.record_detected(self.index.db_path, photo_path, detected_faces)
                         if saved:

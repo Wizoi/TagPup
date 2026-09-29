@@ -426,9 +426,21 @@ def record_detected(db_path, photo_path, detected):
     for good.
     """
     if not detected:
+        # Detection ran and found no face: nothing to record, and no longer anything still
+        # to detect (store.faces_pending). Written only when a photo is marked at all.
+        conn = db.connect(db.readonly_uri(db_path), uri=True)
+        try:
+            marked = faces_pending.count(conn)
+        finally:
+            conn.close()
+        if marked:
+            db.write_with_connection(db_path, lambda conn: faces_pending.clear(conn, [photo_path]),
+                                     label="faces detected in %s" % os.path.basename(photo_path))
         return 0
 
     def insert(conn):
+        # Detection ran: the photo's faces are no longer still to detect (store.faces_pending).
+        faces_pending.clear(conn, [photo_path])
         if faces.count_for_photo(conn, photo_path) > 0:
             return 0  # already recorded; leave it alone
         inserted = 0
@@ -437,9 +449,6 @@ def record_detected(db_path, photo_path, detected):
                 continue
             _insert_detected(conn, photo_path, face)
             inserted += 1
-        if inserted:
-            # Its faces are detected: no longer still to detect (store.faces_pending).
-            faces_pending.clear(conn, [photo_path])
         return inserted
 
     try:
