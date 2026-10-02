@@ -363,6 +363,23 @@ class WhenTheMachineMovesTheRoot(Twins):
         undone = journal_service.undo(self.rooted.library, result.details["change"], apply=True, exiftool_path=EXIFTOOL)
         self.assertEqual(1, undone.changed, undone.errors)
 
+    @requires_exiftool
+    def test_opening_a_folder_and_a_sync_at_the_new_place_say_what_they_said_at_the_old(self):
+        """The same photos, at the new place: the rows describe their files there as they
+        described them at the old one, so nothing is read again and nothing is missing."""
+        at_the_old_place = photo_actions.scan_folder(self.rooted.library, self.rooted.pictures, EXIFTOOL)
+        self.move_the_root(keep_old=False)
+        # copytree kept each file's modified time: the rows' stamps match the copies.
+        at_the_new_place = photo_actions.scan_folder(self.rooted.library, self.moved, EXIFTOOL)
+        self.assertEqual(
+            self.rooted.norm(sorted((r["path"], r["tags"], r["size"]) for r in at_the_old_place.values())),
+            self.rooted.norm(sorted((r["path"], r["tags"], r["size"]) for r in at_the_new_place.values()),
+                             base=os.path.dirname(self.moved)))
+        result = sync.sync(self.rooted.library, apply=False, exiftool_path=EXIFTOOL, roots=[self.moved])
+        counts = result.details["counts"]
+        self.assertEqual((0, 0, 0), (counts["moved"], counts["changed"], counts["new"]))
+        self.assertEqual(self.before, self.rooted.dump(), "a dry run at the new place wrote to the library")
+
     def test_the_old_place_alone_is_not_recognised_once_it_is_dropped_from_the_map(self):
         self.move_the_root(keep_old=False)
         found = self.read()

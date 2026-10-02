@@ -431,6 +431,93 @@ class HowAConnectionHoldsItsRoots(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_a_run_that_pins_the_roots_writes_every_row_under_one_map(self):
+        """The owner edits the map -- the old place dropped -- while a run is half through its
+        photos: pinned, every row it writes is under the root; without, the second write is
+        converted by the map as it stands, and a row for a file at the old place is under no root."""
+        self.side.adopt()
+        moved = os.path.join(self.home.root, "moved")
+        first = os.path.join(self.side.pictures, "2024 Regatta", "Run first.jpg")
+        second = os.path.join(self.side.pictures, "2024 Regatta", "Run second.jpg")
+        third = os.path.join(self.side.pictures, "2024 Regatta", "Run third.jpg")
+
+        def record(path):
+            db.write_with_connection(self.side.db_path, lambda conn: photo_rows.add_read(conn, path, rl.read(path)))
+
+        with store_roots.pinned(self.side.db_path):
+            record(first)
+            with open(config.machine_roots_path(), "w", encoding="utf-8") as handle:
+                json.dump({"version": 1, "roots": {"pictures": [moved]}}, handle)
+            with mock.patch.object(store_roots, "RECHECK_SECONDS", 0):
+                record(second)
+        held = self.side.raw_paths()
+        self.assertIn("@pictures/2024 Regatta/Run first.jpg", held)
+        self.assertIn("@pictures/2024 Regatta/Run second.jpg", held)
+        with mock.patch.object(store_roots, "RECHECK_SECONDS", 0):
+            record(third)
+        self.assertIn(third, self.side.raw_paths(), "unpinned, the map as it stands: a file at the dropped place is under no root")
+
+    def test_one_journaled_change_asks_the_map_once_however_many_rows_it_writes(self):
+        from tagpup.store import journal
+        self.side.adopt()
+        self.asked.clear()
+        ids = [row[0] for row in self.side.rows("SELECT id FROM photos WHERE path LIKE '@pictures/2024 Regatta/%'")]
+        edits = [journal.update("photos", (photo_id,), {}, {"tags": '["Same"]'}) for photo_id in ids]
+        applied = journal.apply(self.side.db_path, "tag them", edits)
+        self.assertEqual(len(ids), applied.changed)
+        self.assertEqual(1, len(self.asked), "a change holds one Roots for its whole length")
+
+    def test_an_index_open_while_the_library_is_adopted_writes_rows_afterwards(self):
+        """The always-on process holds its index's connection open while the CLI adopts the
+        library: the next batch it writes is converted by the roots the library has then."""
+        from tagpup.services.search import PhotoIndex
+        index = PhotoIndex(self.side.db_path, model="m")
+        try:
+            index.load()
+
+            def batch(name):
+                path = os.path.join(self.side.pictures, "2024 Regatta", name)
+                index.build_or_update([[0.0] * 4], [{"path": path, "mtime": 1.0, "size": 2, "tags": [], "captions": [],
+                                                      "raw_metadata": {"SourceFile": path.replace(os.sep, "/")}}],
+                                      dim=4, reload=False)
+
+            batch("Before.jpg")
+            self.assertIn(os.path.join(self.side.pictures, "2024 Regatta", "Before.jpg"), self.side.raw_paths())
+            self.assertTrue(self.side.adopt().ok)
+            batch("After.jpg")
+        finally:
+            index.close()
+        held = self.side.raw_paths()
+        self.assertIn("@pictures/2024 Regatta/Before.jpg", held, "the adoption converted what was there")
+        self.assertIn("@pictures/2024 Regatta/After.jpg", held, "and the open index wrote its next batch as a row")
+        self.assertEqual([], [p for p in held if p.lower().startswith(self.side.pictures.lower() + os.sep)])
+
+    def test_a_map_that_moves_moves_the_generations_every_cache_of_paths_is_keyed_by(self):
+        """The Identify Faces grids, the folders the watcher watches and the index hold native
+        paths, built while a generation stood: moving the root in the map moves no row, so it
+        moves the generation instead."""
+        from tagpup.store import generations
+        plain = rl.Side(self.home, "plain", real=1, bulk=2, outside=0)
+        self.side.adopt()
+
+        def stamps(db_path):
+            conn = db.connect(db.readonly_uri(db_path), uri=True)
+            try:
+                return generations.values(conn), faces.fingerprint(conn)
+            finally:
+                conn.close()
+
+        before, plain_before = stamps(self.side.db_path), stamps(plain.db_path)
+        self.assertEqual(before, stamps(self.side.db_path), "nothing moved")
+        self.edit_map(os.path.join(self.home.root, "moved"))
+        with mock.patch.object(store_roots, "RECHECK_SECONDS", 0):
+            after = stamps(self.side.db_path)
+        self.assertNotEqual(before[0][0], after[0][0], "photos")
+        self.assertNotEqual(before[0][1], after[0][1], "faces")
+        self.assertEqual(before[0][2], after[0][2], "the tag tree holds no paths")
+        self.assertNotEqual(before[1], after[1])
+        self.assertEqual(plain_before, stamps(plain.db_path), "a library with no roots never moves with the map")
+
     def test_a_pinned_run_holds_one_map_however_often_it_is_edited(self):
         self.side.adopt()
         moved = os.path.join(self.home.root, "moved")
@@ -585,6 +672,19 @@ class TheJournalSpeaksOneForm(unittest.TestCase):
         rehearsal = journal.rehearse(self.side.db_path, "x", [
             journal.update("photos", (self.photo_id,), {"path": self.b}, {"path": self.renamed})])
         self.assertIn("path changed", rehearsal.refused)
+
+    def test_a_setting_changed_before_the_adoption_is_undone_after_it_as_rows(self):
+        from tagpup.services import settings
+        sub = os.path.join(self.side.pictures, "Trips")
+        changed = settings.change(self.side.library, {settings.IGNORED: sub})
+        self.assertTrue(changed.changed, changed.message())
+        recorded = self.side.rows("SELECT old, new FROM change_rows WHERE change_id = ? AND column_name = 'value'",
+                                  (changed.details["change"],))
+        self.assertEqual([(os.path.join(self.side.pictures, "Not these"), sub)], recorded, "native, as made")
+        self.assertTrue(self.side.adopt().ok)
+        undone = journal.undo(self.side.db_path, changed.details["change"])
+        self.assertEqual(1, undone.rows)
+        self.assertEqual("@pictures/Not these", self.side.rows("SELECT value FROM settings WHERE key = 'library.ignored'")[0][0])
 
     def test_a_setting_of_folders_is_edited_native_and_recorded_as_rows(self):
         from tagpup.services import settings
