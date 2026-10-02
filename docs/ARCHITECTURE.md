@@ -477,6 +477,78 @@ logs (by source, filtered, raw, downloaded). Done:
   `data/supervisor.json` without its token. Its reads do not count as somebody using the
   app, so an open page does not hold an update back from its quiet moment.
 
+### Roots and machines (design *(2026-10-02)*; root-relative stored path approved by the owner, 2026-10-02; nothing built)
+The owner's model *(2026-10-02)*: the library is rooted at the share `\\idziserver\Pictures`
+(`D:\ServerFolders\Pictures` on the server). Everything under it is the family's catalog and
+part of the backups; what TagPup **indexes** is a subset of folders under it (the library's
+roots, less its ignored folders). Today photo_index indexes a desktop copy of the share's
+`Pictures\` subfolder (`D:\Training\Pictures`), kept there so the vectors run on the desktop's
+graphics card. The master is the share, not the copy. Later the indexing may move to the server
+(not now): a server component and a client-only TagPup. The server has no GPU and 8 GB today;
+the design assumes a GPU and more memory later and does not wait for them.
+- **A folder outside every root** can be opened and tagged (the disk-folder source) and uses the
+  database, but cannot be added to the index; adding says it is outside the roots and where to
+  move it. The owner tags, verifies, then copies the folder under a root by hand; sync lists it
+  for Include / Ignore.
+- **The problem.** Rows hold absolute paths in this machine's spelling: `photos.path`,
+  `change_files.path` and `new_path`, `added_folders.path`, `damaged_files.path`, and the
+  settings `library.roots` and `library.ignored`. Moving the library, or running it from the
+  server, re-spells every one at once; re-pointing rows once made 233 duplicate faces.
+- **Proposed: a stored path is a root's name and a path under it**, so the library says
+  "`pictures`, `Pictures\2024\...`" and not where the machine keeps it.
+  - The library holds its roots (name and the share's own address). Each machine holds where it
+    keeps each root, in `TAGPUP_HOME` beside the libraries (`tagpup.config`'s concern), not in
+    the library, which moves between machines. Longest match wins, so the desktop maps
+    `\\idziserver\Pictures\Pictures` to `D:\Training\Pictures` and the server maps
+    `\\idziserver\Pictures` to `D:\ServerFolders\Pictures`.
+  - **Native in memory, root-relative in the database** *(refined 2026-10-02, after the audit of
+    about 150 places that open, walk, rename or delete a file by a stored path)*. Everything above
+    the store -- the walks, ExifTool, the watcher, sync, renames, the browser, the lock files --
+    keeps handling this machine's native path, as it does today, and does not change. Only the
+    boundary with the database converts: `tagpup.core.paths` gains `to_row()` (native to a root's
+    name and the path under it) and `from_row()` (back), `sql_equals` / `sql_under` / `sql_in`
+    convert their argument and still answer a range on the same indexed column, and the store's
+    reads and writes of a path column call the two. A photo under no root (a tag-only folder, which
+    can have rows) keeps its native path, marked as belonging to this machine.
+  - What the audit adds to the change: the paths inside JSON (`photos.raw_metadata`'s `SourceFile`,
+    `suggestions.raw`), the journal (`change_files`, `change_rows` values of `photos.path` and the
+    roots settings, which an undo replays), the six raw-SQL comparisons that bypass `key()`
+    (`store/photos.py` 163 and 771, `store/faces.py` 589, `store/inspection.py` 116,
+    `store/file_journal.py` 341), and the two-copy files beside the library (the suggestions JSON).
+    The journal holding root-relative paths makes an undo portable between machines.
+  - One migration, with a dry run, a backup and a doctor check: each table's prefix is rewritten
+    in one transaction, a row under no root is reported and not guessed at, and the journal keeps
+    what it was. Moving a library afterwards is a change to the machine's map, not to rows.
+  - Cheaper alternative, not preferred: keep absolute paths and add a journaled "relocate root"
+    that rewrites a prefix (Lightroom's "update folder location"). It costs less now, but a
+    server and a client cannot then share one library, and every move is another bulk rewrite.
+- **Changing where a root lives, in TagTuner** *(owner, 2026-10-02)*: for now the libraries stay on
+  `D:\Training`, and once the core features are in and trusted the same libraries are pointed at
+  the official share, losing nothing. TagTuner's gear (the server-side component's page) shows
+  each root with where this machine keeps it, and offers:
+  - **Verify** a location, before and after a change, read-only: for the root's rows, how many
+    files exist there, match the row's size and modified time, differ (changed since indexed;
+    sync's to settle), are missing, and how many photos there are that no row has. It samples
+    first and can run over every row.
+  - **Change location**: a dry run first showing Verify's counts for the new location, then
+    the change, which only edits the machine's map, never a row. The previous location is kept
+    and **Change back** is one click. A location whose Verify is poor (many missing) is refused
+    unless the owner overrides it. Every change is logged on the Activity page.
+  - The two locations are two copies until the old one is retired; the page says which one
+    writes go to, so a tag written to the share is not mistaken for one on the desktop copy.
+- **Server and client.** The boundary is the HTTP API the pages already use, plus the CLI. The
+  server component is the supervisor, the job runners, the models, the database and file
+  access; the client is a page or the CLI. Inference is a job the runner starts, so where it
+  runs (a worker on the desktop now, the server later) is the runner's business and not the
+  callers'. Decided here: nothing but the abstraction is built before the move.
+- **Decided** *(owner, 2026-10-02)*: the root-relative stored path, not the relocate alternative.
+  Logins and a client on another machine are not part of this: the server keeps listening on this
+  PC only until phase 10 (family access), *(owner, 2026-10-02)*. The design here serves the
+  library views (phase 9) and a later move of the indexing, not remote users.
+- **Before any of it is built:** an audit, read-only, of every place that touches the filesystem
+  with a stored path, to size the change; the research on similar tools (`reports/`) read for how
+  they relocate libraries.
+
 ### Phase 9: Library views (planned for October 2026)
 The owner's idea *(2026-09-25)*: TagPup shows the whole library, not only the folder it
 has open -- by folder, by keyword, by person, by date -- as Windows Live Photo Gallery
