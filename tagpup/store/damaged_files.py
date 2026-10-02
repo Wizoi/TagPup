@@ -18,7 +18,7 @@ damaged_photos) until the next sync or index forgets it.
 import collections
 import time
 
-from tagpup.core import paths
+from tagpup.store import roots as store_roots
 
 TABLE = "damaged_files"
 
@@ -49,8 +49,8 @@ def record(conn, photo_path, stamp, kind, detail, zero_tail=0, run=None, now=Non
     recorded, or was recorded with another stamp or kind -- else False, and only when it
     was last found moves. The caller commits."""
     now = now or time.strftime(TIME)
-    stored = paths.stored(photo_path)
-    where, params = paths.sql_equals("path", stored)
+    stored = store_roots.to_row(conn, photo_path)
+    where, params = store_roots.sql_equals(conn, "path", photo_path)
     held = conn.execute("SELECT mtime, size, kind FROM damaged_files WHERE " + where, params).fetchone()
     from tagpup.store import photos   # photos imports this module
     if held is not None and held[2] == kind and photos.describes(held[0], held[1], stamp):
@@ -68,7 +68,7 @@ def forget(conn, photo_paths):
     """Forget the records of `photo_paths`. Returns records removed. The caller commits."""
     removed = 0
     for photo_path in photo_paths:
-        where, params = paths.sql_equals("path", photo_path)
+        where, params = store_roots.sql_equals(conn, "path", photo_path)
         removed += conn.execute("DELETE FROM damaged_files WHERE " + where, params).rowcount
     return removed
 
@@ -79,7 +79,7 @@ def forget_as_found(conn, found):
     removed. The caller commits."""
     removed = 0
     for each in found:
-        where, params = paths.sql_equals("path", each.path)
+        where, params = store_roots.sql_equals(conn, "path", each.path)
         removed += conn.execute("DELETE FROM damaged_files WHERE " + where + " AND mtime = ? AND size = ?",
                                 params + (each.mtime, each.size)).rowcount
     return removed
@@ -96,7 +96,7 @@ def forget_under(conn, folder):
     library. Returns records removed. The caller commits."""
     if not _there(conn):
         return 0
-    under, params = paths.sql_under("path", folder)
+    under, params = store_roots.sql_under(conn, "path", folder)
     return conn.execute("DELETE FROM damaged_files WHERE " + under, params).rowcount
 
 
@@ -104,13 +104,14 @@ def every(conn):
     """[Record] of every file recorded, by path."""
     if not _there(conn):
         return []
-    return [Record(*row) for row in conn.execute("SELECT " + _COLUMNS + " FROM damaged_files ORDER BY path")]
+    return [Record(*row) for row in store_roots.ordered(conn, store_roots.natives(
+        conn, conn.execute("SELECT " + _COLUMNS + " FROM damaged_files ORDER BY path").fetchall(), 0))]
 
 
 def under(conn, folder):
     """[Record] of the files recorded at any depth under `folder`, by path."""
     if not _there(conn):
         return []
-    where, params = paths.sql_under("path", folder)
-    return [Record(*row) for row in conn.execute(
-        "SELECT " + _COLUMNS + " FROM damaged_files WHERE " + where + " ORDER BY path", params)]
+    where, params = store_roots.sql_under(conn, "path", folder)
+    return [Record(*row) for row in store_roots.ordered(conn, store_roots.natives(conn, conn.execute(
+        "SELECT " + _COLUMNS + " FROM damaged_files WHERE " + where + " ORDER BY path", params).fetchall(), 0))]

@@ -69,6 +69,7 @@ from tagpup.services import damaged_photos
 from tagpup.core import runs as run_tags
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
+from tagpup.services import roots as library_roots
 from tagpup.core.result import NotFound
 from tagpup.services import tagging
 from tagpup.services import maintenance
@@ -997,7 +998,13 @@ def _existing_library(ctx):
     db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
     if not os.path.exists(db_path):
         raise click.ClickException("There is no library at %s." % db_path)
-    return Library(db_path)
+    library = Library(db_path)
+    # A library holding a root this machine does not place is told of at once, and not by the
+    # first photo that fails to open: its paths are refused until the map says where it is.
+    unplaced = library_roots.problem(library)
+    if unplaced:
+        console.print("Warning: %s" % unplaced, markup=False, soft_wrap=True)
+    return library
 
 
 #: How `history` says what a change did to a row.
@@ -1222,6 +1229,106 @@ def settings_set(ctx, key, value, acknowledged, apply_):
         return
     console.print("Changed %s%s. %s" % (", ".join(changed), also, maintenance.recorded(result, library.path)),
                   markup=False, soft_wrap=True)
+
+
+def _machine():
+    """This machine's map of the roots (machine_roots.json in the TagPup home), handed to the
+    service: tagpup.services does not import tagpup.config."""
+    return library_roots.Machine(tagpup_config.machine_roots, tagpup_config.add_machine_root,
+                                 tagpup_config.machine_roots_path)
+
+
+@cli.group("roots", invoke_without_command=True)
+@click.pass_context
+def roots_command(ctx):
+    """The library's roots (tagpup.services.roots): the places its photos' paths are held
+    relative to, and where this machine keeps each. `roots adopt` adds one and converts the
+    paths under it -- a dry run unless --apply; nothing converts a library unasked."""
+    if ctx.invoked_subcommand is not None:
+        return
+    library = _existing_library(ctx)
+    try:
+        found = library_roots.listing(library, _machine())
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+    if not found["roots"]:
+        console.print("%s has no roots: every path in it is this machine's own." % library.name, markup=False)
+    for entry in found["roots"]:
+        where = ", ".join(entry["locations"]) if entry["mapped"] else "NOT PLACED on this machine (%s)" % found["map"]
+        console.print("%s  address %s  added %s  kept at %s" % (entry["name"], entry["address"] or "(none)",
+                                                               entry["added"], where), markup=False, soft_wrap=True)
+
+
+def _say_conversion(report):
+    for table, counts in report["tables"].items():
+        parts = ["%d row(s)" % counts["rows"], "%d to convert" % counts["convert"]]
+        for key, label in (("already", "already rooted"), ("outside", "under no root (kept as they are)"),
+                           ("respelled", "taking the location's spelling (same file)"),
+                           ("irreversible", "NOT reversible"), ("json", "with a path inside their JSON")):
+            if counts[key]:
+                parts.append("%d %s" % (counts[key], label))
+        console.print("  %s: %s" % (table, ", ".join(parts)), markup=False, soft_wrap=True)
+    if report["settings"]:
+        console.print("  settings it rewrites: %s" % ", ".join(report["settings"]), markup=False)
+    if report["outside"]:
+        console.print("  rows under no root, by folder:", markup=False)
+        for group in report["outside"]:
+            console.print("    %6d  %s" % (group["count"], group["group"]), markup=False, soft_wrap=True)
+
+
+@roots_command.command("adopt")
+@click.option("--name", required=True, help="The root's name: 1 to 32 characters of a-z, 0-9, _ and -, as in pictures.")
+@click.option("--address", default="", help="The share's own address, as in \\\\server\\Pictures\\Pictures.")
+@click.option("--location", required=True, help="Where THIS machine keeps the root: a folder that holds the photos.")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Back the library up, then convert it. Without it, only says what would change.")
+@click.pass_context
+def roots_adopt(ctx, name, address, location, apply_):
+    """Adopt the root NAME for the library: every path under LOCATION becomes the root's name
+    and the path under it, in one transaction, recorded as one change that `undo` reverses.
+    Writes the machine's map (machine_roots.json) if it lacks the root. Refuses a wrong
+    location, a root already adopted, a row that would not convert back. A dry run unless
+    --apply."""
+    library = _existing_library(ctx)
+    result = library_roots.adopt(library, name, address, location, _machine(), apply=apply_)
+    report = result.details.get("rehearsal")
+    if report:
+        console.print("%s root %s at %s:" % ("Would adopt" if not apply_ else "Adopting", report["root"],
+                                              report["locations"][0]), markup=False, soft_wrap=True)
+        _say_conversion(report)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    if not apply_:
+        console.print("Nothing changed. --apply %swrites it." % (
+            "writes %s and " % result.details["map"]["file"] if result.details["map"]["would_write"] else ""),
+            markup=False, soft_wrap=True)
+        return
+    backup = result.details["backup"]
+    console.print("Backup: %s %s." % (os.path.basename(backup["file"]), "taken" if backup["made"] else
+                                       "(made within the last quarter hour; it covers this)"), markup=False)
+    if result.details["map"].get("written"):
+        console.print("Wrote %s." % result.details["map"]["file"], markup=False, soft_wrap=True)
+    console.print("Adopted: %d row(s) converted, change %d. `undo %d` reverses it." % (
+        result.changed, result.details["change"], result.details["change"]), markup=False)
+
+
+@roots_command.command("check")
+@click.pass_context
+def roots_check(ctx):
+    """Whether every rooted row converts back (its root is the library's and this machine
+    places it). Reads only."""
+    library = _existing_library(ctx)
+    try:
+        problems = library_roots.check(library)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+    if not problems:
+        console.print("The library's roots are in order.", markup=False)
+        return
+    for problem in problems:
+        console.print(problem, markup=False, soft_wrap=True)
+    raise SystemExit(1)
 
 
 @cli.group(invoke_without_command=True)

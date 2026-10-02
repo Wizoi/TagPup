@@ -17,6 +17,7 @@ seen.
 import time
 
 from tagpup.core import paths
+from tagpup.store import roots as store_roots
 
 TABLE = "faces_pending"
 
@@ -32,7 +33,7 @@ def _there(conn):
 def mark(conn, photo_path, now=None):
     """Mark the photo at `photo_path` as having faces still to detect. Returns 1 when it has
     a row to mark, else 0. The caller commits."""
-    where, params = paths.sql_equals("path", photo_path)
+    where, params = store_roots.sql_equals(conn, "path", photo_path)
     row = conn.execute("SELECT id FROM photos WHERE " + where + " LIMIT 1", params).fetchone()
     if row is None:
         return 0
@@ -53,7 +54,7 @@ def clear(conn, photo_paths):
         return 0
     cleared = 0
     for photo_path in photo_paths:
-        where, params = paths.sql_equals("path", photo_path)
+        where, params = store_roots.sql_equals(conn, "path", photo_path)
         cleared += conn.execute("DELETE FROM faces_pending WHERE photo_id IN (SELECT id FROM photos WHERE "
                                 + where + ")", params).rowcount
     return cleared
@@ -63,8 +64,8 @@ def pending(conn):
     """The paths, as stored, of the photos marked, by path. At once when none is."""
     if _none(conn):
         return []
-    return sorted((path for (path,) in conn.execute(
-        "SELECT p.path FROM faces_pending f JOIN photos p ON p.id = f.photo_id")), key=paths.key)
+    return sorted((path for (path,) in store_roots.natives(conn, conn.execute(
+        "SELECT p.path FROM faces_pending f JOIN photos p ON p.id = f.photo_id").fetchall(), 0)), key=paths.key)
 
 
 def count(conn):

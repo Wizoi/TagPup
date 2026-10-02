@@ -26,6 +26,13 @@ writers to different databases never wait on each other.
 
 **A retry** for the writer this process cannot see -- another process, or a checkpoint.
 
+**The library's roots, held by the connection.** A path column holds a root's name and the path
+under it once a library has been adopted by a root (tagpup.store.roots), and the store converts
+at its boundary. The conversion a connection uses is kept on the connection (`roots_state`), so
+an operation that holds a connection converts every path of it by one Roots -- never a lookup a
+row -- and a write is refused, and run again, when the library's roots changed between the
+moment its paths were converted and the moment it commits.
+
 Never call `sqlite3.connect` directly; `tests/test_db_access.py` fails if you do.
 """
 import logging
@@ -73,6 +80,14 @@ def readonly_uri(db_path):
     return "file:%s?mode=ro" % paths.stored(db_path).replace("\\", "/")  # not a path: URI syntax
 
 
+class Connection(sqlite3.Connection):
+    """The connection db.connect makes: SQLite's, with a place to keep the roots the store
+    converts this connection's paths by (tagpup.store.roots.roots_for)."""
+
+    #: What tagpup.store.roots keeps here, or None before the connection first needs it.
+    roots_state = None
+
+
 def _is_readonly(target, kwargs):
     return kwargs.get("uri") and "mode=ro" in str(target)
 
@@ -111,6 +126,7 @@ def connect(target, *args, foreign_keys=False, **kwargs):
     relies on: deleting a photo row takes its faces with it (ON DELETE CASCADE).
     """
     kwargs.setdefault("timeout", BUSY_TIMEOUT_MS / 1000.0)
+    kwargs.setdefault("factory", Connection)
     conn = sqlite3.connect(target, *args, **kwargs)
     configure(conn, readonly=_is_readonly(target, kwargs))
     if foreign_keys:
@@ -166,12 +182,17 @@ def write_with_connection(target, operation, label="database write"):
 
     `operation` is called with the connection and its result returned; the commit,
     rollback and close are handled here. It may be called more than once, so it
-    should not carry state between attempts.
+    should not carry state between attempts: one is that the library's roots changed, by
+    another process, between the moment the operation converted its paths and the moment it
+    would commit (roots.unchanged), when it is run again with the roots as they now are.
     """
     def attempt():
         conn = connect(target)
         try:
             result = operation(conn)
+            if conn.roots_state is not None:
+                from tagpup.store import roots   # roots imports this module
+                roots.unchanged(conn)
             conn.commit()
             return result
         except Exception:

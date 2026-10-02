@@ -59,7 +59,7 @@ Stores high-level image metadata, tags (keywords) and captions. Its people are i
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | PRIMARY KEY | The photo's row, and what its faces point at. Kept when the photo is renamed or moved: only `path` changes, and its faces go with it. Migration 4 gave every row its old rowid. |
-| `path` | TEXT | NOT NULL UNIQUE | The image file. Absolute path in stored form -- `paths.stored()`: native separators, as the indexer writes it. Compared case-insensitively on Windows through `paths.sql_equals()`, which the `*_path_nocase` indexes answer; never by `LOWER()` or `LIKE`. |
+| `path` | TEXT | NOT NULL UNIQUE | The image file. In a library with no roots (the table `roots` is empty), an absolute path in stored form -- `paths.stored()`: native separators, as the indexer writes it. In a library that holds a root (`roots`), a file under it is held as `@<root name>/<path under it>`, always with `/` (`paths.to_row()`), and a file under none keeps its native path: no native absolute path starts with `@`. Every read of the column goes through `paths.from_row()` and every write through `paths.to_row()` (`tagpup.store.roots`). Compared case-insensitively on Windows through `paths.sql_equals()`, which the `*_path_nocase` indexes answer; never by `LOWER()` or `LIKE`. |
 | `mtime` | REAL | | Last modification time (epoch timestamp) of the image file. |
 | `size` | INTEGER | | File size in bytes. |
 | `tags` | TEXT | | JSON-serialized array of metadata keyword strings (e.g., `["nature", "sunset"]`). |
@@ -213,7 +213,7 @@ The library's settings (`tagpup.store.settings`, `tagpup.services.settings`, mig
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `key` | TEXT | PRIMARY KEY, NOT NULL | The setting, `<section>.<key>` as config.ini named it: `model.name`, `faces.min_face_size`, `candidates.tags`, `renaming.format`, `paths.exiftool`, `library.roots`, `library.ignored` ... A name, not an id: a row put back under it is that setting again (`journal.NAMED`). |
-| `value` | TEXT | NOT NULL | Its value as text, as the validator reads it (`true`/`false`, `0.85`, `0.6, 0.7, 0.7`). An empty `paths.exiftool` is the machine's ExifTool; an empty `model.force_image_size` the model's own size. `library.roots` and `library.ignored` are folders, one a line. A stamp writes every setting but `library.roots`: a library has no roots until the owner sets them. Setting the roots adds the folders under a new root holding photos and no indexed photo to `library.ignored` in the same change. |
+| `value` | TEXT | NOT NULL | Its value as text, as the validator reads it (`true`/`false`, `0.85`, `0.6, 0.7, 0.7`). An empty `paths.exiftool` is the machine's ExifTool; an empty `model.force_image_size` the model's own size. `library.roots` and `library.ignored` are folders, one a line; in a library that holds a root (`roots`) a folder under it is held as its row, `@pictures/2024` (and so are the old and new values of the journaled change), and read and shown as this machine's path. A stamp writes every setting but `library.roots`: a library has no roots until the owner sets them. Setting the roots adds the folders under a new root holding photos and no indexed photo to `library.ignored` in the same change. |
 
 ### 14. `change_files` Table
 The photo files a change writes, one row each (`tagpup.store.file_journal`, `tagpup.services.file_changes`, migration 11; ARCHITECTURE.md, phase 7.5). A batch of file writes cannot be one transaction, so each file carries its own state, as dpkg's packages do: the plan -- every file's fields before and after -- is committed first, `planned`; a file is marked `writing` before ExifTool writes it and `done` in the transaction that records its row (`photos.follow_fields`, or `photos.move_rows_in` for a rename), and the change is `applied` once every file is done or a conflict. A file found holding neither what the plan read nor what it was to hold is a `conflict`: reported, never overwritten. The first time a process reads a library's settings (`tagpup.runtime.library_settings`), and before each change of photo files, a file a crash left `writing` or `planned` is settled by what it holds: the before, written again; the after, marked done and its row recorded; neither, a conflict. An undo writes each file still holding its after back to its before through the same states, `undone`, and refuses, by photo id, a file that does not. Pruning deletes a change's files with its `change_rows`.
@@ -223,8 +223,8 @@ The photo files a change writes, one row each (`tagpup.store.file_journal`, `tag
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | The file of the change, in the order planned. |
 | `change_id` | INTEGER | NOT NULL, → `changes.id`, INDEXED | The change. |
 | `photo_id` | INTEGER | | The photo's row when the plan was made, which reports name the file by; NULL for a file without one (one moved aside by Smart Rename). |
-| `path` | TEXT | NOT NULL | The file, as stored; for a rename, its name before. |
-| `new_path` | TEXT | | A rename's name after; NULL for a change of fields. |
+| `path` | TEXT | NOT NULL | The file, as `photos.path` holds a path (native, or `@<root>/...` in a library with a root); for a rename, its name before. A change recorded before the library was adopted by a root is converted with the rest by the adoption. |
+| `new_path` | TEXT | | A rename's name after, held as `path` is; NULL for a change of fields. |
 | `fields_before` | TEXT | NOT NULL | JSON: what the file held of each field the change writes, `{"XMP:Subject": ["Beach"], ...}`, a field it did not hold `[]`. For a rename, the file's `size` and `mtime_ns`, which renaming does not change and which find it under either name. Can name people. |
 | `fields_after` | TEXT | NOT NULL | JSON: what it is to hold, in the same form. |
 | `state` | TEXT | NOT NULL, one of `planned`, `writing`, `done`, `conflict`, `undone` | Where the write of this file stands. |
@@ -265,7 +265,7 @@ The folders the library was asked to add (`tagpup.store.added_folders`, migratio
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
-| `path` | TEXT | PRIMARY KEY, compared as paths are (`NOCASE` on Windows) | The folder, as stored (`paths.stored`). |
+| `path` | TEXT | PRIMARY KEY, compared as paths are (`NOCASE` on Windows) | The folder, as `photos.path` holds a path: native (`paths.stored`), or `@<root>/...` in a library with a root. |
 | `subfolders` | INTEGER | NOT NULL | 1 when the folders under it were added with it, which covers every folder below; 0 when the folder alone was, which covers none of them: `index --no-subfolders`, which sync runs for the new files of a folder the library holds. A later add with its subfolders sets it to 1; one without never sets it back. |
 | `added` | TEXT | NOT NULL | Local time it was added, `YYYY-MM-DD HH:MM:SS`. |
 
@@ -274,7 +274,7 @@ The photo files the indexer found damaged (`tagpup.store.damaged_files`, `tagpup
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
-| `path` | TEXT | PRIMARY KEY, compared as paths are (`NOCASE` on Windows) | The file, as stored (`paths.stored`). |
+| `path` | TEXT | PRIMARY KEY, compared as paths are (`NOCASE` on Windows) | The file, as `photos.path` holds a path: native (`paths.stored`), or `@<root>/...` in a library with a root. |
 | `mtime` | REAL | NOT NULL | The file's modified time when it was read and found damaged. |
 | `size` | INTEGER | NOT NULL | The file's size then, in bytes. |
 | `kind` | TEXT | NOT NULL | How: `truncated`, `zero-filled`, `all zeros`, `empty`, `not an image`, `damaged` (the picture does not decode; `tagpup.files.images.DAMAGE`), or `incomplete` (it decodes, and ends in zero bytes). |
@@ -291,6 +291,15 @@ The photos whose faces are still to be detected (`tagpup.store.faces_pending`, m
 | :--- | :--- | :--- | :--- |
 | `photo_id` | INTEGER | PRIMARY KEY | The photo (`photos.id`). No foreign key: a mark whose photo is gone is read as none. |
 | `since` | TEXT | NOT NULL | Local time it was marked, `YYYY-MM-DD HH:MM:SS`. |
+
+### 20. `roots` Table
+The library's roots (`tagpup.store.roots`, migration 18; ARCHITECTURE.md, "Roots and machines"): the places the library's photos are held relative to, so that the library does not say where a machine keeps them. Empty until the owner runs `roots adopt`: opening a library only ever makes this table, and a library with no roots behaves exactly as it did, every path in it native. A root is added, and every row under it converted, by one journaled change (`roots adopt`), and removed, the rows converted back, by its undo or `roots remove`. Each machine says where it keeps each root in `TAGPUP_HOME/machine_roots.json`, which `tagpup.config` reads; a root the machine does not place is refused, with a message naming the file and the line to add, and never read as an empty library. Not a table the journal keys: it is written only by that one change, in the transaction that converts the rows.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `name` | TEXT | PRIMARY KEY, NOT NULL | The root's name, 1 to 32 characters of `a-z`, `0-9`, `_`, `-`, lower case: what a path under it begins with, `@pictures/2024/a.jpg`. |
+| `address` | TEXT | NOT NULL | The share's own address, `\\idziserver\Pictures\Pictures`: a spelling that names the root, so a path typed as the share's address is under it. May be empty. |
+| `added` | TEXT | NOT NULL | Local time it was added, `YYYY-MM-DD HH:MM:SS`. |
 
 ---
 
