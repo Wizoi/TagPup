@@ -600,29 +600,37 @@ the design assumes a GPU and more memory later and does not wait for them.
     no root (grouped by folder with `paths.outside_roots`; they keep their native path), rows that would not convert
     back, rows that would become one, the settings it rewrites, and says why it would be refused; it reads and
     writes nothing. `--apply`: the map first if it lacks the root (atomic, one editor at a time, only then), then in
-    ONE transaction under the library's write lock: a new backup of the library (always a fresh one, under the lock,
-    so it is the library as it stands), every table converted, verified before it commits (row counts equal, every
-    rooted row converts back, no row is held under one root though it lies under another's place, the map places the
-    root where the rows were converted by), one journaled change, `roots adopt: pictures`. Every place the map lists
-    for the root is equivalent: a row under any of them converts, taking the first one's spelling (counted as
-    respelled). **A root nested inside one the library has** takes the outer root's rows that lie under it
-    (`@pictures/2024 Regatta/x` becomes `@regatta/x`, counted as rerooted, recorded in the change's summary), or every
-    lookup under the inner root would miss them. It refuses, writing nothing: a root of that name already, a
-    location that is not a folder here, a location no row lies under, a map that places the root elsewhere, a row that
-    is not an absolute path here or does not convert back, rows spelled by the share's address (named as their own
-    count and folder list: converting them would retarget them from the master, the share, to this machine's copy; fix
-    their spelling first, or adopt a root whose location is the share), two rows that would become one when at least
-    one of them converts (two rows of one file that both stay outside the root are only reported as duplicates),
-    another process holding the write lock, an unfinished change of photo files. `undo` reverses it
-    (`adoption.undo_in`: the same conversion back by the map, verified; a rerooted row returns to its outer root) and
-    also converts back the row-form paths that later changes recorded (`change_rows`, `change_files`), in the same
-    transaction, so those changes stay undoable in a library with no root; the dry run says so plainly before
-    `--apply` (the undo's rehearsal notes, which the CLI prints). It is refused only when this machine does not place
-    the root, or a later change recorded a path of the root that cannot be converted back (named). Every step is
-    `_reached`, and tests stop the process at each: the library is exactly as it was. A refused `--apply` still
-    migrates the library to schema 18 first (additive and empty, *decided 2026-10-02*).
+    ONE transaction under the library's write lock: a new backup of the library (always a fresh one, under the
+    lock, so it is the library as it stands; a full copy, so another process's write waits for it -- a note beside
+    the library tells that write why if it gives up, `db.busy_note`, and the dry run and `--apply` say to run it with
+    TagPup and TagTuner stopped and how long to expect, from the speed the last copy ran at, kept in the backups
+    folder), every table converted, verified before it commits (row counts equal, every rooted row converts back, no
+    row is held under one root though it lies under another's place, the map places the root where the rows were
+    converted by), one journaled change, `roots adopt: pictures`, whose summary holds counts and never a name. Every
+    place the map lists for the root is equivalent: a row under any of them converts, taking the first one's spelling
+    (counted as respelled). **One root holds each folder**: nested roots are the model's (`core.paths` resolves
+    them, the deeper winning) and are refused at adoption, in either direction -- a root whose place, or address, is
+    under, over or the same as another root's of the library -- naming both, since moving the outer root's rows under
+    the inner would be a conversion an undo could not reverse once a rename or an index had touched them. It refuses,
+    writing nothing: a root of that name already, a nested root, a location that is not a folder here, a location no
+    row lies under, a map that places the root elsewhere, a row that is not an absolute path here or does not convert
+    back, rows spelled by the share's address (named as their own count and folder list: converting them would
+    retarget them from the master, the share, to this machine's copy; fix their spelling first, or adopt a root whose
+    location is the share), two rows that would become one when at least one of them converts (two rows of one file
+    that both stay outside the root are only reported as duplicates), another process holding the write lock, an
+    unfinished change of photo files. `undo` reverses it (`adoption.undo_in`: the same conversion back by the map,
+    verified) and also converts back the paths that later changes recorded, in the same transaction, so those changes
+    stay undoable in a library with no root: `change_files`, and in `change_rows` only the values that hold a path
+    by their structure (`photos.path`, the two folder settings, the `SourceFile` of `raw_metadata`, the path fields of
+    `suggestions.raw`) and only when the value is a row of the undone root; no text is searched, and a title or an
+    address with an "@" in it is the same bytes afterwards. The dry run says plainly before `--apply` what it will do
+    and which roots remain (the undo's rehearsal notes, which the CLI prints). It is refused only when this machine
+    does not place the root, or a later change recorded a path of the root that cannot be converted back (named).
+    Every step is `_reached`, and tests stop the process at each: the library is exactly as it was. A refused
+    `--apply` still migrates the library to schema 18 first (additive and empty, *decided 2026-10-02*).
   - **Checks**: `tools/doctor.py` and the MCP's checks gain `rooted_rows_convert` (rooted rows that name a root the
-    library does not have, that this machine does not place, or that are not what `to_row` writes) and
+    library does not have, that this machine does not place, that are not what `to_row` writes, or that are held
+    under one root though they lie under another's place) and
     `native_rows_under_a_root` (a write made between another process's adoption and its own commit, the one race
     nothing can close), and the doctor lists the photos under no root, by folder. A library whose map does not place
     a root is told of at once (`services.roots.problem`, which the CLI prints when it opens the library) and its
