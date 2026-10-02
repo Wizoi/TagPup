@@ -27,12 +27,13 @@ process holding the library's write lock, an unfinished change of photo files.
 The machine's map is the entry point's to hand in (`Machine`): this layer does not import
 tagpup.config.
 """
+import contextlib
 import os
 from dataclasses import dataclass
 from typing import Callable
 
 from tagpup.core import paths
-from tagpup.core.result import NotFound, Result
+from tagpup.core.result import NotFound, Refused, Result
 from tagpup.store import adoption, db, schema
 from tagpup.store import roots as store_roots
 
@@ -50,6 +51,56 @@ class Machine:
     path: Callable
     set_location: Callable = None
     change_back: Callable = None
+
+
+#: The library's roots were changed, by another process, while a run held them: what a pinned run
+#: raises. Re-exported for the entry points, which stop cleanly on it.
+RootsChanged = store_roots.RootsChanged
+
+#: The exit code of a process that stopped for it (EX_TEMPFAIL: try again), which the process that
+#: started it -- the server's index queue -- turns into a sentence.
+EXIT_ROOTS_CHANGED = 75
+
+#: What the owner is told when a run stops for it.
+STOPPED = ("The library's roots were changed by another process while this ran, so it stopped: what it would "
+           "write from here would be spelled by roots the library no longer has. Nothing was written wrongly; "
+           "start it again.")
+
+
+class Unplaced(Refused):
+    """A run asked for the library's roots and this machine does not place one (or its map cannot
+    be read): the message names machine_roots.json and the line to add."""
+
+
+@contextlib.contextmanager
+def pinned(library):
+    """Hold the library's Roots, and this machine's map as it is now, for a whole run -- an index
+    run, a sync pass, a change of photo files: every path of it is converted by one map however
+    often the map is edited meanwhile (a Change location is refused while a run is under way, and a
+    connection that opened later would otherwise convert by the new map half-way). A change of the
+    library's own roots by another process stops the run: RootsChanged, which the entry point
+    answers with STOPPED.
+
+    A library that is not there, or has no roots, holds nothing. Unplaced (a Refused, the sentence
+    naming machine_roots.json) when the library holds a root this machine does not place: the run
+    could not name one photo's file."""
+    if not os.path.exists(library.path):
+        yield None
+        return
+    stack = contextlib.ExitStack()
+    try:
+        roots = stack.enter_context(store_roots.pinned(library.path))
+    except ValueError as why:   # paths.RootsError, config.MachineMapError
+        raise Unplaced(str(why)) from None
+    with stack:
+        if roots is not None and roots.unmapped:
+            raise Unplaced(roots.what_to_add(roots.unmapped[0]))
+        yield roots
+
+
+def stopped(why):
+    """The sentence for a run that did not run, or stopped: `why` a RootsChanged or an Unplaced."""
+    return STOPPED if isinstance(why, RootsChanged) else str(why)
 
 
 def listing(library, machine=None):

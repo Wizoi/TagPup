@@ -15,6 +15,7 @@ from tagpup.core import processes
 from tagpup.core import runs
 from tagpup.core import validation
 from tagpup.core.result import Result
+from tagpup.services import roots as roots_service
 
 #: Where faces are clustered when adding a folder did not: the runner's button, whose
 #: label this is (tests/test_indexing_names_a_real_control.py holds the two together).
@@ -135,6 +136,12 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
     # The indexer stores the paths it walks as given, so it is handed the stored form.
     code = run(["index"] + [paths.stored(each) for each in folders] + ([] if subfolders else ["--no-subfolders"]),
                0.9)
+    if code == roots_service.EXIT_ROOTS_CHANGED:
+        # The indexer holds the library's roots for its whole run (tagpup.services.roots.pinned) and
+        # stopped: another process changed them. Said as it is, not as an exit code.
+        result.fail(", ".join(folders), roots_service.STOPPED)
+        result.details["percent"] = 0
+        return result
     if code != 0:
         result.fail(", ".join(folders), "Indexing failed with exit code %s." % code)
         result.details["percent"] = 0

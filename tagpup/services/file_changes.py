@@ -60,6 +60,7 @@ from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, names
+from tagpup.services import roots as roots_service
 from tagpup.store import db, embeddings, file_journal, journal, photos, schema
 
 logger = logging.getLogger(__name__)
@@ -113,9 +114,31 @@ def _exclusive(function):
     return held
 
 
+def _pinned(function):
+    """Hold one map for the whole change (tagpup.services.roots.pinned): a place moved meanwhile
+    changes nothing until it ends, and a change of the library's roots by another process stops
+    it. A change that stops half-way is left as a crash leaves one -- its files written are
+    recorded, the rest settled the next time the library is opened (settle_once). A change that
+    returns a Result answers it as a refusal naming why; a rename raises."""
+    @functools.wraps(function)
+    def held(library, *args, **kwargs):
+        try:
+            with roots_service.pinned(library):
+                return function(library, *args, **kwargs)
+        except (roots_service.RootsChanged, roots_service.Unplaced) as stop:
+            if function.__name__ == "rename":
+                raise
+            result = Result()
+            result.refuse(roots_service.stopped(stop))
+            result.details.update(change=None, conflicts=[], read_back={}, written={})
+            return result
+    return held
+
+
 # ---- Forward ---------------------------------------------------------------------------
 
 @_exclusive
+@_pinned
 def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one, summary=None,
                  unreadable="fail", stop_at_first_error=False, et=None, held=None, read_back_also=()):
     """Write fields into many photos as one change named `operation` (see the module's
@@ -453,6 +476,7 @@ def _holds(path, row):
 
 
 @_exclusive
+@_pinned
 def rename(library, operation, renames, aside, exiftool_path=None, summary=None):
     """Rename photos -- `renames`, old -> new, and first the files in the way, `aside`
     (tagpup.files.names.aside_for) -- as one change named `operation`: planned and
