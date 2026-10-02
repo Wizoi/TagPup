@@ -112,7 +112,7 @@ class Side:
                          name_source="manual" if number % 2 == 0 else None, embedding=b"\x00" * 16)
             conn.commit()
             # What Suggest offered a photo, with the paths its output carries.
-            neighbour = self.rows_only[0]
+            neighbour = (self.rows_only or self.real)[0]
             suggestions.put(conn, self.real[0], {
                 "tags": ["Activity/Sailing"], "people": [], "title": "Start",
                 "raw_suggestions": {"path": self.real[0], "suggested_tags": [],

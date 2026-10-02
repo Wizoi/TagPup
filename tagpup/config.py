@@ -360,6 +360,14 @@ def _add_machine_root(folded, location, path):
                               % (path, folded, ", ".join(held[folded]), location))
     merged = {each: list(places) for each, places in held.items()}
     merged[folded] = [location]
+    _write_map(merged, path)
+    return True
+
+
+def _write_map(merged, path):
+    """Write `merged` ({name: [places]}) as the map, whole, to a temporary name beside it and
+    renamed over it: refused (MachineMapError, nothing written) when the result would be refused at
+    load. The caller holds `_edit_lock`."""
     try:
         merged = paths.check_locations(merged)
     except ValueError as problem:
@@ -385,7 +393,67 @@ def _add_machine_root(folded, location, path):
     finally:
         if os.path.exists(temporary):
             os.remove(temporary)
-    return True
+
+
+def set_location(name, new_location, path=None, expected=None, must_exist=True):
+    """Move root `name` on this machine to `new_location`: the new place first -- where a path is
+    put from now on -- and the old places kept after it, so that every path stays recognised and
+    `change_back` is the reverse. Returns {"changed", "places", "previous"} (the places listed
+    after and before, native); `changed` False, nothing written, when the root is at
+    `new_location` already (a second click, a second tab that came after the first).
+
+    Refused, with MachineMapError and nothing written: a location that is not an absolute folder
+    on this machine, that starts with the long-path or device prefix, that does not exist (unless
+    `must_exist` is False, for a caller that has asked the disk itself, with a deadline: a
+    share that is away would hold this one for as long as Windows waits), that another root holds,
+    or one the root's own other places are nested in; the map unreadable; and, when `expected` is
+    given, a root whose first place is not `expected` (the map was changed since the caller looked
+    -- by another tab, by hand -- and what it was about to confirm is not what it saw).
+
+    One editor at a time across processes (`_edit_lock`), the file read inside it, written whole
+    and renamed over: a reader sees the old map or the new."""
+    path = path or machine_roots_path()
+    folded = paths.root_name(name)
+    if not isinstance(new_location, str) or not paths.is_native_absolute(new_location):
+        raise MachineMapError("%r is not an absolute folder on this machine" % (new_location,))
+    new_location = paths.stored(new_location)
+    if must_exist and not os.path.isdir(new_location):
+        raise MachineMapError("%s is not a folder that exists here" % new_location)
+    with _edit_lock(path):
+        held = _parse(_read_whole(path), path)
+        before = list(held.get(folded, ()))
+        if before and paths.key(before[0]) == paths.key(new_location):
+            return {"changed": False, "places": before, "previous": before}
+        if expected is not None and (not before or paths.key(before[0]) != paths.key(expected)):
+            raise MachineMapError("The map has changed since you looked: %s is now at %s, not %s. Nothing was changed."
+                                  % (folded, before[0] if before else "no place on this machine", expected))
+        places = [new_location] + [place for place in before if paths.key(place) != paths.key(new_location)]
+        merged = {each: list(listed) for each, listed in held.items()}
+        merged[folded] = places
+        _write_map(merged, path)
+        return {"changed": True, "places": places, "previous": before}
+
+
+def change_back(name, path=None, expected=None):
+    """Put root `name` back at the place it was before the last `set_location`: the first two
+    places swap. Returns what set_location does. Refused, nothing written, for a root with only
+    one place, and for the map having changed since the caller looked (`expected`: the first
+    place it saw). The disk is the caller's to ask (it may be away)."""
+    path = path or machine_roots_path()
+    folded = paths.root_name(name)
+    with _edit_lock(path):
+        held = _parse(_read_whole(path), path)
+        before = list(held.get(folded, ()))
+        if len(before) < 2:
+            raise MachineMapError("%s has no previous place on this machine to go back to" % folded)
+        if expected is not None and paths.key(before[0]) != paths.key(expected):
+            raise MachineMapError("The map has changed since you looked: %s is now at %s, not %s. Nothing was changed."
+                                  % (folded, before[0], expected))
+        places = [before[1], before[0]] + before[2:]
+        merged = {each: list(listed) for each, listed in held.items()}
+        merged[folded] = places
+        _write_map(merged, path)
+        return {"changed": True, "places": places, "previous": before}
 
 
 def describe_machine(library_roots, path=None):
