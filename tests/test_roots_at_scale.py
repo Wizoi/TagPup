@@ -122,8 +122,7 @@ class TheSizeOfPhotoIndex(unittest.TestCase):
         total = time.time() - started
         self.assertTrue(converted.ok and not converted.refused, converted.message())
         self.assertEqual(self.under_the_root, converted.details["adopted"]["tables"]["photos"]["convert"])
-        note("adopt --apply (backup %s, conversion, verification, journal): %.1f s" % (
-            "made" if converted.details["backup"]["made"] else "reused", total))
+        note("adopt --apply (new backup, conversion, verification, journal): %.1f s" % total)
         self.assertLess(total, 90, "adopting took minutes")
 
         conn = db.connect(db.readonly_uri(self.library.path), uri=True)

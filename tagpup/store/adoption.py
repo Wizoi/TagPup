@@ -12,17 +12,29 @@ and records ONE change of the journal, `roots adopt`, which History lists and `u
 What it refuses, with nothing written and each reason named (`Refused`): a root of that name
 already (it is adopted once), a location that is not there, a location no row of the library
 lies under (a wrong location would put every row outside the root), a library in which another
-process holds the write lock, an unfinished change of photo files (it is settled first), a row
-that does not convert back to the same file (`paths.key`), and two rows that would become one.
-A row under no root keeps its native path and is reported, by folder, never guessed at.
+process holds the write lock, an unfinished change of photo files (it is settled first), a
+row that is not an absolute native path or does not convert back, a row spelled by the share's
+address (converting it would retarget it from the master to this machine's copy: it is named
+as its own count and folder list), and two rows that would become one when at least one of
+them converts. A row under no root keeps its native path and is reported, by folder, never
+guessed at; two rows of one file that are both outside the root are reported as already
+duplicates (`checks.one_file_two_rows`) and do not block.
 
-The journal keeps what it was: the old and new values of `change_rows` are not rewritten. A
-change recorded before the adoption holds native paths, and the journal converts them as it
+A root nested inside one the library has (`@pictures/2024 Regatta/x` once `regatta` is adopted
+at that folder) takes the outer root's rows that lie under it, in the same transaction: they are
+`rerooted`, recorded in the change's summary, and `verify` fails on any row held under one root
+that lies under another's place. Every location the map lists for a root is equivalent: a row
+under any of them converts, taking the first one's spelling (`respelled`).
+
+The journal keeps what it was at the adoption: the old and new values of `change_rows` are not
+rewritten. A change recorded before it holds native paths, and the journal converts them as it
 reads them (tagpup.store.journal), so its undo writes the row form for a rooted photo.
 
-Undone, the conversion is refused while a change made after the adoption touched a path (a
-file change, a row's path, the folder settings): its recorded values are the row form, which a
-library holding no roots cannot read. Undo those first.
+Undone, the adoption converts the tables back and also the row-form values later changes
+recorded (`change_rows`, `change_files`), in the same transaction, so the journal can still
+undo those changes in a library that holds no root; a rerooted row returns to the root it was
+held under. It is refused only for a later change whose recorded path cannot be converted
+back, which it names.
 
 Every step is `_reached`, which the tests stop the process at: a crash anywhere before the commit
 leaves the library exactly as it was, since it is one transaction.
@@ -46,10 +58,6 @@ LOCK_WAIT_MS = 3000
 
 #: How many rows of the photos table are read and written at once.
 CHUNK = 2000
-
-#: How long a backup made for another operation still covers this one, in seconds. A backup
-#: from minutes ago holds the library as it is (docs/DEVELOPMENT.md: no redundant backups).
-RECENT_BACKUP_SECONDS = 15 * 60
 
 #: The steps of an adoption, in order; `_reached` is told of each.
 STEPS = ("photos converted", "other tables converted", "settings converted", "root recorded",
@@ -81,41 +89,101 @@ def _reached(step):
 # ---- Converting one value -------------------------------------------------------------------
 
 class _Counts:
-    """What one table's pass found, by kind: counts, never values."""
+    """What one table's pass found, by kind: counts, never values; and what a pass carries
+    from one value to the next (the table, key and column being converted, what an undo
+    restores, the roots without the one being undone)."""
 
-    def __init__(self):
-        self.rows = 0
-        self.convert = 0
-        self.rooted = 0
-        self.outside = 0
-        self.respelled = 0
-        self.irreversible = 0
-        self.json = 0
+    def __init__(self, restore=None, without=None):
+        self.rows = self.convert = self.rooted = self.outside = self.respelled = 0
+        self.irreversible = self.json = self.rerooted = self.share_spelled = 0
+        self.collisions = self.duplicates = 0
+        self.context = None
+        self.restore = restore or {}
+        self.without = without
+        self.log = []
+        self.outside_dirs = []
+        self.share_dirs = []
+        self.last_rerooted = False
 
     def as_dict(self):
         return {"rows": self.rows, "convert": self.convert, "already": self.rooted, "outside": self.outside,
-                "respelled": self.respelled, "irreversible": self.irreversible, "json": self.json}
+                "respelled": self.respelled, "irreversible": self.irreversible, "json": self.json,
+                "rerooted": self.rerooted, "share_spelled": self.share_spelled, "duplicates": self.duplicates}
+
+
+def _round_trip(row, roots):
+    """The native path `row` reads as, when it is what to_row writes for that path (so the
+    conversion is reversible), else None."""
+    try:
+        back = paths.from_row(row, roots)
+        return back if paths.to_row(back, roots) == row else None
+    except paths.RootsError:
+        return None
+
+
+def _under_a_place(value, roots, name):
+    """Is `value` at one of the places the map lists for root `name` -- not only spelled by its
+    share address?"""
+    return any(paths.same(value, place) or paths.is_under(value, place) for place in roots.locations.get(name, ()))
+
+
+def _reroot(value, roots, name, counts):
+    """A row of another root, when the file it names lies under root `name` (being adopted): the
+    row it becomes. Else the row as it is."""
+    try:
+        native = paths.from_row(value, roots)
+    except paths.RootsError:
+        counts.rooted += 1
+        return value, False
+    found = roots.locate(native)
+    if found is None or found[0] != name:
+        counts.rooted += 1
+        return value, False
+    row = paths.to_row(native, roots)
+    if _round_trip(row, roots) is None:
+        counts.irreversible += 1
+        return value, False
+    counts.rerooted += 1
+    counts.convert += 1
+    counts.last_rerooted = True
+    return row, True
 
 
 def _forward(value, roots, name, counts):
     """`value`, a path, as the library will hold it once root `name` is adopted: (the new
-    value, whether it changed). A path that is the root's own, or under it, as its row; any
-    other -- already a row, under no root, under another -- as it is. Counts what it found:
-    a row that does not convert back to the same file is `irreversible` and is left as it is."""
-    if not value or value.startswith(paths.ROOT_MARK):
-        counts.rooted += 1 if value else 0
+    value, whether it changed). A path under one of the root's places as its row, a row of
+    another root that lies under it as the root's row (rerooted); any other -- already a row,
+    under no root, under another -- as it is. Counts what it found: a value that is not an
+    absolute path here, or does not convert back, is `irreversible`; one spelled by the share's
+    address is `share_spelled`; both are left as they are, and refuse the adoption."""
+    counts.last_rerooted = False
+    if not value:
+        return value, False
+    if value.startswith(paths.ROOT_MARK):
+        other = value[1:].partition(paths.ROW_SEP)[0].lower()
+        if other == name:
+            counts.rooted += 1
+            return value, False
+        return _reroot(value, roots, name, counts)
+    if not paths.is_native_absolute(value):
+        counts.irreversible += 1
         return value, False
     found = roots.locate(value)
     if found is None or found[0] != name:
         counts.outside += 1
+        counts.outside_dirs.append(os.path.dirname(value))
+        return value, False
+    if not _under_a_place(value, roots, name):
+        counts.share_spelled += 1
+        counts.share_dirs.append(os.path.dirname(value))
         return value, False
     try:
         row = paths.to_row(value, roots)
-        back = paths.from_row(row, roots)
     except paths.RootsError:
         counts.irreversible += 1
         return value, False
-    if paths.key(back) != paths.key(value):
+    back = _round_trip(row, roots)
+    if back is None:
         counts.irreversible += 1
         return value, False
     if back != value:
@@ -125,8 +193,9 @@ def _forward(value, roots, name, counts):
 
 
 def _backward(value, roots, name, counts):
-    """_forward the other way: a row of root `name` as the native path, any other value as it
-    is."""
+    """_forward the other way: a row of root `name` as the native path -- or, for a row the
+    adoption moved from another root and that still names the same file, as the row it was --
+    any other value as it is."""
     if not value or not value.startswith(paths.ROOT_MARK):
         return value, False
     named = value[1:].partition(paths.ROW_SEP)[0].lower()
@@ -138,20 +207,57 @@ def _backward(value, roots, name, counts):
     except paths.RootsError:
         counts.irreversible += 1
         return value, False
+    old = counts.restore.get(counts.context) if counts.context else None
+    if old is not None and counts.without is not None:
+        try:
+            if paths.key(paths.from_row(old, counts.without)) == paths.key(native):
+                counts.convert += 1
+                return old, True
+        except paths.RootsError:
+            pass
     counts.convert += 1
     return native, True
 
 
-def _json_forward(text, roots, column, table):
+def _json_forward(text, roots, column, table, name):
     if table == "photos" and column == "raw_metadata":
-        return store_roots.raw_to_row(text, roots)
-    return store_roots.suggested_to_row(text, roots)
+        return store_roots.raw_to_row(text, roots, reroot=name)
+    return store_roots.suggested_to_row(text, roots, reroot=name)
 
 
-def _json_backward(text, roots, column, table):
+def _json_backward(text, roots, column, table, without):
+    """JSON holding paths, put back: every row native, and then, where the library keeps other
+    roots, each path under one of them as that root's row again (what it was)."""
     if table == "photos" and column == "raw_metadata":
-        return store_roots.raw_to_native(text, roots)
-    return store_roots.suggested_to_native(text, roots)
+        native = store_roots.raw_to_native(text, roots)
+        return store_roots.raw_to_row(native, without) if without is not None and not without.identity else native
+    native = store_roots.suggested_to_native(text, roots)
+    return store_roots.suggested_to_row(native, without) if without is not None and not without.identity else native
+
+
+def _line_forward(folder, roots, name):
+    """One folder of a folder setting, converted (or None when it is not this root's)."""
+    if folder.startswith(paths.ROOT_MARK):
+        native = paths.from_row(folder, roots) if folder[1:].partition(paths.ROW_SEP)[0].lower() != name else None
+        found = roots.locate(native) if native else None
+        if found is None or found[0] != name:
+            return None
+        converted = paths.to_row(native, roots)
+        return converted if _round_trip(converted, roots) is not None else None
+    found = roots.locate(folder)
+    if found is None or found[0] != name or not _under_a_place(folder, roots, name):
+        return None
+    converted = paths.to_row(folder, roots)
+    return converted if _round_trip(converted, roots) is not None else None
+
+
+def _line_backward(folder, roots, name, without):
+    if not folder.startswith(paths.ROOT_MARK) or folder[1:].partition(paths.ROW_SEP)[0].lower() != name:
+        return None
+    native = paths.from_row(folder, roots)
+    if without is not None and not without.identity and without.locate(native) is not None:
+        return paths.to_row(native, without)
+    return native
 
 
 # ---- Passes over the tables ----------------------------------------------------------------
@@ -168,12 +274,34 @@ def _roots_with(conn, name, address, locations):
     return paths.Roots.of(logical, places, existing.map_file)
 
 
-def _photos_pass(conn, roots, name, apply, direction):
-    """Convert (or just count) the photos' paths and raw_metadata, a chunk at a time by id.
-    Returns (_Counts, the converted paths as they will be, by folded spelling, for the
-    collision check, the rows under no root as (folder) for the report)."""
-    counts = _Counts()
-    folded, outside, collisions = {}, [], 0
+def _roots_without(conn, name):
+    """The Roots the library has without root `name`: IDENTITY when it has no other."""
+    logical = {each: address for each, address in store_roots._rows(conn) if each != name}
+    return machine.roots_of(logical) if logical else machine.IDENTITY
+
+
+def _claim(seen, key, changed):
+    """Note a row's final spelling. Returns nothing; `seen` is {folded spelling: [rows, rows
+    that changed]}, read by _clashes."""
+    held = seen.setdefault(key, [0, 0])
+    held[0] += 1
+    held[1] += 1 if changed else 0
+
+
+def _clashes(seen, counts):
+    """Rows that would become one: where at least one of them changed. Rows that already were
+    one -- two rows of one file, neither converting -- are duplicates, counted apart."""
+    for rows, changed in seen.values():
+        if rows > 1:
+            if changed:
+                counts.collisions += rows - 1
+            else:
+                counts.duplicates += rows - 1
+
+
+def _photos_pass(conn, roots, name, apply, direction, counts):
+    """Convert (or just count) the photos' paths and raw_metadata, a chunk at a time by id."""
+    seen = {}
     last = -1
     step = _forward if direction == "adopt" else _backward
     while True:
@@ -185,21 +313,19 @@ def _photos_pass(conn, roots, name, apply, direction):
         paths_only, both = [], []
         for photo_id, path, raw in chunk:
             counts.rows += 1
+            counts.context = ("photos", photo_id, "path")
             new_path, changed = step(path, roots, name, counts)
-            if direction == "adopt" and not changed and not path.startswith(paths.ROOT_MARK):
-                outside.append(os.path.dirname(path))
+            if direction == "adopt" and counts.last_rerooted:
+                counts.log.append(["photos", photo_id, "path", path])
             converted = None
             if raw:
-                converted = (_json_forward if direction == "adopt" else _json_backward)(raw, roots, "raw_metadata",
-                                                                                    "photos")
+                converted = (_json_forward(raw, roots, "raw_metadata", "photos", name) if direction == "adopt"
+                             else _json_backward(raw, roots, "raw_metadata", "photos", counts.without))
                 if converted != raw:
                     counts.json += 1
                 else:
                     converted = None
-            key = store_roots.path_order(new_path)
-            if key in folded:
-                collisions += 1
-            folded[key] = folded.get(key, 0) + 1
+            _claim(seen, store_roots.path_order(new_path), changed)
             if converted is not None:
                 both.append((new_path, converted, photo_id))
             elif changed:
@@ -209,46 +335,49 @@ def _photos_pass(conn, roots, name, apply, direction):
                 conn.executemany("UPDATE photos SET path = ? WHERE id = ?", paths_only)
             if both:
                 conn.executemany("UPDATE photos SET path = ?, raw_metadata = ? WHERE id = ?", both)
-    return counts, collisions, outside
+    _clashes(seen, counts)
+    return counts
 
 
-def _simple_pass(conn, roots, name, apply, direction, table, key, columns, json_columns):
+def _simple_pass(conn, roots, name, apply, direction, table, key, columns, json_columns, counts):
     """Convert (or count) one of the smaller tables: every row, whole."""
-    counts = _Counts()
     step = _forward if direction == "adopt" else _backward
-    convert = _json_forward if direction == "adopt" else _json_backward
     names = list(columns) + list(json_columns)
     if not names:
-        return counts, 0
+        return counts
     rows = conn.execute("SELECT %s, %s FROM %s" % (key, ", ".join(names), table)).fetchall()
-    seen, collisions = {}, 0
+    seen = {}
     for row in rows:
         counts.rows += 1
         found = dict(zip(names, row[1:]))
         new = {}
         for column in columns:
             value = found[column]
+            counts.context = (table, row[0], column)
             moved, changed = step(value, roots, name, counts) if value else (value, False)
             if changed:
                 new[column] = moved
+                if direction == "adopt" and counts.last_rerooted:
+                    counts.log.append([table, moved if key == "path" else row[0], column, value])
         for column in json_columns:
             text = found[column]
-            converted = convert(text, roots, column, table) if text else text
+            if not text:
+                continue
+            converted = (_json_forward(text, roots, column, table, name) if direction == "adopt"
+                         else _json_backward(text, roots, column, table, counts.without))
             if converted != text:
                 new[column] = converted
                 counts.json += 1
         if table in ("added_folders", "damaged_files"):
-            folded = store_roots.path_order(new.get("path", found["path"]))
-            if folded in seen:
-                collisions += 1
-            seen[folded] = True
+            _claim(seen, store_roots.path_order(new.get("path", found["path"])), "path" in new)
         if apply and new:
             conn.execute("UPDATE %s SET %s WHERE %s = ?" % (
                 table, ", ".join("%s = ?" % column for column in new), key), list(new.values()) + [row[0]])
-    return counts, collisions
+    _clashes(seen, counts)
+    return counts
 
 
-def _settings_pass(conn, roots, name, apply, direction):
+def _settings_pass(conn, roots, name, apply, direction, without):
     """The two folder settings, converted a line at a time. Returns the keys it rewrote."""
     rewritten = []
     for key in store_roots.FOLDER_SETTINGS:
@@ -258,17 +387,14 @@ def _settings_pass(conn, roots, name, apply, direction):
         lines, changed = [], False
         for line in str(row[0]).split(validation.FOLDER_SEPARATOR):
             folder = validation.trim(line)
-            if direction == "adopt":
-                found = roots.locate(folder) if folder and not folder.startswith(paths.ROOT_MARK) else None
-                if found is not None and found[0] == name:
-                    try:
-                        converted = paths.to_row(folder, roots)
-                        if paths.key(paths.from_row(converted, roots)) == paths.key(folder):
-                            line, changed = converted, True
-                    except paths.RootsError:
-                        pass
-            elif folder.startswith(paths.ROOT_MARK) and folder[1:].partition(paths.ROW_SEP)[0].lower() == name:
-                line, changed = paths.from_row(folder, roots), True
+            if folder:
+                try:
+                    converted = (_line_forward(folder, roots, name) if direction == "adopt"
+                                 else _line_backward(folder, roots, name, without))
+                except paths.RootsError:
+                    converted = None
+                if converted is not None:
+                    line, changed = converted, True
             lines.append(line)
         if changed:
             rewritten.append(key)
@@ -278,27 +404,35 @@ def _settings_pass(conn, roots, name, apply, direction):
     return rewritten
 
 
-def _tables_pass(conn, roots, name, apply, direction):
-    """Every table, converted (or counted): (the report by table, collisions, outside folders,
-    the settings rewritten)."""
-    report, collisions = {}, 0
-    counts, clash, outside = _photos_pass(conn, roots, name, apply, direction)
-    report["photos"] = counts.as_dict()
-    collisions += clash
+def _tables_pass(conn, roots, name, apply, direction, restore=None, without=None):
+    """Every table, converted (or counted): {"tables": {table: counts}, "settings": [keys],
+    "collisions", "duplicates", "outside_dirs", "share_dirs", "rerooted_log"}."""
+    tables, collisions, duplicates, log, share = {}, 0, 0, [], []
+    counts = _photos_pass(conn, roots, name, apply, direction, _Counts(restore, without))
+    tables["photos"] = counts.as_dict()
+    outside = counts.outside_dirs
+    collisions, duplicates = counts.collisions, counts.duplicates
+    log += counts.log
+    share += counts.share_dirs
     if apply:
         _reached("photos converted")
     for table, key, columns, json_columns in TABLES[1:]:
         if not _has(conn, table):
             continue
-        counts, clash = _simple_pass(conn, roots, name, apply, direction, table, key, columns, json_columns)
-        report[table] = counts.as_dict()
-        collisions += clash
+        counts = _simple_pass(conn, roots, name, apply, direction, table, key, columns, json_columns,
+                              _Counts(restore, without))
+        tables[table] = counts.as_dict()
+        collisions += counts.collisions
+        duplicates += counts.duplicates
+        log += counts.log
+        share += counts.share_dirs
     if apply:
         _reached("other tables converted")
-    settings = _settings_pass(conn, roots, name, apply, direction) if _has(conn, "settings") else []
+    settings = _settings_pass(conn, roots, name, apply, direction, without) if _has(conn, "settings") else []
     if apply:
         _reached("settings converted")
-    return report, collisions, outside, settings
+    return {"tables": tables, "settings": settings, "collisions": collisions, "duplicates": duplicates,
+            "outside_dirs": outside, "share_dirs": share, "rerooted_log": log}
 
 
 def _has(conn, table):
@@ -335,29 +469,43 @@ def early_refusals(conn, name, locations):
     return reasons
 
 
-def refusals(conn, name, locations, roots, counts, collisions):
+def refusals(conn, name, locations, roots, report):
     """Why the root cannot be adopted, [] when it can: each a sentence naming a count, never a
     path."""
     reasons = early_refusals(conn, name, locations)
+    counts = report["tables"]
     photos = counts.get("photos", {})
-    if photos.get("rows") and not photos.get("convert") and not photos.get("irreversible"):
+    if (photos.get("rows") and not photos.get("convert") and not photos.get("irreversible")
+            and not photos.get("share_spelled")):
         reasons.append("no row of the library lies under the location: all %d photo row(s) are outside it "
                        "(%d already rooted); a wrong location would put every row outside the root"
                        % (photos["rows"] - photos.get("already", 0), photos.get("already", 0)))
     irreversible = sum(each.get("irreversible", 0) for each in counts.values())
     if irreversible:
-        reasons.append("%d row(s) do not convert back to the same file under this root" % irreversible)
-    if collisions:
+        reasons.append("%d row(s) are not an absolute path on this machine or do not convert back to the "
+                       "same file under this root" % irreversible)
+    shared = sum(each.get("share_spelled", 0) for each in counts.values())
+    if shared:
+        reasons.append("%d row(s) are spelled by the share's address (%s), not by a place this machine keeps the "
+                       "root at: converting them would retarget them from the master, the share, to this "
+                       "machine's copy at %s. Fix those rows' spelling first -- index them again from the copy, "
+                       "or remove and add their folders -- or adopt a root whose location is the share itself"
+                       % (shared, roots.logical.get(name) or "no address", locations[0] if locations else ""))
+    if report["collisions"]:
         reasons.append("%d row(s) would become the same row as another once converted (two rows of one "
-                       "file): merge them first" % collisions)
+                       "file): merge them first (checks.one_file_two_rows)" % report["collisions"])
     return reasons
 
 
-def _report(conn, roots, name, address, locations, apply, direction="adopt"):
-    report, collisions, outside, settings = _tables_pass(conn, roots, name, apply, direction)
-    return {"root": name, "address": address, "locations": list(locations), "tables": report,
-            "settings": settings, "collisions": collisions,
-            "outside": paths.outside_roots(outside, roots), "outside_rows": len(outside)}
+def _report(conn, roots, name, address, locations, apply):
+    done = _tables_pass(conn, roots, name, apply, "adopt")
+    return {"root": name, "address": address, "locations": list(locations), "tables": done["tables"],
+            "settings": done["settings"], "collisions": done["collisions"], "duplicates": done["duplicates"],
+            "outside": paths.outside_roots(done["outside_dirs"], roots), "outside_rows": len(done["outside_dirs"]),
+            "share_spelled": {"rows": len(done["share_dirs"]),
+                              "folders": paths.outside_roots(done["share_dirs"], paths.Roots())},
+            "rerooted": sum(counts["rerooted"] for counts in done["tables"].values()),
+            "rerooted_log": done["rerooted_log"]}
 
 
 def _clean(location):
@@ -368,19 +516,20 @@ def _clean(location):
 
 def rehearse(db_path, name, address, locations):
     """What adopting root `name` at `locations` -- the first is where this machine puts its
-    paths -- would do to the library at `db_path`, and why it would be refused: a dict
-    {root, address, locations, tables: {table: counts}, settings, outside: [{group, count}],
-    outside_rows, collisions, refused: [reasons]}. Reads only, on a connection that writes
-    nothing; a library behind this version's schema is not migrated, and has no roots (its
-    tables are counted as they are)."""
+    paths, all are equivalent -- would do to the library at `db_path`, and why it would be
+    refused: a dict {root, address, locations, tables: {table: counts}, settings, outside:
+    [{group, count}], outside_rows, share_spelled: {rows, folders}, rerooted, collisions,
+    duplicates, refused: [reasons]}. Reads only, on a connection that writes nothing; a library
+    behind this version's schema is not migrated, and has no roots (its tables are counted as
+    they are)."""
     name = paths.root_name(name)
     locations = [_clean(each) for each in locations]
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         roots = _roots_with(conn, name, address or "", locations)
         report = _report(conn, roots, name, address, locations, apply=False)
-        counts = report["tables"]
-        report["refused"] = refusals(conn, name, locations, roots, counts, report["collisions"])
+        report["refused"] = refusals(conn, name, locations, roots, report)
+        del report["rerooted_log"]
         return report
     finally:
         conn.close()
@@ -388,44 +537,22 @@ def rehearse(db_path, name, address, locations):
 
 # ---- The adoption ----------------------------------------------------------------------------
 
-def _recent_backup(db_path):
-    """The newest `before-*` copy of the library made within RECENT_BACKUP_SECONDS, or None."""
-    from tagpup.core.library import Library
-    import time
-    folder = Library(db_path).backups
-    stem = os.path.splitext(os.path.basename(db_path))[0] + ".before-"
-    newest = None
-    try:
-        names = os.listdir(folder)
-    except OSError:
-        return None
-    for each in names:
-        if each.startswith(stem) and each.endswith(".db"):
-            made = os.path.getmtime(os.path.join(folder, each))
-            if time.time() - made <= RECENT_BACKUP_SECONDS and (newest is None or made > newest[0]):
-                newest = (made, os.path.join(folder, each))
-    return newest[1] if newest else None
-
-
 def backup(db_path):
-    """The copy that covers the adoption: one made within the last RECENT_BACKUP_SECONDS if there
-    is one, else a new one (tagpup.store.db.backup). Returns (its path, whether it was just made)."""
-    found = _recent_backup(db_path)
-    if found:
-        return found, False
-    return db.backup(db_path, "roots-adopt"), True
+    """A copy of the library as it stands, made now (tagpup.store.db.backup). Always a new one:
+    a copy from minutes ago can predate rows the adoption rewrites."""
+    return db.backup(db_path, "roots-adopt")
 
 
 def adopt(db_path, name, address, locations):
     """Adopt root `name` (the share's own `address`, kept as given) at `locations` -- where
-    this machine keeps it, the first being where a path under it is put -- for the library at
-    `db_path`: convert every path under it and record the change, in one transaction under the
-    write lock. Returns what it did, as rehearse reports what it would. Refused (Refused), with
+    this machine keeps it, the first being where a path under it is put, every one a place a row
+    may be under -- for the library at `db_path`: convert every path under it, move the rows of
+    an outer root that lie under it, and record the change, in one transaction under the write
+    lock. Returns what it did, as rehearse reports what it would. Refused (Refused), with
     nothing written, for every reason refusals() gives, and for another process holding the
-    write lock, after the library's backup is taken (`backup`: a copy made within the quarter
-    hour before covers it) -- under the write lock too, so the copy is the library as the
-    adoption finds it and two adoptions at once do not both copy it. The caller has written the
-    machine's map."""
+    write lock, after a new backup of the library is taken (`backup`) -- under the write lock
+    too, so the copy is the library as the adoption finds it and two adoptions at once do not
+    both copy it. The caller has written the machine's map."""
     name = paths.root_name(name)
     locations = [_clean(each) for each in locations]
     schema.ensure(db_path)
@@ -444,7 +571,7 @@ def adopt(db_path, name, address, locations):
                 if early:
                     raise Refused(early)
                 try:
-                    kept, made = backup(db_path)
+                    kept = backup(db_path)
                 except Exception as problem:
                     raise Refused("the library could not be backed up first (%s)" % problem) from None
                 roots = _roots_with(conn, name, address or "", locations)
@@ -456,7 +583,7 @@ def adopt(db_path, name, address, locations):
                 except sqlite3.IntegrityError as problem:
                     raise Refused("two rows would become one row once converted (two rows of one file): "
                                   "merge them first (%s)" % problem) from None
-                reasons = refusals(conn, name, locations, roots, report["tables"], report["collisions"])
+                reasons = refusals(conn, name, locations, roots, report)
                 if reasons:
                     raise Refused(reasons)
                 store_roots.insert(conn, name, address or "")
@@ -477,8 +604,9 @@ def adopt(db_path, name, address, locations):
                            "json": {table: counts["json"] for table, counts in report["tables"].items()
                                     if counts["json"]},
                            "settings": report["settings"], "outside_rows": report["outside_rows"],
-                           "respelled": sum(counts["respelled"] for counts in report["tables"].values())}
-                report["backup"] = {"file": kept, "made": made}
+                           "respelled": sum(counts["respelled"] for counts in report["tables"].values()),
+                           "rerooted": report.pop("rerooted_log")}
+                report["backup"] = {"file": kept}
                 report["change"] = journal.record(conn, "%s: %s" % (OPERATION, name), [], summary)
                 _reached("change recorded")
                 conn.commit()
@@ -504,11 +632,12 @@ def _held_roots(conn):
 
 def verify(conn, roots):
     """What is wrong with the library's roots, [] when nothing: every rooted row converts back
-    (its root is the library's, and this machine places it), and no table's row is a rooted row
-    that is not what to_row writes. Reads only; counts, never paths. The doctor's check
-    (tagpup.store.checks) and the adoption's own, before it commits."""
+    (its root is the library's, and this machine places it), and none is held under one root
+    though the file it names lies under another's place (a nested root's rows left under the
+    outer one, which every lookup then misses). Reads only; counts, never paths. The doctor's
+    check (tagpup.store.checks) and the adoption's own, before it commits."""
     problems = []
-    unknown = unplaced = malformed = 0
+    unknown = unplaced = malformed = shadowed = 0
     why_unplaced = ""
     for table, key, columns, _json in TABLES:
         if not _has(conn, table) or not columns:
@@ -518,48 +647,46 @@ def verify(conn, roots):
                 if not value.startswith(paths.ROOT_MARK):
                     continue
                 try:
-                    paths.from_row(value, roots)
+                    native = paths.from_row(value, roots)
                 except paths.UnknownRoot:
                     unknown += 1
+                    continue
                 except paths.UnmappedRoot as problem:
                     unplaced += 1
                     why_unplaced = why_unplaced or str(problem)
+                    continue
                 except paths.RootsError:
                     malformed += 1
+                    continue
+                found = roots.locate(native)
+                if found is not None and found[0] != value[1:].partition(paths.ROW_SEP)[0].lower():
+                    shadowed += 1
     if unknown:
         problems.append("%d row(s) name a root the library does not have" % unknown)
     if unplaced:
         problems.append("%d row(s) name a root this machine does not place: %s" % (unplaced, why_unplaced))
     if malformed:
         problems.append("%d row(s) are not a path under a root" % malformed)
+    if shadowed:
+        problems.append("%d row(s) are held under one root but lie under another root's place, so a lookup under "
+                        "that root misses them" % shadowed)
     return problems
 
 
 # ---- The undo --------------------------------------------------------------------------------
 
-#: The rows a change recorded that hold a path: what makes an undo of the adoption wait, since
-#: they are the row form, which a library without the root cannot read.
+#: The rows a change recorded that hold a path, in the row form: what an undo of the adoption
+#: converts back (alias `r` is change_rows).
 _PATH_ROWS = ("(r.table_name = 'photos' AND r.column_name IN ('path', 'raw_metadata'))"
               " OR (r.table_name = 'suggestions' AND r.column_name = 'raw')"
               " OR (r.table_name = 'settings' AND r.row_key IN ('[\"library.roots\"]', '[\"library.ignored\"]'))")
 
 
-def later_path_changes(conn, change_id):
-    """(id, operation) of each change after `change_id`, applied and not undone, that wrote a
-    path: a photo file, a photo's path or raw_metadata, a suggestion, a folder setting."""
-    files = ("OR EXISTS (SELECT 1 FROM change_files f WHERE f.change_id = c.id)"
-             if _has(conn, "change_files") else "")
-    return conn.execute(
-        "SELECT c.id, c.operation FROM changes c WHERE c.id > ? AND c.undone IS NULL"
-        " AND c.status IN ('applied', 'derived_pending', 'planned') AND substr(c.operation, 1, ?) <> ? AND ("
-        "EXISTS (SELECT 1 FROM change_rows r WHERE r.change_id = c.id AND (" + _PATH_ROWS + ")) " + files + ")"
-        " ORDER BY c.id", (change_id, len(OPERATION), OPERATION)).fetchall()
-
-
 def undo_refusals(conn, change_id):
-    """Why the adoption `change_id` cannot be undone now, [] when it can."""
-    reasons = ["change %d (%s), made after it, wrote a path: undo it first" % (other, operation)
-               for other, operation in later_path_changes(conn, change_id)]
+    """Why the adoption `change_id` cannot be undone now, [] when it can: it names no root, or
+    the library has none of that name any more. Later changes do not stop it: their recorded
+    values are converted with the tables."""
+    reasons = []
     row = conn.execute("SELECT summary FROM changes WHERE id = ?", (change_id,)).fetchone()
     summary = json.loads(row[0] or "{}") if row else {}
     name = summary.get("root")
@@ -570,12 +697,54 @@ def undo_refusals(conn, change_id):
     return reasons
 
 
+def _journal_pass(conn, roots, name, without):
+    """Convert back the paths later changes recorded, `change_rows` and the folder settings'
+    values among them: (rows converted, the ids of the changes holding one that cannot be)."""
+    counts, bad, converted = _Counts(without=without), set(), 0
+    rows = conn.execute("SELECT r.id, r.change_id, r.table_name, r.column_name, r.old, r.new FROM change_rows r"
+                        " WHERE " + _PATH_ROWS).fetchall()
+    for row_id, change_id, table, column, old, new in rows:
+        values, changed = [old, new], False
+        for number, value in enumerate(values):
+            if not isinstance(value, str) or paths.ROOT_MARK not in value:
+                continue
+            before = counts.irreversible
+            counts.context = None
+            if table == "photos" and column == "path":
+                moved, did = _backward(value, roots, name, counts)
+            elif table == "settings":
+                lines, did = [], False
+                for line in value.split(validation.FOLDER_SEPARATOR):
+                    try:
+                        found = _line_backward(validation.trim(line), roots, name, without) if line.strip() else None
+                    except paths.RootsError:
+                        counts.irreversible += 1
+                        found = None
+                    if found is not None:
+                        line, did = found, True
+                    lines.append(line)
+                moved = validation.FOLDER_SEPARATOR.join(lines)
+            else:
+                moved = _json_backward(value, roots, column, table, without)
+                did = moved != value
+            if counts.irreversible != before:
+                bad.add(change_id)
+            elif did and moved != value:
+                values[number], changed = moved, True
+                converted += 1
+        if changed:
+            conn.execute("UPDATE change_rows SET old = ?, new = ? WHERE id = ?", (values[0], values[1], row_id))
+    return converted, bad
+
+
 def undo_in(conn, change_id):
     """Undo the adoption `change_id` on `conn`, in the caller's transaction: every path under
-    the root back to the native path this machine's map gives it, the root taken away.
-    Refused (journal.Refusal) when a later change wrote a path, or this machine does not place
-    the root. Returns the rows converted, by table. Verified before it returns: the row counts
-    are what they were, and no row still names the root."""
+    the root back to the native path this machine's map gives it (a row the adoption moved from
+    an outer root back to that root), the paths later changes recorded converted with them, the
+    root taken away. Refused (journal.Refusal) when this machine does not place the root, or a
+    later change recorded a path of the root that cannot be converted back (it is named).
+    Returns the rows converted, by table. Verified before it returns: the row counts are what
+    they were, and no row still names the root."""
     reasons = undo_refusals(conn, change_id)
     if reasons:
         raise journal.Refusal(reasons)
@@ -585,8 +754,15 @@ def undo_in(conn, change_id):
     roots = store_roots.roots_for(conn)
     if name not in roots.locations:
         raise journal.Refusal([roots.what_to_add(name)])
+    without = _roots_without(conn, name)
+    restore = {(table, key, column): old for table, key, column, old in summary.get("rerooted", [])}
     before = _counted(conn)
-    report, _collisions, _outside, _settings = _tables_pass(conn, roots, name, True, "unadopt")
+    done = _tables_pass(conn, roots, name, True, "unadopt", restore, without)
+    recorded, bad = _journal_pass(conn, roots, name, without)
+    if bad:
+        raise journal.Refusal(["change(s) %s recorded a path of the root %r that cannot be converted back, so the "
+                               "journal could not read them in a library without it: undo them first"
+                               % (", ".join(str(each) for each in sorted(bad)), name)])
     left = _rooted_left(conn, name)
     if left:
         raise journal.Refusal(["%d row(s) still name the root %r after converting them back" % (left, name)])
@@ -594,7 +770,9 @@ def undo_in(conn, change_id):
     after = _counted(conn)
     if after != before:
         raise journal.Refusal(["the tables' row counts changed: %r then %r" % (before, after)])
-    return {table: counts["convert"] for table, counts in report.items()}
+    converted = {table: counts["convert"] for table, counts in done["tables"].items()}
+    converted["recorded values"] = recorded
+    return converted
 
 
 def _rooted_left(conn, name):

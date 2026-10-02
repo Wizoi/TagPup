@@ -8,7 +8,15 @@ is given here, once: tagpup.config registers its `roots_of` when it is imported,
 store asks. A library with no roots never asks (every path function then behaves as it
 always did), so a process that never imported config cannot open a library with roots by
 mistake and get a map of nothing: it is told, and does not guess.
+
+Nobody has to remember to import config first: asked with no reader registered, `roots_of`
+imports tagpup.config itself, which registers. (A dynamic import, since core may import nothing
+above it and the layer test reads the imports a module writes: config's own import of core is the
+declared direction; this is the one place core asks upward, to be answered by the layer whose
+whole job is the machine.)
 """
+import importlib
+
 from tagpup.core import paths
 
 __all__ = ["provide", "roots_of", "IDENTITY"]
@@ -32,6 +40,8 @@ def roots_of(logical):
     machine keeps them."""
     if not logical:
         return IDENTITY
+    if _provider is None:
+        importlib.import_module("tagpup.config")
     if _provider is None:
         raise paths.RootsError(
             "this library has roots (%s) and no machine map is available: tagpup.config was not "

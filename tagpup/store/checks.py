@@ -228,7 +228,10 @@ def rooted_rows_convert(conn):
         good = name in held and roots is not None
         if good:
             try:
-                paths.from_row(value, roots)
+                found = roots.locate(paths.from_row(value, roots))
+                # Held under one root, though the file lies under another's place: a nested root's
+                # rows left under the outer one, which a lookup under the inner root misses.
+                good = found is None or found[0] == name
             except paths.RootsError:
                 good = False
         if not good:

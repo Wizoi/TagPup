@@ -611,6 +611,51 @@ class HowAConnectionHoldsItsRoots(unittest.TestCase):
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class TheMapProviderIsNeverForgotten(unittest.TestCase):
+    """No entry point has to import tagpup.config before it reads a rooted library: the owner's
+    scripts import the store and nothing of config, and a library that holds a root was
+    unreadable to them."""
+
+    CODE = (
+        "import sys\n"
+        "root, scripts, library, script = sys.argv[1:5]\n"
+        "sys.path.insert(0, root)\n"
+        "sys.path.insert(0, scripts)\n"
+        "if script:\n"
+        "    __import__(script)\n"
+        "before = 'tagpup.config' in sys.modules\n"
+        "from tagpup.store import db, photos\n"
+        "conn = db.connect(db.readonly_uri(library), uri=True)\n"
+        "print(before, len(photos.all_paths(conn)))\n")
+
+    def setUp(self):
+        self.home = own_home.for_test(self, prefix="roots_provider_")
+        self.side = rl.Side(self.home, "rooted", real=1, bulk=2, outside=1)
+        self.assertTrue(self.side.adopt().ok)
+        self.root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def read_in_a_fresh_interpreter(self, script=""):
+        import subprocess
+        from tagpup.core import processes
+        done = processes.run([sys.executable, "-c", self.CODE, self.root, os.path.join(self.root, "scripts"),
+                              self.side.db_path, script], capture_output=True, text=True, timeout=120,
+                             stdin=subprocess.DEVNULL)
+        self.assertEqual(0, done.returncode, done.stderr[-2000:])
+        return done.stdout.split()
+
+    def test_a_process_that_imported_only_the_store_reads_the_library(self):
+        before, count = self.read_in_a_fresh_interpreter()
+        self.assertEqual("False", before, "config was not imported first: the store asked for it")
+        self.assertEqual("10", count)
+
+    def test_each_script_that_opens_a_library_reads_a_rooted_one(self):
+        for script in ("relink_renamed_photos", "dedupe_faces", "merge_duplicate_person_tags", "backfill_document_ids"):
+            with self.subTest(script=script):
+                _before, count = self.read_in_a_fresh_interpreter(script)
+                self.assertEqual("10", count)
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
 class TheJournalSpeaksOneForm(unittest.TestCase):
     """An edit's values are native; the library holds rows. A change recorded before the
     adoption holds native paths and is replayed as rows."""

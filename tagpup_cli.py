@@ -1067,6 +1067,8 @@ def _say_rehearsal(result):
             rehearsal["rows"], "." if rehearsal["exact"] else "; these would be refused, and left as they are: %s"
             % "; ".join(rehearsal["differences"])), markup=False, soft_wrap=True)
     elif rehearsal:
+        for note in rehearsal.get("notes", []):
+            console.print(note, markup=False, soft_wrap=True)
         exact = rehearsal["exact"] and rehearsal["derived_exact"]
         console.print("Rehearsed: %d row(s); %s" % (
             rehearsal["rows"], "every one came back exactly." if exact else
@@ -1264,12 +1266,22 @@ def _say_conversion(report):
         parts = ["%d row(s)" % counts["rows"], "%d to convert" % counts["convert"]]
         for key, label in (("already", "already rooted"), ("outside", "under no root (kept as they are)"),
                            ("respelled", "taking the location's spelling (same file)"),
-                           ("irreversible", "NOT reversible"), ("json", "with a path inside their JSON")):
+                           ("rerooted", "moved from another root that lies under this one"),
+                           ("duplicates", "already two rows of one file (merge them; they do not block)"),
+                           ("share_spelled", "spelled by the share's address (REFUSED, see below)"),
+                           ("irreversible", "NOT reversible or not an absolute path (REFUSED)"),
+                           ("json", "with a path inside their JSON")):
             if counts[key]:
                 parts.append("%d %s" % (counts[key], label))
         console.print("  %s: %s" % (table, ", ".join(parts)), markup=False, soft_wrap=True)
     if report["settings"]:
         console.print("  settings it rewrites: %s" % ", ".join(report["settings"]), markup=False)
+    if report["share_spelled"]["rows"]:
+        console.print("  rows spelled by the share's address, by folder (converting them would retarget them from "
+                      "the master, the share, to this machine's copy; fix their spelling first, or adopt a root "
+                      "whose location is the share):", markup=False, soft_wrap=True)
+        for group in report["share_spelled"]["folders"]:
+            console.print("    %6d  %s" % (group["count"], group["group"]), markup=False, soft_wrap=True)
     if report["outside"]:
         console.print("  rows under no root, by folder:", markup=False)
         for group in report["outside"]:
@@ -1305,8 +1317,7 @@ def roots_adopt(ctx, name, address, location, apply_):
             markup=False, soft_wrap=True)
         return
     backup = result.details["backup"]
-    console.print("Backup: %s %s." % (os.path.basename(backup["file"]), "taken" if backup["made"] else
-                                       "(made within the last quarter hour; it covers this)"), markup=False)
+    console.print("Backup: %s taken first." % os.path.basename(backup["file"]), markup=False)
     if result.details["map"].get("written"):
         console.print("Wrote %s." % result.details["map"]["file"], markup=False, soft_wrap=True)
     console.print("Adopted: %d row(s) converted, change %d. `undo %d` reverses it." % (

@@ -54,6 +54,41 @@ class TheMapFile(unittest.TestCase):
         self.assertEqual(set(names), set(config.machine_roots()))
         self.assertEqual([], [n for n in os.listdir(self.home.root) if n.endswith((".tmp", ".lock"))])
 
+    def test_two_editors_racing_a_stale_lock_are_never_both_let_in(self):
+        """A lock a crash left is old; two editors find it at once. Each used to remove it and
+        make its own, the second removing the first's fresh one: both inside. Many rounds, a
+        thread's turn inside lasting long enough for the other to arrive."""
+        path = config.machine_roots_path()
+        lock = path + ".lock"
+        inside, overlaps, done = [0], [], []
+        guard = threading.Lock()
+
+        def editor():
+            with config._edit_lock(path, wait=10, stale=1):
+                with guard:
+                    inside[0] += 1
+                    if inside[0] > 1:
+                        overlaps.append(inside[0])
+                time.sleep(0.002)
+                with guard:
+                    inside[0] -= 1
+            done.append(1)
+
+        for _round in range(120):
+            with open(lock, "w", encoding="utf-8"):
+                pass
+            old = time.time() - 60
+            os.utime(lock, (old, old))
+            threads = [threading.Thread(target=editor) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(30)
+            self.assertFalse(os.path.exists(lock), "the lock was left behind")
+        self.assertEqual([], overlaps)
+        self.assertEqual(240, len(done), "an editor never got in")
+        self.assertEqual([], [n for n in os.listdir(os.path.dirname(path)) if n.endswith(".guard")])
+
     def test_a_lock_a_live_editor_holds_is_waited_for_and_one_a_crash_left_is_taken_over(self):
         path = config.machine_roots_path()
         lock = path + ".lock"

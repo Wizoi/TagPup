@@ -23,10 +23,13 @@ one), and the machine's map is looked at again once a second at most -- tagpup.c
 makes that a stat, and the same Roots back when the file is as it was -- so a map edited
 while a long-lived connection sits idle is found. Inside a transaction the Roots is the one
 the transaction began with. `pinned(db_path)` holds one Roots for every connection of the
-library in this process for a whole run (a sync pass, an index run, an adoption): a map edited
-meanwhile changes nothing until the run ends, and a change of the library's roots by another
-process stops it (RootsChanged), where converting under the old Roots would write a native
-row into a converted library. A write on a connection of its own that spans the change is
+library in this process for a whole run: a map edited meanwhile changes nothing until the run
+ends, and a change of the library's roots by another process stops it (RootsChanged), where
+converting under the old Roots would write a native row into a converted library. It is built
+and tested, and no run in `services` calls it yet: an index run, a sync pass and a file change
+hold the Roots of their one connection, which is what keeps each operation consistent, and
+wrapping a run that opens a connection per batch is stage 3's (docs/ARCHITECTURE.md, "Roots
+and machines"). A write on a connection of its own that spans the change is
 refused at its commit and run again (db.write_with_connection; `unchanged`), and one that
 writes on a connection its caller commits begins its transaction first (`begin_write`).
 
@@ -333,21 +336,40 @@ def native_one(conn, row, *columns, raw=()):
 _SOURCE_FILE = re.compile(r'("SourceFile"\s*:\s*)("(?:[^"\\]|\\.)*")')
 
 
-def source_to_row(value, roots):
+def _rerooted(value, roots, reroot):
+    """The native path of `value`, a row of ANOTHER root, when it lies under root `reroot`'s place
+    (a root nested inside the one the row names, being adopted); else None."""
+    if not reroot or not isinstance(value, str) or not value.startswith(paths.ROOT_MARK):
+        return None
+    try:
+        native = paths.from_row(value, roots)
+    except paths.RootsError:
+        return None
+    found = roots.locate(native)
+    return native if found is not None and found[0] == reroot else None
+
+
+def source_to_row(value, roots, reroot=None):
     """ExifTool's SourceFile of a photo, `D:/Training/Pictures/2024/a.jpg` -- the path the way
     ExifTool spells it, forward slashes -- as `@pictures/2024/a.jpg`, when the file is under a
     root and converting back gives exactly this string; any other spelling is left as it is,
     which loses nothing: the field says where the file was read, and a row that is compared
     with a fresh read compares the same string it was written with."""
-    if not isinstance(value, str) or not value or value.startswith(paths.ROOT_MARK):
+    if not isinstance(value, str) or not value:
         return value
+    original = value
+    if value.startswith(paths.ROOT_MARK):
+        native = _rerooted(value, roots, reroot)
+        if native is None:
+            return value
+        value = paths.exiftool_spelling(native)
     try:
         row = paths.to_row(value, roots)
         if row == value or not row.startswith(paths.ROOT_MARK):
-            return value
-        return row if paths.exiftool_spelling(paths.from_row(row, roots)) == value else value
+            return original
+        return row if paths.exiftool_spelling(paths.from_row(row, roots)) == value else original
     except paths.RootsError:
-        return value
+        return original
 
 
 def source_from_row(value, roots):
@@ -357,7 +379,7 @@ def source_from_row(value, roots):
     return value
 
 
-def _source(text, roots, convert):
+def _source(text, roots, convert, reroot=None):
     if roots.identity or not text or '"SourceFile"' not in text:
         return text
 
@@ -366,16 +388,17 @@ def _source(text, roots, convert):
             value = json.loads(found.group(2))
         except ValueError:
             return found.group(0)
-        changed = convert(value, roots)
+        changed = convert(value, roots, reroot) if reroot else convert(value, roots)
         return found.group(0) if changed == value else found.group(1) + json.dumps(changed)
 
     return _SOURCE_FILE.sub(swap, text)
 
 
-def raw_to_row(text, roots):
-    """raw_metadata as the library holds it: its SourceFile converted (source_to_row). The
-    rest of the text is as it was."""
-    return _source(text, roots, source_to_row)
+def raw_to_row(text, roots, reroot=None):
+    """raw_metadata as the library holds it: its SourceFile converted (source_to_row), and with
+    `reroot` -- the root being adopted -- one held under another root that lies under it moved to
+    it. The rest of the text is as it was."""
+    return _source(text, roots, source_to_row, reroot)
 
 
 def raw_to_native(text, roots):
@@ -383,10 +406,16 @@ def raw_to_native(text, roots):
     return _source(text, roots, source_from_row)
 
 
-def _exact(value, roots):
-    """A native stored path as `@name/...` when converting back gives exactly this string."""
-    if not isinstance(value, str) or not value or value.startswith(paths.ROOT_MARK):
+def _exact(value, roots, reroot=None):
+    """A native stored path as `@name/...` when converting back gives exactly this string; with
+    `reroot`, a row of another root lying under root `reroot` moved to it."""
+    if not isinstance(value, str) or not value:
         return value
+    if value.startswith(paths.ROOT_MARK):
+        native = _rerooted(value, roots, reroot)
+        if native is None:
+            return value
+        value = native
     try:
         row = paths.to_row(value, roots)
         return row if row.startswith(paths.ROOT_MARK) and paths.from_row(row, roots) == value else value
@@ -400,7 +429,7 @@ def _plain(value, roots):
     return value
 
 
-def _suggested(text, roots, convert):
+def _suggested(text, roots, convert, reroot=None):
     """suggestions.raw, the suggester's own output, with the paths in it -- the photo's own
     and each nearest neighbour's -- converted. Parsed and written back only when a path
     changed."""
@@ -413,20 +442,24 @@ def _suggested(text, roots, convert):
     if not isinstance(raw, dict):
         return text
     changed = False
-    if isinstance(raw.get("path"), str) and convert(raw["path"], roots) != raw["path"]:
-        raw["path"] = convert(raw["path"], roots)
+
+    def go(value):
+        return convert(value, roots, reroot) if reroot else convert(value, roots)
+
+    if isinstance(raw.get("path"), str) and go(raw["path"]) != raw["path"]:
+        raw["path"] = go(raw["path"])
         changed = True
     for neighbour in raw.get("nearest_neighbors") or []:
         if isinstance(neighbour, dict) and isinstance(neighbour.get("path"), str):
-            converted = convert(neighbour["path"], roots)
+            converted = go(neighbour["path"])
             if converted != neighbour["path"]:
                 neighbour["path"] = converted
                 changed = True
     return json.dumps(raw) if changed else text
 
 
-def suggested_to_row(text, roots):
-    return _suggested(text, roots, _exact)
+def suggested_to_row(text, roots, reroot=None):
+    return _suggested(text, roots, _exact, reroot)
 
 
 def suggested_to_native(text, roots):

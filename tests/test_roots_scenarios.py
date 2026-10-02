@@ -28,10 +28,12 @@ import roots_library as rl  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
+from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.services import sync, tagging  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.store import added_folders, damaged_files, db, folders, journal, suggestions  # noqa: E402
+from tagpup.store import adoption, checks  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
@@ -303,6 +305,161 @@ class TheOwnersFlows(Twins):
         plain_said = []
         doctor.report(self.plain.db_path, show=2, out=plain_said.append)
         self.assertEqual([], [line for line in plain_said if "under no root" in line])
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class ARootNestedInsideAnother(unittest.TestCase):
+    """`pictures` is adopted; then `regatta`, one of its folders. The rows of `pictures` that
+    lie under `regatta` are held by `regatta` from then on, or every lookup under it misses them
+    and the next index inserts them again."""
+
+    NOT_COMPARED = ("generations", "changes", "change_rows", "roots", "schema_version", "photo_people")
+
+    def setUp(self):
+        self.home = own_home.for_test(self, prefix="roots_nested_")
+        self.side = rl.Side(self.home, "nested", real=2, bulk=15, outside=1)
+        self.assertTrue(self.side.adopt().ok)
+        self.regatta = os.path.join(self.side.pictures, "2024 Regatta")
+        # A row written natively under the folder, as a stray is: before the outer root's adoption,
+        # or by a write that raced it.
+        self.stray = os.path.join(self.regatta, "Stray.jpg")
+        db.write_with_connection(self.side.db_path, lambda conn: conn.execute(
+            "INSERT INTO photos (path, tags, captions, raw_metadata) VALUES (?, '[]', '[]', '{}')", (self.stray,)))
+        self.before = self.side.dump(leave_out=self.NOT_COMPARED)
+
+    def inner(self, apply=True):
+        return roots_service.adopt(self.side.library, "regatta", "", self.regatta, rl.machine(), apply=apply)
+
+    def read(self, ask):
+        conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
+        try:
+            return ask(conn)
+        finally:
+            conn.close()
+
+    def test_the_dry_run_counts_what_it_would_move(self):
+        report = self.inner(apply=False).details["rehearsal"]
+        self.assertEqual(18, report["rerooted"], "17 photos and a damaged file")
+        self.assertEqual(18, report["tables"]["photos"]["convert"], "the 17 rooted rows and the stray")
+        self.assertEqual(17, report["tables"]["photos"]["rerooted"])
+        self.assertEqual(1, report["tables"]["damaged_files"]["rerooted"])
+        self.assertEqual(["pictures"], [r["name"] for r in self.side.library_roots()], "a dry run adopts nothing")
+
+    def test_every_row_is_found_by_the_inner_root_after_it(self):
+        result = self.inner()
+        self.assertTrue(result.ok, result.message())
+        held = self.side.raw_paths()
+        self.assertEqual(18, len([p for p in held if p.startswith("@regatta/")]))
+        self.assertEqual(0, len([p for p in held if p.startswith("@pictures/2024 Regatta")]))
+        self.assertEqual(34, len([p for p in held if p.startswith("@pictures/")]))
+        self.assertIn("@regatta/Stray.jpg", held)
+
+        def ask(conn):
+            listed = sorted(path for path, *_ in store_photos.rows_under(conn, self.regatta))
+            found = store_photos.rows_of(conn, listed)
+            return listed, found, store_photos.count_under(conn, self.regatta), store_photos.count_under(
+                conn, self.side.pictures), folders.holds(conn, self.regatta)
+        listed, found, under, whole, holds = self.read(ask)
+        self.assertEqual((18, 18, 18, 52, True), (len(listed), len(found), under, whole, holds))
+
+    def test_verify_and_the_doctor_are_clean_after_it(self):
+        self.assertTrue(self.inner().ok)
+
+        def ask(conn):
+            return (adoption.verify(conn, store_roots.roots_for(conn)), checks.rooted_rows_convert(conn).count,
+                    checks.native_rows_under_a_root(conn).count)
+        self.assertEqual(([], 0, 0), self.read(ask))
+
+    def test_a_nested_root_added_without_moving_the_rows_is_found_by_verify_and_the_doctor(self):
+        """What the adoption must never leave: the inner root's row in place and the outer root's
+        rows under it untouched."""
+        db.write_with_connection(self.side.db_path, lambda conn: store_roots.insert(conn, "regatta", ""))
+        config.add_machine_root("regatta", self.regatta)
+
+        def ask(conn):
+            return adoption.verify(conn, store_roots.roots_for(conn)), checks.rooted_rows_convert(conn).count
+        problems, broken = self.read(ask)
+        self.assertEqual(18, broken)
+        self.assertTrue([p for p in problems if "18 row(s) are held under one root but lie under another" in p],
+                        problems)
+
+    def test_a_photo_the_indexer_reads_again_is_the_row_it_has(self):
+        self.assertTrue(self.inner().ok)
+        path = self.side.real[0]
+        db.write_with_connection(self.side.db_path, lambda conn: photo_rows.add_read(conn, path, rl.read(path)))
+        held = [p for p in self.side.raw_paths() if p.endswith("IMG_1001.jpg")]
+        self.assertEqual(["@regatta/IMG_1001.jpg"], held)
+
+    def test_the_undo_returns_the_exact_previous_rows(self):
+        change = self.inner().details["change"]
+        done = journal_service.undo(self.side.library, change, apply=True)
+        self.assertIsNone(done.refused, done.refused)
+        self.assertEqual(self.before, self.side.dump(leave_out=self.NOT_COMPARED))
+        self.assertEqual(["pictures"], [r["name"] for r in self.side.library_roots()])
+        held = self.side.raw_paths()
+        self.assertIn(self.stray, held, "a row that was native stays native")
+        self.assertIn("@pictures/2024 Regatta/IMG_1001.jpg", held, "a rerooted row returns to its root")
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+@requires_exiftool
+class AnAdoptionUndoneAfterWork(unittest.TestCase):
+    """The owner adopts, works -- a tag edit that writes files, a rename -- and then undoes the
+    adoption. It is allowed, and the work stays undoable: every row and file ends as it began."""
+
+    def setUp(self):
+        self.home = own_home.for_test(self, prefix="roots_after_work_")
+        self.side = rl.Side(self.home, "work", real=2, bulk=5, outside=1)
+        self.begin = self.state()
+
+    def state(self):
+        conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
+        try:
+            # The photos of real files take their tags from the files, which the seeded rows
+            # only claimed to hold: what the owner undoes to is what the file held.
+            rows = sorted((path, None if path in self.side.real else tags)
+                          for path, _m, _s, tags, *_ in store_photos.rows_under(conn, self.side.base))
+        finally:
+            conn.close()
+        files = sorted(os.path.join(folder, name) for folder, _d, names in os.walk(self.side.base) for name in names)
+        return rows, files, [keywords(path) for path in self.side.real]
+
+    def test_adopt_then_edit_then_rename_then_undo_the_adoption_then_the_work(self):
+        adopted = self.side.adopt()
+        self.assertTrue(adopted.ok, adopted.message())
+        tag = tagging.change_tags(self.side.library, self.side.real, ["Later"], [], EXIFTOOL)
+        self.assertEqual(6, tag.changed)
+        with mock.patch("tagpup.services.photos.preserve_names", return_value=Result()):
+            renamed = photo_actions.smart_rename(self.side.library, self.side.real[:2], "Regatta", FORMAT, EXIFTOOL)
+        self.assertEqual(2, renamed.changed)
+        held = self.side.raw_paths("change_files", "path") + self.side.raw_paths("change_files", "new_path")
+        self.assertTrue([p for p in held if p and p.startswith("@pictures/")], "the later changes hold row paths")
+
+        rehearsal = journal_service.undo(self.side.library, adopted.details["change"], apply=False,
+                                         exiftool_path=EXIFTOOL)
+        self.assertIsNone(rehearsal.refused, rehearsal.refused)
+        said = " ".join(rehearsal.details["rehearsal"]["notes"])
+        self.assertIn("recorded in later changes' values", said)
+        undone = journal_service.undo(self.side.library, adopted.details["change"], apply=True, exiftool_path=EXIFTOOL)
+        self.assertIsNone(undone.refused, undone.refused)
+        self.assertEqual([], self.side.library_roots())
+        self.assertEqual([], [p for p in self.side.raw_paths("change_files", "path") if p.startswith("@")])
+        self.assertEqual([], [p for p in self.side.raw_paths() if p.startswith("@")])
+
+        back = journal_service.undo(self.side.library, renamed.details["change"], apply=True, exiftool_path=EXIFTOOL)
+        self.assertIsNone(back.refused, back.refused)
+        self.assertEqual((2, []), (back.changed, back.errors))
+        back = journal_service.undo(self.side.library, tag.details["change"], apply=True, exiftool_path=EXIFTOOL)
+        self.assertIsNone(back.refused, back.refused)
+        self.assertEqual((6, []), (back.changed, back.errors))
+        self.assertEqual(self.begin, self.state(), "every row and file as at the start")
+
+
+def keywords(path):
+    from tagpup.files.exiftool_session import ExifToolSession
+    with ExifToolSession(executable=EXIFTOOL) as et:
+        found = et.get_tags([path], tags=["XMP:Subject"])[0].get("XMP:Subject", [])
+    return sorted(found if isinstance(found, list) else [found])
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")

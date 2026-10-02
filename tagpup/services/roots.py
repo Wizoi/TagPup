@@ -11,8 +11,9 @@ the owner says so, and is a dry run unless told to apply:
   whose conversion raises or would not convert back, the settings it would rewrite, and why
   it would be refused. Nothing is written, nothing migrated.
 - `apply` writes the machine's map if it lacks the root (atomically, one editor at a time,
-  only then), then, in one transaction under the library's write lock, takes the library's
-  backup (the copy made within the last quarter hour covers it), converts every table,
+  only then), then, in one transaction under the library's write lock, takes a new backup of
+  the library, converts every table (and re-roots the rows of an outer root that lie under a
+  root nested inside it),
   re-verifies before it commits (row counts equal, every rooted row converts back, the map
   places the root where the rows were converted by), and records one journaled change --
   `roots adopt: <name>` -- that History lists and `undo` reverses, converting back by the

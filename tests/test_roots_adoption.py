@@ -64,6 +64,9 @@ class AdoptionCase(unittest.TestCase):
     def map(self):
         return config.machine_roots()
 
+    def side_execute(self, sql, params=()):
+        db.write_with_connection(self.side.db_path, lambda conn: conn.execute(sql, params))
+
     def fingerprint(self):
         """The library's file content as rows: what 'nothing was written' means."""
         return json.dumps(self.side.dump(), default=repr, sort_keys=True)
@@ -79,7 +82,7 @@ class TheDryRun(AdoptionCase):
         tables = result.details["rehearsal"]["tables"]
         # Three folders of 14 photos, two photos beside them under no root.
         self.assertEqual({"rows": 44, "convert": 42, "already": 0, "outside": 2, "respelled": 0, "irreversible": 0,
-                          "json": 42}, tables["photos"])
+                          "json": 42, "rerooted": 0, "share_spelled": 0, "duplicates": 0}, tables["photos"])
         self.assertEqual({"rows": 2, "convert": 2}, {k: tables["damaged_files"][k] for k in ("rows", "convert")})
         self.assertEqual(1, tables["added_folders"]["convert"])
         self.assertEqual(1, tables["suggestions"]["json"])
@@ -251,9 +254,8 @@ class WhatItDoes(AdoptionCase):
         self.assertEqual({"photos": 42, "suggestions": 0, "damaged_files": 2, "added_folders": 1, "change_files": 0},
                          listed[0]["summary"]["converted"])
 
-    def test_the_backup_is_taken_first_and_a_recent_one_covers_the_next(self):
+    def test_a_new_backup_is_taken_first_every_time(self):
         first = self.adopt()
-        self.assertTrue(first.details["backup"]["made"])
         self.assertTrue(os.path.exists(first.details["backup"]["file"]))
         copy = db.connect(db.readonly_uri(first.details["backup"]["file"]), uri=True)
         try:
@@ -264,12 +266,23 @@ class WhatItDoes(AdoptionCase):
             copy.close()
         undone = journal_service.undo(self.side.library, first.details["change"], apply=True)
         self.assertIsNone(undone.refused, undone.refused)
+        # A row written between the two adoptions is in the second backup: a copy from minutes ago
+        # would not hold it.
+        newer = os.path.join(self.side.pictures, "2024 Regatta", "Written between.jpg")
+        self.side_execute("INSERT INTO photos (path, tags, captions, raw_metadata) VALUES (?, '[]', '[]', '{}')", (newer,))
+        time.sleep(1.1)
         second = self.adopt()
         self.assertTrue(second.ok, second.message())
-        self.assertFalse(second.details["backup"]["made"], "a copy from minutes ago covers this one")
-        self.assertEqual(first.details["backup"]["file"], second.details["backup"]["file"])
-        with mock.patch.object(adoption, "RECENT_BACKUP_SECONDS", -1):
-            self.assertTrue(adoption.backup(self.side.db_path)[1], "a copy that is not recent is made again")
+        self.assertNotEqual(first.details["backup"]["file"], second.details["backup"]["file"])
+        self.assertNotIn("made", second.details["backup"])
+        copy = db.connect(db.readonly_uri(second.details["backup"]["file"]), uri=True)
+        try:
+            self.assertEqual(1, copy.execute("SELECT COUNT(*) FROM photos WHERE path = ?", (newer,)).fetchone()[0])
+        finally:
+            copy.close()
+
+    def side_execute(self, sql, params=()):
+        db.write_with_connection(self.side.db_path, lambda conn: conn.execute(sql, params))
 
     def test_the_map_is_written_when_it_lacks_the_root_and_not_when_it_has_it(self):
         self.assertTrue(self.adopt().details["map"]["written"])
@@ -469,20 +482,42 @@ class Undoing(AdoptionCase):
         self.assertEqual("undone", [e for e in self.history() if e["id"] == self.change][0]["status"])
         self.assertTrue(self.undo().refused, "undone twice")
 
-    def test_it_is_refused_while_a_later_change_wrote_a_path(self):
+    def test_a_later_change_that_wrote_a_path_does_not_stop_it_and_is_still_undoable_after(self):
         photo_id = self.side.rows("SELECT id FROM photos WHERE path = ?", ("@pictures/2024 Regatta/IMG_1001.jpg",))[0][0]
         renamed = os.path.join(self.side.pictures, "2024 Regatta", "Another.jpg")
         later = journal.apply(self.side.db_path, "rename", [journal.update(
             "photos", (photo_id,), {"path": self.side.real[0]}, {"path": renamed})])
+        recorded = self.side.rows("SELECT old, new FROM change_rows WHERE change_id = ? AND column_name = 'path'",
+                                  (later.change_id,))
+        self.assertEqual([("@pictures/2024 Regatta/IMG_1001.jpg", "@pictures/2024 Regatta/Another.jpg")], recorded)
+        reasons = journal_service.refusals(self.side.library, [{"id": self.change, "operation": "roots adopt: pictures"}])
+        self.assertEqual({self.change: None}, reasons)
+        rehearsal = self.undo(apply=False)
+        self.assertIsNone(rehearsal.refused, rehearsal.refused)
+        said = " ".join(rehearsal.details["rehearsal"]["notes"])
+        self.assertIn("converts 45 path(s) in the library's tables", said)
+        self.assertIn("2 path(s) recorded in later changes' values", said)
+        self.assertIn("can still be undone afterwards", said)
+        self.assertIsNone(self.undo().refused)
+        self.assertEqual([(self.side.real[0], renamed)],
+                         self.side.rows("SELECT old, new FROM change_rows WHERE change_id = ? AND column_name = 'path'",
+                                        (later.change_id,)), "the later change's values are native again")
+        self.assertIsNone(journal_service.undo(self.side.library, later.change_id, apply=True).refused)
+        self.assertEqual(self.before, self.side.dump(leave_out=NOT_COMPARED))
+
+    def test_a_later_change_whose_path_cannot_be_converted_back_is_named(self):
+        self.side_execute("INSERT INTO changes (operation, status, schema_version, created, applied, summary)"
+                          " VALUES ('rename', 'applied', %d, '2026-10-02 10:00:00', '2026-10-02 10:00:00', '{}')"
+                          % schema.LATEST)
+        later = self.side.rows("SELECT MAX(id) FROM changes")[0][0]
+        self.side_execute("INSERT INTO change_rows (change_id, action, table_name, row_key, column_name, old, new)"
+                          " VALUES (?, 'update', 'photos', '[1]', 'path', '@pictures/a:b.jpg', '@pictures/c.jpg')",
+                          (later,))
         before = self.fingerprint()
         refused = self.undo()
-        self.assertIn("change %d (rename), made after it, wrote a path: undo it first" % later.change_id, refused.refused)
+        self.assertIn("change(s) %d recorded a path of the root 'pictures' that cannot be converted back" % later,
+                      refused.refused)
         self.assertEqual(before, self.fingerprint())
-        reasons = journal_service.refusals(self.side.library, [{"id": self.change, "operation": "roots adopt: pictures"}])
-        self.assertIn("undo it first", reasons[self.change])
-        self.assertIsNone(journal_service.undo(self.side.library, later.change_id, apply=True).refused)
-        self.assertIsNone(self.undo().refused)
-        self.assertEqual(self.before, self.side.dump(leave_out=NOT_COMPARED))
 
     def test_a_later_change_that_wrote_no_path_does_not_stop_it(self):
         from tagpup.services import settings
@@ -518,6 +553,139 @@ class Undoing(AdoptionCase):
         said = runner.invoke(cli, ["--db", self.side.db_path, "undo", str(self.change), "--apply"]).output
         self.assertIn("Undid change %d: 45 row(s) written back" % self.change, said)
         self.assertEqual(self.before, self.side.dump(leave_out=NOT_COMPARED))
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class AnotherRootNotPlaced(AdoptionCase):
+    """A second root this machine does not place: undoing a change recorded before the
+    adoptions, whose paths are native and must be spelled, is a refusal naming the map file,
+    never an UnmappedRoot."""
+
+    def test_an_older_change_is_refused_not_raised(self):
+        from tagpup.core import paths
+        photo_id = self.side.rows("SELECT id FROM photos WHERE path = ?", (self.side.outside[0],))[0][0]
+        renamed = os.path.join(self.side.outside_folder, "Another.jpg")
+        earlier = journal.apply(self.side.db_path, "rename", [journal.update(
+            "photos", (photo_id,), {"path": self.side.outside[0]}, {"path": renamed})])
+        self.assertTrue(self.adopt().ok)
+        second = roots_service.adopt(self.side.library, "loose", "", os.path.dirname(self.side.outside[0]),
+                                     rl.machine(), apply=True)
+        self.assertTrue(second.ok, second.message())
+        with open(self.map_file, "w", encoding="utf-8") as handle:
+            json.dump({"version": 1, "roots": {"pictures": [self.side.pictures]}}, handle)
+        before = self.fingerprint()
+        result = journal_service.undo(self.side.library, earlier.change_id, apply=True)
+        self.assertIn("machine_roots.json", result.refused)
+        rehearsal = journal_service.rehearse(self.side.library, earlier.change_id)
+        self.assertIn("machine_roots.json", rehearsal.refused)
+        self.assertEqual(before, self.fingerprint())
+        with self.assertRaises(paths.UnmappedRoot):
+            conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
+            try:
+                store_photos.all_paths(conn)
+            finally:
+                conn.close()
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class RowsAsRealLibrariesSpellThem(AdoptionCase):
+    """Rows seeded as other spellings, other places and other shapes than the indexer writes today
+    -- what a library a year old holds."""
+
+    def seed(self, *paths_):
+        for path in paths_:
+            self.side_execute("INSERT INTO photos (path, tags, captions, raw_metadata) VALUES (?, '[]', '[]', '{}')",
+                              (path,))
+
+    def side_execute(self, sql, params=()):
+        db.write_with_connection(self.side.db_path, lambda conn: conn.execute(sql, params))
+
+    def photos_report(self, **kwargs):
+        return self.adopt(apply=False, **kwargs).details["rehearsal"]["tables"]["photos"]
+
+    def test_a_row_with_forward_slashes_converts_and_comes_back_as_the_same_file(self):
+        slashed = os.path.join(self.side.pictures, "2024 Regatta", "Slashed.jpg").replace(os.sep, "/")
+        self.seed(slashed)
+        report = self.photos_report()
+        self.assertEqual((43, 1, 0), (report["convert"], report["respelled"], report["irreversible"]))
+        self.assertTrue(self.adopt().ok)
+        self.assertIn("@pictures/2024 Regatta/Slashed.jpg", self.side.raw_paths())
+        change = [e for e in journal.history(self.side.db_path) if e["operation"].startswith("roots adopt")][0]["id"]
+        self.assertIsNone(journal_service.undo(self.side.library, change, apply=True).refused)
+        self.assertIn(os.path.join(self.side.pictures, "2024 Regatta", "Slashed.jpg"), self.side.raw_paths())
+
+    def test_a_row_with_a_lower_case_prefix_converts_with_its_own_case_kept_below_the_root(self):
+        lower = os.path.join(self.side.pictures, "2024 Regatta", "Lower Case.JPG").lower()
+        self.seed(lower)
+        report = self.photos_report()
+        self.assertEqual((43, 1, 0), (report["convert"], report["respelled"], report["irreversible"]))
+        self.assertTrue(self.adopt().ok)
+        self.assertIn("@pictures/2024 regatta/lower case.jpg", self.side.raw_paths())
+
+    def test_every_place_the_map_lists_is_equivalent(self):
+        second = os.path.join(self.home.root, "Second copy")
+        os.makedirs(second)
+        with open(self.map_file, "w", encoding="utf-8") as handle:
+            json.dump({"version": 1, "roots": {"pictures": [self.side.pictures, second]}}, handle)
+        self.seed(os.path.join(second, "2024 Regatta", "At the second place.jpg"))
+        report = self.photos_report()
+        self.assertEqual((43, 1, 0), (report["convert"], report["respelled"], report["irreversible"]))
+        self.assertTrue(self.adopt().ok)
+        self.assertIn("@pictures/2024 Regatta/At the second place.jpg", self.side.raw_paths())
+        conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
+        try:
+            self.assertEqual(os.path.join(self.side.pictures, "2024 Regatta", "At the second place.jpg"),
+                             store_photos.rows_of(conn, [os.path.join(second, "2024 Regatta", "At the second place.jpg")])[
+                                 store_photos.paths.key(os.path.join(second, "2024 Regatta", "At the second place.jpg"))][1],
+                             "a path at either place finds the row")
+        finally:
+            conn.close()
+
+    def test_a_row_that_is_not_an_absolute_path_is_refused_whatever_the_working_folder(self):
+        self.seed(os.path.join("2024 Regatta", "Relative.jpg"))
+        here = self.photos_report()
+        cwd = os.getcwd()
+        os.chdir(self.side.pictures)
+        try:
+            inside = self.photos_report()
+            result = self.adopt(apply=False)
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(here, inside, "the dry run depends on where it was started")
+        self.assertEqual(1, here["irreversible"])
+        self.assertIn("not an absolute path", result.refused)
+
+    def test_rows_spelled_by_the_shares_address_are_named_as_their_own_count_and_folder_list(self):
+        shared = os.path.join(rl.ADDRESS, "2024 Regatta", "Spelled by the share.jpg")
+        self.seed(shared, os.path.join(rl.ADDRESS, "Trips", "Another.jpg"))
+        result = self.adopt(apply=False)
+        report = result.details["rehearsal"]
+        self.assertEqual(2, report["share_spelled"]["rows"])
+        self.assertEqual(2, report["tables"]["photos"]["share_spelled"])
+        self.assertEqual(0, report["tables"]["photos"]["irreversible"])
+        self.assertEqual([2], [group["count"] for group in report["share_spelled"]["folders"]])
+        self.assertIn("retarget", result.refused)
+        self.assertIn("from the master, the share, to this machine's copy", result.refused)
+        self.assertIn("adopt a root whose location is the share itself", result.refused)
+        before = self.fingerprint()
+        self.assertTrue(self.adopt().refused)
+        self.assertEqual(before, self.fingerprint())
+
+    def test_two_rows_of_one_file_outside_the_root_are_reported_and_do_not_block(self):
+        a = os.path.join(self.side.outside_folder, "Twice.jpg")
+        self.seed(a, os.path.join(self.side.outside_folder, "TWICE.JPG"))
+        result = self.adopt(apply=False)
+        self.assertIsNone(result.refused, result.refused)
+        self.assertEqual(1, result.details["rehearsal"]["duplicates"])
+        self.assertEqual(0, result.details["rehearsal"]["collisions"])
+        self.assertTrue(self.adopt().ok)
+
+    def test_two_rows_that_become_one_are_blamed_on_the_conversion_by_name(self):
+        base = os.path.join(self.side.pictures, "2024 Regatta")
+        self.seed(os.path.join(base, "Pair.jpg"), os.path.join(base, "PAIR.JPG"))
+        result = self.adopt(apply=False)
+        self.assertEqual(1, result.details["rehearsal"]["collisions"])
+        self.assertIn("checks.one_file_two_rows", result.refused)
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")

@@ -264,6 +264,42 @@ def roots_of(library_roots, path=None):
     return paths.Roots.of(library_roots, _machine_map(path), path)
 
 
+def _old(file, seconds):
+    try:
+        return time.time() - os.path.getmtime(file) > seconds
+    except OSError:
+        return False
+
+
+def _take_over(lock, stale):
+    """Remove a stale `lock` -- one editor at a time doing it, through a guard file made
+    exclusively, and only if it is still stale once the guard is held: two that both saw it stale
+    would otherwise both remove it, the second removing the fresh lock the first's successor had
+    just made, and two editors would be let in. True when the caller may try the lock again."""
+    guard = lock + ".guard"
+    try:
+        os.close(os.open(guard, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except (FileExistsError, PermissionError):
+        if _old(guard, stale):
+            try:
+                os.remove(guard)   # a crash held it
+            except OSError:
+                pass
+        return False
+    try:
+        if _old(lock, stale):
+            try:
+                os.remove(lock)
+            except OSError:
+                pass
+        return True
+    finally:
+        try:
+            os.remove(guard)
+        except OSError:
+            pass
+
+
 @contextlib.contextmanager
 def _edit_lock(path, wait=5.0, stale=30.0):
     """The one editor of the map at a time, across processes: a file beside it made exclusively
@@ -277,12 +313,8 @@ def _edit_lock(path, wait=5.0, stale=30.0):
         try:
             os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
             break
-        except FileExistsError:
-            try:
-                if time.time() - os.path.getmtime(lock) > stale:
-                    os.remove(lock)
-                    continue
-            except OSError:
+        except (FileExistsError, PermissionError):   # Windows: a file being deleted refuses with the latter
+            if _old(lock, stale) and _take_over(lock, stale):
                 continue
             if time.monotonic() > deadline:
                 raise MachineMapError("%s is being edited by another process (%s is there); try again in a moment"

@@ -64,6 +64,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from tagpup.core import paths
 from tagpup.store import db, file_journal, people, schema
 from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
@@ -236,6 +237,9 @@ class Rehearsal:
     derived_stale: int = 0
     #: [row, why] of each skippable edit applying would leave out.
     skipped: List[List[str]] = field(default_factory=list)
+    #: What the undo does that its rows do not say: the undo of an adoption converts paths in the
+    #: library's tables and in what later changes recorded.
+    notes: List[str] = field(default_factory=list)
 
     def as_dict(self):
         return asdict(self)
@@ -892,11 +896,32 @@ def refusals(db_path, change_ids):
 
 class _Undone(list):
     """The rows an undo wrote, and `converted`: how many paths the undo of an adoption
-    converted back, which are rows of tables the journal does not key."""
+    converted back, which are rows of tables the journal does not key, and what it says of
+    them (`notes`)."""
     converted = 0
+    notes = ()
+
+
+def _adoption_note(conn, change_id, converted):
+    name = json.loads(conn.execute("SELECT summary FROM changes WHERE id = ?", (change_id,)).fetchone()[0]
+                      or "{}").get("root", "")
+    recorded = converted.get("recorded values", 0)
+    tables = sum(n for table, n in converted.items() if table != "recorded values")
+    return ["Undoing the adoption of root %s converts %d path(s) in the library's tables back to this machine's "
+            "own spelling, and %d path(s) recorded in later changes' values, in one step, so those changes can "
+            "still be undone afterwards; the library holds no root when it is done." % (name, tables, recorded)]
 
 
 def _undo_in(conn, change_id):
+    """_undo_rows, a root this machine does not place or a map that cannot be read being a
+    refusal that says so, not an error."""
+    try:
+        return _undo_rows(conn, change_id)
+    except paths.RootsError as problem:
+        raise Refusal([str(problem)]) from None
+
+
+def _undo_rows(conn, change_id):
     """Check change `change_id` may be undone (refusal), and write its inverse. Returns
     its rows. The caller holds the transaction."""
     if _writes_files(conn, change_id):
@@ -906,11 +931,13 @@ def _undo_in(conn, change_id):
     reasons = refusal(conn, change_id)
     if reasons:
         raise Refusal(reasons)
-    converted = 0
+    converted, notes = 0, ()
     if conn.execute("SELECT 1 FROM changes WHERE id = ? AND substr(operation, 1, ?) = ?",
                     (change_id, len(ADOPTION), ADOPTION)).fetchone():
         from tagpup.store import adoption   # adoption imports this module
-        converted = sum(adoption.undo_in(conn, change_id).values())
+        counted = adoption.undo_in(conn, change_id)
+        converted = sum(counted.values())
+        notes = _adoption_note(conn, change_id, counted)
     changes = _load(conn, change_id)
     reasons = _not_as_left(conn, change_id, changes)
     inverse = [_inverse(change) for change in reversed(changes)]
@@ -925,6 +952,7 @@ def _undo_in(conn, change_id):
     conn.execute("UPDATE changes SET status = 'derived_pending', undone = ? WHERE id = ?", (_now(), change_id))
     undone = _Undone(changes)
     undone.converted = converted
+    undone.notes = notes
     return undone
 
 
@@ -1054,11 +1082,15 @@ def rehearse_undo(db_path, change_id):
         try:
             db.begin(conn, immediate=True)
             try:
-                changes = _load(conn, change_id) if has_journal(conn) else []
+                try:
+                    changes = _load(conn, change_id) if has_journal(conn) else []
+                except paths.RootsError as e:
+                    return Rehearsal(refused=str(e))
                 stale = _derive(conn, changes)
                 before = _snapshot(conn, changes)
                 try:
-                    converted = _undo_in(conn, change_id).converted
+                    undone = _undo_in(conn, change_id)
+                    converted = undone.converted
                 except Refusal as e:
                     return Rehearsal(refused=str(e))
                 _derive(conn, changes)
@@ -1069,6 +1101,7 @@ def rehearse_undo(db_path, change_id):
 
                 rehearsal = _rehearsed(conn, before, changes, again, len(changes), stale)
                 rehearsal.rows += converted
+                rehearsal.notes = list(undone.notes)
                 return rehearsal
             finally:
                 conn.rollback()
