@@ -510,13 +510,13 @@ class ReviewFindings(unittest.TestCase):
             config.machine_roots()
         self.assertIn("UTF-8", str(caught.exception))
 
-    def test_429_the_long_path_prefix_is_refused(self):
+    def test_428_the_long_path_prefix_is_refused(self):
         for spelled in ("\\\\?\\D:\\Training", "\\\\?\\UNC\\nas\\photos"):
             with self.assertRaises(paths.RootsError) as caught:
                 paths.check_locations({"a": [spelled]})
             self.assertIn("plain spelling", str(caught.exception))
 
-    def test_429_the_folders_under_no_root_are_grouped_and_counted(self):
+    def test_428_the_folders_under_no_root_are_grouped_and_counted(self):
         roots = paths.Roots.of({"pictures": LOGICAL}, {"pictures": [DESKTOP]})
         folders = [DESKTOP + "\\2024", DESKTOP, "E:\\Elsewhere\\a", "e:\\elsewhere\\b", "E:\\Elsewhere",
                    "\\\\other\\share\\Misc\\x", "D:\\Training\\Other\\y", "D:\\Training", "@pictures/x", ""]
@@ -524,6 +524,83 @@ class ReviewFindings(unittest.TestCase):
             {"group": "E:\\Elsewhere", "count": 3},
             {"group": "D:\\Training", "count": 2},
             {"group": "\\\\other\\share\\Misc", "count": 1}])
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class SecondReviewFindings(unittest.TestCase):
+    """#431 to #438."""
+
+    def setUp(self):
+        self.home = own_home.for_test(self)
+        self.file = config.machine_roots_path()
+
+    def write(self, text, binary=None):
+        with open(self.file, "wb") as handle:
+            handle.write(binary if binary is not None else text.encode("utf-8"))
+
+    def test_431_a_colon_is_refused_in_both_directions_on_windows_and_in_neither_elsewhere(self):
+        with self.assertRaises(paths.RootsError):
+            paths.to_row(DESKTOP + "\\a.jpg:stream", desktop())
+        with self.assertRaises(paths.RootsError):
+            paths.from_row("@pictures/a.jpg:stream", desktop())
+        with mock.patch.object(paths, "_COLON_REFUSED", False):
+            row = paths.to_row(DESKTOP + "\\12:30.jpg", desktop())
+            self.assertEqual(row, "@pictures/12:30.jpg")
+            self.assertEqual(paths.from_row(row, desktop()), DESKTOP + "\\12:30.jpg")
+
+    def test_432_a_same_size_rewrite_with_the_old_mtime_is_found_within_five_seconds(self):
+        self.write(json.dumps({"version": 1, "roots": {"pictures": ["D:\\Aaaa"]}}))
+        library = {"pictures": ""}
+        first = config.roots_of(library)
+        self.assertEqual(paths.from_row("@pictures", first), "D:\\Aaaa")
+        stamp = os.stat(self.file)
+        self.write(json.dumps({"version": 1, "roots": {"pictures": ["D:\\Bbbb"]}}))
+        os.utime(self.file, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        self.assertEqual(os.stat(self.file).st_size, stamp.st_size)
+        self.assertEqual(paths.from_row("@pictures", config.roots_of(library)), "D:\\Aaaa")   # not yet looked at
+        later = time.monotonic() + config.RECHECK_SECONDS + 1
+        with mock.patch.object(config.time, "monotonic", return_value=later):
+            self.assertEqual(paths.from_row("@pictures", config.roots_of(library)), "D:\\Bbbb")
+            # Unchanged content is not parsed again, and keeps the prepared Roots.
+            kept = config.roots_of(library)
+        later += config.RECHECK_SECONDS + 1
+        with mock.patch.object(config.time, "monotonic", return_value=later), \
+                mock.patch.object(config, "_parse", side_effect=AssertionError("parsed again")):
+            self.assertIs(config.roots_of(library), kept)
+
+    def test_433_the_device_prefix_is_refused_as_the_long_path_prefix_is(self):
+        for spelled in ("\\\\.\\D:\\Training", "//./D:/Training"):
+            with self.assertRaises(paths.RootsError) as caught:
+                paths.check_locations({"a": [spelled]})
+            self.assertIn("plain spelling", str(caught.exception))
+
+    def test_435_the_refusal_for_a_path_under_no_root_has_its_verb(self):
+        one = paths.Roots({"east": "", "west": ""}, {"east": ["D:\\East"]})
+        with self.assertRaises(paths.UnmappedRoot) as caught:
+            paths.to_row("E:\\x\\a.jpg", one)
+        self.assertIn("west has no location here", str(caught.exception))
+        two = paths.Roots({"east": "", "west": "", "north": ""}, {"east": ["D:\\East"]})
+        with self.assertRaises(paths.UnmappedRoot) as caught:
+            paths.to_row("E:\\x\\a.jpg", two)
+        self.assertIn("north, west have no location here", str(caught.exception))
+
+    def test_436_a_refusal_from_combining_the_sources_names_both(self):
+        for logical, locations in (({"a": "D:\\X\\Y"}, {"a": ["D:\\X"]}),
+                                   ({"a": "D:\\X", "b": ""}, {"b": ["D:\\X"]})):
+            with self.assertRaises(paths.RootsError) as caught:
+                paths.Roots(logical, locations, map_file="C:\\home\\machine_roots.json")
+            message = str(caught.exception)
+            self.assertIn("C:\\home\\machine_roots.json", message)
+            self.assertIn("library's roots setting", message)
+            self.assertIn("'a'", message)
+
+    def test_437_utf16_without_a_bom_is_told_to_be_saved_as_utf8(self):
+        text = json.dumps({"version": 1, "roots": {"pictures": [DESKTOP]}})
+        for encoding in ("utf-16-le", "utf-16-be"):
+            self.write("", binary=text.encode(encoding))
+            with self.assertRaises(config.MachineMapError) as caught:
+                config.machine_roots()
+            self.assertIn("save it as UTF-8", str(caught.exception))
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")

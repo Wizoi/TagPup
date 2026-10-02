@@ -44,6 +44,7 @@ The name ends where the first "/" does, so "@photos/" is a prefix of nothing in
 Nothing outside this module converts separators or case on a path. The test
 tests/test_paths_single_owner.py fails the build on anything that does.
 """
+import contextlib
 import os
 import re
 import threading
@@ -237,9 +238,14 @@ def _folded(path):
     return spelled, _as_folder(os.path.normcase(spelled))
 
 
+#: A colon in the part under a root is refused where it can only be an NTFS stream, in to_row
+#: and in from_row alike; elsewhere it is an ordinary character in both.
+_COLON_REFUSED = os.name == "nt"
+
+
 def _plain(address, what):
-    if address.startswith("\\\\?\\") or address.startswith("//?/"):
-        raise RootsError("%s %r uses the long-path prefix; write the plain spelling "
+    if address.startswith(("\\\\?\\", "//?/", "\\\\.\\", "//./")):
+        raise RootsError("%s %r uses the long-path or device prefix; write the plain spelling "
                          "(D:\\folder or \\\\server\\share\\folder)" % (what, address))
 
 
@@ -302,8 +308,8 @@ class Roots:
       the longest match, so a nested location of another root resolves to the deeper root.
       Within one root, locations and address must not nest or repeat (RootsError);
     * a path under none is "unrooted" and keeps its native spelling -- unless some root of
-      the library has no location on this machine and no address that could say it is not
-      its, when to_row raises UnmappedRoot: it might belong to that root;
+      the library has no location on this machine (whether or not it has an address), when
+      to_row raises UnmappedRoot for every path under no mapped root: it might belong to it;
     * a root with no location here is refused both ways: from_row of its rows, and to_row
       (so sql_*) of a path under its share address, raise UnmappedRoot, so that no row is
       ever written that cannot be read back. The message says what to add to the map. A
@@ -328,24 +334,36 @@ class Roots:
         keyed = {name: [(s, _folded(s)[1]) for s in listed] for name, listed in self.locations.items()}
         for name, address in logical.items():
             if address and is_native_absolute(address):
-                _plain(address, "root %r: share address" % name)
-                spelled, folded_key = _folded(address)
-                if folded_key in explicit and explicit[folded_key][1] != name:
-                    raise RootsError("%r is the share address of %r and a location of %r"
-                                     % (address, name, explicit[folded_key][1]))
-                if folded_key in entries and entries[folded_key][1] != name:
-                    raise RootsError("%r is the address of both %r and %r" % (address, entries[folded_key][1], name))
-                entries[folded_key] = (spelled, name)
-                # The same place as one of its own locations is harmless; anything else nested is not.
-                if all(folded_key != k for _s, k in keyed.get(name, ())):
-                    keyed.setdefault(name, []).append((spelled, folded_key))
+                with self._sources(name):
+                    _plain(address, "root %r: share address" % name)
+                    spelled, folded_key = _folded(address)
+                    if folded_key in explicit and explicit[folded_key][1] != name:
+                        raise RootsError("%r is the share address of %r and a location of %r"
+                                         % (address, name, explicit[folded_key][1]))
+                    if folded_key in entries and entries[folded_key][1] != name:
+                        raise RootsError("%r is the address of both %r and %r" % (address, entries[folded_key][1], name))
+                    entries[folded_key] = (spelled, name)
+                    # The same place as one of its own locations is harmless; anything else nested is not.
+                    if all(folded_key != k for _s, k in keyed.get(name, ())):
+                        keyed.setdefault(name, []).append((spelled, folded_key))
         for name, pairs in keyed.items():
-            _nested(name, pairs)
+            with self._sources(name):
+                _nested(name, pairs)
         entries.update(explicit)
         # Longest first, so the first match is the deepest. (folder-form key, its length, name)
         self._matchers = tuple(sorted(((k, len(k), name) for k, (_s, name) in entries.items()),
                                       key=lambda m: -m[1]))
         self._first = {n: v[0] for n, v in self.locations.items()}
+
+    @contextlib.contextmanager
+    def _sources(self, name):
+        """A refusal made while combining the two sources says where each comes from."""
+        try:
+            yield
+        except RootsError as problem:
+            raise RootsError("%s -- root %r: its share address is in the library's roots setting, "
+                             "its locations in the machine map (%s)"
+                             % (problem, name, self.map_file or "machine_roots.json")) from None
 
     _prepared = {}
     _lock = threading.Lock()
@@ -433,10 +451,13 @@ def to_row(path, roots=None):
     if found is not None:
         if found[0] not in roots._first:
             raise UnmappedRoot(roots.what_to_add(found[0]))
+        if _COLON_REFUSED and ":" in found[1]:
+            raise RootsError("%r: a colon under a root is a stream name on Windows, and cannot be stored" % stored(path))
         return _row(*found)
     if roots.unmapped:
-        raise UnmappedRoot("%r is under no root this machine knows, and %s no location here, so it "
+        raise UnmappedRoot("%r is under no root this machine knows, and %s %s no location here, so it "
                            "may belong to one. %s" % (stored(path), ", ".join(roots.unmapped),
+                                                      "has" if len(roots.unmapped) == 1 else "have",
                                                       roots.what_to_add(roots.unmapped[0])))
     return stored(path)
 
@@ -445,7 +466,7 @@ def from_row(value, roots=None):
     """The native path of what the database holds. A row under no root is already native.
 
     A rooted row is refused, not repaired, when it is not what to_row writes: a relative
-    part with an empty, ".", ".." or drive/colon element or a native separator, or an empty
+    part with an empty, "." or ".." element, a native separator, or (on Windows) a colon, or an empty
     one after the separator ("@name/"). The root's name is matched in any case, which is
     how a NOCASE comparison may hand it back."""
     if not value:
@@ -464,7 +485,7 @@ def from_row(value, roots=None):
     if not separator:
         return location
     parts = rel.split(ROW_SEP)
-    if any(part in ("", ".", "..") or ":" in part or (os.sep != ROW_SEP and os.sep in part) for part in parts):
+    if any(part in ("", ".", "..") or (_COLON_REFUSED and ":" in part) or (os.sep != ROW_SEP and os.sep in part) for part in parts):
         raise RootsError("%r is not a path under a root" % value)
     return _as_folder(location) + (rel if os.sep == ROW_SEP else rel.replace(ROW_SEP, os.sep))
 

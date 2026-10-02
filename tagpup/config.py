@@ -148,7 +148,7 @@ def _read_whole(path):
         try:
             with open(path, "rb") as handle:
                 raw = handle.read()
-            if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+            if raw[:2] in (b"\xff\xfe", b"\xfe\xff") or b"\x00" in raw[:8]:
                 raise MachineMapError("%s is saved as UTF-16; save it as UTF-8" % path)
             return raw.decode("utf-8-sig")
         except FileNotFoundError:
@@ -174,7 +174,7 @@ def machine_roots(path=None):
     ignored by that library (tagpup.core.paths.Roots). Saved as UTF-8, with or without a
     BOM. Refused, with MachineMapError naming the file and the fault: unreadable, UTF-16,
     not JSON, a key twice, a key it does not know, a bad root name, a location that is not
-    absolute or starts with the long-path prefix, a root with none, one location under two
+    absolute or starts with the long-path or device prefix, a root with none, one location under two
     roots, and one root's locations nested (core.paths.check_locations).
 
     A missing file is an empty map, and that is not harmless once a library holds roots:
@@ -184,7 +184,10 @@ def machine_roots(path=None):
     renames a finished file over it, and every reader loads the whole file once.
     """
     path = path or machine_roots_path()
-    text = _read_whole(path)
+    return _parse(_read_whole(path), path)
+
+
+def _parse(text, path):
     if text is None:
         return {}
     try:
@@ -219,26 +222,40 @@ def _map_stamp(path):
     return (found.st_mtime_ns, found.st_size)
 
 
+#: How long a map is trusted on its stamp alone. A rewrite that keeps size and mtime (a
+#: restore, a copy that keeps timestamps) is then found by content within this long.
+RECHECK_SECONDS = 5
+
+
 def _machine_map(path):
-    """machine_roots(), read again only when the file's (mtime_ns, size) has changed: one
-    stat per call. A missing file is remembered too, as an empty map."""
+    """machine_roots(), read again when the file's (mtime_ns, size) has changed or more than
+    RECHECK_SECONDS have passed since it was read -- then only to compare its content, and
+    the parsed map is kept when it is the same. One stat per call otherwise. A missing file
+    is remembered too, as an empty map."""
     stamp = _map_stamp(path)
+    now = time.monotonic()
     with _MAPS_LOCK:
         held = _MAPS.get(path)
-    if held is not None and held[0] == stamp:
+    if held is not None and held[0] == stamp and now - held[3] <= RECHECK_SECONDS:
         return held[1]
-    loaded = machine_roots(path)
+    text = _read_whole(path)
+    digest = None if text is None else hash(text)
+    if held is not None and held[2] == digest:
+        loaded = held[1]
+    else:
+        loaded = _parse(text, path)
     with _MAPS_LOCK:
-        _MAPS[path] = (stamp, loaded)
+        _MAPS[path] = (stamp, loaded, digest, now)
     return loaded
 
 
 def roots_of(library_roots, path=None):
     """The paths.Roots for a library's roots ({name: logical address}) on this machine.
 
-    Costs one stat of the map file, and reads it only when it changed, so an edit to
-    machine_roots.json is picked up by the next call, in this process, and 2,000 calls
-    with no change read nothing. Still, an operation builds one Roots and passes it down
+    Costs one stat of the map file, and reads it only when its stamp changed or five seconds
+    have passed (then to compare the content, keeping the prepared map when it is the same),
+    so an edit to machine_roots.json is picked up by the next call, in this process, and
+    2,000 quick calls with no change read nothing. Still, an operation builds one Roots and passes it down
     to what it calls (stage 2 does this for each request, run and job), instead of asking
     per row. A library with roots on a machine with no map raises paths.UnmappedRoot at
     the first path it is asked to convert."""

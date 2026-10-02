@@ -523,7 +523,7 @@ the design assumes a GPU and more memory later and does not wait for them.
     `{"version": 1, "roots": {"pictures": ["D:\\Training\\Pictures"]}}`, UTF-8, the first location
     being where a path is put and all being recognised. Absent means nothing is mapped; malformed
     is an error naming the file, never an identity. Refused at load: a location that is not
-    absolute or starts `\\?\\`, one place listed twice or under two roots, a root's own places
+    absolute or starts `\\?\` or `\\.\` (the long-path and device prefixes), one place listed twice or under two roots, a root's own places
     (locations and share address) nested in one another, a share address equal to another root's
     location. A UNC share root with or without its trailing separator is one place. Nesting across
     different roots is allowed and the deeper wins. The map is re-read only when its (mtime, size)
