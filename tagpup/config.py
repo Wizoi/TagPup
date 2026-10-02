@@ -24,6 +24,7 @@ format and the ExifTool it names. What is left here is the machine's:
   and can be deleted.
 """
 import configparser
+import contextlib
 import json
 import os
 import platform
@@ -31,7 +32,7 @@ import shutil
 import threading
 import time
 
-from tagpup.core import paths
+from tagpup.core import machine, paths
 
 CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -263,6 +264,98 @@ def roots_of(library_roots, path=None):
     return paths.Roots.of(library_roots, _machine_map(path), path)
 
 
+@contextlib.contextmanager
+def _edit_lock(path, wait=5.0, stale=30.0):
+    """The one editor of the map at a time, across processes: a file beside it made exclusively
+    for as long as the read-modify-write takes. Two libraries adopting two roots at once would
+    each read the map without the other's root and the second rename would drop the first's.
+    A lock a crash left is taken over once it is `stale` seconds old."""
+    lock = path + ".lock"
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            break
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock) > stale:
+                    os.remove(lock)
+                    continue
+            except OSError:
+                continue
+            if time.monotonic() > deadline:
+                raise MachineMapError("%s is being edited by another process (%s is there); try again in a moment"
+                                      % (path, lock)) from None
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
+
+
+def add_machine_root(name, location, path=None):
+    """Say where this machine keeps root `name`: write it to machine_roots.json, keeping
+    every other root in it. True when it was written; False when the map already places the
+    root, at a place listed with `location` among them (nothing is written then). Refused,
+    with MachineMapError and nothing written, when the map already places the root and
+    `location` is not one of its places (it is not changed here: that is the owner's edit,
+    which keeps the old place listed), when the file is there and cannot be used, or when
+    the result would be refused at load (a place under two roots, nested places).
+
+    The file is written whole to a temporary name beside it and renamed over it
+    (os.replace), so a process reading meanwhile sees the old file or the new, never half of
+    one; Windows refuses the rename for a moment while a reader has the file open, which is
+    waited out as the reader waits out the rename. One editor at a time, across processes
+    (`_edit_lock`): each reads the map as the one before left it."""
+    path = path or machine_roots_path()
+    folded = paths.root_name(name)
+    with _edit_lock(path):
+        return _add_machine_root(folded, location, path)
+
+
+def _add_machine_root(folded, location, path):
+    text = _read_whole(path)
+    held = _parse(text, path)
+    if folded in held:
+        if any(paths.key(location) == paths.key(place) for place in held[folded]):
+            return False
+        raise MachineMapError("%s already places root %r at %s; %r is not one of its places. Edit the file "
+                              "to add it (keep the old place listed, so every path stays recognised)"
+                              % (path, folded, ", ".join(held[folded]), location))
+    merged = {each: list(places) for each, places in held.items()}
+    merged[folded] = [location]
+    try:
+        merged = paths.check_locations(merged)
+    except ValueError as problem:
+        raise MachineMapError("%s: %s" % (path, problem)) from problem
+    body = json.dumps({"version": 1, "roots": {each: list(places) for each, places in sorted(merged.items())}},
+                      indent=2) + "\n"
+    folder = os.path.dirname(path) or "."
+    os.makedirs(folder, exist_ok=True)
+    temporary = path + ".%d.tmp" % os.getpid()
+    try:
+        with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(body)
+            handle.flush()
+            os.fsync(handle.fileno())
+        for attempt in range(40):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError as problem:
+                if attempt == 39:
+                    raise MachineMapError("%s cannot be replaced: %s" % (path, problem)) from problem
+                time.sleep(0.025)
+    finally:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+    return True
+
+
 def describe_machine(library_roots, path=None):
     """Each of a library's roots with where this machine keeps it, for TagTuner's gear."""
     return roots_of(library_roots, path).describe()
@@ -272,3 +365,8 @@ def propose_row(native_path, library_roots, path=None):
     """The root-relative form a native path would have, "@name/under/it", or None when it
     is under no root of the library. Pure: nothing is written and no disk is asked."""
     return roots_of(library_roots, path).propose_row(native_path)
+
+
+# The store converts paths at its boundary and may import only core: it asks core.machine,
+# and this is what answers (docs/ARCHITECTURE.md, "Roots and machines").
+machine.provide(roots_of)

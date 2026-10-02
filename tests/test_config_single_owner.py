@@ -48,7 +48,7 @@ PUBLIC = {"home", "data_dir", "library_path", "default_exiftool", "exiftool_path
           "code_version",
           # Where this machine keeps each root of the libraries: the machine's, not a setting.
           "machine_roots", "machine_roots_path", "MachineMapError", "roots_of", "describe_machine",
-          "propose_row"}
+          "propose_row", "add_machine_root"}
 
 
 def _lines(relative):

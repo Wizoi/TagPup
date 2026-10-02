@@ -51,7 +51,7 @@ import threading
 
 __all__ = ["stored", "key", "same", "is_under", "sql_equals", "sql_under", "sql_in", "COLLATE",
            "Roots", "to_row", "from_row", "root_name", "check_locations", "is_native_absolute",
-           "RootsError", "UnmappedRoot", "UnknownRoot", "outside_roots"]
+           "RootsError", "UnmappedRoot", "UnknownRoot", "outside_roots", "exiftool_spelling", "ROOT_MARK"]
 
 #: Does this filesystem ignore case? normcase says so on Windows and not elsewhere.
 CASE_INSENSITIVE = os.path.normcase("A") == "a"
@@ -488,6 +488,12 @@ def from_row(value, roots=None):
     if any(part in ("", ".", "..") or (_COLON_REFUSED and ":" in part) or (os.sep != ROW_SEP and os.sep in part) for part in parts):
         raise RootsError("%r is not a path under a root" % value)
     return _as_folder(location) + (rel if os.sep == ROW_SEP else rel.replace(ROW_SEP, os.sep))
+
+
+def exiftool_spelling(native):
+    """A native path as ExifTool prints it in a SourceFile: with "/" for the separator, on
+    every machine. Only for comparing with what ExifTool says; never stored or opened."""
+    return native.replace(os.sep, "/") if os.sep != "/" else native
 
 
 def outside_roots(folders, roots):
