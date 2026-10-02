@@ -41,7 +41,13 @@ def roots_of(logical):
     if not logical:
         return IDENTITY
     if _provider is None:
-        importlib.import_module("tagpup.config")
+        try:
+            importlib.import_module("tagpup.config")
+        except Exception as problem:
+            raise paths.RootsError(
+                "this library has roots (%s) and the machine's map reader could not be loaded: importing "
+                "tagpup.config failed with %s: %s" % (", ".join(sorted(logical)), type(problem).__name__,
+                                                      problem)) from problem
     if _provider is None:
         raise paths.RootsError(
             "this library has roots (%s) and no machine map is available: tagpup.config was not "

@@ -655,6 +655,41 @@ class TheMapProviderIsNeverForgotten(unittest.TestCase):
                 self.assertEqual("10", count)
 
 
+class TheDynamicImportIsInOnePlace(unittest.TestCase):
+    """core.machine imports tagpup.config when asked with no reader registered, and nowhere else in
+    core does, since core may import nothing above it."""
+
+    def test_a_failure_to_load_the_reader_is_a_roots_error_naming_what_failed(self):
+        from tagpup.core import paths
+        machine.provide(None)
+        try:
+            with mock.patch("importlib.import_module", side_effect=ImportError("no module named something")):
+                with self.assertRaises(paths.RootsError) as raised:
+                    machine.roots_of({"pictures": rl.ADDRESS})
+        finally:
+            machine.provide(config.roots_of)
+        said = str(raised.exception)
+        self.assertIn("tagpup.config", said)
+        self.assertIn("ImportError", said)
+        self.assertIn("no module named something", said)
+        self.assertIn("pictures", said)
+
+    def test_only_machine_py_imports_config_inside_core(self):
+        import re
+        root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tagpup", "core")
+        pattern = re.compile(r"""import_module\(\s*["']tagpup\.config["']|import tagpup\.config|"""
+                             r"""from tagpup import config|from tagpup\.config""")
+        found = []
+        for name in sorted(os.listdir(root)):
+            if name.endswith(".py"):
+                with open(os.path.join(root, name), encoding="utf-8") as handle:
+                    for number, line in enumerate(handle, 1):
+                        if not line.lstrip().startswith("#") and pattern.search(line):
+                            found.append("%s:%d" % (name, number))
+        self.assertEqual(1, len(found), found)
+        self.assertTrue(found[0].startswith("machine.py:"), found)
+
+
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
 class TheJournalSpeaksOneForm(unittest.TestCase):
     """An edit's values are native; the library holds rows. A change recorded before the

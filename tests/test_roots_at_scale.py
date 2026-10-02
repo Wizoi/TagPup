@@ -124,6 +124,15 @@ class TheSizeOfPhotoIndex(unittest.TestCase):
         self.assertEqual(self.under_the_root, converted.details["adopted"]["tables"]["photos"]["convert"])
         note("adopt --apply (new backup, conversion, verification, journal): %.1f s" % total)
         self.assertLess(total, 90, "adopting took minutes")
+        from tagpup.store import adoption as adopting
+        size = os.path.getsize(self.library.path)
+        started = time.time()
+        copy = adopting.backup(self.library.path)
+        took = time.time() - started
+        note("a backup copy alone: %.1f s for %.0f MB (%.0f MB/s), the write lock held for all of it" % (
+            took, size / 1e6, size / 1e6 / took))
+        note("its estimate for this library now: %s" % adopting.backup_estimate(self.library.path))
+        os.remove(copy)
 
         conn = db.connect(db.readonly_uri(self.library.path), uri=True)
         try:

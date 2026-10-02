@@ -1266,7 +1266,6 @@ def _say_conversion(report):
         parts = ["%d row(s)" % counts["rows"], "%d to convert" % counts["convert"]]
         for key, label in (("already", "already rooted"), ("outside", "under no root (kept as they are)"),
                            ("respelled", "taking the location's spelling (same file)"),
-                           ("rerooted", "moved from another root that lies under this one"),
                            ("duplicates", "already two rows of one file (merge them; they do not block)"),
                            ("share_spelled", "spelled by the share's address (REFUSED, see below)"),
                            ("irreversible", "NOT reversible or not an absolute path (REFUSED)"),
@@ -1308,6 +1307,11 @@ def roots_adopt(ctx, name, address, location, apply_):
         console.print("%s root %s at %s:" % ("Would adopt" if not apply_ else "Adopting", report["root"],
                                               report["locations"][0]), markup=False, soft_wrap=True)
         _say_conversion(report)
+        console.print("Run this with TagPup and TagTuner stopped: the backup holds the write lock for the length of "
+                      "the copy (about %d s for a library this size, %.1f GB); an app writing meanwhile waits, "
+                      "and is told why if it gives up." % (report["backup"]["seconds"],
+                                                             report["backup"]["bytes"] / 1e9),
+                      markup=False, soft_wrap=True)
     if result.refused:
         console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
         raise SystemExit(1)

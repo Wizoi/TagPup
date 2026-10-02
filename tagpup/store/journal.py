@@ -907,9 +907,14 @@ def _adoption_note(conn, change_id, converted):
                       or "{}").get("root", "")
     recorded = converted.get("recorded values", 0)
     tables = sum(n for table, n in converted.items() if table != "recorded values")
-    return ["Undoing the adoption of root %s converts %d path(s) in the library's tables back to this machine's "
-            "own spelling, and %d path(s) recorded in later changes' values, in one step, so those changes can "
-            "still be undone afterwards; the library holds no root when it is done." % (name, tables, recorded)]
+    remaining = [each for each, _address in store_roots._rows(conn)]
+    keeps = ("the library keeps %s, whose rows are not touched" % ", ".join("root " + each for each in remaining)
+             if remaining else "the library holds no root")
+    return ["Undoing the adoption of root %s returns %d path(s) in the library's tables, and %d path(s) recorded in "
+            "later changes' values, from %s's row form to the native path this machine's map gives them, in one "
+            "step, so those changes can still be undone afterwards. No row moves to another root, and a value that "
+            "is not a path of %s (a title, an address, another root's row) is left exactly as it is; when it is "
+            "done %s." % (name, tables, recorded, name, name, keeps)]
 
 
 def _undo_in(conn, change_id):

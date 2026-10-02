@@ -82,7 +82,7 @@ class TheDryRun(AdoptionCase):
         tables = result.details["rehearsal"]["tables"]
         # Three folders of 14 photos, two photos beside them under no root.
         self.assertEqual({"rows": 44, "convert": 42, "already": 0, "outside": 2, "respelled": 0, "irreversible": 0,
-                          "json": 42, "rerooted": 0, "share_spelled": 0, "duplicates": 0}, tables["photos"])
+                          "json": 42, "share_spelled": 0, "duplicates": 0}, tables["photos"])
         self.assertEqual({"rows": 2, "convert": 2}, {k: tables["damaged_files"][k] for k in ("rows", "convert")})
         self.assertEqual(1, tables["added_folders"]["convert"])
         self.assertEqual(1, tables["suggestions"]["json"])
@@ -495,7 +495,7 @@ class Undoing(AdoptionCase):
         rehearsal = self.undo(apply=False)
         self.assertIsNone(rehearsal.refused, rehearsal.refused)
         said = " ".join(rehearsal.details["rehearsal"]["notes"])
-        self.assertIn("converts 45 path(s) in the library's tables", said)
+        self.assertIn("returns 45 path(s) in the library's tables", said)
         self.assertIn("2 path(s) recorded in later changes' values", said)
         self.assertIn("can still be undone afterwards", said)
         self.assertIsNone(self.undo().refused)
@@ -686,6 +686,206 @@ class RowsAsRealLibrariesSpellThem(AdoptionCase):
         result = self.adopt(apply=False)
         self.assertEqual(1, result.details["rehearsal"]["collisions"])
         self.assertIn("checks.one_file_two_rows", result.refused)
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class UndoLeavesWhatIsNotAPath(AdoptionCase):
+    """An undo converts only the values that hold a path by their structure, and only when the
+    value is a row of the root undone. A text with an "@" in it -- an address, a title, a note --
+    is not searched, and is left as the byte string it was."""
+
+    def second_root(self):
+        result = roots_service.adopt(self.side.library, "loose", "", self.side.outside_folder, rl.machine(), apply=True)
+        self.assertTrue(result.ok, result.message())
+        return result.details["change"]
+
+    def test_a_change_made_before_any_adoption_whose_metadata_holds_an_at_sign_is_left_alone(self):
+        photo = self.side.outside[0]
+        photo_id = self.side.rows("SELECT id FROM photos WHERE path = ?", (photo,))[0][0]
+        old = self.side.rows("SELECT raw_metadata FROM photos WHERE id = ?", (photo_id,))[0][0]
+        new = json.dumps(dict(json.loads(old), **{"XMP:Creator": "Kit Marlowe <kit@pictures.example>",
+                                                  "XMP:Description": "see @pictures/notes and @loose/x"}))
+        change = journal.apply(self.side.db_path, "edit metadata", [journal.update(
+            "photos", (photo_id,), {"raw_metadata": old}, {"raw_metadata": new})]).change_id
+
+        def recorded():
+            return self.side.rows("SELECT old, new FROM change_rows WHERE change_id = ? AND column_name = 'raw_metadata'",
+                                  (change,))
+        before = recorded()
+        self.assertEqual([(old, new)], before)
+        adopted = self.adopt()
+        self.assertTrue(adopted.ok)
+        loose = self.second_root()
+        self.assertIsNone(journal_service.undo(self.side.library, adopted.details["change"], apply=True).refused)
+        self.assertEqual(before, recorded(), "undoing a different root rewrote a change that has nothing to do with it")
+        self.assertIsNone(journal_service.undo(self.side.library, loose, apply=True).refused)
+        self.assertEqual(before, recorded(), "and neither did undoing the root its photo is under")
+
+    def test_a_value_is_converted_by_what_it_is_and_nothing_outside_the_path_fields_changes(self):
+        import random
+        from tagpup.core import machine, paths
+        folder = os.path.join(self.home.root, "Another place")
+        os.makedirs(folder)
+        config.add_machine_root("pictures", self.side.pictures)
+        config.add_machine_root("loose", folder)
+        roots = machine.roots_of({"pictures": "", "loose": ""})
+        rnd = random.Random(20261002)
+        pieces = ["@", "@pictures", "@pictures/", "@loose/x", "kit@mail.example", "a", " ", "\u00e9", '"', "\\", "@@"]
+
+        def text():
+            return "".join(rnd.choice(pieces) for _ in range(rnd.randint(0, 6)))
+
+        def of_pictures(value):
+            return isinstance(value, str) and value.startswith("@") and value[1:].partition("/")[0].lower() == "pictures"
+
+        def native(value):
+            return paths.from_row(value, roots)
+
+        for _ in range(400):
+            source = rnd.choice([None, self.side.outside[0].replace(os.sep, "/"), "@loose/a.jpg", "@pictures/a/b.jpg",
+                                 "@PICTURES/c.jpg", "@picturesx/d.jpg", "@pictures", "free @pictures/e", "x" + text()])
+            meta = {"XMP:Title": text(), "XMP:Creator": text(), "Subject": [text(), text()]}
+            if source is not None:
+                meta["SourceFile"] = source
+            value = json.dumps(meta)
+            out = adoption.back_value("photos", "raw_metadata", value, roots, "pictures")
+            expected = dict(meta)
+            if of_pictures(source):
+                expected["SourceFile"] = paths.exiftool_spelling(native(source))
+            self.assertEqual(expected, json.loads(out), value)
+            if expected == meta:
+                self.assertEqual(value, out, "a value with no path of the root is the same bytes")
+
+            suggestion = {"path": rnd.choice([source or "x", "x" + text()]), "title": text(),
+                          "suggested_tags": [{"tag": text()}], "nearest_neighbors": [
+                              {"path": rnd.choice(["@pictures/n.jpg", "@loose/n.jpg", "x" + text()]), "similarity": 0.5}]}
+            out = json.loads(adoption.back_value("suggestions", "raw", json.dumps(suggestion), roots, "pictures"))
+            want = json.loads(json.dumps(suggestion))
+            for holder in (want, want["nearest_neighbors"][0]):
+                if of_pictures(holder["path"]):
+                    holder["path"] = native(holder["path"])
+            self.assertEqual(want, out, suggestion)
+
+            lines = [rnd.choice([self.side.pictures, "@pictures/x", "@loose/y", "free @pictures text", "", "x" + text()])
+                     for _ in range(3)]
+            joined = "\n".join(lines)
+            moved = adoption.back_value("settings", "value", joined, roots, "pictures").split("\n")
+            self.assertEqual([native(line.strip()) if of_pictures(line.strip()) else line for line in lines], moved)
+
+            each = rnd.choice(["@pictures/a", "@loosex/a", "foo@pictures/x", "@PICTURES/b", self.side.pictures, "x" + text()])
+            self.assertEqual(native(each) if of_pictures(each) else each,
+                             adoption.back_value("photos", "path", each, roots, "pictures"))
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class AnAdoptionsSummaryHoldsCounts(AdoptionCase):
+    """The journal's rule: a summary holds counts and never names. The MCP history tool returns
+    summaries without reveal."""
+
+    def test_no_summary_and_no_listing_holds_a_path_or_a_file_name(self):
+        result = self.adopt()
+        self.assertTrue(result.ok)
+        change = result.details["change"]
+        listings = [journal.history(self.side.db_path, limit=50), journal.history(self.side.db_path, change_id=change),
+                    journal_service.history(self.side.library)["changes"],
+                    journal_service.history(self.side.library, change_id=change)["changes"]]
+        text = json.dumps(listings, default=repr).lower()
+        for name in ("img_1001", "earlier_", "cut short", "added later", "loose_", "photo_index", "pictures\\",
+                     os.path.basename(self.home.root).lower(), self.side.base.lower().replace("\\", "\\\\")):
+            self.assertNotIn(name, text)
+        summary = [e for e in listings[1] if e["id"] == change][0]["summary"]
+        self.assertEqual({"converted", "json", "settings", "outside_rows", "respelled", "root", "rows"}, set(summary))
+        self.assertEqual("pictures", summary["root"])
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class TheNoteSaysWhatIsTrue(AdoptionCase):
+    def test_it_names_the_roots_that_remain_and_where_the_rows_go(self):
+        first = self.adopt().details["change"]
+        loose = roots_service.adopt(self.side.library, "loose", "", self.side.outside_folder, rl.machine(), apply=True)
+        self.assertTrue(loose.ok)
+        said = " ".join(journal_service.undo(self.side.library, loose.details["change"]).details["rehearsal"]["notes"])
+        self.assertIn("Undoing the adoption of root loose returns 2 path(s)", said)
+        self.assertIn("from loose's row form to the native path this machine's map gives them", said)
+        self.assertIn("No row moves to another root", said)
+        self.assertIn("the library keeps root pictures, whose rows are not touched", said)
+        self.assertNotIn("holds no root", said)
+        self.assertIsNone(journal_service.undo(self.side.library, loose.details["change"], apply=True).refused)
+        said = " ".join(journal_service.undo(self.side.library, first).details["rehearsal"]["notes"])
+        self.assertIn("when it is done the library holds no root", said)
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class TheBackupHoldsTheLock(AdoptionCase):
+    def test_the_dry_run_says_how_long_and_to_stop_the_apps(self):
+        from click.testing import CliRunner
+        from tagpup_cli import cli
+        estimate = self.adopt(apply=False).details["rehearsal"]["backup"]
+        self.assertGreater(estimate["bytes"], 0)
+        self.assertGreaterEqual(estimate["seconds"], 1)
+        said = CliRunner().invoke(cli, ["--db", self.side.db_path, "roots", "adopt", "--name", "pictures",
+                                         "--location", self.side.pictures]).output
+        self.assertIn("Run this with TagPup and TagTuner stopped: the backup holds the write lock for the length of "
+                      "the copy (about", " ".join(said.split()))
+
+    def test_the_estimate_uses_the_speed_the_last_backup_ran_at(self):
+        self.assertTrue(self.adopt().ok)
+        with open(os.path.join(self.home.data, "backups", adoption.RATE_FILE), encoding="utf-8") as handle:
+            rate = json.load(handle)["bytes_per_second"]
+        self.assertGreater(rate, 0)
+        size = adoption.backup_estimate(self.side.db_path)["bytes"]
+        self.assertEqual(max(1, int(round(size / rate))), adoption.backup_estimate(self.side.db_path)["seconds"])
+
+    def test_a_write_by_another_process_during_the_copy_is_told_why(self):
+        started, release, outcome = threading.Event(), threading.Event(), []
+        real = adoption.backup
+
+        def slow(db_path):
+            started.set()
+            release.wait(60)
+            return real(db_path)
+
+        code = (
+            "import sys\n"
+            "sys.path.insert(0, %r)\n"
+            "from tagpup.store import db\n"
+            "db.BUSY_TIMEOUT_MS = 300\n"
+            "try:\n"
+            "    db.write_with_connection(%r, lambda conn: conn.execute(\"UPDATE settings SET value = value\"))\n"
+            "    print('written')\n"
+            "except Exception as problem:\n"
+            "    print(type(problem).__name__, problem)\n"
+        ) % (os.path.dirname(os.path.dirname(os.path.abspath(__file__))), self.side.db_path)
+        with mock.patch.object(adoption, "backup", slow):
+            thread = threading.Thread(target=lambda: outcome.append(self.adopt()))
+            thread.start()
+            self.assertTrue(started.wait(60), "the adoption never reached its backup")
+            self.assertTrue(os.path.exists(self.side.db_path + ".busy"))
+            done = processes.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120,
+                                 stdin=subprocess.DEVNULL)
+            release.set()
+            thread.join(120)
+        said = done.stdout.strip()
+        self.assertIn("OperationalError", said, done.stderr[-1000:])
+        self.assertIn("database is locked", said)
+        self.assertIn("being adopted by a root (roots adopt)", said)
+        self.assertIn("backup copy holds the write lock for the length of the copy, about", said)
+        self.assertTrue(outcome and outcome[0].ok, outcome)
+        self.assertFalse(os.path.exists(self.side.db_path + ".busy"), "the note outlived the copy")
+
+    def test_a_note_that_is_old_is_not_believed_and_a_lock_with_no_note_is_a_bare_lock(self):
+        db.mark_busy(self.side.db_path, "a reason")
+        self.assertEqual("a reason", db.busy_note(self.side.db_path))
+        old = time.time() - db.BUSY_NOTE_SECONDS - 5
+        os.utime(self.side.db_path + ".busy", (old, old))
+        with open(self.side.db_path + ".busy", encoding="utf-8") as handle:
+            found = json.load(handle)
+        found["since"] = old
+        with open(self.side.db_path + ".busy", "w", encoding="utf-8") as handle:
+            json.dump(found, handle)
+        self.assertIsNone(db.busy_note(self.side.db_path))
+        db.clear_busy(self.side.db_path)
+        self.assertIsNone(db.busy_note(self.side.db_path))
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")

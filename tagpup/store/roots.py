@@ -336,50 +336,40 @@ def native_one(conn, row, *columns, raw=()):
 _SOURCE_FILE = re.compile(r'("SourceFile"\s*:\s*)("(?:[^"\\]|\\.)*")')
 
 
-def _rerooted(value, roots, reroot):
-    """The native path of `value`, a row of ANOTHER root, when it lies under root `reroot`'s place
-    (a root nested inside the one the row names, being adopted); else None."""
-    if not reroot or not isinstance(value, str) or not value.startswith(paths.ROOT_MARK):
-        return None
-    try:
-        native = paths.from_row(value, roots)
-    except paths.RootsError:
-        return None
-    found = roots.locate(native)
-    return native if found is not None and found[0] == reroot else None
+def _of_root(value, only):
+    """Is `value` a row of root `only` -- `@only` or `@only/...`, the name in any case? Always
+    true when no root is asked for. A test of the row's own form, never of the text around it."""
+    if not isinstance(value, str) or not value.startswith(paths.ROOT_MARK):
+        return False
+    return only is None or value[1:].partition(paths.ROW_SEP)[0].lower() == only
 
 
-def source_to_row(value, roots, reroot=None):
+def source_to_row(value, roots):
     """ExifTool's SourceFile of a photo, `D:/Training/Pictures/2024/a.jpg` -- the path the way
     ExifTool spells it, forward slashes -- as `@pictures/2024/a.jpg`, when the file is under a
     root and converting back gives exactly this string; any other spelling is left as it is,
     which loses nothing: the field says where the file was read, and a row that is compared
     with a fresh read compares the same string it was written with."""
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not value or value.startswith(paths.ROOT_MARK):
         return value
-    original = value
-    if value.startswith(paths.ROOT_MARK):
-        native = _rerooted(value, roots, reroot)
-        if native is None:
-            return value
-        value = paths.exiftool_spelling(native)
     try:
         row = paths.to_row(value, roots)
         if row == value or not row.startswith(paths.ROOT_MARK):
-            return original
-        return row if paths.exiftool_spelling(paths.from_row(row, roots)) == value else original
+            return value
+        return row if paths.exiftool_spelling(paths.from_row(row, roots)) == value else value
     except paths.RootsError:
-        return original
+        return value
 
 
-def source_from_row(value, roots):
-    """source_to_row, the other way."""
-    if isinstance(value, str) and value.startswith(paths.ROOT_MARK):
+def source_from_row(value, roots, only=None):
+    """source_to_row, the other way: a row (of root `only`, if one is named) as ExifTool's
+    spelling of the path."""
+    if _of_root(value, only):
         return paths.exiftool_spelling(paths.from_row(value, roots))
     return value
 
 
-def _source(text, roots, convert, reroot=None):
+def _source(text, roots, convert):
     if roots.identity or not text or '"SourceFile"' not in text:
         return text
 
@@ -388,34 +378,28 @@ def _source(text, roots, convert, reroot=None):
             value = json.loads(found.group(2))
         except ValueError:
             return found.group(0)
-        changed = convert(value, roots, reroot) if reroot else convert(value, roots)
+        changed = convert(value, roots)
         return found.group(0) if changed == value else found.group(1) + json.dumps(changed)
 
     return _SOURCE_FILE.sub(swap, text)
 
 
-def raw_to_row(text, roots, reroot=None):
-    """raw_metadata as the library holds it: its SourceFile converted (source_to_row), and with
-    `reroot` -- the root being adopted -- one held under another root that lies under it moved to
-    it. The rest of the text is as it was."""
-    return _source(text, roots, source_to_row, reroot)
+def raw_to_row(text, roots):
+    """raw_metadata as the library holds it: its SourceFile converted (source_to_row). The
+    rest of the text is as it was."""
+    return _source(text, roots, source_to_row)
 
 
-def raw_to_native(text, roots):
-    """raw_metadata as this machine reads it: its SourceFile as ExifTool would give it here."""
-    return _source(text, roots, source_from_row)
+def raw_to_native(text, roots, only=None):
+    """raw_metadata as this machine reads it: its SourceFile as ExifTool would give it here --
+    with `only`, just a SourceFile that is a row of that root, and nothing else of the text."""
+    return _source(text, roots, lambda value, each: source_from_row(value, each, only))
 
 
-def _exact(value, roots, reroot=None):
-    """A native stored path as `@name/...` when converting back gives exactly this string; with
-    `reroot`, a row of another root lying under root `reroot` moved to it."""
-    if not isinstance(value, str) or not value:
+def _exact(value, roots):
+    """A native stored path as `@name/...` when converting back gives exactly this string."""
+    if not isinstance(value, str) or not value or value.startswith(paths.ROOT_MARK):
         return value
-    if value.startswith(paths.ROOT_MARK):
-        native = _rerooted(value, roots, reroot)
-        if native is None:
-            return value
-        value = native
     try:
         row = paths.to_row(value, roots)
         return row if row.startswith(paths.ROOT_MARK) and paths.from_row(row, roots) == value else value
@@ -423,13 +407,7 @@ def _exact(value, roots, reroot=None):
         return value
 
 
-def _plain(value, roots):
-    if isinstance(value, str) and value.startswith(paths.ROOT_MARK):
-        return paths.from_row(value, roots)
-    return value
-
-
-def _suggested(text, roots, convert, reroot=None):
+def _suggested(text, roots, convert):
     """suggestions.raw, the suggester's own output, with the paths in it -- the photo's own
     and each nearest neighbour's -- converted. Parsed and written back only when a path
     changed."""
@@ -442,28 +420,26 @@ def _suggested(text, roots, convert, reroot=None):
     if not isinstance(raw, dict):
         return text
     changed = False
-
-    def go(value):
-        return convert(value, roots, reroot) if reroot else convert(value, roots)
-
-    if isinstance(raw.get("path"), str) and go(raw["path"]) != raw["path"]:
-        raw["path"] = go(raw["path"])
+    if isinstance(raw.get("path"), str) and convert(raw["path"], roots) != raw["path"]:
+        raw["path"] = convert(raw["path"], roots)
         changed = True
     for neighbour in raw.get("nearest_neighbors") or []:
         if isinstance(neighbour, dict) and isinstance(neighbour.get("path"), str):
-            converted = go(neighbour["path"])
+            converted = convert(neighbour["path"], roots)
             if converted != neighbour["path"]:
                 neighbour["path"] = converted
                 changed = True
     return json.dumps(raw) if changed else text
 
 
-def suggested_to_row(text, roots, reroot=None):
-    return _suggested(text, roots, _exact, reroot)
+def suggested_to_row(text, roots):
+    return _suggested(text, roots, _exact)
 
 
-def suggested_to_native(text, roots):
-    return _suggested(text, roots, _plain)
+def suggested_to_native(text, roots, only=None):
+    """suggestions.raw with its paths native: with `only`, just those that are rows of that
+    root."""
+    return _suggested(text, roots, lambda value, each: paths.from_row(value, each) if _of_root(value, only) else value)
 
 
 # ---- Folder lists: the settings library.roots and library.ignored ------------------------------
