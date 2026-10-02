@@ -60,6 +60,14 @@ def _library_roots(library):
         raise NotFound("The library cannot be read: %s" % problem) from None
 
 
+def require_root(library, name):
+    """The root's name as the library spells it; NotFound when the library has no such root."""
+    folded = paths.root_name(name)
+    if folded not in _library_roots(library):
+        raise NotFound("This library has no root called %s." % folded)
+    return folded
+
+
 def last_verify(library, name):
     """What the last Verify of root `name` found, as counts and when, or None: {"when", "mode",
     "location", "outcome", "checked", "matches", "differs", "missing", "unreadable", "rows",
@@ -270,12 +278,14 @@ def change_location(library, name, location, machine, apply=False, override=Fals
 
     running = list(busy() if busy is not None else []) + _running_here(library)
     if running:
+        result.details["conflict"] = True
         result.refuse("Not changed: %s. Wait for it to finish or cancel it, then try again." % "; ".join(running))
         return result
     job = MOVE_JOB % name
     started = now()
     claim = job_runs.claim(library.path, job, library.name, started)
     if not claim:
+        result.details["conflict"] = True
         result.refuse("Not changed: another change of %s is under way; try again in a moment." % name)
         return result
     try:
@@ -286,6 +296,7 @@ def change_location(library, name, location, machine, apply=False, override=Fals
     except ValueError as problem:
         job_runs.finish(library.path, claim.run_id, job_runs.FAILED, now(),
                         {"what": "change of location of root %s refused" % name}, str(problem))
+        result.details["conflict"] = "changed since you looked" in str(problem)
         result.refuse(str(problem))
         return result
     except BaseException as problem:
