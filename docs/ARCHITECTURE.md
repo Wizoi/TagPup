@@ -64,7 +64,7 @@ Imports only go down:
 | Layer | Package | Owns | May import |
 |---|---|---|---|
 | core | `tagpup.core` | Pure rules: path identity (and a root's row form, `paths.to_row` / `from_row`), a library's name and the files that belong to it (`Library`), the tag vocabulary (leaf, root, person), people derivation, suggestion scoring, clustering decisions; and `core.machine`, the one place the store asks for the machine's map of the roots | nothing but `core` |
-| config | `tagpup.config` | `TAGPUP_HOME` and where the libraries are (its `data/`), which ExifTool the machine has, where this machine keeps each root (`machine_roots.json`, read, and written only when an adoption finds the root missing from it; it registers its reader with `tagpup.core.machine` when imported), and the one reading of an old `config.ini`, for stamping a library that holds no settings yet (phase 7.6). A library's settings are its own (`tagpup.services.settings`). Never written by the app (#100) | `core` (to spell and check a root's locations) |
+| config | `tagpup.config` | `TAGPUP_HOME` and where the libraries are (its `data/`), which ExifTool the machine has, where this machine keeps each root (`machine_roots.json`, read, and written only when an adoption finds the root missing from it; it registers its reader with `tagpup.core.machine` when imported, and `core.machine` imports it itself when asked with none registered, so no entry point has to remember to), and the one reading of an old `config.ini`, for stamping a library that holds no settings yet (phase 7.6). A library's settings are its own (`tagpup.services.settings`). Never written by the app (#100) | `core` (to spell and check a root's locations) |
 | logs | `tagpup.logs` | Each program's log file in `data/logs/`, each line carrying the runs under way (`tagpup.core.runs`), and reading them back, bounded, for the Activity page. Set up by entry points | `core`, `config` |
 | supervisor | `tagpup.supervisor` | The always-on process (phase 8): runs the web server as its child, restarts it, moves it onto a newer installed version once drained, one per home; and the names it shares with the server (the token, `data/server.json`, the exit code for ports another holds), which `tagpup.web` reads | `core`, `config`, `logs` |
 | store | `tagpup.store` | The library database: connections and locks, schema and migrations, generations, one repository per table, caches keyed by generation, backups | `core` |
@@ -600,16 +600,27 @@ the design assumes a GPU and more memory later and does not wait for them.
     no root (grouped by folder with `paths.outside_roots`; they keep their native path), rows that would not convert
     back, rows that would become one, the settings it rewrites, and says why it would be refused; it reads and
     writes nothing. `--apply`: the map first if it lacks the root (atomic, one editor at a time, only then), then in
-    ONE transaction under the library's write lock: the library's backup (the copy made within the last quarter
-    hour covers it; under the lock, so it is the library as it stands), every table converted, verified before it
-    commits (row counts equal, every rooted row converts back, the map places the root where the rows were converted
-    by), one journaled change, `roots adopt: pictures`. It refuses, writing nothing: a root of that name already, a
+    ONE transaction under the library's write lock: a new backup of the library (always a fresh one, under the lock,
+    so it is the library as it stands), every table converted, verified before it commits (row counts equal, every
+    rooted row converts back, no row is held under one root though it lies under another's place, the map places the
+    root where the rows were converted by), one journaled change, `roots adopt: pictures`. Every place the map lists
+    for the root is equivalent: a row under any of them converts, taking the first one's spelling (counted as
+    respelled). **A root nested inside one the library has** takes the outer root's rows that lie under it
+    (`@pictures/2024 Regatta/x` becomes `@regatta/x`, counted as rerooted, recorded in the change's summary), or every
+    lookup under the inner root would miss them. It refuses, writing nothing: a root of that name already, a
     location that is not a folder here, a location no row lies under, a map that places the root elsewhere, a row that
-    is not reversible, two rows that would become one, another process holding the write lock, an unfinished change of
-    photo files. `undo` reverses it (`adoption.undo_in`: the same conversion back by the map, verified), refused while a
-    later change wrote a path (their recorded values are rows, which an unadopted library cannot read) or this
-    machine does not place the root. Every step is `_reached`, and tests stop the process at each: the library is
-    exactly as it was.
+    is not an absolute path here or does not convert back, rows spelled by the share's address (named as their own
+    count and folder list: converting them would retarget them from the master, the share, to this machine's copy; fix
+    their spelling first, or adopt a root whose location is the share), two rows that would become one when at least
+    one of them converts (two rows of one file that both stay outside the root are only reported as duplicates),
+    another process holding the write lock, an unfinished change of photo files. `undo` reverses it
+    (`adoption.undo_in`: the same conversion back by the map, verified; a rerooted row returns to its outer root) and
+    also converts back the row-form paths that later changes recorded (`change_rows`, `change_files`), in the same
+    transaction, so those changes stay undoable in a library with no root; the dry run says so plainly before
+    `--apply` (the undo's rehearsal notes, which the CLI prints). It is refused only when this machine does not place
+    the root, or a later change recorded a path of the root that cannot be converted back (named). Every step is
+    `_reached`, and tests stop the process at each: the library is exactly as it was. A refused `--apply` still
+    migrates the library to schema 18 first (additive and empty, *decided 2026-10-02*).
   - **Checks**: `tools/doctor.py` and the MCP's checks gain `rooted_rows_convert` (rooted rows that name a root the
     library does not have, that this machine does not place, or that are not what `to_row` writes) and
     `native_rows_under_a_root` (a write made between another process's adoption and its own commit, the one race
