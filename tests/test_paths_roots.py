@@ -146,8 +146,8 @@ class RoundTrip(unittest.TestCase):
                     self.assertTrue(row.startswith("@"), (spelled, row))
                     back = paths.from_row(row, roots)
                     # Equal to the path, apart from the root's own spelling, which the map decides.
-                    # (A UNC share root has two spellings, with and without the trailing separator.)
-                    self.assertEqual(paths.key(back).rstrip("\\"), paths.key(spelled).rstrip("\\"), (spelled, row, back))
+                    self.assertEqual(paths._as_folder(paths.key(back)), paths._as_folder(paths.key(spelled)),
+                                     (spelled, row, back))
                     # Idempotent: a row is the same row from what it gave back.
                     self.assertEqual(paths.to_row(back, roots), row)
                     if spelled is native and "/" in row:
@@ -204,9 +204,11 @@ class WhichRootAPathIsUnder(unittest.TestCase):
         with self.assertRaises(paths.UnmappedRoot):
             paths.sql_equals("path", "E:\\West\\a.jpg", roots)
 
-    def test_an_unmapped_root_with_an_address_still_names_paths_in_its_address(self):
+    def test_an_unmapped_root_with_an_address_names_its_paths_but_is_not_converted(self):
         roots = paths.Roots.of({"east": "", "west": "\\\\nas\\West"}, {"east": ["D:\\East"]})
-        self.assertEqual(paths.to_row("\\\\nas\\west\\a.jpg", roots), "@west/a.jpg")
+        self.assertEqual(roots.propose_row("\\\\nas\\west\\a.jpg"), "@west/a.jpg")
+        with self.assertRaises(paths.UnmappedRoot):    # refused, as from_row refuses, so no row is written unread
+            paths.to_row("\\\\nas\\west\\a.jpg", roots)
 
     def test_a_drive_not_mounted_is_not_a_difference(self):
         # The model asks the disk nothing, so a root on an absent drive still maps its paths.
@@ -412,6 +414,116 @@ class TheMachineMap(unittest.TestCase):
             out, err = reader.communicate(timeout=120)
             self.assertEqual(reader.returncode, 0, err)
             self.assertTrue(set(json.loads(out)) <= whole, out)
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class ReviewFindings(unittest.TestCase):
+    """The reviewer's findings on the first version (#421 to #429)."""
+
+    def setUp(self):
+        self.home = own_home.for_test(self)
+        self.file = config.machine_roots_path()
+
+    def write(self, text, binary=None):
+        with open(self.file, "wb") as handle:
+            handle.write(binary if binary is not None else text.encode("utf-8"))
+
+    def test_421_one_root_may_not_nest_its_own_places(self):
+        with self.assertRaises(paths.RootsError) as caught:
+            paths.check_locations({"a": ["D:\\X", "D:\\X\\Y"]})
+        self.assertIn(repr("D:\\X"), str(caught.exception))
+        self.assertIn(repr("D:\\X\\Y"), str(caught.exception))
+        with self.assertRaises(paths.RootsError):
+            paths.Roots({"a": "\\\\nas\\Pics"}, {"a": ["\\\\nas\\Pics\\2024"]})
+        with self.assertRaises(paths.RootsError):
+            paths.Roots({"a": "\\\\nas\\Pics\\2024"}, {"a": ["\\\\nas\\Pics"]})
+        # Across different roots, the deeper one wins; a root's address equal to its own location is one place.
+        paths.Roots({"a": "", "b": ""}, {"a": ["D:\\X"], "b": ["D:\\X\\Y"]})
+        paths.Roots({"a": "D:\\X"}, {"a": ["D:\\X"]})
+
+    def test_422_a_unc_share_root_is_one_place_with_or_without_its_separator(self):
+        with self.assertRaises(paths.RootsError):
+            paths.check_locations({"a": ["\\\\nas\\photos", "\\\\nas\\photos\\"]})
+        with self.assertRaises(paths.RootsError):
+            paths.check_locations({"a": ["\\\\nas\\photos"], "b": ["\\\\NAS\\photos\\"]})
+        roots = paths.Roots({"s": ""}, {"s": ["\\\\nas\\photos\\"]})
+        for spelled in ("\\\\nas\\photos", "\\\\nas\\photos\\", "//NAS/photos"):
+            self.assertEqual(paths.to_row(spelled, roots), "@s", spelled)
+        self.assertEqual(paths.to_row("\\\\nas\\photos\\a.jpg", roots), "@s/a.jpg")
+        self.assertEqual(paths.from_row("@s", roots), "\\\\nas\\photos")
+        self.write(json.dumps({"version": 1, "roots": {"a": ["\\\\nas\\photos", "\\\\nas\\photos\\"]}}))
+        with self.assertRaises(config.MachineMapError):
+            config.machine_roots()
+
+    def test_423_a_root_with_an_address_and_no_location_refuses_both_ways(self):
+        library = {"east": "", "west": "\\\\nas\\West"}
+        self.write(json.dumps({"version": 1, "roots": {"east": ["D:\\East"]}}))
+        roots = config.roots_of(library)
+        for call in (lambda: paths.to_row("\\\\nas\\west\\a.jpg", roots),
+                     lambda: paths.sql_equals("path", "\\\\nas\\west\\a.jpg", roots),
+                     lambda: paths.sql_under("path", "\\\\nas\\west\\2024", roots),
+                     lambda: paths.sql_in("path", "\\\\nas\\west", roots),
+                     lambda: paths.from_row("@west/a.jpg", roots)):
+            with self.assertRaises(paths.UnmappedRoot) as caught:
+                call()
+            message = str(caught.exception)
+            self.assertIn("machine_roots.json", message)
+            self.assertIn(self.file, message)
+            self.assertIn("west", message)
+            self.assertIn('"roots": {"west": [', message)
+
+    def test_425_the_map_is_read_when_it_changes_and_not_per_call(self):
+        self.write(json.dumps({"version": 1, "roots": {"pictures": [DESKTOP]}}))
+        library = {"pictures": LOGICAL}
+        self.assertEqual(paths.to_row(DESKTOP + "\\a.jpg", config.roots_of(library)), "@pictures/a.jpg")
+        reads = []
+        real = config._read_whole
+        with mock.patch.object(config, "_read_whole", side_effect=lambda p: reads.append(p) or real(p)):
+            for _ in range(2000):
+                config.roots_of(library)
+            self.assertEqual(reads, [])
+            self.write(json.dumps({"version": 1, "roots": {"pictures": [SERVER], "extra": ["E:\\Extra"]}}))
+            self.assertEqual(paths.from_row("@pictures/a.jpg", config.roots_of(library)), SERVER + "\\a.jpg")
+            self.assertEqual(len(reads), 1)
+
+    def test_426_from_row_refuses_what_to_row_never_writes(self):
+        for bad in ("@pictures/", "@pictures/a\\b.jpg", "@pictures/C:x.jpg", "@pictures/a/b:c", "@pictures/x//y"):
+            with self.assertRaises(paths.RootsError, msg=bad):
+                paths.from_row(bad, desktop())
+        self.assertEqual(paths.from_row("@Pictures/x.jpg", desktop()), DESKTOP + "\\x.jpg")
+        self.assertEqual(paths.from_row("@PICTURES", desktop()), DESKTOP)
+        self.assertEqual(paths.to_row(DESKTOP + "\\x.jpg", desktop()), "@pictures/x.jpg")
+
+    def test_427_an_address_equal_to_another_roots_location_is_refused(self):
+        with self.assertRaises(paths.RootsError):
+            paths.Roots({"a": "D:\\X", "b": ""}, {"b": ["d:/x/"]})
+        paths.Roots.of({"a": ""}, {"a": ["D:\\X"]})
+        for turn in range(70):
+            paths.Roots.of({"a": ""}, {"a": ["D:\\Evict%d" % turn]})
+
+    def test_427_a_bom_is_read_and_utf16_is_told_to_be_saved_as_utf8(self):
+        text = json.dumps({"version": 1, "roots": {"pictures": [DESKTOP]}})
+        self.write("", binary=b"\xef\xbb\xbf" + text.encode("utf-8"))
+        self.assertEqual(config.machine_roots(), {"pictures": (DESKTOP,)})
+        self.write("", binary=text.encode("utf-16"))
+        with self.assertRaises(config.MachineMapError) as caught:
+            config.machine_roots()
+        self.assertIn("UTF-8", str(caught.exception))
+
+    def test_429_the_long_path_prefix_is_refused(self):
+        for spelled in ("\\\\?\\D:\\Training", "\\\\?\\UNC\\nas\\photos"):
+            with self.assertRaises(paths.RootsError) as caught:
+                paths.check_locations({"a": [spelled]})
+            self.assertIn("plain spelling", str(caught.exception))
+
+    def test_429_the_folders_under_no_root_are_grouped_and_counted(self):
+        roots = paths.Roots.of({"pictures": LOGICAL}, {"pictures": [DESKTOP]})
+        folders = [DESKTOP + "\\2024", DESKTOP, "E:\\Elsewhere\\a", "e:\\elsewhere\\b", "E:\\Elsewhere",
+                   "\\\\other\\share\\Misc\\x", "D:\\Training\\Other\\y", "D:\\Training", "@pictures/x", ""]
+        self.assertEqual(paths.outside_roots(folders, roots), [
+            {"group": "E:\\Elsewhere", "count": 3},
+            {"group": "D:\\Training", "count": 2},
+            {"group": "\\\\other\\share\\Misc", "count": 1}])
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")

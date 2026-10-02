@@ -509,7 +509,31 @@ the design assumes a GPU and more memory later and does not wait for them.
     name and the path under it) and `from_row()` (back), `sql_equals` / `sql_under` / `sql_in`
     convert their argument and still answer a range on the same indexed column, and the store's
     reads and writes of a path column call the two. A photo under no root (a tag-only folder, which
-    can have rows) keeps its native path, marked as belonging to this machine.
+    can have rows) keeps its native path, with no mark (decided 2026-10-02): a native absolute path
+    starts with a drive letter, a separator or `/`, never `@`, so the two forms cannot be confused.
+  - **The row form, as built in stage 1** (`tagpup.core.paths`, tested by `tests/test_paths_roots.py`):
+    `@name` is the root itself, `@name/a/b.jpg` a path under it, with `/` on every machine and the
+    case the file has; a root's name is `[a-z0-9_-]`, 1 to 32 characters, lower case. The name ends
+    at the first `/`, so `@photos/` is never a prefix of `@photos2/`, and `sql_under` is still one
+    range on the NOCASE index (the prefix, and the prefix with its `/` raised by one); a folder
+    above a root's location adds the root's own range to an OR. `from_row` refuses a part that is
+    empty, `.`, `..`, holds a colon or a backslash, or an empty part after `@name/`, and matches the
+    root's name in any case.
+  - **The machine's map** is `TAGPUP_HOME/machine_roots.json`, owned by `tagpup.config`:
+    `{"version": 1, "roots": {"pictures": ["D:\\Training\\Pictures"]}}`, UTF-8, the first location
+    being where a path is put and all being recognised. Absent means nothing is mapped; malformed
+    is an error naming the file, never an identity. Refused at load: a location that is not
+    absolute or starts `\\?\\`, one place listed twice or under two roots, a root's own places
+    (locations and share address) nested in one another, a share address equal to another root's
+    location. A UNC share root with or without its trailing separator is one place. Nesting across
+    different roots is allowed and the deeper wins. The map is re-read only when its (mtime, size)
+    changes; an operation builds one `Roots` and passes it down.
+  - **A root with no location on this machine is refused both ways** (`UnmappedRoot`): `from_row`
+    of its rows, and `to_row` and every `sql_*` of a path under its share address, so a row is never
+    written that cannot be read. So is a path under no root when such a root exists, since it might
+    be its. The message names `machine_roots.json`, its path, the root and the line to add. A
+    library with roots opened on a machine with no map therefore refuses; it does not behave as
+    if nothing were rooted.
   - What the audit adds to the change: the paths inside JSON (`photos.raw_metadata`'s `SourceFile`,
     `suggestions.raw`), the journal (`change_files`, `change_rows` values of `photos.path` and the
     roots settings, which an undo replays), the six raw-SQL comparisons that bypass `key()`

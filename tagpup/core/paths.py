@@ -46,10 +46,11 @@ tests/test_paths_single_owner.py fails the build on anything that does.
 """
 import os
 import re
+import threading
 
 __all__ = ["stored", "key", "same", "is_under", "sql_equals", "sql_under", "sql_in", "COLLATE",
            "Roots", "to_row", "from_row", "root_name", "check_locations", "is_native_absolute",
-           "RootsError", "UnmappedRoot", "UnknownRoot"]
+           "RootsError", "UnmappedRoot", "UnknownRoot", "outside_roots"]
 
 #: Does this filesystem ignore case? normcase says so on Windows and not elsewhere.
 CASE_INSENSITIVE = os.path.normcase("A") == "a"
@@ -225,18 +226,41 @@ def is_native_absolute(path):
 
 
 def _folded(path):
-    """(stored, key) of an absolute path."""
+    """(stored, folder-form key) of an absolute path. The key ends in a separator whether or
+    not the spelling does, so a UNC share root with and without its trailing separator,
+    and a drive root, are each one location; two places nest when one key starts with the
+    other, which a sibling ("photos2" against "photos") never does."""
     spelled = stored(path)
-    return spelled, os.path.normcase(spelled)
+    drive = os.path.splitdrive(spelled)[0]
+    if spelled.endswith(os.sep) and not (spelled == drive + os.sep and (not drive or drive.endswith(":"))):
+        spelled = spelled[:-1]     # a UNC share root, with or without its separator, is one place
+    return spelled, _as_folder(os.path.normcase(spelled))
+
+
+def _plain(address, what):
+    if address.startswith("\\\\?\\") or address.startswith("//?/"):
+        raise RootsError("%s %r uses the long-path prefix; write the plain spelling "
+                         "(D:\\folder or \\\\server\\share\\folder)" % (what, address))
+
+
+def _nested(name, spelled_keys):
+    """Refuse two places of one root, one inside the other: a path under both would have
+    two relative parts. [(spelling, folder-form key)], in the order given."""
+    for i, (first, a) in enumerate(spelled_keys):
+        for second, b in spelled_keys[i + 1:]:
+            if a.startswith(b) or b.startswith(a):
+                raise RootsError("root %r: %r and %r are one place inside the other (or the same); "
+                                 "a root's locations and share address must not nest" % (name, first, second))
 
 
 def check_locations(locations):
     """Validate {name: [native, ...]} and return it as {folded name: (stored, ...)}.
 
     Refused, each with a message naming it: a bad name, two names that fold to one, a
-    root with no location, a location that is not absolute, and the same location twice
-    -- under two roots, or twice under one -- since a path under it could then belong to
-    either. Nested locations are fine: the deeper one wins.
+    root with no location, a location that is not absolute or that uses the long-path
+    prefix (\\\\?\\), the same location twice (under two roots, or under one), and, within
+    one root, one location inside another. Nested locations of different roots are fine:
+    the deeper one wins.
     """
     checked, seen = {}, {}
     for name, listed in locations.items():
@@ -247,8 +271,9 @@ def check_locations(locations):
             listed = [listed]
         if not listed:
             raise RootsError("root %r lists no location" % folded)
-        spelled_all = []
+        spelled_all, keyed = [], []
         for native in listed:
+            _plain(native, "root %r: location" % folded)
             if not is_native_absolute(native):
                 raise RootsError("root %r: %r is not an absolute location" % (folded, native))
             spelled, folded_key = _folded(native)
@@ -256,6 +281,8 @@ def check_locations(locations):
                 raise RootsError("%r is listed under %r and under %r" % (spelled, seen[folded_key], folded))
             seen[folded_key] = folded
             spelled_all.append(spelled)
+            keyed.append((spelled, folded_key))
+        _nested(folded, keyed)
         checked[folded] = tuple(spelled_all)
     return checked
 
@@ -266,70 +293,96 @@ class Roots:
     `logical` is {name: the share's own address} -- informational, but also a spelling
     that names the root (a path typed as the share's UNC address is under it). `locations`
     is {name: [native location, ...]}; the first is where from_row puts a path, and every
-    one is a place to_row recognises. Build with Roots.of(), which keeps the prepared map
-    for as long as the same content is asked for.
+    one is a place to_row recognises. `map_file` is where the machine's map is, for the
+    message that says what to add. Build with Roots.of(), which keeps the prepared map for
+    as long as the same content is asked for; build one per operation and pass it down.
 
     The rules, each a refusal and not a guess:
     * a path under a location (or a logical address) of a root is that root's; of several,
-      the longest match, so a nested location resolves to the deeper root;
+      the longest match, so a nested location of another root resolves to the deeper root.
+      Within one root, locations and address must not nest or repeat (RootsError);
     * a path under none is "unrooted" and keeps its native spelling -- unless some root of
-      the library has no location on this machine, when it might belong to that root, and
-      to_row raises UnmappedRoot. A machine whose drive is not mounted still maps the
-      string (nothing here asks the disk), so an unmounted drive is not this case;
-    * from_row of a row under a root that has no location here, or whose name the library
-      does not have, raises.
+      the library has no location on this machine and no address that could say it is not
+      its, when to_row raises UnmappedRoot: it might belong to that root;
+    * a root with no location here is refused both ways: from_row of its rows, and to_row
+      (so sql_*) of a path under its share address, raise UnmappedRoot, so that no row is
+      ever written that cannot be read back. The message says what to add to the map. A
+      machine whose drive is not mounted still maps the string; nothing here asks the disk;
+    * a row naming a root the library does not have raises UnknownRoot.
     """
 
-    def __init__(self, logical=None, locations=None):
+    def __init__(self, logical=None, locations=None, map_file=""):
         logical = {root_name(n): (a or "") for n, a in (logical or {}).items()}
         checked = check_locations(locations or {})
         self.logical = logical
+        self.map_file = map_file
         # Roots the machine maps that this library does not have are another library's.
         self.locations = {n: v for n, v in checked.items() if n in logical}
         self.unmapped = tuple(sorted(n for n in logical if n not in self.locations))
         self.identity = not logical
         entries = {}
+        explicit = {}
+        for name, listed in self.locations.items():
+            for spelled in listed:
+                explicit[_folded(spelled)[1]] = (spelled, name)
+        keyed = {name: [(s, _folded(s)[1]) for s in listed] for name, listed in self.locations.items()}
         for name, address in logical.items():
             if address and is_native_absolute(address):
+                _plain(address, "root %r: share address" % name)
                 spelled, folded_key = _folded(address)
+                if folded_key in explicit and explicit[folded_key][1] != name:
+                    raise RootsError("%r is the share address of %r and a location of %r"
+                                     % (address, name, explicit[folded_key][1]))
                 if folded_key in entries and entries[folded_key][1] != name:
                     raise RootsError("%r is the address of both %r and %r" % (address, entries[folded_key][1], name))
                 entries[folded_key] = (spelled, name)
-        for name, listed in self.locations.items():
-            for spelled in listed:
-                entries[os.path.normcase(spelled)] = (spelled, name)
-        # Longest first, so the first match is the deepest. (key, folder form, its length, name)
-        self._matchers = tuple(sorted(
-            ((k, _as_folder(k), len(_as_folder(k)), name) for k, (_s, name) in entries.items()),
-            key=lambda m: -len(m[0])))
+                # The same place as one of its own locations is harmless; anything else nested is not.
+                if all(folded_key != k for _s, k in keyed.get(name, ())):
+                    keyed.setdefault(name, []).append((spelled, folded_key))
+        for name, pairs in keyed.items():
+            _nested(name, pairs)
+        entries.update(explicit)
+        # Longest first, so the first match is the deepest. (folder-form key, its length, name)
+        self._matchers = tuple(sorted(((k, len(k), name) for k, (_s, name) in entries.items()),
+                                      key=lambda m: -m[1]))
         self._first = {n: v[0] for n, v in self.locations.items()}
 
     _prepared = {}
+    _lock = threading.Lock()
 
     @classmethod
-    def of(cls, logical=None, locations=None):
+    def of(cls, logical=None, locations=None, map_file=""):
         """The Roots for this content, built once however often it is asked for."""
         key = (tuple(sorted((logical or {}).items())),
-               tuple(sorted((n, tuple([v] if isinstance(v, str) else v)) for n, v in (locations or {}).items())))
-        found = cls._prepared.get(key)
+               tuple(sorted((n, tuple([v] if isinstance(v, str) else v)) for n, v in (locations or {}).items())),
+               map_file)
+        with cls._lock:
+            found = cls._prepared.get(key)
         if found is None:
-            found = cls._prepared[key] = cls(logical, locations)
-            if len(cls._prepared) > 64:
-                cls._prepared.pop(next(iter(cls._prepared)))
+            found = cls(logical, locations, map_file)
+            with cls._lock:
+                cls._prepared[key] = found
+                while len(cls._prepared) > 64:
+                    cls._prepared.pop(next(iter(cls._prepared)), None)
         return found
 
     def locate(self, native):
         """(name, relative part with "/" separators) of a native path, or None when it is
         under no root. Never raises for an unmapped root; to_row does."""
         spelled = stored(native)
-        folded_key = os.path.normcase(spelled)
-        for exact, folder, size, name in self._matchers:
-            if folded_key == exact:
-                return name, ""
-            if folded_key.startswith(folder):
+        folder = _as_folder(os.path.normcase(spelled))
+        for exact, size, name in self._matchers:
+            if folder.startswith(exact):
+                if len(folder) == size:
+                    return name, ""
                 rel = spelled[size:]
                 return name, (rel if os.sep == ROW_SEP else rel.replace(os.sep, ROW_SEP))
         return None
+
+    def what_to_add(self, name):
+        where = self.map_file or "machine_roots.json in the TagPup home"
+        return ('root %r has no location on this machine: add it to %s, for example '
+                '{"version": 1, "roots": {"%s": ["D:\\\\where\\\\it\\\\lives"]}}' % (name, where, name))
 
     def describe(self):
         """One dict per root, for a page to show: name, logical address, this machine's
@@ -339,8 +392,8 @@ class Roots:
 
     def propose_row(self, native):
         """What the row for a native path would be, or None when it is under no root, so a
-        page can say "outside the roots" and where to move it. Same answer as to_row, for
-        a path to_row can answer."""
+        page can say "outside the roots" and where to move it. Never raises, and so says
+        nothing of an unmapped root; to_row is what refuses."""
         found = self.locate(native)
         return None if found is None else _row(*found)
 
@@ -367,41 +420,76 @@ def _row(name, rel):
 
 def to_row(path, roots=None):
     """A native path as the database holds it: "@name/rel" under a root, else stored().
-    With no roots, or none configured, stored() -- as it always was. "" for nothing."""
+    With no roots, or none configured, stored() -- as it always was. "" for nothing.
+
+    Raises UnmappedRoot for a path under a root this machine has no location for, and for
+    a path under no root when such a root exists (it might be its): the machine's map
+    (machine_roots.json) has to say where the root is first."""
     if not path:
         return ""
     if roots is None or roots.identity:
         return stored(path)
     found = roots.locate(path)
     if found is not None:
+        if found[0] not in roots._first:
+            raise UnmappedRoot(roots.what_to_add(found[0]))
         return _row(*found)
     if roots.unmapped:
-        raise UnmappedRoot("%r is under no root this machine knows, and %s %s no location here, "
-                           "so it may belong to one" % (stored(path), ", ".join(roots.unmapped),
-                                                        "has" if len(roots.unmapped) == 1 else "have"))
+        raise UnmappedRoot("%r is under no root this machine knows, and %s no location here, so it "
+                           "may belong to one. %s" % (stored(path), ", ".join(roots.unmapped),
+                                                      roots.what_to_add(roots.unmapped[0])))
     return stored(path)
 
 
 def from_row(value, roots=None):
-    """The native path of what the database holds. A row under no root is already native."""
+    """The native path of what the database holds. A row under no root is already native.
+
+    A rooted row is refused, not repaired, when it is not what to_row writes: a relative
+    part with an empty, ".", ".." or drive/colon element or a native separator, or an empty
+    one after the separator ("@name/"). The root's name is matched in any case, which is
+    how a NOCASE comparison may hand it back."""
     if not value:
         return ""
     if not value.startswith(ROOT_MARK):
         return value
     if roots is None or roots.identity:
         raise UnknownRoot("%r is a root-relative row and no roots were given" % value)
-    name, _, rel = value[1:].partition(ROW_SEP)
+    name, separator, rel = value[1:].partition(ROW_SEP)
+    name = name.lower()
     if name not in roots.logical:
         raise UnknownRoot("%r names root %r, which this library does not have" % (value, name))
     if name not in roots._first:
-        raise UnmappedRoot("root %r has no location on this machine" % name)
+        raise UnmappedRoot(roots.what_to_add(name))
     location = roots._first[name]
-    if not rel:
+    if not separator:
         return location
     parts = rel.split(ROW_SEP)
-    if any(part in ("", ".", "..") for part in parts):
+    if any(part in ("", ".", "..") or ":" in part or (os.sep != ROW_SEP and os.sep in part) for part in parts):
         raise RootsError("%r is not a path under a root" % value)
     return _as_folder(location) + (rel if os.sep == ROW_SEP else rel.replace(ROW_SEP, os.sep))
+
+
+def outside_roots(folders, roots):
+    """The folders under no root, grouped for a person to read: [{"group", "count"}], the
+    biggest first, each group the first two elements of the path (D:\\Training; for a
+    share, \\\\server\\share\\Folder), counting the folders given -- one per row or one per
+    distinct folder, as the caller passes them. For the migration's dry run and for
+    Verify. `folders` are native paths; a row already in root form is skipped. Pure, and
+    never raises for an unmapped root: that root's paths are under it, not outside."""
+    counts, shown = {}, {}
+    for folder in folders:
+        if not folder or folder.startswith(ROOT_MARK):
+            continue
+        spelled = stored(folder)
+        if roots is not None and not roots.identity and roots.locate(spelled) is not None:
+            continue
+        drive, rest = os.path.splitdrive(spelled)
+        names = [part for part in rest.split(os.sep) if part]
+        group = drive + os.sep + names[0] if names else drive + os.sep
+        group_key = os.path.normcase(group)
+        counts[group_key] = counts.get(group_key, 0) + 1
+        shown.setdefault(group_key, group)
+    return [{"group": shown[k], "count": n} for k, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
 
 
 def _row_folder(folder, roots):
@@ -423,7 +511,7 @@ def _under_roots(folder, roots):
     spelling reaches."""
     inside = _as_folder(os.path.normcase(stored(folder)))
     names = []
-    for exact, _folder, _size, name in roots._matchers:
-        if exact.startswith(inside) and name not in names:
+    for exact, _size, name in roots._matchers:
+        if exact != inside and exact.startswith(inside) and name not in names:
             names.append(name)
     return names

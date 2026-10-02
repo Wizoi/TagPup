@@ -28,6 +28,7 @@ import json
 import os
 import platform
 import shutil
+import threading
 import time
 
 from tagpup.core import paths
@@ -145,15 +146,20 @@ def _read_whole(path):
     the file a writer is renaming a new one over; that is waited out, a second at most."""
     for attempt in range(40):
         try:
-            with open(path, encoding="utf-8") as handle:
-                return handle.read()
+            with open(path, "rb") as handle:
+                raw = handle.read()
+            if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+                raise MachineMapError("%s is saved as UTF-16; save it as UTF-8" % path)
+            return raw.decode("utf-8-sig")
         except FileNotFoundError:
             return None
         except PermissionError as problem:
             if attempt == 39:
                 raise MachineMapError("%s cannot be read: %s" % (path, problem)) from problem
             time.sleep(0.025)
-        except (OSError, UnicodeDecodeError) as problem:
+        except UnicodeDecodeError as problem:
+            raise MachineMapError("%s cannot be read as UTF-8; save it as UTF-8: %s" % (path, problem)) from problem
+        except OSError as problem:
             raise MachineMapError("%s cannot be read: %s" % (path, problem)) from problem
 
 
@@ -165,10 +171,15 @@ def machine_roots(path=None):
         {"version": 1, "roots": {"pictures": ["D:\\Training\\Pictures"]}}
 
     Several libraries on one machine share it: a root the library does not have is
-    ignored by that library (tagpup.core.paths.Roots). Refused, with MachineMapError
-    naming the file and the fault: unreadable, not JSON, a key twice, a key it does not
-    know, a bad root name, a location that is not absolute, a root with none, and one
-    location under two roots (core.paths.check_locations). Read-only: a process reading
+    ignored by that library (tagpup.core.paths.Roots). Saved as UTF-8, with or without a
+    BOM. Refused, with MachineMapError naming the file and the fault: unreadable, UTF-16,
+    not JSON, a key twice, a key it does not know, a bad root name, a location that is not
+    absolute or starts with the long-path prefix, a root with none, one location under two
+    roots, and one root's locations nested (core.paths.check_locations).
+
+    A missing file is an empty map, and that is not harmless once a library holds roots:
+    every row under a root then raises paths.UnmappedRoot, and so does a path under that
+    root's share address, naming this file and the line to add. Read-only: a process reading
     while another replaces the file sees the old file or the new, as long as the writer
     renames a finished file over it, and every reader loads the whole file once.
     """
@@ -196,10 +207,43 @@ def machine_roots(path=None):
         raise MachineMapError("%s: %s" % (path, problem)) from problem
 
 
+_MAPS = {}
+_MAPS_LOCK = threading.Lock()
+
+
+def _map_stamp(path):
+    try:
+        found = os.stat(path)
+    except OSError:
+        return None
+    return (found.st_mtime_ns, found.st_size)
+
+
+def _machine_map(path):
+    """machine_roots(), read again only when the file's (mtime_ns, size) has changed: one
+    stat per call. A missing file is remembered too, as an empty map."""
+    stamp = _map_stamp(path)
+    with _MAPS_LOCK:
+        held = _MAPS.get(path)
+    if held is not None and held[0] == stamp:
+        return held[1]
+    loaded = machine_roots(path)
+    with _MAPS_LOCK:
+        _MAPS[path] = (stamp, loaded)
+    return loaded
+
+
 def roots_of(library_roots, path=None):
-    """The paths.Roots for a library's roots ({name: logical address}) on this machine,
-    prepared once for as long as the same map and roots are asked for."""
-    return paths.Roots.of(library_roots, machine_roots(path))
+    """The paths.Roots for a library's roots ({name: logical address}) on this machine.
+
+    Costs one stat of the map file, and reads it only when it changed, so an edit to
+    machine_roots.json is picked up by the next call, in this process, and 2,000 calls
+    with no change read nothing. Still, an operation builds one Roots and passes it down
+    to what it calls (stage 2 does this for each request, run and job), instead of asking
+    per row. A library with roots on a machine with no map raises paths.UnmappedRoot at
+    the first path it is asked to convert."""
+    path = path or machine_roots_path()
+    return paths.Roots.of(library_roots, _machine_map(path), path)
 
 
 def describe_machine(library_roots, path=None):
