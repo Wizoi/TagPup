@@ -579,6 +579,10 @@ the design assumes a GPU and more memory later and does not wait for them.
     what the owner sees listed in path order (`damaged_files.every` / `under`, `inspection.ids_and_paths`,
     `whose_file_is_gone`) is sorted again after the paths are native, in the order the NOCASE index gave
     (`roots.ordered`); every other `ORDER BY` is by id or time.
+  - **Caches of native paths.** The Identify Faces grids, the folders the watcher watches and the index hold
+    paths of this machine, built while a generation of photos or faces stood; moving a root in the map moves no row,
+    so `store.generations` adds a salt -- the library's roots and where this machine keeps them, 0 for a library with
+    none -- to the generations of photos and faces, and every cache keyed by them is built again when the map moves.
   - **The paths inside JSON.** `photos.raw_metadata`'s `SourceFile` is ExifTool's spelling of the path (forward
     slashes) and is compared with a fresh read of the file (`refresh_rows.differences`), and after a rename it names
     the old file, so it is converted, not derived: `@pictures/2024/a.jpg` when the file is under a root and
@@ -617,9 +621,7 @@ the design assumes a GPU and more memory later and does not wait for them.
     made here) the dry run takes 1.5 s and `--apply` 5.9 s with the backup, an undo 6.6 s.
   - **Not built, for stage 3**: TagTuner's Verify and Change location, the machine map's writer for a changed place
     (`config.add_machine_root` refuses a different place for a root it has: the previous place is kept beside the new
-    one by the owner's edit), pinning a run in `services` (above), the folder caches above the store that hold native
-    paths across a map edit (`services.sync._held_folders`, keyed by the photos generation; the watcher's watches), the
-    server's answer to `services.roots.problem` at a library's open, and `roots remove` (an undo is the way back).
+    one by the owner's edit), pinning a run in `services` (above), the server's answer to `services.roots.problem` at a library's open, and `roots remove` (an undo is the way back).
 - **Changing where a root lives, in TagTuner** *(owner, 2026-10-02)*: for now the libraries stay on
   `D:\Training`, and once the core features are in and trusted the same libraries are pointed at
   the official share, losing nothing. TagTuner's gear (the server-side component's page) shows
