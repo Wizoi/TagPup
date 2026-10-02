@@ -13,6 +13,8 @@ format and the ExifTool it names. What is left here is the machine's:
   Where the libraries are is not a setting: data/ in the home.
 - Which ExifTool the machine has: where its installer puts it, else the one on PATH.
   A library may name another.
+- Which folder on this machine holds each root of the libraries (machine_roots.json in the
+  home; docs/ARCHITECTURE.md, "Roots and machines"). Absent means nothing is mapped.
 - `code_version`, the installed version the code is (scripts/install_app.py writes its
   name beside it), or None for a checkout: what the pages say answers them.
 - `config_ini`, what a home's config.ini says, which tagpup.runtime hands to the
@@ -22,9 +24,13 @@ format and the ExifTool it names. What is left here is the machine's:
   and can be deleted.
 """
 import configparser
+import json
 import os
 import platform
 import shutil
+import time
+
+from tagpup.core import paths
 
 CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -110,3 +116,98 @@ def config_ini(folder=None):
     if exiftool and _same_file(os.path.expandvars(exiftool), default_exiftool()):
         found["paths.exiftool"] = ""
     return found
+
+
+#: The file in a home that says where this machine keeps each root of the libraries.
+MACHINE_ROOTS_FILE = "machine_roots.json"
+
+
+class MachineMapError(ValueError):
+    """machine_roots.json is there and cannot be used. Never read as "no mapping": rows
+    that hold a root's name would then be opened at the wrong place, or nowhere."""
+
+
+def machine_roots_path():
+    return os.path.join(home(), MACHINE_ROOTS_FILE)
+
+
+def _no_duplicate_keys(pairs):
+    found = {}
+    for name, value in pairs:
+        if name in found:
+            raise ValueError("%r appears twice" % name)
+        found[name] = value
+    return found
+
+
+def _read_whole(path):
+    """The file's text, None when there is no file. Windows refuses a reader, for a moment,
+    the file a writer is renaming a new one over; that is waited out, a second at most."""
+    for attempt in range(40):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return handle.read()
+        except FileNotFoundError:
+            return None
+        except PermissionError as problem:
+            if attempt == 39:
+                raise MachineMapError("%s cannot be read: %s" % (path, problem)) from problem
+            time.sleep(0.025)
+        except (OSError, UnicodeDecodeError) as problem:
+            raise MachineMapError("%s cannot be read: %s" % (path, problem)) from problem
+
+
+def machine_roots(path=None):
+    """Where this machine keeps each root: {name: (native location, ...)}, the first of
+    a root's locations being where a path under it is put. {} when the home has no
+    machine_roots.json, which means this machine maps nothing.
+
+        {"version": 1, "roots": {"pictures": ["D:\\Training\\Pictures"]}}
+
+    Several libraries on one machine share it: a root the library does not have is
+    ignored by that library (tagpup.core.paths.Roots). Refused, with MachineMapError
+    naming the file and the fault: unreadable, not JSON, a key twice, a key it does not
+    know, a bad root name, a location that is not absolute, a root with none, and one
+    location under two roots (core.paths.check_locations). Read-only: a process reading
+    while another replaces the file sees the old file or the new, as long as the writer
+    renames a finished file over it, and every reader loads the whole file once.
+    """
+    path = path or machine_roots_path()
+    text = _read_whole(path)
+    if text is None:
+        return {}
+    try:
+        found = json.loads(text, object_pairs_hook=_no_duplicate_keys)
+        if not isinstance(found, dict) or set(found) - {"version", "roots"}:
+            raise ValueError('it holds an object with "version" and "roots", and nothing else')
+        if found.get("version") != 1:
+            raise ValueError('"version" is 1')
+        listed = found.get("roots")
+        if not isinstance(listed, dict):
+            raise ValueError('"roots" is an object of root name to a list of locations')
+        for name, locations in listed.items():
+            if isinstance(locations, str):
+                locations = [locations]
+            if not isinstance(locations, list) or not all(isinstance(each, str) for each in locations):
+                raise ValueError("root %r: locations are a list of paths" % name)
+            listed[name] = locations
+        return paths.check_locations(listed)
+    except ValueError as problem:
+        raise MachineMapError("%s: %s" % (path, problem)) from problem
+
+
+def roots_of(library_roots, path=None):
+    """The paths.Roots for a library's roots ({name: logical address}) on this machine,
+    prepared once for as long as the same map and roots are asked for."""
+    return paths.Roots.of(library_roots, machine_roots(path))
+
+
+def describe_machine(library_roots, path=None):
+    """Each of a library's roots with where this machine keeps it, for TagTuner's gear."""
+    return roots_of(library_roots, path).describe()
+
+
+def propose_row(native_path, library_roots, path=None):
+    """The root-relative form a native path would have, "@name/under/it", or None when it
+    is under no root of the library. Pure: nothing is written and no disk is asked."""
+    return roots_of(library_roots, path).propose_row(native_path)

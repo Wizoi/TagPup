@@ -45,7 +45,10 @@ READS_THE_FILE = re.compile(r"\.config_ini\b|\bimport\b.*\bconfig_ini\b")
 #: and the one reader of config.ini.
 PUBLIC = {"home", "data_dir", "library_path", "default_exiftool", "exiftool_path", "config_ini",
           # Which installed version the code is (VERSION.txt beside it): not a setting.
-          "code_version"}
+          "code_version",
+          # Where this machine keeps each root of the libraries: the machine's, not a setting.
+          "machine_roots", "machine_roots_path", "MachineMapError", "roots_of", "describe_machine",
+          "propose_row"}
 
 
 def _lines(relative):
