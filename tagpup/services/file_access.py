@@ -508,7 +508,7 @@ def forget():
 def check(data_folder, places=(), refresh=False, probes=None, total=TOTAL_SECONDS):
     """The findings, read now or remembered (CACHE_SECONDS, per process). A `probes` of a test is never remembered. Never
     raises; a check that did not finish in `total` seconds returns what it had, with a finding saying so."""
-    places = [paths.stored(place) for place in places if place]
+    places = list({paths.key(place): paths.stored(place) for place in places if place}.values())
     data_folder = paths.stored(data_folder)
     key = (paths.key(data_folder), tuple(paths.key(place) for place in places))
     if probes is None:

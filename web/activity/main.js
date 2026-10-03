@@ -9,6 +9,7 @@ import { loadNow } from './now.js';
 import { loadJobs } from './jobs.js';
 import { loadSync } from './sync.js';
 import { loadSnapshots } from './snapshots.js';
+import { loadFileAccess } from './file-access.js';
 import { loadServer } from './server.js';
 import { loadTimeline, wireTimeline } from './timeline.js';
 import { followLog, loadLogFiles, readLog, wireLogs } from './logs.js';
@@ -32,5 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
     poller(() => Promise.all([loadAttention(), loadJobs(), loadSync(), loadServer(), loadTimeline()]),
            state.slowEvery).start();
     poller(loadSnapshots, state.slowEvery * 4).start();
+    // Which other programs can interfere with the files: asked once when the page opens, and on Check again.
+    loadFileAccess();
     loadLogFiles().then(() => readLog());
 });

@@ -8,6 +8,7 @@
 // state.js's; requests go through api.js; paths are the server's, shown as they come.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
+import { fileAccessNote } from './common/file-access-note.js';
 import { state } from './state.js';
 
 const TIMES = String.fromCharCode(0xd7);
@@ -464,6 +465,7 @@ function buildRootsDialog() {
             buildElement('p', { className: 'roots-about', text: 'The library remembers each photo as a root and '
                 + 'the path under it; this computer says where each root is. Moving a root changes only that: '
                 + 'no photo file and no row.' }),
+            fileAccessNote('roots-about file-access-note'),
             state.roots.body,
             buildElement('div', { className: 'modal-footer roots-footer' }, [state.roots.status, done]),
         ]),

@@ -222,7 +222,8 @@ describe("the Activity page draws each section from what the server says", () =>
     await flush(window, 6);
     assert.ok(fake.urls().length >= 7);
     for (const url of fake.urls().filter((each) => !each.includes("api/rules"))) {
-      assert.ok(url.startsWith("/api/activity/"), `asked under a library, or not the Activity routes: ${url}`);
+      assert.ok(url.startsWith("/api/activity/") || url.startsWith("/api/file-access/"),
+        `asked under a library, or not the Activity routes: ${url}`);
     }
   });
 });

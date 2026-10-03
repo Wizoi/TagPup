@@ -17,6 +17,12 @@ export const state = {
     sync: null,
     snapshots: null,
     server: null,
+    //: File access: what the check last found, whether one is under way, why it failed, and the
+    //: findings the owner has dealt with in this browser ({ id: true }, localStorage).
+    fileAccess: null,
+    fileAccessChecking: false,
+    fileAccessError: null,
+    fileAccessDismissed: {},
     timeline: { limit: 50, entries: [], more: false },
     //: The Run now asked and waiting for its confirmation: { job, library } or null.
     confirming: null,

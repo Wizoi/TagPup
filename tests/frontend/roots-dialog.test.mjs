@@ -85,6 +85,15 @@ describe("the Roots dialog", () => {
     assert.ok(row.querySelector(".roots-back").disabled, "no earlier place to go back to");
   });
 
+  test("it carries one quiet line linking to the Activity page's File access, and asks nothing for it", async (t) => {
+    const ctx = await tuner(t);
+    const dialog = await openFromGear(ctx);
+    const note = dialog.querySelector(".file-access-note");
+    assert.equal(text(note), "Other programs may be scanning these files: see Activity > File access");
+    assert.equal(note.querySelector("a").getAttribute("href"), "/activity/#file-access");
+    assert.equal(ctx.server.calls.filter((c) => c.url.includes("file-access")).length, 0);
+  });
+
   test("a root with an earlier place says it is a separate copy, and Change back is there", async (t) => {
     const ctx = await tuner(t, { roots: [entry({ places: [NEW, OLD], active: NEW, previous: OLD,
       writes_to: `Tags and renames are written to files at ${NEW}.` })] });

@@ -151,3 +151,23 @@ td.actions { white-space: nowrap; }
 .attention-table td.path {
     word-break: break-all;
 }
+
+/* File access: one row to a finding; a warning is loud, a note quiet, a dealt-with warning greyed as ok. */
+.finding { border-left: 4px solid var(--border); background: var(--bg-card); border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
+.finding-warn { border-left-color: var(--busy); }
+.finding-info { border-left-color: var(--accent); }
+.finding-ok { border-left-color: var(--ok); }
+.finding.dismissed { opacity: 0.55; }
+.finding-head { display: flex; gap: 10px; align-items: center; }
+.level-icon { display: inline-block; min-width: 22px; height: 22px; line-height: 22px; text-align: center; border-radius: 11px;
+              font-size: 12px; font-weight: bold; color: #0f1115; padding: 0 4px; }
+.level-warn { background: var(--busy); }
+.level-info { background: var(--accent); }
+.level-ok { background: var(--ok); }
+.finding .why, .finding .what { margin: 6px 0 0 32px; }
+.finding .why { color: var(--muted); }
+.commands-box { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0 0 32px; }
+.commands { flex: 1; margin: 0; padding: 8px 10px; background: #0b0d11; border: 1px solid var(--border); border-radius: 6px;
+            overflow-x: auto; white-space: pre; user-select: all; font-family: Consolas, monospace; font-size: 12px; }
+.finding .dismiss { margin: 6px 0 0 32px; }
+.file-access-controls { display: flex; gap: 12px; align-items: center; margin-top: 10px; }

@@ -21,6 +21,10 @@ raw, downloaded) show background work. What it asks:
   POST /api/activity/attention/check reads them again now (Check again).
 - GET /api/activity/logs and /api/activity/logs/<name>[/raw|/download]: the logs in
   data/logs, read from the end and never whole (tagpup.logs.read).
+- GET /api/file-access/check: which other programs (Windows Defender's real-time scanning,
+  the Search indexer, a cloud-sync client, another antivirus) can interfere with TagPup's
+  folders, as findings with the commands the owner may run; read-only, remembered ten minutes
+  (tagpup.services.file_access; `refresh=1` asks again).
 
 It answers this PC alone: a request from any other address is refused 403 whatever
 address the server listens on (it listens on loopback: tagpup.web.app.bind). What it
@@ -34,6 +38,7 @@ import urllib.parse
 
 from flask import Blueprint, Response, abort, current_app, jsonify, request, send_file
 
+from tagpup import config as tagpup_config
 from tagpup import logs
 from tagpup import runtime as runtimes
 from tagpup import supervisor
@@ -44,8 +49,10 @@ from tagpup.jobs import recurring
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import activity
 from tagpup.services import damaged_photos
+from tagpup.services import file_access
 from tagpup.services import indexing
 from tagpup.services import job_runs
+from tagpup.services import roots as roots_service
 from tagpup.web import responses
 
 logger = logging.getLogger(__name__)
@@ -397,6 +404,39 @@ def attention_check():
             logger.warning("Could not check the damaged photos of %s again: %s", library.name, e)
             listed.append({"name": library.name, "error": str(e)})
     return jsonify({"success": True, "libraries": listed})
+
+
+# ---- File access ---------------------------------------------------------------------------
+
+def _places_of(library):
+    """The folders this machine keeps `library`'s roots at, the first place of each; [] when it cannot say."""
+    try:
+        machine = roots_service.Machine(tagpup_config.machine_roots, tagpup_config.add_machine_root,
+                                        tagpup_config.machine_roots_path)
+        found = roots_service.listing(library, machine)["roots"]
+    except Exception as e:
+        logger.warning("Could not read the places of the roots of %s: %s", library.name, e)
+        return []
+    return [entry["locations"][0] for entry in found if entry.get("locations")]
+
+
+@routes.get("/api/file-access/check")
+def file_access_check():
+    """Which other programs can interfere with TagPup's files: the data folder and, for `library` (every
+    library when none is named), the places its roots are kept at. Reads only; never changes a setting."""
+    name = request.args.get("library")
+    if name:
+        library = _library_named(name)
+        if library is None:
+            return responses.error(404, "There is no library called %s" % (name,))
+        every = [library]
+    else:
+        every = _libraries()
+    places = []
+    for library in every:
+        places += _places_of(library)
+    refresh = request.args.get("refresh") in ("1", "true")
+    return jsonify(file_access.check(tagpup_config.data_dir(), places, refresh=refresh))
 
 
 # ---- Snapshots ----------------------------------------------------------------------------
