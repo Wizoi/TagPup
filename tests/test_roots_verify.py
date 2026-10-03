@@ -206,6 +206,21 @@ class ASampleCoversEveryFolder(VerifyCase):
         self.assertEqual(found["checked"], self.verify(sample=6)["checked"])
         self.assertEqual(153, found["rows"])
 
+    def test_a_sample_that_is_stopped_early_has_looked_at_folders_from_everywhere(self):
+        """On a slow share a sample may run out of time: it must not have seen only the first folders."""
+        seen = []
+        real_list = roots_verify._list_one
+
+        def listing(folder):
+            seen.append(folder)
+            return real_list(folder)
+
+        with mock.patch.object(roots_verify, "_list_one", listing):
+            found = self.verify(cancel=lambda: len(seen) >= 2)
+        self.assertEqual("cancelled", found["stopped"])
+        everything = sorted(os.path.dirname(path) for path in self.side.real)
+        self.assertNotEqual(sorted(set(everything))[:2], sorted(seen), "the sample went through the folders in order")
+
     def test_more_folders_than_the_sample_still_each_get_a_row(self):
         by_folder = {"f%03d" % n: ("f%03d" % n, [("a", "a", 1, 1), ("b", "b", 1, 1)]) for n in range(40)}
         chosen = roots_verify.sample_of(by_folder, 10)

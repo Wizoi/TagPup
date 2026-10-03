@@ -318,7 +318,11 @@ def _list_bounded(location, folder, seconds):
 
 
 def _sample_run(location, chosen, by_folder, tally, cancel, progress, deadline, total, seconds):
-    for number, key in enumerate(sorted(chosen), 1):
+    # In an order spread over the root, not alphabetical: a sample that runs out of time on a slow
+    # share has then looked at folders from everywhere, not at the first few years only.
+    order = sorted(chosen)
+    random.Random(len(order)).shuffle(order)
+    for key in order:
         if cancel():
             tally.stopped = "cancelled"
             return
