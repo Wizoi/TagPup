@@ -41,6 +41,17 @@ rebuilt, or forbidden. `tests/test_journal_keys_and_cascades.py` holds every cas
 of a new library to one of the three, and every journaled table to keys SQLite never
 hands out again, so an undo that puts a row back cannot meet a newer one.
 
+A library that holds a root (tagpup.store.roots) holds a photo's path, its raw_metadata's
+SourceFile, a suggestion's paths and the folders of the two folder settings as the root's row
+(`@pictures/2024/a.jpg`), and the journal speaks of them in that one form: the values an edit
+carries -- native, as everything above the store spells them -- are converted before they are
+compared with a row or written (`_canonical`), what a change records is the row form, and a
+change recorded before the library was adopted, whose values are native, is converted the same
+way when it is read (`_load`), so that undoing it writes the row form for a rooted photo and
+never a native row beside the rooted one. Both sides of every comparison are converted, so a
+row and a value that name the same file are equal however either is spelled. A library with no
+roots is read and written exactly as before.
+
 Refusals name tables, row keys and columns, never values: the library is photographs of
 real people, many of them minors.
 """
@@ -53,8 +64,10 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from tagpup.core import paths
 from tagpup.store import db, file_journal, people, schema
 from tagpup.store import photos as store_photos
+from tagpup.store import roots as store_roots
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +114,13 @@ CASCADES = {
     ("photos", "photo_people"): ("photo_id", REBUILT),
     ("tag_taxonomy", "tag_taxonomy"): ("parent_id", FORBIDDEN),
 }
+
+#: What the name of the journal's record of a migration begins with ("migration 8: ...").
+MIGRATION = "migration "
+
+#: What the name of the change that adopts a root begins with (tagpup.store.adoption): it holds
+#: no rows, and its undo converts the library's paths back.
+ADOPTION = "roots adopt"
 
 #: How long a change stays undoable. Pruning then deletes its values and keeps its
 #: summary, and the change becomes `pruned`. An undo is for a mistake noticed in use,
@@ -220,6 +240,9 @@ class Rehearsal:
     derived_stale: int = 0
     #: [row, why] of each skippable edit applying would leave out.
     skipped: List[List[str]] = field(default_factory=list)
+    #: What the undo does that its rows do not say: the undo of an adoption converts paths in the
+    #: library's tables and in what later changes recorded.
+    notes: List[str] = field(default_factory=list)
 
     def as_dict(self):
         return asdict(self)
@@ -261,6 +284,21 @@ def _read(conn, table, key, columns):
     return None if row is None else dict(zip(columns, row))
 
 
+def _canonical(roots, table, key, values):
+    """`values` ({column: value}) of the row keyed `key` of `table` as the library holds
+    them: the paths in them as their row form (tagpup.store.roots.row_value). The same
+    dict for a library with no roots."""
+    if roots.identity:
+        return values
+    return store_roots.row_values(roots, table, values, key[0] if table == "settings" and key else None)
+
+
+def _canonical_value(roots, table, key, column, value):
+    if roots.identity:
+        return value
+    return store_roots.row_value(roots, table, column, value, key[0] if table == "settings" and key else None)
+
+
 def has_journal(conn):
     """Has the library on `conn` the journal's tables (migration 9)?"""
     return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'changes'").fetchone() is not None
@@ -274,6 +312,7 @@ def _resolve(conn, edits):
     writing them would leave a row naming one that is not there or break a UNIQUE
     constraint (_blocked). Reads only."""
     columns = {}
+    roots = store_roots.roots_for(conn)
 
     def cols(table):
         if table not in columns:
@@ -303,7 +342,8 @@ def _resolve(conn, edits):
                     continue
             elif len(KEYS[edit.table]) > 1:
                 raise ValueError("a row of %s is inserted with its key" % edit.table)
-            top.append(RowChange("insert", edit.table, key, None, dict(edit.values), edit.kind))
+            top.append(RowChange("insert", edit.table, key, None,
+                                 dict(_canonical(roots, edit.table, key, edit.values)), edit.kind))
             continue
 
         key = tuple(edit.key)
@@ -319,7 +359,9 @@ def _resolve(conn, edits):
             else:
                 refusals.append("%s is gone" % _named(edit.table, key))
             continue
-        differs = [column for column, value in edit.expect.items() if not _same(row[column], value)]
+        differs = [column for column, value in edit.expect.items()
+                   if not _same(_canonical_value(roots, edit.table, key, column, row[column]),
+                                _canonical_value(roots, edit.table, key, column, value))]
         if differs:
             if edit.skippable:
                 skipped.append((_named(edit.table, key), "not what the plan read: %s changed" % ", ".join(differs)))
@@ -328,7 +370,9 @@ def _resolve(conn, edits):
                                 % (_named(edit.table, key), ", ".join(differs)))
             continue
         if edit.action == "update":
-            changed = {column: value for column, value in edit.values.items() if not _same(row[column], value)}
+            wanted_values = _canonical(roots, edit.table, key, edit.values)
+            changed = {column: value for column, value in wanted_values.items()
+                       if not _same(_canonical_value(roots, edit.table, key, column, row[column]), value)}
             if changed:
                 top.append(RowChange("update", edit.table, key, {c: row[c] for c in changed}, changed, edit.kind))
             continue
@@ -571,8 +615,10 @@ def _record(conn, change_id, changes):
                      " VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
 
 
-def _load(conn, change_id):
-    """The rows change `change_id` wrote, in the order it wrote them."""
+def _load(conn, change_id, canonical=True):
+    """The rows change `change_id` wrote, in the order it wrote them: with their paths in the
+    form the library holds them in now (a change made before the library was adopted by a root
+    recorded them native), unless not `canonical`, which is for showing what was recorded."""
     changes, index = [], {}
     for action, table, key_text, column, old, new in conn.execute(
             "SELECT action, table_name, row_key, column_name, old, new FROM change_rows"
@@ -588,6 +634,13 @@ def _load(conn, change_id):
             change.old[column] = old
         if change.new is not None:
             change.new[column] = new
+    roots = store_roots.roots_for(conn) if canonical else None
+    if roots is not None and not roots.identity:
+        for change in changes:
+            if change.old is not None:
+                change.old = _canonical(roots, change.table, change.key, change.old)
+            if change.new is not None:
+                change.new = _canonical(roots, change.table, change.key, change.new)
     return changes
 
 
@@ -608,6 +661,7 @@ def _again(change):
 def _not_as_left(conn, change_id, changes):
     """Why the rows are not what change `change_id` left them: [] when they are."""
     reasons = []
+    roots = store_roots.roots_for(conn)
     for change in changes:
         if change.action == "delete":
             if _read(conn, change.table, change.key, KEYS[change.table]) is not None:
@@ -618,7 +672,8 @@ def _not_as_left(conn, change_id, changes):
             reasons.append("%s is gone" % _named(change.table, change.key))
             continue
         derived = DERIVED_COLUMNS.get(change.table, ())
-        differs = [c for c in change.new if c not in derived and not _same(row[c], change.new[c])]
+        differs = [c for c in change.new if c not in derived
+                   and not _same(_canonical_value(roots, change.table, change.key, c, row[c]), change.new[c])]
         if differs:
             reasons.append("%s is not what change %d left: %s changed"
                            % (_named(change.table, change.key), change_id, ", ".join(differs)))
@@ -792,6 +847,30 @@ def _writes_files(conn, change_id):
         "SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone() is not None
 
 
+def schema_gap_blocker(version, current):
+    """Why a change made at schema `version` may not mean what it did in a library at `current`:
+    a sentence naming the first migration in between that could have changed it, or None when none
+    could. A migration cannot have if it is ADDITIVE and touches no table a change can name or the
+    journal derives (KEYS, DERIVED): adding the roots table, the runs of jobs, a folder list, moves
+    no row a journaled change recorded. Every other migration blocks, and so does one that is not
+    in the list: what cannot be classified is never exempt. A change made at a schema NEWER than
+    the library's blocks too (an older version of the app opened it)."""
+    if version > current:
+        return "migration %d is not applied here" % version
+    known = {migration.version: migration for migration in schema.MIGRATIONS}
+    journaled = set(KEYS) | set(DERIVED)
+    for number in range(version + 1, current + 1):
+        migration = known.get(number)
+        if migration is None:
+            return "migration %d is not known" % number
+        if migration.kind != schema.ADDITIVE:
+            return "migration %d, %s, is %s" % (number, migration.name, migration.kind)
+        touched = sorted(set(migration.touches) & journaled)
+        if touched:
+            return "migration %d, %s, touches %s" % (number, migration.name, ", ".join(touched))
+    return None
+
+
 def refusal(conn, change_id):
     """Why change `change_id` cannot be undone now, as the journal alone can say --
     without reading a row's values or a photo file -- or [] when it may be tried. The
@@ -808,6 +887,12 @@ def refusal(conn, change_id):
     if row is None:
         return ["there is no change %d" % change_id]
     _operation, status, version = row
+    if _operation.startswith(MIGRATION) and conn.execute(
+            "SELECT 1 FROM change_rows WHERE change_id = ? LIMIT 1", (change_id,)).fetchone() is None:
+        # The journal's record that a migration ran, with no rows to put back (schema._Run._record):
+        # a schema is not undone. A data migration's record holds its rows and is undone, by the
+        # rule below, while it is the newest.
+        return ["change %d (%s): a migration is not undone" % (change_id, _operation)]
     files = _writes_files(conn, change_id)
     if status == "pruned":
         return ["change %d was pruned: %s gone, so it cannot be undone"
@@ -821,8 +906,13 @@ def refusal(conn, change_id):
                 for other, name in file_journal.newer_overlapping(conn, change_id)]
     current = schema.version(conn)
     if version != current:
-        return ["change %d was made at schema %d and the library is at %d: its rows may not mean"
-                " what they did" % (change_id, version, current)]
+        blocking = schema_gap_blocker(version, current)
+        if blocking is not None:
+            return ["change %d was made at schema %d and the library is at %d: its rows may not mean"
+                    " what they did (%s)" % (change_id, version, current, blocking)]
+    if _operation.startswith(ADOPTION):
+        from tagpup.store import adoption   # adoption imports this module
+        return adoption.undo_refusals(conn, change_id)
     return ["change %d (%s), applied after it, changed the same rows: undo it first" % (other, name)
             for other, name in _newer_overlapping(conn, change_id)]
 
@@ -839,7 +929,39 @@ def refusals(db_path, change_ids):
         conn.close()
 
 
+class _Undone(list):
+    """The rows an undo wrote, and `converted`: how many paths the undo of an adoption
+    converted back, which are rows of tables the journal does not key, and what it says of
+    them (`notes`)."""
+    converted = 0
+    notes = ()
+
+
+def _adoption_note(conn, change_id, converted):
+    name = json.loads(conn.execute("SELECT summary FROM changes WHERE id = ?", (change_id,)).fetchone()[0]
+                      or "{}").get("root", "")
+    recorded = converted.get("recorded values", 0)
+    tables = sum(n for table, n in converted.items() if table != "recorded values")
+    remaining = [each for each, _address in store_roots._rows(conn)]
+    keeps = ("the library keeps %s, whose rows are not touched" % ", ".join("root " + each for each in remaining)
+             if remaining else "the library holds no root")
+    return ["Undoing the adoption of root %s returns %d path(s) in the library's tables, and %d path(s) recorded in "
+            "later changes' values, from %s's row form to the native path this machine's map gives them, in one "
+            "step, so those changes can still be undone afterwards. No row moves to another root, and a value that "
+            "is not a path of %s (a title, an address, another root's row) is left exactly as it is; when it is "
+            "done %s." % (name, tables, recorded, name, name, keeps)]
+
+
 def _undo_in(conn, change_id):
+    """_undo_rows, a root this machine does not place or a map that cannot be read being a
+    refusal that says so, not an error."""
+    try:
+        return _undo_rows(conn, change_id)
+    except paths.RootsError as problem:
+        raise Refusal([str(problem)]) from None
+
+
+def _undo_rows(conn, change_id):
     """Check change `change_id` may be undone (refusal), and write its inverse. Returns
     its rows. The caller holds the transaction."""
     if _writes_files(conn, change_id):
@@ -849,6 +971,13 @@ def _undo_in(conn, change_id):
     reasons = refusal(conn, change_id)
     if reasons:
         raise Refusal(reasons)
+    converted, notes = 0, ()
+    if conn.execute("SELECT 1 FROM changes WHERE id = ? AND substr(operation, 1, ?) = ?",
+                    (change_id, len(ADOPTION), ADOPTION)).fetchone():
+        from tagpup.store import adoption   # adoption imports this module
+        counted = adoption.undo_in(conn, change_id)
+        converted = sum(counted.values())
+        notes = _adoption_note(conn, change_id, counted)
     changes = _load(conn, change_id)
     reasons = _not_as_left(conn, change_id, changes)
     inverse = [_inverse(change) for change in reversed(changes)]
@@ -861,7 +990,10 @@ def _undo_in(conn, change_id):
     except sqlite3.IntegrityError as e:
         raise _integrity(e) from e
     conn.execute("UPDATE changes SET status = 'derived_pending', undone = ? WHERE id = ?", (_now(), change_id))
-    return changes
+    undone = _Undone(changes)
+    undone.converted = converted
+    undone.notes = notes
+    return undone
 
 
 def undo(db_path, change_id):
@@ -881,8 +1013,8 @@ def undo(db_path, change_id):
                 raise
             _reached("undo committed")
             settled = _settle_change(conn, change_id, changes)
-            logger.info("%s: change %d undone, %d row(s)", db_path, change_id, len(changes))
-            return Undone(change_id, len(changes), settled)
+            logger.info("%s: change %d undone, %d row(s)", db_path, change_id, len(changes) + changes.converted)
+            return Undone(change_id, len(changes) + changes.converted, settled)
         finally:
             conn.close()
 
@@ -990,11 +1122,15 @@ def rehearse_undo(db_path, change_id):
         try:
             db.begin(conn, immediate=True)
             try:
-                changes = _load(conn, change_id) if has_journal(conn) else []
+                try:
+                    changes = _load(conn, change_id) if has_journal(conn) else []
+                except paths.RootsError as e:
+                    return Rehearsal(refused=str(e))
                 stale = _derive(conn, changes)
                 before = _snapshot(conn, changes)
                 try:
-                    _undo_in(conn, change_id)
+                    undone = _undo_in(conn, change_id)
+                    converted = undone.converted
                 except Refusal as e:
                     return Rehearsal(refused=str(e))
                 _derive(conn, changes)
@@ -1003,7 +1139,10 @@ def rehearse_undo(db_path, change_id):
                     _write(conn, [_again(change) for change in changes])
                     _derive(conn, changes)
 
-                return _rehearsed(conn, before, changes, again, len(changes), stale)
+                rehearsal = _rehearsed(conn, before, changes, again, len(changes), stale)
+                rehearsal.rows += converted
+                rehearsal.notes = list(undone.notes)
+                return rehearsal
             finally:
                 conn.rollback()
         finally:
@@ -1105,7 +1244,7 @@ def history(db_path, limit=20, change_id=None, values=False):
                 keys[table].append(json.loads(key_text))
             entries[0]["keys"] = dict(keys)
             if values:
-                changes = _load(conn, change_id)
+                changes = _load(conn, change_id, canonical=False)
                 entries[0]["values"] = [{
                     "action": change.action, "table": change.table, "key": list(change.key),
                     "old": None if change.old is None else {c: _shown(v) for c, v in change.old.items()},

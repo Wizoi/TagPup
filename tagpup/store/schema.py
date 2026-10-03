@@ -652,6 +652,21 @@ def _faces_pending(conn):
                  " since TEXT NOT NULL)")
 
 
+def _roots(conn):
+    """The library's roots: `roots`, one row for each, its name (`pictures`), the share's own
+    address and when it was added (tagpup.store.roots; docs/ARCHITECTURE.md, "Roots and
+    machines"). A library with a root holds each photo's path as the root's name and the path
+    under it, and each machine says where it keeps the root. Only adds a table, empty: opening
+    a library never converts its paths, and one with no roots behaves exactly as it did. A
+    library is converted only by the explicit `roots adopt`, which the owner runs and which can
+    be undone. Needs no backup.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS roots ("
+                 " name TEXT PRIMARY KEY NOT NULL,"
+                 " address TEXT NOT NULL,"
+                 " added TEXT NOT NULL)")
+
+
 # ---- What a migration holds true before it commits ----------------------------------------
 
 #: The runner's own tables: it writes them as it records each migration.
@@ -1141,6 +1156,10 @@ MIGRATIONS = (
     Migration(17, "the photos whose faces are to be detected", _faces_pending, ADDITIVE,
               "adds the faces_pending table, empty",
               ("faces_pending",),
+              (RowsKept(),) + STANDARD),
+    Migration(18, "the library's roots", _roots, ADDITIVE,
+              "adds the roots table, empty: no path changes until the owner adopts a root",
+              ("roots",),
               (RowsKept(),) + STANDARD),
 )
 

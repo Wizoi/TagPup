@@ -4,9 +4,11 @@
     .venv/Scripts/python.exe tools/doctor.py --db data/photo_index.db --show 5
 
 Prints what the library holds, then each rule (tagpup.store.checks) with how many rows
-break it, then how many photos have no CLIP vector for the model the config names, then
-the rows whose file is not on disk, by folder. Counts only, unless --show asks for
-examples: they are paths and tags, and paths name people.
+break it -- among them the library's roots: a rooted row that cannot be read, a native row
+under a root -- then how many photos have no CLIP vector for the model the config names,
+then the rows whose file is not on disk, by folder, and the photos under no root, by folder.
+Counts only, unless --show asks for examples: they are paths and tags, and paths name
+people.
 
 Exits 1 when a rule is broken, else 0. Missing files do not count against it: a folder
 on an unplugged drive looks the same as a deleted one, and removing either is the
@@ -20,6 +22,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from tagpup import runtime  # noqa: E402
+from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import checks, db, embeddings  # noqa: E402
 
@@ -30,14 +33,24 @@ def report(db_path, show=0, out=print):
         raise SystemExit("There is no library at %s." % db_path)
     # The library's CLIP model, read without writing: a library never stamped reads as
     # stamping would make it.
-    model = embeddings.model_key(**runtime.peek_settings(Library(db_path)).embedder)
+    # A library holding a root this machine does not place cannot spell its paths: what needs
+    # them is left out, and said, and the rules that can still be asked are.
+    unplaced = None
+    try:
+        model = embeddings.model_key(**runtime.peek_settings(Library(db_path)).embedder)
+    except paths.RootsError as problem:
+        unplaced, model = str(problem), None
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         held = checks.summary(conn)
         results = checks.run(conn)
-        missing = checks.missing_files(conn)
-        unembedded = checks.without_a_vector(conn, model)
+        try:
+            missing = checks.missing_files(conn)
+        except paths.RootsError as problem:
+            unplaced, missing = unplaced or str(problem), []
+        unembedded = checks.without_a_vector(conn, model) if model else None
         undetected = checks.faces_to_detect(conn)
+        unrooted = checks.unrooted_by_folder(conn)
     finally:
         conn.close()
 
@@ -52,16 +65,26 @@ def report(db_path, show=0, out=print):
             for example in check.examples[:show]:
                 out("    %s" % example)
     out("")
-    out("photos without a vector for the configured model: %d (the next index of their folders "
-        "computes them)" % unembedded)
+    if unplaced:
+        out("this machine does not say where the library's roots are, so its photos' paths cannot be read "
+            "(what needs them is not reported): %s" % unplaced)
+    if unembedded is not None:
+        out("photos without a vector for the configured model: %d (the next index of their folders "
+            "computes them)" % unembedded)
     out("photos whose faces are still to be detected: %d (indexed from a damaged copy; the next index "
         "of their folders detects them)" % undetected)
-    rows = sum(count for _folder, count, _there in missing)
-    gone = [(folder, count) for folder, count, there in missing if not there]
-    out("rows whose file is not on disk: %d, in %d folder(s); %d folder(s) are gone entirely"
-        % (rows, len(missing), len(gone)))
-    for folder, count, there in missing[:show]:
-        out("    %6d  %s%s" % (count, folder, "" if there else "  (folder gone)"))
+    if not unplaced:
+        rows = sum(count for _folder, count, _there in missing)
+        gone = [(folder, count) for folder, count, there in missing if not there]
+        out("rows whose file is not on disk: %d, in %d folder(s); %d folder(s) are gone entirely"
+            % (rows, len(missing), len(gone)))
+        for folder, count, there in missing[:show]:
+            out("    %6d  %s%s" % (count, folder, "" if there else "  (folder gone)"))
+    if unrooted:
+        out("photos under no root of the library: %d, in %d place(s) (they keep their native paths)"
+            % (sum(group["count"] for group in unrooted), len(unrooted)))
+        for group in unrooted[:show]:
+            out("    %6d  %s" % (group["count"], group["group"]))
     return broken
 
 

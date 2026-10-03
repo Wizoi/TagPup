@@ -27,7 +27,7 @@ from shipped_sources import LAUNCHERS, ROOT, python_sources  # noqa: E402
 #: objects (models, each library's photo index). docs/ARCHITECTURE.md, "Layers".
 MAY_IMPORT = {
     "core": set(),
-    "config": set(),
+    "config": {"core"},
     "logs": {"core", "config"},
     "supervisor": {"core", "config", "logs"},
     "store": {"core"},

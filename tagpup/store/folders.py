@@ -15,6 +15,7 @@ import os
 
 from tagpup.core import paths, validation
 from tagpup.store import added_folders
+from tagpup.store import roots as store_roots
 
 #: The setting naming the library's ignored folders (tagpup.core.validation.SETTINGS),
 #: read here as the store reads any setting: changed only through the journal.
@@ -27,7 +28,7 @@ def ignored(conn):
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'").fetchone() is None:
         return []
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (IGNORED,)).fetchone()
-    return validation.folder_list(row[0]) if row and row[0] else []
+    return validation.folder_list(store_roots.folders_to_native(row[0], store_roots.roots_for(conn))) if row and row[0] else []
 
 
 def is_ignored(folder, ignored_folders):
@@ -41,7 +42,7 @@ def holds(conn, folder, ignored_folders=None):
     handful: what ensure_row asks for every row it would make."""
     if is_ignored(folder, ignored(conn) if ignored_folders is None else ignored_folders):
         return False
-    where, params = paths.sql_in("path", folder)
+    where, params = store_roots.sql_in(conn, "path", folder)
     if conn.execute("SELECT 1 FROM photos WHERE " + where + " LIMIT 1", params).fetchone() is not None:
         return True
     return added_folders.covers(conn, folder)
@@ -53,8 +54,9 @@ def with_rows(conn):
     in case are one folder, under the first seen. Every row's path is read: for a
     whole-library answer (of), not a question about one folder."""
     held, spelling = {}, {}
+    roots = store_roots.roots_for(conn)
     for (photo_path,) in conn.execute("SELECT path FROM photos"):
-        folder = os.path.dirname(photo_path)
+        folder = os.path.dirname(paths.from_row(photo_path, roots))
         key = paths.key(folder)
         spelling.setdefault(key, folder)
         held[key] = held.get(key, 0) + 1

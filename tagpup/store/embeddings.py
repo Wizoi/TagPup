@@ -19,6 +19,7 @@ import collections
 import os
 
 from tagpup.core import paths
+from tagpup.store import roots as store_roots
 
 #: A photo's vector for one model, and the stamp of the file it was computed from.
 #: `vector` is float32 bytes.
@@ -32,14 +33,14 @@ def model_key(model_name, pretrained, preserve_full_frame, max_aspect_ratio, for
                                float(max_aspect_ratio), force_image_size or "native")
 
 
-def _photo(photo_path):
-    where, params = paths.sql_equals("path", photo_path)
+def _photo(conn, photo_path):
+    where, params = store_roots.sql_equals(conn, "path", photo_path)
     return "photo_id IN (SELECT id FROM photos WHERE %s)" % where, params
 
 
 def get(conn, photo_path, model):
     """The Stored vector of one photo under `model`, or None."""
-    where, params = _photo(photo_path)
+    where, params = _photo(conn, photo_path)
     row = conn.execute("SELECT mtime, size, vector FROM embeddings WHERE " + where + " AND model = ?",
                        params + (model,)).fetchone()
     return Stored(*row) if row else None
@@ -61,7 +62,7 @@ def stamps_by_path(conn, photo_paths):
     photos.rows_of: a scan of every vector took 3 s on photo_index."""
     found = {}
     for photo_path in photo_paths:
-        where, params = paths.sql_equals("p.path", photo_path)
+        where, params = store_roots.sql_equals(conn, "p.path", photo_path)
         stamps = {(mtime, size) for mtime, size in conn.execute(
             "SELECT e.mtime, e.size FROM photos p JOIN embeddings e ON e.photo_id = p.id WHERE " + where, params)}
         if stamps:
@@ -94,7 +95,7 @@ def restamp(conn, photo_id, before, after):
 def forget(conn, photo_path):
     """Take away a photo's vectors: it now looks different (a rotation). Returns rows
     deleted. The caller commits."""
-    where, params = _photo(photo_path)
+    where, params = _photo(conn, photo_path)
     return conn.execute("DELETE FROM embeddings WHERE " + where, params).rowcount
 
 

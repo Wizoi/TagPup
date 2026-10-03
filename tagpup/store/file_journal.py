@@ -33,8 +33,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from tagpup.core import processes
+from tagpup.core import paths, processes
 from tagpup.store import db, schema
+from tagpup.store import roots as store_roots
 
 STATES = ("planned", "writing", "done", "conflict", "undone")
 
@@ -149,8 +150,13 @@ def has_table(conn):
                         ).fetchone() is not None
 
 
-def _row(found):
+def _row(found, roots):
+    """A FileRow of a change_files row, its paths as this machine spells them. A change
+    recorded before the library's roots were adopted holds native paths, and one recorded
+    after holds the row form: either reads as the native path (paths.from_row)."""
     file_id, change_id, photo_id, path, new_path, before, after, state, note, stamp = found
+    path = paths.from_row(path, roots)
+    new_path = paths.from_row(new_path, roots) if new_path else new_path
     return FileRow(file_id, change_id, photo_id, path, new_path, json.loads(before or "{}"),
                    json.loads(after or "{}"), state, note, tuple(json.loads(stamp)) if stamp else None)
 
@@ -175,7 +181,8 @@ def plan(db_path, operation, files, summary=None):
             file_id = conn.execute(
                 "INSERT INTO change_files (change_id, photo_id, path, new_path, fields_before, fields_after, state)"
                 " VALUES (?, ?, ?, ?, ?, ?, 'planned')",
-                (change_id, planned.get("photo_id"), planned["path"], planned.get("new_path"),
+                (change_id, planned.get("photo_id"), store_roots.to_row(conn, planned["path"]),
+                 store_roots.to_row(conn, planned["new_path"]) if planned.get("new_path") else planned.get("new_path"),
                  json.dumps(before, sort_keys=True), json.dumps(after, sort_keys=True))).lastrowid
             rows.append(FileRow(file_id, change_id, planned.get("photo_id"), planned["path"],
                                 planned.get("new_path"), dict(before), dict(after)))
@@ -244,7 +251,8 @@ def files_of(db_path, change_id):
     try:
         if not has_table(conn):
             return []
-        return [_row(found) for found in conn.execute(
+        roots = store_roots.roots_for(conn)
+        return [_row(found, roots) for found in conn.execute(
             "SELECT " + _FILE_COLUMNS + " FROM change_files WHERE change_id = ? ORDER BY id", (change_id,))]
     finally:
         conn.close()

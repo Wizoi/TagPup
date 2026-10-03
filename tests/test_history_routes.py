@@ -92,7 +92,8 @@ class TheHistoryRoutes(HistoryCase):
                 third = settings.change(library, {"renaming.format": "{grouping} - {index}"}).details["change"]
                 conn = db.connect(library.path)
                 try:
-                    conn.execute("UPDATE changes SET schema_version = schema_version - 1 WHERE id = ?", (third,))
+                    # Made at schema 9: migration 10, the settings table, has run since -- a journaled table.
+                    conn.execute("UPDATE changes SET schema_version = 9 WHERE id = ?", (third,))
                     conn.commit()
                 finally:
                     conn.close()

@@ -14,7 +14,7 @@ suggestion failed has a row with its `error`, so the next run tries it again.
 import json
 import time
 
-from tagpup.core import paths
+from tagpup.store import roots as store_roots
 
 #: The columns of a row, in the order `entry` reads them.
 COLUMNS = "p.path, s.tags, s.people, s.title, s.raw, s.before_consensus, s.error"
@@ -35,11 +35,13 @@ def in_folder(conn, folder):
     """{path as stored: entry} of the photos under `folder`, at any depth, that have a
     row: what a run over the folder suggests for, its scan walking the folders below
     (docs/findings.md, #91)."""
-    where, params = paths.sql_under("p.path", folder)
+    where, params = store_roots.sql_under(conn, "p.path", folder)
     found = {}
-    for row in conn.execute(
-            "SELECT " + COLUMNS + " FROM suggestions s JOIN photos p ON p.id = s.photo_id WHERE " + where, params):
-        found[row[0]] = entry(*row[1:])
+    roots = store_roots.roots_for(conn)
+    for row in store_roots.natives(conn, conn.execute(
+            "SELECT " + COLUMNS + " FROM suggestions s JOIN photos p ON p.id = s.photo_id WHERE " + where,
+            params).fetchall(), 0):
+        found[row[0]] = entry(row[1], row[2], row[3], store_roots.suggested_to_native(row[4], roots), row[5], row[6])
         # The suggester's output names the path it was made for; a photo renamed since
         # is under its row's path now (#90).
         if isinstance(found[row[0]]["raw_suggestions"], dict) and "path" in found[row[0]]["raw_suggestions"]:
@@ -60,7 +62,8 @@ def put_for(conn, photo_id, found, model=None):
         "INSERT OR REPLACE INTO suggestions (photo_id, tags, people, title, raw, before_consensus, error,"
         " model, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (photo_id, json.dumps(found.get("tags") or []), json.dumps(found.get("people") or []), found.get("title"),
-         json.dumps(found.get("raw_suggestions")) if found.get("raw_suggestions") is not None else None,
+         store_roots.suggested_to_row(json.dumps(found.get("raw_suggestions")), store_roots.roots_for(conn))
+         if found.get("raw_suggestions") is not None else None,
          1 if found.get("raw_before_consensus") else 0, found.get("error"), model,
          time.strftime("%Y-%m-%d %H:%M:%S")))
 
@@ -69,7 +72,7 @@ def offer(conn, photo_path, tags, people, title):
     """Change what is offered for a photo -- the tags, people and title a folder's
     consensus settled on -- leaving what the suggester made as it was. Returns rows
     changed. The caller commits."""
-    where, params = paths.sql_equals("path", photo_path)
+    where, params = store_roots.sql_equals(conn, "path", photo_path)
     return conn.execute(
         "UPDATE suggestions SET tags = ?, people = ?, title = ?"
         " WHERE photo_id IN (SELECT id FROM photos WHERE " + where + ")",

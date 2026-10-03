@@ -18,7 +18,8 @@ import contextlib
 import json
 import os
 
-from tagpup.core import paths, vocabulary
+from tagpup.core import vocabulary
+from tagpup.store import roots as store_roots
 from tagpup.store import db
 
 #: A photo's people as a JSON list, in order, for a query whose photos are `p`: what
@@ -97,14 +98,14 @@ def rebuild_photos(conn, photo_paths, known=None):
     photos' people changed. The caller commits."""
     ids = []
     for photo_path in photo_paths:
-        where, params = paths.sql_equals("path", photo_path)
+        where, params = store_roots.sql_equals(conn, "path", photo_path)
         ids += [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)]
     return rebuild(conn, ids, known) if ids else 0
 
 
 def of_photo(conn, photo_path):
     """The people of one photo, in order; [] without a row."""
-    where, params = paths.sql_equals("path", photo_path)
+    where, params = store_roots.sql_equals(conn, "path", photo_path)
     return [name for (name,) in conn.execute(
         "SELECT pp.name FROM photo_people pp JOIN photos p ON p.id = pp.photo_id WHERE " + where
         + " ORDER BY pp.position", params)]
