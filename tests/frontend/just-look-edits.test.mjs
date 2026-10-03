@@ -229,7 +229,8 @@ describe("the other file edits", () => {
     assert.doesNotMatch(asked, /permanently/);
     closeAllApps();
 
-    const mapped = server().first("/api/folder/membership", () => ({ ...HELD, permanent_delete: true }));
+    const mapped = server().first("/api/folder/membership", () => ({ ...HELD, permanent_delete: true,
+      permanent_reason: "on a removable drive" }));
     const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/kr-track/", server: mapped });
     ctx.window.alert = () => {};
     ctx.window.confirm = (text) => { asked = text; return false; };
@@ -237,7 +238,8 @@ describe("the other file edits", () => {
     click(ctx.window, ctx.document.querySelectorAll(".photo-item-file")[0]);
     await flush(ctx.window, 6);
     click(ctx.window, ctx.document.getElementById("btn-delete-photo"));
-    assert.match(asked, /deleted permanently, not moved to the Recycle Bin/);
+    assert.match(asked, /This file is on a removable drive: it will be deleted permanently, not moved to the Recycle Bin/);
+    assert.doesNotMatch(asked, /network share/, "the reason is the server's, not always a share");
   });
 
   test("a Smart Rename that stopped part-way shows the names that did change, and says how to recover", async (t) => {

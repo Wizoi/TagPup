@@ -466,7 +466,13 @@ def folder_rename_photos():
                 # Some were renamed before it stopped (the second part of a mixed rename): the cache is read
                 # again and the page told which names changed, so it shows them instead of the old ones.
                 cache.pop(folder)
-                changed = photo_actions.read_folder(library, folder, state.exiftool(library))
+                try:
+                    changed = photo_actions.read_folder(library, folder, state.exiftool(library))
+                except Exception as again:
+                    # The folder cannot be read again just now: the cache stays dropped, and the answer is
+                    # a plain error (the page's Refresh reads the files).
+                    logger.error("Could not read %s again after a part-way rename: %s", folder, again)
+                    return responses.error(500, result.message())
                 cache.put(folder, changed)
                 return responses.error(500, result.message(), updated_paths=result.details["updated_paths"],
                                        updated_photos=_sorted(changed))
@@ -478,6 +484,7 @@ def folder_rename_photos():
         cache.put(folder, photos)
     except Exception as e:
         logger.error("Error smart renaming photos: %s", e, exc_info=True)
+        cache.pop(folder)   # whatever it renamed before it stopped, the old names are not to be served
         return responses.error(500, str(e))
     return jsonify({
         "success": True,
@@ -715,9 +722,10 @@ def photo_delete():
     # What happened, never what was meant: a file on a network share has no Recycle Bin to go to.
     permanent = bool(result.details.get("permanent"))
     name = picker_name(os.path.basename(library.path))
-    where = ("The file was deleted permanently: it is on a network share, which has no Recycle Bin."
+    reason = result.details.get("permanent_reason")
+    where = ("The file was deleted permanently: it was %s, so it could not go to the Recycle Bin." % reason
              if permanent else "Moved to the Recycle Bin.")
-    reply = {"success": True, "permanent": permanent, **_where(result)}
+    reply = {"success": True, "permanent": permanent, "permanent_reason": reason, **_where(result)}
     if result.details.get(file_only.FILE_ONLY):
         # A photo of a folder the library does not hold: the file only.
         reply["message"] = "%s Nothing in %s changed: it does not hold this folder." % (where, name)

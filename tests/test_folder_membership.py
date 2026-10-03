@@ -112,7 +112,7 @@ class Membership(Libraries, unittest.TestCase):
         self.assertEqual({
             "library": "harbour", "folder": self.lighthouse, "photos": 3, "photos_held": 0, "photos_ignored": 0,
             "photos_not_held": 3, "folders_not_held": 1, "first_not_held": self.lighthouse,
-            "has_roots": True, "under_roots": False, "ignored": False, "permanent_delete": False,
+            "has_roots": True, "under_roots": False, "ignored": False, "permanent_delete": False, "permanent_reason": None,
         }, found)
 
     def test_a_held_folder_with_a_subfolder_not_held(self):

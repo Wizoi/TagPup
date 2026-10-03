@@ -143,33 +143,20 @@ def is_damage(error):
     return _decoder_failed(error)
 
 
-#: What a whole file of each kind ends in, past the zero bytes some cameras pad with: a JPEG's end-of-image
-#: marker, a PNG's IEND chunk and its checksum.
-_ENDS = {".jpg": b"\xff\xd9", ".jpeg": b"\xff\xd9", ".png": b"IEND\xaeB`\x82"}
-
-
 def tail_check(photo_path):
     """How many zero bytes the file at `photo_path` ends in (zero_tail_of), having read only the end of
     it: for a write that wants to refuse a damaged photo without decoding it (#523). Raises Unreadable
-    for a file that is empty, or a JPEG or PNG that does not end as one whole does -- a copy that stopped
-    early -- and what the system raised for a file that cannot be read. It cannot see damage in the middle
-    of a picture (the indexer's full decode, `opened`, does); ExifTool's own failure to read the file is
-    the other signal, and a write that needs the picture itself (a rotate) decodes it
+    for an empty file, and what the system raised for one that cannot be read. At PARITY with the held
+    path and the indexer (#528): a zero-filled tail is `zero_tail_of`'s rule, the caller's to refuse at
+    ZERO_TAIL, and nothing is judged of what follows the picture -- a Samsung trailer, an MP4 appended
+    to a motion photo, 0xFF or zero padding below ZERO_TAIL, bytes after a PNG's IEND all decode, and a
+    false refusal of a good photo is the worst thing a cheap check can do. It cannot see damage in the
+    middle of a picture, which the indexer's full decode (`opened`) does; ExifTool's own failure to read
+    the file is the other signal, and a write that needs the picture itself (a rotate) decodes it
     (zero_tail_if_whole)."""
-    size = os.path.getsize(photo_path)
-    if size == 0:
+    if os.path.getsize(photo_path) == 0:
         raise Unreadable("empty", "the file is empty")
-    zeros = zero_tail_of(photo_path)
-    if zeros >= ZERO_TAIL:
-        return zeros
-    ending = _ENDS.get(os.path.splitext(photo_path)[1].lower())
-    if ending:
-        with open(photo_path, "rb") as handle:
-            handle.seek(max(0, size - 4096))
-            tail = handle.read().rstrip(bytes(1))
-        if not tail.endswith(ending):
-            raise Unreadable("truncated", "the file does not end where a whole picture does", zeros)
-    return zeros
+    return zero_tail_of(photo_path)
 
 
 def zero_tail_if_whole(photo_path):

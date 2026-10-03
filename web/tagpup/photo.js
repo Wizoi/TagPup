@@ -593,9 +593,11 @@ export function deleteActivePhoto() {
     const alone = isJustLooking()
         ? `\n\n${libraryName()} does not hold this folder: only the file is deleted, and nothing in ${libraryName()} changes.`
         : '';
-    const permanent = isUnc(path) || Boolean(state.folderMembership && state.folderMembership.permanent_delete);
-    const question = permanent
-        ? `This file is on a network share: it will be deleted permanently, not moved to the Recycle Bin.\n\n`
+    const known = state.folderMembership && state.folderMembership.permanent_delete
+        ? (state.folderMembership.permanent_reason || 'on a drive without a Recycle Bin') : '';
+    const reason = known || (isUnc(path) ? 'on a network share' : '');
+    const question = reason
+        ? `This file is ${reason}: it will be deleted permanently, not moved to the Recycle Bin.\n\n`
             + `Are you sure you want to delete "${filename}"?`
         : `Are you sure you want to delete "${filename}" and move it to the Windows Recycle Bin?`;
     if (!confirm(question + alone)) {

@@ -184,14 +184,12 @@ class TheFileOnlyCheckIsCheap(jl.Base):
             self.assertEqual(200, self.post("/photo/rotate", {"path": self.loose[0], "direction": "left"}).status_code)
         self.assertEqual(1, decoded.call_count)
 
-    def test_a_cut_png_and_an_empty_file_are_found_by_the_tail(self):
+    def test_a_zero_filled_png_and_an_empty_file_are_found_by_the_tail(self):
         from PIL import Image
-        png = os.path.join(self.lighthouse, "cut.png")
+        png = os.path.join(self.lighthouse, "zero filled.png")
         Image.new("RGB", (64, 64), "red").save(png)
-        with open(png, "rb") as handle:
-            whole = handle.read()
-        with open(png, "wb") as handle:
-            handle.write(whole[:-20])
+        with open(png, "ab") as handle:
+            handle.write(bytes(images.ZERO_TAIL + 10))
         empty = os.path.join(self.lighthouse, "empty.jpg")
         open(empty, "wb").close()
         for path in (png, empty):

@@ -130,12 +130,14 @@ def membership(library, folder, roots=(), ignored=()):
     "photos_not_held" (photos in folders under it the library holds none directly in,
     ignored folders left out),
     "folders_not_held", "first_not_held" (the first such folder, or None),
-    "permanent_delete" (a photo deleted there is deleted for good: no Recycle Bin on a network share,
-    tagpup.files.recycle_bin.goes_to_bin), "has_roots",
+    "permanent_delete" (a photo deleted there is deleted for good) and "permanent_reason" (why, as a phrase:
+    "on a network share", "on a removable drive", "on a substituted (SUBST) drive", "on a drive without a
+    Recycle Bin"; None otherwise; tagpup.files.recycle_bin.no_bin_reason), "has_roots",
     "under_roots" (the folder is one of `roots` or under one), "ignored" (likewise, of
     `ignored`)}. One walk of the folder, no file read. Only `library` is opened: the page
     asking is in one library, which does not open, read or name another (2026-10-02)."""
     folder = paths.stored(folder)
+    reason = recycle_bin.no_bin_reason(folder)
     on_disk = images.photos_under(folder)
     unheld = not_held(library, on_disk, ignored)
     unheld_keys = {paths.key(each) for each in unheld}
@@ -151,7 +153,8 @@ def membership(library, folder, roots=(), ignored=()):
         "has_roots": bool(roots),
         "under_roots": _under_any(folder, roots),
         "ignored": _under_any(folder, ignored),
-        "permanent_delete": not recycle_bin.goes_to_bin(folder),
+        "permanent_delete": reason is not None,
+        "permanent_reason": reason,
     }
 
 

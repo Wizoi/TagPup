@@ -33,7 +33,7 @@ import web_client  # noqa: E402
 
 from tagpup.core import fields, paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
+from tagpup.files import field_values, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -301,7 +301,7 @@ class ASmartRename(Base):
         self.assert_library_unchanged()
 
     def test_a_photo_that_does_not_decode_refuses_the_whole_rename(self):
-        damaged = damaged_photos.truncated(os.path.join(self.lighthouse, "IMG_0004.jpg"))
+        damaged = damaged_photos.all_zeros(os.path.join(self.lighthouse, "IMG_0004.jpg"), size=images.ZERO_TAIL + 100)
         original = self.names()
         self.before = library_dump.dump(self.library.path)
         reply = self.rename(self.loose + [damaged])
@@ -328,7 +328,7 @@ class ASmartRename(Base):
 class ADamagedPhotoIsNeverWritten(Base):
     def setUp(self):
         super().setUp()
-        self.cut = damaged_photos.truncated(os.path.join(self.lighthouse, "cut short.jpg"))
+        self.cut = damaged_photos.all_zeros(os.path.join(self.lighthouse, "cut short.jpg"), size=images.ZERO_TAIL + 100)
         self.zeros = damaged_photos.second_half_zeros(os.path.join(self.lighthouse, "incomplete.jpg"))
         self.before = library_dump.dump(self.library.path)
 
@@ -351,7 +351,7 @@ class ADamagedPhotoIsNeverWritten(Base):
         self.assertEqual((2, 1), (body["skipped_damaged"], body["file_only"]))
         self.assertEqual(sorted([self.cut, self.zeros]), sorted(each["path"] for each in body["skipped"]))
         self.assertEqual(["Trips/Lighthouse"], tags_in(self.loose[0]))
-        self.assertEqual([], tags_in(self.cut))
+        self.assertEqual(images.ZERO_TAIL + 100, os.path.getsize(self.cut), "a zero-filled file was written into")
         self.assert_library_unchanged()
 
     def test_a_time_shift_is_refused_whole(self):

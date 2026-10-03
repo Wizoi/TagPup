@@ -10,47 +10,136 @@ to local storage (\\\\localhost\\C$\\...): it reported success, the file was gon
 $Recycle.Bin held no entry for it, where the same file by its local path held one. So `goes_to_bin`
 says it beforehand, for the page to tell the owner before it deletes, and the reply after.
 """
+import ctypes
 import os
 
 from tagpup.core import paths
 from tagpup.files import images
 
-#: GetDriveType's answer for a drive with a Recycle Bin of its own.
-DRIVE_FIXED = 3
+#: GetDriveType's answers.
+DRIVE_REMOVABLE, DRIVE_FIXED, DRIVE_REMOTE = 2, 3, 4
+
+#: Why a delete there is permanent, as a phrase after "it is" (the page and the reply say them).
+NETWORK = "on a network share"
+REMOVABLE = "on a removable drive"
+SUBST = "on a substituted (SUBST) drive"
+NO_BIN = "on a drive without a Recycle Bin"
+
+
+def _long_path(path):
+    """`path` with its 8.3 names spelled out (GetLongPathNameW); as given if Windows cannot say."""
+    try:
+        buffer = ctypes.create_unicode_buffer(32768)
+        if ctypes.windll.kernel32.GetLongPathNameW(path, buffer, 32768):
+            return buffer.value
+    except (OSError, AttributeError):
+        pass
+    return path
 
 
 def problem(file_path):
     """Why `file_path` may not be sent to the Recycle Bin, or None: it is no existing regular file
     (a folder, a path with a trailing separator, one that is not there) or no photo by its
-    extension (images.is_photo; the short 8.3 spelling of a .txt is a .txt)."""
+    extension. The path is judged by its LONG name: A4413~1.JPG may be holiday.jpgold (#530)."""
     given = str(file_path or "")
     name = os.path.basename(given.rstrip("\\/")) or given
     if not given or given[-1] in "\\/" or not os.path.isfile(paths.stored(given)):
         return "%s is not a file; only a photo file is deleted" % name
-    if not images.is_photo(given):
-        return "%s is not a photo; only a photo file is deleted" % name
+    long = _long_path(paths.stored(given))
+    if not os.path.isfile(long) or not images.is_photo(long):
+        return "%s is not a photo; only a photo file is deleted" % os.path.basename(long)
     return None
 
 
-def goes_to_bin(file_path):
-    """Can a file at `file_path` be restored from the Recycle Bin after it is sent there? No for a
-    UNC path (\\\\server\\share, \\\\?\\UNC\\...) or a drive that is not a local fixed disk; yes
-    otherwise. Reads nothing of the file."""
-    spelled = paths.stored(file_path)
+def _without_prefix(path):
+    """`path` without the \\\\?\\ (or \\\\.\\) prefix: \\\\?\\UNC\\server\\share is \\\\server\\share."""
+    for prefix in ("\\\\?\\", "\\\\.\\"):
+        if path.startswith(prefix):
+            rest = path[len(prefix):]
+            return "\\\\" + rest[4:] if rest[:4].upper() == "UNC\\" else rest
+    return path
+
+
+def _real(path):
+    """`path` with its links followed (a symlink or junction to a share leads there)."""
+    return os.path.realpath(path)
+
+
+def _mount_point(path):
+    """The root of the volume `path` is on: "C:\\", or the folder a volume is mounted in."""
+    buffer = ctypes.create_unicode_buffer(32768)
+    if not ctypes.windll.kernel32.GetVolumePathNameW(path, buffer, 32768):
+        raise OSError("no volume for %s" % path)
+    return buffer.value
+
+
+def _drive_type(mount):
+    return ctypes.windll.kernel32.GetDriveTypeW(mount)
+
+
+def _dos_device(drive):
+    """What the drive letter `drive` ("Z:") stands for: \\Device\\HarddiskVolume3 for a disk,
+    \\??\\C:\\dir for a SUBST drive; None if Windows cannot say."""
+    buffer = ctypes.create_unicode_buffer(32768)
+    if not ctypes.windll.kernel32.QueryDosDeviceW(drive, buffer, 32768):
+        return None
+    return buffer.value
+
+
+def _reason_for(path):
+    """Why a file at `path`, as spelled, would not go to the Bin, or None."""
+    spelled = _without_prefix(paths.stored(path))
     if spelled.startswith("\\\\"):
-        return False
-    drive = os.path.splitdrive(spelled)[0]
-    if not drive:
-        return True
-    import ctypes
-    return ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") == DRIVE_FIXED
+        return NETWORK
+    try:
+        # A SUBST drive first: GetVolumePathName cannot say which volume one is on.
+        drive = os.path.splitdrive(spelled)[0]
+        device = _dos_device(drive) if drive else None
+        if device and device.startswith("\\??\\"):
+            return SUBST
+        mount = _mount_point(spelled)
+        kind = _drive_type(mount)
+        if kind == DRIVE_REMOTE:
+            return NETWORK
+        if kind == DRIVE_REMOVABLE:
+            return REMOVABLE
+        if kind != DRIVE_FIXED:
+            return NO_BIN
+        if drive and mount.rstrip("\\/") == drive:
+            # A bare drive letter must stand for a real disk volume.
+            if device is None or not device.startswith("\\Device\\Harddisk"):
+                return NO_BIN
+    except (OSError, AttributeError, ValueError):
+        return NO_BIN
+    return None
+
+
+def no_bin_reason(file_path):
+    """Why a file at `file_path` would be deleted for good, not moved to the Recycle Bin -- NETWORK,
+    REMOVABLE, SUBST or NO_BIN -- or None when it goes to the Bin. Judged by the path as spelled (a
+    SUBST drive resolves to its folder only once its links are followed) and again by where its links
+    lead (a junction or symlink to a share); a \\\\?\\ prefix is looked through; when unsure, NO_BIN.
+    Reads nothing of the file."""
+    reason = _reason_for(file_path)
+    if reason:
+        return reason
+    try:
+        real = _real(paths.stored(file_path))
+    except OSError:
+        return NO_BIN
+    return _reason_for(real)
+
+
+def goes_to_bin(file_path):
+    """Can a file at `file_path` be restored from the Recycle Bin after it is sent there? Only one on a
+    fixed local disk with a real volume (no_bin_reason)."""
+    return no_bin_reason(file_path) is None
 
 
 def send_to_recycle_bin(file_path):
     """Move the photo file to the Recycle Bin; False when Windows would not. Raises ValueError,
-    moving nothing, for anything `problem` names. A file for which `goes_to_bin` is False is
+    moving nothing, for anything `problem` names. A file for which `no_bin_reason` names a reason is
     deleted permanently, and Windows says it succeeded."""
-    import ctypes
     from ctypes import wintypes
 
     # SHFileOperationW wants native separators, which is what stored() gives.

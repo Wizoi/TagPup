@@ -329,9 +329,13 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
             done.update(outcome.done)
             moved_aside.update(outcome.moved_aside)
             files_only = sum(1 for old, new in outcome.done.items() if old != new)
-    except names.RenameFailed as failure:
+    except Exception as failure:
+        if not done and not isinstance(failure, names.RenameFailed):
+            raise   # nothing was renamed: an error, as it always was
+        # Any failure after the held part committed (#531): what did change is reported, not lost.
         report()
-        said = failure.message()
+        said = failure.message() if isinstance(failure, names.RenameFailed) else (
+            "Could not rename: %s." % failure)
         if done:
             said += " The photos of %s were renamed, and stay so." % (
                 "the folders the library holds" if held_renames else "the other folders")
@@ -434,11 +438,13 @@ def delete(library, photo_path):
     if why:
         result.refuse(why)
         return result
-    permanent = not recycle_bin.goes_to_bin(photo_path)
+    reason = recycle_bin.no_bin_reason(photo_path)
+    permanent = reason is not None
     _held, loose = libraries.split(library, [photo_path])
     if loose:
         result = file_only.delete(photo_path)
-        result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0, "permanent": permanent})
+        result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0, "permanent": permanent,
+                               "permanent_reason": reason})
         return result
     # A damaged photo may be deleted: nothing is written into it.
     if libraries.refuse_writes(result, library, [photo_path], damaged_ok=True):
@@ -456,7 +462,8 @@ def delete(library, photo_path):
     ids = thumbnails.ids_of(library, [photo_path])
     result.details["removed"] = photos.forget_photo(library.path, photo_path)
     thumbnails.forget(library, ids)
-    result.details.update({file_only.FILE_ONLY: 0, file_only.WITH_ROWS: 1, "permanent": permanent})
+    result.details.update({file_only.FILE_ONLY: 0, file_only.WITH_ROWS: 1, "permanent": permanent,
+                               "permanent_reason": reason})
     return result
 
 
