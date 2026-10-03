@@ -88,6 +88,7 @@ describe("a missing photo: shown, not editable", () => {
     assert.ok(controls.length >= 6, "rotation, date, title, people, keywords, suggestions");
     assert.ok(controls.every((el) => el.hasAttribute("inert") && el.getAttribute("aria-disabled") === "true"));
     assert.equal(ctx.document.getElementById("main-image").getAttribute("src") || "", "", "no request for a file that is not there");
+    assert.ok(ctx.document.getElementById("main-image").classList.contains("hidden"), "and no broken-image icon in its place");
     assert.equal(ctx.document.getElementById("detail-path").textContent, recordOf(13).path);
   });
 
@@ -97,6 +98,7 @@ describe("a missing photo: shown, not editable", () => {
     await ctx.settle(100);
     assert.equal(ctx.state.library.activeId, 14);
     assert.ok(ctx.document.getElementById("photo-missing-note").classList.contains("hidden"));
+    assert.ok(!ctx.document.getElementById("main-image").classList.contains("hidden"));
     assert.ok(writes(ctx).every((el) => !el.hasAttribute("inert") && !el.hasAttribute("aria-disabled")));
   });
 

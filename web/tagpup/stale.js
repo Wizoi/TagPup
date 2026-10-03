@@ -11,7 +11,7 @@
 //    refreshed before it has will say "changed" again, which is true.
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
-import { photoMissingNote } from './elements.js';
+import { mainImage, photoMissingNote } from './elements.js';
 import { libraryName } from './looking.js';
 
 /** The badge's words for a card's `stale`, or ''. */
@@ -48,6 +48,8 @@ export function applyPhotoStale(photo) {
         ? `This photo’s file is not on disk. ${libraryName() || 'The library'} still holds it, and it is shown as the library holds it. `
             + 'It cannot be edited until the file is back or the photo is removed from the library.'
         : '';
+    // No picture to show, and no broken-image icon in its place.
+    mainImage.classList.toggle('hidden', missing);
     for (const el of document.querySelectorAll('[data-writes]')) {
         if (missing) {
             el.setAttribute('inert', '');

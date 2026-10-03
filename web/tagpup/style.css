@@ -2311,8 +2311,8 @@ select {
 /* A card whose file is not as the library says, and a photo whose file is gone. */
 .thumbnail-stale {
     position: absolute;
-    left: 6px;
-    top: 6px;
+    right: 6px;
+    bottom: 6px;
     padding: 1px 6px;
     border-radius: 4px;
     background: rgba(180, 83, 9, 0.92);

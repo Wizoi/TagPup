@@ -81,7 +81,7 @@ describe("Show in library", () => {
   test("a photo the library does not hold leaves the view at the top, and nothing is said", async (t) => {
     const ids = Array.from({ length: 400 }, (_, i) => 1000 + i);
     const ctx = await folderPage(t, { photos: 400, ids });
-    ctx.server.first("/api/library/find", { error: "The library holds no photo at that path." }, { status: 404 });
+    ctx.server.first("/api/library/find", { id: null });
     await ctx.scrollTo(GRID_TOP + 40 * STRIDE);
     ctx.document.getElementById("btn-show-in-library").click();
     await ctx.settle(200);
