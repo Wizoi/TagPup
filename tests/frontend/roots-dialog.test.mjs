@@ -498,6 +498,40 @@ describe("Change back", () => {
   });
 });
 
+describe("a page holding an old place's paths (#492)", () => {
+  const reloads = (ctx) => ctx.consoleErrors.filter((e) => /navigation/i.test(String(e && e.message || e))).length;
+
+  async function movedPage(t, app, { recent = false } = {}) {
+    const server = new FakeServer()
+      .on("/api/apps", { this: app === "tagpup" ? "tagpup" : "tuner", apps: {} })
+      .on("/api/databases", { databases: [LIBRARY] })
+      .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
+      .on(app === "tagpup" ? "/api/taxonomy/tree" : "/api/photos", [], { headers: { "X-TagPup-Roots-Moved": "pictures" } });
+    const ctx = await loadApp(app, { t, url: `http://localhost:8080/${LIBRARY}/`, server,
+      before: (window) => { if (recent) window.sessionStorage.setItem("tagpup-roots-reload", String(Date.now())); } });
+    await flush(ctx.window, 8);
+    return ctx;
+  }
+
+  for (const app of ["tagtuner", "tagpup"]) {
+    test(`${app} says the place changed and reloads once`, async (t) => {
+      const ctx = await movedPage(t, app);
+      const banner = ctx.document.getElementById("roots-banner");
+      assert.ok(!banner.classList.contains("hidden"));
+      assert.match(text(banner), /The place of root pictures changed since this page loaded; reloading/);
+      assert.doesNotMatch(text(banner), /does not know where this library keeps/);
+      assert.equal(reloads(ctx), 1);
+      assert.ok(Number(ctx.window.sessionStorage.getItem("tagpup-roots-reload")) > 0);
+    });
+  }
+
+  test("a reload within 30 s of the last one is not made, and the banner still says why", async (t) => {
+    const ctx = await movedPage(t, "tagtuner", { recent: true });
+    assert.equal(reloads(ctx), 0, "a page that cannot converge reloaded again");
+    assert.match(text(ctx.document.getElementById("roots-banner")), /changed since this page loaded/);
+  });
+});
+
 describe("a library whose root this computer does not place", () => {
   const MESSAGE = "root 'pictures' has no location on this machine: add it to C:/TagPup/machine_roots.json";
 

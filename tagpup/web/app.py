@@ -97,6 +97,7 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
     app.before_request(libraries.attach_library)
     app.before_request(roots_gate.guard)
     app.before_request(roots_ingress.guard)
+    app.after_request(roots_ingress.mark)
     app.before_request(_start_clock)
     app.after_request(_never_cache_json)
     app.after_request(_log_slow)

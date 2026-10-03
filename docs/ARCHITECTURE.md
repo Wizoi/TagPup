@@ -720,7 +720,15 @@ the design assumes a GPU and more memory later and does not wait for them.
       path under another listed place of the root, the path as given for any other) before any route, cache or
       pre-check reads it. TagPup's folder scans are therefore one entry for a folder however it is spelled, the photo
       file served and opened is the first place's, and a request holding old paths works once the old place is gone.
-      A folder to add that exists only at the previous place is refused naming both places and the root. The
+      A folder to open or add (`/api/folder/scan`, `membership`, `subfolders`, `add`, `index-start`) that exists only at
+      the previous place is refused naming both places and the root. The ingress costs a request with no path
+      parameter nothing (it returns before opening anything), and one with a path one look per library per second
+      (about 9 us and 60 us per request measured; it opened a connection per request, 4.2 ms, before); `/api/roots`
+      and the folder box's autocomplete (half-typed text) are left alone. **A page that sent an old place's
+      spelling is told**: the response carries `X-TagPup-Roots-Moved: <root>`, and `web/common/api.js` shows the
+      banner "The place of root X changed since this page loaded; reloading" and reloads once (not again within 30 s,
+      kept in sessionStorage); the page's held paths are not translated. **Accepted**: a Suggest run keyed by a folder's
+      old spelling does not survive a move (the run is lost, not wrong). The
       services keep `services.roots.canonical_args` as the second line (the CLI, the MCP tools, jobs): the writes
       (`tagging`, `photos` delete / rotate / Smart Rename / time shift, `file_changes.write_fields` and `rename`), the
       folder scans, Add, `sync` and the photo's details -- not `index_folder`, which runs on the queue's worker and

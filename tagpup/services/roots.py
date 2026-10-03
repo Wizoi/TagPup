@@ -127,7 +127,14 @@ def canonicaliser(library):
     the library's roots -- for an ingress that resolves many -- or None for a library that has none
     or whose roots this machine cannot place (the gate tells the owner)."""
     roots = _roots_of(library)
-    return None if roots is None else (lambda path: paths.canonical(path, roots))
+    if roots is None:
+        return None
+
+    def canonical_of(path):
+        return paths.canonical(path, roots)
+
+    canonical_of.roots = roots
+    return canonical_of
 
 
 def old_place_sentence(library, original, canonical_path):

@@ -36,7 +36,7 @@ from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.services import roots_location, roots_verify
 from tagpup.services import tags as tags_service
-from tagpup.web import desktop, responses, roots_gate, state, tagpup_routes
+from tagpup.web import desktop, responses, roots_gate, roots_ingress, state, tagpup_routes
 from tagpup.web import libraries as web_libraries
 
 logger = logging.getLogger(__name__)
@@ -843,6 +843,7 @@ def _moved(library, name, back):
         # find the new map by themselves within a second, and every cache keyed by the library's
         # generations is built again (tagpup.store.generations).
         roots_gate.forget(library)
+        roots_ingress.forget(library)
         tagpup_routes.forget_scans(library)
     answer = {"success": result.refused is None, "dry_run": not apply, "changed": result.changed,
               "error": result.refused, **{key: value for key, value in result.details.items() if key != "dry_run"}}

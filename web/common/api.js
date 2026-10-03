@@ -92,6 +92,22 @@ function announceRootsProblem(res) {
     }).catch(() => {});
 }
 
+/** Set once a request's paths have been rewritten, so the page is told once per load. */
+let rootsMovedAnnounced = false;
+
+/**
+ * A response whose request carried an old place's paths (the server rewrote them,
+ * X-TagPup-Roots-Moved: the root's name) says the page is out of date: announced once as a
+ * `tagpup:roots-moved` event, which web/common/roots-banner.js shows and answers by reloading.
+ */
+function announceRootsMoved(res) {
+    if (rootsMovedAnnounced || !res || !res.headers || typeof res.headers.get !== 'function') return;
+    const root = res.headers.get('X-TagPup-Roots-Moved');
+    if (!root || typeof document === 'undefined') return;
+    rootsMovedAnnounced = true;
+    document.dispatchEvent(new CustomEvent('tagpup:roots-moved', { detail: { root } }));
+}
+
 function pause(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -104,6 +120,7 @@ function fetchThroughAnUpdate(url, options, started = Date.now(), updating = fal
     const again = (ms) => pause(ms).then(() => fetchThroughAnUpdate(url, options, started, true));
     return fetch(url, options).then(res => {
         announceRootsProblem(res);
+        announceRootsMoved(res);
         if (refusedForAnUpdate(res) && Date.now() - started < UPDATE_WAIT_MS) {
             const seconds = Number(res.headers.get('Retry-After'));
             return again(Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : RESTART_RETRY_MS);

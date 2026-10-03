@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import sys
+import time
 import unittest
 from unittest import mock
 
@@ -24,9 +25,9 @@ from tagpup.core import paths  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
-from tagpup.store import file_journal  # noqa: E402
+from tagpup.store import db, file_journal  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
-from tagpup.web import roots_gate, tagpup_routes  # noqa: E402
+from tagpup.web import roots_gate, roots_ingress, tagpup_routes  # noqa: E402
 
 WINDOWS = os.name == "nt"
 LIBRARY = "photo_index"
@@ -63,6 +64,7 @@ class AfterAMove(unittest.TestCase):
         self.client = self.app.test_client()
         tagpup_routes.folders.of(self.library).clear()
         roots_gate.forget(self.library)
+        roots_ingress.forget(self.library)
 
     def get(self, path, **kwargs):
         return self.client.get("/%s%s" % (LIBRARY, path), **kwargs)
@@ -80,14 +82,15 @@ class AfterAMove(unittest.TestCase):
 
 
 class TheFolderCache(AfterAMove):
-    def test_the_old_and_the_first_spelling_of_a_folder_are_one_cache_entry(self):          # #480
-        self.scan(self.folder_old)
+    def test_the_old_and_the_first_spelling_of_a_folder_are_one_cache_entry(self):          # #480, #493
         self.move()
+        self.scan(self.folder_old)
         self.scan(self.folder_first)
         self.scan(self.folder_old.upper().replace("\\", "/"))
         cache = tagpup_routes.folders.of(self.library)
-        entries = [key for key in cache._maps if key.startswith(paths.key(self.first))]
-        self.assertEqual(1, len(entries), "two entries for one folder: %s" % entries)
+        either = (paths.key(self.first), paths.key(self.old))
+        entries = [key for key in cache._maps if key.startswith(either)]
+        self.assertEqual(1, len(entries), "two entries for one folder, under both spellings: %s" % entries)
 
     def test_tags_written_at_the_first_place_show_on_a_rescan_of_the_old_folder_and_survive_a_save(self):   # #480
         before = self.scan(self.folder_old)                    # cached, spelled by the place before the move
@@ -106,6 +109,98 @@ class TheFolderCache(AfterAMove):
         self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
         self.assertIn("Harbour", keywords(self.moved[0]), "a panel save removed the bulk-added tag")
         self.assertNotIn("Harbour", keywords(self.held[0]), "the old copy was written")
+
+
+class TheCostOfTheIngress(AfterAMove):
+    def timed(self, url, runs=300):
+        """Microseconds per call of the guard alone, in a request context naming the library."""
+        from flask import g
+        with self.app.test_request_context("/api/server" if url is None else url):
+            g.library = self.library
+            roots_ingress.guard()
+            started = time.perf_counter()
+            for _ in range(runs):
+                roots_ingress.guard()
+            return (time.perf_counter() - started) / runs * 1e6
+
+    def test_a_request_without_a_path_costs_nothing_and_one_with_a_path_under_a_millisecond(self):   # #489
+        nothing = self.timed(None)
+        photo = self.timed("/api/photo-file?path=" + self.held[0].replace("\\", "%5C"))
+        sys.stderr.write("[ingress] guard per request: no path %.1f us, a photo-file path %.1f us\n" % (nothing, photo))
+        self.assertLess(nothing, 50, "a request with no path opened something")
+        self.assertLess(photo, 1000, "a request with a path costs more than a millisecond")
+
+    def test_a_request_without_a_path_opens_no_connection(self):                              # #489
+        from tagpup.services import roots as roots_service
+        with mock.patch.object(roots_service, "canonicaliser", side_effect=AssertionError("looked")):
+            self.assertEqual(200, self.get("/api/server").status_code)
+            self.assertEqual(200, self.get("/api/databases").status_code)
+
+    def test_one_look_serves_a_second_of_requests_and_a_changed_map_is_seen_at_once(self):   # #489
+        from tagpup.services import roots as roots_service
+        looks = []
+        real = roots_service.canonicaliser
+        with mock.patch.object(roots_service, "canonicaliser", side_effect=lambda lib: looks.append(1) or real(lib)):
+            for _ in range(5):
+                self.get("/api/photo-file", query_string={"path": self.held[0]})
+            self.assertEqual(1, len(looks))
+            self.move()
+            self.get("/api/photo-file", query_string={"path": self.held[0]})
+        self.assertEqual(2, len(looks), "a changed map was not looked at again")
+
+
+class TheFolderRoutesNameTheTwoPlaces(AfterAMove):
+    def only_at_the_old_place(self):
+        self.move()
+        later = os.path.join(self.old, "Only here")
+        os.makedirs(later)
+        return later
+
+    def assert_two_places(self, reply, later):
+        self.assertEqual(400, reply.status_code, reply.get_data(as_text=True))
+        said = reply.get_json()["error"]
+        self.assertIn("previous place of root pictures", said)
+        self.assertIn("does not exist at its current place", said)
+        self.assertIn(later, said)
+
+    def test_scan_membership_and_subfolders_say_it(self):                                    # #490
+        later = self.only_at_the_old_place()
+        self.assert_two_places(self.get("/api/folder/scan", query_string={"path": later}), later)
+        self.assert_two_places(self.get("/api/folder/membership", query_string={"path": later}), later)
+        self.assert_two_places(self.get("/api/folder/subfolders", query_string={"path": later}), later)
+
+    def test_the_tuner_says_it_too(self):                                                    # #490
+        self.app = web.create_app("tuner", startup=self.library)
+        self.app.testing = True
+        self.client = self.app.test_client()
+        later = self.only_at_the_old_place()
+        self.assert_two_places(self.get("/api/folder/subfolders", query_string={"path": later}), later)
+        self.assert_two_places(self.post("/api/folder/add", {"folder_path": later}), later)
+
+    def test_the_autocomplete_is_left_alone(self):                                           # #491
+        from flask import g, request
+        self.move()
+        typed = self.old + "\\"
+        with self.app.test_request_context("/api/autocomplete-folder", query_string={"path": typed}):
+            g.library = self.library
+            roots_ingress.guard()
+            self.assertEqual(typed, request.args["path"], "half-typed text was rewritten")
+        with self.app.test_request_context("/api/folder/scan", query_string={"path": self.folder_old}):
+            g.library = self.library
+            roots_ingress.guard()
+            self.assertEqual(self.folder_first, request.args["path"])
+
+
+class ThePageIsToldItsPathsAreOld(AfterAMove):
+    def test_a_response_to_old_paths_carries_the_roots_name(self):                           # #492
+        self.move()
+        old = self.post("/api/photos/bulk-tags", {"paths": [self.held[0]], "add_tags": ["Harbour"], "remove_tags": []})
+        self.assertEqual("pictures", old.headers.get("X-TagPup-Roots-Moved"))
+        new = self.post("/api/photos/bulk-tags", {"paths": [self.moved[0]], "add_tags": ["Quay"], "remove_tags": []})
+        self.assertIsNone(new.headers.get("X-TagPup-Roots-Moved"))
+        self.assertIsNone(self.get("/api/server").headers.get("X-TagPup-Roots-Moved"))
+        self.assertEqual("pictures", self.get("/api/photo-file", query_string={"path": self.held[1]}).headers.get(
+            "X-TagPup-Roots-Moved"))
 
 
 class ThePhotoServedAndOpened(AfterAMove):
@@ -201,6 +296,10 @@ class AnUndoOfAnEarlierChange(unittest.TestCase):
         shutil.copytree(side.pictures, first, copy_function=shutil.copy2)
         config.set_location("pictures", first)
         change = before.details["change"]
+        # A row the adoption did not convert: kept native, under a place the library no longer lives at.
+        db.write_with_connection(side.db_path, lambda conn: conn.execute(
+            "UPDATE change_files SET path = ? WHERE change_id = ? AND path = ?",
+            (side.real[0], change, "@pictures/" + os.path.relpath(side.real[0], side.pictures).replace(os.sep, "/"))))
         files = file_journal.files_of(side.db_path, change)
         self.assertTrue(all(row.path.lower().startswith(first.lower()) for row in files),
                         "an undo would write the old copy: " + files[0].path)
