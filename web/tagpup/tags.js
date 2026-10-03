@@ -5,6 +5,7 @@ import { buildElement, replaceContent } from './common/dom.js';
 import { leafOf, rootOf, samePerson, tagProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
+import { isJustLooking } from './looking.js';
 import { peopleDatalist, tagsDatalist } from './elements.js';
 
 // Dynamic Autocomplete loaders
@@ -331,7 +332,9 @@ export async function resolveTagOrPerson(inputName, isPersonField = false, { pro
     const askWhereItGoes = (...args) => (prompt ? showPlacementModal(...args) : null);
     
     if (inputName.includes('/')) {
-        const created = await api.json('/api/taxonomy/create', {
+        // Not while just looking: a tag in the tree is the library's, and an edit of files only
+        // changes nothing of it. The tag is written as typed and filed; the index reads it later.
+        const created = isJustLooking() ? null : await api.json('/api/taxonomy/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: inputName })
@@ -377,7 +380,7 @@ export async function resolveTagOrPerson(inputName, isPersonField = false, { pro
         
         const peopleRootNames = peopleRoots.map(r => r.name);
         if (peopleRootNames.length === 0) {
-            await api.fetch('/api/taxonomy/create', {
+            if (!isJustLooking()) await api.fetch('/api/taxonomy/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: "People", has_face: 1 })
@@ -386,7 +389,7 @@ export async function resolveTagOrPerson(inputName, isPersonField = false, { pro
             return `People/${inputName}`;
         } else if (peopleRootNames.length === 1) {
             const targetPath = `${peopleRootNames[0]}/${inputName}`;
-            await api.fetch('/api/taxonomy/create', {
+            if (!isJustLooking()) await api.fetch('/api/taxonomy/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: targetPath })
@@ -402,7 +405,7 @@ export async function resolveTagOrPerson(inputName, isPersonField = false, { pro
             );
             if (!res) return null;
             const targetPath = `${res.root}/${inputName}`;
-            await api.fetch('/api/taxonomy/create', {
+            if (!isJustLooking()) await api.fetch('/api/taxonomy/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: targetPath })
@@ -435,7 +438,7 @@ export async function resolveTagOrPerson(inputName, isPersonField = false, { pro
         
         let targetPath;
         if (res.action === 'create_root') {
-            const rootRes = await api.json('/api/taxonomy/create', {
+            const rootRes = isJustLooking() ? { success: true } : await api.json('/api/taxonomy/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: res.name, has_face: res.hasFace ? 1 : 0 })
@@ -450,7 +453,7 @@ export async function resolveTagOrPerson(inputName, isPersonField = false, { pro
             targetPath = `${res.root}/${inputName}`;
         }
         
-        await api.fetch('/api/taxonomy/create', {
+        if (!isJustLooking()) await api.fetch('/api/taxonomy/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: targetPath })

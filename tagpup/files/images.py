@@ -143,6 +143,27 @@ def is_damage(error):
     return _decoder_failed(error)
 
 
+def zero_tail_if_whole(photo_path):
+    """How many zero bytes the file at `photo_path` ends in, once its picture has been
+    decoded to the end; raises Unreadable when it does not decode (damage), or what the
+    system raised when it cannot be read. Nothing is kept: for a write that has no row to
+    record a photo found damaged in (a photo of a folder the library does not hold), which
+    must still not be written into one. A JPEG is decoded at a fraction of its size
+    (`draft`), which still reads every byte of the stream."""
+    with open(photo_path, "rb") as handle:
+        data = handle.read()
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            if img.format == "JPEG":
+                img.draft("RGB", (128, 128))
+            img.load()
+    except Exception as error:
+        if not _decoder_failed(error):
+            raise
+        raise damage(data, error) from error
+    return zero_tail(data)
+
+
 def shown_size(photo_path):
     """(width, height, oriented): the size Pillow shows a photo at, and whether it
     turned the picture by its Orientation as it loaded it.

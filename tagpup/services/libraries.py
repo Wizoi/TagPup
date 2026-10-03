@@ -172,6 +172,22 @@ def not_in(library, folder, ignored=None):
             % (len(unheld), folder, name, unheld[0], name))
 
 
+def split(library, photo_paths):
+    """(the photos of `photo_paths` in a folder the library holds, those in one it does not),
+    each in the order given: decided here, now, by the library's own answer (tagpup.store.
+    folders.holds) and never by what a page says. A photo of the first is written as
+    always -- its row, the journal, what derives from it. A photo of the second is written
+    to its file only (tagpup.services.file_only): Just look in TagPup. An ignored folder
+    is not held. A library that cannot be read just now raises, as not_held does: a moment's
+    lock must not write rows for photos the library does not hold, nor skip them for ones
+    it does."""
+    unheld = {paths.key(folder) for folder in not_held(library, photo_paths, leave_out_ignored=False)}
+    held, loose = [], []
+    for photo_path in photo_paths:
+        (loose if paths.key(os.path.dirname(paths.stored(photo_path))) in unheld else held).append(photo_path)
+    return held, loose
+
+
 def refuse_writes(result, library, photo_paths, damaged_ok=False):
     """Refuse `result` -- a write of photo files, nothing written yet -- when the library
     does not hold the folder of any photo of `photo_paths`: "<folder> is not in

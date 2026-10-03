@@ -6,7 +6,7 @@ import os
 from tagpup.core import dates, fields, paths, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
 from tagpup.files import images, metadata, names, recycle_bin
-from tagpup.services import file_changes, libraries, thumbnails
+from tagpup.services import file_changes, file_only, libraries, thumbnails
 from tagpup.services import roots as roots_service
 from tagpup.store import db, embeddings, faces, photos, taxonomy
 from tagpup.store import folders as store_folders
@@ -205,15 +205,21 @@ def preserve_names(library, photo_paths, exiftool_path):
     leave alone, and which relink_photos finds a renamed photo by -- as one change of
     photo files, `smart rename: original names` (tagpup.services.file_changes), which
     can be undone. A photo holding one already is skipped; one that cannot be read is
-    skipped too, as the rename leaves it be. A Result, as write_fields'."""
+    skipped too, as the rename leaves it be. A Result, as write_fields'. A photo of a folder
+    the library does not hold has the name written to its file only (tagpup.services.
+    file_only): no journal change, no row."""
     def plan_one(path, held):
         if held.get(names.PRESERVED_NAME):
             return file_changes.skip("keeps the name it had before it was first renamed")
         return file_changes.Plan(after={names.PRESERVED_NAME: os.path.basename(path)})
 
-    return file_changes.write_fields(library, "smart rename: original names", exiftool_path, photo_paths,
-                                     [names.PRESERVED_NAME], plan_one, summary={"photos": len(photo_paths)},
-                                     unreadable="skip")
+    held, loose = libraries.split(library, photo_paths)
+    journaled = file_changes.write_fields(
+        library, "smart rename: original names", exiftool_path, held, [names.PRESERVED_NAME], plan_one,
+        summary={"photos": len(held)}, unreadable="skip") if held else None
+    files = file_only.write_fields(exiftool_path, loose, [names.PRESERVED_NAME], plan_one,
+                                   unreadable="skip") if loose else None
+    return file_only.combined(journaled, files)
 
 
 @roots_service.canonical_args("photo_paths")
@@ -238,6 +244,12 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     of the way; `index_rows_moved`; `index_skipped`, the (old, new) pairs whose new name
     already had rows in the index, left as they were; `change`.
 
+    The photos of a folder the library does not hold (Just look) are renamed, all together
+    or not at all among themselves, with no journal change and no row to move
+    (tagpup.services.file_only); the others as above. A failure of the second part leaves
+    the first part renamed, and says so. `file_only` and `with_rows` count the photos
+    renamed each way.
+
     Refused, and nothing renamed, for a grouping that may not be used
     (tagpup.core.validation). The grouping is used trimmed as the rules trim it
     (validation.trim): the rules allow blanks at its ends, and a trailing space -- from
@@ -251,8 +263,12 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
         return result
     # A photo found damaged refuses the whole rename, nothing moved: skipped, it kept a name
     # the numbering gave another photo, which moved it aside and lost its record.
-    if libraries.refuse_writes(result, library, photo_paths):
+    held, loose = libraries.split(library, photo_paths)
+    if held and libraries.refuse_writes(result, library, held):
         return result
+    if loose and file_only.refuse_unwritable(result, loose):
+        return result
+    held_keys = {paths.key(p) for p in held}
     grouping = validation.trim(grouping)
     width = len(str(len(photo_paths)))
     present = [p for p in photo_paths if os.path.exists(p)]
@@ -271,25 +287,49 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
         base = renaming.file_base(rename_format, grouping, str(index).zfill(width), captions[old_path])
         renames[old_path] = os.path.join(os.path.dirname(old_path), base + os.path.splitext(old_path)[1])
 
+    # Two parts: the photos of held folders, then the others. Photos stay in their own folder
+    # and a folder is held or not, so the names of the parts never meet.
+    held_renames = {old: new for old, new in renames.items() if paths.key(old) in held_keys}
+    loose_renames = {old: new for old, new in renames.items() if paths.key(old) not in held_keys}
+    done, moved_aside, skipped, moved, change, with_rows, files_only = {}, {}, [], 0, None, 0, 0
+
+    def report():
+        renamed = {old: new for old, new in done.items() if old != new}
+        result.changed = len(renamed)
+        result.details.update(updated_paths=done, renamed=renamed, moved_aside=moved_aside,
+                              index_rows_moved=moved, index_skipped=skipped, change=change,
+                              **{file_only.WITH_ROWS: with_rows, file_only.FILE_ONLY: files_only})
+
     try:
-        # The rows move in the transaction that marks the files done, the files moved
-        # aside and renamed into their names in one call, so each frees its name for the
-        # next within it.
-        outcome = file_changes.rename(library, "smart rename", renames, names.aside_for(renames),
-                                      exiftool_path, summary={"photos": len(renames)})
+        if held_renames:
+            # The rows move in the transaction that marks the files done, the files moved
+            # aside and renamed into their names in one call, so each frees its name for the
+            # next within it.
+            outcome = file_changes.rename(library, "smart rename", held_renames, names.aside_for(held_renames),
+                                          exiftool_path, summary={"photos": len(held_renames)})
+            done.update(outcome.done)
+            moved_aside.update(outcome.moved_aside)
+            skipped, moved, change = list(outcome.skipped or []), outcome.moved, outcome.change_id
+            with_rows = sum(1 for old, new in outcome.done.items() if old != new)
+        if loose_renames:
+            outcome = file_only.rename(loose_renames, names.aside_for(loose_renames))
+            done.update(outcome.done)
+            moved_aside.update(outcome.moved_aside)
+            files_only = sum(1 for old, new in outcome.done.items() if old != new)
     except names.RenameFailed as failure:
-        result.fail("smart rename", failure.message())
+        report()
+        said = failure.message()
+        if done:
+            said += " The photos of %s were renamed, and stay so." % (
+                "the folders the library holds" if held_renames else "the other folders")
+        result.fail("smart rename", said)
         return result
 
-    renamed = {old: new for old, new in outcome.done.items() if old != new}
-    result.changed = len(renamed)
-    result.details.update(updated_paths=outcome.done, renamed=renamed, moved_aside=outcome.moved_aside,
-                          index_rows_moved=outcome.moved, index_skipped=outcome.skipped or [],
-                          change=outcome.change_id)
-    for old_path, new_path in outcome.skipped or []:
+    report()
+    for old_path, new_path in skipped:
         logger.warning("Renamed %s to %s, but the index already has rows for the new "
                        "name; left both as they were.", old_path, new_path)
-    logger.info("Renamed %d photo(s); moved %d index row(s).", len(renamed), outcome.moved)
+    logger.info("Renamed %d photo(s) (%d to files only); moved %d index row(s).", result.changed, files_only, moved)
     return result
 
 
@@ -316,7 +356,12 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
         return result
     refused = Result(attempted=len(photo_paths))
     # A photo found damaged refuses the whole shift, nothing written, as it refuses a rename.
-    if libraries.refuse_writes(refused, library, photo_paths):
+    # Photos of folders the library does not hold are shifted in their files only
+    # (tagpup.services.file_only), and are asked for what they decode as, not for records.
+    held, loose = libraries.split(library, photo_paths)
+    if held and libraries.refuse_writes(refused, library, held):
+        return refused
+    if loose and file_only.refuse_unwritable(refused, loose):
         return refused
 
     def plan_one(_path, held):
@@ -331,9 +376,12 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
         return file_changes.Plan(after=after) if after else file_changes.skip("holds no Date Taken to move")
 
     try:
-        result = file_changes.write_fields(library, "time shift", exiftool_path, photo_paths, dates.SHIFTED_FIELDS,
-                                           plan_one, summary={"photos": len(photo_paths), "minutes": minutes},
-                                           unreadable="skip")
+        journaled = file_changes.write_fields(
+            library, "time shift", exiftool_path, held, dates.SHIFTED_FIELDS, plan_one,
+            summary={"photos": len(held), "minutes": minutes}, unreadable="skip") if held else None
+        files = file_only.write_fields(exiftool_path, loose, dates.SHIFTED_FIELDS, plan_one,
+                                       unreadable="skip") if loose else None
+        result = file_only.combined(journaled, files)
     except Exception as e:
         result = Result(attempted=len(photo_paths))
         result.fail("time shift", e)
@@ -354,9 +402,18 @@ def delete(library, photo_path):
     The file goes first. A photo that could not be moved stays in the library, and its
     rows with it.
 
-    details: `removed`, the rows removed from each table.
+    A photo of a folder the library does not hold (Just look) is sent to the Recycle Bin
+    and nothing else happens: it has no row to forget (tagpup.services.file_only).
+
+    details: `removed`, the rows removed from each table (None for such a photo);
+    `file_only` and `with_rows`, 1 for the way it was done.
     """
     result = Result(attempted=1)
+    _held, loose = libraries.split(library, [photo_path])
+    if loose:
+        result = file_only.delete(photo_path)
+        result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0})
+        return result
     # A damaged photo may be deleted: nothing is written into it.
     if libraries.refuse_writes(result, library, [photo_path], damaged_ok=True):
         return result
@@ -373,6 +430,7 @@ def delete(library, photo_path):
     ids = thumbnails.ids_of(library, [photo_path])
     result.details["removed"] = photos.forget_photo(library.path, photo_path)
     thumbnails.forget(library, ids)
+    result.details.update({file_only.FILE_ONLY: 0, file_only.WITH_ROWS: 1})
     return result
 
 
@@ -397,6 +455,14 @@ def rotate(library, photo_path, direction, exiftool_path):
     if refused:
         result.refuse(refused)
         return result
+    _held, loose = libraries.split(library, [photo_path])
+    if loose:
+        # A photo of a folder the library does not hold: its file only, but only if it decodes.
+        if file_only.refuse_unwritable(result, [photo_path]):
+            return result
+        turned = file_only.rotate(photo_path, direction, exiftool_path)
+        turned.details.update({file_only.FILE_ONLY: turned.changed, file_only.WITH_ROWS: 0})
+        return turned
     if libraries.refuse_writes(result, library, [photo_path]):
         return result
     # The row is stamped only if it described the file just before the turn (#249).
@@ -416,6 +482,7 @@ def rotate(library, photo_path, direction, exiftool_path):
     photos.record_file_stat(library.path, photo_path, looks_different=True, before=before)
     stat = os.stat(photo_path)
     result.details.update(mtime=stat.st_mtime, size=stat.st_size)
+    result.details.update({file_only.FILE_ONLY: 0, file_only.WITH_ROWS: 1})
     return result
 
 

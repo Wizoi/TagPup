@@ -10,9 +10,25 @@
 // Dismiss. The entries are state.writeQueue's; only edits.js adds and marks them.
 import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
+import { libraryName } from './looking.js';
 import { writeQueueBox } from './elements.js';
 
-/** Done entries the list keeps; a failed one stays until it is dismissed or retried. */
+/** Done entries the list keeps; a failed one stays until it is dismissed or retried. *//**
+ * What a write's reply says of where it wrote (the server's `file_only`, `with_rows`: files
+ * written with no row because the library does not hold their folder, and with theirs), as a
+ * sentence to follow "Saved.", or '' when every file was written with its rows.
+ */
+export function whereWritten(data) {
+    const only = (data && data.file_only) || 0;
+    if (!only) return '';
+    const name = libraryName();
+    const rows = (data && data.with_rows) || 0;
+    return rows
+        ? ` ${only} to the files only (${name} does not hold their folder), ${rows} with their rows.`
+        : ` Written to the files only: ${name} does not hold this folder.`;
+}
+
+
 export const KEEP_DONE = 10;
 
 /** A new entry, waiting: `label` says what it does. */

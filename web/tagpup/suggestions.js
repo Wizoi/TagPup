@@ -14,6 +14,7 @@ import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson } from './tags.js';
 import { postPhotoMetadata, queuePhotoWrite, queueWriteOf, redrawIfShowing } from './edits.js';
+import { isJustLooking } from './looking.js';
 import { isPhotoTagged, renderFileList, scanFolder } from './folder.js';
 import { saveSingleTitle } from './photo.js';
 import { recordUndo, snapshotPhotos } from './undo.js';
@@ -30,7 +31,7 @@ export function updateSuggestButtonState(status = null) {
         return;
     }
     // Just looking at a folder the library does not hold (membership.js).
-    if (state.justLooking && samePath(state.justLooking, state.scannedFolder)) {
+    if (isJustLooking()) {
         btnSuggestTags.disabled = true;
         return;
     }
@@ -319,7 +320,7 @@ export function applySuggestedTagDirect(tagName, isPerson, forPath = state.activ
         setStatus('ready', 'Ready');
         saveToLocalStorageCache();
         return true;
-    });
+    }, undefined, { needsLibrary: true });
 }
 
 export function applySuggestedTitle() {
@@ -380,7 +381,7 @@ export async function applyAllSingleSuggestions() {
         setStatus('ready', 'Ready');
         saveToLocalStorageCache();
         return true;
-    });
+    }, undefined, { needsLibrary: true });
 }
 
 export function applyFolderSuggestionsLevel() {
@@ -457,7 +458,7 @@ export function applyFolderSuggestionsLevel() {
             alert("Error applying suggestions: " + err.message);
             return false;
         });
-    }, `Apply All suggestions (${targets.length} photos)`);
+    }, `Apply All suggestions (${targets.length} photos)`, { needsLibrary: true });
 }
 
 export function updateFolderAutoApplyState() {

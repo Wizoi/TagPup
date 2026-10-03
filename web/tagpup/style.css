@@ -1475,23 +1475,11 @@ body {
 }
 
 body.just-looking #btn-suggest-tags,
-body.just-looking #btn-rotate-left,
-body.just-looking #btn-rotate-right,
-body.just-looking #btn-delete-photo,
-body.just-looking #btn-save-details,
-body.just-looking #btn-edit-date-taken,
-body.just-looking #btn-save-title,
 body.just-looking #btn-suggest-title-wand,
-body.just-looking #btn-add-person,
-body.just-looking #btn-add-tag,
 body.just-looking #btn-carry-forward,
 body.just-looking #btn-apply-all-single-sugg,
-body.just-looking #btn-apply-rename,
-body.just-looking #btn-apply-timeshift,
-body.just-looking #btn-bulk-add-people,
-body.just-looking #btn-bulk-add-tags,
 body.just-looking #btn-folder-auto-apply,
-body.just-looking .editable-title {
+body.just-looking #faces-strip {
     opacity: 0.4;
     cursor: not-allowed;
 }

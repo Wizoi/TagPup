@@ -14,6 +14,7 @@ import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { renderFileList } from './folder.js';
 import { renderThumbnails } from './grid.js';
 import { updateSelectedThumbnailsCount } from './selection.js';
+import { whereWritten } from './write-queue.js';
 
 /**
  * Why a Smart Rename grouping cannot be used, or null if it can: the server's rule
@@ -95,7 +96,8 @@ export function wireRenameAndTimeShift() {
             saveToLocalStorageCache();
             
             const skipped = data.skipped_damaged || 0;
-            setStatus('ready', `Renamed ${renamedCount} photo(s)` + (skipped ? `; ${skipped} skipped: damaged` : ''));
+            setStatus('ready', `Renamed ${renamedCount} photo(s)` + (skipped ? `; ${skipped} skipped: damaged` : '')
+                + whereWritten(data));
         })
         .catch(err => {
             console.error(err);
@@ -217,7 +219,7 @@ export function applyTimeShift() {
                 setStatus('error', `Time shift applied to ${done} of ${asked} photo(s); ${asked - done} could not be written${also}`,
                     { transient: false });
             } else {
-                setStatus('ready', `Time shift applied to ${done} photo(s)${also}`);
+                setStatus('ready', `Time shift applied to ${done} photo(s)${also}.${whereWritten(data)}`.replace(/\.$/, ''));
             }
 
             renderFileList();

@@ -14,6 +14,8 @@ import {
     inputPhotoTitle, mainImage, panelContent, photoList, statusDot, statusText
 } from './elements.js';
 import { setStatus } from './status.js';
+import { isJustLooking, libraryName } from './looking.js';
+import { whereWritten } from './write-queue.js';
 import { saveToLocalStorageCache } from './cache.js';
 import {
     exifDateToIso, formatFriendlyDateSingle, getCurrentDateTimeIso,
@@ -294,7 +296,7 @@ export function carryTagsForward() {
         saveToLocalStorageCache();
         setStatus('ready', `Copied ${missing.length} tag(s) from ${from}`);
         return true;
-    });
+    }, undefined, { needsLibrary: true });
 }
 
 /** Keep the carry-forward button honest about what it would do. */
@@ -559,7 +561,7 @@ export function rotatePhoto(direction) {
             if (thumb) thumb.src = photoFileUrl(photo, 300);
             saveToLocalStorageCache();
             statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Ready';
+            statusText.textContent = data.file_only ? `Rotated.${whereWritten(data)}` : 'Ready';
         } else {
             throw new Error(data.error || 'Failed to rotate');
         }
@@ -581,7 +583,11 @@ export function deleteActivePhoto() {
     if (index === -1) return;
 
     const filename = state.folderPhotos[index].filename || 'this photo';
-    if (!confirm(`Are you sure you want to delete "${filename}" and move it to the Windows Recycle Bin?`)) {
+    // A photo of a folder the library does not hold: say that only the file moves.
+    const alone = isJustLooking()
+        ? `\n\n${libraryName()} does not hold this folder: only the file is moved, and nothing in ${libraryName()} changes.`
+        : '';
+    if (!confirm(`Are you sure you want to delete "${filename}" and move it to the Windows Recycle Bin?${alone}`)) {
         return;
     }
 
@@ -626,7 +632,7 @@ export function deleteActivePhoto() {
             }
 
             statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Ready';
+            statusText.textContent = data.message || 'Ready';
         } else {
             throw new Error(data.error || 'Failed to delete photo');
         }
@@ -675,9 +681,10 @@ export function wireDateTakenModal() {
             // In the photo write queue with every other write: it sends the tags and
             // title too, and those are read when it runs, not when Save was clicked.
             queueWriteOf(photo.path, async () => {
+                let saved;
                 setStatus('busy', 'Saving date taken...');
                 try {
-                    await postPhotoMetadata(photo, { date_taken: newDateVal });
+                    saved = await postPhotoMetadata(photo, { date_taken: newDateVal });
                 } catch (err) {
                     console.error(err);
                     setStatus('error', 'Error');
@@ -700,7 +707,7 @@ export function wireDateTakenModal() {
                     }
                 }
 
-                setStatus('ready', 'Ready');
+                setStatus('ready', 'Saved the date taken.' + whereWritten(saved));
                 saveToLocalStorageCache();
                 renderFileList();
                 upper.renderThumbnails();

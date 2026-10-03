@@ -29,7 +29,7 @@ from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import damaged_photos
 from tagpup.services import faces as face_actions
-from tagpup.services import file_changes
+from tagpup.services import file_changes, file_only
 from tagpup.services import indexing
 from tagpup.services import libraries as library_actions
 from tagpup.services import library_view
@@ -424,7 +424,7 @@ def folder_time_shift():
         return responses.error(500, str(e))
     return jsonify({"success": True, "updated_photos": list(photos.values()),
                     "updated_count": result.changed, "requested_count": result.attempted,
-                    **_skipped_damaged(result)})
+                    **_skipped_damaged(result), **_where(result)})
 
 
 @routes.post("/api/folder/rename-photos")
@@ -477,7 +477,7 @@ def folder_rename_photos():
         "updated_photos": _sorted(photos),
         "index_rows_moved": result.details["index_rows_moved"],
         "index_skipped": [new for _, new in result.details["index_skipped"]],
-        **_skipped_damaged(result),
+        **_skipped_damaged(result), **_where(result),
     })
 
 
@@ -683,7 +683,7 @@ def photo_rotate():
         return responses.error(500, str(e))
     # The new mtime, which versions the page's image URLs: thumbnails are cached for a
     # day, so without a new URL the grid kept the old turn.
-    return jsonify({"success": True, "mtime": result.details["mtime"]})
+    return jsonify({"success": True, "mtime": result.details["mtime"], **_where(result)})
 
 
 @routes.post("/api/photo/delete")
@@ -704,7 +704,12 @@ def photo_delete():
     except Exception as e:
         logger.error("Error deleting image %s: %s", photo_path, e)
         return responses.error(500, str(e))
-    return jsonify({"success": True})
+    reply = {"success": True, **_where(result)}
+    if result.details.get(file_only.FILE_ONLY):
+        # A photo of a folder the library does not hold: the file only.
+        reply["message"] = ("Moved to the Recycle Bin. Nothing in %s changed: it does not hold this folder."
+                            % picker_name(os.path.basename(library.path)))
+    return jsonify(reply)
 
 
 @routes.post("/api/photo/save-metadata")
@@ -742,7 +747,7 @@ def photo_save_metadata():
     except Exception as e:
         logger.error("Error saving metadata for %s: %s", photo_path, e)
         return responses.error(500, str(e))
-    reply = {"success": True, "new_path": new_path}
+    reply = {"success": True, "new_path": new_path, **_where(result)}
     if result.details["index_warning"]:
         reply["index_warning"] = result.details["index_warning"]
     return jsonify(reply)
@@ -780,7 +785,16 @@ def photos_bulk_tags():
         # so that its records say what the files hold.
         logger.error("Error in bulk tags write: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
-    return jsonify({"success": True, "written": _written_tags(result), **_skipped_damaged(result)})
+    return jsonify({"success": True, "written": _written_tags(result), **_skipped_damaged(result),
+                    **_where(result)})
+
+
+def _where(result):
+    """What a write says of where it wrote (tagpup.services.file_only): {"file_only": files
+    written with no row, because the library does not hold their folder, "with_rows": files
+    written with their rows}. What was written, not attempted."""
+    return {file_only.FILE_ONLY: result.details.get(file_only.FILE_ONLY, 0),
+            file_only.WITH_ROWS: result.details.get(file_only.WITH_ROWS, 0)}
 
 
 def _skipped_damaged(result):
@@ -788,8 +802,10 @@ def _skipped_damaged(result):
     (tagpup.services.libraries.leave_out_damaged): {"skipped_damaged": n, "skipped":
     [{"path", "why"}]}, the photos the page shows."""
     count = result.details.get(library_actions.SKIPPED_DAMAGED, 0)
-    return {"skipped_damaged": count,
-            "skipped": [{"path": what, "why": why} for what, why in result.skipped[-count:]] if count else []}
+    # By what they say, not by position: a write of two parts (held photos and the others)
+    # skips in each.
+    damaged = [{"path": what, "why": why} for what, why in result.skipped if why.startswith("damaged, ")]
+    return {"skipped_damaged": count, "skipped": damaged if count else []}
 
 
 def _written_tags(result):

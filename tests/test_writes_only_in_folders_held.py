@@ -1,12 +1,15 @@
-"""No photo is written through a library that does not hold its folder.
+"""No row, and no write that needs one, is made through a library that does not hold the folder.
 
 Refusing Suggest there kept the rows out (test_rows_only_in_folders_added), but a
-tag write, a rotation, a rename, a time shift or a delete still reached the file: with
-kr-track selected on a folder photo_index holds, kr-track's tags were written into
-photo_index's photos. The page's Just look holds them back; the server now refuses
-each, 409, "<folder> is not in <library>. Add it to <library> first.", and writes
-nothing -- one check, tagpup.services.libraries.refuse_writes, in every write service.
-The CLI's `write` refuses the same way.
+tag write, a rotation, a rename, a time shift or a delete still reached the file and made a
+row: with kr-track selected on a folder photo_index holds, kr-track's tags were written into
+photo_index's photos. The server refused each, 409, "<folder> is not in <library>. Add it to
+<library> first." -- one check, tagpup.services.libraries.refuse_writes.
+
+Since 2026-10-02 only what needs the library's database is refused that way: Suggest, Apply
+All and the CLI's `write` of suggestions. A caption, a tag, a Smart Rename, a turn, a date
+and a delete write the photo's FILE (tagpup.services.file_only; tests/test_just_look_edits.py)
+and make no row: here, that the folder is still not the library's after each.
 """
 import os
 import sys
@@ -70,37 +73,49 @@ class WriteCase(unittest.TestCase):
     def post(self, route, body):
         return self.client.post("/library/api" + route, json=body)
 
+    def assert_file_only(self, reply):
+        """Written, and no row made: the folder is still not the library's."""
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual([self.lighthouse], library_actions.not_held(self.library, [self.photo]), "rows were made")
+
 
 class TheWriteRoutes(WriteCase):
-    def test_saving_one_photo(self):
-        self.assert_refused(self.post("/photo/save-metadata", {"path": self.photo, "title": "Lighthouse",
-                                                              "tags": ["Trips/Lighthouse"]}))
+    def test_saving_one_photo_writes_the_file_only(self):
+        self.assert_file_only(self.post("/photo/save-metadata", {"path": self.photo, "title": "Lighthouse",
+                                                                "tags": ["Trips/Lighthouse"]}))
+        self.assertNotEqual(self.before, stamp(self.photo))
 
-    def test_tags_on_a_selection(self):
-        self.assert_refused(self.post("/photos/bulk-tags", {"paths": [self.photo], "add_tags": ["Trips/Lighthouse"],
-                                                           "remove_tags": []}))
+    def test_tags_on_a_selection_write_the_files_only(self):
+        self.assert_file_only(self.post("/photos/bulk-tags", {"paths": [self.photo], "add_tags": ["Trips/Lighthouse"],
+                                                             "remove_tags": []}))
+        self.assertNotEqual(self.before, stamp(self.photo))
 
     def test_apply_all(self):
         saved = {self.photo: {"tags": [{"tag": "Trips/Lighthouse", "score": 0.9}], "people": [], "title": None}}
         with mock.patch.object(suggestion_jobs.SuggestionRuns, "suggestions", return_value=saved):
             self.assert_refused(self.post("/folder/auto-apply", {"folder_path": self.lighthouse}))
 
-    def test_rotating(self):
-        self.assert_refused(self.post("/photo/rotate", {"path": self.photo, "direction": "left"}))
+    def test_rotating_turns_the_file_only(self):
+        self.assert_file_only(self.post("/photo/rotate", {"path": self.photo, "direction": "left"}))
+        self.assertNotEqual(self.before, stamp(self.photo))
 
-    def test_smart_rename(self):
-        self.assert_refused(self.post("/folder/rename-photos", {"folder_path": self.lighthouse,
-                                                               "photo_paths": [self.photo], "grouping": "Lighthouse"}))
-        self.assertEqual(["IMG_0001.jpg"], os.listdir(self.lighthouse))
+    def test_smart_rename_renames_the_file_only(self):
+        self.assert_file_only(self.post("/folder/rename-photos", {"folder_path": self.lighthouse,
+                                                                 "photo_paths": [self.photo], "grouping": "Lighthouse"}))
+        self.assertEqual(["Lighthouse - 1.jpg"], os.listdir(self.lighthouse))
 
-    def test_time_shift(self):
+    def test_time_shift_of_a_photo_with_no_date_writes_nothing(self):
         tagpup_routes.folders.of(self.library).put(self.lighthouse, {self.photo: {"path": self.photo, "raw_metadata": {}}})
-        self.assert_refused(self.post("/folder/time-shift", {"folder_path": self.lighthouse,
-                                                            "camera_model": fields.ALL_CAMERAS, "shift_minutes": 60}))
+        reply = self.post("/folder/time-shift", {"folder_path": self.lighthouse,
+                                                "camera_model": fields.ALL_CAMERAS, "shift_minutes": 60})
+        self.assert_file_only(reply)
+        self.assertEqual(self.before, stamp(self.photo))
 
-    def test_delete(self):
-        with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=AssertionError("sent")):
-            self.assert_refused(self.post("/photo/delete", {"path": self.photo}))
+    def test_delete_sends_the_file_to_the_recycle_bin_only(self):
+        with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=lambda p: os.remove(p) or True):
+            reply = self.post("/photo/delete", {"path": self.photo})
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual([self.lighthouse], library_actions.not_held(self.library, [self.photo]))
 
     def test_a_held_folder_is_written(self):
         held = os.path.join(self.regatta, "regatta_01.jpg")
