@@ -197,7 +197,7 @@ def tree_edit(conn):
 
 
 def names(db_path, keywords_too=False, include_hidden=False):
-    """The people the library knows, sorted: the names given to faces -- and, with
+    """The people the library knows, alphabetical (vocabulary.tag_sort_key): the names given to faces -- and, with
     `keywords_too`, the people photos' keywords name.
 
     A person whose every node in the tag tree is hidden from autocomplete, or sits in a
@@ -227,7 +227,7 @@ def names(db_path, keywords_too=False, include_hidden=False):
                                                         for tag in filed[person]))}
     finally:
         conn.close()
-    return sorted(person for person in people if person)
+    return sorted((person for person in people if person), key=vocabulary.tag_sort_key)
 
 
 def rename(conn, old, new):

@@ -32,4 +32,7 @@ def with_counts(library):
         if tag_paths and all(vocabulary.hidden_by(path, hidden_tags) for path in tag_paths):
             continue
         listed.append({"name": name, "count": count})
+    # Most faces first, and the alphabet for those that tie: the order of the rows the query
+    # grouped is nobody's.
+    listed.sort(key=lambda each: (-each["count"], vocabulary.tag_sort_key(each["name"])))
     return listed

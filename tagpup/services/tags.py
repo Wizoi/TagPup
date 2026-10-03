@@ -469,7 +469,7 @@ def listing(library, include_people=False):
 
     every = set(counts) | set(in_taxonomy)
     out = []
-    for tag in sorted(every):
+    for tag in sorted(every, key=vocabulary.tag_sort_key):
         if is_person_tag(tag) and not include_people:
             continue
         out.append({
@@ -484,14 +484,15 @@ def listing(library, include_people=False):
         })
 
     buckets = {
-        "flat": sorted(t["tag"] for t in out if t["flat"] and t["count"]),
-        "used_once": sorted(t["tag"] for t in out if t["count"] == 1),
-        "unused": sorted(t["tag"] for t in out if t["count"] == 0),
+        "flat": sorted((t["tag"] for t in out if t["flat"] and t["count"]), key=vocabulary.tag_sort_key),
+        "used_once": sorted((t["tag"] for t in out if t["count"] == 1), key=vocabulary.tag_sort_key),
+        "unused": sorted((t["tag"] for t in out if t["count"] == 0), key=vocabulary.tag_sort_key),
         # Counted separately from the tags returned: a person who lost their path is
         # excluded from the word-tag list by is_person_tag, but it is exactly what
         # somebody opening this view wants told.
         "people_without_a_path": sorted(
-            tag for tag in every if is_stray_person(tag) and counts.get(tag, 0) > 0),
+            (tag for tag in every if is_stray_person(tag) and counts.get(tag, 0) > 0),
+            key=vocabulary.tag_sort_key),
     }
     return {"tags": out, "buckets": buckets}
 
@@ -511,9 +512,9 @@ def photos_carrying(library, tag):
 
 
 def autocomplete(library):
-    """Every tag offered while one is typed, sorted: the tags photos carry and the tree's
-    nodes, less those hidden from autocomplete and everything under them
-    (tagpup.core.vocabulary.hidden_by). TagPup's /api/tags."""
+    """Every tag offered while one is typed, alphabetical (vocabulary.tag_sort_key, the order the
+    pages show tags in): the tags photos carry and the tree's nodes, less those hidden from
+    autocomplete and everything under them (tagpup.core.vocabulary.hidden_by). TagPup's /api/tags."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         found = set()
@@ -523,4 +524,4 @@ def autocomplete(library):
         hidden = taxonomy.hidden_tags(conn)
     finally:
         conn.close()
-    return sorted(tag for tag in found if not vocabulary.hidden_by(tag, hidden))
+    return sorted((tag for tag in found if not vocabulary.hidden_by(tag, hidden)), key=vocabulary.tag_sort_key)

@@ -301,5 +301,5 @@ def _folders(tree):
 def _keywords(nodes):
     tag_of = {node["id"]: node["tag"] for node in nodes}
     return [{"tag": node["tag"], "name": node["name"], "parent": tag_of.get(node["parent_id"]), "count": node["count"]}
-            for node in sorted(nodes, key=lambda node: vocabulary.key(node["tag"] or ""))]
+            for node in sorted(nodes, key=lambda node: vocabulary.tag_sort_key(node["tag"]))]
 
