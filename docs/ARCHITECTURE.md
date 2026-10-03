@@ -713,14 +713,20 @@ the design assumes a GPU and more memory later and does not wait for them.
       point, through the machine's map, at the real photos. `generate_screenshots.py` finds its photos from its own
       checkout.
     - **An old place's spelling** *(review of stage 3, #465)*: after a move the previous place is still recognised, so a page that
-      still holds a path spelled by it, a bookmark, or a folder typed under it, names the same row. No file operation
-      takes such a path as written: every service that touches a file or a row by a caller's path -- the writes
+      still holds a path spelled by it, a bookmark, or a folder typed under it, names the same row. No request takes such a
+      path as written: **one ingress** (`tagpup.web.roots_ingress`, a before_request after the gate) turns every
+      path-bearing parameter of an `/api/` request -- `path`, `paths`, `folder`, `folder_path(s)`, `photo_path(s)`, in
+      the query or the JSON body -- into the first place's spelling (`paths.canonical`: `from_row(to_row(path))` for a
+      path under another listed place of the root, the path as given for any other) before any route, cache or
+      pre-check reads it. TagPup's folder scans are therefore one entry for a folder however it is spelled, the photo
+      file served and opened is the first place's, and a request holding old paths works once the old place is gone.
+      A folder to add that exists only at the previous place is refused naming both places and the root. The
+      services keep `services.roots.canonical_args` as the second line (the CLI, the MCP tools, jobs): the writes
       (`tagging`, `photos` delete / rotate / Smart Rename / time shift, `file_changes.write_fields` and `rename`), the
-      folder scans, Add, `sync` and `index_folder`, the photo's details -- is decorated with
-      `services.roots.canonical_args`, which resolves the path through the first place (`paths.canonical`: `from_row(to_row(path))`
-      for a path under another listed place of the root, the path as given for any other) before the service sees it. A
-      request with an old spelling therefore reads and writes at the first place and answers with first-place paths,
-      so the page converges, and a folder made later under an old place is added and indexed at the first place.
+      folder scans, Add, `sync` and the photo's details -- not `index_folder`, which runs on the queue's worker and
+      is handed what Add and sync resolved; the CLI's `index` resolves its folders itself, through the roots it pins,
+      refusing one that exists only at the previous place. An undo of a change recorded before the adoption writes the
+      first place's file (`file_journal` reads a path through `paths.canonical`).
     - **Verify, as reviewed**: a result is also poor when more than half the rows checked differ (a stale copy: sync
       would re-read those rows from the files there, replacing tags newer in the rows than in those files, which the
       dry run says and counts); a row the index never read is counted apart ("never read"), not as "differs"; a library

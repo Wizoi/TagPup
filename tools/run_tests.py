@@ -171,9 +171,9 @@ def keep_failed_run(text):
         return None
 
 
-#: Files that run alone, after every other has finished: their own deadlines are real time -- they start
-#: server processes and wait for them -- and a full run's eight processes at once made two of them fail
-#: that wait (docs/findings.md, #476); alone, the file takes about 45 s.
+#: Files that run in a lane of their own, one at a time, beside the pool and not in it: their deadlines are real
+#: time -- they start server processes and wait for them -- and a pool slot's share of a loaded machine made two
+#: of them fail that wait (docs/findings.md, #476). Beside the pool, the suite takes no longer than it did.
 ALONE = ("test_supervisor",)
 
 
@@ -200,16 +200,21 @@ def run(modules, jobs):
         for module in shared:
             record(run_one(module))
 
-    # The lane has a process of its own while it has anything to run.
-    spread_jobs = max(1, jobs - 1) if shared else jobs
+    def solo():
+        for module in alone:
+            record(run_one(module))
+
+    # Each lane has a process of its own while it has anything to run.
+    spread_jobs = max(1, jobs - (1 if shared else 0) - (1 if alone else 0))
     with concurrent.futures.ThreadPoolExecutor(max_workers=spread_jobs) as pool:
         lane_thread = threading.Thread(target=lane)
         lane_thread.start()
+        solo_thread = threading.Thread(target=solo)
+        solo_thread.start()
         for future in concurrent.futures.as_completed([pool.submit(run_one, m) for m in spread]):
             record(future.result())
         lane_thread.join()
-    for module in alone:
-        record(run_one(module))
+        solo_thread.join()
     save_durations(durations)
     return results
 

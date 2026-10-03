@@ -119,6 +119,20 @@ def _exclusive(function):
 _running = threading.local()
 
 
+def _settle_stopped(library, change_id):
+    """A change a stop cut short is finished now, not at the next settle: the files never written are taken
+    out of it and it is applied for the files that were, so that what was written can be undone at once.
+    The pin has been let go by now (the roots changed), so these writes see the roots as they are."""
+    if not change_id:
+        return
+    try:
+        left = [row.id for row in file_journal.files_of(library.path, change_id) if row.state == "planned"]
+        file_journal.withdraw(library.path, left)
+        file_journal.finish(library.path, change_id)
+    except Exception as problem:
+        logger.warning("Could not finish change %s after it was stopped: %s", change_id, problem)
+
+
 def _pinned(function):
     """Hold one map for the whole change (tagpup.services.roots.pinned): a place moved meanwhile
     changes nothing until it ends, and a change of the library's roots by another process stops
@@ -142,6 +156,7 @@ def _pinned(function):
                 said += (" Before it stopped %d file(s) were written, recorded as change %s in History, which "
                          "can be undone." % (result.changed, result.details.get("change")))
             result.refuse(said)
+            _settle_stopped(library, result.details.get("change"))
             for name, empty in (("change", None), ("conflicts", []), ("read_back", {}), ("written", {})):
                 result.details.setdefault(name, empty)
             return result

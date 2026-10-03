@@ -122,6 +122,29 @@ def canonical(library, path):
     return paths.canonical(path, _roots_of(library)) if path else path
 
 
+def canonicaliser(library):
+    """A function that spells a path by the first place of its root (paths.canonical), made once from
+    the library's roots -- for an ingress that resolves many -- or None for a library that has none
+    or whose roots this machine cannot place (the gate tells the owner)."""
+    roots = _roots_of(library)
+    return None if roots is None else (lambda path: paths.canonical(path, roots))
+
+
+def old_place_sentence(library, original, canonical_path):
+    """Why a folder typed in an old place's spelling cannot be used: it does not exist at the first place.
+    Names the root, the previous place `original` is under and the first place `canonical_path` is."""
+    roots = _roots_of(library)
+    found = roots.locate(original) if roots is not None else None
+    if found is None:
+        return "%s is not a folder." % original
+    name = found[0]
+    previous = next((place for place in roots.locations.get(name, ())[1:]
+                     if paths.same(original, place) or paths.is_under(original, place)), "its previous place")
+    first = roots.locations[name][0]
+    return ("%s is under %s, the previous place of root %s, and does not exist at its current place (%s) as %s. "
+            "Nothing was done. Use the folder at the current place." % (original, previous, name, first, canonical_path))
+
+
 def canonical_all(library, many):
     """canonical for each of a list; a dict has its keys made so."""
     roots = _roots_of(library)

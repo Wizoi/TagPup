@@ -46,6 +46,8 @@ export function lastVerifyText(last) {
     if (last.outcome === 'failed') return `Last checked ${last.when}: it could not finish (${what}).`;
     const found = [`${count(last.matches)} match`, `${count(last.differs)} changed since they were indexed`,
         `${count(last.missing)} missing`];
+    if (last.unread) found.push(`${count(last.unread)} never read by the index`);
+    if (last.unreadable) found.push(`${count(last.unreadable)} could not be read`);
     return `Last checked ${last.when}, ${what}: ${found.join(', ')}.`;
 }
 

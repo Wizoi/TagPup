@@ -155,8 +155,10 @@ def _row(found, roots):
     recorded before the library's roots were adopted holds native paths, and one recorded
     after holds the row form: either reads as the native path (paths.from_row)."""
     file_id, change_id, photo_id, path, new_path, before, after, state, note, stamp = found
-    path = paths.from_row(path, roots)
-    new_path = paths.from_row(new_path, roots) if new_path else new_path
+    # By the first place of its root: a change recorded before the adoption holds the path as it was then
+    # (the place the library lived at); after a move an undo must write where writes go now.
+    path = paths.canonical(paths.from_row(path, roots), roots)
+    new_path = paths.canonical(paths.from_row(new_path, roots), roots) if new_path else new_path
     return FileRow(file_id, change_id, photo_id, path, new_path, json.loads(before or "{}"),
                    json.loads(after or "{}"), state, note, tuple(json.loads(stamp)) if stamp else None)
 

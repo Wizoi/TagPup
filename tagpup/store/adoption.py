@@ -670,7 +670,7 @@ def verify(conn, roots):
     Reads only; counts, never paths. The doctor's check (tagpup.store.checks) and the adoption's
     own, before it commits."""
     problems = []
-    unknown = unplaced = malformed = shadowed = 0
+    unknown = unplaced = malformed = shadowed = native = 0
     why_unplaced = ""
     for table, key, columns, _json in TABLES:
         if not _has(conn, table) or not columns:
@@ -678,9 +678,15 @@ def verify(conn, roots):
         for column in columns:
             for (value,) in conn.execute("SELECT %s FROM %s WHERE %s IS NOT NULL" % (column, table, column)):
                 if not value.startswith(paths.ROOT_MARK):
+                    # A row that kept its native path where Roots.locate says it is a root's -- by one of
+                    # its places or by its share's address (adopted before the address was given, or a
+                    # write that raced the adoption): every lookup of that path is by the row form, and
+                    # misses it. The same classifier as the adoption's own (_forward).
+                    if paths.is_native_absolute(value) and roots.locate(value) is not None:
+                        native += 1
                     continue
                 try:
-                    native = paths.from_row(value, roots)
+                    native_path = paths.from_row(value, roots)
                 except paths.UnknownRoot:
                     unknown += 1
                     continue
@@ -691,7 +697,7 @@ def verify(conn, roots):
                 except paths.RootsError:
                     malformed += 1
                     continue
-                found = roots.locate(native)
+                found = roots.locate(native_path)
                 if found is not None and found[0] != value[1:].partition(paths.ROW_SEP)[0].lower():
                     shadowed += 1
     if unknown:
@@ -700,6 +706,9 @@ def verify(conn, roots):
         problems.append("%d row(s) name a root this machine does not place: %s" % (unplaced, why_unplaced))
     if malformed:
         problems.append("%d row(s) are not a path under a root" % malformed)
+    if native:
+        problems.append("%d row(s) kept their native path where this library's roots resolve it to a root (its place "
+                        "or its share's address): a lookup by the row form misses them" % native)
     if shadowed:
         problems.append("%d row(s) are held under one root but lie under another root's place, so a lookup under "
                         "that root misses them" % shadowed)

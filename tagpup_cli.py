@@ -179,6 +179,24 @@ def cli(ctx, db, test):
     ctx.obj["test"] = test
     ctx.obj["db"] = db
 
+def _resolve_directories(library, kwargs):
+    """A folder typed in an old place's spelling is the first place's folder: spelled so before the command
+    walks or records it. One that does not exist at the first place is refused, naming both places and the root,
+    and nothing is done (findings #483, #485)."""
+    typed = kwargs.get("directories")
+    canonical = library_roots.canonicaliser(library) if typed else None
+    if canonical is None:
+        return
+    resolved = []
+    for directory in typed:
+        found = canonical(directory)
+        if found != directory and not os.path.isdir(found):
+            console.print(library_roots.old_place_sentence(library, directory, found), markup=False, soft_wrap=True)
+            raise SystemExit(1)
+        resolved.append(found)
+    kwargs["directories"] = tuple(resolved)
+
+
 def _holds_the_roots(command):
     """A command that runs for as long as an index does, run holding one map: every path it writes is
     spelled by the roots and the places it started with, however the machine's map is edited
@@ -192,6 +210,7 @@ def _holds_the_roots(command):
             with contextlib.ExitStack() as held:
                 if not kwargs.get("reset"):
                     held.enter_context(library_roots.pinned(library))
+                    _resolve_directories(library, kwargs)
                 return command(ctx, *args, **kwargs)
         except library_roots.RootsChanged:
             console.print(library_roots.STOPPED, markup=False, soft_wrap=True)

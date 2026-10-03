@@ -108,6 +108,14 @@ describe("the Roots dialog", () => {
       "Last checked 2026-10-02 10:00:00, a sample of 2,000 rows: 1,998 match, 2 changed since they were indexed, 0 missing.");
   });
 
+  test("the last check adds up to its sample: never read and unreadable are said too (#488)", async (t) => {
+    const ctx = await tuner(t, { roots: [entry({ last_verify: { when: "2026-10-02 10:00:00", mode: "sample",
+      checked: 2000, matches: 1990, differs: 2, unread: 5, unreadable: 3, missing: 0, outcome: "done" } })] });
+    const row = (await openFromGear(ctx)).querySelector(".roots-root");
+    assert.equal(text(row.querySelector(".roots-last")),
+      "Last checked 2026-10-02 10:00:00, a sample of 2,000 rows: 1,990 match, 2 changed since they were indexed, 0 missing, 5 never read by the index, 3 could not be read.");
+  });
+
   test("a library with no roots says so, and shows the command", async (t) => {
     const ctx = await tuner(t, { roots: [] });
     const dialog = await openFromGear(ctx);
