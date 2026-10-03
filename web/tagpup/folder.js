@@ -11,6 +11,7 @@ import {
     photoSearch, sidebar, sidebarResizer, statusDot, statusText
 } from './elements.js';
 import { flagField } from './status.js';
+import { clearSelection, keepOnly } from './selected.js';
 import { CACHE_TTL_MS, folderCacheKey, saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
@@ -33,7 +34,23 @@ export function wireChangeDogPark() {
     }
 }
 
+/**
+ * The selection belongs to the folder it was made in: another folder starts with none, and the
+ * same folder scanned again keeps what is still in it. Called with the folder that was open
+ * before, as the new one is put in place.
+ */
+function carrySelection(previous, path, photos) {
+    if (previous && samePath(previous, path)) keepOnly(photos.map(photo => photo.path));
+    else {
+        clearSelection();
+        state.lastSelectedPath = null;
+    }
+    upper.updateSelectedThumbnailsCount();
+}
+
 export function closeFolderForDogPark() {
+    clearSelection();
+    state.lastSelectedPath = null;
     state.scannedFolder = null;
     state.folderPhotos = [];
     state.folderSuggestions = {};
@@ -216,9 +233,11 @@ export function scanFolder(forceRefresh = false) {
                 const cacheEntry = JSON.parse(rawCache);
                 const age = Date.now() - cacheEntry.timestamp;
                 if (age < CACHE_TTL_MS) {
+                    const previous = state.scannedFolder;
                     state.scannedFolder = path;
                     updateCurrentFolderLabel();
                     state.folderPhotos = cacheEntry.photos;
+                    carrySelection(previous, path, state.folderPhotos);
                     state.folderSuggestions = cacheEntry.suggestions || {};
                     updateListStats('(cached)');
                     folderViewHeader.classList.remove('hidden');
@@ -314,9 +333,11 @@ export function scanFolder(forceRefresh = false) {
 }
 
 export function showScannedFolder(path, data) {
+    const previous = state.scannedFolder;
     state.scannedFolder = path;
     updateCurrentFolderLabel();
     state.folderPhotos = data;
+    carrySelection(previous, path, data);
     updateListStats();
 
     // Update URL search path parameter

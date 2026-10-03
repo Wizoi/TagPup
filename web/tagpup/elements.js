@@ -35,6 +35,8 @@ export const panelContent = document.getElementById('panel-content');
 
 export const folderViewHeader = document.getElementById('folder-view-header');
 export const folderViewContent = document.getElementById('folder-view-content');
+// What scrolls: the grid sits in it below the folder's header (vgrid.js windows by its scroll).
+export const folderViewMain = document.getElementById('folder-view-main');
 export const folderViewTitle = document.getElementById('folder-view-title');
 export const folderViewStats = document.getElementById('folder-view-stats');
 export const btnSelectAllThumbnails = document.getElementById('btn-select-all-thumbnails');

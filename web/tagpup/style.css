@@ -774,6 +774,8 @@ body {
     gap: 20px;
     height: 100%;
     overflow-y: auto;
+    /* The grid changes its own padding as the window moves; the browser must not "help". */
+    overflow-anchor: none;
     padding: 20px;
 }
 
@@ -1000,12 +1002,15 @@ body {
     border-color: var(--accent);
 }
 
-/* Thumbnail Grid */
+/* Thumbnail Grid. Only the rows in view are in the DOM (vgrid.js); the rows above and below
+   are this padding, so the scroll bar is right for every card. */
 .thumbnails-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     gap: 16px;
-    padding-bottom: 40px;
+    position: relative;
+    padding-top: var(--vgrid-before, 0px);
+    padding-bottom: calc(40px + var(--vgrid-after, 0px));
 }
 
 .thumbnail-card {

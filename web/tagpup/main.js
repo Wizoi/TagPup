@@ -29,7 +29,7 @@ import {
 } from './photo.js';
 import {
     renderThumbnails, selectAllThumbnails, selectNoneThumbnails, wireGridContextMenu,
-    wireThumbnailSize
+    wireThumbnailGrid, wireThumbnailSize
 } from './grid.js';
 import { recordUndo, undoLastOperation } from './undo.js';
 import { enableSwipeNavigation, wireKeyboard } from './navigation.js';
@@ -110,6 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
     detailPath.title = 'Open in default app';
     btnApplyTimeshift.addEventListener('click', applyTimeShift);
     
+    wireThumbnailGrid();
     wireThumbnailSize();
     wireRenameAndTimeShift();
 

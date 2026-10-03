@@ -23,6 +23,7 @@ import {
 import { renderFileList } from './folder.js';
 import { renderThumbnails } from './grid.js';
 import { queuePhotoWrite } from './edits.js';
+import { isSelected } from './selected.js';
 
 export function updateSelectedThumbnailsCount() {
     selectedThumbnailsCount.textContent = `Selected: ${state.selectedThumbnails.length}`;
@@ -42,7 +43,7 @@ export function updateSelectedThumbnailsCount() {
     if (state.selectedThumbnails.length > 0) {
         
         // Gather statistics
-        const selectedPhotos = state.folderPhotos.filter(p => state.selectedThumbnails.includes(p.path));
+        const selectedPhotos = state.folderPhotos.filter(p => isSelected(p.path));
         
         // Calculate Date Taken Range
         const dateObjs = [];

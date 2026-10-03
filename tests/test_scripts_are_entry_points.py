@@ -23,6 +23,8 @@ SCRIPTS = os.path.join(ROOT, "scripts")
 HELPERS = {
     "_root": "puts the repository root on sys.path for a script run directly",
     "code_snapshot": "the code, as the installer and the measurement sandbox copy it",
+    "sandbox": "a private copy of a library, a free port and a clean-up that tells, which the measurement "
+               "scripts share (measure_identify_faces, measure_suggest_folder, measure_grid)",
     "reloader": "the development auto-reloader tagpup_web.py starts; "
                 "tagpup/dev/reloader.py in docs/ARCHITECTURE.md, 'Where everything goes'",
 }
@@ -31,7 +33,6 @@ HELPERS = {
 #: tools/ with one sandbox module (docs/ARCHITECTURE.md, "Where everything goes").
 #: None may be added.
 SHARED_UNTIL_TOOLS = {
-    (os.path.join("scripts", "measure_suggest_folder.py"), "measure_identify_faces"),
     (os.path.join("scripts", "generate_screenshots.py"), "prepare_test_environment"),
 }
 
