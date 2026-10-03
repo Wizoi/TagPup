@@ -407,6 +407,94 @@ class ALibraryMovedToAnotherPlace(unittest.TestCase):
         self.assertEqual(before, entries_of(library))
 
 
+AWAY = "\\\\idziserver-test\\Pictures\\2024"
+
+
+class AShareThatIsAway(Cache):
+    """A file on a network share that does not answer: one wait, then an answer at once (tagpup.files.shares)."""
+
+    def setUp(self):
+        super().setUp()
+        from tagpup.files import shares
+        shares.forget()
+        self.addCleanup(shares.forget)
+        self.release = threading.Event()
+        self.addCleanup(self.release.set)
+        self.ids = [self.vl.photo("", "", at=AWAY + "\\x%02d.jpg" % n) for n in range(24)]
+        real = os.stat
+
+        def stat(path, *args, **kwargs):
+            if str(path).startswith("\\\\"):
+                self.release.wait(10)
+                raise OSError(53, "The network path was not found")
+            return real(path, *args, **kwargs)
+
+        patcher = mock.patch.object(damaged_photos.os, "stat", stat)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        wait = mock.patch.object(damaged_photos, "SHARE_WAIT", 0.3)
+        wait.start()
+        self.addCleanup(wait.stop)
+
+    def test_24_requests_cost_about_one_wait_not_24(self):
+        import time
+        started = time.monotonic()
+        for photo_id in self.ids:
+            with self.assertRaises(thumbnails.Unavailable) as caught:
+                self.serve(photo_id)
+            self.assertIn("away", str(caught.exception))
+        self.assertLess(time.monotonic() - started, 2.0, "24 waits of 0.3 s would be 7 s")
+        self.assertEqual(1, sum(1 for each in threading.enumerate() if each.name == "ShareLook"), "one hung look, not 24")
+
+    def test_warm_over_an_away_share_asks_once_and_ends_fast(self):
+        import time
+        started = time.monotonic()
+        counts = thumbnails.warm(self.library, apply=True)
+        self.assertLess(time.monotonic() - started, 2.0)
+        self.assertEqual(1, len(counts["away"]))
+        self.assertEqual(24, counts["skipped_away"])
+        self.assertEqual(1, counts["made"], "the one photo on the local disk")
+
+
+class AFileThatCannotBeRead(Cache):
+    def test_a_file_that_is_there_and_refuses_is_not_a_file_that_is_gone(self):
+        real = os.stat
+
+        def stat(path, *args, **kwargs):
+            if str(path) == self.path:
+                raise PermissionError(13, "Access is denied")
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(damaged_photos.os, "stat", stat):
+            with self.assertRaises(thumbnails.Unavailable) as caught:
+                self.serve()
+        self.assertIn("cannot be read", str(caught.exception))
+
+    def test_a_file_that_is_gone_is_still_not_there(self):
+        os.remove(self.path)
+        with self.assertRaises(NotFound) as caught:
+            self.serve()
+        self.assertIn("is not there", str(caught.exception))
+
+
+class TwoLibrariesNotDecoding(unittest.TestCase):
+    def test_a_photo_that_does_not_decode_in_one_library_is_not_a_placeholder_in_another(self):
+        home = own_home.for_test(self)
+        first = ViewLibrary(self, "harbour", home=home)
+        second = ViewLibrary(self, "meadow", home=home)
+        good = second.photo("P", "x.jpg", real=True, size=(100, 100))
+        size = os.path.getsize(second.path_of(good))
+        bad = first.photo("P", "x.jpg")
+        os.makedirs(os.path.dirname(first.path_of(bad)), exist_ok=True)
+        with open(first.path_of(bad), "wb") as handle:
+            handle.write(b"x" * size)
+        stamp = os.stat(second.path_of(good)).st_mtime
+        os.utime(first.path_of(bad), (stamp, stamp))
+        self.assertEqual(good, bad)
+        self.assertEqual(thumbnails.DAMAGED, thumbnails.serve(first.library, bad).kind)
+        self.assertEqual(thumbnails.OK, thumbnails.serve(second.library, good).kind)
+
+
 class Warming(Cache):
     def setUp(self):
         super().setUp()
@@ -475,6 +563,16 @@ class Warming(Cache):
         counts = thumbnails.warm(self.library, apply=True)
         self.assertEqual(1, counts["swept"])
         self.assertEqual(3, len(entries_of(self.library)))
+
+    def test_an_unwritable_cache_ends_the_run_before_the_rest_is_decoded(self):
+        for n in range(12):
+            self.vl.photo("Many", "m%d.jpg" % n, real=True, size=(200, 200))
+        with mock.patch.object(thumbs, "write", side_effect=OSError(28, "No space left on device")), \
+                mock.patch.object(thumbs, "render", wraps=thumbs.render) as render:
+            counts = thumbnails.warm(self.library, apply=True)
+        self.assertLessEqual(render.call_count, thumbnails.WORKERS, "not the whole library")
+        self.assertEqual((0, True), (counts["made"], counts["stopped_unwritable"]))
+        self.assertGreaterEqual(counts["unwritable"], 1)
 
     def test_progress_is_reported_after_each_batch(self):
         seen = []

@@ -1468,9 +1468,12 @@ def thumbs_warm(ctx, folder, limit, apply_):
     console.print("Made %d, %s." % (counts["made"], _megabytes(counts["bytes_made"])), markup=False)
     if counts["swept"]:
         console.print("Deleted %d thumbnail(s) of photos the library no longer holds." % counts["swept"], markup=False)
+    if counts["away"]:
+        console.print("Not walked: %s did not answer (taken as away) and its %d photo(s) were left; run it again when it "
+                      "is back." % (", ".join(counts["away"]), counts["skipped_away"]), markup=False, soft_wrap=True)
     if counts["unwritable"]:
-        console.print("%d could not be kept: the cache folder cannot be written (read-only or full)." % counts["unwritable"],
-                      markup=False, soft_wrap=True)
+        console.print("Stopped at the first thumbnail that could not be kept: the cache folder cannot be written "
+                      "(read-only or full), and nothing more was decoded.", markup=False, soft_wrap=True)
         raise SystemExit(1)
     if counts["stopped"]:
         console.print("Stopped at --limit; run it again to go on.", markup=False)

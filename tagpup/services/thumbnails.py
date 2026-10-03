@@ -37,7 +37,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from tagpup.core import paths
 from tagpup.core.result import NotFound
-from tagpup.files import images, thumbs
+from tagpup.files import images, shares, thumbs
 from tagpup.services import damaged_photos
 from tagpup.store import damaged_files, db
 from tagpup.store import photos as store_photos
@@ -53,6 +53,9 @@ KINDS = (OK, DAMAGED, UNREADABLE, LAST_KNOWN)
 
 #: What warming says of a thumbnail it made and could not keep.
 UNWRITABLE = "unwritable"
+
+#: What warming says of a photo it did not make because the cache could not be written.
+SKIPPED = "skipped"
 
 #: What a thumbnail an average entry weighs when nothing is cached yet to say, in bytes: the owner's estimate.
 ASSUMED_BYTES = 30_000
@@ -98,8 +101,8 @@ def _look(library):
 #: and the second finds what the first made.
 _locks = [threading.Lock() for _ in range(64)]
 
-#: {(photo id, mtime ms, size): the kind of placeholder} of photos found not to decode, as the process
-#: has them: bounded, so a library of broken files does not grow it without end.
+#: {(the library's cache folder, photo id, mtime ms, size): the kind of placeholder} of photos found not to
+#: decode, as the process has them (two libraries have the same ids): bounded, so a library of broken files does not grow it without end.
 _undecodable = {}
 _undecodable_guard = threading.Lock()
 UNDECODABLE_MOST = 5000
@@ -131,7 +134,7 @@ def _make(root, photo_id, row_path, path, stamp):
     found = thumbs.read(root, photo_id, path_hash, mtime, size)
     if found is not None:
         return Thumb(found, OK, etag, mtime, kept=True)
-    key = (photo_id, thumbs.stamp_key(mtime), size)
+    key = (root, photo_id, thumbs.stamp_key(mtime), size)
     with _undecodable_guard:
         known = _undecodable.get(key)
     if known is not None:
@@ -165,12 +168,14 @@ def _make(root, photo_id, row_path, path, stamp):
 
 
 def _file_stamp(path):
-    """The file's (mtime, size), or None when it is not there; raises Unavailable for a share that did not
-    answer."""
+    """The file's (mtime, size), or None when it is not there; raises Unavailable for a share that is away
+    (answered at once while it is taken as away, damaged_photos.stamp_of) and for a file that cannot be read."""
     stamp = damaged_photos.stamp_of(path)
     if stamp is damaged_photos.UNANSWERED:
-        raise Unavailable("The folder this photo is in did not answer just now (a network share that is away?): "
-                          "try again in a moment.")
+        raise Unavailable("The network share this photo is on is away just now: try again in a moment.")
+    if stamp is damaged_photos.CANNOT_READ:
+        raise Unavailable("The photo's file cannot be read (it is there, but permissions or another program "
+                          "refuse it): try again in a moment.")
     return stamp
 
 
@@ -286,7 +291,8 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
 
     Returns {"photos": looked at, "present": already cached, "to_make": without one, "made", "damaged": not
     decoded (recorded damaged, or found not to), "missing": file not there, "failed": file not reachable,
-    "unwritable": made and not kept (the cache cannot be written), "swept": entries of photos the library no longer
+    "unwritable": made and not kept (the cache cannot be written), "away": the shares found away (each asked once, its photos
+    not walked: "skipped_away" counts them), "stopped_unwritable": the first unwritable cache ended the run, "swept": entries of photos the library no longer
     holds, deleted (with --apply only), "bytes_cached": what the cache holds before, "bytes_made", "estimate": bytes the missing ones would take
     (from the average entry, ASSUMED_BYTES when none is cached), "stopped": the limit was reached}. `progress`
     is called with the counts so far after each batch."""
@@ -294,10 +300,12 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
     held, bytes_cached = thumbs.usage(root)
     average = bytes_cached // held if held else ASSUMED_BYTES
     counts = {"photos": 0, "present": 0, "to_make": 0, "made": 0, "damaged": 0, "missing": 0, "failed": 0,
-              "unwritable": 0, "bytes_cached": bytes_cached, "bytes_made": 0, "estimate": 0, "stopped": False, "average": average}
+              "unwritable": 0, "away": [], "skipped_away": 0,
+              "stopped_unwritable": False, "bytes_cached": bytes_cached, "bytes_made": 0, "estimate": 0, "stopped": False, "average": average}
     conn = _look(library)
     try:
         recorded = {paths.key(each.path): each for each in damaged_files.every(conn)}
+        away, stop = set(), threading.Event()
         after = 0
         with ThreadPoolExecutor(max_workers=workers) as pool:
             while not counts["stopped"]:
@@ -308,8 +316,17 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
                 jobs = []
                 for photo_id, row_path, path in batch:
                     counts["photos"] += 1
+                    share = shares.share_of(path) if shares.on_a_share(path) else None
+                    if share in away:
+                        counts["skipped_away"] += 1   # asked once: not asked again for each of its photos
+                        continue
                     stamp = damaged_photos.stamp_of(path)
                     if stamp is damaged_photos.UNANSWERED:
+                        away.add(share)
+                        counts["away"].append(path.split("\\")[2] if path.startswith("\\") else share)
+                        counts["skipped_away"] += 1
+                        continue
+                    if stamp is damaged_photos.CANNOT_READ:
                         counts["failed"] += 1
                         continue
                     if stamp is None:
@@ -328,11 +345,14 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
                     counts["estimate"] += average
                     if apply and (limit is None or counts["made"] + len(jobs) < limit):
                         jobs.append((photo_id, row_path, path, stamp))
-                for result in pool.map(lambda job: _warm_one(root, *job), jobs):
+                for result in pool.map(lambda job: _warm_one(root, *job, stop), jobs):
                     if result is None:
                         counts["failed"] += 1
+                    elif result == SKIPPED:
+                        continue
                     elif result == UNWRITABLE:
                         counts["unwritable"] += 1
+                        counts["stopped_unwritable"] = True
                     elif result in (DAMAGED, UNREADABLE):
                         counts["damaged"] += 1
                         counts["to_make"] -= 1
@@ -341,6 +361,8 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
                         counts["bytes_made"] += result
                 if limit is not None and counts["made"] >= limit:
                     counts["stopped"] = True
+                if stop.is_set():
+                    break   # the cache cannot be written: decoding the rest would only be thrown away
                 if progress is not None:
                     progress(dict(counts))
     finally:
@@ -353,16 +375,22 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
     return counts
 
 
-def _warm_one(root, photo_id, row_path, path, stamp):
+def _warm_one(root, photo_id, row_path, path, stamp, stop):
     """Make one entry for `warm`: its size in bytes, or DAMAGED / UNREADABLE for a picture that does not decode,
-    or None when the file could not be read."""
+    UNWRITABLE for one made and not kept (which sets `stop`: the rest are SKIPPED, not decoded), or None when the
+    file could not be read."""
+    if stop.is_set():
+        return SKIPPED
     try:
         made = _make(root, photo_id, row_path, path, stamp)
     except Unavailable:
         return None
     if made.kind != OK:
         return made.kind
-    return len(made.content) if made.kept else UNWRITABLE
+    if not made.kept:
+        stop.set()
+        return UNWRITABLE
+    return len(made.content)
 
 
 def stats(library):

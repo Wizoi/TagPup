@@ -65,6 +65,13 @@ class Warm(unittest.TestCase):
         self.assertEqual(0, result.exit_code, result.output)
         self.assertIn("Brought the library up to date", result.output)
 
+    def test_a_cache_that_cannot_be_written_stops_it_and_is_exit_1(self):
+        from tagpup.files import thumbs
+        with mock.patch.object(thumbs, "write", side_effect=OSError(28, "No space left on device")):
+            said = self.run_warm("--apply", code=1)
+        self.assertIn("cannot be written", said)
+        self.assertIn("Stopped", said)
+
     def test_an_unplaced_root_is_a_sentence_and_nothing_is_made(self):
         import contextlib
 
