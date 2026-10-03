@@ -5,18 +5,17 @@
 // share outside kr-track's root folders; Suggest made rows for its photos in kr-track
 // without asking, and the folder was kr-track's from then on (2026-09-28). Now opening a
 // folder the library holds photos in none of the folders of asks: "Add this folder to
-// kr-track?", with how many photos it holds, whether it is outside the library's root
-// folders, and which other library holds them already. Add adds it (POST
-// /api/folder/add); Open in <other> goes to the library that holds it; Just look shows
-// its photos with Suggest and every change held back until it is added. The server
-// refuses Suggest in a folder not added (409) whatever the page does.
+// kr-track?", with how many photos it holds and whether it is outside the library's root
+// folders. It names only this library: no other library is opened or mentioned. Add adds
+// it (POST /api/folder/add); Just look shows its photos with Suggest and every change
+// held back until it is added. The server refuses Suggest in a folder not added (409)
+// whatever the page does.
 import { api, libraryIn } from './common/api.js';
-import { goToLibrary } from './common/library.js';
 import { samePath } from './common/paths.js';
 import { state } from './state.js';
 import {
     addFolderFacts, addFolderLibrary, addFolderModal, addFolderPath, addFolderTitle,
-    btnAddFolder, btnAddFolderFromNote, btnJustLook, btnOpenInOtherLibrary, justLookingNote,
+    btnAddFolder, btnAddFolderFromNote, btnJustLook, justLookingNote,
     justLookingText, libraryNameBadge
 } from './elements.js';
 import { setStatus } from './status.js';
@@ -109,14 +108,7 @@ function plural(count, one, many) {
     return `${count} ${count === 1 ? one : many}`;
 }
 
-/** The other libraries holding photos of the folder, the fullest first. */
-function othersOf(found) {
-    return (Array.isArray(found.others) ? found.others : [])
-        .filter(other => other && other.library && other.library !== libraryName())
-        .sort((a, b) => (b.photos || 0) - (a.photos || 0));
-}
-
-/** "Add this folder to kr-track?", with what it holds and who holds it already. */
+/** "Add this folder to kr-track?", with what it holds. */
 export function askToAdd(found) {
     const name = libraryName();
     const held = found.photos_held || 0;
@@ -146,23 +138,11 @@ export function askToAdd(found) {
     if (found.ignored) {
         fact(`${name}'s settings ignore this folder; adding it keeps it in step all the same.`, 'add-folder-warning');
     }
-    const others = othersOf(found);
-    others.forEach(other => {
-        fact(`${other.library} already holds ${other.photos} of these photos.`, 'add-folder-warning');
-    });
     fact('Adding it gives each photo a place in the library, indexes it, and keeps it in step from then on. '
         + 'Just look shows the photos and changes nothing.', 'add-folder-note');
 
     btnAddFolder.textContent = `Add to ${name}`;
     btnAddFolderFromNote.textContent = `Add to ${name}`;
-    if (others.length) {
-        btnOpenInOtherLibrary.textContent = `Open in ${others[0].library}`;
-        btnOpenInOtherLibrary.dataset.library = others[0].library;
-        btnOpenInOtherLibrary.classList.remove('hidden');
-    } else {
-        delete btnOpenInOtherLibrary.dataset.library;
-        btnOpenInOtherLibrary.classList.add('hidden');
-    }
     addFolderModal.classList.add('active');
     btnJustLook.focus();
 }
@@ -195,14 +175,6 @@ export function applyJustLooking() {
         if (field) field.readOnly = looking;
     });
     updateSuggestButtonState();
-}
-
-/** Open the folder in the library that holds it: the same address, that library's. */
-export function openInOtherLibrary() {
-    const other = btnOpenInOtherLibrary.dataset.library;
-    if (!other) return;
-    closeDialog();
-    goToLibrary(other);
 }
 
 /** Add the open folder to the library, as the person asked: POST /api/folder/add. */
@@ -260,7 +232,6 @@ export function wireMembership() {
     btnAddFolder.addEventListener('click', addFolderToLibrary);
     btnAddFolderFromNote.addEventListener('click', addFolderToLibrary);
     btnJustLook.addEventListener('click', justLook);
-    btnOpenInOtherLibrary.addEventListener('click', openInOtherLibrary);
     addFolderModal.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             e.preventDefault();

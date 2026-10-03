@@ -8,9 +8,8 @@
  * adding it." The page names its library in the header at all times, and a folder the
  * library holds photos in none of the folders of opens with a question: "Add this
  * folder to kr-track?", the folder, its photos, whether it is outside the library's
- * roots, and which other library holds them. Add adds it (POST /api/folder/add); Open
- * in <other> goes to the library holding it; Just look shows it with Suggest and every
- * change held back until it is added.
+ * roots. It names only the open library, never another (2026-10-02). Add adds it (POST
+ * /api/folder/add); Just look shows it with Suggest held back.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -23,11 +22,10 @@ const FOLDER = "\\\\harbour-nas\\photos\\2019\\Lighthouse Trip";
 const NOT_HELD = {
   library: "kr-track", folder: FOLDER, photos: 25, photos_held: 0, photos_not_held: 25,
   folders_not_held: 1, first_not_held: FOLDER, has_roots: true, under_roots: false, ignored: false,
-  others: [{ library: "photo_index", photos: 25 }],
 };
 
 const HELD = { ...NOT_HELD, photos_held: 25, photos_not_held: 0, folders_not_held: 0, first_not_held: null,
-  under_roots: true, others: [] };
+  under_roots: true };
 
 function server(membership, indexing = { status: "completed", percent: 100, message: "Ready" },
   scanned = [photoRecord({ filename: "IMG_0001.jpg" }), photoRecord({ filename: "IMG_0002.jpg" })]) {
@@ -69,7 +67,7 @@ describe("the library is named", () => {
 });
 
 describe("a folder the library does not hold", () => {
-  test("asks, naming the library, the folder, its photos, the roots and who holds it", async (t) => {
+  test("asks, naming only the library, the folder, its photos and the roots", async (t) => {
     const ctx = await open(t);
     assert.ok(ctx.dialogOpen(), "no question was asked");
     assert.equal(ctx.$("add-folder-title").textContent, "Add this folder to kr-track?");
@@ -78,10 +76,9 @@ describe("a folder the library does not hold", () => {
     const facts = ctx.$("add-folder-facts").textContent;
     assert.match(facts, /25 photos, none of them in kr-track/);
     assert.match(facts, /Outside kr-track's root folders/);
-    assert.match(facts, /photo_index already holds 25 of these photos/);
+    assert.doesNotMatch(ctx.$("add-folder-modal").textContent, /photo_index/, "another library was named");
+    assert.equal(ctx.$("btn-open-in-other-library"), null, "a button to open another library is back");
     assert.equal(ctx.$("btn-add-folder").textContent, "Add to kr-track");
-    assert.equal(ctx.$("btn-open-in-other-library").textContent, "Open in photo_index");
-    assert.ok(!ctx.$("btn-open-in-other-library").classList.contains("hidden"));
     assert.equal(ctx.posts("/api/folder/add").length, 0, "it was added without asking");
   });
 
@@ -98,15 +95,6 @@ describe("a folder the library does not hold", () => {
     assert.ok(!ctx.document.body.classList.contains("just-looking"));
     assert.ok(!ctx.$("btn-suggest-tags").disabled, "Suggest stayed off after adding");
     assert.match(ctx.$("status-text").textContent, /Added to kr-track; indexing it now/);
-  });
-
-  test("Open in the other library goes there, with the folder", async (t) => {
-    const ctx = await open(t);
-    click(ctx.window, ctx.$("btn-open-in-other-library"));
-    await flush(ctx.window);
-    const navigated = ctx.consoleErrors.some((e) => /navigation/i.test(e && e.message ? e.message : String(e)));
-    assert.ok(navigated, "the page did not go to photo_index");
-    assert.equal(ctx.posts("/api/folder/add").length, 0);
   });
 
   test("Just look shows it, with Suggest and every change held back", async (t) => {
@@ -158,11 +146,10 @@ describe("a folder the library does not hold", () => {
   });
 
   test("a folder only partly held asks to add the rest", async (t) => {
-    const ctx = await open(t, { ...NOT_HELD, photos: 30, photos_held: 25, photos_not_held: 5, others: [] });
+    const ctx = await open(t, { ...NOT_HELD, photos: 30, photos_held: 25, photos_not_held: 5 });
     assert.ok(ctx.dialogOpen());
     assert.equal(ctx.$("add-folder-title").textContent, "Add the rest of this folder to kr-track?");
     assert.match(ctx.$("add-folder-facts").textContent, /kr-track holds 25 of its 30 photos/);
-    assert.ok(ctx.$("btn-open-in-other-library").classList.contains("hidden"));
   });
 });
 

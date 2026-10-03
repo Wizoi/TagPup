@@ -119,7 +119,7 @@ def is_ignored(photo_path, ignored):
     return store_folders.is_ignored(os.path.dirname(paths.stored(photo_path)), ignored)
 
 
-def membership(library, folder, roots=(), ignored=(), others=()):
+def membership(library, folder, roots=(), ignored=()):
     """What `library` holds of `folder`, for the page to say before anything is done in it:
     {"library" (its name, as the address bar has it), "folder" (as stored), "photos" (on
     disk under it, at any depth), "photos_held" (the library's rows under it),
@@ -128,25 +128,12 @@ def membership(library, folder, roots=(), ignored=(), others=()):
     ignored folders left out),
     "folders_not_held", "first_not_held" (the first such folder, or None), "has_roots",
     "under_roots" (the folder is one of `roots` or under one), "ignored" (likewise, of
-    `ignored`), "others": [{"library", "photos"}] -- each library of `others` holding
-    photos under it, and how many}. One walk of the folder, no file read; the other
-    libraries are only read."""
+    `ignored`)}. One walk of the folder, no file read. Only `library` is opened: the page
+    asking is in one library, which does not open, read or name another (2026-10-02)."""
     folder = paths.stored(folder)
     on_disk = images.photos_under(folder)
     unheld = not_held(library, on_disk, ignored)
     unheld_keys = {paths.key(each) for each in unheld}
-    elsewhere = []
-    for other in others:
-        if other == library:
-            continue
-        try:
-            count = held_under(other, folder)
-        except Exception as e:
-            # Another library's count is for the dialog's information only.
-            logger.warning("Could not read %s to count its photos under a folder: %s", other.name, e)
-            continue
-        if count:
-            elsewhere.append({"library": picker_name(os.path.basename(other.path)), "photos": count})
     return {
         "library": picker_name(os.path.basename(library.path)),
         "folder": folder,
@@ -159,7 +146,6 @@ def membership(library, folder, roots=(), ignored=(), others=()):
         "has_roots": bool(roots),
         "under_roots": _under_any(folder, roots),
         "ignored": _under_any(folder, ignored),
-        "others": elsewhere,
     }
 
 

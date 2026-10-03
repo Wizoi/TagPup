@@ -142,8 +142,8 @@ def list_libraries():
 
 
 def home_libraries():
-    """Every library of this home the picker offers that is on disk, as Libraries: what a
-    folder's membership (GET /api/folder/membership) asks the others of."""
+    """Every library of this home the picker offers that is on disk, as Libraries: what the
+    Roots screen asks the others of (the machine map is shared by the data folder)."""
     data_dir = tagpup_config.data_dir()
     files = os.listdir(data_dir) if os.path.exists(data_dir) else []
     found = []

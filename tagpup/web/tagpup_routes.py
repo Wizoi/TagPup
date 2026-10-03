@@ -39,7 +39,6 @@ from tagpup.services import tagging as tagging_actions
 from tagpup.services import tags as tags_service
 from tagpup.services import thumbnails
 from tagpup.web import activity_routes, desktop, responses, state
-from tagpup.web import libraries as web_libraries
 
 logger = logging.getLogger(__name__)
 
@@ -251,9 +250,9 @@ def folder_damaged():
 
 @routes.get("/api/folder/membership")
 def folder_membership():
-    """What this library holds of a folder, and which other libraries of the home hold
-    photos in it (tagpup.services.libraries.membership): what the page asks as a folder
-    opens, to ask before adding one the library does not hold."""
+    """What this library holds of a folder (tagpup.services.libraries.membership): what the
+    page asks as a folder opens, to ask before adding one the library does not hold. No
+    other library is opened."""
     library = state.require()
     folder = _wanted_path()
     if not folder:
@@ -261,8 +260,7 @@ def folder_membership():
     if not os.path.isdir(folder):
         return responses.error(400, "Path is not a valid directory: %s" % folder)
     settings = runtimes.peek_settings(library)
-    return jsonify(library_actions.membership(library, folder, settings.roots, settings.ignored,
-                                              web_libraries.home_libraries()))
+    return jsonify(library_actions.membership(library, folder, settings.roots, settings.ignored))
 
 
 @routes.get("/api/folder/index-status")

@@ -130,7 +130,6 @@ export const addFolderPath = document.getElementById('add-folder-path');
 export const addFolderFacts = document.getElementById('add-folder-facts');
 export const btnAddFolder = document.getElementById('btn-add-folder');
 export const btnJustLook = document.getElementById('btn-just-look');
-export const btnOpenInOtherLibrary = document.getElementById('btn-open-in-other-library');
 export const justLookingNote = document.getElementById('just-looking-note');
 export const damagedBadge = document.getElementById('damaged-badge');
 export const damagedNotice = document.getElementById('damaged-notice');

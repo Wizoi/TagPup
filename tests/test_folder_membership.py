@@ -4,7 +4,7 @@ With kr-track selected, the owner opened a folder another library held, on a net
 share outside kr-track's root folders, and Suggest made 25 rows for its photos in
 kr-track without asking (2026-09-28). The page is to ask first -- "Add this folder to
 kr-track?" -- saying how many photos the folder holds, whether it is outside the
-library's roots, and which other library already holds them. This is what it asks:
+library's roots (and no other library: the page names only its own). This is what it asks:
 tagpup.services.libraries.membership, and GET /api/folder/membership.
 
 A folder is a library's when the library holds a photo directly in it
@@ -13,6 +13,7 @@ A folder is a library's when the library holds a photo directly in it
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
@@ -107,28 +108,24 @@ class Membership(Libraries, unittest.TestCase):
         self.make(self.home.root)
 
     def test_a_folder_another_library_holds(self):
-        found = library_actions.membership(self.harbour, self.lighthouse, roots=[os.path.dirname(self.regatta)],
-                                           others=[self.harbour, self.quayside])
+        found = library_actions.membership(self.harbour, self.lighthouse, roots=[os.path.dirname(self.regatta)])
         self.assertEqual({
             "library": "harbour", "folder": self.lighthouse, "photos": 3, "photos_held": 0, "photos_ignored": 0,
             "photos_not_held": 3, "folders_not_held": 1, "first_not_held": self.lighthouse,
             "has_roots": True, "under_roots": False, "ignored": False,
-            "others": [{"library": "quayside", "photos": 3}],
         }, found)
 
     def test_a_held_folder_with_a_subfolder_not_held(self):
-        found = library_actions.membership(self.harbour, self.regatta, roots=[self.regatta], others=[self.quayside])
+        found = library_actions.membership(self.harbour, self.regatta, roots=[self.regatta])
         self.assertEqual((3, 2, 1, 1, self.scans), (found["photos"], found["photos_held"], found["photos_not_held"],
                                                    found["folders_not_held"], found["first_not_held"]))
 
     def test_its_ignored_subfolder_is_neither_held_nor_offered(self):
-        found = library_actions.membership(self.harbour, self.regatta, roots=[self.regatta], ignored=[self.scans],
-                                           others=[self.quayside])
+        found = library_actions.membership(self.harbour, self.regatta, roots=[self.regatta], ignored=[self.scans])
         self.assertEqual((3, 2, 1, 0, 0, None), (found["photos"], found["photos_held"], found["photos_ignored"],
                                                  found["photos_not_held"], found["folders_not_held"],
                                                  found["first_not_held"]))
-        self.assertEqual((True, True, False, []), (found["has_roots"], found["under_roots"], found["ignored"],
-                                                  found["others"]))
+        self.assertEqual((True, True, False), (found["has_roots"], found["under_roots"], found["ignored"]))
 
     def test_an_ignored_folder_says_so(self):
         found = library_actions.membership(self.harbour, self.scans, roots=[self.regatta], ignored=[self.scans])
@@ -149,15 +146,28 @@ class TheRoute(unittest.TestCase):
         other = self.home.library("quayside.db")
         library_actions.create(other)
         index(other, shared)
+        # Every connection the answer makes: only this library's may be among them.
+        self.opened = []
+        real = db.connect
 
-    def test_says_what_this_library_and_the_others_hold(self):
+        def watching(path, *args, **kwargs):
+            if "quayside" in str(path):
+                self.opened.append(path)
+            return real(path, *args, **kwargs)
+        patcher = mock.patch.object(db, "connect", watching)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_says_what_this_library_holds_and_opens_no_other(self):
         reply = self.client.get("/library/api/folder/membership", query_string={"path": self.folder})
         self.assertEqual(200, reply.status_code, reply.data)
         found = reply.get_json()
         self.assertEqual(("library", 2, 0, 2), (found["library"], found["photos"], found["photos_held"],
                                                 found["photos_not_held"]))
-        self.assertEqual([{"library": "quayside", "photos": 2}], found["others"])
+        self.assertNotIn("others", found)
+        self.assertNotIn("quayside", reply.get_data(as_text=True))
         self.assertFalse(found["has_roots"])
+        self.assertEqual([], self.opened, "another library was opened to answer")
 
     def test_refuses_what_is_not_a_folder(self):
         self.assertEqual(400, self.client.get("/library/api/folder/membership").status_code)
