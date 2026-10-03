@@ -208,6 +208,8 @@ KINDS = {
     # Shift Date Taken: minutes, later or earlier.
     "time shift": {"rules": [
         {"rule": "integer", "message": "A time shift is a whole number of minutes."},
+        # A hundred years: more is a typo, and a date the shift moves out of the years a date can be is an error of its photo.
+        _between("A time shift", -52560000, 52560000),
     ]},
     # Why a face is taken out of identity work, as the service is given it: trimmed and
     # lower case, none being the default (tagpup.services.faces.exclude).

@@ -283,8 +283,11 @@ def photo_ids_done(db_path, operation):
     try:
         if not has_table(conn):
             return set()
+        # Driven from `changes` (a few thousand rows, filtered by name), each one's files found by idx_change_files_change.
+        # Left to the planner, which has no statistics, the 68,000 rows of a library-wide change were scanned and each looked
+        # up in `changes` (the CROSS JOIN fixes the order).
         return {photo_id for (photo_id,) in conn.execute(
-            "SELECT f.photo_id FROM change_files f JOIN changes c ON c.id = f.change_id"
+            "SELECT f.photo_id FROM changes c CROSS JOIN change_files f ON f.change_id = c.id"
             " WHERE c.operation = ? AND f.state = 'done' AND f.photo_id IS NOT NULL", (operation,))}
     finally:
         conn.close()
