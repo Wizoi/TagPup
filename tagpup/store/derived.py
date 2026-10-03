@@ -468,11 +468,15 @@ def stale_meta(conn):
     return stale + sorted(set(held) - seen)
 
 
+Stale = collections.namedtuple("Stale", "photos folders missing strays")
+
+
 def stale_folders(conn):
-    """(photo ids, folder ids, folders missing) of what is not as the photos' paths give: a photo
-    not in the folder its path names (or in one though it names none), a folder that holds nothing
-    or whose parent is not the folder above it, and how many folders a photo needs that have no
-    row. Reads only."""
+    """What is not as the photos' paths give, as Stale: the ids of the photos not in the folder their
+    path names (or in one though it names none); the ids of the folders whose parent is not the folder
+    above them; how many folders a photo needs that have no row; and the ids of the `strays`, folders
+    with no photo at or below them, which a delete that did not come through the store leaves (the
+    store's own prune takes them) -- harmless to a count, and so told apart from the rest. Reads only."""
     folders = {}
     by_key = {}
     for folder_id, parent_id, path in conn.execute("SELECT id, parent_id, path FROM folders"):
@@ -492,13 +496,15 @@ def stale_folders(conn):
             wrong_photos.append(photo_id)
     wrong_photos += sorted(set(held) - seen)
     wanted = _wanted(folder for folder in expected.values() if folder is not None)
-    wrong_folders = []
+    wrong_folders, strays = [], []
     for folder_id, (parent_id, path) in folders.items():
         key = _fold(path)
         above = paths.row_parent(path)
-        if key not in wanted or by_key.get(_fold(above) if above is not None else None) != parent_id:
+        if key not in wanted:
+            strays.append(folder_id)
+        elif by_key.get(_fold(above) if above is not None else None) != parent_id:
             wrong_folders.append(folder_id)
-    return wrong_photos, sorted(wrong_folders), len(set(wanted) - set(by_key))
+    return Stale(wrong_photos, sorted(wrong_folders), len(set(wanted) - set(by_key)), sorted(strays))
 
 
 def problems(conn):
@@ -506,12 +512,12 @@ def problems(conn):
     migration checks before it commits. Reads only."""
     found = []
     tags, meta = stale_tags(conn), stale_meta(conn)
-    photos, folders, missing = stale_folders(conn)
+    photos, folders, missing, strays = stale_folders(conn)
     if tags:
         found.append("%d photo(s) have keyword rows that are not what their tags and the tree give" % len(tags))
-    if photos or folders or missing:
-        found.append("the folders are not what the photos' paths give (%d photo(s), %d folder(s), %d missing)"
-                     % (len(photos), len(folders), missing))
+    if photos or folders or missing or strays:
+        found.append("the folders are not what the photos' paths give (%d photo(s), %d folder(s), %d missing, "
+                     "%d holding no photo)" % (len(photos), len(folders), missing, len(strays)))
     if meta:
         found.append("%d photo(s) have metadata rows that are not what their raw metadata gives" % len(meta))
     return found
@@ -529,18 +535,27 @@ def repair(db_path):
     return db.write_with_connection(db_path, work, label="rebuild the derived tables")
 
 
-def tags_without_a_node(conn):
-    """{keyword: photos carrying it} of each keyword, as photos spell it, that names no node of
-    the tree, so has no row: a photo counts once for a keyword it holds twice. The tree is the
-    owner's and indexing a photo never adds to it; a keyword whose node was deleted while the files
-    keep it is here until a node is made. Reads only."""
+Unnamed = collections.namedtuple("Unnamed", "by_tag photos")
+
+
+def unnamed_keywords(conn):
+    """The keywords that name no node of the tree, so have no row: (a Counter of keyword, as
+    photos spell it, to the photos carrying it -- one photo counts once for a keyword it holds twice
+    -- and how many photos carry any). The tree is the owner's and indexing a photo never adds to it;
+    a keyword whose node was deleted while the files keep it is here until a node is made. Reads
+    only."""
     tree = Tree.read(conn)
-    found = collections.Counter()
+    found, photos = collections.Counter(), 0
     for (tags_json,) in conn.execute("SELECT tags FROM photos WHERE tags IS NOT NULL AND tags != '[]'"):
-        for tag in set(keywords_of(tags_json)):
-            if tree.find(tag) is None:
-                found[tag] += 1
-    return found
+        unnamed = [tag for tag in set(keywords_of(tags_json)) if tree.find(tag) is None]
+        found.update(unnamed)
+        photos += 1 if unnamed else 0
+    return Unnamed(found, photos)
+
+
+def tags_without_a_node(conn):
+    """{keyword: photos carrying it} of each keyword that names no node (unnamed_keywords)."""
+    return unnamed_keywords(conn).by_tag
 
 
 # ---- What the views ask ----------------------------------------------------------------------

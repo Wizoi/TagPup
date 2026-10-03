@@ -13,7 +13,7 @@ import sys
 import tempfile
 import unittest
 
-from tagpup.store import checks, db, people, schema
+from tagpup.store import checks, db, derived, people, schema
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 import doctor  # noqa: E402
@@ -38,9 +38,10 @@ class Library(unittest.TestCase):
         if on_disk:
             with open(path, "wb") as f:
                 f.write(b"photo")
-        self.conn.execute("INSERT INTO photos (path, mtime, size, tags) VALUES (?, 1, 1, ?)",
-                          (path, json.dumps(list(tags))))
+        added = self.conn.execute("INSERT INTO photos (path, mtime, size, tags) VALUES (?, 1, 1, ?)",
+                                  (path, json.dumps(list(tags))))
         people.rebuild_photos(self.conn, [path])
+        derived.refresh_photos(self.conn, [added.lastrowid])   # a library at rest: its derived tables are right
         self.conn.commit()
         return path
 

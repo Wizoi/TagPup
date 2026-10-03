@@ -302,7 +302,7 @@ class TheFolderTree(ALibrary):
         self.conn.execute("INSERT INTO photos (path, tags, captions, raw_metadata) VALUES ('loose.jpg', '[]', '[]', '{}')")
         self.rebuilt()
         self.assertEqual(1, self.rows("SELECT COUNT(*) FROM photo_folder")[0][0])
-        self.assertEqual(([], [], 0), derived.stale_folders(self.conn))
+        self.assertEqual(([], [], 0, []), derived.stale_folders(self.conn))
 
 
 class WhatAPhotoSaysOfItself(ALibrary):
@@ -357,7 +357,7 @@ class WhatRebuildingDoes(ALibrary):
         self.conn.commit()
         self.assertEqual([one], derived.stale_tags(self.conn))
         self.assertEqual([one], derived.stale_meta(self.conn))
-        photos_wrong, folders_wrong, missing = derived.stale_folders(self.conn)
+        photos_wrong, folders_wrong, missing, strays = derived.stale_folders(self.conn)
         self.assertEqual([777], photos_wrong)
         self.assertTrue(folders_wrong)
         self.assertEqual(3, len(derived.problems(self.conn)))
