@@ -1,6 +1,6 @@
 // TagPup's page: undoing the last bulk write.
 import { api } from './common/api.js';
-import { samePath } from './common/paths.js';
+import { pathKey, samePath } from './common/paths.js';
 import { state } from './state.js';
 import { btnUndo } from './elements.js';
 import { setStatus } from './status.js';
@@ -8,7 +8,7 @@ import { saveToLocalStorageCache } from './cache.js';
 import { renderFileList } from './folder.js';
 import { renderTags } from './photo.js';
 import { renderThumbnails } from './grid.js';
-import { queuePhotoWrite } from './edits.js';
+import { queuePhotoWrite, takeWritten } from './edits.js';
 
 export function recordUndo(entry) {
     state.lastUndoable = entry;
@@ -77,6 +77,9 @@ async function undoEntry(entry, queued) {
         } catch (err) {
             data = { success: false, error: err.message };
         }
+        // The photos the undo wrote are of their files as they are now: the stamp and the tags a save names next.
+        const stamps = new Map(Object.entries(data.stamps || {}).map(([path, stamp]) => [pathKey(path), stamp]));
+        const heldTags = new Map(Object.entries(data.written || {}).map(([path, held]) => [pathKey(path), held]));
         // A write that stopped part-way names the photos it wrote.
         const done = data.success ? group.paths : Object.keys(data.written || {});
         for (const path of group.paths) {
@@ -89,6 +92,7 @@ async function undoEntry(entry, queued) {
             if (!photo) continue;
             const kept = (photo.tags || []).filter(t => !group.added.includes(t));
             photo.tags = kept.concat(group.removed.filter(t => !kept.includes(t)));
+            takeWritten(photo, stamps.get(pathKey(path)), heldTags.get(pathKey(path)));
         }
         if (!data.success) {
             console.error('Undo:', data.error);

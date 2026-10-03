@@ -22,7 +22,7 @@ import {
 } from './tags.js';
 import { renderFileList } from './folder.js';
 import { renderThumbnails } from './grid.js';
-import { queuePhotoWrite, takeStamp } from './edits.js';
+import { queuePhotoWrite, takeWritten } from './edits.js';
 import { BULK_CONFIRM_ABOVE, BULK_LIMIT, isSelected } from './selected.js';
 
 export function updateSelectedThumbnailsCount() {
@@ -366,10 +366,11 @@ function queueBulkTags({ label, busy, failed, targets, add = [], remove = [], wr
             const skipped = (data.skipped || []).map(each => each.path);
             // Each photo written is of the file as it is now: the stamp its next save names.
             const stamps = new Map(Object.entries(data.stamps || {}).map(([path, stamp]) => [pathKey(path), stamp]));
+            const heldTags = new Map(Object.entries(data.written || {}).map(([path, held]) => [pathKey(path), held]));
             targets.filter(path => !skipped.some(s => samePath(s, path))).forEach(path => {
                 const photo = state.folderPhotos.find(p => p.path === path);
                 if (photo) {
-                    takeStamp(photo, stamps.get(pathKey(path)));
+                    takeWritten(photo, stamps.get(pathKey(path)), heldTags.get(pathKey(path)));
                     written(photo);
                 }
             });
@@ -480,6 +481,8 @@ export async function bulkAddPeopleToSelection() {
         return;
     }
     const targets = state.selectedThumbnails.slice();
+    // Before a name is resolved: resolving may make a tree node, and a refused or cancelled write makes none.
+    if (!confirmBulkWrite(`Add ${peopleList.join(', ')} to`, targets.length)) return;
 
     const resolvedPeople = [];
     for (const p of peopleList) {
@@ -489,7 +492,6 @@ export async function bulkAddPeopleToSelection() {
         }
     }
     if (resolvedPeople.length === 0) return;
-    if (!confirmBulkWrite(`Add ${resolvedPeople.join(', ')} to`, targets.length)) return;
 
     const done = await queueBulkTags({
         label: `Add ${resolvedPeople.join(', ')} to ${targets.length} photo(s)`,
@@ -526,6 +528,7 @@ export async function bulkAddTagsToSelection() {
         return;
     }
     const targets = state.selectedThumbnails.slice();
+    if (!confirmBulkWrite(`Add ${tagsList.join(', ')} to`, targets.length)) return;
 
     const resolvedTags = [];
     for (const t of tagsList) {
@@ -535,7 +538,6 @@ export async function bulkAddTagsToSelection() {
         }
     }
     if (resolvedTags.length === 0) return;
-    if (!confirmBulkWrite(`Add ${resolvedTags.join(', ')} to`, targets.length)) return;
 
     const done = await queueBulkTags({
         label: `Add ${resolvedTags.join(', ')} to ${targets.length} photo(s)`,

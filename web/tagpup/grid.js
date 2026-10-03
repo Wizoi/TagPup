@@ -15,7 +15,7 @@ import { saveToLocalStorageCache } from './cache.js';
 import {
     formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
-import { photoChangedOnDisk, queueWriteOf, stampOf, takeStamp } from './edits.js';
+import { baseOf, photoChangedOnDisk, queueWriteOf, stampOf, takeStamp } from './edits.js';
 import { damageOf, markCard } from './damaged.js';
 import { renderFileList, visiblePhotos } from './folder.js';
 import { photoFileUrl, selectPhoto } from './photo.js';
@@ -393,7 +393,7 @@ function buildThumbnailCard(photo) {
             queueWriteOf(photo.path, () => api.json('/api/photo/save-metadata', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: photo.path, title: newTitle, tags: photo.tags, stamp: stampOf(photo) })
+                body: JSON.stringify({ path: photo.path, title: newTitle, tags: photo.tags, stamp: stampOf(photo), base: baseOf(photo) })
             })
             .then(data => {
                 if (data.changed_on_disk) photoChangedOnDisk(photo);

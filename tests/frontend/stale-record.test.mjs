@@ -76,6 +76,57 @@ describe("a save names the stamp of the record it was built from", () => {
   });
 });
 
+describe("a save names what the page read, and an undo keeps the record current (#549, #551, #552)", () => {
+  test("a save sends the tags and caption as the record read them", async (t) => {
+    const server = folderServer({ "/api/photo/save-metadata": { success: true, mtime: 1700000500.5, size: 2100,
+      base: { tags: ["Trips/Coast", "Trips/Lakes"], title: "" } } });
+    const ctx = await folderPage(t, server);
+    await openPhoto(ctx, "a.jpg");
+    ctx.document.getElementById("input-add-tag").value = "Trips/Lakes";
+    click(ctx.window, ctx.document.getElementById("btn-add-tag"));
+    await flush(ctx.window, 8);
+    assert.deepEqual(server.lastBody("/api/photo/save-metadata").base, { tags: ["Trips/Coast"], title: "" });
+    ctx.document.getElementById("input-add-tag").value = "Trips/Harbour";
+    click(ctx.window, ctx.document.getElementById("btn-add-tag"));
+    await flush(ctx.window, 8);
+    assert.deepEqual(server.lastBody("/api/photo/save-metadata").base, { tags: ["Trips/Coast", "Trips/Lakes"], title: "" },
+      "the next save names the file as the last reply said it was left");
+  });
+
+  test("carry forward, then undo, then a tag: the undo's stamp and tags are the next save's, no refusal", async (t) => {
+    const server = folderServer({
+      "/api/photo/save-metadata": { success: true, mtime: 1700000500.5, size: 2100, base: { tags: ["Activity/Sailing", "Trips/Coast"], title: "" } },
+      "/api/photos/bulk-tags": { success: true, written: { [`${FOLDER}\\b.jpg`]: ["Activity/Sailing"] },
+        stamps: { [`${FOLDER}\\b.jpg`]: { mtime: 1700000900.5, size: 4200 } } },
+    });
+    const ctx = await folderPage(t, server);
+    await openPhoto(ctx, "b.jpg");
+    click(ctx.window, ctx.document.getElementById("btn-carry-forward"));
+    await flush(ctx.window, 10);
+    assert.ok(server.lastBody("/api/photo/save-metadata"), "carried");
+    click(ctx.window, ctx.document.getElementById("btn-undo"));
+    await flush(ctx.window, 10);
+    ctx.document.getElementById("input-add-tag").value = "Trips/Lakes";
+    click(ctx.window, ctx.document.getElementById("btn-add-tag"));
+    await flush(ctx.window, 10);
+    const sent = server.lastBody("/api/photo/save-metadata");
+    assert.deepEqual(sent.stamp, { mtime: 1700000900.5, size: 4200 });
+    assert.deepEqual(sent.base.tags, ["Activity/Sailing"]);
+  });
+
+  test("a photo ExifTool could not read is not saved from, and nothing is sent", async (t) => {
+    const server = folderServer({ "/api/photo/save-metadata": { success: true } });
+    server.scanned = [{ ...server.scanned[0], tags: [], unreadable: true, read_error: "File is empty" }, server.scanned[1]];
+    const ctx = await folderPage(t, server);
+    await openPhoto(ctx, "a.jpg");
+    ctx.document.getElementById("input-add-tag").value = "Trips/Lakes";
+    click(ctx.window, ctx.document.getElementById("btn-add-tag"));
+    await flush(ctx.window, 8);
+    assert.equal(server.calls.filter((c) => c.url.includes("save-metadata")).length, 0);
+    assert.match(ctx.document.getElementById("status-text").textContent, /could not be read just now: reopen it/);
+  });
+});
+
 describe("a refusal because the file changed", () => {
   test("a folder's photo is read again (the folder is scanned afresh), the owner is told, and nothing is merged", async (t) => {
     const server = folderServer({
@@ -192,6 +243,42 @@ describe("a bulk write from a selection names itself", () => {
     await flush(ctx.window, 8);
     assert.ok(ctx.alerts.some((m) => /Narrow the selection: bulk edits over 5000 photos arrive with the editing stage/.test(m)));
     assert.equal(bulkCalls(ctx), 0);
+  });
+});
+
+describe("a bulk write refused or cancelled makes no tree node (#554)", () => {
+  const taxonomyWrites = (ctx) => ctx.server.calls.filter((c) => c.method === "POST" && c.url.includes("/api/taxonomy/"));
+  async function many(t, count) {
+    const records = Array.from({ length: count }, (_, i) => photoRecord({ filename: `IMG_${i}.jpg`, path: `${FOLDER}\\IMG_${i}.jpg` }));
+    const server = folderServer({ "/api/photos/bulk-tags": { success: true, written: {}, stamps: {} } });
+    server.scanned = records;
+    const ctx = await folderPage(t, server);
+    ctx.document.getElementById("btn-select-all-thumbnails").click();
+    await flush(ctx.window, 4);
+    return ctx;
+  }
+
+  test("over 5,000: refused before the new person or tag is resolved", async (t) => {
+    const ctx = await many(t, 5001);
+    ctx.document.getElementById("bulk-add-tags-input").value = "Brand/New Tag";
+    click(ctx.window, ctx.document.getElementById("btn-bulk-add-tags"));
+    ctx.document.getElementById("bulk-add-people-input").value = "Fictional Newcomer";
+    click(ctx.window, ctx.document.getElementById("btn-bulk-add-people"));
+    await flush(ctx.window, 10);
+    assert.deepEqual(taxonomyWrites(ctx), []);
+    assert.ok(ctx.alerts.length >= 2);
+  });
+
+  test("cancelled at the question: nothing is created", async (t) => {
+    const ctx = await many(t, 300);
+    ctx.answer = false;
+    ctx.document.getElementById("bulk-add-tags-input").value = "Brand/New Tag";
+    click(ctx.window, ctx.document.getElementById("btn-bulk-add-tags"));
+    ctx.document.getElementById("bulk-add-people-input").value = "Fictional Newcomer";
+    click(ctx.window, ctx.document.getElementById("btn-bulk-add-people"));
+    await flush(ctx.window, 10);
+    assert.deepEqual(taxonomyWrites(ctx), []);
+    assert.equal(ctx.server.calls.filter((c) => c.url.includes("bulk-tags")).length, 0);
   });
 });
 
