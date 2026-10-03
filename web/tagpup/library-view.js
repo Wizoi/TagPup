@@ -111,9 +111,7 @@ export function libraryChanged() {
     libraryStripTotal.textContent = total;
     libraryStripTotal.classList.toggle('hidden', !total);
     let status = lib.notice;
-    if (lib.selecting) {
-        status = `Selecting ${lib.selecting.done.toLocaleString()} of ${lib.selecting.total.toLocaleString()}...`;
-    } else if (lib.loading && lib.status !== 'loading') {
+    if (lib.loading && lib.status !== 'loading') {
         status = 'Refreshing...';
     } else if (lib.status === 'error') {
         status = lib.message;

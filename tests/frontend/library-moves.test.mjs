@@ -130,7 +130,7 @@ describe("Show on disk, and the scope of a folder's view", () => {
     const ctx = await loadViewPage(t, { search: FOLDER_VIEW, scan: scan(60) });
     await ctx.settle(100);
     ctx.real()[0].click();
-    assert.equal(ctx.state.selectedThumbnails.length, 1);
+    assert.equal(ctx.selectedIds().length, 1);
     ctx.document.getElementById("btn-show-on-disk").click();
     await ctx.settle(200);
     assert.equal(ctx.state.library, null);

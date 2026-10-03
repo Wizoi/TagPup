@@ -116,6 +116,10 @@ async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards,
     strip: () => ctx.document.getElementById("library-strip"),
     stripText: () => ctx.strip().textContent.replace(/\s+/g, " ").trim(),
     label: () => ctx.document.getElementById("selected-thumbnails-count").textContent,
+    selectedIds: () => {
+      const { sel, ids } = ctx.state.library;
+      return sel.mode === "ids" ? ids.filter((id) => sel.ids.has(id)) : ids.filter((id) => !sel.excluded.has(id));
+    },
     release: async () => {
       const waiting = ctx.held.splice(0);
       waiting.forEach((go) => go());
@@ -359,7 +363,7 @@ describe("the order and the cards, scrolled", () => {
     await ctx.settle();
     assert.equal(ctx.photosAsked.length, 0);
     assert.equal(ctx.state.activePhotoPath, null);
-    assert.equal(ctx.state.selectedThumbnails.length, 0);
+    assert.equal(ctx.selectedIds().length, 0);
     ctx.hold = false;
     await ctx.release();
   });
@@ -383,76 +387,53 @@ describe("the order and the cards, scrolled", () => {
 });
 
 describe("selecting in a view", () => {
-  test("a click selects by the card's path; a Shift-click over cards not here fetches them and says so", async (t) => {
+  test("a click selects the photo by its id; a Shift-click across cards that are not here selects the range at once, with no request", async (t) => {
     const ctx = await load(t);
     click(ctx.window, ctx.cardById(IDS[1]).querySelector(".thumbnail-checkbox"));
-    assert.deepEqual([...ctx.state.selectedThumbnails], [cardOf(IDS[1]).path]);
+    assert.deepEqual(ctx.selectedIds(), [IDS[1]]);
+    assert.equal(ctx.state.selectedThumbnails.length, 0, "a library view's selection is ids, never paths");
     await ctx.scrollToIndex(1500);
     await ctx.settle();
-    ctx.hold = true;
+    const asked = ctx.cardsAsked.length;
     click(ctx.window, ctx.cardById(IDS[1500]).querySelector(".thumbnail-checkbox"), { shiftKey: true });
-    await flush(ctx.window, 4);
-    assert.match(ctx.stripText(), /Selecting \d[\d,]* of 1,?500/, "the header says what is happening");
-    ctx.hold = false;
-    await ctx.release();
-    await ctx.settle();
-    assert.equal(ctx.state.selectedThumbnails.length, 1500, "photos 1 through 1500");
-    assert.equal(ctx.state.selectedThumbnails[0], cardOf(IDS[1]).path);
-    assert.equal(new Set(ctx.state.selectedThumbnails).size, 1500);
-    assert.match(ctx.label(), /1,?500/);
-    assert.doesNotMatch(ctx.stripText(), /Selecting/);
+    assert.equal(ctx.cardsAsked.length, asked, "not one request for the 1,500 photos between");
+    assert.equal(ctx.selectedIds().length, 1500, "photos 1 through 1500");
+    assert.equal(ctx.selectedIds()[0], IDS[1]);
+    assert.match(ctx.label(), /1,500/);
     assert.ok(ctx.cardById(IDS[1500]).classList.contains("selected"));
     assert.equal(ctx.state.library.cards.size <= 2000, true);
   });
 
-  test("Select all of 68,000 asks first; no leaves the selection alone; yes selects every one", async (t) => {
+  test("Select all of 68,000 is the view's source with nothing excluded: no question, no request, no ids", async (t) => {
     const ctx = await load(t);
-    const questions = [];
-    ctx.window.confirm = (q) => { questions.push(q); return false; };
-    ctx.document.getElementById("btn-select-all-thumbnails").click();
-    await ctx.settle();
-    assert.match(questions[0], /Select all 68,?000 photos\?/);
-    assert.equal(ctx.state.selectedThumbnails.length, 0);
-    ctx.window.confirm = (q) => { questions.push(q); return true; };
-    ctx.cardsAsked.length = 0;
-    ctx.document.getElementById("btn-select-all-thumbnails").click();
-    for (let i = 0; i < 40 && ctx.state.selectedThumbnails.length < N; i++) await ctx.settle(60);
-    assert.equal(ctx.state.selectedThumbnails.length, N);
-    assert.equal(ctx.state.selectedKeys.size, N);
-    assert.ok(ctx.cardsAsked.every((asked) => asked.length <= 200));
-    assert.ok(ctx.state.library.cards.size <= 2000, "the cards fetched for their paths are not all kept");
-    assert.match(ctx.label(), /68,?000|68000/);
-  });
-
-  test("a small selection is not asked about", async (t) => {
-    const ctx = await load(t, { search: "?view=year&value=2020", ids: IDS.slice(0, 400), total: 400 });
     let asked = 0;
-    ctx.window.confirm = () => { asked++; return true; };
+    ctx.window.confirm = () => { asked++; return false; };
+    const requests = ctx.server.calls.length;
     ctx.document.getElementById("btn-select-all-thumbnails").click();
-    await ctx.settle();
     assert.equal(asked, 0);
-    assert.equal(ctx.state.selectedThumbnails.length, 400);
-    ctx.document.getElementById("btn-select-none-thumbnails").click();
+    assert.equal(ctx.server.calls.length, requests, "nothing was asked of the server");
+    assert.equal(ctx.state.library.sel.mode, "source");
+    assert.equal(ctx.state.library.sel.excluded.size, 0);
+    assert.equal(ctx.state.library.sel.ids.size, 0);
     assert.equal(ctx.state.selectedThumbnails.length, 0);
+    assert.match(ctx.label(), /68,000/);
+    assert.ok(ctx.real().every((card) => card.classList.contains("selected")));
+    ctx.document.getElementById("btn-select-none-thumbnails").click();
+    assert.match(ctx.label(), /Selected: 0$/);
+    assert.ok(ctx.real().every((card) => !card.classList.contains("selected")));
   });
 
-  test("a bulk write after selecting names every path, once, as a folder's does", async (t) => {
-    const ctx = await load(t, { search: "?view=year&value=2020", ids: IDS.slice(0, 300), total: 300 });
+  test("a small selection: all, then none", async (t) => {
+    const ctx = await load(t, { search: "?view=year&value=2020", ids: IDS.slice(0, 400), total: 400 });
     ctx.document.getElementById("btn-select-all-thumbnails").click();
-    await ctx.settle();
-    ctx.document.getElementById("bulk-add-tags-input").value = "Trips/Lighthouse";
-    click(ctx.window, ctx.document.getElementById("btn-bulk-add-tags"));
-    await ctx.settle();
-    const sent = ctx.server.lastBody("/api/photos/bulk-tags");
-    assert.equal(sent.paths.length, 300);
-    assert.equal(new Set(sent.paths).size, 300);
-    assert.deepEqual(sent.paths.slice(0, 2), [cardOf(IDS[0]).path, cardOf(IDS[1]).path]);
+    assert.equal(ctx.selectedIds().length, 400);
+    ctx.document.getElementById("btn-select-none-thumbnails").click();
+    assert.equal(ctx.selectedIds().length, 0);
   });
 
-  test("the selection panel does not claim tallies it cannot count, and Smart Rename and Time Shift stay off", async (t) => {
+  test("the selection panel keeps Smart Rename off (a name is per folder)", async (t) => {
     const ctx = await load(t);
     click(ctx.window, ctx.cardById(IDS[0]).querySelector(".thumbnail-checkbox"));
-    assert.match(ctx.document.getElementById("selection-tags-list").textContent, /Not tallied/);
     assert.equal(ctx.document.getElementById("btn-apply-rename").disabled, true);
     assert.equal(ctx.document.getElementById("btn-toggle-rename").disabled, true);
   });
@@ -460,10 +441,9 @@ describe("selecting in a view", () => {
   test("a selection survives Refresh view", async (t) => {
     const ctx = await load(t, { search: "?view=year&value=2020", ids: IDS.slice(0, 300), total: 300 });
     ctx.document.getElementById("btn-select-all-thumbnails").click();
-    await ctx.settle();
     click(ctx.window, ctx.document.getElementById("btn-library-refresh"));
     await ctx.settle();
-    assert.equal(ctx.state.selectedThumbnails.length, 300);
+    assert.equal(ctx.selectedIds().length, 300);
     assert.ok(ctx.cardById(IDS[0]).classList.contains("selected"));
   });
 });

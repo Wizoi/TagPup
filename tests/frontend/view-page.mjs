@@ -200,6 +200,12 @@ export async function loadViewPage(t, {
   const module = (file) => pageExports(ctx.window, `web/tagpup/${file}`);
   Object.assign(ctx, {
     here, scroller, module,
+    // What is selected in the view: the ids, in the view's order, whichever way the page holds them (selected.js).
+    selectedIds: () => {
+      const { sel, ids } = ctx.state.library;
+      return sel.mode === "ids" ? ids.filter((id) => sel.ids.has(id)) : ids.filter((id) => !sel.excluded.has(id));
+    },
+
     cards: () => [...ctx.document.querySelectorAll("#thumbnails-grid .thumbnail-card")],
     real: () => ctx.cards().filter((c) => !c.classList.contains("placeholder")),
     cardById: (id) => ctx.document.querySelector(`#thumbnails-grid [data-id="${id}"]`),

@@ -4,7 +4,7 @@
 //   Arrows        one card left or right, one row up or down;        Home / End   the first / the last photo of the view
 //   PageUp/Down   a window (the rows in view);                       Enter        opens the photo in the details panel
 //   Space         selects or deselects the photo;                    Shift+Space  selects from the last one picked to this one
-//   Shift+arrows  extend the selection from where the move began (each step adds; stepping back does not take away).
+//   Shift+arrows  extend the selection from where the move began (each step adds; in a library view stepping back takes away).
 //
 // The moves are by INDEX in the view's order, not by card, so they cross the window's edge and 20,000 photos: the grid
 // scrolls to the index (the window is drawn around it), and focus goes to its card -- or, if the card has not arrived
@@ -140,7 +140,7 @@ function goTo(index) {
 }
 
 /**
- * Listen on the grid. `handlers`: count() photos in the view; open(i); toggle(i, shift); extend(from, to).
+ * Listen on the grid. `handlers`: count() photos in the view; open(i); toggle(i, shift); extend(from, to, was).
  */
 export function wireGridKeys(handlers) {
     thumbnailsGrid.addEventListener('focusin', (e) => {
@@ -183,7 +183,7 @@ export function wireGridKeys(handlers) {
         e.stopPropagation();
         if (e.shiftKey && at >= 0) {
             if (keys.anchor < 0) keys.anchor = at;
-            handlers.extend(keys.anchor, to);
+            handlers.extend(keys.anchor, to, at);
         } else {
             keys.anchor = -1;
         }

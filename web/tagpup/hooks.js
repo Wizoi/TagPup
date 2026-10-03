@@ -25,7 +25,6 @@ export const upper = {
     renderTags: null,
     renderThumbnails: null,
     selectPhoto: null,
-    syncSelectionMarks: null,
     updateCameraHighlights: null,
     updateCarryForwardState: null,
     updateFolderAutoApplyState: null,

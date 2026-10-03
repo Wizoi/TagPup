@@ -18,7 +18,7 @@ import { api } from './common/api.js';
 import { pathKey } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
-import { addToSelection, isSelected, removeFromSelection, setSelection } from './selected.js';
+import { forgetSelectedIds, newIdSelection, reconcileIdSelection } from './selected.js';
 
 /** The kinds a view is, as GET /api/library/view names them. */
 export const LIBRARY_KINDS = ['all', 'folder', 'keyword', 'person', 'year', 'month'];
@@ -39,8 +39,6 @@ export const MAX_IN_FLIGHT = 2;
 export const MAX_TRIES = 2;
 /** After a failure, before the one more try. */
 export const RETRY_MS = 2000;
-/** Select all of more than this many photos is asked about first. */
-export const ASK_SELECT_ABOVE = 5000;
 /** The longest value an address may name. */
 export const MAX_VALUE = 1000;
 
@@ -131,8 +129,8 @@ export function newLibrary(spec) {
         requested: new Set(),         // ids in a batch under way
         inflight: new Map(),          // batch number -> { ids, lo, hi, controller }
         batches: 0, timer: 0, retryTimer: 0, more: false, baseline: null, rearms: 0,
-        selecting: null, activeId: null, wantedId: null, lastId: null, openToken: 0,
-        missing: new Set(),           // pathKey of each photo whose card said its file is gone (stale: 'missing')
+        activeId: null, wantedId: null, lastId: null, openToken: 0,
+        sel: newIdSelection(),        // what is selected, by photo id (selected.js): survives Refresh view and edits
     };
 }
 
@@ -143,8 +141,6 @@ export function destroyLibrary(lib) {
     for (const batch of lib.inflight.values()) batch.controller.abort();
     lib.inflight.clear();
     lib.requested.clear();
-    if (lib.selecting) lib.selecting.controller.abort();
-    lib.selecting = null;
     window.clearTimeout(lib.timer);
     window.clearTimeout(lib.retryTimer);
     lib.timer = 0;
@@ -172,6 +168,7 @@ export function loadLibraryIds(lib, refreshing = false) {
             lib.status = lib.ids.length === 0 ? 'empty' : 'ready';
             lib.message = lib.ids.length === 0 ? emptySentence(lib) : '';
             lib.notice = '';
+            reconcileIdSelection();       // a photo the view no longer holds is no longer selected
             return true;
         })
         .catch(err => {
@@ -316,27 +313,9 @@ function sendBatch(lib, indexes) {
         });
 }
 
-/**
- * Remember whether a card's file is gone: a bulk write leaves such a photo out (the server would skip it as well), and
- * the cards held are only the last 2,000 used, so what they said is kept here by path.
- */
-export function noteMissing(card) {
-    const lib = state.library;
-    if (!lib || !card || !card.path) return;
-    if (card.stale === 'missing') lib.missing.add(pathKey(card.path));
-    else lib.missing.delete(pathKey(card.path));
-}
-
-/** Is this photo one whose card said its file is gone? */
-export function isMissingPath(path) {
-    const lib = state.library;
-    return Boolean(lib) && lib.missing.size > 0 && lib.missing.has(pathKey(path));
-}
-
 /** Keep a card as the page reads it: `filename` is what a folder's record calls its name. */
 function held(card) {
     card.filename = card.name;
-    noteMissing(card);
     return card;
 }
 
@@ -395,6 +374,7 @@ export function dropPhotos(lib, ids) {
         lib.cards.delete(id);
         lib.tries.delete(id);
     }
+    forgetSelectedIds(gone);
     if (lib.ids.length === 0) {
         lib.status = 'empty';
         lib.message = emptySentence(lib);
@@ -490,6 +470,24 @@ export function applyEditedRecords() {
     if (changed.length) state.grid.patch(changed);
 }
 
+/**
+ * A bulk edit has rewritten files: the cards in the window are asked for again (their `thumb` carries the file's new stamp,
+ * and `stale` is what the file is now), and the others are let go, to be asked for when they are scrolled to. Resolves when
+ * the window's cards have arrived.
+ */
+export function refreshHeldCards() {
+    const lib = state.library;
+    if (!lib || !state.grid) return Promise.resolve();
+    const extent = state.grid.extent();
+    const near = lib.ids.slice(extent.first, extent.end);
+    const keep = new Set(near);
+    for (const id of [...lib.cards.keys()]) if (!keep.has(id)) lib.cards.delete(id);
+    lib.tries.clear();
+    const asking = [];
+    for (let start = 0; start < near.length; start += BATCH) asking.push(refetchCards(near.slice(start, start + BATCH)));
+    return Promise.all(asking);
+}
+
 /** Which photo comes `delta` after the open one in the view's order: its id, or null at either end. */
 export function libraryStepTarget(delta) {
     const lib = state.library;
@@ -509,93 +507,4 @@ export function libraryPosition() {
     if (!lib || lib.activeId === null) return null;
     const at = lib.ids.indexOf(lib.activeId);
     return at === -1 ? null : { index: at + 1, total: lib.ids.length };
-}
-
-// ---- Selecting photos that have no card -----------------------------------------------------
-
-/** The ids from one photo to another in the view's order, both included; null if either is not in it. */
-export function idsBetween(fromId, toId) {
-    const lib = state.library;
-    if (!lib) return null;
-    const a = lib.ids.indexOf(fromId);
-    const b = lib.ids.indexOf(toId);
-    if (a === -1 || b === -1) return null;
-    return lib.ids.slice(Math.min(a, b), Math.max(a, b) + 1);
-}
-
-function pathsOfIds(lib, idList, job) {
-    const found = new Map();
-    const missing = [];
-    for (const id of idList) {
-        const card = lib.cards.get(id);
-        if (card) found.set(id, card.path);
-        else missing.push(id);
-    }
-    job.done = found.size;
-    const chunks = [];
-    for (let start = 0; start < missing.length; start += BATCH) chunks.push(missing.slice(start, start + BATCH));
-    let next = 0;
-    const worker = () => {
-        if (next >= chunks.length || job.controller.signal.aborted) return Promise.resolve();
-        const chunk = chunks[next++];
-        return api.fetch(`/api/library/cards?ids=${chunk.join(',')}`, { signal: job.controller.signal })
-            .then(res => res.json().catch(() => ({})).then(body => {
-                if (!res.ok) throw new Error((body && body.error) || `The library answered ${res.status}`);
-                return body;
-            }))
-            .then(body => {
-                for (const card of body.cards || []) {
-                    found.set(card.id, card.path);
-                    noteMissing(card);
-                }
-                job.done += chunk.length;
-                if (lib === state.library) upper.libraryChanged();
-                return worker();
-            });
-    };
-    return Promise.all([worker(), worker(), worker()])
-        .then(() => idList.filter(id => found.has(id)).map(id => found.get(id)));
-}
-
-/** Stop a selection that is being fetched. */
-export function cancelLibrarySelection() {
-    const lib = state.library;
-    if (!lib || !lib.selecting) return;
-    lib.selecting.controller.abort();
-    lib.selecting = null;
-    upper.libraryChanged();
-}
-
-/**
- * Select, deselect, replace the selection with, or invert over these photos -- mode 'add', 'remove',
- * 'replace' or 'invert' -- fetching the cards of those the page does not hold (for their paths, which is
- * what selecting is by), with 'Selecting N...' in the header while it does. A newer selection replaces
- * one still being fetched. Resolves true when the selection was changed.
- */
-export function selectInLibrary(mode, idList) {
-    const lib = state.library;
-    if (!lib) return Promise.resolve(false);
-    cancelLibrarySelection();
-    const job = { done: 0, total: idList.length, controller: new AbortController() };
-    lib.selecting = job;
-    upper.libraryChanged();
-    return pathsOfIds(lib, idList, job).then(paths => {
-        if (lib !== state.library || lib.selecting !== job) return false;
-        lib.selecting = null;
-        if (mode === 'add') addToSelection(paths);
-        else if (mode === 'remove') removeFromSelection(paths);
-        else if (mode === 'replace') setSelection(paths);
-        else setSelection(paths.filter(path => !isSelected(path)));
-        upper.syncSelectionMarks();
-        upper.updateSelectedThumbnailsCount();
-        upper.libraryChanged();
-        return true;
-    }).catch(err => {
-        if (err.name === 'AbortError' || lib !== state.library) return false;
-        if (lib.selecting === job) lib.selecting = null;
-        job.controller.abort();
-        lib.notice = `Could not select those photos: ${err.message}`;
-        upper.libraryChanged();
-        return false;
-    });
 }

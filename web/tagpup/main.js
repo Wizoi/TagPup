@@ -34,7 +34,7 @@ import {
     updateCarryForwardState, wireDateTakenModal, wireZoom
 } from './photo.js';
 import {
-    renderThumbnails, selectAllThumbnails, selectNoneThumbnails, syncSelectionMarks, wireGridContextMenu,
+    renderThumbnails, selectAllThumbnails, selectNoneThumbnails, wireGridContextMenu,
     wireThumbnailGrid, wireThumbnailSize
 } from './grid.js';
 import { recordUndo, undoLastOperation } from './undo.js';
@@ -57,7 +57,7 @@ Object.assign(upper, {
     addedFromView, applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, populateCameraModelsDropdown, recordUndo,
     renderFileList, renderSuggestionsPanel, renderTags, renderThumbnails, selectPhoto,
     landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows,
-    reloadChangedPhoto, syncSelectionMarks,
+    reloadChangedPhoto,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
 });

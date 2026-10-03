@@ -275,24 +275,25 @@ describe("Enter and Space", () => {
     const ctx = await viewPage(t);
     ctx.cardById(1001).focus();
     ctx.key(ctx.focused(), " ");
-    assert.equal(ctx.state.selectedThumbnails.length, 1);
-    assert.equal(ctx.state.selectedThumbnails[0], cardOf(1001).path);
+    assert.deepEqual(ctx.selectedIds(), [1001]);
+    assert.equal(ctx.state.selectedThumbnails.length, 0, "ids, not paths");
     assert.equal(ctx.cardById(1001).getAttribute("aria-selected"), "true");
     assert.ok(ctx.cardById(1001).classList.contains("selected"));
     assert.match(ctx.document.getElementById("selected-thumbnails-count").textContent, /1/);
     ctx.key(ctx.focused(), " ");
-    assert.equal(ctx.state.selectedThumbnails.length, 0);
+    assert.equal(ctx.selectedIds().length, 0);
     assert.equal(ctx.cardById(1001).getAttribute("aria-selected"), "false");
   });
 
-  test("Space on a place whose card has not arrived selects it once the card's path is fetched", async (t) => {
+  test("Space on a place whose card has not arrived selects the photo all the same, by its id; a photo the library turns out not to have is let go", async (t) => {
     const ctx = await viewPage(t, 400, { onCards: (asked) => ({ cards: asked.filter((id) => id < 1200).map((id) => cardOf(id)) }) });
     ctx.cardById(1000).focus();
     ctx.key(ctx.focused(), "End");
     await frame(ctx.window);
     ctx.key(ctx.focused(), " ");
+    assert.deepEqual(ctx.selectedIds(), [1399], "no card is needed to select a photo");
     await ctx.settle(100);
-    assert.equal(ctx.state.selectedThumbnails.length, 0, "no card for it: the library has none to give (a photo deleted since)");
+    assert.deepEqual(ctx.selectedIds(), [], "the library has no such photo (deleted since): dropped from the view, and from the selection");
   });
 });
 
@@ -303,41 +304,54 @@ describe("Shift extends the selection", () => {
     await ctx.press("ArrowRight", { shiftKey: true }, 200);
     await ctx.press("ArrowRight", { shiftKey: true }, 200);
     await ctx.press("ArrowDown", { shiftKey: true }, 200);
-    const paths = new Set(ctx.state.selectedThumbnails);
-    for (let id = 1001; id <= 1007; id++) assert.ok(paths.has(cardOf(id).path), `1001..1007 include ${id}`);
-    assert.ok(!paths.has(cardOf(1000).path) && !paths.has(cardOf(1008).path));
+    const picked = new Set(ctx.selectedIds());
+    for (let id = 1001; id <= 1007; id++) assert.ok(picked.has(id), `1001..1007 include ${id}`);
+    assert.ok(!picked.has(1000) && !picked.has(1008));
     assert.equal(ctx.state.gridKeys.anchor, 1);
     // An arrow without Shift moves and ends the run.
     await ctx.press("ArrowRight");
     assert.equal(ctx.state.gridKeys.anchor, -1);
   });
 
-  test("Shift+End across photos with no card selects them all: their paths are fetched, 200 at a time", async (t) => {
+  test("stepping back toward where the run began takes the photos it leaves off again (the 9c limit is lifted)", async (t) => {
+    const ctx = await viewPage(t);
+    ctx.cardById(1010).focus();
+    await ctx.press("ArrowRight", { shiftKey: true }, 100);
+    await ctx.press("ArrowRight", { shiftKey: true }, 100);
+    await ctx.press("ArrowRight", { shiftKey: true }, 100);
+    assert.deepEqual(ctx.selectedIds(), [1010, 1011, 1012, 1013]);
+    await ctx.press("ArrowLeft", { shiftKey: true }, 100);
+    assert.deepEqual(ctx.selectedIds(), [1010, 1011, 1012], "1013 is let go");
+    await ctx.press("ArrowLeft", { shiftKey: true }, 100);
+    await ctx.press("ArrowLeft", { shiftKey: true }, 100);
+    assert.deepEqual(ctx.selectedIds(), [1010], "back to the anchor");
+    await ctx.press("ArrowLeft", { shiftKey: true }, 100);
+    assert.deepEqual(ctx.selectedIds(), [1009, 1010], "past the anchor the other way");
+    await ctx.press("ArrowRight", { shiftKey: true }, 100);
+    assert.deepEqual(ctx.selectedIds(), [1010]);
+  });
+
+  test("Shift+End across photos with no card selects them all at once: no card is asked for", async (t) => {
     const ctx = await viewPage(t);
     ctx.cardById(1000).focus();
     const before = ctx.cardsAsked.length;
     await ctx.press("End", { shiftKey: true }, 500);
-    assert.equal(ctx.state.selectedThumbnails.length, 400);
-    const fetched = ctx.cardsAsked.slice(before);
-    assert.ok(fetched.every((batch) => batch.length <= 200));
+    assert.equal(ctx.selectedIds().length, 400);
     assert.equal(ctx.focusedId(), 1399);
-    assert.equal(new Set(ctx.state.selectedThumbnails).size, 400);
+    assert.ok(ctx.cardsAsked.slice(before).flat().every((id) => id >= 1300), "only the cards the window at the end needs");
   });
 
-  test("a new move replaces a selection still being fetched, and none is left half made", async (t) => {
-    const ctx = await viewPage(t);
+  test("Shift+End across 20,000 unloaded cards is instant and asks for nothing between", async (t) => {
+    const ctx = await viewPage(t, 20000);
     ctx.cardById(1000).focus();
-    ctx.hold.cards = true;
+    const before = ctx.cardsAsked.length;
+    const began = Date.now();
     ctx.key(ctx.focused(), "End", { shiftKey: true });
-    await ctx.settle(30);
-    assert.ok(ctx.state.library.selecting, "being fetched");
-    ctx.key(ctx.document.getElementById("thumbnails-grid"), "Home", { shiftKey: true });
-    await ctx.settle(30);
-    ctx.hold.cards = false;
-    await ctx.release("cards");
+    assert.equal(ctx.selectedIds().length, 20000);
+    assert.ok(Date.now() - began < 1000, "a loop over ids");
     await ctx.settle(300);
-    assert.equal(ctx.state.library.selecting, null);
-    assert.ok(ctx.state.selectedThumbnails.length <= 400);
+    const asked = ctx.cardsAsked.slice(before).flat();
+    assert.ok(asked.length < 400, `${asked.length} cards asked for: the window at the end, not the range`);
   });
 });
 
