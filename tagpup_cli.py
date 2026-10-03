@@ -1,4 +1,6 @@
 # tagpup_cli.py
+import contextlib
+import functools
 import os
 import sys
 import json
@@ -177,6 +179,30 @@ def cli(ctx, db, test):
     ctx.obj["test"] = test
     ctx.obj["db"] = db
 
+def _holds_the_roots(command):
+    """A command that runs for as long as an index does, run holding one map: every path it writes is
+    spelled by the roots and the places it started with, however the machine's map is edited
+    meanwhile (tagpup.services.roots.pinned), and the library's roots changed by another process
+    stops it, with a sentence and the exit code the server's queue turns into one. A `--reset`
+    deletes the library, and its roots with it: nothing is held then."""
+    @functools.wraps(command)
+    def run(ctx, *args, **kwargs):
+        library = Library(get_db_path(ctx.obj.get("test", False), ctx.obj.get("db")))
+        try:
+            with contextlib.ExitStack() as held:
+                if not kwargs.get("reset"):
+                    held.enter_context(library_roots.pinned(library))
+                return command(ctx, *args, **kwargs)
+        except library_roots.RootsChanged:
+            console.print(library_roots.STOPPED, markup=False, soft_wrap=True)
+            raise SystemExit(library_roots.EXIT_ROOTS_CHANGED) from None
+        except library_roots.Unplaced as why:
+            console.print("Not run: %s" % why, markup=False, soft_wrap=True)
+            raise SystemExit(1) from None
+    run.holds_the_roots = True
+    return run
+
+
 @cli.command()
 @click.argument("directories", nargs=-1, required=True, type=click.Path(exists=True, file_okay=False))
 @click.option("--force-reembed", is_flag=True, help="Force recreation of embeddings.")
@@ -185,6 +211,7 @@ def cli(ctx, db, test):
 @click.option("--no-subfolders", is_flag=True,
               help="Only the photos directly in each DIRECTORY, not in its subfolders.")
 @click.pass_context
+@_holds_the_roots
 def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, no_subfolders: bool = False):
     """Phase 1: Scan and index a tagged photo library: one or more DIRECTORIES, in one run
     (sync hands it every folder of new files at once, so one indexer loads the models)."""

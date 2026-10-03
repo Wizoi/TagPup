@@ -27,12 +27,13 @@ process holding the library's write lock, an unfinished change of photo files.
 The machine's map is the entry point's to hand in (`Machine`): this layer does not import
 tagpup.config.
 """
+import contextlib
 import os
 from dataclasses import dataclass
 from typing import Callable
 
 from tagpup.core import paths
-from tagpup.core.result import NotFound, Result
+from tagpup.core.result import NotFound, Refused, Result
 from tagpup.store import adoption, db, schema
 from tagpup.store import roots as store_roots
 
@@ -42,10 +43,64 @@ class Machine:
     """What an entry point hands in of this machine: `roots()` the map as {name: (locations)},
     `add(name, location)` writes the root into it (True if written, False if it already places
     the root there), `path()` where the file is. tagpup.config's machine_roots,
-    add_machine_root and machine_roots_path."""
+    add_machine_root and machine_roots_path. `set_location(name, location, expected=, must_exist=)`
+    and `change_back(name, expected=)` move a root it already places (tagpup.config; TagTuner's
+    Roots, tagpup.services.roots_location); none where the entry point does not move roots."""
     roots: Callable
     add: Callable
     path: Callable
+    set_location: Callable = None
+    change_back: Callable = None
+
+
+#: The library's roots were changed, by another process, while a run held them: what a pinned run
+#: raises. Re-exported for the entry points, which stop cleanly on it.
+RootsChanged = store_roots.RootsChanged
+
+#: The exit code of a process that stopped for it (EX_TEMPFAIL: try again), which the process that
+#: started it -- the server's index queue -- turns into a sentence.
+EXIT_ROOTS_CHANGED = 75
+
+#: What the owner is told when a run stops for it.
+STOPPED = ("The library's roots were changed by another process while this ran, so it stopped: what it would "
+           "write from here would be spelled by roots the library no longer has. Nothing was written wrongly; "
+           "start it again.")
+
+
+class Unplaced(Refused):
+    """A run asked for the library's roots and this machine does not place one (or its map cannot
+    be read): the message names machine_roots.json and the line to add."""
+
+
+@contextlib.contextmanager
+def pinned(library):
+    """Hold the library's Roots, and this machine's map as it is now, for a whole run -- an index
+    run, a sync pass, a change of photo files: every path of it is converted by one map however
+    often the map is edited meanwhile (a Change location is refused while a run is under way, and a
+    connection that opened later would otherwise convert by the new map half-way). A change of the
+    library's own roots by another process stops the run: RootsChanged, which the entry point
+    answers with STOPPED.
+
+    A library that is not there, or has no roots, holds nothing. Unplaced (a Refused, the sentence
+    naming machine_roots.json) when the library holds a root this machine does not place: the run
+    could not name one photo's file."""
+    if not os.path.exists(library.path):
+        yield None
+        return
+    stack = contextlib.ExitStack()
+    try:
+        roots = stack.enter_context(store_roots.pinned(library.path))
+    except ValueError as why:   # paths.RootsError, config.MachineMapError
+        raise Unplaced(str(why)) from None
+    with stack:
+        if roots is not None and roots.unmapped:
+            raise Unplaced(roots.what_to_add(roots.unmapped[0]))
+        yield roots
+
+
+def stopped(why):
+    """The sentence for a run that did not run, or stopped: `why` a RootsChanged or an Unplaced."""
+    return STOPPED if isinstance(why, RootsChanged) else str(why)
 
 
 def listing(library, machine=None):
@@ -184,6 +239,50 @@ def problem(library):
         return None
     finally:
         conn.close()
+
+
+class SandboxError(Refused):
+    """A measurement sandbox that cannot be made safe: a root of its library copy it did not place,
+    a place outside it, a map that is not its own."""
+
+
+def unplaced(library, machine):
+    """The names of the library's roots that `machine`'s map does not place: what a sandbox that
+    runs the library's copy must find empty before it starts a server."""
+    placed = machine.roots()
+    return [entry["name"] for entry in store_roots.listing(library.path) if not placed.get(entry["name"])]
+
+
+def place_in_sandbox(library, sandbox, machine, folder_for=None):
+    """Make a copy of `library`, run in the folder `sandbox` as its TAGPUP_HOME, safe: write the
+    sandbox's OWN machine map (`machine`, whose file must lie in `sandbox`) placing each root of the
+    copy at `folder_for(name)` -- by default `sandbox/roots/<name>`, made empty -- and never at the
+    real photos. A converted library copy would otherwise point, through the machine's map, at the
+    real files: a sandbox server would read them, and a write it made (a tag, a rename) would reach
+    the owner's photos. Returns {root name: its place}; {} for a library with no roots, which writes
+    no map.
+
+    SandboxError, nothing written to the real map, for a map file outside the sandbox, a place
+    outside it, and -- after placing -- any root of the copy the map does not place."""
+    if not paths.is_under(machine.path(), sandbox):
+        raise SandboxError("the sandbox's machine map is %s, which is not inside the sandbox (%s): placing "
+                           "roots there would change the real map" % (machine.path(), sandbox))
+    placed = {}
+    for entry in store_roots.listing(library.path):
+        name = entry["name"]
+        place = folder_for(name) if folder_for is not None else os.path.join(sandbox, "roots", name)
+        if not paths.is_under(place, sandbox):
+            raise SandboxError("root %s would be placed at %s, outside the sandbox (%s): the copy would reach "
+                               "real photos" % (name, place, sandbox))
+        placed[name] = paths.stored(place)
+    for name, place in placed.items():
+        os.makedirs(place, exist_ok=True)
+        machine.add(name, place)
+    missing = unplaced(library, machine)
+    if missing:
+        raise SandboxError("the sandbox's map (%s) does not place %s: its copy of the library would refuse every "
+                           "photo, or reach the real ones" % (machine.path(), ", ".join(missing)))
+    return placed
 
 
 def pending(library):

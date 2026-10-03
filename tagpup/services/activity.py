@@ -29,6 +29,13 @@ def _counts(found):
             if isinstance(value, numbers.Number) and not isinstance(value, bool)}
 
 
+def _what(run):
+    """What a run of a job is called in the timeline: what it says it did (a text in its counts,
+    "what"), else the job's name."""
+    said = run.changed.get("what")
+    return said if isinstance(said, str) and said else run.job
+
+
 def seconds_between(started, finished):
     """How long from `started` to `finished` (as the records spell a time), or None."""
     if not started or not finished:
@@ -138,7 +145,7 @@ def timeline(library, limit=50):
                         "id": record["id"], "run": entry["run"], "error": None})
     for run in job_runs.runs(library.path, None, limit):
         entries.append({"kind": "job", "library": library.name, "time": run.started, "finished": run.finished,
-                        "seconds": seconds_between(run.started, run.finished), "what": run.job,
+                        "seconds": seconds_between(run.started, run.finished), "what": _what(run),
                         "outcome": run.outcome, "counts": _counts(run.changed), "id": run.id,
                         "run": runs.job_tag(run.library, run.id), "error": run.note})
     for change in journal.history(library.path, limit=limit):

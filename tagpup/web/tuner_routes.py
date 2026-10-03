@@ -18,21 +18,26 @@ import os
 import threading
 from contextlib import contextmanager
 
-from flask import Blueprint, abort, jsonify, make_response, request
+from flask import Blueprint, abort, current_app, jsonify, make_response, request
 
 from tagpup import config as tagpup_config
 from tagpup.core import paths
-from tagpup.core.result import Conflict, NotFound
+from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import identify as identify_jobs
 from tagpup.jobs import indexing as indexing_jobs
+from tagpup.jobs import suggestions as suggestion_jobs
+from tagpup.jobs import verifying as verify_jobs
 from tagpup.services import faces as faces_service
 from tagpup.services import identify as identify_service
 from tagpup.services import indexing
 from tagpup.services import libraries as library_actions
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
+from tagpup.services import roots as roots_service
+from tagpup.services import roots_location, roots_verify
 from tagpup.services import tags as tags_service
-from tagpup.web import desktop, responses, state, tagpup_routes
+from tagpup.web import desktop, responses, roots_gate, state, tagpup_routes
+from tagpup.web import libraries as web_libraries
 
 logger = logging.getLogger(__name__)
 
@@ -699,3 +704,164 @@ def browse_folder():
         return jsonify({"path": desktop.ask_for_folder()})
     except Exception as e:
         _refuse(500, str(e))
+
+
+# ---- Roots: where this machine keeps each root of the library ----------------------------------
+#
+# The library's rows say `@pictures/2024/a.jpg`; this machine's map (machine_roots.json) says where
+# `pictures` is. These routes show each root, Verify a place, and move a root: the map is edited, never
+# a row (tagpup.services.roots_location; docs/ARCHITECTURE.md, "Roots and machines"). They answer this
+# PC only, as the Activity page does.
+
+#: The addresses of this PC.
+LOOPBACK = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
+
+#: The background task the folder watcher is (tagpup.runtime.BACKGROUND).
+WATCHER = "folder watcher"
+
+#: How often the page asks how a full Verify is going, in milliseconds.
+POLL_MS = 1000
+
+
+@routes.before_request
+def _roots_from_this_pc():
+    if request.path.startswith("/api/roots") and request.remote_addr not in LOOPBACK:
+        abort(403, description="Roots are shown and changed from this PC only")
+
+
+def _machine():
+    """This machine's map, handed to the services (they do not import tagpup.config)."""
+    return roots_service.Machine(tagpup_config.machine_roots, tagpup_config.add_machine_root,
+                                 tagpup_config.machine_roots_path, tagpup_config.set_location,
+                                 tagpup_config.change_back)
+
+
+def _busy_in(library):
+    """What is running or queued for `library` in this process, as sentences: the index queue,
+    Suggest, the folder watcher's sync and a full Verify. (The library's own job runs, any
+    process's, are read by the service.)"""
+    said = []
+    if indexing_jobs.queue_for(library).busy():
+        said.append("an index run is running or queued")
+    if any(run["library"].lower() == library.name.lower() for run in suggestion_jobs.under_way()):
+        said.append("Suggest is running")
+    background = getattr(current_app.config.get("LIFECYCLE"), "background", None)
+    watcher = background.task(WATCHER) if background is not None else None
+    syncing = watcher.status().get("syncing") if watcher is not None and hasattr(watcher, "status") else None
+    if syncing and syncing.get("library", "").lower() == library.name.lower():
+        said.append("a sync is running")
+    if verify_jobs.running(library):
+        said.append("a verify of every row is running")
+    return said
+
+
+def _busy(library, name=None):
+    """_busy_in `library` and, for root `name`, in each other library of the home that holds it
+    too: the machine's map is one for them all."""
+    said = _busy_in(library)
+    if name:
+        for other in roots_location.sharing(library, name, web_libraries.home_libraries()):
+            said += ["%s (in %s, which uses this root too)" % (each, other.name) for each in _busy_in(other)]
+    return said
+
+
+def _roots_answer(call):
+    """`call()`, its refusals as the page reads them: NotFound 404, Refused or a map that cannot
+    be used 400, Conflict 409."""
+    try:
+        return call()
+    except NotFound as e:
+        _refuse(404, str(e))
+    except Conflict as e:
+        _refuse(409, str(e))
+    except (Refused, ValueError) as e:
+        _refuse(400, str(e))
+
+
+def _root_named(body):
+    name = body.get("root")
+    if not isinstance(name, str) or not name:
+        _refuse(400, "Missing root: the name of one of the library's roots")
+    return name
+
+
+@routes.get("/api/roots")
+def roots_list():
+    """Each root of the library, where this machine keeps it, and how a Verify is going."""
+    library = state.require()
+    found = _roots_answer(lambda: roots_location.overview(library, _machine(), web_libraries.home_libraries()))
+    running = verify_jobs.status(library)
+    for entry in found["roots"]:
+        entry["verifying"] = running.get(entry["name"])
+    found["busy"] = _busy(library)
+    found["poll_ms"] = POLL_MS
+    return jsonify(found)
+
+
+@routes.post("/api/roots/verify")
+def roots_verify_root():
+    """Verify a root at its place (or at `location`): a sample, answered at once; `all`, every row
+    and the photos no row has, a job that `/api/roots` reports on."""
+    library = state.require()
+    body = request.get_json(silent=True) or {}
+    name = _root_named(body)
+    machine = _machine()
+
+    def run():
+        roots_location.require_root(library, name)
+        place = body.get("location")
+        if not place:
+            places = machine.roots().get(name) or ()
+            if not places:
+                raise Refused("This machine does not place %s: name a location to look at." % name)
+            place = places[0]
+        if body.get("all") is True:
+            return {"success": True, "started": True, "status": verify_jobs.start(library, name, place, machine).status()}
+        return {"success": True, "started": False, "verify": roots_location.run_verify(
+            library, name, place, machine, budget=roots_verify.SAMPLE_BUDGET)}
+    return jsonify(_roots_answer(run))
+
+
+@routes.post("/api/roots/verify-cancel")
+def roots_verify_cancel():
+    """Stop the full Verify of a root, between folders: what it counted is kept, as partial."""
+    library = state.require()
+    name = _root_named(request.get_json(silent=True) or {})
+    return jsonify({"success": True, "cancelled": _roots_answer(lambda: verify_jobs.cancel(library, name))})
+
+
+def _moved(library, name, back):
+    body = request.get_json(silent=True) or {}
+    machine = _machine()
+    apply = body.get("dry_run") is False
+    result = _roots_answer(lambda: roots_location.change_location(
+        library, name, body.get("location"), machine, apply=apply, override=body.get("override") is True,
+        expected=body.get("from") or None, busy=lambda: _busy(library, name), back=back,
+        others=web_libraries.home_libraries()))
+    if result.changed:
+        # The map moved: what this process kept of the old places is let go -- the connections
+        # find the new map by themselves within a second, and every cache keyed by the library's
+        # generations is built again (tagpup.store.generations).
+        roots_gate.forget(library)
+        tagpup_routes.forget_scans(library)
+    answer = {"success": result.refused is None, "dry_run": not apply, "changed": result.changed,
+              "error": result.refused, **{key: value for key, value in result.details.items() if key != "dry_run"}}
+    return jsonify(answer), (200 if result.refused is None else 409 if result.details.get("conflict") else 400)
+
+
+@routes.post("/api/roots/change-location")
+def roots_change_location():
+    """Move a root to `location` on this machine. A dry run unless `dry_run` is false: the sample
+    of what the new place holds, and why it would be refused. `from` is the place the page saw."""
+    library = state.require()
+    name = _root_named(request.get_json(silent=True) or {})
+    return _moved(library, name, back=False)
+
+
+@routes.post("/api/roots/change-back")
+def roots_change_back():
+    """Put a root back at the place it was before the last change (the first two places swap),
+    unless that place is gone."""
+    library = state.require()
+    name = _root_named(request.get_json(silent=True) or {})
+    return _moved(library, name, back=True)

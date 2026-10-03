@@ -62,6 +62,13 @@ export const state = {
     // Ignore is on its way, and the dialog's parts, built the first time it opens.
     review: { folders: [], busy: false, modal: null, body: null, status: null, opener: null },
 
+    // Roots (roots.js): the dialog's parts, built the first time it opens; whether it is open and
+    // which opening (`token`, so an answer that comes after it closed is let go); a move being made
+    // (`busy`, so a second press of Move does nothing); the roots whose full check is being followed
+    // (`watching`) and when to ask again (`timer`, `pollMs`, which the server sets).
+    roots: { modal: null, body: null, status: null, opener: null, open: false, token: 0, busy: false,
+             watching: new Set(), timer: null, pollMs: 1000 },
+
     // Remove Folder: the library's folders (/api/folder/indexed), and the one chosen.
     removeFolders: [],
     removeFolderChosen: null,

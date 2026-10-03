@@ -58,6 +58,7 @@ from tagpup.core import paths, runs, validation
 from tagpup.core.result import Result
 from tagpup.files import images
 from tagpup.services import damaged_photos, maintenance, refresh_rows, relink_photos
+from tagpup.services import roots as roots_service
 from tagpup.store import damaged_files, db, generations, schema, sync_runs
 from tagpup.store import folders as store_folders
 from tagpup.store import photos as store_photos
@@ -463,8 +464,23 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, root
     started = sync_runs.now()
     # Every line the sync logs carries its tag, made from what its record keeps (the
     # library and when it started): the Activity page's "Logs for this run".
-    with runs.running(runs.sync_tag(library.name, started)):
-        return _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
+    try:
+        # One map for the whole pass: a place moved meanwhile (TagTuner's Roots) changes nothing
+        # until it ends, and another process changing the library's roots stops it, cleanly.
+        with runs.running(runs.sync_tag(library.name, started)), roots_service.pinned(library):
+            return _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
+    except (roots_service.RootsChanged, roots_service.Unplaced) as stop:
+        return _not_run(stop, apply)
+
+
+def _not_run(stop, apply):
+    """A sync that did not run -- the library's roots changed under it, or this machine does
+    not place one: a refused Result with what the callers read of any, and why."""
+    result = Result()
+    result.refuse(roots_service.stopped(stop))
+    result.details.update(counts={}, in_step=False, changed={kind: 0 for kind in KINDS}, queued=0, warnings=[],
+                          dry_run=not apply)
+    return result
 
 
 def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started):

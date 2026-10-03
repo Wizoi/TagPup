@@ -95,6 +95,12 @@ def key(path):
     return os.path.normcase(stored(path))
 
 
+def name_key(name):
+    """A file's or folder's NAME, without its folder, for comparing within one folder: the case
+    the file system ignores folded. key() makes a path absolute, which a bare name must not be."""
+    return os.path.normcase(name)
+
+
 def same(a, b):
     """Do these two spellings name the same file?"""
     return bool(a) and bool(b) and key(a) == key(b)
