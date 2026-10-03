@@ -559,7 +559,7 @@ CURRENT_DAYS = 30
 def current(library):
     """The bulk edit a page opening the library should show: the one running (here, or in another process), else the latest
     one that stopped part-way -- cancelled, failed or abandoned by a restart -- within CURRENT_DAYS; None when the latest
-    finished, or there has been none. Its status, as `status` gives it. One read of the library's latest run, and only when
+    finished or is too old to resume (nothing is offered that could not be done), or there has been none. Its status, as `status` gives it. One read of the library's latest run, and only when
     nothing runs in this process."""
     with _lock:
         running_here = next((job for job in _held(library).values() if job.state == RUNNING), None)
@@ -570,7 +570,7 @@ def current(library):
         return None
     handle = (found[0].changed or {}).get("job") or found[0].id
     seen = status(library, handle)
-    if seen is None or seen["state"] == DONE:
+    if seen is None or seen["state"] in (DONE, EXPIRED):
         return None
     if seen["state"] != RUNNING and (time.time() - (seen.get("started") or 0)) > CURRENT_DAYS * 86400:
         return None

@@ -833,6 +833,13 @@ class AfterARestart(Bulk):
         with mock.patch.object(bulk_edits.time, "time", return_value=seen["started"] + 31 * 86400):
             self.assertIsNone(self.current())
 
+    def test_current_does_not_offer_a_job_that_is_too_old_to_resume(self):
+        handle = self.shift_job(5)["job"]
+        self.finish(handle)
+        expired = dict(self.status(handle), state="expired", resumable=False)
+        with mock.patch.object(bulk_edits, "status", lambda library, asked: expired):
+            self.assertIsNone(self.current())
+
     def test_the_job_goes_on_when_the_page_is_closed_or_another_library_is_open(self):
         gate = Gate(2)
         self.files.on_write = gate
