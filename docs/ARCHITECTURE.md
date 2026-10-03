@@ -1266,16 +1266,36 @@ panel and selection. Nothing is migrated and nothing of a folder's machinery run
   carries the new `mtime` and `size` (a rename by the caption: of the file under its new name) and the record takes them, so the next save
   passes; bulk tags reports each photo's (`stamps`; it adds and removes against the file's own tags, so it needs no precondition),
   rotate reports `size` with `mtime`. Auto-apply and Smart Rename read the folder again, so their records are fresh.
+- **The stamp is the cheap first check; the base is the real one** *(review of the fix, findings #549 to #552)*. A stamp can be kept: a
+  copy keeps its times, and a same-length rename of a tag with the time put back changes the keywords and nothing the stamp sees. So
+  the page also keeps, with each record, what it read of the two things a save overwrites -- `base: {tags, title}` (`edits.js baseOf`,
+  taken from the record the first time it is needed) -- and sends it with every write that carries a whole list or caption: a save of
+  tags, title or people, the Date Taken edit, carry forward, applying a suggestion, a folder card's title. `tagging.save_photo`, under
+  the file-changes lock and after it has read the file's current state, compares the file's keywords (as a SET of paths, `_tags_held`)
+  and caption (the first, trimmed) with `base`; any difference is `409` `changed_on_disk` with the same sentence and nothing written;
+  a field the save does not touch (a rating) is not compared, so another program's rating is no refusal. The page takes the next
+  `base` from each reply (`base`: the tags and caption as written), and from the replies of bulk tags (`written`) and of undo, which
+  also give the stamp (`edits.js takeWritten`: undo had left the record with the old one, so the next save was refused and the old
+  stamp survived in the folder cache); the server's cached scan takes the file's stamp from a bulk write too (`_records_written`).
+  A call with neither `stamp` nor `base` (the CLI, the MCP) is no check, as it was. **A photo ExifTool could not read when it was opened**
+  (`read_error` of the reader, an empty file for one: `page_record` keeps it as `unreadable: true`) is not saved from: the page says
+  "This photo could not be read just now: reopen it." and sends nothing, and the server refuses a page's save (one with a stamp) whose
+  `base` is null with the same sentence, so a record that shows no tags because the read failed never replaces the keywords of a file
+  that reads now. The cost is about a hundred bytes a save (`base` of a photo with three tags and a caption).
 - **A bulk write is asked about and capped** *(findings #535)*. A selection over 200 photos asks "Add Trips/Coast to 3,412 photos?" (the
   write named, `selection.js confirmBulkWrite`) before any bulk tag, person or removal; the server refuses a request of more than 5,000
   photos with `400` "Narrow the selection: bulk edits over 5000 photos arrive with the editing stage" -- bulk tags and Smart Rename; the
-  page says the same without sending. A job with progress, cancel and undo of its own is 9d's.
+  page says the same without sending, **before** a typed name is resolved (resolving may make a tree node: a refused or cancelled bulk
+  makes none, findings #554). A job with progress, cancel and undo of its own is 9d's. Accepted and left: time-shift and auto-apply take a
+  folder and have no cap, and the undo of an auto-apply over 5,000 photos is refused by the cap.
 - **The tag tree's counts are one pass of `photo_tags`** *(findings #534)*. `/api/taxonomy/tree` parsed every photo's tags JSON for
   `usage_count` (`store.photos.tag_usage`): 350 ms on a synthetic library of photo_index's scale (68,466 photos, 159,651 `photo_tags`
   rows, 931 nodes), which held the Python process at page start so that `/api/library/ids` and `/api/tags` waited behind it. It now
   reads `photo_tags` (`library_view.keyword_counts`, whose per-photo grouping SQLite does: Python sees the distinct tag sets, not 68,000
   photos): **68 ms**, the same counts node for node (`tests/test_tag_usage_from_photo_tags.py`); a library without the derived tables
-  is counted from the JSON as before. With the page's first three requests in flight together: tree 785 -> 122 ms, ids 830 -> 170 ms,
+  is counted from the JSON as before. **What a count means** *(findings #553)*: it follows the views' derivation, so a keyword with no
+  node counts toward nothing (the old lineage count credited the levels above it: 4 such keywords on 32 uses in photo_index), and a
+  keyword that differs from a node only in case or spacing counts toward that node (`tests/test_tag_usage_from_photo_tags.py` pins both). With the page's first three requests in flight together: tree 785 -> 122 ms, ids 830 -> 170 ms,
   tags 920 -> 260 ms (`/api/tags` is itself 260 ms there: not looked at). So the "85-330 ms in the page" of the ids request was mostly
   the tree route holding the process, not the route (30 ms alone). Re-measured on the sandbox copy with `measure_library_view.py` on a
   machine eight times slower than the earlier runs (copying the library took 219 s, not 15), so its absolute numbers are not comparable;

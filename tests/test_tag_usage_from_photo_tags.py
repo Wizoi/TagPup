@@ -53,6 +53,21 @@ class TheCounts(unittest.TestCase):
         self.assertEqual(wanted["Trips/Coast"], usage["Trips/Coast"])
         self.assertLess(usage["Trips/Coast"], 240, "a photo with two tags under it counts once")
 
+    def test_a_keyword_with_no_node_counts_toward_nothing_and_a_case_folded_one_toward_its_node(self):
+        """The meaning, pinned (findings #553): counts follow the views' derivation (photo_tags), which ties a photo's
+        keyword to a node, else the node it is without case, and makes no node: so a keyword with no node credits no
+        level above it (the old lineage count credited 'Not'), and 'trips/lakes' credits the node 'Trips/Lakes'."""
+        before = photos.tag_usage(self.vl.path)
+        self.vl.photo("Event 0", "folded.jpg", tags=["trips/lakes"])
+        self.vl.photo("Event 0", "orphan.jpg", tags=["Orphans/Nowhere"])
+        after = photos.tag_usage(self.vl.path)
+        self.assertEqual(before["Trips/Lakes"] + 1, after["Trips/Lakes"])
+        self.assertEqual(before["Trips"] + 1, after["Trips"])
+        self.assertNotIn("Orphans", after)
+        self.assertNotIn("Orphans/Nowhere", after)
+        self.assertNotIn("Not", after)
+        self.assertIn("Not", counted_from_the_json(self.vl.path), "the JSON count credited the levels of a keyword with no node")
+
     def test_no_photos_tags_are_read(self):
         seen = []
         real = db.connect
