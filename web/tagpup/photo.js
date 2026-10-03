@@ -3,7 +3,7 @@
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { baseName, isUnc, pathKey } from './common/paths.js';
-import { photoAlreadyHas } from './common/vocabulary.js';
+import { photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
@@ -470,6 +470,10 @@ export function wireZoom() {
     }
 }
 
+/**
+ * The photo's tags and people as pills. The pills are alphabetical (sortedTags); the photo's own
+ * list is not touched, so a save sends the tags in the order the file holds them.
+ */
 export function renderTags(tags) {
     detailPeople.innerHTML = '';
     detailTags.innerHTML = '';
@@ -496,7 +500,7 @@ export function renderTags(tags) {
             style: 'color: var(--text-muted); font-size: 13px;', text: 'No people tags.',
         }));
     } else {
-        peopleTags.forEach(tag => {
+        sortedTags(peopleTags).forEach(tag => {
             const pill = document.createElement('span');
             pill.className = 'tag-pill';
             pill.style.cursor = 'pointer';
@@ -514,7 +518,7 @@ export function renderTags(tags) {
             style: 'color: var(--text-muted); font-size: 13px;', text: 'No keywords set.',
         }));
     } else {
-        nonPeopleTags.forEach(tag => {
+        sortedTags(nonPeopleTags).forEach(tag => {
             const pill = document.createElement('span');
             pill.className = 'tag-pill';
             pill.style.cursor = 'pointer';

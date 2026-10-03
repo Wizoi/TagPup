@@ -298,7 +298,7 @@ an assignment is undone by unmatching, an exclusion by restoring.
 The sidebar orders people by how many photos are waiting, which puts the most work
 first. **Name (A-Z)** is offered alongside, because finding one person among twenty-two
 ordered by count means reading all of them, and you usually already know the name. The
-comparison ignores case, so a lower-case name does not sort after every capitalised one.
+comparison is the shared one for tags and people -- alphabetical, case and accents ignored, numbers in order ("Trip 3" before "Trip 10"), a path one level at a time (`compareTagNames` / `sortedTags`, `web/common/vocabulary.js`; the server's `tag_sort_key`, `tagpup.core.vocabulary`, is the same order, and `tests/fixtures/tag_order.json` holds the two to one table) -- so a lower-case name does not sort after every capitalised one. By count, people with the same count are in that order too.
 The choice is remembered across sessions.
 
 The buckets -- `Unknown Faces`, `Ungrouped`, `Excluded` -- stay pinned to the top in
@@ -362,7 +362,7 @@ misspelling spreads exactly as a wrong name does — and until this view there w
 to ask *where is this tag, and what does it touch*.
 
 The sidebar lists every tag with its photo count, ordered and searched by the same
-controls the people list uses. Four buckets sit pinned above the alphabet, because a
+controls the people list uses (by name in the shared alphabetical order, by count with the alphabet breaking a tie). Four buckets sit pinned above the alphabet, because a
 flat list of 881 tags hides the handful worth looking at: **No hierarchy** (a tag with
 no path), **Used once** (where typos hide, never confirmed by a second photo), **On no
 photo** (in the vocabulary, describing nothing, still offerable), and **People missing a
@@ -383,7 +383,7 @@ matching can still read its name.
 - **Deselection/Cancel**: Clicking "Cancel" or selecting another face card deselects the current face and hides the editing panel.
 - **Suggestions (Top 5 matches)**: Dynamically fetches and displays the top 5 names of people whose faces are most similar to the selected face embedding (calculated via cosine similarity/dot-product of 512-dimensional embeddings).
 - **Match Selection**:
-  - Input field with standard HTML5 autocomplete linked to a global `<datalist>` of all known people.
+  - Input field with standard HTML5 autocomplete linked to a global `<datalist>` of all known people, alphabetical.
   - Appends the name to the photo's `people` array in the database upon matching.
 - **New Person Profile Creator**:
   - Clicking the `👤+` button (available in both unmatched face panel and face matching actions) opens the **Create New Person Profile** modal dialog.
@@ -404,6 +404,7 @@ matching can still read its name.
 - **Matched Photos Toggle**: A toggle checkbox in `folder-match` mode controls whether photos whose faces are all named are listed. Off (the default), only photos with an unnamed face are listed, and a photo leaves the list when its last face is named. On, `/api/photos?show_matched=true` lists every photo with a face; a finished photo stays listed, dimmed (`all-matched`), so the folder can be stepped through in order.
 
 ### 3. Detected Faces Grid Sorting
+- The photo's tag and people pills in the details panel are alphabetical, in the shared order.
 - Inside the details panel, the detected faces grid is sorted with **already matched faces at the top**, followed by unmatched faces.
 - Within both groups, faces are sorted descending by their computed maximum similarity/correlation to known identities in the database.
 
@@ -437,7 +438,7 @@ matching can still read its name.
 - `/api/photo-details?path=<photo_path>`: Returns metadata details (path, filename, caption, people, tags, faces list with `max_similarity` scores).
 - `/api/photo-file?path=<photo_path>&size=<int>&upright=1`: Serves the original image file, or with `size` a JPEG copy no larger than that on a side. The copy is as stored -- the face views draw boxes over it in the stored pixels' coordinates -- unless `upright=1`, which turns it by its Orientation as a person sees it; the Tags view's cards, which draw no boxes, ask that way.
 - `/api/face-crop?id=<face_id>`: Dynamically crops the face from the original photo and returns it as a JPEG (caches the JPEG crop binary in the database).
-- `/api/people`: Returns a sorted list of all unique people names in the database, leaving out people hidden from autocomplete. `include_hidden=1` includes them: the page asks that way to check whether a name already exists.
+- `/api/people`: Returns an alphabetical list (`tag_sort_key`) of all unique people names in the database, leaving out people hidden from autocomplete. `include_hidden=1` includes them: the page asks that way to check whether a name already exists.
 - `/api/people-with-counts`: Returns unique names with their respective face counts.
 - `/api/person-faces?name=<name>`: Returns matched/outlier faces for a person (an outlier is a face `possibly_wrong`:
   `tagpup.core.clustering.looks_wrong` against the person's closest face in the years around the photo).

@@ -1,5 +1,6 @@
 // Review People: the people list, and choosing a person.
 import { api } from './common/api.js';
+import { compareTagNames } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
     btnRenamePerson, emptyState, faceMatchingContent, inputReassignName, listStats,
@@ -74,10 +75,9 @@ function sortedPeople() {
     people.sort((a, b) => {
         const pinned = rank(a) - rank(b);
         if (pinned !== 0) return pinned;
-        if (byName) {
-            return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-        }
-        return (b.count || 0) - (a.count || 0);
+        if (byName) return compareTagNames(a.name, b.name);
+        // Most first; the alphabet breaks a tie, so the order is not the server's.
+        return ((b.count || 0) - (a.count || 0)) || compareTagNames(a.name, b.name);
     });
     return people;
 }
@@ -88,6 +88,7 @@ function renderPeopleList(keepTab = false) {
     photoList.innerHTML = '';
     
     if (state.allPeopleWithCounts.length === 0) {
+        state.shownPeople = [];
         listStats.textContent = 'No people found';
         return;
     }
@@ -97,7 +98,10 @@ function renderPeopleList(keepTab = false) {
     // Apply filter directly in case search has value
     const query = photoSearch.value.toLowerCase();
 
-    sortedPeople().forEach(person => {
+    // What the list shows, in the order it shows it: the person to move to when one is emptied is the
+    // one beside them here.
+    state.shownPeople = sortedPeople();
+    state.shownPeople.forEach(person => {
         const li = document.createElement('li');
         li.className = 'photo-item';
         li.personName = person.name;

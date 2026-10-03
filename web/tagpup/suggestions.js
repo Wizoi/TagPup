@@ -2,7 +2,7 @@
 // showing them for a photo, and applying them.
 import { api } from './common/api.js';
 import { samePath } from './common/paths.js';
-import { leafOf, photoAlreadyHas } from './common/vocabulary.js';
+import { leafOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
     btnFolderAutoApply, btnSuggestTags, btnSuggestTitleWand, indexProgressBar,
@@ -315,7 +315,8 @@ export function renderSuggestionsPanel(photoPath) {
         const group = container.closest('.suggestion-item');
         // Hide the half that has nothing rather than label an empty row.
         if (group) group.classList.toggle('hidden', items.length === 0);
-        items.forEach(item => {
+        // Ranked by how sure the analysis was, the most sure first; the alphabet breaks a tie.
+        sortedTags(items, item => item[key], { rank: item => item.score }).forEach(item => {
             const name = item[key];
             const pct = Math.round((item.score || 0) * 100);
             const chip = document.createElement('span');

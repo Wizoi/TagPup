@@ -1,5 +1,6 @@
 // What every feature uses: the address bar, the names the library knows.
 import { api } from './common/api.js';
+import { sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
 import { modeSelect, showMatchedToggle } from './elements.js';
 
@@ -67,7 +68,7 @@ function updatePeopleDatalist() {
     const datalist = document.getElementById('people-datalist');
     if (!datalist) return;
     datalist.innerHTML = '';
-    state.allKnownPeople.forEach(person => {
+    sortedTags(state.allKnownPeople).forEach(person => {
         const option = document.createElement('option');
         option.value = person;
         datalist.appendChild(option);

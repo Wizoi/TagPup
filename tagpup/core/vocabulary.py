@@ -16,6 +16,7 @@ Reading the metadata out of a file is tagpup.files.metadata's; what a library's 
 tree says about people is read by tagpup.store.taxonomy and passed in. Everything here
 works on what they hand over, and touches neither.
 """
+import unicodedata
 
 SEPARATOR = "/"
 
@@ -59,6 +60,59 @@ def lineage(tag):
 def with_leaf(tag, leaf):
     """The same path with another leaf: ("Family/Rowan", "Rowan T") -> "Family/Rowan T"."""
     return SEPARATOR.join(segments(tag)[:-1] + [str(leaf).strip()])
+
+
+# ---- The order tags are shown in -------------------------------------------------------
+#
+# The same order as the pages' (web/common/vocabulary.js, compareTagNames): case and accents
+# ignored, digits read as numbers, a tag path compared a level at a time, then the exact
+# spelling so the order is total. The page orders with Intl.Collator('en'); this does not
+# depend on the machine's locale or on ICU, and tests/fixtures/tag_order.json holds the two
+# to one table. A letter ICU files with another (a stroke, a ligature) is folded the same way.
+
+# Punctuation in the order the Unicode root collation gives it, all before digits.
+_PUNCTUATION = " _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$"
+_FOLDED = str.maketrans({"\u00f8": "o", "\u0142": "l", "\u0111": "d", "\u0127": "h", "\u00e6": "ae",
+                         "\u0153": "oe"})
+
+
+def _level_key(text):
+    """One level of a tag, as it is compared: a tuple of (kind, value), symbols < digits < letters."""
+    plain = "".join(each for each in unicodedata.normalize("NFKD", text.casefold())
+                    if not unicodedata.combining(each)).translate(_FOLDED)
+    found, digits = [], ""
+    for each in plain:
+        if each.isdecimal():
+            digits += each
+            continue
+        if digits:
+            found.append((1, int(digits)))
+            digits = ""
+        found.append(_char_key(each))
+    if digits:
+        found.append((1, int(digits)))
+    return tuple(found)
+
+
+def _char_key(each):
+    at = _PUNCTUATION.find(each)
+    if at >= 0:
+        return (0, at)
+    if each.isalpha():
+        return (2, ord(each))
+    return (0, len(_PUNCTUATION) + ord(each))
+
+
+def tag_sort_key(tag):
+    """What to sort tags by to show them alphabetically: `sorted(tags, key=tag_sort_key)`.
+    A path is compared a level at a time (so "Family" is followed by "Family/Amy" and then
+    "Family Tree"), each level with case and accents ignored and digits as numbers ("Trip 3"
+    before "Trip 10"); tags that tie that way are ordered by their exact spelling, in the
+    UTF-16 order the page's strings compare in. Display only: nothing stored or written is
+    reordered by it."""
+    text = "" if tag is None else str(tag)
+    return (tuple(_level_key(level) for level in text.split(SEPARATOR)),
+            text.encode("utf-16-be", "surrogatepass"))
 
 
 def key(text):

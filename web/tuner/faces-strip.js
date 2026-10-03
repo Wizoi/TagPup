@@ -2,7 +2,7 @@
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { samePath } from './common/paths.js';
-import { nameProblem, samePerson } from './common/vocabulary.js';
+import { nameProblem, samePerson, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
 import { emptyState, modeSelect, panelContent, photoList, showMatchedToggle } from './elements.js';
 import { UNKNOWN_YEAR } from './rules.js';
@@ -118,7 +118,7 @@ function renderPhotoDetails(details) {
     
     // People pills
     const peopleList = details.people || [];
-    peopleList.forEach(person => {
+    sortedTags(peopleList).forEach(person => {
         const pill = document.createElement('span');
         pill.className = 'tag-pill people-tag';
         pill.textContent = `👤 ${person}`;
@@ -127,7 +127,7 @@ function renderPhotoDetails(details) {
 
     // Category / Keyword tags
     const tagsList = details.tags || [];
-    tagsList.forEach(tag => {
+    sortedTags(tagsList).forEach(tag => {
         // A keyword that names somebody already shown as a person is not repeated.
         if (peopleList.some(p => samePerson(p, tag))) {
             return;

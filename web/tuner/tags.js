@@ -1,7 +1,7 @@
 // Review Tags.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { tagProblem } from './common/vocabulary.js';
+import { sortedTags, tagProblem } from './common/vocabulary.js';
 import { state } from './state.js';
 import { listStats, peopleSort, photoList, photoSearch } from './elements.js';
 
@@ -52,9 +52,10 @@ export function loadTags() {
 function visibleTags() {
     const query = (photoSearch.value || '').toLowerCase();
     const matching = state.allTags.filter(t => t.tag.toLowerCase().includes(query));
-    const byName = (a, b) => a.tag.toLowerCase().localeCompare(b.tag.toLowerCase());
-    if (peopleSort && peopleSort.value === 'name') return matching.sort(byName);
-    return matching.sort((a, b) => (b.count - a.count) || byName(a, b));
+    // By name: the alphabet every list of tags is in. By count: most photos first, the alphabet
+    // breaking a tie, so the order does not depend on the order the server sent them in.
+    if (peopleSort && peopleSort.value === 'name') return sortedTags(matching, t => t.tag);
+    return sortedTags(matching, t => t.tag, { rank: t => t.count });
 }
 
 export function renderTagList() {
@@ -131,7 +132,7 @@ function tagRow(label, count, { tag, bucket, hint } = {}) {
 
 function showBucket(key) {
     const label = (TAG_BUCKETS.find(b => b[0] === key) || [])[1] || key;
-    const members = state.tagBuckets[key] || [];
+    const members = sortedTags(state.tagBuckets[key] || []);
     tagViewPlaceholder.classList.add('hidden');
     tagViewName.textContent = label;
     tagViewSummary.textContent =
