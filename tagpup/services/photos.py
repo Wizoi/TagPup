@@ -6,7 +6,7 @@ import os
 from tagpup.core import dates, fields, paths, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
 from tagpup.files import images, metadata, names, recycle_bin
-from tagpup.services import file_changes, libraries
+from tagpup.services import file_changes, libraries, thumbnails
 from tagpup.services import roots as roots_service
 from tagpup.store import db, embeddings, faces, photos, taxonomy
 from tagpup.store import folders as store_folders
@@ -369,7 +369,10 @@ def delete(library, photo_path):
         result.fail(photo_path, "Failed to move file to Recycle Bin")
         return result
     result.changed = 1
+    # The thumbnail goes with the photo: its id is read first, while the row is there to name it.
+    ids = thumbnails.ids_of(library, [photo_path])
     result.details["removed"] = photos.forget_photo(library.path, photo_path)
+    thumbnails.forget(library, ids)
     return result
 
 

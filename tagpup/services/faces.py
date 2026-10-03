@@ -19,6 +19,7 @@ import numpy as np
 
 from tagpup.core import clustering, paths, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Result
+from tagpup.services import thumbnails
 from tagpup.store import db, faces, faces_pending, photos
 from tagpup.store import folders as store_folders
 
@@ -256,8 +257,11 @@ def remove_folder(library, folder):
     def remove(conn):
         return photos.remove_under(conn, folder)
 
+    # Their thumbnails go with them (tagpup.services.thumbnails): the ids are read before the rows go.
+    gone = thumbnails.ids_of(library, folder=folder)
     result.details.update(db.write_with_connection(library.path, remove, label="remove a folder"))
     result.changed = result.details["photos_removed"]
+    thumbnails.forget(library, gone)
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         still = store_folders.holds(conn, folder)

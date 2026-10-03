@@ -9,7 +9,7 @@ import json
 import os
 import stat
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 from tagpup.core import paths
 
@@ -134,6 +134,13 @@ def _decoder_failed(error):
     if isinstance(error, OSError):
         return error.errno is None and not isinstance(error, Unreadable)
     return isinstance(error, (SyntaxError, ValueError, EOFError))
+
+
+def is_damage(error):
+    """Did decoding fail on what the file holds -- a truncated or not-a-picture file -- rather than on
+    reading it (a missing file, a share gone away)? What `opened` raises Unreadable for; for a caller that
+    decodes some other way (smaller_copy) and wants the same line drawn."""
+    return _decoder_failed(error)
 
 
 def shown_size(photo_path):
@@ -265,6 +272,19 @@ def smaller_copy(photo_path, max_size, upright):
         out = io.BytesIO()
         img.save(out, format="JPEG", quality=85)
         return out.getvalue()
+
+
+def placeholder_jpeg():
+    """A small grey picture with a cross, as the JPEG a photo that cannot be shown is stood in by (the thumbnail
+    cache): 200 by 150 pixels, the same bytes every time."""
+    picture = Image.new("RGB", (200, 150), (64, 64, 64))
+    draw = ImageDraw.Draw(picture)
+    draw.rectangle((1, 1, 198, 148), outline=(110, 110, 110))
+    draw.line((60, 45, 140, 105), fill=(150, 150, 150), width=3)
+    draw.line((60, 105, 140, 45), fill=(150, 150, 150), width=3)
+    out = io.BytesIO()
+    picture.save(out, format="JPEG", quality=70)
+    return out.getvalue()
 
 
 def opened(photo_path, upright):

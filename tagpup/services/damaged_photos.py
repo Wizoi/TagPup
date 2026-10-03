@@ -317,6 +317,12 @@ def _stamp_within(photo_path):
     return answer["stamp"] if "stamp" in answer else UNANSWERED
 
 
+def stamp_of(photo_path):
+    """(mtime, size) of the file now; None when it is not there; UNANSWERED when it is on a share that did
+    not answer within SHARE_WAIT. What a page's request asks of one file without waiting on a share gone away."""
+    return _stamp_within(photo_path)
+
+
 def for_write(library, photo_paths):
     """([the photos of `photo_paths` recorded damaged or possibly incomplete whose files
     still have the stamp they were found with, as listed() gives each], [the shares that did

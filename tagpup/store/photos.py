@@ -10,6 +10,7 @@ Paths cross this module's boundary native, and the library holds them as its roo
 converted, and a comparison is made by the converted argument. A library with no roots is
 read and written exactly as it always was.
 """
+import collections
 import json
 import logging
 import os
@@ -692,6 +693,54 @@ def remove_under(conn, folder):
     damaged_files.forget_under(conn, folder)
     return dict(photos_removed=photos_removed, faces_removed=faces_removed,
                 manual_lost=manual, excluded_lost=excluded)
+
+
+# ---- What the thumbnail cache reads -----------------------------------------------------
+
+#: A photo as the thumbnail cache asks for it: its id, its path as the row holds it (what the cache's
+#: entry is keyed by, so that a library moved to another place keeps its entries), its native path and its
+#: damaged_files record, if any.
+ThumbRow = collections.namedtuple("ThumbRow", "id row_path path damaged")
+
+
+def thumb_row(conn, photo_id):
+    """The ThumbRow of the photo with this id, or None: one read by primary key, never a BLOB. Raises
+    paths.RootsError for a photo under a root this machine does not place."""
+    row = conn.execute("SELECT path FROM photos WHERE id = ?", (photo_id,)).fetchone()
+    if row is None:
+        return None
+    native = store_roots.from_row(conn, row[0])
+    return ThumbRow(photo_id, row[0], native, damaged_files.one(conn, native))
+
+
+def thumb_rows(conn, folder=None, after=0, limit=1000):
+    """[(id, path as the row holds it, native path)] of the photos with an id above `after`, in id order, at
+    most `limit`: those under `folder` at any depth, or every one. What warming the cache walks, a batch
+    at a time."""
+    query, params = "SELECT id, path FROM photos WHERE id > ?", [after]
+    if folder:
+        where, folder_params = store_roots.sql_under(conn, "path", folder)
+        query += " AND " + where
+        params += list(folder_params)
+    rows = conn.execute(query + " ORDER BY id LIMIT ?", params + [limit]).fetchall()
+    return [(photo_id, row_path, store_roots.from_row(conn, row_path)) for photo_id, row_path in rows]
+
+
+def row_paths(conn):
+    """{photo id: path as the row holds it} of every photo: what sweeping the cache compares its entries
+    with. 68,000 short strings; one scan of the table, once per sweep."""
+    return dict(conn.execute("SELECT id, path FROM photos"))
+
+
+def ids_under(conn, folder):
+    """The ids of the photos under `folder`, at any depth: one range of the path index."""
+    where, params = store_roots.sql_under(conn, "path", folder)
+    return [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)]
+
+
+def ids_at(conn, photo_paths):
+    """The ids of the photos at `photo_paths`, however spelled: one indexed lookup a path."""
+    return _ids_of(conn, photo_paths)
 
 
 # ---- What TagTuner's screens read -----------------------------------------------------

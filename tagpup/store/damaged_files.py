@@ -108,6 +108,15 @@ def every(conn):
         conn, conn.execute("SELECT " + _COLUMNS + " FROM damaged_files ORDER BY path").fetchall(), 0))]
 
 
+def one(conn, photo_path):
+    """The Record of the file at `photo_path`, or None."""
+    if not _there(conn):
+        return None
+    where, params = store_roots.sql_equals(conn, "path", photo_path)
+    row = conn.execute("SELECT " + _COLUMNS + " FROM damaged_files WHERE " + where, params).fetchone()
+    return Record(*store_roots.native_one(conn, row, 0)) if row else None
+
+
 def under(conn, folder):
     """[Record] of the files recorded at any depth under `folder`, by path."""
     if not _there(conn):
