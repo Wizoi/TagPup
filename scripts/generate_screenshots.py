@@ -4,6 +4,7 @@ import socket
 import sys
 import time
 import subprocess
+from urllib.parse import quote
 from playwright.sync_api import sync_playwright
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -18,6 +19,10 @@ from prepare_test_environment import main as prepare_env
 
 #: Ports of its own, so a run never answers the apps somebody has open.
 TAGPUP_PORT, TUNER_PORT = 8092, 8081
+
+#: The photos prepare_test_environment makes, in the repository's data/ -- where the screenshots
+#: look for them, from this checkout's own folder and not from a path typed into the script.
+NEW_PHOTOS = os.path.join(PROJECT_ROOT, "data", "test_photos", "New")
 
 def run_screenshot_flow():
     refresh = os.environ.get("REFRESH_TUTORIAL") == "1" or "--refresh" in sys.argv
@@ -63,7 +68,7 @@ def run_screenshot_flow():
             # --- 1. TagPup GUI Main Workspace Screenshot ---
             # Navigate to the test photo directory New folder in TagPup GUI
             print("Navigating to TagPup GUI...")
-            page.goto(f"http://localhost:{gui_port}/?path=c:/src/kingersoll/GitHub/TagPup/data/test_photos/New")
+            page.goto(f"http://localhost:{gui_port}/?path={quote(NEW_PHOTOS)}")
             page.wait_for_load_state("networkidle")
             time.sleep(2)
             
@@ -126,7 +131,7 @@ def run_screenshot_flow():
             
             # Navigate to TagTuner with show_matched=true enabled and select puppy2.png
             print("Navigating to TagTuner...")
-            page.goto(f"http://localhost:{tuner_port}/?mode=folder-match&photo=c:/src/kingersoll/GitHub/TagPup/data/test_photos/New/puppy2.png&show_matched=true")
+            page.goto(f"http://localhost:{tuner_port}/?mode=folder-match&photo={quote(os.path.join(NEW_PHOTOS, 'puppy2.png'))}&show_matched=true")
             page.wait_for_load_state("networkidle")
             
             # Wait for the unmatched puppy face card to render and click it to open edit details

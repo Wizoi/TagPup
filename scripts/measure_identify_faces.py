@@ -63,6 +63,8 @@ import _root  # noqa: E402,F401
 from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import roots as roots_service  # noqa: E402
 # The code a sandbox runs: scripts/code_snapshot.py, shared with the installer.
 from code_snapshot import copy_code  # noqa: E402
 
@@ -99,7 +101,25 @@ def build_sandbox(source_db, sandbox):
         source.close()
     size = os.path.getsize(target) / 1e9
     print("  copied %.1f GB in %.1fs" % (size, time.time() - started))
+    place_roots(target, sandbox)
     return target
+
+
+def place_roots(db_path, sandbox):
+    """Make the sandbox's copy of the library safe if it holds roots: write the sandbox's OWN
+    machine map (machine_roots.json in its home) placing each root at an empty folder of the sandbox,
+    never at the real photos -- a converted library copy would otherwise point at them through the
+    machine's map, and a sandbox server would read them, or write a tag into them. Fails loudly
+    (roots_service.SandboxError) when the copy has a root the sandbox did not place. {name: place}."""
+    map_path = os.path.join(sandbox, tagpup_config.MACHINE_ROOTS_FILE)
+    machine = roots_service.Machine(
+        lambda: tagpup_config.machine_roots(map_path),
+        lambda name, place: tagpup_config.add_machine_root(name, place, path=map_path),
+        lambda: map_path)
+    placed = roots_service.place_in_sandbox(Library(db_path), sandbox, machine)
+    for name, place in placed.items():
+        print("  root %s placed at %s, by the sandbox's own map" % (name, place))
+    return placed
 
 
 def start_sandbox_server(sandbox, db_path, port):

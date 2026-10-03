@@ -241,6 +241,50 @@ def problem(library):
         conn.close()
 
 
+class SandboxError(Refused):
+    """A measurement sandbox that cannot be made safe: a root of its library copy it did not place,
+    a place outside it, a map that is not its own."""
+
+
+def unplaced(library, machine):
+    """The names of the library's roots that `machine`'s map does not place: what a sandbox that
+    runs the library's copy must find empty before it starts a server."""
+    placed = machine.roots()
+    return [entry["name"] for entry in store_roots.listing(library.path) if not placed.get(entry["name"])]
+
+
+def place_in_sandbox(library, sandbox, machine, folder_for=None):
+    """Make a copy of `library`, run in the folder `sandbox` as its TAGPUP_HOME, safe: write the
+    sandbox's OWN machine map (`machine`, whose file must lie in `sandbox`) placing each root of the
+    copy at `folder_for(name)` -- by default `sandbox/roots/<name>`, made empty -- and never at the
+    real photos. A converted library copy would otherwise point, through the machine's map, at the
+    real files: a sandbox server would read them, and a write it made (a tag, a rename) would reach
+    the owner's photos. Returns {root name: its place}; {} for a library with no roots, which writes
+    no map.
+
+    SandboxError, nothing written to the real map, for a map file outside the sandbox, a place
+    outside it, and -- after placing -- any root of the copy the map does not place."""
+    if not paths.is_under(machine.path(), sandbox):
+        raise SandboxError("the sandbox's machine map is %s, which is not inside the sandbox (%s): placing "
+                           "roots there would change the real map" % (machine.path(), sandbox))
+    placed = {}
+    for entry in store_roots.listing(library.path):
+        name = entry["name"]
+        place = folder_for(name) if folder_for is not None else os.path.join(sandbox, "roots", name)
+        if not paths.is_under(place, sandbox):
+            raise SandboxError("root %s would be placed at %s, outside the sandbox (%s): the copy would reach "
+                               "real photos" % (name, place, sandbox))
+        placed[name] = paths.stored(place)
+    for name, place in placed.items():
+        os.makedirs(place, exist_ok=True)
+        machine.add(name, place)
+    missing = unplaced(library, machine)
+    if missing:
+        raise SandboxError("the sandbox's map (%s) does not place %s: its copy of the library would refuse every "
+                           "photo, or reach the real ones" % (machine.path(), ", ".join(missing)))
+    return placed
+
+
 def pending(library):
     """The migrations the library has not had (it needs migration 18 to adopt a root)."""
     return [m.name for m in schema.pending(library.path)]
