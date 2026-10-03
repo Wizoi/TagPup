@@ -439,6 +439,8 @@ def folder_rename_photos():
         return responses.error(400, "Invalid folder path")
     if not photo_paths:
         return responses.error(400, "No photos selected for renaming")
+    if (refusal := _too_many(len(photo_paths))) is not None:
+        return refusal
     cache = folders.of(library)
     try:
         # In the order they were taken, by the Date Taken in the folder's cached scan; a
@@ -646,12 +648,13 @@ def library_photo():
     if (refusal := _this_pc_only()) is not None:
         return refusal
     library = state.require()
-    try:
-        photo_id = int(request.args.get("id") or "")
-    except ValueError:
+    wanted = request.args.get("id") or ""
+    if not (wanted.isascii() and wanted.isdigit()):
+        # Digits only, as `ids` of the cards route: int() would read 1_0 as 10 and +5 as 5.
         return responses.error(400, "id must be a whole number.")
+    photo_id = int(wanted)
     try:
-        return jsonify({"photo": library_view.photo(library, photo_id)})
+        return jsonify({"photo": library_view.photo(library, photo_id, lambda: state.exiftool(library))})
     except (Refused, NotFound, paths.RootsError) as why:
         return _view_error(why)
     except Exception as e:
@@ -753,7 +756,7 @@ def photo_rotate():
         return responses.error(500, str(e))
     # The new mtime, which versions the page's image URLs: thumbnails are cached for a
     # day, so without a new URL the grid kept the old turn.
-    return jsonify({"success": True, "mtime": result.details["mtime"], **_where(result)})
+    return jsonify({"success": True, "mtime": result.details["mtime"], "size": result.details["size"], **_where(result)})
 
 
 @routes.post("/api/photo/delete")
@@ -789,6 +792,38 @@ def photo_delete():
     return jsonify(reply)
 
 
+#: The most photos one bulk write names (bulk tags, Smart Rename): a request over it is refused before anything is
+#: written. A write of that many runs under the global file-changes lock with no progress, no cancel and no undo
+#: of its own; a job for more arrives with the editing stage (docs/ARCHITECTURE.md, phase 9d; findings #535).
+BULK_LIMIT = 5000
+
+
+def _too_many(count):
+    """The 400 for a bulk write naming more than BULK_LIMIT photos, else None."""
+    if count > BULK_LIMIT:
+        return responses.error(400, "Narrow the selection: bulk edits over %d photos arrive with the editing stage. "
+                                    "%d were named." % (BULK_LIMIT, count))
+    return None
+
+
+def _stamp_of(sent):
+    """((mtime, size) a write names, or None; why it cannot be read): the `stamp` of a request, {"mtime", "size"}, is
+    the file's stamp as the record the page built the write from had it (docs: findings #533); absent is no check."""
+    if sent is None:
+        return None, None
+    ok = (isinstance(sent, dict) and all(isinstance(sent.get(key), (int, float)) and not isinstance(sent.get(key), bool)
+                                         for key in ("mtime", "size")))
+    if not ok:
+        return None, "stamp must be {\"mtime\": number, \"size\": number}."
+    return (float(sent["mtime"]), int(sent["size"])), None
+
+
+def _stamp_reply(path):
+    """{"mtime", "size"} of the file at `path` now, for the page's record: the stamp its next write names."""
+    stamp = photo_actions.file_stamp(path)
+    return {"mtime": stamp[0], "size": stamp[1]} if stamp else {}
+
+
 @routes.post("/api/photo/save-metadata")
 def photo_save_metadata():
     library = state.require()
@@ -800,9 +835,12 @@ def photo_save_metadata():
     if not photo_path or not os.path.exists(photo_path):
         return responses.error(400, "Invalid file path")
     photo_path = paths.stored(photo_path)
+    stamp, why = _stamp_of(body.get("stamp"))
+    if why:
+        return responses.error(400, why)
     try:
         result = tagging_actions.save_photo(library, photo_path, title, tags, date_taken,
-                                            state.exiftool(library), state.rename_format(library))
+                                            state.exiftool(library), state.rename_format(library), stamp)
         if result.refused:
             return responses.refused(result)
         new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
@@ -821,10 +859,13 @@ def photo_save_metadata():
             record["tags"] = vocabulary.extract_tags(raw_meta)
             record["captions"] = [title] if title else []
             record["title"] = title
+            written_stamp = photo_actions.file_stamp(new_path)
+            if written_stamp:
+                record["mtime"], record["size"] = written_stamp
     except Exception as e:
         logger.error("Error saving metadata for %s: %s", photo_path, e)
         return responses.error(500, str(e))
-    reply = {"success": True, "new_path": new_path, **_where(result)}
+    reply = {"success": True, "new_path": new_path, **_where(result), **_stamp_reply(new_path)}
     if result.details["index_warning"]:
         reply["index_warning"] = result.details["index_warning"]
     return jsonify(reply)
@@ -839,6 +880,8 @@ def photos_bulk_tags():
     remove_tags = body.get("remove_tags", [])
     if not photo_paths:
         return responses.error(400, "Missing paths list")
+    if (refusal := _too_many(len(photo_paths))) is not None:
+        return refusal
     try:
         # What is added is checked, not what is removed (tagpup.services.tagging). The
         # page's records are told in the order the files were written.
@@ -863,7 +906,7 @@ def photos_bulk_tags():
         logger.error("Error in bulk tags write: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
     return jsonify({"success": True, "written": _written_tags(result), **_skipped_damaged(result),
-                    **_where(result)})
+                    "stamps": {path: _stamp_reply(path) for path in result.details["written"]}, **_where(result)})
 
 
 def _where(result):

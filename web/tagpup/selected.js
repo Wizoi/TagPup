@@ -10,6 +10,11 @@
 import { pathKey } from './common/paths.js';
 import { state } from './state.js';
 
+/** A bulk write over more photos than this names itself and asks first (selection.js). */
+export const BULK_CONFIRM_ABOVE = 200;
+/** The most photos one bulk write may name: the server refuses more (tagpup.web.tagpup_routes.BULK_LIMIT). */
+export const BULK_LIMIT = 5000;
+
 /** Is this photo selected? O(1), whatever its spelling of the path. */
 export function isSelected(path) {
     return state.selectedKeys.has(pathKey(path));

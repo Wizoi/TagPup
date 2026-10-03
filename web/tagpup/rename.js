@@ -14,7 +14,7 @@ import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { renderFileList } from './folder.js';
 import { renderThumbnails } from './grid.js';
 import { updateSelectedThumbnailsCount } from './selection.js';
-import { clearSelection } from './selected.js';
+import { BULK_LIMIT, clearSelection } from './selected.js';
 import { whereWritten } from './write-queue.js';
 
 /**
@@ -57,6 +57,10 @@ export function wireRenameAndTimeShift() {
             return;
         }
 
+        if (state.selectedThumbnails.length > BULK_LIMIT) {
+            alert(`Narrow the selection: bulk edits over ${BULK_LIMIT} photos arrive with the editing stage.`);
+            return;
+        }
         if (!confirm(`Are you sure you want to smart-rename the ${state.selectedThumbnails.length} selected photos?`)) {
             return;
         }
