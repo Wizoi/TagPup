@@ -84,7 +84,7 @@ class TheRoutes(Drifted, unittest.TestCase):
 
                 state = client.get("/library/api/sync")
                 self.assertEqual(200, state.status_code, state.data)
-                self.assertEqual({"library": "library", "last_run": None, "last_in_step": None}, state.get_json())
+                self.assertEqual({"library": "library", "last_run": None, "last_in_step": None, "syncing": False}, state.get_json())
 
                 dry = client.post("/library/api/sync", json={})
                 self.assertEqual(200, dry.status_code, dry.data)

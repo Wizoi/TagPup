@@ -132,6 +132,7 @@ export function newLibrary(spec) {
         inflight: new Map(),          // batch number -> { ids, lo, hi, controller }
         batches: 0, timer: 0, retryTimer: 0, more: false, baseline: null, rearms: 0,
         selecting: null, activeId: null, wantedId: null, lastId: null, openToken: 0,
+        missing: new Set(),           // pathKey of each photo whose card said its file is gone (stale: 'missing')
     };
 }
 
@@ -315,9 +316,27 @@ function sendBatch(lib, indexes) {
         });
 }
 
+/**
+ * Remember whether a card's file is gone: a bulk write leaves such a photo out (the server would skip it as well), and
+ * the cards held are only the last 2,000 used, so what they said is kept here by path.
+ */
+export function noteMissing(card) {
+    const lib = state.library;
+    if (!lib || !card || !card.path) return;
+    if (card.stale === 'missing') lib.missing.add(pathKey(card.path));
+    else lib.missing.delete(pathKey(card.path));
+}
+
+/** Is this photo one whose card said its file is gone? */
+export function isMissingPath(path) {
+    const lib = state.library;
+    return Boolean(lib) && lib.missing.size > 0 && lib.missing.has(pathKey(path));
+}
+
 /** Keep a card as the page reads it: `filename` is what a folder's record calls its name. */
 function held(card) {
     card.filename = card.name;
+    noteMissing(card);
     return card;
 }
 
@@ -525,7 +544,10 @@ function pathsOfIds(lib, idList, job) {
                 return body;
             }))
             .then(body => {
-                for (const card of body.cards || []) found.set(card.id, card.path);
+                for (const card of body.cards || []) {
+                    found.set(card.id, card.path);
+                    noteMissing(card);
+                }
                 job.done += chunk.length;
                 if (lib === state.library) upper.libraryChanged();
                 return worker();

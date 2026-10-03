@@ -276,10 +276,13 @@ def folder_membership():
     folder = _wanted_path()
     if not folder:
         return responses.error(400, "Missing 'path' parameter")
-    if not os.path.isdir(folder):
+    # A folder on a network share is looked at by membership_checked, on a thread that is waited for: isdir of a share
+    # that has stopped answering would hold this one.
+    if not library_actions.on_a_network_drive(folder) and not os.path.isdir(folder):
         return responses.error(400, "Path is not a valid directory: %s" % folder)
     settings = runtimes.peek_settings(library)
-    return jsonify(library_actions.membership(library, folder, settings.roots, settings.ignored))
+    # Bounded, and one walk of a folder at a time (findings #568): a page asks it of a library view's folder too.
+    return jsonify(library_actions.membership_checked(library, folder, settings.roots, settings.ignored))
 
 
 @routes.get("/api/folder/index-status")
@@ -666,12 +669,14 @@ def library_ids():
 @routes.get("/api/library/cards")
 def library_cards():
     """The cards of the photos named by `ids` (at most 200), in that order; an id the library has no photo of is
-    left out (tagpup.services.library_view.cards)."""
+    left out (tagpup.services.library_view.cards). Each card's file is looked at, once (`stale`: changed on disk, or
+    missing), which the page marks on the card."""
     if (refusal := _this_pc_only()) is not None:
         return refusal
     library = state.require()
     try:
-        return jsonify({"cards": library_view.cards(library, library_view.read_ids(request.args.get("ids")))})
+        return jsonify({"cards": library_view.cards(library, library_view.read_ids(request.args.get("ids")),
+                                                     check_disk=True)})
     except (Refused, NotFound, paths.RootsError) as why:
         return _view_error(why)
     except Exception as e:
@@ -697,6 +702,22 @@ def library_photo():
         return _view_error(why)
     except Exception as e:
         logger.error("Error reading photo %s of the library: %s", photo_id, e, exc_info=True)
+        return responses.error(500, str(e))
+
+
+@routes.get("/api/library/find")
+def library_find():
+    """The id of the photo at `path`, to land on it in a library view when the move is made from the folder it is in
+    (tagpup.services.library_view.find); `id` null when the library holds no photo there."""
+    if (refusal := _this_pc_only()) is not None:
+        return refusal
+    library = state.require()
+    try:
+        return jsonify({"id": library_view.find(library, request.args.get("path"))})
+    except (Refused, NotFound, paths.RootsError) as why:
+        return _view_error(why)
+    except Exception as e:
+        logger.error("Error finding a photo of the library: %s", e, exc_info=True)
         return responses.error(500, str(e))
 
 
@@ -961,7 +982,7 @@ def photos_bulk_tags():
         # so that its records say what the files hold.
         logger.error("Error in bulk tags write: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
-    return jsonify({"success": True, "written": _written_tags(result), **_skipped_damaged(result),
+    return jsonify({"success": True, "written": _written_tags(result), **_skipped_photos(result),
                     "stamps": {path: _stamp_reply(path) for path in result.details["written"]}, **_where(result)})
 
 
@@ -982,6 +1003,19 @@ def _skipped_damaged(result):
     # skips in each.
     damaged = [{"path": what, "why": why} for what, why in result.skipped if why.startswith("damaged, ")]
     return {"skipped_damaged": count, "skipped": damaged if count else []}
+
+
+def _skipped_photos(result):
+    """_skipped_damaged, and the photos a bulk tag write left out because their files are gone
+    (tagpup.services.tagging.leave_out_missing): {"skipped_damaged": n, "skipped_missing": m,
+    "skipped": [{"path", "why"}]}."""
+    out = _skipped_damaged(result)
+    gone = result.details.get(tagging_actions.SKIPPED_MISSING, 0)
+    out["skipped_missing"] = gone
+    if gone:
+        out["skipped"] = out["skipped"] + [{"path": what, "why": why} for what, why in result.skipped
+                                           if why.startswith("missing, ")]
+    return out
 
 
 def _written_tags(result):

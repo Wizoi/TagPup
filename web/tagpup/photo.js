@@ -29,6 +29,7 @@ import {
 import { renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
 import { damageOf, showPhotoDamage } from './damaged.js';
 import { removeFromSelection } from './selected.js';
+import { applyPhotoStale } from './stale.js';
 import { cardDamage, fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
 
 // ---- Detected faces ----------------------------------------------------
@@ -273,11 +274,13 @@ export function showPhoto(path) {
     // Fetch photo data from local array
     const photo = state.folderPhotos.find(p => p.path === path);
     showPhotoDamage(photo ? photo.path : null);
+    // A photo whose file is gone is shown as the library holds it and cannot be edited (stale.js); any other is editable.
+    applyPhotoStale(photo);
     if (!photo) return;
 
-    // Render values. A photo that cannot be read has no picture to ask for (damaged.js).
+    // Render values. A photo that cannot be read has no picture to ask for (damaged.js), nor has one whose file is gone.
     const damage = damageOf(photo.path);
-    mainImage.src = damage && !damage.indexed ? '' : photoFileUrl(photo, 800);
+    mainImage.src = (damage && !damage.indexed) || photo.missing ? '' : photoFileUrl(photo, 800);
     detailPath.textContent = photo.path;
     let dateVal = "Unknown";
     const shownDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));

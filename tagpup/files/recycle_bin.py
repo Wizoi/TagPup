@@ -12,6 +12,7 @@ says it beforehand, for the page to tell the owner before it deletes, and the re
 """
 import ctypes
 import os
+import time
 
 from tagpup.core import paths
 from tagpup.files import images
@@ -112,6 +113,33 @@ def _reason_for(path):
     except (OSError, AttributeError, ValueError):
         return NO_BIN
     return None
+
+
+#: {drive letter: (when asked, whether it is a mapped network drive)}: a drive's type does not change from one card to the
+#: next, and asking Windows costs about 0.6 ms (GetVolumePathName), which 200 cards in a batch would pay 200 times.
+_drive_kinds = {}
+DRIVE_KIND_FRESH = 30.0
+
+
+def on_a_network_drive(path):
+    """Is `path` on a mapped network drive (GetDriveType says remote)? A UNC path is the caller's to tell by its spelling.
+    A drive's type, no read of the path, remembered per drive letter for DRIVE_KIND_FRESH seconds; False when Windows
+    cannot say."""
+    try:
+        spelled = _without_prefix(paths.stored(path))
+        drive = os.path.splitdrive(spelled)[0]
+        if spelled.startswith("\\\\") or not drive:
+            return False
+        key = drive.upper()
+        now = time.monotonic()
+        held = _drive_kinds.get(key)
+        if held is not None and now - held[0] < DRIVE_KIND_FRESH:
+            return held[1]
+        remote = _drive_type(_mount_point(spelled)) == DRIVE_REMOTE
+        _drive_kinds[key] = (now, remote)
+        return remote
+    except (OSError, AttributeError, ValueError):
+        return False
 
 
 def no_bin_reason(file_path):

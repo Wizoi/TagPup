@@ -20,6 +20,39 @@ export const state = {
     library: null,
     libraryTokens: 0,
     libraryReturn: '',
+    // The navigator beside the grid (navigator.js, navigator-model.js; docs/ARCHITECTURE.md, phase 9c). `shown` is the
+    // sidebar's pane ('library' | 'folder'), `choice` the pane each kind of view shows, as the person last chose it
+    // (until the page is left); `tab` the section shown; `followed` the source of the view that is open ({ kind,
+    // value, recursive }) or null. A section holds what GET /api/library/navigator answered (`index`, built by
+    // navigator-model.js), what is open in it (`expanded`, row ids), its filter text, the row the arrow keys are on
+    // (`currentId`), the rows last drawn (`rows`, for the keys), and `asked`, the number of the request whose answer
+    // counts: an older answer is dropped. `stale`: counts changed since it was read. `reveal`: the followed source
+    // is to be shown in it once it is here.
+    nav: {
+        shown: 'folder',
+        choice: { library: 'library', folder: 'folder' },
+        tab: 'folders',
+        followed: null,
+        timer: null,
+        sections: {
+            folders: { status: 'idle', message: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, rows: [], asked: 0, stale: false, reveal: false },
+            keywords: { status: 'idle', message: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, rows: [], asked: 0, stale: false, reveal: false },
+            people: { status: 'idle', message: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, rows: [], asked: 0, stale: false, reveal: false },
+            dates: { status: 'idle', message: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, rows: [], asked: 0, stale: false, reveal: false },
+        },
+    },
+    // Moving between a folder on disk and its view of the library (library-moves.js): the photo to land on in the
+    // view being opened ({ path, folder, toKind } -- the top of the grid when the move was made), `addFor` the folder
+    // the add-folder question is asked of when it was asked from a library view, the folders whose
+    // "not in the library" banner was dismissed (until the page is left), the banner shown, and the number of the
+    // membership question whose answer counts; `cache` what the disk held of each folder (by pathKey), for the page's life
+    // (library-banner.js).
+    moves: { anchor: null, dismissed: new Set(), banner: null, asked: 0, controller: null, addFor: null, cache: new Map(), leaving: false },
+    // When the library was last in step with its folders, for the view's strip (sync-state.js).
+    syncInfo: { status: 'idle', lastInStep: null, syncing: false, known: false, asked: 0, controller: null },
+    // The grid's keys (grid-keys.js): the index of the card the arrow keys are on (or -1), where a Shift run began
+    // (-1: none), and whether the focus waits on the grid for a card that has not arrived.
+    gridKeys: { index: -1, anchor: -1, waiting: false },
     // What to say once the folder just asked for again has been put on screen (folder.js
     // showScannedFolder): a refusal because the photo's file changed reads the folder, then tells the owner.
     afterScan: null,

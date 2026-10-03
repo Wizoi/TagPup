@@ -10,11 +10,12 @@ tagpup.services.settings.
 """
 import logging
 import os
+import threading
 
 from tagpup.core import paths, validation
 from tagpup.core.library import Library, picker_name
 from tagpup.core.result import DAMAGED_PHOTOS, NOT_IN_LIBRARY, Result
-from tagpup.files import images, recycle_bin
+from tagpup.files import images, recycle_bin, shares
 from tagpup.services import damaged_photos, settings
 from tagpup.services import roots as roots_service
 from tagpup.store import added_folders, db, photos, schema, taxonomy
@@ -162,6 +163,76 @@ def membership(library, folder, roots=(), ignored=()):
         "permanent_delete": reason is not None,
         "permanent_reason": reason,
     }
+
+
+#: How long a membership walk may take before the answer is "could not check", in seconds, and how long a folder on a
+#: network share gets to say it is there at all (shares.bounded).
+MEMBERSHIP_DEADLINE = 12.0
+MEMBERSHIP_SHARE_WAIT = 1.0
+
+_walks = {}                  # {(library key, folder key): the _Walk under way}
+_walks_guard = threading.Lock()
+
+
+class _Walk:
+    """One membership walk of one folder, under way or done: whoever asks for the same folder meanwhile is answered by it."""
+
+    def __init__(self):
+        self.done = threading.Event()
+        self.answer = None
+        self.error = None
+
+
+def on_a_network_drive(folder):
+    """Is `folder` on a network share (a UNC path or a mapped drive)? What a page's request must not look at itself: it may
+    stop answering (tagpup.files.shares)."""
+    return shares.on_a_network_drive(folder)
+
+
+def could_not_check(folder, why):
+    """The answer of membership_checked when the folder could not be walked in time: no counts, and why."""
+    return {"folder": paths.stored(folder), "could_not_check": True, "why": why}
+
+
+def membership_checked(library, folder, roots=(), ignored=(), deadline=None):
+    """membership, for a page's request (phase 9c, findings #568): the walk is made on a thread of its own and waited for
+    `deadline` seconds, and a second request for the same folder while one walk is under way is answered by it -- never a
+    second walk of one folder, however often the view is opened. A folder on a network share (a UNC path or a mapped
+    drive) must first say it is there within a second (tagpup.files.shares.bounded), else the answer is
+    could_not_check("the network share is away") and no thread is left walking it. A walk that outlives the deadline
+    answers could_not_check("it took too long") and goes on, for the next request to be answered by when it is done. A
+    walk that raised raises here."""
+    folder = paths.stored(folder)
+    waited = MEMBERSHIP_DEADLINE if deadline is None else deadline
+    if shares.on_a_network_drive(folder):
+        state, there = shares.bounded(folder, lambda: os.path.isdir(folder), MEMBERSHIP_SHARE_WAIT)
+        if state == "away":
+            return could_not_check(folder, "the network share is away")
+        if state == "error" or not there:
+            return could_not_check(folder, "the folder could not be reached")
+    key = (library.key, paths.key(folder))
+    with _walks_guard:
+        walk = _walks.get(key)
+        mine = walk is None
+        if mine:
+            walk = _walks[key] = _Walk()
+    if mine:
+        def run():
+            try:
+                walk.answer = membership(library, folder, roots, ignored)
+            except BaseException as problem:   # handed to whoever waits, not lost on this thread
+                walk.error = problem
+            finally:
+                with _walks_guard:
+                    if _walks.get(key) is walk:
+                        del _walks[key]
+                walk.done.set()
+        threading.Thread(target=run, name="MembershipWalk", daemon=True).start()
+    if not walk.done.wait(waited):
+        return could_not_check(folder, "it took too long")
+    if walk.error is not None:
+        raise walk.error
+    return walk.answer
 
 
 def suggest_how(library, folder, ignored=None):

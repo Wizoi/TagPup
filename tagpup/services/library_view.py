@@ -13,7 +13,10 @@ ids with the TOTAL and the cards of the page; `cards` turns any list of ids into
   that change itself explains, and a page deep in a 20,000-photo source costs what the first does.
 * **A card** is small: id, file name, native path, taken, whether the photo is recorded damaged, and the
   thumbnail's URL by id (tagpup.services.thumbnails). One batch read of the columns it needs: no
-  raw_metadata, no BLOB, no query for each photo, no look at the disk.
+  raw_metadata, no BLOB, no query for each photo. `view` looks at no disk. `cards` may (`check_disk`, which the
+  page's route asks): one stat per card, bounded for a network share, adds `stale` -- "changed" when the file's
+  size and time no longer describe the row, "missing" when the file is gone -- and nothing to a card whose file
+  is as the row says, is on a share that did not answer, cannot be read, or whose row was never stamped.
 * **The navigator**: `navigator(library, section)` for `folders`, `keywords`, `people` or `dates`, each one query
   (or one read of a derived table) and a pass in memory; native paths, tag paths and names out, never ids.
 * **What fails, and how it says so**: a library that has not had migrations 19 and 20 (the derived tables and
@@ -26,6 +29,7 @@ import binascii
 import json
 import os
 import re
+import time
 
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import NotFound, Refused
@@ -39,6 +43,15 @@ from tagpup.store import roots as store_roots
 
 KINDS = store.KINDS
 SECTIONS = ("folders", "keywords", "people", "dates")
+
+#: How long a batch of cards may spend looking at its files, in seconds: a share that answers every stat slowly (0.3 to 0.9 s)
+#: never trips "away", and 200 of them in a row would hold the request for minutes. When the budget is spent the rest of the
+#: batch is left unmarked, quietly (findings #570).
+STAT_BUDGET_SECONDS = 1.5
+
+#: What a card says of its file when the disk was looked at (`stale`).
+CHANGED = "changed"
+MISSING = "missing"
 
 #: Photos in a page when none is asked for, and the most a page holds.
 DEFAULT_LIMIT = 200
@@ -243,10 +256,41 @@ def photo(library, photo_id, exiftool_path=None):
     return record
 
 
-def _cards(conn, photo_ids):
+def disk_mark(path, mtime, size):
+    """What the disk says of the file a row describes: MISSING when it is not there, CHANGED when its size and time are
+    other than the row's (the folder scan's own test, store.photos.describes), else None. None too when the file
+    cannot be read, when its share did not answer in time (a share found away is answered at once, so a page of cards
+    on it waits once: damaged_photos.stamp_of), and when the row was never stamped -- Suggest's row for a photo nobody
+    read holds no size or time to compare, and 'changed' would claim a difference nothing knows of."""
+    stamp = damaged_photos.stamp_of(path)
+    if stamp is None:
+        return MISSING
+    if stamp is damaged_photos.CANNOT_READ or stamp is damaged_photos.UNANSWERED:
+        return None
+    if mtime is None or size is None:
+        return None
+    return None if store_photos.describes(mtime, size, stamp) else CHANGED
+
+
+def find(library, photo_path):
+    """The id of the photo at `photo_path`, as the move from a folder on disk to its library view looks for the photo it
+    was looking at (phase 9c): None when the library holds no photo there (asked speculatively, so not an error: a 404 is
+    a line in the browser's console each time). Refused for a path that is not text."""
+    if not isinstance(photo_path, str) or not photo_path.strip():
+        raise Refused("find needs the path of a photo.")
+    conn = _open(library)
+    try:
+        found = store.photo_id_of(conn, paths.stored(photo_path.strip()))
+    finally:
+        conn.close()
+    return found
+
+
+def _cards(conn, photo_ids, check_disk=False):
     held = store.card_rows(conn, photo_ids)
     recorded = store.damaged(conn)
     found = []
+    started = time.monotonic()
     for photo_id in photo_ids:
         row = held.get(photo_id)
         if row is None:
@@ -254,18 +298,24 @@ def _cards(conn, photo_ids):
         path, mtime, size, taken = row
         record = recorded.get(paths.key(path))
         flagged = record is not None and damaged_photos.describes((record.mtime, record.size), (mtime, size))
-        found.append({"id": photo_id, "name": os.path.basename(path), "path": path, "taken": taken,
-                      "damaged": bool(flagged), "damage": record.kind if flagged else None,
-                      "thumb": thumbnails.url(photo_id, mtime)})
+        card = {"id": photo_id, "name": os.path.basename(path), "path": path, "taken": taken,
+                "damaged": bool(flagged), "damage": record.kind if flagged else None,
+                "thumb": thumbnails.url(photo_id, mtime)}
+        if check_disk and time.monotonic() - started < STAT_BUDGET_SECONDS:
+            mark = disk_mark(path, mtime, size)
+            if mark:
+                card["stale"] = mark
+        found.append(card)
     return found
 
 
-def cards(library, photo_ids):
+def cards(library, photo_ids, check_disk=False):
     """The cards of the photos `photo_ids`, in that order: those that have no photo (deleted since) are left out.
-    One read in batches, whatever the number."""
+    One read in batches, whatever the number; with `check_disk`, one stat of each file besides (at most MAX_CARDS
+    when the ids come from read_ids), adding `stale` where the disk differs from the row."""
     conn = _open(library)
     try:
-        return _cards(conn, list(photo_ids))
+        return _cards(conn, list(photo_ids), check_disk)
     finally:
         conn.close()
 

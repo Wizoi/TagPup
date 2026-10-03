@@ -7,7 +7,7 @@ import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
     btnApplyRename, bulkAddPeopleInput, bulkAddTagsInput, folderSelectionSidebar,
-    selectedThumbnailsCount, selectionDateLabel, selectionDateValue, selectionEmptyHint,
+    selectedThumbnailsCount, selectionDateLabel, selectionDateValue, selectionEmptyHint, selectionMissingNote,
     selectionPeopleList, selectionSuggestedPeopleList, selectionSuggestedTagsList,
     selectionSummaryCount, selectionSummaryScroll, selectionTagsList, statusDot, statusText
 } from './elements.js';
@@ -24,8 +24,42 @@ import { renderFileList } from './folder.js';
 import { renderThumbnails } from './grid.js';
 import { queuePhotoWrite, takeWritten } from './edits.js';
 import { BULK_CONFIRM_ABOVE, BULK_LIMIT, isSelected } from './selected.js';
+import { isMissingPath } from './library-source.js';
+import { setStatus } from './status.js';
+
+/**
+ * The photos of a bulk write, and how many were left out because their cards said their files are gone (a library
+ * view shows a missing photo and a selection can hold one; findings #566). The server skips a missing photo as well,
+ * but the page says so first and the confirmation names the count that will be written.
+ */
+export function leaveOutMissing(paths) {
+    const targets = [];
+    let left = 0;
+    for (const path of paths) {
+        if (isMissingPath(path)) left += 1;
+        else targets.push(path);
+    }
+    return { targets, left };
+}
+
+function leftOutSentence(count) {
+    return `${count.toLocaleString()} ${count === 1 ? 'photo is' : 'photos are'} missing on disk and ${count === 1 ? 'was' : 'were'} left out`;
+}
+
+/** A write that has nothing to write because every selected photo is missing: said, and nothing is sent. */
+function nothingWritten(left) {
+    setStatus('ready', `Nothing was written: ${left === 1 ? 'the selected photo is' : `all ${left.toLocaleString()} selected photos are`} missing on disk.`, { transient: false });
+}
+
+function updateMissingNote() {
+    if (!selectionMissingNote) return;
+    const left = state.library ? leaveOutMissing(state.selectedThumbnails).left : 0;
+    selectionMissingNote.textContent = left ? `${leftOutSentence(left)} of bulk edits.` : '';
+    selectionMissingNote.classList.toggle('hidden', !left);
+}
 
 export function updateSelectedThumbnailsCount() {
+    updateMissingNote();
     selectedThumbnailsCount.textContent = `Selected: ${state.selectedThumbnails.length}`;
     selectionSummaryCount.textContent = `Selected: ${state.selectedThumbnails.length}`;
     
@@ -335,7 +369,7 @@ export function applyTagToAllSelected(tag, isPerson) {
  * one in an alert -- and the next goes on either way. `targets` are the photos as
  * they were when it was clicked. Resolves true when written.
  */
-function queueBulkTags({ label, busy, failed, targets, add = [], remove = [], written, datalist = updateTagsDatalist }) {
+function queueBulkTags({ label, busy, failed, targets, add = [], remove = [], written, datalist = updateTagsDatalist, leftOut = 0 }) {
     return queuePhotoWrite((entry) => {
         statusDot.className = 'status-indicator-dot busy';
         statusText.textContent = busy;
@@ -382,6 +416,9 @@ function queueBulkTags({ label, busy, failed, targets, add = [], remove = [], wr
             saveToLocalStorageCache();
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = data.file_only ? `Saved.${whereWritten(data)}` : 'Ready';
+            // Photos whose files are gone were left out: by the page before it sent, and by the server for any it did not know.
+            const gone = leftOut + (data.skipped_missing || 0);
+            if (gone) statusText.textContent = `${leftOutSentence(gone)}.${data.file_only ? whereWritten(data) : ''}`;
             return true;
         })
         .catch(err => {
@@ -416,10 +453,14 @@ export function confirmBulkWrite(what, count) {
  * be selected at the time.
  */
 export function applyTagToPhotos(tag, isPerson, paths) {
-    const targets = (paths || []).filter(Boolean);
-    if (targets.length === 0) return;
+    const { targets, left } = leaveOutMissing((paths || []).filter(Boolean));
+    if (targets.length === 0) {
+        if (left) nothingWritten(left);
+        return;
+    }
     if (!confirmBulkWrite(`Add ${tag} to`, targets.length)) return;
     return queueBulkTags({
+        leftOut: left,
         label: `Add ${tag} to ${targets.length} photo(s)`,
         busy: 'Applying tag...',
         failed: 'Error applying tag selection',
@@ -450,12 +491,18 @@ export function removeTagFromAllSelected(tagOrTags, isPerson) {
     const tags = Array.isArray(tagOrTags) ? tagOrTags : [tagOrTags];
     if (tags.length === 0) return;
     const leaves = tags.map(t => leafOf(t).toLowerCase());
-    if (!confirmBulkWrite(`Remove ${tags.join(', ')} from`, state.selectedThumbnails.length)) return;
+    const { targets, left } = leaveOutMissing(state.selectedThumbnails.slice());
+    if (targets.length === 0) {
+        nothingWritten(left);
+        return;
+    }
+    if (!confirmBulkWrite(`Remove ${tags.join(', ')} from`, targets.length)) return;
     return queueBulkTags({
-        label: `Remove ${tags.join(', ')} from ${state.selectedThumbnails.length} photo(s)`,
+        leftOut: left,
+        label: `Remove ${tags.join(', ')} from ${targets.length} photo(s)`,
         busy: 'Removing tag...',
         failed: 'Error removing tag selection',
-        targets: state.selectedThumbnails.slice(),
+        targets,
         remove: tags,
         written: photo => {
             photo.tags = photo.tags.filter(t => !tags.includes(t));
@@ -480,7 +527,11 @@ export async function bulkAddPeopleToSelection() {
         alert(refused);
         return;
     }
-    const targets = state.selectedThumbnails.slice();
+    const { targets, left } = leaveOutMissing(state.selectedThumbnails.slice());
+    if (targets.length === 0) {
+        nothingWritten(left);
+        return;
+    }
     // Before a name is resolved: resolving may make a tree node, and a refused or cancelled write makes none.
     if (!confirmBulkWrite(`Add ${peopleList.join(', ')} to`, targets.length)) return;
 
@@ -494,6 +545,7 @@ export async function bulkAddPeopleToSelection() {
     if (resolvedPeople.length === 0) return;
 
     const done = await queueBulkTags({
+        leftOut: left,
         label: `Add ${resolvedPeople.join(', ')} to ${targets.length} photo(s)`,
         busy: 'Adding people...',
         failed: 'Error bulk adding people',
@@ -527,7 +579,11 @@ export async function bulkAddTagsToSelection() {
         alert(refused);
         return;
     }
-    const targets = state.selectedThumbnails.slice();
+    const { targets, left } = leaveOutMissing(state.selectedThumbnails.slice());
+    if (targets.length === 0) {
+        nothingWritten(left);
+        return;
+    }
     if (!confirmBulkWrite(`Add ${tagsList.join(', ')} to`, targets.length)) return;
 
     const resolvedTags = [];
@@ -540,6 +596,7 @@ export async function bulkAddTagsToSelection() {
     if (resolvedTags.length === 0) return;
 
     const done = await queueBulkTags({
+        leftOut: left,
         label: `Add ${resolvedTags.join(', ')} to ${targets.length} photo(s)`,
         busy: 'Adding tags...',
         failed: 'Error bulk adding tags',

@@ -2101,3 +2101,282 @@ select {
     background: rgba(239, 68, 68, 0.08);
     font-size: 13px;
 }
+
+
+/* ---- Phase 9c: the navigator beside the grid, the move between a folder and its view, staleness, the grid's keys ---- */
+
+/* The sidebar is two panes and a switch between them (web/tagpup/navigator.js). */
+.sidebar-switch {
+    display: flex;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.sidebar-switch-tab {
+    flex: 1;
+    padding: 6px 10px;
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    cursor: pointer;
+}
+
+.sidebar-switch-tab:first-child {
+    border-radius: 8px 0 0 8px;
+}
+
+.sidebar-switch-tab:last-child {
+    border-radius: 0 8px 8px 0;
+    border-left: none;
+}
+
+.sidebar-switch-tab.active {
+    color: var(--text-primary);
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.sidebar-switch-tab:focus-visible,
+.nav-tab:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.sidebar-pane {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* The navigator: four tabs, and for each a filter, a line that says what is going on, the rows, a note. */
+.nav-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 8px 12px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.nav-tab {
+    flex: 1;
+    padding: 6px 4px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+}
+
+.nav-tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--accent);
+}
+
+.nav-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+.nav-filter {
+    margin: 10px 12px 6px;
+    padding: 7px 10px;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    font-size: 13px;
+    outline: none;
+}
+
+.nav-filter:focus {
+    border-color: var(--accent);
+}
+
+.nav-status,
+.nav-note {
+    padding: 4px 16px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.nav-status.nav-problem {
+    color: #f59e0b;
+}
+
+.nav-tree {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 16px;
+}
+
+.nav-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px 5px calc(10px + (var(--nav-level, 1) - 1) * 16px);
+    border-left: 3px solid transparent;
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.nav-row:hover {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+.nav-row.current {
+    background-color: rgba(99, 102, 241, 0.12);
+    border-left-color: var(--accent);
+}
+
+.nav-row:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+.nav-row.grouping .nav-label {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.nav-twisty {
+    flex: none;
+    width: 14px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.nav-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.nav-hint {
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.nav-count {
+    flex: none;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+/* A view of a folder: when the library last was in step with its folders, and the disk holding more than the library. */
+.library-strip-sync {
+    flex-basis: 100%;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.library-strip-sync.library-strip-problem {
+    color: #f59e0b;
+}
+
+.moves-banner {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 8px 14px;
+    margin-bottom: 12px;
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.5);
+    border-radius: 10px;
+    font-size: 13px;
+}
+
+.moves-banner.moves-banner-quiet {
+    background: transparent;
+    border-color: transparent;
+    padding: 0 14px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.moves-check {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent);
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.moves-banner > span {
+    flex: 1;
+}
+
+/* A card whose file is not as the library says, and a photo whose file is gone. */
+.thumbnail-stale {
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(180, 83, 9, 0.92);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.thumbnail-card.stale-missing .thumbnail-stale {
+    background: rgba(185, 28, 28, 0.92);
+}
+
+.thumbnail-card.stale-missing .thumbnail-img-wrapper {
+    opacity: 0.6;
+}
+
+.thumbnail-img-wrapper img.failed {
+    visibility: hidden;
+}
+
+.photo-missing-note {
+    margin: 0 0 10px;
+    padding: 8px 12px;
+    border: 1px solid rgba(239, 68, 68, 0.5);
+    border-radius: 6px;
+    background: rgba(239, 68, 68, 0.08);
+    font-size: 13px;
+}
+
+.selection-missing-note {
+    margin: 0 20px 8px;
+    font-size: 12px;
+    color: #f59e0b;
+}
+
+[data-writes][inert] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* The grid is one tab stop: the card the arrow keys are on shows it. */
+.thumbnail-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.thumbnails-grid:focus {
+    outline: none;
+}

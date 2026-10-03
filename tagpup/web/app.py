@@ -19,6 +19,7 @@ request passes the process's gate (tagpup.web.lifecycle), which counts it while 
 flight and turns it away while the always-on process moves onto a new version.
 """
 import errno
+import gzip
 import logging
 import os
 import socket
@@ -100,6 +101,7 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
     app.after_request(roots_ingress.mark)
     app.before_request(_start_clock)
     app.after_request(_never_cache_json)
+    app.after_request(_gzip_big_json)
     app.after_request(_log_slow)
     app.teardown_request(_log_failure)
     app.register_blueprint(libraries.picker)
@@ -180,6 +182,26 @@ def _never_cache_json(response):
     that kept an old answer argued with its server."""
     if response.mimetype == "application/json":
         response.headers.update(NO_CACHE)
+    return response
+
+
+#: A JSON reply of at least this many bytes is gzipped for a client that accepts it: the navigator's folders (792 KB for
+#: 2,746 folders) and a view's order (236 KB for 41,000 ids) are long lists of repeating text, which shrink to a fifth or less.
+GZIP_FROM = 100_000
+
+
+def _gzip_big_json(response):
+    """Compress a long JSON reply when the client sent Accept-Encoding: gzip (findings #572). The page's fetch undoes it
+    unseen. A reply that is streamed, already encoded, or not a plain 200 is left as it is."""
+    if (response.status_code != 200 or response.mimetype != "application/json" or response.direct_passthrough
+            or "Content-Encoding" in response.headers or "gzip" not in request.headers.get("Accept-Encoding", "").lower()):
+        return response
+    data = response.get_data()
+    if len(data) < GZIP_FROM:
+        return response
+    response.set_data(gzip.compress(data, compresslevel=5))
+    response.headers["Content-Encoding"] = "gzip"
+    response.headers.add("Vary", "Accept-Encoding")
     return response
 
 

@@ -428,3 +428,74 @@ describe("what the source offers", () => {
     assert.equal(seen, t.grid.children.length);
   });
 });
+
+describe("what the keys of a page lean on (phase 9c)", () => {
+  /** A card that can hold the focus. */
+  const focusable = (win, record) => {
+    const card = win.document.createElement("div");
+    card.className = "card";
+    card.dataset.id = record.id;
+    card.tabIndex = -1;
+    return card;
+  };
+
+  test("afterDraw is called after every draw, with the cards in the DOM", async () => {
+    const seen = [];
+    const t = setup({ records: records(400), options: { afterDraw: () => seen.push(t.grid.children.length) } });
+    t.view.refresh();
+    const first = seen.length;
+    assert.ok(first >= 1 && seen.at(-1) > 0);
+    await t.scrollTo(216 * 8);
+    assert.ok(seen.length > first, "and after a scroll's draw");
+  });
+
+  test("the card with the focus is not taken from under it: out of the window it is kept, out of sight, and the focus stays", async () => {
+    const holder = {};
+    const t = setup({ records: records(400), options: { buildCard: (record) => focusable(holder.win, record) } });
+    holder.win = t.win;
+    t.view.refresh();
+    const card = t.grid.querySelector('[data-id="p2"]');
+    card.focus();
+    assert.equal(t.win.document.activeElement, card);
+    await t.scrollTo(216 * 40);
+    assert.equal(card.isConnected, true, "kept");
+    assert.equal(t.win.document.activeElement, card, "and still focused");
+    assert.equal(card.style.position, "absolute", "laid out of the way, as a card being typed in is");
+    assert.ok(t.grid.children.length < 40);
+    // Focus moved elsewhere: the card is let go at the next draw.
+    t.grid.querySelector('[data-id="p160"]').focus();
+    await t.scrollTo(216 * 40 + 1);
+    assert.equal(card.isConnected, false);
+  });
+
+  test("a card rebuilt for changed data gives the focus to the one built in its place", () => {
+    const holder = {};
+    const t = setup({ records: records(100), options: { buildCard: (record) => focusable(holder.win, record) } });
+    holder.win = t.win;
+    t.view.refresh();
+    const old = t.grid.querySelector('[data-id="p5"]');
+    old.focus();
+    t.view.refresh();
+    const fresh = t.grid.querySelector('[data-id="p5"]');
+    assert.notEqual(fresh, old);
+    assert.equal(t.win.document.activeElement, fresh);
+  });
+
+  test("topInset: a card scrolled to is put below what sticks over the top of the scroller", () => {
+    const t = setup({ records: records(2000), options: { topInset: () => 60 } });
+    t.view.refresh();
+    t.view.scrollToIndex(1000, "start");
+    assert.equal(t.here.scrollTop, 100 + 250 * 216 - 60);
+    t.view.scrollToIndex(0, "start");
+    assert.equal(t.here.scrollTop, 40, "the first row, with the inset above it");
+    t.view.scrollToIndex(1000);
+    assert.equal(t.here.scrollTop, 100 + 250 * 216 - 600 + 216, "the row's bottom edge at the view's, as without an inset");
+  });
+
+  test("geometry: the columns, and the rows in view; none before anything is drawn", () => {
+    const t = setup({ records: records(100) });
+    assert.equal(t.view.geometry(), null);
+    t.view.refresh();
+    assert.deepEqual(t.view.geometry(), { columns: 4, rows: 2 });
+  });
+});

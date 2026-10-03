@@ -23,6 +23,7 @@
 // files only. What stays held back here is what needs a row of the library's: naming faces.
 import { api, libraryIn } from './common/api.js';
 import { samePath } from './common/paths.js';
+import { upper } from './hooks.js';
 import { state } from './state.js';
 import { isJustLooking, libraryName } from './looking.js';
 import {
@@ -106,7 +107,7 @@ export function askToAdd(found) {
     addFolderLibrary.textContent = name;
     addFolderTitle.appendChild(addFolderLibrary);
     addFolderTitle.appendChild(document.createTextNode('?'));
-    addFolderPath.textContent = found.folder || state.scannedFolder || '';
+    addFolderPath.textContent = found.folder || state.scannedFolder || state.moves.addFor || '';
     addFolderPath.title = addFolderPath.textContent;
 
     addFolderFacts.textContent = '';
@@ -127,10 +128,17 @@ export function askToAdd(found) {
     if (found.ignored) {
         fact(`${name}'s settings ignore this folder; adding it keeps it in step all the same.`, 'add-folder-warning');
     }
-    fact('Adding it gives each photo a place in the library, indexes it, and keeps it in step from then on. '
-        + 'Just look does not add it: tags, captions, renames, rotating, deleting and date changes would be made '
-        + 'to the photo files only; Suggest analyses the photos against ' + name + ' without adding them, and face '
-        + 'naming stays off.', 'add-folder-note');
+    if (state.library) {
+        // Asked from a library view's banner: there is no folder view to look at, so no Just look.
+        fact('Adding it gives each photo a place in the library, indexes it, and keeps it in step from then on. '
+            + 'Not now leaves it as it is.', 'add-folder-note');
+    } else {
+        fact('Adding it gives each photo a place in the library, indexes it, and keeps it in step from then on. '
+            + 'Just look does not add it: tags, captions, renames, rotating, deleting and date changes would be made '
+            + 'to the photo files only; Suggest analyses the photos against ' + name + ' without adding them, and face '
+            + 'naming stays off.', 'add-folder-note');
+    }
+    btnJustLook.textContent = state.library ? 'Not now' : 'Just look';
 
     btnAddFolder.textContent = `Add to ${name}`;
     btnAddFolderFromNote.textContent = `Add to ${name}`;
@@ -168,7 +176,9 @@ export function applyJustLooking() {
 
 /** Add the open folder to the library, as the person asked: POST /api/folder/add. */
 export function addFolderToLibrary() {
-    const folder = state.scannedFolder;
+    // From a library view the folder is the one its banner offered; from a folder view, the folder that is open.
+    const inView = Boolean(state.library);
+    const folder = inView ? state.moves.addFor : state.scannedFolder;
     if (!folder) return Promise.resolve(null);
     const name = libraryName();
     closeDialog();
@@ -182,6 +192,11 @@ export function addFolderToLibrary() {
         .then(({ ok, data }) => {
             if (!ok || !data || !data.success) throw new Error((data && data.error) || 'Adding the folder failed');
             state.justLooking = null;
+            if (inView) {
+                state.moves.addFor = null;
+                upper.addedFromView(folder);
+                return data;
+            }
             if (state.folderMembership) {
                 state.folderMembership = {
                     ...state.folderMembership,

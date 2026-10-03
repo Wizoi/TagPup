@@ -64,6 +64,11 @@ export function keystrokeBelongsToField(el) {
     return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
 }
 
+/** Is focus in something that takes the arrow keys for itself (marked `data-own-keys` in the page)? */
+export function ownsItsKeys(el) {
+    return Boolean(el && typeof el.closest === 'function' && el.closest('[data-own-keys]'));
+}
+
 export function wireKeyboard() {
     document.addEventListener('keydown', (e) => {
         if (state.leavePrompt) return;   // "Save changes?" is open; its keys are its own
@@ -92,6 +97,9 @@ export function wireKeyboard() {
         // looking, and there is no reason to make them guess right.
         const steps = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
         if (!(e.key in steps)) return;
+        // The navigator's trees and tabs, the sidebar's switch and the grid move by their own arrow keys; Ctrl+D and
+        // Ctrl+Z above are everyone's, wherever the focus is.
+        if (ownsItsKeys(document.activeElement)) return;
 
         e.preventDefault();
         stepPhoto(steps[e.key]);
