@@ -384,6 +384,32 @@ class TheRealCheck(unittest.TestCase):
         fa.forget()
 
 
+class WhereThereIsNoWindows(unittest.TestCase):
+    """lock_owners and file_access are imported by a server on any platform, and answer nothing there."""
+
+    def test_both_import_and_answer_nothing(self):
+        import importlib.util
+        import ctypes  # noqa: F401
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        loaded = []
+        with mock.patch.object(sys, "platform", "linux"), mock.patch.dict(sys.modules, {"ctypes.wintypes": None}):
+            for name in ("tagpup/files/lock_owners.py", "tagpup/services/file_access.py"):
+                spec = importlib.util.spec_from_file_location("elsewhere_" + os.path.basename(name)[:-3],
+                                                              os.path.join(root, name))
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                loaded.append(module)
+            owners, access = loaded
+            self.assertIsNone(owners.wintypes, "the guard was exercised: the Windows types were refused")
+            self.assertEqual([], owners.holders("/tmp/x.jpg"))
+            self.assertEqual({}, owners.running())
+            self.assertEqual("", owners.describe([]))
+            self.assertIsNone(access.read_search_rules())
+            self.assertIsNone(access.read_registry_exclusions())
+            result = access.check("/data", [], probes=probes())
+            self.assertTrue(result["findings"])
+
+
 class ItOnlyReads(unittest.TestCase):
     SOURCE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tagpup", "services",
                           "file_access.py")

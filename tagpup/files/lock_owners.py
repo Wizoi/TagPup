@@ -23,7 +23,11 @@ import os
 import re
 import sys
 import threading
-from ctypes import wintypes
+
+try:
+    import ctypes.wintypes as wintypes
+except (ImportError, ValueError):   # a platform without the Windows types: every lookup there is []
+    wintypes = None
 
 #: How long a lookup is waited for, in seconds.
 TIMEOUT = 2.0
@@ -93,22 +97,23 @@ _guard = threading.Lock()
 
 
 def available():
-    """Can Restart Manager be asked here (Windows, with rstrtmgr.dll)?"""
-    return sys.platform == "win32"
+    """Can Restart Manager be asked here (Windows, with the Windows types)?"""
+    return sys.platform == "win32" and wintypes is not None
 
 
-class _FILETIME(ctypes.Structure):
-    _fields_ = [("dwLowDateTime", wintypes.DWORD), ("dwHighDateTime", wintypes.DWORD)]
+if wintypes is not None:
+    class _FILETIME(ctypes.Structure):
+        _fields_ = [("dwLowDateTime", wintypes.DWORD), ("dwHighDateTime", wintypes.DWORD)]
 
 
-class _UNIQUE_PROCESS(ctypes.Structure):
-    _fields_ = [("dwProcessId", wintypes.DWORD), ("ProcessStartTime", _FILETIME)]
+    class _UNIQUE_PROCESS(ctypes.Structure):
+        _fields_ = [("dwProcessId", wintypes.DWORD), ("ProcessStartTime", _FILETIME)]
 
 
-class _PROCESS_INFO(ctypes.Structure):
-    _fields_ = [("Process", _UNIQUE_PROCESS), ("strAppName", ctypes.c_wchar * 256),
-                ("strServiceShortName", ctypes.c_wchar * 64), ("ApplicationType", ctypes.c_int),
-                ("AppStatus", ctypes.c_ulong), ("TSSessionId", wintypes.DWORD), ("bRestartable", wintypes.BOOL)]
+    class _PROCESS_INFO(ctypes.Structure):
+        _fields_ = [("Process", _UNIQUE_PROCESS), ("strAppName", ctypes.c_wchar * 256),
+                    ("strServiceShortName", ctypes.c_wchar * 64), ("ApplicationType", ctypes.c_int),
+                    ("AppStatus", ctypes.c_ulong), ("TSSessionId", wintypes.DWORD), ("bRestartable", wintypes.BOOL)]
 
 
 #: RM_APP_TYPE: how Restart Manager knows the program.
@@ -116,11 +121,12 @@ _KINDS = {0: "unknown", 1: "application", 2: "application", 3: "service", 4: "ex
           1000: "critical"}
 
 
-class _PROCESSENTRY32(ctypes.Structure):
-    _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
-                ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
-                ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
-                ("pcPriClassBase", wintypes.LONG), ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
+if wintypes is not None:
+    class _PROCESSENTRY32(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", wintypes.LONG), ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
 
 
 def running():
