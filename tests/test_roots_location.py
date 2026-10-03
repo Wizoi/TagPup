@@ -377,6 +377,54 @@ class ChangingTheLocation(RootsCase):
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class TwoLibrariesHoldingOneFolder(RootsCase):
+    """The machine's map is one for every library of the home: two libraries over one folder, each
+    with a root called pictures, move together."""
+
+    def setUp(self):
+        super().setUp()
+        self.second = rl.Side(self.home, "second", real=2, bulk=0, outside=0, share=self.side)
+        self.assertIsNone(self.second.adopt().refused)
+
+    def test_each_says_who_else_uses_the_root(self):
+        mine = roots_location.overview(self.library, self.machine, [self.second.library])["roots"][0]
+        theirs = roots_location.overview(self.second.library, self.machine, [self.library])["roots"][0]
+        self.assertEqual(["second"], mine["shared_with"])
+        self.assertEqual([self.library.name], theirs["shared_with"])
+        alone = roots_location.overview(self.library, self.machine)["roots"][0]
+        self.assertEqual([], alone["shared_with"])
+
+    def test_a_run_in_the_other_library_holds_the_move_up_and_is_named(self):
+        claim = store_job_runs.claim(self.second.db_path, "sync", self.second.library.name, time.time())
+        self.assertTrue(claim)
+        before = open(config.machine_roots_path(), "rb").read()
+        result = self.move(apply=True, others=[self.second.library])
+        self.assertIn("in second", result.refused)
+        self.assertIn("uses this root too", result.refused)
+        self.assertEqual(before, open(config.machine_roots_path(), "rb").read())
+        store_job_runs.finish(self.second.db_path, claim.run_id, "done", time.time(), {})
+        self.assertIsNone(self.move(apply=True, others=[self.second.library]).refused)
+
+    def test_the_move_reaches_both_and_changes_no_row_of_either(self):
+        before = (self.rows_dump(), json.dumps(self.second.dump(leave_out=("job_runs",)), default=repr, sort_keys=True))
+        result = self.move(apply=True, others=[self.second.library])
+        self.assertEqual(["second"], result.details["shared_with"])
+        self.assertEqual(self.copy, roots_location.overview(self.second.library, self.machine)["roots"][0]["active"])
+        after = (self.rows_dump(), json.dumps(self.second.dump(leave_out=("job_runs",)), default=repr, sort_keys=True))
+        self.assertEqual(before, after)
+
+    def test_a_verify_of_one_is_not_the_others(self):
+        from tagpup.jobs import verifying
+        self.addCleanup(verifying.forget, self.library)
+        self.addCleanup(verifying.forget, self.second.library)
+        claim = roots_location.begin_verify(self.library, "pictures")
+        self.addCleanup(lambda: store_job_runs.finish(self.side.db_path, claim.run_id, "done", time.time(), {}))
+        other = roots_location.begin_verify(self.second.library, "pictures")    # not refused: another library's
+        store_job_runs.finish(self.second.db_path, other.run_id, "done", time.time(), {})
+        self.assertEqual({}, verifying.status(self.second.library))
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
 class ChangingBack(RootsCase):
     def test_change_back_is_the_reverse_and_one_step(self):
         before = self.rows_dump()

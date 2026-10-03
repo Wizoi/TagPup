@@ -88,11 +88,27 @@ def _writes_to(places):
     return "Tags and renames are written to files at %s." % places[0]
 
 
-def overview(library, machine):
+def sharing(library, name, others):
+    """The libraries among `others` that also hold a root called `name`: the machine's map is one for
+    all of them, so moving the root moves it for each. Libraries that cannot be read are left out."""
+    found = []
+    for other in others:
+        if paths.key(other.path) == paths.key(library.path):
+            continue
+        try:
+            if any(entry["name"] == name for entry in store_roots.listing(other.path)):
+                found.append(other)
+        except Exception as problem:
+            logger.info("Could not read the roots of %s: %s", other.name, problem)
+    return found
+
+
+def overview(library, machine, others=()):
     """Each root of the library with where this machine keeps it: {"roots": [{"name", "address",
-    "added", "places", "active", "previous", "writes_to", "mapped", "rows", "last_verify"}], "map",
-    "adopt_hint", "problem"}. `problem` is the sentence when the map cannot be read; the roots are
-    then listed without places. Reads only."""
+    "added", "places", "active", "previous", "writes_to", "mapped", "rows", "last_verify",
+    "shared_with"}], "map", "adopt_hint", "problem"}. `shared_with` is the names of the libraries among
+    `others` that hold a root of that name (the map is one for them all). `problem` is the sentence
+    when the map cannot be read; the roots are then listed without places. Reads only."""
     found = _library_roots(library)
     answer = {"library": library.name, "map": machine.path(), "roots": [], "adopt_hint": ADOPT_HINT, "problem": None}
     try:
@@ -110,7 +126,8 @@ def overview(library, machine):
             "name": name, "address": entry["address"], "added": entry["added"], "places": places,
             "active": places[0] if places else None, "previous": places[1] if len(places) > 1 else None,
             "writes_to": _writes_to(places), "mapped": bool(places), "rows": rows,
-            "last_verify": last_verify(library, name)})
+            "last_verify": last_verify(library, name),
+            "shared_with": [other.name for other in sharing(library, name, others)]})
     return answer
 
 
@@ -203,19 +220,21 @@ def _overlap(library_names, name, current, candidate, machine):
 
 
 def change_location(library, name, location, machine, apply=False, override=False, expected=None, busy=None,
-                    back=False, now=time.time, budget=roots_verify.SAMPLE_BUDGET, seconds=None):
+                    back=False, now=time.time, budget=roots_verify.SAMPLE_BUDGET, seconds=None, others=()):
     """Move root `name` to `location` on this machine -- or, with `back`, to the place it was before
     (`location` is then ignored). A dry run unless `apply`: details["verify"] says what a sample of
     the place holds, details["would_refuse"] why it would be refused. `override` accepts a poor
     result. `expected` is the place the caller saw the root at: the map having moved since
     refuses (another tab, a hand edit). `busy()` returns the sentences for what the caller knows is
-    running or queued for the library. A Result: `changed` 1 when the map was written, 0 when
+    running or queued for the library (and for those among `others` that hold the root too, whose runs
+    the map's move would reach just the same: the map is the machine's, one for all of them). A Result: `changed` 1 when the map was written, 0 when
     the root was at that place already (details["unchanged"]); `refused` with the sentence when it
     was not, nothing written."""
     result = Result(details={"dry_run": not apply, "root": name, "back": back})
     try:
         name = paths.root_name(name)
         found = _library_roots(library)
+        result.details["shared_with"] = [other.name for other in sharing(library, name, others)]
         if name not in found:
             raise NotFound("This library has no root called %s." % name)
         if machine.set_location is None:
@@ -277,6 +296,9 @@ def change_location(library, name, location, machine, apply=False, override=Fals
         return result
 
     running = list(busy() if busy is not None else []) + _running_here(library)
+    # The map is one for every library that holds the root: a run in one of them is held up too.
+    for other in sharing(library, name, others):
+        running += ["in %s, which uses this root too, %s" % (other.name, said) for said in _running_here(other)]
     if running:
         result.details["conflict"] = True
         result.refuse("Not changed: %s. Wait for it to finish or cancel it, then try again." % "; ".join(running))

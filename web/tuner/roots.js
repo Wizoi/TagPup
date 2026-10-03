@@ -353,6 +353,10 @@ function rootRow(entry) {
             facts.push(buildElement('p', { className: 'roots-previous',
                 text: `Before that: ${entry.previous}. It is a separate copy: nothing written now goes there.` }));
         }
+        if (entry.shared_with && entry.shared_with.length) {
+            facts.push(buildElement('p', { className: 'roots-shared',
+                text: `${entry.shared_with.join(', ')} also uses this root: moving it moves it for them too.` }));
+        }
     } else {
         facts.push(buildElement('p', { className: 'roots-place validation-error',
             text: 'This computer does not place this root yet. Change location says where it is.' }));

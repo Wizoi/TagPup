@@ -94,6 +94,12 @@ describe("the Roots dialog", () => {
     assert.equal(row.querySelector(".roots-back").disabled, false);
   });
 
+  test("a root another library uses too says that moving it moves it for them", async (t) => {
+    const ctx = await tuner(t, { roots: [entry({ shared_with: ["kr-track"] })] });
+    const row = (await openFromGear(ctx)).querySelector(".roots-root");
+    assert.equal(text(row.querySelector(".roots-shared")), "kr-track also uses this root: moving it moves it for them too.");
+  });
+
   test("the last check is a sentence with its counts", async (t) => {
     const ctx = await tuner(t, { roots: [entry({ last_verify: { when: "2026-10-02 10:00:00", mode: "sample",
       checked: 2000, matches: 1998, differs: 2, missing: 0, outcome: "done" } })] });
@@ -220,6 +226,30 @@ describe("Verify", () => {
     await flush(ctx.window, 4);
     assert.deepEqual(ctx.posted("/api/roots/verify-cancel"), [{ root: "pictures" }]);
     assert.match(text(dialog.querySelector(".roots-progress-text")), /stopping/i);
+  });
+
+  test("an answer that arrives after the dialog was closed and opened again is let go", async (t) => {
+    // The library switched, or the dialog reopened, while a poll was in flight: its answer is for the
+    // dialog that asked, and must not put that run's progress in this one.
+    const running = entry({ verifying: { root: "pictures", state: "running", checked: 5, rows: 100, folders: 1, cancelling: false } });
+    const ctx = await tuner(t, { roots: [running] });
+    let release;
+    const late = new Promise((resolve) => { release = resolve; });
+    let slow = false;
+    ctx.server.first("/api/roots", () => (slow ? late : listing([running])));
+    const dialog = await openFromGear(ctx);
+    await wait(ctx.window, 40);
+    slow = true;
+    await wait(ctx.window, 40);              // a poll is now waiting on `late`
+    click(ctx.window, dialog.querySelector(".btn.btn-secondary:not(.btn-sm)"));   // Close
+    slow = false;
+    ctx.server.first("/api/roots", () => listing([entry()]));
+    await openFromGear(ctx);
+    assert.ok(dialog.querySelector(".roots-progress").classList.contains("hidden"));
+    release(listing([running]));
+    await wait(ctx.window, 60);
+    assert.ok(dialog.querySelector(".roots-progress").classList.contains("hidden"), "an old answer drew progress in the new dialog");
+    assert.equal(ctx.consoleErrors.length > 0 ? ctx.consoleErrors.filter((e) => /roots/i.test(String(e))).length : 0, 0);
   });
 
   test("closing the dialog stops asking how the run is going", async (t) => {

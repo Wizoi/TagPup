@@ -37,6 +37,7 @@ from tagpup.services import roots as roots_service
 from tagpup.services import roots_location, roots_verify
 from tagpup.services import tags as tags_service
 from tagpup.web import desktop, responses, roots_gate, state, tagpup_routes
+from tagpup.web import libraries as web_libraries
 
 logger = logging.getLogger(__name__)
 
@@ -735,7 +736,7 @@ def _machine():
                                  tagpup_config.change_back)
 
 
-def _busy(library):
+def _busy_in(library):
     """What is running or queued for `library` in this process, as sentences: the index queue,
     Suggest, the folder watcher's sync and a full Verify. (The library's own job runs, any
     process's, are read by the service.)"""
@@ -751,6 +752,16 @@ def _busy(library):
         said.append("a sync is running")
     if verify_jobs.running(library):
         said.append("a verify of every row is running")
+    return said
+
+
+def _busy(library, name=None):
+    """_busy_in `library` and, for root `name`, in each other library of the home that holds it
+    too: the machine's map is one for them all."""
+    said = _busy_in(library)
+    if name:
+        for other in roots_location.sharing(library, name, web_libraries.home_libraries()):
+            said += ["%s (in %s, which uses this root too)" % (each, other.name) for each in _busy_in(other)]
     return said
 
 
@@ -778,7 +789,7 @@ def _root_named(body):
 def roots_list():
     """Each root of the library, where this machine keeps it, and how a Verify is going."""
     library = state.require()
-    found = _roots_answer(lambda: roots_location.overview(library, _machine()))
+    found = _roots_answer(lambda: roots_location.overview(library, _machine(), web_libraries.home_libraries()))
     running = verify_jobs.status(library)
     for entry in found["roots"]:
         entry["verifying"] = running.get(entry["name"])
@@ -825,7 +836,8 @@ def _moved(library, name, back):
     apply = body.get("dry_run") is False
     result = _roots_answer(lambda: roots_location.change_location(
         library, name, body.get("location"), machine, apply=apply, override=body.get("override") is True,
-        expected=body.get("from") or None, busy=lambda: _busy(library), back=back))
+        expected=body.get("from") or None, busy=lambda: _busy(library, name), back=back,
+        others=web_libraries.home_libraries()))
     if result.changed:
         # The map moved: what this process kept of the old places is let go -- the connections
         # find the new map by themselves within a second, and every cache keyed by the library's

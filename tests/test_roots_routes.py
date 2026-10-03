@@ -278,6 +278,37 @@ class ChangingTheLocation(RootsRoutes):
         self.assertEqual([self.side.pictures], self.places())
 
 
+class TwoLibrariesOnOneRoot(RootsRoutes):
+    def setUp(self):
+        super().setUp()
+        self.second = rl.Side(self.home, "second", real=2, bulk=0, outside=0, share=self.side)
+        self.assertIsNone(self.second.adopt().refused)
+
+    def test_the_list_says_who_shares_the_root(self):
+        mine = self.get("/api/roots").get_json()["roots"][0]
+        theirs = self.client.get("/second/api/roots").get_json()["roots"][0]
+        self.assertEqual(["second"], mine["shared_with"])
+        self.assertEqual([LIBRARY], theirs["shared_with"])
+
+    def test_a_run_queued_in_the_other_library_holds_the_move_up(self):
+        before = open(config.machine_roots_path(), "rb").read()
+        queue = indexing_jobs.queue_for(self.second.library)
+        self.addCleanup(indexing_jobs.forget, self.second.library)
+        with mock.patch.object(type(queue), "busy", lambda q: q is queue):
+            reply = self.post("/api/roots/change-location", {"root": "pictures", "location": self.copy,
+                                                             "dry_run": False})
+        self.assertEqual(409, reply.status_code)
+        self.assertIn("in second, which uses this root too", reply.get_json()["error"])
+        self.assertEqual(before, open(config.machine_roots_path(), "rb").read())
+
+    def test_a_verify_in_one_is_not_shown_in_the_other(self):
+        with mock.patch("tagpup.jobs.verifying.threading.Thread", SyncThread):
+            self.post("/api/roots/verify", {"root": "pictures", "all": True})
+        self.assertEqual("done", self.get("/api/roots").get_json()["roots"][0]["verifying"]["state"])
+        self.assertIsNone(self.client.get("/second/api/roots").get_json()["roots"][0]["verifying"])
+        self.addCleanup(verifying.forget, self.second.library)
+
+
 class WhatAMachineThatDoesNotPlaceTheRootIsTold(RootsRoutes):
     def lose_the_map(self):
         os.remove(config.machine_roots_path())
