@@ -30,7 +30,7 @@ def shell(status=DEFENDER_ON, preference=NOT_ADMIN, products=(DEFENDER_PRODUCT,)
 
 def probes(**replaced):
     base = dict(powershell=lambda: shell(), registry_exclusions=lambda: None, search_rules=lambda: [],
-                not_indexed=lambda folder: False, synced_folders=lambda: [], running=lambda: [],
+                not_indexed=lambda folder: False, unmarked_files=lambda folder: (5, 0), synced_folders=lambda: [], running=lambda: [],
                 on_a_share=lambda place: False)
     base.update(replaced)
     return fa.Probes(**base)
@@ -38,7 +38,7 @@ def probes(**replaced):
 
 def run(places=(PHOTOS,), **replaced):
     result = fa.check(DATA, places, probes=probes(**replaced))
-    return {each["id"]: each for each in result["findings"]}, result
+    return {each["id"].split(":")[0]: each for each in result["findings"]}, result
 
 
 class Defender(unittest.TestCase):
@@ -55,7 +55,7 @@ class Defender(unittest.TestCase):
 
     def test_a_path_with_a_quote_is_quoted_for_powershell(self):
         found = fa.check(r"D:\Kid's Photos\data", [], probes=probes())
-        commands = [f for f in found["findings"] if f["id"] == "defender-exclusions"][0]["commands"]
+        commands = [f for f in found["findings"] if f["id"].startswith("defender-exclusions")][0]["commands"]
         self.assertIn("Add-MpPreference -ExclusionPath 'D:\\Kid''s Photos\\data'", commands)
 
     def test_readable_exclusions_that_cover_everything_are_ok(self):
@@ -117,6 +117,93 @@ class Defender(unittest.TestCase):
         self.assertEqual("ok", found["other-antivirus"]["level"])
 
 
+GUID = "d8254c53-2b61-4c77-9a0e-5f3b1c6a7e90"
+#: Rules as this PC's registry holds them (2026-10-03): a [volume guid] after the drive, wildcards in a component,
+#: a drive that is a wildcard; WorkingSetRules and DefaultRules (where the Users\ Include=1 rule lives).
+WORKING_SET = [
+    ("file:///C:\\[%s]\\Users\\*\\AppData\\Local\\Temp\\" % GUID, 0),
+    ("file:///C:\\[%s]\\Users\\pat\\.*\\" % GUID, 0),
+    ("file:///C:\\[%s]\\Users\\pat\\AppData\\" % GUID, 0),
+    ("file:///C:\\[%s]\\ProgramData\\Microsoft\\Windows\\Start Menu\\" % GUID, 1),
+    ("file:///*\\$RECYCLE.BIN\\", 0),
+    ("iehistory://{S-1-5-21-1}/", 1),
+]
+DEFAULT = [("file:///C:\\[%s]\\Users\\" % GUID, 1), ("file:///C:\\[%s]\\ProgramData\\" % GUID, 0)]
+
+
+class TheRegistrysRules(unittest.TestCase):
+    def rules(self):
+        return [(fa.parse_scope_url(url), bool(include)) for url, include in WORKING_SET + DEFAULT
+                if fa.parse_scope_url(url)]
+
+    def test_the_volume_guid_is_not_part_of_the_folder(self):
+        self.assertEqual("C:\\Users\\*\\AppData\\Local\\Temp", fa.parse_scope_url(WORKING_SET[0][0]))
+        self.assertEqual("C:\\Users", fa.parse_scope_url(DEFAULT[0][0]))
+        self.assertEqual("*\\$RECYCLE.BIN", fa.parse_scope_url(WORKING_SET[4][0]))
+
+    def test_the_users_rule_of_the_default_rules_includes_a_pictures_folder(self):
+        include = lambda path: fa.search_scope_includes(path, self.rules())   # noqa: E731
+        self.assertTrue(include("C:\\Users\\pat\\Pictures\\TagPup"))
+        self.assertFalse(include("C:\\Users\\pat\\AppData\\Roaming\\TagPup"), "a named folder rule excludes")
+        self.assertFalse(include("C:\\Users\\pat\\.config\\x"), "Users\\pat\\.* is a wildcard component")
+        self.assertFalse(include("C:\\Users\\bob\\AppData\\Local\\Temp\\x"), "Users\\*\\AppData\\Local\\Temp")
+        self.assertTrue(include("C:\\Users\\bob\\Documents"))
+        self.assertFalse(include("D:\\Training\\Pictures"), "no rule covers D:")
+        self.assertFalse(include("E:\\$RECYCLE.BIN\\x"), "a rule whose drive is a wildcard")
+        self.assertFalse(include("C:\\ProgramData\\x"))
+        self.assertTrue(include("C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\x"), "the more specific include wins")
+
+    def test_both_rule_sets_are_read(self):
+        asked = []
+
+        def registry_rules(key):
+            asked.append(key.rsplit("\\", 1)[-1])
+            return WORKING_SET if "WorkingSet" in key else DEFAULT
+
+        with mock.patch.object(fa, "_registry_rules", registry_rules), mock.patch.object(fa.sys, "platform", "win32"):
+            found = fa.read_search_rules()
+        self.assertEqual(["WorkingSetRules", "DefaultRules"], asked)
+        self.assertIn(("C:\\Users", True), found)
+        self.assertIn(("C:\\Users\\*\\AppData\\Local\\Temp", False), found)
+
+    def test_neither_set_readable_is_unknown(self):
+        with mock.patch.object(fa, "_registry_rules", lambda key: None), mock.patch.object(fa.sys, "platform", "win32"):
+            self.assertIsNone(fa.read_search_rules())
+
+
+class IdsCarryTheirSpecifics(unittest.TestCase):
+    """Dismissing one warning (the page keeps the id) must not hide a different later one."""
+
+    def ids(self, **replaced):
+        return {each["id"] for each in fa.check(DATA, replaced.pop("places", [PHOTOS]), probes=probes(**replaced))["findings"]
+                if each["level"] == "warn"}
+
+    def test_exclusions_not_known_is_not_exclusions_missing(self):
+        unknown = self.ids()
+        missing = self.ids(registry_exclusions=lambda: ["D:\\TagPup"])
+        other = self.ids(registry_exclusions=lambda: ["D:\\TagPup"], places=["E:\\Elsewhere"])
+        self.assertEqual(1, len(unknown & {i for i in unknown if i.startswith("defender-exclusions")}))
+        self.assertFalse(unknown & missing & {i for i in unknown if i.startswith("defender-exclusions")})
+        self.assertNotEqual(missing, other, "a different folder is a different warning")
+
+    def test_search_cloud_and_antivirus_name_their_folder_or_product(self):
+        rules = [("D:\\Training", True)]
+        a = self.ids(search_rules=lambda: rules)
+        b = self.ids(search_rules=lambda: rules, places=["D:\\Training\\Other"])
+        self.assertTrue({i for i in a if i.startswith("windows-search")})
+        self.assertNotEqual({i for i in a if i.startswith("windows-search")}, {i for i in b if i.startswith("windows-search")})
+        one = self.ids(synced_folders=lambda: [("OneDrive", "D:\\Training")])
+        two = self.ids(synced_folders=lambda: [("OneDrive", "D:\\TagPup")])
+        self.assertNotEqual({i for i in one if i.startswith("cloud-sync")}, {i for i in two if i.startswith("cloud-sync")})
+        shield = lambda name: self.ids(powershell=lambda: shell(products=[DEFENDER_PRODUCT, {   # noqa: E731
+            "displayName": name, "productState": 266240}]))
+        self.assertNotEqual({i for i in shield("Fictional Shield 9") if i.startswith("other-antivirus")},
+                            {i for i in shield("Other Guard 2") if i.startswith("other-antivirus")})
+
+    def test_the_same_situation_keeps_its_id(self):
+        self.assertEqual(self.ids(), self.ids())
+
+
 class WindowsSearch(unittest.TestCase):
     RULES = [("C:\\Users", True), ("C:\\Users\\Fictional\\AppData", False), ("D:\\Training", True),
              ("D:\\Training\\Pictures\\Raw", False)]
@@ -143,15 +230,68 @@ class WindowsSearch(unittest.TestCase):
         one = found["windows-search"]
         self.assertEqual("warn", one["level"])
         self.assertEqual([PHOTOS], one["places"])
-        self.assertEqual(['attrib +I "D:\\Training\\Pictures" /S /D'], one["commands"])
+        self.assertEqual('attrib +I "D:\\Training\\Pictures" /S /D', one["commands"][-1])
 
-    def test_a_folder_marked_not_indexed_is_ok(self):
-        found, _ = run(search_rules=lambda: self.RULES, not_indexed=lambda folder: True)
+    def test_a_folder_marked_not_indexed_with_every_sampled_file_marked_is_ok(self):
+        found, _ = run(search_rules=lambda: self.RULES, not_indexed=lambda folder: True, unmarked_files=lambda f: (20, 0))
         self.assertEqual("ok", found["windows-search"]["level"])
+
+    def test_the_folders_mark_alone_is_not_ok_because_search_honours_it_per_file(self):
+        found, _ = run(search_rules=lambda: self.RULES, not_indexed=lambda folder: True, unmarked_files=lambda f: (20, 7))
+        one = found["windows-search"]
+        self.assertEqual("warn", one["level"])
+        self.assertIn("7 of 20", one["why"])
+        self.assertIn("per file", one["why"])
+
+    def test_a_marked_folder_whose_files_could_not_be_sampled_is_not_ok(self):
+        found, _ = run(search_rules=lambda: self.RULES, not_indexed=lambda folder: True, unmarked_files=lambda f: None)
+        self.assertNotEqual("ok", found["windows-search"]["level"])
+
+    def test_the_advice_names_what_the_attribute_command_costs(self):
+        found, _ = run(search_rules=lambda: self.RULES)
+        one = found["windows-search"]
+        said = one["what_to_do"] + " ".join(one["commands"])
+        self.assertIn("trade-off", said)
+        self.assertIn("change time", said)
+        self.assertIn("every file", said)
 
     def test_a_scope_that_cannot_be_read_is_info(self):
         found, _ = run(search_rules=lambda: None)
         self.assertEqual("info", found["windows-search"]["level"])
+
+
+class TheAttributeIsReadBounded(unittest.TestCase):
+    def setUp(self):
+        fa.forget()
+        self.addCleanup(fa.forget)
+
+    def test_a_share_that_does_not_answer_is_unknown_quickly_and_asked_once(self):
+        import threading
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        stats = []
+
+        def hang(folder):
+            stats.append(folder)
+            gate.wait(30)
+            return mock.Mock(st_file_attributes=0)
+
+        with mock.patch.object(fa.shares, "on_a_network_drive", lambda path: True), \
+                mock.patch.object(fa.os, "stat", hang), mock.patch.object(fa, "SHARE_SECONDS", 0.2):
+            started = time.monotonic()
+            first = fa.read_not_indexed("\\\\nas\\photos")
+            self.assertIsNone(first)
+            self.assertLess(time.monotonic() - started, 1.5)
+            started = time.monotonic()
+            for _ in range(5):
+                self.assertIsNone(fa.read_not_indexed("\\\\nas\\photos"))
+            self.assertLess(time.monotonic() - started, 0.5, "the failed answer is remembered for a while")
+        self.assertEqual(1, len(stats), "no second thread was started at the share that is away")
+
+    def test_a_local_folder_is_read_without_a_thread(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertIn(fa.read_not_indexed(folder), (True, False))
 
 
 class CloudSync(unittest.TestCase):
@@ -159,7 +299,7 @@ class CloudSync(unittest.TestCase):
         synced = [("OneDrive", "C:\\Users\\Fictional\\OneDrive")]
         result = fa.check("C:\\Users\\Fictional\\OneDrive\\TagPup\\data", [PHOTOS],
                           probes=probes(synced_folders=lambda: synced))
-        one = [f for f in result["findings"] if f["id"] == "cloud-sync"][0]
+        one = [f for f in result["findings"] if f["id"].startswith("cloud-sync")][0]
         self.assertEqual("warn", one["level"])
         self.assertIn("OneDrive", one["title"])
         self.assertEqual(["C:\\Users\\Fictional\\OneDrive\\TagPup\\data"], one["places"])

@@ -21,6 +21,7 @@ runs on a thread of its own, and is remembered for CACHE_SECONDS per process; `r
 """
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -53,7 +54,15 @@ POWERSHELL = ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", POW
 
 #: Where Windows keeps what the exclusions and the Search scope are (read with winreg, KEY_READ only).
 DEFENDER_EXCLUSIONS_KEY = r"SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths"
-SEARCH_RULES_KEY = r"SOFTWARE\Microsoft\Windows Search\CrawlScopeManager\Windows\SystemIndex\WorkingSetRules"
+SEARCH_KEY = r"SOFTWARE\Microsoft\Windows Search\CrawlScopeManager\Windows\SystemIndex"
+#: The two sets of scope rules under it: what was added, and what Windows ships (the Users\ rule is there).
+SEARCH_RULE_SETS = ("WorkingSetRules", "DefaultRules")
+
+#: How long a look at a folder on a share is waited for, and how long an unanswered look is remembered.
+SHARE_SECONDS = 3.0
+REMEMBER_SECONDS = 120.0
+#: The files looked at to see whether they carry the not-indexed mark, and the entries walked to find them.
+SAMPLE_FILES, SAMPLE_ENTRIES = 24, 300
 
 #: GetFileAttributes: "do not index the content of this file or folder".
 NOT_CONTENT_INDEXED = 0x2000
@@ -98,29 +107,48 @@ def covers(excluded, path):
 
 
 def parse_scope_url(url):
-    """The folder a Windows Search scope rule's URL names -- file:///D:\\Photos\\ -- or None for a rule of another
-    kind (iehistory://, csc://, mapi16://)."""
+    """The folder a Windows Search scope rule's URL names, or None for a rule of another kind (iehistory://, csc://,
+    mapi16://). The registry spells a file rule file:///C:\\[volume-guid]\\Users\\*\\AppData\\ -- a [guid] after the
+    drive, which is dropped, and `*` or `?` in a component, which are kept (search_scope_includes matches them)."""
     text = str(url or "")
     if not text.lower().startswith("file:///"):
         return None
-    folder = text[len("file:///"):].replace("/", os.sep).rstrip("\\/")
-    if len(folder) == 2 and folder[1] == ":":
-        folder += os.sep
-    return folder or None
+    parts = [part for part in text[len("file:///"):].replace("/", os.sep).split(os.sep) if part]
+    if len(parts) > 1 and parts[1].startswith("[") and parts[1].endswith("]"):
+        del parts[1]
+    if not parts:
+        return None
+    folder = os.sep.join(parts)
+    return folder + os.sep if len(parts) == 1 and parts[0].endswith(":") else folder
+
+
+def _components(spelling):
+    return [part for part in str(spelling).lower().replace("/", os.sep).split(os.sep) if part]
+
+
+def _component_matches(rule, name):
+    if "*" not in rule and "?" not in rule:
+        return rule == name
+    wild = "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in rule)
+    return re.match(wild + r"\Z", name) is not None
 
 
 def search_scope_includes(path, rules):
-    """Does the Windows Search scope include `path`? `rules` is [(folder, include)]: a path is included when the most
-    specific rule that covers it -- the longest folder it equals or is inside -- includes it. At one length, an
-    exclusion wins. No rule covering it: not included."""
-    best, included = -1, False
+    """Does the Windows Search scope include `path`? `rules` is [(folder, include)] -- a folder as parse_scope_url gives it,
+    a component of which may hold `*` or `?`. A rule covers a path that is the folder or inside it; the most specific
+    rule that covers it decides (the one with more components, then more that are not wildcards), and at one
+    specificity an exclusion wins. No rule covering it: not included."""
+    where = _components(paths.key(path))
+    best, included = None, False
     for folder, include in rules:
-        if not folder:
+        rule = _components(folder)
+        if not rule or len(rule) > len(where):
             continue
-        if paths.same(path, folder) or paths.is_under(path, folder):
-            length = len(paths.key(folder).rstrip("\\/"))
-            if length > best or (length == best and not include):
-                best, included = length, bool(include)
+        if not all(_component_matches(r, w) for r, w in zip(rule, where)):
+            continue
+        rank = (len(rule), sum(1 for r in rule if "*" not in r and "?" not in r))
+        if best is None or rank > best or (rank == best and not include):
+            best, included = rank, bool(include)
     return included
 
 
@@ -177,14 +205,14 @@ def read_registry_exclusions():
     return None if found is None else [name for name, _data in found]
 
 
-def read_search_rules():
-    """[(folder, include)] of Windows Search's scope rules for files, or None when they cannot be read."""
+def _registry_rules(key):
+    """[(url, include)] of the scope rules under registry `key`, read only; None when it cannot be read."""
     if sys.platform != "win32":
         return None
     try:
         import winreg
         rules = []
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, SEARCH_RULES_KEY, 0, winreg.KEY_READ) as opened:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key, 0, winreg.KEY_READ) as opened:
             index = 0
             while True:
                 try:
@@ -194,24 +222,86 @@ def read_search_rules():
                 index += 1
                 try:
                     with winreg.OpenKey(opened, name, 0, winreg.KEY_READ) as rule:
-                        url = winreg.QueryValueEx(rule, "URL")[0]
-                        include = winreg.QueryValueEx(rule, "Include")[0]
+                        rules.append((winreg.QueryValueEx(rule, "URL")[0], bool(winreg.QueryValueEx(rule, "Include")[0])))
                 except OSError:
                     continue
-                folder = parse_scope_url(url)
-                if folder:
-                    rules.append((folder, bool(include)))
         return rules
     except Exception:
         return None
 
 
-def read_not_indexed(folder):
-    """Does `folder` carry the 'do not index its content' attribute? None when it cannot be asked."""
-    try:
-        return bool(os.stat(folder).st_file_attributes & NOT_CONTENT_INDEXED)
-    except (OSError, AttributeError):
+def read_search_rules():
+    """[(folder, include)] of Windows Search's scope rules for files, from WorkingSetRules and DefaultRules, or None when
+    neither can be read."""
+    if sys.platform != "win32":
         return None
+    found, readable = [], False
+    for name in SEARCH_RULE_SETS:
+        raw = _registry_rules(SEARCH_KEY + "\\" + name)
+        if raw is None:
+            continue
+        readable = True
+        for url, include in raw:
+            folder = parse_scope_url(url)
+            if folder:
+                found.append((folder, bool(include)))
+    return found if readable else None
+
+
+_unanswered = {}
+
+
+def _looked_at(folder, call):
+    """(`call()`,) -- or None when it could not be answered: an error, or a share that did not answer in SHARE_SECONDS. A
+    folder on a share is looked at on a thread that is waited for (tagpup.files.shares.bounded), and one that
+    did not answer is not asked again for REMEMBER_SECONDS, so opening the page again neither waits nor starts
+    another thread."""
+    if not shares.on_a_network_drive(folder):
+        try:
+            return (call(),)
+        except (OSError, AttributeError):
+            return None
+    key = paths.key(folder)
+    with _guard:
+        since = _unanswered.get(key)
+    if since is not None and time.monotonic() - since < REMEMBER_SECONDS:
+        return None
+    how, value = shares.bounded(folder, call, SHARE_SECONDS)
+    if how == "ok":
+        return (value,)
+    with _guard:
+        _unanswered[key] = time.monotonic()
+    return None
+
+
+def read_not_indexed(folder):
+    """Does `folder` itself carry the 'do not index its content' attribute? None when it cannot be asked."""
+    answered = _looked_at(folder, lambda: bool(os.stat(folder).st_file_attributes & NOT_CONTENT_INDEXED))
+    return None if answered is None else answered[0]
+
+
+def _sample(folder):
+    sampled = unmarked = seen = 0
+    waiting = [folder]
+    while waiting and sampled < SAMPLE_FILES and seen < SAMPLE_ENTRIES:
+        with os.scandir(waiting.pop(0)) as entries:
+            for entry in entries:
+                seen += 1
+                if entry.is_dir(follow_symlinks=False):
+                    waiting.append(entry.path)
+                elif sampled < SAMPLE_FILES:
+                    sampled += 1
+                    unmarked += 0 if entry.stat().st_file_attributes & NOT_CONTENT_INDEXED else 1
+                if seen >= SAMPLE_ENTRIES:
+                    break
+    return sampled, unmarked
+
+
+def read_unmarked_files(folder):
+    """(files looked at, how many of them lack the not-indexed attribute), for up to SAMPLE_FILES files found under
+    `folder`; None when it cannot be asked. Search honours the attribute per file, not by the folder that holds it."""
+    answered = _looked_at(folder, lambda: _sample(folder))
+    return None if answered is None else answered[0]
 
 
 def read_synced_folders(environ=None, profile=None, isdir=os.path.isdir, listdir=os.listdir):
@@ -251,6 +341,7 @@ class Probes:
         self.registry_exclusions = read_registry_exclusions
         self.search_rules = read_search_rules
         self.not_indexed = read_not_indexed
+        self.unmarked_files = read_unmarked_files
         self.synced_folders = read_synced_folders
         self.running = read_running
         self.on_a_share = shares.on_a_network_drive
@@ -261,6 +352,12 @@ class Probes:
 
 
 # ---- The findings ---------------------------------------------------------------------------------
+
+def specific(id_, *things):
+    """`id_` with what the finding is about -- the folders, the drive, the product -- after a colon: the page keeps a
+    dismissal by id, so dismissing a warning about one folder must not hide a later one about another."""
+    return "%s:%s" % (id_, "|".join(sorted(str(thing).lower() for thing in things)))
+
 
 def finding(id_, level, title, why="", what_to_do="", commands=(), places=()):
     return {"id": id_, "level": level, "title": title, "why": why, "what_to_do": what_to_do,
@@ -332,7 +429,7 @@ def defender_findings(shell, probes, data_folder, places):
     wanted = [("the data folder", data_folder)] + [("a photo folder", place) for place in places if place]
     if not readable:
         out.append(finding(
-            "defender-exclusions", WARN, "Whether Microsoft Defender excludes TagPup's folders is not known",
+            "defender-exclusions:unknown", WARN, "Whether Microsoft Defender excludes TagPup's folders is not known",
             "Windows lets only an administrator read Defender's exclusions, and TagPup does not run as one, so it cannot "
             "tell whether the data folder%s is excluded." % (" and the photo folders" if places else ""),
             "Open Windows PowerShell as administrator and run the first line to see the excluded folders; add TagPup's "
@@ -350,7 +447,7 @@ def defender_findings(shell, probes, data_folder, places):
         return out
     data_missing = any(what == "the data folder" for what, _folder in missing)
     out.append(finding(
-        "defender-exclusions", WARN,
+        specific("defender-exclusions", *[paths.key(folder) for _what, folder in missing]), WARN,
         "Microsoft Defender scans %s" % ("TagPup's data folder" if data_missing else "the photo folders"),
         "Not excluded: %s." % "; ".join("%s (%s)" % (folder, what) for what, folder in missing),
         "Exclude the data folder: it is TagPup's own working files. Excluding the photo folders is optional, a trade-off: "
@@ -374,7 +471,8 @@ def network_finding(shell, probes, places):
         return finding("defender-network", OK, "Defender does not scan files on network shares",
                        "Its setting for scanning network files is off.", places=shared)
     return finding(
-        "defender-network", WARN, "Microsoft Defender scans files on the network share too",
+        specific("defender-network", *[paths.key(each) for each in shared]), WARN,
+        "Microsoft Defender scans files on the network share too",
         "Scanning of network files is on, and a photo folder is on a share: every photo opened or written there is "
         "scanned over the network, which is slow and can hold the file.",
         "Exclude the share's folder (optional, a trade-off), or accept the slower writes.",
@@ -402,7 +500,7 @@ def antivirus_finding(shell):
         return finding("other-antivirus", OK, "No antivirus other than Microsoft Defender is registered with Windows")
     names = ", ".join(name for name, _on in others)
     return finding(
-        "other-antivirus", WARN, "Another antivirus is installed: %s" % names,
+        specific("other-antivirus", *[name for name, _on in others]), WARN, "Another antivirus is installed: %s" % names,
         "%s scans files too, and TagPup cannot read its exclusion list. %s" % (
             names, "At least one reports it is on." if any(on for _name, on in others) else
             "It reports it is off, but check."),
@@ -412,29 +510,45 @@ def antivirus_finding(shell):
 
 
 def search_finding(probes, data_folder, places):
-    wanted = [data_folder] + [place for place in places if place]
+    """Windows Search: a folder is a problem when the scope includes it and its files are not marked not-indexed. The folder's
+    own mark is not enough -- Search honours it per file -- so a marked folder is judged by a sample of its files."""
     rules = probes.search_rules()
-    included, unknown = [], []
-    for folder in wanted:
-        if probes.not_indexed(folder):
+    problems, unknown, marked = [], [], []
+    for folder in [data_folder] + [place for place in places if place]:
+        in_scope = None if rules is None else search_scope_includes(folder, rules)
+        if in_scope is False:
             continue
-        if rules is None:
-            unknown.append(folder)
-        elif search_scope_includes(folder, rules):
-            included.append(folder)
-    if included:
+        if not probes.not_indexed(folder):
+            (unknown if in_scope is None else problems).append((folder, None))
+            continue
+        sample = probes.unmarked_files(folder)
+        if sample is None:
+            unknown.append((folder, None))
+        elif sample[1]:
+            problems.append((folder, "%d of %d sampled files are not marked" % (sample[1], sample[0])))
+        else:
+            marked.append((folder, sample[0]))
+    if problems:
+        folders = [folder for folder, _how in problems]
         return finding(
-            "windows-search", WARN, "Windows Search indexes %s" % ("TagPup's folders" if len(included) > 1 else "a TagPup folder"),
-            "The Search indexer opens every file in these folders to index it, and reads photos again when they change: "
-            "%s." % "; ".join(included),
-            "Remove them from the index (Settings > Search > Searching Windows > Excluded folders), or mark them "
-            "not-indexed with the command below, run for each folder.",
-            ["attrib +I %s /S /D" % ('"%s"' % folder) for folder in included], included)
+            specific("windows-search", *[paths.key(folder) for folder in folders]), WARN,
+            "Windows Search indexes %s" % ("TagPup's folders" if len(folders) > 1 else "a TagPup folder"),
+            "The Search indexer opens every file in these folders to index it, and reads photos again when they change: %s. "
+            "Search honours the not-indexed mark per file, not by the folder, so a folder marked on its own is still "
+            "indexed file by file." % "; ".join("%s%s" % (folder, " (%s)" % how if how else "") for folder, how in problems),
+            "Best: remove them from the index (Settings > Search > Searching Windows > Excluded folders); no file is touched. "
+            "The command below is a trade-off: it rewrites the mark on every file under the folder, which changes each "
+            "file's change time, and a cloud-sync client or a backup may scan them all again.",
+            ["# Optional, and a trade-off (see above). Run in PowerShell, once for each folder:"]
+            + ['attrib +I "%s" /S /D' % folder for folder in folders], folders)
     if unknown:
-        return finding("windows-search", INFO, "Whether Windows Search indexes TagPup's folders could not be checked",
-                       "The Search scope could not be read.", places=unknown)
+        return finding(specific("windows-search", "unknown", *[paths.key(folder) for folder, _how in unknown]), INFO,
+                       "Whether Windows Search indexes TagPup's folders could not be checked",
+                       "The Search scope or the files' marks could not be read: %s." % "; ".join(
+                           folder for folder, _how in unknown), places=[folder for folder, _how in unknown])
     return finding("windows-search", OK, "Windows Search does not index TagPup's folders",
-                   "They are outside its scope, or marked not to be indexed.")
+                   "They are outside its scope%s." % (
+                       ", or marked not to be indexed (the sampled files carry the mark too)" if marked else ""))
 
 
 def sync_finding(probes, data_folder, places):
@@ -448,7 +562,8 @@ def sync_finding(probes, data_folder, places):
         return finding("cloud-sync", OK, "TagPup's folders are not in a cloud-synced folder")
     providers = sorted({provider for _what, _folder, provider in inside})
     return finding(
-        "cloud-sync", WARN, "TagPup's folders are inside %s" % " and ".join(providers),
+        specific("cloud-sync", *["%s=%s" % (provider, paths.key(folder)) for _what, folder, provider in inside]), WARN,
+        "TagPup's folders are inside %s" % " and ".join(providers),
         "A sync client opens and locks the files it uploads, and a file that is online-only is not on the disk until "
         "something downloads it. %s." % "; ".join("%s: %s (%s)" % (what, folder, provider)
                                                  for what, folder, provider in inside),
@@ -495,6 +610,7 @@ def _gather(data_folder, places, probes, into, facts):
 
 
 _cache = {}
+_worker = None
 _guard = threading.Lock()
 _one_at_a_time = threading.Lock()
 
@@ -503,6 +619,8 @@ def forget():
     """Forget what was remembered: what a test starts from."""
     with _guard:
         _cache.clear()
+        _unanswered.clear()
+    shares.forget()
 
 
 def check(data_folder, places=(), refresh=False, probes=None, total=TOTAL_SECONDS):
@@ -519,7 +637,11 @@ def check(data_folder, places=(), refresh=False, probes=None, total=TOTAL_SECOND
     if not _one_at_a_time.acquire(timeout=total):
         return _result([finding("timeout", INFO, "The file access check is still running",
                                 "Another check has not finished; ask again in a moment.")], {})
+    global _worker
     try:
+        if probes is None and _worker is not None and _worker.is_alive():
+            return _result([finding("timeout", INFO, "The file access check is still running",
+                                    "A check that took too long has not ended; ask again in a moment.")], {})
         if probes is None and not refresh:
             with _guard:
                 held = _cache.get(key)
@@ -528,6 +650,8 @@ def check(data_folder, places=(), refresh=False, probes=None, total=TOTAL_SECOND
         findings, facts = [], {}
         worker = threading.Thread(target=_gather, args=(data_folder, places, probes or Probes(), findings, facts),
                                   name="file-access-check", daemon=True)
+        if probes is None:
+            _worker = worker
         worker.start()
         worker.join(total)
         done = not worker.is_alive()
