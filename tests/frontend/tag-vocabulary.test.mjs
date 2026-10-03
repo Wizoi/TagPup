@@ -34,7 +34,8 @@ const LINES = SOURCE.split(/\r?\n/);
 const VOCABULARY_JS = fs.readFileSync(path.join(REPO_ROOT, "web", "common", "vocabulary.js"), "utf8");
 
 /** The helpers that are allowed to split a tag, by the name they are declared with. */
-const VOCABULARY = ["leafOf", "rootOf", "ancestorsOf", "normalizeTag"];
+// "ordering" takes a tag apart to compare it level by level (the order tags are shown in).
+const VOCABULARY = ["leafOf", "rootOf", "ancestorsOf", "normalizeTag", "ordering"];
 
 /** Helpers that split something that is not a tag: api.js reading the library out of the URL. */
 const NOT_TAGS = ["libraryIn"];

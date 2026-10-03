@@ -1,0 +1,75 @@
+{
+  "about": "The order tags are shown in, one table for both comparators: compareTagNames / sortedTags (web/common/vocabulary.js, checked by tests/frontend/tag-order.test.mjs) and tag_sort_key (tagpup/core/vocabulary.py, checked by tests/test_tag_order.py). Each case lists the tags as given and the order they are shown in: case and accents ignored, digits read as numbers, then the exact spelling; a path is compared one level at a time, a shorter path before its longer. Only orders the ICU collator and the Python key agree on belong here.",
+  "cases": [
+    {
+      "name": "case is ignored, so apple comes before Zoo",
+      "given": ["Zoo", "apple", "Banana", "cherry"],
+      "shown": ["apple", "Banana", "cherry", "Zoo"]
+    },
+    {
+      "name": "digits are numbers, so Trip 3 comes before Trip 10",
+      "given": ["Trip 10", "Trip 3", "Trip 2", "Trip 1"],
+      "shown": ["Trip 1", "Trip 2", "Trip 3", "Trip 10"]
+    },
+    {
+      "name": "accents are ignored, then the exact spelling breaks the tie",
+      "given": ["Zed", "Ève", "Eve", "Émile", "Edith"],
+      "shown": ["Edith", "Émile", "Eve", "Ève", "Zed"]
+    },
+    {
+      "name": "names equal but for case: the exact spelling decides, capitals first",
+      "given": ["apple", "Apple", "APPLE"],
+      "shown": ["APPLE", "Apple", "apple"]
+    },
+    {
+      "name": "a path is compared a level at a time, as the tag editor's tree is",
+      "given": ["Family Tree/Zed", "Family/Zed", "Family/Amy", "family"],
+      "shown": ["family", "Family/Amy", "Family/Zed", "Family Tree/Zed"]
+    },
+    {
+      "name": "levels are read as numbers too",
+      "given": ["Trips/2024/Day 10", "Trips/2024/Day 9", "Trips/2023"],
+      "shown": ["Trips/2023", "Trips/2024/Day 9", "Trips/2024/Day 10"]
+    },
+    {
+      "name": "an empty tag comes first",
+      "given": ["b", "", "a"],
+      "shown": ["", "a", "b"]
+    },
+    {
+      "name": "a symbol comes before a digit, a digit before a letter",
+      "given": ["Dogs", "1 Dog", "🐶 Dogs", "_x"],
+      "shown": ["_x", "🐶 Dogs", "1 Dog", "Dogs"]
+    },
+    {
+      "name": "numbers equal in value: the exact spelling decides, a prefix comes first",
+      "given": ["a10b", "a2b", "a2", "a02"],
+      "shown": ["a02", "a2", "a2b", "a10b"]
+    },
+    {
+      "name": "letters with a stroke sort with their plain letter",
+      "given": ["Øystein", "Oscar", "Zoe", "Ørjan"],
+      "shown": ["Ørjan", "Oscar", "Øystein", "Zoe"]
+    },
+    {
+      "name": "a sharp s is read as ss",
+      "given": ["Strauss", "Straße", "Strasse"],
+      "shown": ["Strasse", "Straße", "Strauss"]
+    },
+    {
+      "name": "a space, an underscore and a hyphen come before letters, in that order",
+      "given": ["ab", "a-b", "a_b", "a b"],
+      "shown": ["a b", "a_b", "a-b", "ab"]
+    },
+    {
+      "name": "a shorter word before a longer, a digit before a letter",
+      "given": ["abc", "ab1", "ab"],
+      "shown": ["ab", "ab1", "abc"]
+    },
+    {
+      "name": "people, as the pickers list them: leaf names",
+      "given": ["rowan Thackeray", "Anh Tran", "Hazel Brookmire", "Étienne Roy", "Kira Bao"],
+      "shown": ["Anh Tran", "Étienne Roy", "Hazel Brookmire", "Kira Bao", "rowan Thackeray"]
+    }
+  ]
+}

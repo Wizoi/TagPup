@@ -33,6 +33,58 @@ export function joinTag(parentTag, name) {
     return parentTag ? `${parentTag}/${name}` : String(name);
 }
 
+// ---- The order tags are shown in ---------------------------------------------------
+//
+// Every list of tags or people that is shown as a set -- a photo's tags, a picker, an
+// autocomplete, a placement question -- is alphabetical, one way: case and accents
+// ignored, digits read as numbers ("Trip 3" before "Trip 10"), then the exact spelling,
+// so the order is total and a reload does not reshuffle it. A tag path is compared one
+// level at a time, the way the tag editor's tree orders it, so "Family" is followed by
+// "Family/Amy" and then "Family Tree", not by the tag a space would put first. A list
+// that is ranked on purpose (by count, score or similarity) keeps its rank and breaks
+// its ties with this order. It is the display's order only: what is written to a file,
+// stored or sent keeps the order it has. The server's is tagpup.core.vocabulary.tag_sort_key;
+// tests/fixtures/tag_order.json is the table both are held to. The collator is fixed to
+// English, not the machine's language, so the order is the same on every computer.
+const NAME_ORDER = new Intl.Collator('en', { sensitivity: 'base', numeric: true });
+
+function exactOrder(left, right) {
+    return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function orderOf(a, b) {
+    const shared = Math.min(a.parts.length, b.parts.length);
+    for (let i = 0; i < shared; i++) {
+        const found = NAME_ORDER.compare(a.parts[i], b.parts[i]);
+        if (found !== 0) return found;
+    }
+    return (a.parts.length - b.parts.length) || exactOrder(a.text, b.text);
+}
+
+function ordering(value) {
+    const text = String(value ?? '');
+    return { text, parts: text.split('/') };
+}
+
+/** The order tags are listed in: alphabetical, then the exact spelling, so it is total. */
+export function compareTagNames(a, b) {
+    return orderOf(ordering(a), ordering(b));
+}
+
+/**
+ * A copy of `list` in the order tags are shown in. `key` says which text of an item to
+ * order by (the item itself when it is a tag). With `rank`, a number each item is
+ * ranked by, the biggest first, the alphabet only breaks ties. Each text is taken apart
+ * once, not once per comparison.
+ */
+export function sortedTags(list, key = (item) => item, { rank = null } = {}) {
+    const entries = Array.from(list, (item) => ({
+        item, ...ordering(key(item)), rank: rank ? Number(rank(item)) || 0 : 0,
+    }));
+    entries.sort((a, b) => (b.rank - a.rank) || orderOf(a, b));
+    return entries.map(entry => entry.item);
+}
+
 /** Do these two tags name the same person, however each is spelled? */
 export function samePerson(a, b) {
     const left = leafOf(a).toLowerCase();

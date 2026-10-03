@@ -26,9 +26,8 @@
  * as /api/taxonomy/tree answers; a node the editor has made and the server has not yet
  * answered has a text id ('new-1') and `temp: true`.
  */
-import { joinTag } from './vocabulary.js';
+import { compareTagNames, joinTag } from './vocabulary.js';
 
-const NAME_ORDER = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
 const FLASH_MS = 1600;
 
 /** Numbers (the server's ids) before text (the editor's own), each in its own order. */
@@ -37,13 +36,6 @@ function compareIds(a, b) {
     if (typeof a === 'number') return -1;
     if (typeof b === 'number') return 1;
     return a < b ? -1 : a > b ? 1 : 0;
-}
-
-/** The order tags are listed in: alphabetical, then the exact spelling, so it is total. */
-export function compareTagNames(a, b) {
-    const left = String(a ?? '');
-    const right = String(b ?? '');
-    return NAME_ORDER.compare(left, right) || (left < right ? -1 : left > right ? 1 : 0);
 }
 
 /** Siblings' order: by name, then by id. */
