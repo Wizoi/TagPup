@@ -29,6 +29,7 @@ import binascii
 import json
 import os
 import re
+import time
 
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import NotFound, Refused
@@ -42,6 +43,11 @@ from tagpup.store import roots as store_roots
 
 KINDS = store.KINDS
 SECTIONS = ("folders", "keywords", "people", "dates")
+
+#: How long a batch of cards may spend looking at its files, in seconds: a share that answers every stat slowly (0.3 to 0.9 s)
+#: never trips "away", and 200 of them in a row would hold the request for minutes. When the budget is spent the rest of the
+#: batch is left unmarked, quietly (findings #570).
+STAT_BUDGET_SECONDS = 1.5
 
 #: What a card says of its file when the disk was looked at (`stale`).
 CHANGED = "changed"
@@ -284,6 +290,7 @@ def _cards(conn, photo_ids, check_disk=False):
     held = store.card_rows(conn, photo_ids)
     recorded = store.damaged(conn)
     found = []
+    started = time.monotonic()
     for photo_id in photo_ids:
         row = held.get(photo_id)
         if row is None:
@@ -294,7 +301,7 @@ def _cards(conn, photo_ids, check_disk=False):
         card = {"id": photo_id, "name": os.path.basename(path), "path": path, "taken": taken,
                 "damaged": bool(flagged), "damage": record.kind if flagged else None,
                 "thumb": thumbnails.url(photo_id, mtime)}
-        if check_disk:
+        if check_disk and time.monotonic() - started < STAT_BUDGET_SECONDS:
             mark = disk_mark(path, mtime, size)
             if mark:
                 card["stale"] = mark

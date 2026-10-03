@@ -114,6 +114,18 @@ def _reason_for(path):
     return None
 
 
+def on_a_network_drive(path):
+    """Is `path` on a mapped network drive (GetDriveType says remote)? A UNC path is the caller's to tell by its spelling.
+    Cheap: a drive's type, no read of the path; False when Windows cannot say."""
+    try:
+        spelled = _without_prefix(paths.stored(path))
+        if spelled.startswith("\\\\") or not os.path.splitdrive(spelled)[0]:
+            return False
+        return _drive_type(_mount_point(spelled)) == DRIVE_REMOTE
+    except (OSError, AttributeError, ValueError):
+        return False
+
+
 def no_bin_reason(file_path):
     """Why a file at `file_path` would be deleted for good, not moved to the Recycle Bin -- NETWORK,
     REMOVABLE, SUBST or NO_BIN -- or None when it goes to the Bin. Judged by the path as spelled (a

@@ -15,6 +15,7 @@ import threading
 import time
 
 from tagpup.core import paths
+from tagpup.files import recycle_bin
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,13 @@ def share_of(folder):
 def on_a_share(path):
     """Is `path` spelled as a network share (\\\\server\\share, or //server/share)?"""
     return str(path).startswith(("\\\\", "//"))
+
+
+def on_a_network_drive(path):
+    """Is `path` on a network share: spelled as one (on_a_share), or on a mapped network drive (a drive letter that
+    GetDriveType says is remote; tagpup.files.recycle_bin.on_a_network_drive)? Either can stop answering, and a
+    look at either is made on a thread that is waited for (bounded)."""
+    return on_a_share(path) or recycle_bin.on_a_network_drive(path)
 
 
 def forget():

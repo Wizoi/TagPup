@@ -7,7 +7,7 @@ from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, UNREAD
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, metadata, names
-from tagpup.services import file_changes, file_only, libraries
+from tagpup.services import damaged_photos, file_changes, file_only, libraries
 from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.store import photos, taxonomy
@@ -179,10 +179,32 @@ def _caption_problem(et, photo_path, caption):
     return None if vocabulary.trimmed(caption) in held else problem
 
 
+#: What a bulk write says of a photo whose file is gone (the page starts the reason with "missing, ").
+MISSING_WHY = "missing, nothing is written to it: its file is not on disk"
+
+#: details key: how many photos of a bulk write were left out because their files are gone.
+SKIPPED_MISSING = "skipped_missing"
+
+
+def leave_out_missing(photo_paths):
+    """(`photo_paths` but those whose file is gone, [(path, why)] of those left out). A bulk write skips them and writes
+    the rest, as it does a damaged photo: the library still holds the row of a missing photo and a view shows it
+    (phase 9c), so a selection can name one. A file that cannot be read, or on a share that does not answer, is NOT
+    missing: the write meets it itself, and stops at it as for any read or write error of a present file."""
+    present, gone = [], []
+    for path in photo_paths:
+        (gone if damaged_photos.stamp_of(path) is None else present).append(path)
+    return present, [(path, MISSING_WHY) for path in gone]
+
+
 @roots_service.canonical_args("photo_paths")
 def change_tags(library, photo_paths, add, remove, exiftool_path):
     """Add the same tags to many photos and take the same tags off them. Adding or
     removing tags on a selection of photos. See _change_each.
+
+    A photo whose file is gone is left out and listed in the result's skips (details[SKIPPED_MISSING] says how many);
+    the photos after it are written. Only a read or write ERROR of a present file stops the run
+    (_change_each).
 
     What is added is checked (tagpup.core.validation) and written in its one spelling;
     what is taken off is not: taking a bad tag off must stay possible. One that may not
@@ -190,6 +212,18 @@ def change_tags(library, photo_paths, add, remove, exiftool_path):
     problem = validation.first_problem("tag", add)
     if problem:
         return _refused(len(photo_paths), problem)
+    present, gone = leave_out_missing(photo_paths)
+    result = _change_present(library, present, add, remove, exiftool_path) if present else _refused(0, None)
+    if not result.refused:
+        result.attempted += len(gone)
+        for path, why in gone:
+            result.skip(path, why)
+    result.details[SKIPPED_MISSING] = len(gone)
+    return result
+
+
+def _change_present(library, photo_paths, add, remove, exiftool_path):
+    """change_tags for photos whose files are there."""
     refused = _refused(len(photo_paths), None)
     held, loose = libraries.split(library, photo_paths)
     if held and libraries.refuse_writes(refused, library, held, damaged_ok=True):

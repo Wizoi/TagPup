@@ -62,7 +62,7 @@ SHARE_AWAY = 30.0
 #: are its caches, here by their old names.
 _away = shares._away
 _reading = shares._reading
-_on_a_share = shares.on_a_share
+_on_a_share = shares.on_a_network_drive   # a mapped drive to a NAS can stop answering as a UNC path can
 
 
 def _stamps_in(folder):
