@@ -28,3 +28,7 @@ backups/
 
 # Each test file's last time, kept by tools/run_tests.py
 tests/.durations.json
+
+# Where this machine keeps each library's roots (tagpup.config.machine_roots_path): per machine
+machine_roots.json
+.claude/worktrees/
