@@ -238,6 +238,17 @@ describe("the server not answering", () => {
     assert.ok(calls(ctx, "/bulk/status").length > asked, "Ask again asks");
   });
 
+  test("an answer that never comes is a miss after 15 s, and the next try is made; the strip says so", async (t) => {
+    const ctx = await started(t, { total: 100, status: { done: 10 } });
+    await ctx.settle(40);
+    let asked = 0;
+    ctx.server.first("/api/library/bulk/status", () => { asked += 1; return new Promise(() => {}); });
+    for (let waited = 0; waited < 12000 && asked < 4; waited += 100) await ctx.settle(100);
+    assert.ok(asked >= 4, `${asked} tries: each given up after 15 s (150 ms here) and asked again`);
+    assert.match(text(ctx, "bulk-strip-message"), /TagPup is not answering \(no answer in 15 s\)/);
+    assert.equal(text(ctx, "bulk-strip-progress"), "10 of 100");
+  });
+
   test("a server that restarted: the job is abandoned, and the strip says how far it got; a time shift offers Resume", async (t) => {
     const ctx = await started(t, { begin: false, total: 60 });
     click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));

@@ -375,6 +375,7 @@ export function dropPhotos(lib, ids) {
         lib.tries.delete(id);
     }
     forgetSelectedIds(gone);
+    upper.updateSelectedThumbnailsCount();   // the selection is the view's total less the excluded: the count moved
     if (lib.ids.length === 0) {
         lib.status = 'empty';
         lib.message = emptySentence(lib);

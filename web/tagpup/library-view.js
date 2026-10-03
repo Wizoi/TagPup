@@ -317,6 +317,7 @@ export function refreshLibraryView() {
             if (at >= 0) state.grid.scrollToIndex(at, 'start');
         }
         libraryChanged();
+        upper.updateSelectedThumbnailsCount();          // a selection of the whole source is the new total less what was left out
         upper.navigatorCountsChanged({ now: true });   // the counts are read at each call: ask again
         upper.libraryViewPainted(lib, { refreshed: true });   // what the disk held is asked again, by the rule for its size
         return true;

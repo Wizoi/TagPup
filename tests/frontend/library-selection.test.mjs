@@ -188,6 +188,20 @@ describe("the selection and the view", () => {
     assert.deepEqual([...ctx.state.library.sel.ids].sort((a, b) => a - b), [3, 5]);
   });
 
+  test("a Select all is the new total less what was left out after Refresh view, and after a photo is found deleted", async (t) => {
+    let ids = range(400);
+    const ctx = await loadViewPage(t, { search: "?view=all", onIds: () => ({ source: {}, total: ids.length, ids, complete: true }),
+      onCards: (asked) => ({ cards: asked.filter((id) => id !== 9).map((id) => ({ id, name: `IMG_${id}.jpg`, path: `D:\\x\\IMG_${id}.jpg`, taken: null, damaged: false, damage: null, thumb: `/t?id=${id}` })) }) });
+    ctx.document.getElementById("btn-select-all-thumbnails").click();
+    click(ctx.window, ctx.cardById(3).querySelector(".thumbnail-checkbox"));
+    assert.equal(countText(ctx), "Selected: 398", "399 after card 9 was found not to exist, less the one left out");
+    ids = ids.filter((id) => id > 50);
+    click(ctx.window, ctx.document.getElementById("btn-library-refresh"));
+    await ctx.settle();
+    assert.equal(ctx.state.library.total, 350);
+    assert.equal(countText(ctx), "Selected: 350", "the excluded photo is not in the view any more: nothing is left out of it");
+  });
+
   test("memory: the order is held once, and the selection is sets of ids, never a list of paths", async (t) => {
     const ctx = await bigView(t, 68000);
     const order = ctx.state.library.ids;

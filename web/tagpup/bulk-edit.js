@@ -56,17 +56,25 @@ export async function addTypedToSelection(isPeople) {
         return false;
     }
     const op = isPeople ? 'people' : 'tags';
+    // A second click while the first one's question or placement dialog is open asks nothing more.
+    if (state.bulk.asking) return false;
     const picked = readSelection();
     if (!picked) return false;
-    if (!confirmed(describeTags({ op, add: names }), picked.count)) return false;
-    const resolved = [];
-    for (const name of names) {
-        const found = await resolveTagOrPerson(name, isPeople);
-        if (found) resolved.push(found);
+    state.bulk.asking = true;
+    let started;
+    try {
+        if (!confirmed(describeTags({ op, add: names }), picked.count)) return false;
+        const resolved = [];
+        for (const name of names) {
+            const found = await resolveTagOrPerson(name, isPeople);
+            if (found) resolved.push(found);
+        }
+        if (!resolved.length) return false;
+        started = await startBulk({ op, selection: picked.selection, params: { add: resolved, remove: [] },
+            desc: describeTags({ op, add: resolved }) });
+    } finally {
+        state.bulk.asking = false;
     }
-    if (!resolved.length) return false;
-    const started = await startBulk({ op, selection: picked.selection, params: { add: resolved, remove: [] },
-        desc: describeTags({ op, add: resolved }) });
     // Only the text that was written: what was typed since stays.
     if (started.ok && input.value.trim() === typed) input.value = '';
     if (started.ok) (isPeople ? updatePeopleDatalist : updateTagsDatalist)();
@@ -79,13 +87,19 @@ export async function addTypedToSelection(isPeople) {
  */
 export async function editByPill({ kind, name, remove }) {
     const op = kind === 'person' ? 'people' : 'tags';
+    if (state.bulk.asking) return false;
     const picked = readSelection();
     if (!picked) return false;
     const desc = describeTags({ op, add: remove ? [] : [name], remove: remove ? [name] : [] });
-    if (!confirmed(desc, picked.count)) return false;
-    const started = await startBulk({ op, selection: picked.selection,
-        params: remove ? { add: [], remove: [name] } : { add: [name], remove: [] }, desc });
-    return started.ok;
+    state.bulk.asking = true;
+    try {
+        if (!confirmed(desc, picked.count)) return false;
+        const started = await startBulk({ op, selection: picked.selection,
+            params: remove ? { add: [], remove: [name] } : { add: [name], remove: [] }, desc });
+        return started.ok;
+    } finally {
+        state.bulk.asking = false;
+    }
 }
 
 /** The minutes typed, as a signed whole number (earlier is negative), or null with the reason said beside the field. */

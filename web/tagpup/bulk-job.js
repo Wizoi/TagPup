@@ -32,6 +32,9 @@ export const MAX_FAILURES = 40;
 /** The longest wait between two tries after answers stopped coming. */
 const MOST_BACKOFF = 6;
 
+/** A request for how it is going that has not been answered in this long is given up as a miss (the server may be away or stuck). */
+export const POLL_TIMEOUT_MS = 15000;
+
 /** A view that opens within this long of the page asking which bulk edit runs does not ask again. */
 const ATTACH_AGAIN_MS = 5000;
 
@@ -125,9 +128,15 @@ function askHowItIsGoing() {
     bulk.controller = controller;
     const wanted = job.job;
     const mine = () => bulk.controller === controller && bulk.job && bulk.job.job === wanted;
+    let timedOut = false;
+    const giveUp = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+    }, POLL_TIMEOUT_MS);
     api.fetch(`/api/library/bulk/status?job=${wanted}`, { signal: controller.signal })
         .then(res => res.json().catch(() => ({})).then(body => ({ res, body })))
         .then(({ res, body }) => {
+            window.clearTimeout(giveUp);
             if (!mine()) return;
             bulk.controller = null;
             if (res.status === 404) {
@@ -146,14 +155,16 @@ function askHowItIsGoing() {
             if (isRunning(bulk.job)) schedulePoll();
         })
         .catch(err => {
-            if (err.name === 'AbortError' || !mine()) return;
+            window.clearTimeout(giveUp);
+            if ((err.name === 'AbortError' && !timedOut) || !mine()) return;
+            const reason = timedOut ? `no answer in ${POLL_TIMEOUT_MS / 1000} s` : err.message;
             bulk.controller = null;
             bulk.failures += 1;
             if (bulk.failures >= MAX_FAILURES) {
                 bulk.gaveUp = true;
-                bulk.trouble = `TagPup has not answered for a long time (${err.message}). The edit goes on in TagPup if it is running; Ask again to look.`;
+                bulk.trouble = `TagPup has not answered for a long time (${reason}). The edit goes on in TagPup if it is running; Ask again to look.`;
             } else if (bulk.failures >= SAY_AFTER) {
-                bulk.trouble = `TagPup is not answering (${err.message}). The edit goes on if TagPup is running; still trying.`;
+                bulk.trouble = `TagPup is not answering (${reason}). The edit goes on if TagPup is running; still trying.`;
             }
             repaint();
             if (!bulk.gaveUp) schedulePoll();

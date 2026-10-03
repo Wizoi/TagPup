@@ -57,6 +57,17 @@ describe("Add tag to a selection of a library view", () => {
     assert.match(el(ctx, "bulk-strip-title").textContent, /Add Trips\/Lighthouse to 68,000 photos/, "the server's count of the photos it found");
   });
 
+  test("rapid clicks on Add (and Enter): one question and one request, never two jobs", async (t) => {
+    const ctx = await view(t, 400);
+    click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
+    el(ctx, "bulk-add-tags-input").value = "Trips/Lighthouse";
+    for (let n = 0; n < 4; n++) click(ctx.window, el(ctx, "btn-bulk-add-tags"));
+    el(ctx, "bulk-add-tags-input").dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await ctx.settle(80);
+    assert.equal(ctx.questions.length, 1);
+    assert.equal(starts(ctx).length, 1);
+  });
+
   test("a small selection is asked once, still naming the write and the count", async (t) => {
     const ctx = await view(t, 400);
     click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
