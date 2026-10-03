@@ -683,12 +683,14 @@ class Runtime:
 
     # ---- What a suggestion run is given ----------------------------------------------
 
-    def begin(self, library):
+    def begin(self, library, remember=True):
         """Ready the suggester for a run over `library`, on the run's thread: what
         tagpup.jobs.suggestions calls (tagpup.services.suggester.SuggestionModel). The
         library's settings are read once for the run, and what it is given -- its photo
         index, its models -- is held until it ends (RunModel.end): a model change
-        meanwhile leaves the run on what it began with."""
+        meanwhile leaves the run on what it began with. Not `remember`: a run that only
+        looks (Just look, a folder the library does not hold) reads the library and keeps
+        nothing in it."""
         settings = self.settings(library)
         model_key = self.model_key(library, settings)
         with self._lock:
@@ -700,7 +702,11 @@ class Runtime:
             self._held[("faces", lease.faces_key)] += 1
         try:
             photo_index.reload_if_changed()
-            model = suggestions.model_for_run(photo_index, clip, faces, settings.candidate_words)
+            if remember:
+                model = suggestions.model_for_run(photo_index, clip, faces, settings.candidate_words)
+            else:
+                model = suggestions.model_for_run(photo_index, clip, faces, settings.candidate_words,
+                                                  remember=False)
         except BaseException:
             self._end(lease)
             raise

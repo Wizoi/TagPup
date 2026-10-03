@@ -65,8 +65,13 @@ class TagSuggester:
     suggester made for itself.
     """
 
-    def __init__(self, index, taxonomy, embedder=None, candidate_tags: List[str] = None, faces=None):
+    def __init__(self, index, taxonomy, embedder=None, candidate_tags: List[str] = None, faces=None,
+                 remember=True):
         self.index = index
+        #: False: the library is only read -- no face of a photo detected here is recorded
+        #: and no candidate word's embedding is kept in it (a Just look run, where nothing
+        #: is added to the library: tagpup.jobs.suggestions). What is computed stays in memory.
+        self.remember = remember
         self.taxonomy = taxonomy
         self.embedder = embedder
         self.faces = faces
@@ -114,6 +119,10 @@ class TagSuggester:
                 self._people = (names, known)
             return self._people
 
+    def knows_named_faces(self):
+        """Does the library hold a named face to compare a photo's faces with?"""
+        return bool(self._known_people()[1].names())
+
     def _precompute_candidates(self):
         """Precompute embeddings for candidate tags using a template."""
         if not self.embedder or not self.candidate_tags or self.candidate_embeddings:
@@ -140,7 +149,7 @@ class TagSuggester:
                 try:
                     emb = self.embedder.embed_text(prompt)
                     self.candidate_embeddings[tag] = emb
-                    if self.index and hasattr(self.index, "save_tag_embedding"):
+                    if self.remember and self.index and hasattr(self.index, "save_tag_embedding"):
                         self.index.save_tag_embedding(tag, prompt, model_name, pretrained, emb)
                 except Exception as e:
                     logger.warning(f"Failed to embed candidate tag '{tag}': {e}")
@@ -189,7 +198,7 @@ class TagSuggester:
                 try:
                     emb = self.embedder.embed_text(prompt)
                     year_embeddings[tag] = emb
-                    if self.index and hasattr(self.index, "save_tag_embedding"):
+                    if self.remember and self.index and hasattr(self.index, "save_tag_embedding"):
                         self.index.save_tag_embedding(tag, prompt, model_name, pretrained, emb)
                 except Exception as e:
                     logger.warning(f"Failed to embed era-aware candidate tag '{tag}' for year {year}: {e}")
@@ -350,7 +359,7 @@ class TagSuggester:
                 # rows are left untouched, so manual names and exclusions are safe.
                 # Found none, detection still ran: a photo marked as having faces still to
                 # detect (store.faces_pending) is marked no longer.
-                if self.index is not None:
+                if self.index is not None and self.remember:
                     try:
                         saved = face_records.record_detected(self.index.db_path, photo_path, detected_faces)
                         if saved:
@@ -634,16 +643,34 @@ class SuggestionModel:
     def consensus(self, suggestions):
         return self.suggester.apply_folder_consensus(suggestions)
 
+    def what_it_lacks(self):
+        """What the library had too little of to compare a photo with, for the run to say
+        when it is done: [sentence]. A new library holds no vectors and no named faces, and
+        its photos are then suggested nothing -- not an error, so the page is told why."""
+        notes = []
+        if getattr(self.suggester.index, "indexed", None) == 0:
+            notes.append("The library has no photo vectors yet, so no tags are suggested from similar photos.")
+        try:
+            if not self.suggester.knows_named_faces():
+                notes.append("The library has no named faces yet, so no people are suggested.")
+        except Exception as e:
+            logger.warning("Could not tell whether the library has named faces: %s", e)
+        return notes
 
-def model_for_run(photo_index, clip, faces, configured_words):
+
+def model_for_run(photo_index, clip, faces, configured_words, remember=True):
     """Ready the suggester for one run over a library, on the run's thread: its tag tree,
     the words CLIP is asked about -- `configured_words`, the library's, and the tree's, but
     no one's name (tagpup.core.suggesting) -- and their embeddings, before the parallel
     photos need them. `photo_index` is the library's, loaded; `clip` and `faces` the
-    models (tagpup.runtime)."""
+    models (tagpup.runtime). Not `remember`: nothing computed is kept in the library -- no
+    vector, no face, no candidate word's embedding -- and what it reads of it is what it
+    holds (a Just look run)."""
     taxonomy = TagTaxonomy(photo_index.db_path)
     taxonomy.load()
     candidates = suggesting.zero_shot_words(configured_words, taxonomy.paths, taxonomy.people_roots())
-    suggester = TagSuggester(photo_index, taxonomy, embedder=clip, candidate_tags=candidates, faces=faces)
+    # Said only when it differs, so a stand-in for either class need not know of it.
+    given = {} if remember else {"remember": False}
+    suggester = TagSuggester(photo_index, taxonomy, embedder=clip, candidate_tags=candidates, faces=faces, **given)
     suggester._precompute_candidates()
-    return SuggestionModel(suggester, search.PhotoEmbeddings(clip, photo_index), taxonomy.people_roots())
+    return SuggestionModel(suggester, search.PhotoEmbeddings(clip, photo_index, **given), taxonomy.people_roots())

@@ -224,19 +224,40 @@ def add_tags(library, additions, exiftool_path):
     """Add each photo in `additions` (path -> tags) its own tags. Apply All on a folder's
     suggestions: suggestions deal in people's bare names, which are written as the tags
     they are filed under. A photo with nothing to add is left alone. See _change_each.
-    A tag that may not be set refuses the whole of it, and nothing is written."""
+    A tag that may not be set refuses the whole of it, and nothing is written.
+
+    A photo in a folder the library does not hold (Just look: what Suggest offered it was
+    analysed in memory) is written to its file only, as change_tags does
+    (tagpup.services.file_only): no row, no journal change, and the tag tree is only read, so a
+    person or tag the tree does not hold is written as it is offered. The library's own answer
+    decides, per photo, now."""
     problem = validation.first_problem("tag", dict.fromkeys(t for tags in additions.values() for t in tags))
     if problem:
         return _refused(len(additions), problem)
     refused = _refused(len(additions), None)
-    if libraries.refuse_writes(refused, library, [path for path, tags in additions.items() if tags], damaged_ok=True):
+    held, loose = libraries.split(library, [path for path, tags in additions.items() if tags])
+    if held and libraries.refuse_writes(refused, library, held, damaged_ok=True):
         return refused
     # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
-    kept, left = libraries.leave_out_damaged(refused, library, [path for path, tags in additions.items() if tags])
+    kept, left = libraries.leave_out_damaged(refused, library, held) if held else ([], [])
     if kept is None:
         return refused
-    return libraries.with_skipped(_change_each(library, [(path, additions[path], ()) for path in kept],
-                                               exiftool_path, "apply all suggestions"), left)
+    done = None
+    if held or not loose:
+        done = libraries.with_skipped(_change_each(library, [(path, additions[path], ()) for path in kept],
+                                                   exiftool_path, "apply all suggestions"), left)
+    if not loose:
+        return file_only.combined(done, None)
+    if done is not None and not done.ok:
+        done.attempted += len(loose)
+        for path in loose:
+            done.skip(path, "not written: an earlier photo failed")
+        return file_only.combined(done, None)
+    writable, skipped = file_only.leave_out_unwritable(loose)
+    files = libraries.with_skipped(
+        _change_each(library, [(path, additions[path], ()) for path in writable], exiftool_path,
+                     "apply all suggestions", files_only=True) if writable else _refused(0, None), skipped)
+    return file_only.combined(done, files)
 
 
 def _refused(attempted, problem):

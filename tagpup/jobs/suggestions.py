@@ -14,7 +14,19 @@ that starts it. A module-level slot the web launcher filled held them before
 
 A run goes "preparing" -> "running" -> "completed", or "error". Nothing but a start
 changes a folder that is preparing or running, and a start leaves one alone.
+
+A run in a folder the library does not hold only looks (Just look; `Work.looking`, decided
+by the route from the library's own answer at the start, never by the page). It analyses
+each photo against what the library holds -- its vectors, its named faces, its tag tree,
+all read -- and keeps what it finds in this process's memory (`SuggestionRuns.looks`), never
+in the library: no suggestion, face, crop, vector or photo row is made, and nothing is
+recorded of a photo that does not decode. That memory is bounded -- MAX_LOOKED_PHOTOS a
+folder, MAX_LOOKED_FOLDERS a library, the oldest folder dropped -- and let go when the
+library is forgotten or unused for the idle period (release_looks). A folder added to the
+library while its run is going leaves the run in memory; the next start is a persisted run,
+which drops what was in memory. docs/ARCHITECTURE.md, "Analyse-only Suggest".
 """
+import collections
 import concurrent.futures
 import copy
 import logging
@@ -31,18 +43,29 @@ logger = logging.getLogger(__name__)
 #: Photos suggested for at once.
 WORKERS = min(4, os.cpu_count() or 1)
 
+#: What a run that only looks keeps in memory: photos' suggestions in a folder, and folders
+#: in a library (the oldest not under way is dropped). A suggestion is a few KB.
+MAX_LOOKED_PHOTOS = 2000
+MAX_LOOKED_FOLDERS = 3
+
+#: Called when a looking run's memory is used, to say the process's idle registry so (the
+#: web fills it in: tagpup.web.tagpup_routes.idle_caches).
+on_looks_use = None
+
 _runs = {}
 _runs_lock = threading.Lock()
 
 
-def work_for(library, photos, models):
+def work_for(library, photos, models, looking=False):
     """What a run over one folder of `library` runs (SuggestionRuns.start): `photos()`,
     the folder's photos as {key: metadata with "path"}, and the model `models` readies
     for the library -- something with `begin(library)` (tagpup.runtime.Runtime), which
     returns what a run calls (`suggest`, `offered`, `consensus`, `model_key`; see
     SuggestionRuns.start). Everything the run's thread needs is handed to it here; it
     never asks which library a request was for (docs/findings.md, #44). Without models,
-    a run over a folder with photos fails with a message saying so."""
+    a run over a folder with photos fails with a message saying so. `looking`: the folder is
+    not the library's, and the run keeps what it finds in memory and adds nothing to the
+    library (decided by the route, from the library's own answer)."""
 
     class Work:
         def photos(self):
@@ -52,8 +75,9 @@ def work_for(library, photos, models):
             if models is None:
                 raise RuntimeError("Suggest has no model: this app was made without a runtime "
                                    "(tagpup.web.app.create_app(runtime=...))")
-            return models.begin(library)
+            return models.begin(library, remember=False) if looking else models.begin(library)
 
+    Work.looking = looking
     return Work()
 
 
@@ -88,6 +112,15 @@ def running():
             count += sum(1 for status in runs.statuses.values()
                          if status.get("status") in ("preparing", "running"))
     return count
+
+
+def release_looks():
+    """Let go of what runs that only looked kept in memory, in every library, for each
+    folder not under way (the idle registry's call: tagpup.web.tagpup_routes). How many
+    folders."""
+    with _runs_lock:
+        every = list(_runs.values())
+    return sum(runs.release_looks() for runs in every)
 
 
 def under_way():
@@ -141,6 +174,10 @@ class SuggestionRuns:
         self.db_path = db_path
         self.lock = threading.Lock()
         self.statuses = {}
+        #: {folder key: {photo as the run was handed it: entry}}: what runs that only look
+        #: (a folder the library does not hold) found, in the shape the library keeps. A
+        #: folder here is answered from memory, never from the library. Oldest first.
+        self.looks = collections.OrderedDict()
         #: {folder key: {paths.key of a photo: the path its run was handed}}: the
         #: spelling the page knows each photo by, which the library's row need not share.
         self.spellings = {}
@@ -173,6 +210,9 @@ class SuggestionRuns:
         rows are handed back under."""
         with self.lock:
             run = copy.deepcopy(self.statuses.get(paths.key(folder)))
+            looked = self._looked(paths.key(folder))
+        if looked is not None:
+            return self._looked_status(run, looked)
         found = self._saved(folder, photos)
         if run is not None:
             return plain(dict(run, suggestions=found))
@@ -183,7 +223,64 @@ class SuggestionRuns:
 
     def suggestions(self, folder, photos=None):
         """What a folder's runs suggested, each photo to its entry, or None."""
+        with self.lock:
+            looked = self._looked(paths.key(folder))
+        if looked is not None:
+            return plain(looked) or None
         return self._saved(folder, photos) or None
+
+    # ---- A folder only looked at -----------------------------------------------------
+
+    def _looked(self, key):
+        """A copy of what runs that only looked kept for the folder, or None when none did.
+        Under the lock. The entries are replaced, never changed, so a copy of the dict is
+        a snapshot."""
+        if key not in self.looks:
+            return None
+        if on_looks_use:
+            on_looks_use()
+        return dict(self.looks[key])
+
+    @staticmethod
+    def _looked_status(run, looked):
+        found = plain(looked)
+        if run is not None:
+            return dict(plain(run), suggestions=found, in_memory=True)
+        if not found:
+            return {"status": "idle"}
+        done = sum(1 for entry in found.values() if _succeeded(entry))
+        return {"status": "completed", "completed": done, "total": len(found), "suggestions": found,
+                "in_memory": True}
+
+    def release_looks(self):
+        """Let go of what runs that only looked kept, for every folder not under way, and
+        the state of their runs. How many folders."""
+        with self.lock:
+            let_go = [key for key in self.looks
+                      if self.statuses.get(key, {}).get("status") not in ("preparing", "running")]
+            for key in let_go:
+                self._drop_look(key)
+        return len(let_go)
+
+    def _drop_look(self, key):
+        """Forget a folder's looking run. Under the lock."""
+        self.looks.pop(key, None)
+        self.statuses.pop(key, None)
+        self.spellings.pop(key, None)
+        self.folders.pop(key, None)
+
+    def _keep_looking_at(self, key):
+        """Make room for a folder to be looked at: the oldest folders not under way beyond
+        MAX_LOOKED_FOLDERS are dropped. Under the lock."""
+        self.looks.setdefault(key, {})
+        self.looks.move_to_end(key)
+        while len(self.looks) > MAX_LOOKED_FOLDERS:
+            for old in self.looks:
+                if old != key and self.statuses.get(old, {}).get("status") not in ("preparing", "running"):
+                    self._drop_look(old)
+                    break
+            else:
+                return
 
     # ---- Starting and running -------------------------------------------------------
 
@@ -198,16 +295,27 @@ class SuggestionRuns:
         if it holds something for the run, `end()`, called when the run is over.
         """
         key = paths.key(folder)
+        looking = bool(getattr(work, "looking", False))
         # A photo whose suggestion failed is tried again, so it is not done yet.
-        done = sum(1 for found in self._saved(folder).values() if _succeeded(found))
+        if looking:
+            with self.lock:
+                done = sum(1 for found in self.looks.get(key, {}).values() if _succeeded(found))
+        else:
+            done = sum(1 for found in self._saved(folder).values() if _succeeded(found))
         with self.lock:
             status = self.statuses.get(key)
             if status and status.get("status") in ("preparing", "running"):
                 return status["status"]
             self.statuses[key] = {"status": "preparing", "completed": done, "total": 0}
             self.folders[key] = paths.stored(folder)
-        threading.Thread(target=self.run, args=(folder, work), name="FolderSuggestionsThread",
-                         daemon=True).start()
+            if looking:
+                self._keep_looking_at(key)
+            else:
+                # The folder is the library's: what was found in memory while it was not is
+                # let go, and this run keeps its own in the library.
+                self.looks.pop(key, None)
+        threading.Thread(target=self.run_looking if looking else self.run, args=(folder, work),
+                         name="FolderSuggestionsThread", daemon=True).start()
         return "running"
 
     def run(self, folder, work):
@@ -266,6 +374,140 @@ class SuggestionRuns:
                 entry = self.statuses.get(key) or {"completed": 0, "total": 0}
                 entry.update(status="error", message=str(e))
                 self.statuses[key] = entry
+
+    def run_looking(self, folder, work):
+        """`run` for a folder the library does not hold: the same steps, and what each photo
+        is suggested is kept in memory (`looks`), not in the library. Photos suggested for
+        already are not suggested for again; at most MAX_LOOKED_PHOTOS of a folder are kept,
+        and the status says when some were left out. When it is done the status says what the
+        library had too little of to compare with (`notes`), and how many photos could not be
+        read (`unread`)."""
+        folder = paths.stored(folder)
+        key = paths.key(folder)
+        try:
+            photos = work.photos()
+            if not photos:
+                logger.warning("No photos found in %s.", folder)
+                self._say_error(key, "No images found in this folder.")
+                return
+            with self.lock:
+                self.spellings[key] = {paths.key(meta["path"]): paths.stored(meta["path"])
+                                       for meta in photos.values()}
+                self._keep_looking_at(key)
+                memory = dict(self.looks[key])
+            done_before = {paths.key(photo): found for photo, found in memory.items()}
+            todo = [photo for photo in photos
+                    if not _succeeded(done_before.get(paths.key(photos[photo]["path"])))]
+            # A photo failed before is tried again and has its place; a new one needs room.
+            fresh = [photo for photo in todo if paths.key(photos[photo]["path"]) not in done_before]
+            room = max(0, MAX_LOOKED_PHOTOS - len(memory))
+            left_out = set(fresh[room:])
+            todo = [photo for photo in todo if photo not in left_out]
+            with self.lock:
+                self.statuses.setdefault(key, {"status": "preparing", "completed": 0, "total": 0}).update(
+                    status="preparing", total=len(photos) - len(left_out), completed=len(photos) - len(todo) - len(left_out))
+
+            try:
+                model = work.begin()
+            except Exception as e:
+                raise RuntimeError("The models could not be made ready, so no photo was analysed and nothing "
+                                   "was changed: %s" % e) from e
+            try:
+                with self.lock:
+                    self.statuses[key]["status"] = "running"
+                made = []
+                with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as pool:
+                    for done in concurrent.futures.as_completed(
+                            [pool.submit(self._suggest_in_memory, key, photos[photo], model) for photo in todo]):
+                        if done.result() is not None:
+                            made.append(done.result())
+
+                if made and key in self.statuses:
+                    self._take_consensus_in_memory(key, photos, model)
+                with self.lock:
+                    entry = self.statuses[key]
+                    entry.update(self._what_was_found(key, photos, model, left_out))
+                    entry["status"] = "completed"
+            finally:
+                _end(model)
+        except Exception as e:
+            logger.exception("Error analysing the photos of %s without saving: %s", folder, e)
+            self._say_error(key, str(e))
+
+    def _say_error(self, key, message):
+        """Always said, even with the entry gone, so the page stops polling."""
+        with self.lock:
+            entry = self.statuses.get(key) or {"completed": 0, "total": 0}
+            entry.update(status="error", message=message)
+            self.statuses[key] = entry
+
+    def _what_was_found(self, key, photos, model, left_out):
+        """What a finished looking run adds to its status: `notes`, sentences for the page, and
+        `unread`, how many of this folder's photos have no suggestion for want of being read."""
+        notes = []
+        lacks = getattr(model, "what_it_lacks", None)
+        try:
+            said = lacks() if callable(lacks) else []
+            notes.extend(said if isinstance(said, list) else [])
+        except Exception as e:
+            logger.warning("Could not tell what the library lacks: %s", e)
+        wanted = {paths.key(meta["path"]) for meta in photos.values()}
+        memory = self.looks.get(key, {})
+        failed = [found for photo, found in memory.items() if paths.key(photo) in wanted and not _succeeded(found)]
+        if failed:
+            notes.append("%d photo(s) could not be analysed, nothing was recorded of them (%s)."
+                         % (len(failed), failed[0].get("error", "unreadable")))
+        if left_out:
+            notes.append("%d photo(s) were left out: a look keeps the suggestions of at most %d photos of a folder "
+                         "in memory. Add the folder to the library to suggest for all of them."
+                         % (len(left_out), MAX_LOOKED_PHOTOS))
+        return {"notes": notes, "unread": len(failed)}
+
+    def _suggest_in_memory(self, key, meta, model):
+        """`_suggest` that keeps the suggestion in memory only. None when the folder's run is gone or the
+        photo could not be suggested for (its entry says why, and is tried again by the next run)."""
+        if key not in self.statuses:
+            return None
+        photo = paths.stored(meta["path"])
+        try:
+            suggestion = model.suggest(photo, meta)
+            tags, people, title = model.offered(suggestion)
+            found = {"tags": tags, "people": people, "title": title,
+                     "raw_suggestions": suggestion, "raw_before_consensus": True}
+        except Exception as e:
+            logger.error("Error suggesting for %s: %s", photo, e)
+            suggestion = None
+            found = {"tags": [], "people": [], "title": None,
+                     "raw_suggestions": {"suggested_tags": []}, "error": str(e) or type(e).__name__}
+        with self.lock:
+            if key not in self.statuses or key not in self.looks:
+                return None
+            self.looks[key][photo] = plain(found)
+            self.statuses[key]["completed"] += 1
+        return suggestion
+
+    def _take_consensus_in_memory(self, key, photos, model):
+        """`_take_consensus`, over what is in memory."""
+        try:
+            in_run = {paths.key(meta["path"]) for meta in photos.values()}
+            with self.lock:
+                kept = list(self.looks.get(key, {}).items())
+            raw = [dict(copy.deepcopy(found["raw_suggestions"]), path=photo)
+                   for photo, found in kept
+                   if paths.key(photo) in in_run and _succeeded(found) and found.get("raw_before_consensus")
+                   and isinstance(found.get("raw_suggestions"), dict) and found["raw_suggestions"].get("path")]
+            if len(raw) < 2:
+                return
+            offered = [(paths.stored(s["path"]), plain(model.offered(s))) for s in model.consensus(raw)]
+            with self.lock:
+                memory = self.looks.get(key)
+                if memory is None:
+                    return
+                for photo, (tags, people, title) in offered:
+                    if photo in memory:
+                        memory[photo] = dict(memory[photo], tags=tags, people=people, title=title)
+        except Exception as e:
+            logger.error("Error taking folder consensus: %s", e)
 
     def _suggest(self, key, meta, model):
         if key not in self.statuses:

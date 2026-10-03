@@ -158,6 +158,29 @@ def membership(library, folder, roots=(), ignored=()):
     }
 
 
+def suggest_how(library, folder, ignored=None):
+    """How Suggest may run in `folder` for `library`: (why not, looking). `why not` is a
+    sentence when the folder itself is one the library ignores (its Library settings): not
+    its to suggest in. Otherwise None, and `looking`: True when some folder of photos under
+    it is not the library's, so the run only looks -- it analyses the photos against what
+    the library holds, keeps what it finds in memory and adds nothing to the library
+    (tagpup.jobs.suggestions); False when the library holds every folder of photos under
+    it but its ignored ones, which a run leaves out, and the run keeps what it suggests in
+    the library, as always. The library's own answer, here and now, never a page's flag;
+    a library that cannot be read just now raises, as not_held does, and nothing is run."""
+    if ignored is None:
+        ignored = _read(library.path, store_folders.ignored, [])
+    if ignored and store_folders.is_ignored(folder, ignored):
+        return _ignored_message(library, folder), False
+    return None, bool(not_held(library, images.photos_under(folder), ignored))
+
+
+def _ignored_message(library, folder):
+    name = picker_name(os.path.basename(library.path))
+    return ("%s is ignored in %s (its Library settings): it is not %s's."
+            % (paths.stored(folder), name, name))
+
+
 def not_in(library, folder, ignored=None):
     """Why nothing that makes rows -- Suggest, whose faces, vectors and suggestions each
     need their photo's row -- may be done in `folder` for `library`, or None when the
@@ -169,8 +192,7 @@ def not_in(library, folder, ignored=None):
     if ignored is None:
         ignored = _read(library.path, store_folders.ignored, [])
     if ignored and store_folders.is_ignored(folder, ignored):
-        return ("%s is ignored in %s (its Library settings): it is not %s's."
-                % (paths.stored(folder), name, name))
+        return _ignored_message(library, folder)
     unheld = not_held(library, images.photos_under(folder), ignored)
     if not unheld:
         return None
