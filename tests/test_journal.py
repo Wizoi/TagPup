@@ -545,6 +545,29 @@ class TheSchemaMovedOn(unittest.TestCase):
             self.assertGreater(undone.rows, 0)
         self.assertEqual([], [p for p in side.raw_paths() if p.startswith(paths.ROOT_MARK)])
 
+    def test_a_migration_is_never_undone_whatever_the_gap(self):
+        from test_migrations import at_version
+        from tagpup.services import journal as journal_service
+        from tagpup.core.library import Library
+        home = own_home.for_test(self)
+        path = home.library("harbour.db")
+        at_version(path, 10)
+        schema._current.clear()
+        self.assertEqual(8, len(schema.ensure(path)))
+        library = Library(path)
+        listed = journal.history(path, limit=100)
+        migrations = [e for e in listed if e["operation"].startswith("migration ")]
+        self.assertGreaterEqual(len(migrations), 8)
+        reasons = journal_service.refusals(library, migrations)
+        for entry in migrations:
+            self.assertIn("a migration is not undone", reasons[entry["id"]], entry)
+            self.assertEqual(["change %d (%s): a migration is not undone" % (entry["id"], entry["operation"])],
+                             journal.refusals(path, [entry["id"]])[entry["id"]])
+            result = journal_service.undo(library, entry["id"], apply=True)
+            self.assertIn("a migration is not undone", result.refused)
+        after = journal.history(path, limit=100)
+        self.assertEqual([], [e["id"] for e in after if e["status"] == "undone"], "nothing was marked undone")
+
     def test_a_change_at_the_current_version_is_as_before(self):
         home = own_home.for_test(self)
         path = home.library("harbour.db")

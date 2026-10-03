@@ -112,7 +112,7 @@ class AnAdditiveMigration(Migrated):
         self.migrate(step(schema.ADDITIVE, self.add, ("albums",)))
         with self.assertRaises(journal.Refusal) as refused:
             journal.undo(self.db_path, self.newest_change())
-        self.assertIn("schema", str(refused.exception))
+        self.assertIn("a migration is not undone", str(refused.exception))
 
     def test_that_changes_a_row_is_rolled_back(self):
         face = self.ids["kept"]

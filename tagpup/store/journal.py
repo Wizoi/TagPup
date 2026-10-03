@@ -115,6 +115,9 @@ CASCADES = {
     ("tag_taxonomy", "tag_taxonomy"): ("parent_id", FORBIDDEN),
 }
 
+#: What the name of the journal's record of a migration begins with ("migration 8: ...").
+MIGRATION = "migration "
+
 #: What the name of the change that adopts a root begins with (tagpup.store.adoption): it holds
 #: no rows, and its undo converts the library's paths back.
 ADOPTION = "roots adopt"
@@ -884,6 +887,12 @@ def refusal(conn, change_id):
     if row is None:
         return ["there is no change %d" % change_id]
     _operation, status, version = row
+    if _operation.startswith(MIGRATION) and conn.execute(
+            "SELECT 1 FROM change_rows WHERE change_id = ? LIMIT 1", (change_id,)).fetchone() is None:
+        # The journal's record that a migration ran, with no rows to put back (schema._Run._record):
+        # a schema is not undone. A data migration's record holds its rows and is undone, by the
+        # rule below, while it is the newest.
+        return ["change %d (%s): a migration is not undone" % (change_id, _operation)]
     files = _writes_files(conn, change_id)
     if status == "pruned":
         return ["change %d was pruned: %s gone, so it cannot be undone"
