@@ -237,6 +237,23 @@ def conflicts(library, operation):
     return file_journal.files_of_operation(library.path, operation, "conflict")
 
 
+def unsettled(library, operation, ids):
+    """The files of `ids` that the changes named `operation` still hold `planned` or `writing`: written or not, nobody has
+    recorded which. A time shift resumed while any is left would plan the photo again from a file that may already be shifted."""
+    wanted = set(ids)
+    return [row for state in ("planned", "writing") for row in file_journal.files_of_operation(library.path, operation, state)
+            if row.photo_id in wanted]
+
+
+def journal_holds(library, operation, change_id):
+    """Does the journal still hold the change `change_id`, which a record of the job names? False when the journal ends below it
+    (a snapshot restored, the change with it) or holds another operation's change under that id."""
+    if file_journal.highest(library.path) < change_id:
+        return False
+    found = file_journal.change(library.path, change_id)
+    return found is None or found.operation == operation
+
+
 def decide(library, rows, exiftool_path):
     """file_changes.reconcile over a session of its own -- the chunk's has timed out and stays dead -- with the chunk's deadline.
     (landed, not_written, elsewhere); ChunkUndecided when a file cannot be read to tell, or ExifTool cannot be had."""
@@ -267,9 +284,10 @@ def _decided(library, result, exiftool_path):
     result.changed += len(landed)
 
 
-def run_chunk(library, edit, ids, exiftool_path, operation):
+def run_chunk(library, edit, ids, exiftool_path, operation, on_planned=None):
     """Do `edit` to the photos `ids` (a few: a job takes 25), and say what became of each (Outcome). An exception that
-    escapes is not one photo's -- ExifTool that cannot start, a library that cannot be read -- and stops the job."""
+    escapes is not one photo's -- ExifTool that cannot start, a library that cannot be read -- and stops the job.
+    `on_planned(change_id)` is told of a time shift's change once it is planned and before its first file is written."""
     conn = library_view.opened(library)
     try:
         found = store.paths_of(conn, ids)
@@ -290,7 +308,7 @@ def run_chunk(library, edit, ids, exiftool_path, operation):
         et = ChunkSession(session)
         with file_changes.exclusively():
             if edit.op == TIME_SHIFT:
-                result = _shift(library, chosen, edit.minutes, exiftool_path, operation, et)
+                result = _shift(library, chosen, edit.minutes, exiftool_path, operation, et, on_planned)
                 if et.dead:
                     _decided(library, result, exiftool_path)
             else:
@@ -342,7 +360,7 @@ def _count(out, result, present, by_key):
     out.unchanged = max(0, len(present) - out.changed - gone - damaged - (len(out.errors) - away))
 
 
-def _shift(library, photo_paths, minutes, exiftool_path, operation, et=None):
+def _shift(library, photo_paths, minutes, exiftool_path, operation, et=None, on_planned=None):
     """photos.shift_date_taken for a bulk job's chunk: a photo whose file is gone, or found damaged, is left out and counted
     (the folder's shift refuses the whole batch for one damaged photo); one ExifTool cannot read is an error, not a skip;
     and no record of each photo is read back for a page, which nobody is waiting to receive. Nothing is caught here: an
@@ -358,7 +376,8 @@ def _shift(library, photo_paths, minutes, exiftool_path, operation, et=None):
     writable, skipped = file_only.leave_out_unwritable(loose)
     plan_one = photo_actions.date_shift_plan(minutes, strict=True)
     journaled = file_changes.write_fields(library, operation, exiftool_path, kept, dates.SHIFTED_FIELDS, plan_one,
-                                          summary={"photos": len(kept), "minutes": minutes}, et=et) if kept else None
+                                          summary={"photos": len(kept), "minutes": minutes}, et=et,
+                                          on_planned=on_planned) if kept else None
     files = file_only.write_fields(exiftool_path, writable, dates.SHIFTED_FIELDS, plan_one, et=et) if writable else None
     result = libraries.with_skipped(file_only.combined(journaled, files), left + skipped)
     result.attempted += len(gone)

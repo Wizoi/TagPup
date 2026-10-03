@@ -28,7 +28,16 @@ photo holds, or taking one off that it lacks, changes nothing) simply is. A TIME
 how far it got are kept in the library's cache folder (tagpup.files.job_files) -- the state before each chunk, saying which was in
 flight -- and `resume` continues from there. The chunk in flight when it stopped is settled by the journal, the one record of
 what was written: each photo of it that a change named after the job left done is not shifted again. A photo named by id has a
-row, so its folder is the library's and its write is journaled, and the journal can always tell.
+row, so its folder is the library's and its write is journaled, and the journal can always tell. A chunk the journal has not
+finished (a change left planned or writing, owned by a process that is gone or by this one after an error) is finished by the
+resume's settle; if it cannot be, the resume is refused (COULD_NOT_SETTLE) and nothing is written, because planning a photo again
+from a file that may already be shifted shifts it twice. The state records the change the job last planned (`journal_high`),
+before that change writes a file, and a resume refuses when the journal no longer holds it (a snapshot restored over it).
+
+**What is accepted.** The state file is flushed (fsync) and replaced atomically, but its folder is not flushed, and the journal
+runs with WAL synchronous=NORMAL: after a POWER LOSS (not a crash of the process, which loses neither) a photo written on another
+volume can survive while the record before its chunk, or the journal's plan, rolls back, and a resume then shifts it again. A
+power loss between volumes is accepted; nothing more is built against it (docs/findings.md, #597).
 
 The job holds its Library, not the page's: the page may switch library or be closed and the job goes on, its status reachable.
 """
@@ -120,6 +129,9 @@ class Job:
         #: How many of `changed` a resume counted from the journal for the chunk that was in flight: not yet in the state's own
         #: count while that chunk is unfinished, or a second resume of it would count them again.
         self.credit = 0
+        #: The journal change this job last planned (None before the first): kept in the record so that a resume can tell a
+        #: journal that lost it (a snapshot restored) from one that never had a chunk in flight.
+        self.high = None
         #: The record's sequence number: one more on every write of the state file (a resume that finds another has been beaten
         #: to it by another process).
         self.seq = 0
@@ -135,6 +147,7 @@ class Job:
         self.done = self.began = int(state.get("done", 0))
         self.inflight = int(state.get("inflight", 0))
         self.seq = int(state.get("seq", 0))
+        self.high = state.get("journal_high")
         for name in ("changed", "unchanged", "skipped_missing", "skipped_damaged", "error_count"):
             setattr(self, name, int(state.get(name, 0)))
         self.errors = list(state.get("errors") or [])
@@ -145,7 +158,7 @@ class Job:
         until the write has worked)."""
         with self.lock:
             return {"job": self.handle, "op": self.edit.op, "edit": self.edit.to_json(), "state": self.state, "seq": self.seq + 1,
-                    "message": self.message, "total": self.total, "done": self.done,
+                    "journal_high": self.high, "message": self.message, "total": self.total, "done": self.done,
                     "inflight": self.inflight if inflight is None else inflight, "changed": self.changed - self.credit,
                     "unchanged": self.unchanged, "skipped_missing": self.skipped_missing,
                     "skipped_damaged": self.skipped_damaged, "error_count": self.error_count, "errors": list(self.errors),
@@ -211,6 +224,16 @@ class Job:
                 self.seq = state["seq"]
             return True
         return False
+
+    def _planned(self, change_id):
+        """A chunk's change is planned and no file of it written yet: the record names it, durably, or the chunk is not written
+        (the exception releases the change, planned, and a resume settles it). A record that names the change is what lets a
+        resume tell that the journal lost it."""
+        before = self.high
+        self.high = change_id
+        if not self._persist(mandatory=True):
+            self.high = before
+            raise OSError("the job's record could not be written")
 
     def _flush(self, force=False):
         """Record the counts in the library's run and the state file, at most every FLUSH_SECONDS; and tell the page's caches
@@ -291,7 +314,8 @@ class Job:
                     self.inflight = before
                     return self._end(FAILED, NOT_RECORDED % (_number(self.done), _number(self.total)))
             try:
-                out = bulk_edit.run_chunk(self.library, self.edit, wanted, self.exiftool_path, self.operation) if wanted \
+                out = bulk_edit.run_chunk(self.library, self.edit, wanted, self.exiftool_path, self.operation,
+                                    self._planned if keeps_cursor else None) if wanted \
                     else bulk_edit.Outcome()
             except Exception as problem:
                 logger.exception("Bulk edit %s of %s: a chunk failed", self.handle, self.library.name)
@@ -571,6 +595,12 @@ def cancel(library, handle):
 #: What a resume that could not settle the chunk in flight says. Nothing was changed: the record is as it was.
 COULD_NOT_SETTLE = "Could not settle the last chunk that was being written: try again in a moment."
 
+#: What a resume says when the journal no longer holds the change the job's record names: the record of what the chunk in flight
+#: wrote was in it.
+JOURNAL_LOST = ("The library's journal no longer holds the last change of this bulk edit (a snapshot was restored over it?), so "
+                "which photos of the last chunk were already shifted cannot be told, and a resume could shift them twice. "
+                "It was not resumed; nothing was changed.")
+
 #: What a resume that finds the record moved on says.
 MOVED = "Another TagPup process moved this job on: reload and look at it again."
 
@@ -652,18 +682,27 @@ def _prepare_resume(library, handle, claim, exiftool_path, after_write):
 
 
 def _settle_flight(library, job, state):
-    """The chunk a stop left in flight: finish what the journal left half done (settle); read the files the journal holds as
+    """The chunk a stop left in flight: refuse (Refused) when the journal no longer holds the change the record names; finish what
+    the journal left half done (settle, which takes over this job's own changes whoever is named as owning them -- the claim
+    says nothing carries them out -- and which does not raise when one cannot be finished), and refuse (Conflict,
+    COULD_NOT_SETTLE) if any file of the chunk is still planned or writing: written or not, nobody recorded which, and
+    planning it again could shift it twice; read the files the journal holds as
     conflicts for this job -- a command that stalled may have written a file and not said so -- and record those that hold the
     shift as done; then take out of the work every photo a change of this job left done, counted as changed (`credit`: until that
     chunk is finished the state's own count does not include them), and every photo whose file could not be told either way
-    (changed by something else), counted as an error and left alone. Raises if the journal cannot be settled or read, or a file
-    cannot be read to decide: the caller then writes nothing."""
+    (changed by something else), counted as an error and left alone. Raises if the journal cannot be read, or a file cannot be
+    read to decide, or the chunk is not settled: the caller then writes nothing."""
     done, flight = int(state.get("done", 0)), int(state.get("inflight", 0))
     if flight <= done:
         return
-    file_changes.settle(library, job.exiftool_path)
+    if job.high is not None and not bulk_edit.journal_holds(library, job.operation, int(job.high)):
+        raise Refused(JOURNAL_LOST)
+    file_changes.settle(library, job.exiftool_path, job.operation)
     asked = job.ids[done:flight]
     wanted = set(asked)
+    if bulk_edit.unsettled(library, job.operation, asked):
+        logger.warning("Bulk edit %s of %s: the journal could not finish the last chunk now", job.handle, library.name)
+        raise Conflict(COULD_NOT_SETTLE)
     doubtful = [row for row in bulk_edit.conflicts(library, job.operation) if row.photo_id in wanted]
     if doubtful:
         _landed, _not_written, elsewhere = bulk_edit.decide(library, doubtful, job.exiftool_path)

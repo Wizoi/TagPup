@@ -260,6 +260,18 @@ def files_of(db_path, change_id):
         conn.close()
 
 
+def highest(db_path):
+    """The highest change id the journal holds (0 for none): a record of a job names the change it last saw, and a journal now
+    below it has lost that change (a snapshot restored). Reads only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not has_table(conn):
+            return 0
+        return conn.execute("SELECT MAX(id) FROM changes").fetchone()[0] or 0
+    finally:
+        conn.close()
+
+
 def change(db_path, change_id):
     """Change `change_id` (Change), or None."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)

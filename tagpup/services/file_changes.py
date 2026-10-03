@@ -188,7 +188,7 @@ def _pinned(function):
 @_exclusive
 @_pinned
 def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one, summary=None,
-                 unreadable="fail", stop_at_first_error=False, et=None, held=None, read_back_also=()):
+                 unreadable="fail", stop_at_first_error=False, et=None, held=None, read_back_also=(), on_planned=None):
     """Write fields into many photos as one change named `operation` (see the module's
     docstring). `read` is the fields read from each file; `plan_one(path, held)` says
     what one file is to hold (a Plan) from what it holds, {field: [texts]}.
@@ -205,7 +205,9 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     write. With `read_back_also`, the files written are read back for those fields too,
     and details["read_back"] is {paths.key(path): ExifTool's record} of each: one save
     was four ExifTool sessions and six reads, where it had been three and three (review
-    of pass/journal).
+    of pass/journal). `on_planned(change_id)` is called once the plan is committed and
+    before any file is written (a job records which change it is about to carry out); if it
+    raises nothing is written and the change is released, planned.
 
     A Result: `changed` the files written, errors the photos that failed and the
     conflicts. details: `change` (its id, or None when nothing was written), `written`
@@ -215,13 +217,13 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     if et is None:
         with exiftool_session.ExifToolSession(executable=exiftool_path) as session:
             return _write_fields(session, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
-                                 unreadable, stop_at_first_error, held, read_back_also)
+                                 unreadable, stop_at_first_error, held, read_back_also, on_planned)
     return _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
-                         unreadable, stop_at_first_error, held, read_back_also)
+                         unreadable, stop_at_first_error, held, read_back_also, on_planned)
 
 
 def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
-                  stop_at_first_error, fresh, read_back_also):
+                  stop_at_first_error, fresh, read_back_also, on_planned=None):
     result = Result(attempted=len(photo_paths))
     _running.result = result
     written = result.details["written"] = {}
@@ -270,6 +272,8 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     result.details["change"] = change_id
     try:
         _reached("plan committed")
+        if on_planned is not None:
+            on_planned(change_id)
         for n, row in enumerate(rows):
             path, detail = planned[n][0], planned[n][3]
             # Read just now, in this session, by the caller: that is the check.
@@ -687,14 +691,20 @@ def _settle_renames(library, rows, forward, redo):
 # ---- Settling at start -------------------------------------------------------------------
 
 @_exclusive
-def settle(library, exiftool_path):
+def settle(library, exiftool_path, operation=None):
     """Finish every change of photo files that a process no longer running -- or an error
     in this one -- left half done: each file it left planned or writing is settled by
     what it holds, forward or, for an undo under way, back. Returns how many changes
-    were finished. A change that cannot be finished now stays as it is for the next time."""
+    were finished. A change that cannot be finished now is logged, released and left as
+    it is for the next time: it does NOT raise, so a caller that must know asks the
+    journal afterwards (tagpup.services.bulk_edit.unsettled).
+
+    `operation` names changes whose owner is not asked after: the caller holds the claim
+    that nothing carries that operation out (a bulk job's resume, which holds the library's
+    claim), so one left by an error of THIS process, still alive, is its to finish."""
     finished = 0
     for change in file_journal.unfinished(library.path):
-        if change.owner and file_journal.owner_alive(change.owner):
+        if change.owner and file_journal.owner_alive(change.owner) and change.operation != operation:
             continue
         if not file_journal.claim(library.path, change.id, change.owner):
             continue
