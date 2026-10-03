@@ -102,8 +102,11 @@ function syncSelectionMarks() {
 }
 
 export function invertThumbnailSelection() {
-    const next = [];
-    for (const photo of state.folderPhotos) {
+    // The photos the filter shows are inverted; those it hides keep whatever they had.
+    const shown = visiblePhotos();
+    const showing = new Set(shown.map(photo => pathKey(photo.path)));
+    const next = state.selectedThumbnails.filter(path => !showing.has(pathKey(path)));
+    for (const photo of shown) {
         if (!isSelected(photo.path)) next.push(photo.path);
     }
     setSelection(next);
@@ -443,7 +446,8 @@ export function toggleThumbnailSelection(path, isChecked, cardElement) {
 }
 
 export function selectAllThumbnails() {
-    setSelection(state.folderPhotos.map(p => p.path));
+    // What the filter shows: the count and a bulk write then match what is on the screen.
+    setSelection(visiblePhotos().map(p => p.path));
     syncSelectionMarks();
     upper.updateSelectedThumbnailsCount();
 }

@@ -51,6 +51,15 @@ export function removeFromSelection(paths) {
     state.selectedThumbnails = state.selectedThumbnails.filter(path => !gone.has(pathKey(path)));
 }
 
+/** Keep only the selected photos that are among these paths (the same folder, scanned again). */
+export function keepOnly(paths) {
+    const present = new Set();
+    for (const path of paths) present.add(pathKey(path));
+    state.selectedThumbnails = state.selectedThumbnails.filter(path => present.has(pathKey(path)));
+    state.selectedKeys = new Set(state.selectedThumbnails.map(pathKey));
+    if (state.lastSelectedPath && !present.has(pathKey(state.lastSelectedPath))) state.lastSelectedPath = null;
+}
+
 export function clearSelection() {
     state.selectedThumbnails = [];
     state.selectedKeys = new Set();

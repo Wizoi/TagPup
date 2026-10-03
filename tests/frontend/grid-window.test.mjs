@@ -348,6 +348,114 @@ describe("marks that arrive after the cards were built", () => {
   });
 });
 
+describe("a grid with a photo open over it", () => {
+  /** Count what is given a picture inside the grid from now on. */
+  const watchPictures = (ctx) => {
+    const sets = [];
+    const proto = ctx.window.HTMLImageElement.prototype;
+    Object.defineProperty(proto, "src", {
+      configurable: true,
+      get() { return this.getAttribute("src") || ""; },
+      set(value) {
+        if (this.closest && this.closest("#thumbnails-grid")) sets.push(value);
+        this.setAttribute("src", value);
+      },
+    });
+    return sets;
+  };
+  const hide = async (ctx, i) => {
+    ctx.cardOf(i).querySelector(".btn-thumbnail-detail").dispatchEvent(new ctx.window.MouseEvent("click", { bubbles: true }));
+    await flush(ctx.window, 6);
+    assert.ok(ctx.document.getElementById("folder-view-content").classList.contains("hidden"), "the photo is open");
+  };
+  const show = async (ctx) => {
+    ctx.document.getElementById("folder-view-header").dispatchEvent(new ctx.window.MouseEvent("click", { bubbles: true }));
+    await flush(ctx.window, 6);
+  };
+
+  test("is not drawn again, nor asked for pictures, however often the photo view saves", async (t) => {
+    const ctx = await load(t);
+    const { renderThumbnails } = pageExports(ctx.window, "web/tagpup/grid.js");
+    click(ctx.window, ctx.box(3));
+    await ctx.scrollToRow(40);
+    await wait(ctx.window, 160);
+    const before = ctx.cards();
+    const sets = watchPictures(ctx);
+    await hide(ctx, 164);
+    for (let i = 0; i < 10; i++) renderThumbnails();
+    await wait(ctx.window, 160);
+    assert.deepEqual(sets, [], "no picture was asked for while the grid could not be seen");
+    assert.deepEqual(ctx.cards(), before, "no card was built again");
+    await show(ctx);
+    assert.equal(ctx.here.scrollTop, GRID_TOP + 40 * STRIDE);
+    assert.deepEqual([...ctx.state.selectedThumbnails], [`${FOLDER}\\${name(3)}`]);
+    assert.ok(ctx.cardOf(164));
+  });
+
+  test("is put back where it was when it was shown again before any render saw it hidden", async (t) => {
+    const ctx = await load(t);
+    await ctx.scrollToRow(40);
+    await hide(ctx, 164);
+    ctx.here.scrollTop = 0; // the browser forgot the offset; no render ran while it was hidden
+    await show(ctx);
+    assert.equal(ctx.here.scrollTop, GRID_TOP + 40 * STRIDE);
+    assert.ok(ctx.cardOf(164));
+  });
+});
+
+describe("the selection belongs to the folder and to what the filter shows", () => {
+  const typeFilter = async (ctx, text) => {
+    const search = ctx.document.getElementById("photo-search");
+    search.value = text;
+    search.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+    await wait(ctx.window, 220);
+  };
+
+  test("another folder starts with nothing selected; the same folder scanned again keeps what is still in it", async (t) => {
+    const ctx = await load(t);
+    click(ctx.window, ctx.box(1));
+    click(ctx.window, ctx.box(2));
+    assert.match(ctx.label(), /2/);
+    ctx.server.counts[FOLDER] = 2; // IMG_0000 and IMG_0001 are left
+    ctx.document.getElementById("btn-refresh-list").click();
+    await flush(ctx.window, 8);
+    assert.deepEqual([...ctx.state.selectedThumbnails], [`${FOLDER}\\${name(1)}`], "the photo still there stays selected");
+    assert.match(ctx.label(), /: 1/);
+    await openFolder(ctx, "D:\\Library\\2021", { settle: 8 });
+    assert.deepEqual([...ctx.state.selectedThumbnails], []);
+    assert.equal(ctx.state.selectedKeys.size, 0);
+    assert.match(ctx.label(), /: 0/);
+    assert.ok(ctx.cards().every((c) => !c.classList.contains("selected")));
+  });
+
+  test("Select all takes what the filter shows, and a bulk write names those", async (t) => {
+    const ctx = await load(t);
+    await typeFilter(ctx, "IMG_01");
+    ctx.document.getElementById("btn-select-all-thumbnails").click();
+    assert.equal(ctx.state.selectedThumbnails.length, 100);
+    assert.ok(ctx.state.selectedThumbnails.every((p) => /IMG_01\d\d/.test(p)));
+    assert.match(ctx.label(), /100/);
+    ctx.document.getElementById("bulk-add-tags-input").value = "Trips/Lighthouse";
+    click(ctx.window, ctx.document.getElementById("btn-bulk-add-tags"));
+    await flush(ctx.window, 8);
+    const call = ctx.server.calls.find((c) => c.url.includes("/api/photos/bulk-tags"));
+    assert.equal(call.body.paths.length, 100);
+  });
+
+  test("Invert turns over what the filter shows and leaves the hidden as they were", async (t) => {
+    const ctx = await load(t);
+    click(ctx.window, ctx.box(0)); // IMG_0000, which the filter below will hide
+    await typeFilter(ctx, "IMG_01");
+    click(ctx.window, ctx.cardOf(100).querySelector(".thumbnail-checkbox"));
+    ctx.cards()[0].dispatchEvent(new ctx.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    ctx.document.querySelector('#grid-context-menu [data-action="invert"]').click();
+    const picked = [...ctx.state.selectedThumbnails];
+    assert.equal(picked.length, 1 + 99, "IMG_0000 stays, IMG_0100 is off, the other 99 shown are on");
+    assert.ok(picked.includes(`${FOLDER}\\${name(0)}`));
+    assert.ok(!picked.includes(`${FOLDER}\\${name(100)}`));
+  });
+});
+
 describe("the selection has one owner", () => {
   test("nothing but selected.js assigns, pushes to or splices state.selectedThumbnails", () => {
     const dir = path.join(REPO_ROOT, "web", "tagpup");
