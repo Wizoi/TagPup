@@ -44,6 +44,8 @@
                         <button type="button" role="menuitem" data-action="tag-editor">Tag editor</button>
                         <button type="button" role="menuitem" data-action="library-settings" title="Settings for Suggest's words and Smart Rename's format">Settings</button>
                         <button type="button" role="menuitem" data-action="library-history" title="This dog park's last changes, and Undo beside each that can be undone">History...</button>
+                        <button type="button" role="menuitem" data-action="browse-library" title="Show every photo of this dog park in the grid, by date taken, from its index">Browse the whole library</button>
+                        <button type="button" role="menuitem" data-action="library-of-folder" aria-disabled="true" title="Open a folder first">Library view of this folder</button>
                         <a role="menuitem" href="/activity/" target="_blank" rel="noopener" title="What runs and what ran in every library: indexing, jobs, syncs, snapshots, logs">Activity...</a>
                         <a role="menuitem" data-app="tuner" target="_blank" rel="noopener" aria-disabled="true">Open in TagTuner</a>
                     </div>
@@ -241,6 +243,17 @@
                 <!-- Folder View Content -->
                 <div class="folder-view-content hidden" id="folder-view-content">
                     <div class="folder-view-main" id="folder-view-main">
+                        <!-- Which view of the library is open, how many photos it holds, and the way back
+                             (web/tagpup/library-view.js). Shown only while one is. -->
+                        <div id="library-strip" class="library-strip hidden" role="status">
+                            <strong id="library-strip-source" class="library-strip-source"></strong>
+                            <span id="library-strip-total" class="folder-stats-badge"></span>
+                            <span id="library-strip-status" class="library-strip-status"></span>
+                            <span class="library-strip-actions">
+                                <button id="btn-library-refresh" class="btn btn-secondary btn-sm" title="Ask the library for this view's photos again; the place in the view is kept">Refresh view</button>
+                                <a id="library-strip-back" class="library-strip-back" href="#">Back to folder view</a>
+                            </span>
+                        </div>
                         <div class="folder-view-header-card">
                             <div>
                                 <div class="folder-title-stats">

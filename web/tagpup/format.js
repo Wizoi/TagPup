@@ -24,6 +24,8 @@ export function parseExifDateToLocalDate(rawStr) {
 }
 
 export function getFolderDateStats() {
+    // A library view spans years: every date is written whole.
+    if (state.library) return { allWithin7Days: false, sameYearAcrossFolder: false };
     const dates = [];
     state.folderPhotos.forEach(photo => {
         const localD = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));

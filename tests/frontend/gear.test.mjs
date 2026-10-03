@@ -83,14 +83,14 @@ describe("TagPup's gear", () => {
     assert.ok(menu.classList.contains("hidden"), "the menu starts open");
   });
 
-  test("opens on a click, onto its items: the tag editor, the settings, the history and TagTuner", async (t) => {
+  test("opens on a click, onto its items: the tag editor, the settings, the history, the library views and TagTuner", async (t) => {
     const { window, document } = await tagpup(t);
     const { button, menu } = gearOf(document);
     click(window, button);
     await flush(window);
     assert.ok(!menu.classList.contains("hidden"));
     assert.equal(button.getAttribute("aria-expanded"), "true");
-    assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Settings", "History...", "Activity...", "Open in TagTuner"]);
+    assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Settings", "History...", "Browse the whole library", "Library view of this folder", "Activity...", "Open in TagTuner"]);
     assert.equal(document.activeElement, items(menu)[0], "the focus is not on the first item");
   });
 

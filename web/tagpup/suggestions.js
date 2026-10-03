@@ -84,6 +84,7 @@ export function checkIndexingStatus(folderPath) {
     function queryProgress() {
         api.json(`/api/folder/index-status?path=${encodeURIComponent(folderPath)}`)
             .then(data => {
+                if (state.library) return;   // a reply that came after a library view opened shows nothing
                 if (data.status === 'running') {
                     indexProgressContainer.classList.remove('hidden');
                     const pct = data.percent || 0;
@@ -135,6 +136,7 @@ export function checkSuggestionsStatus(folderPath) {
     function queryProgress() {
         api.json(`/api/folder/suggest-status?path=${encodeURIComponent(folderPath)}`)
             .then(data => {
+                if (state.library) return;   // likewise: its progress and suggestions belong to a folder
                 if (data.status === 'preparing' || data.status === 'running') {
                     suggestProgressContainer.classList.remove('hidden');
                     const total = data.total || 0;

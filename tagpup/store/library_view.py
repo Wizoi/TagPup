@@ -21,10 +21,12 @@ Reads only. Every function does nothing useful on a library that has not had mig
 says so); the service answers that in a sentence.
 """
 import collections
+import time
 
 from tagpup.core import paths, vocabulary
 from tagpup.store import damaged_files, derived
 from tagpup.store import roots as store_roots
+from tagpup.store.people import PEOPLE_JSON
 
 #: The kinds of source (Source.kind).
 ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH = "all", "folder", "keyword", "person", "year", "month"
@@ -149,6 +151,40 @@ def _page(conn, scope, cursor, limit):
     return rows[:limit], len(rows) > limit
 
 
+def all_ids(conn, source, cap):
+    """([photo id] of the whole source in the order `page` gives, how many photos the source holds): at most `cap`
+    ids, the total counted when the source holds more. Two statements at most, one per phase, each an index-ordered
+    read of ids alone -- the keyset page's order without the keyset."""
+    scope = _scope(conn, source)
+    if scope is None:
+        return [], 0
+    ids = [photo_id for (photo_id,) in conn.execute(
+        "SELECT p.id FROM %s WHERE %s AND p.taken IS NOT NULL ORDER BY p.taken, p.id LIMIT ?" % (scope.from_, scope.where),
+        list(scope.params) + [cap + 1])]
+    if len(ids) <= cap and not scope.dated:
+        ids += [photo_id for (photo_id,) in conn.execute(
+            "SELECT p.id FROM %s WHERE %s AND p.taken IS NULL ORDER BY p.id LIMIT ?" % (scope.from_, scope.where),
+            list(scope.params) + [cap + 1 - len(ids)])]
+    if len(ids) <= cap:
+        return ids, len(ids)
+    return ids[:cap], conn.execute(*scope.count).fetchone()[0]
+
+
+def id_plans(conn, source, cap):
+    """([(statement, [plan lines])] of every SELECT `all_ids` runs for `source`, the milliseconds it took): what the
+    measurement script prints and a person reads to see that a source's id list searches an index, as SQLite plans it."""
+    seen = []
+    conn.set_trace_callback(seen.append)
+    started = time.perf_counter()
+    try:
+        all_ids(conn, source, cap)
+    finally:
+        conn.set_trace_callback(None)
+    elapsed = (time.perf_counter() - started) * 1000
+    return [(sql, [row[-1] for row in conn.execute("EXPLAIN QUERY PLAN " + sql)])
+            for sql in seen if sql.lstrip().upper().startswith("SELECT")], elapsed
+
+
 def total(conn, source):
     """How many photos `source` holds."""
     scope = _scope(conn, source)
@@ -195,6 +231,16 @@ def card_rows(conn, photo_ids):
     return found
 
 
+def photo_row(conn, photo_id):
+    """(path -- native --, mtime, size, tags JSON, people JSON, captions JSON, raw_metadata JSON, year) of the photo
+    `photo_id`, or None: one row by its primary key, what the details panel shows of a photo. Raises
+    paths.RootsError for a root this machine does not place."""
+    rows = conn.execute("SELECT p.path, p.mtime, p.size, p.tags, " + PEOPLE_JSON + ", p.captions, p.raw_metadata, p.year"
+                        " FROM photos p WHERE p.id = ?", (photo_id,)).fetchall()
+    rows = store_roots.natives(conn, rows, 0, raw=(6,))
+    return tuple(rows[0]) if rows else None
+
+
 def damaged(conn):
     """{paths.key: store.damaged_files.Record} of every record of a damaged photo (a handful)."""
     return {paths.key(each.path): each for each in damaged_files.every(conn)}
@@ -219,10 +265,11 @@ def keyword_counts(conn):
             here = parent.get(here)
         upward[node_id] = tuple(walked)
     counts = collections.Counter()
-    sets = collections.Counter()   # photos for each distinct set of tags: most photos share theirs
-    for _photo, tag_ids in conn.execute("SELECT photo_id, group_concat(tag_id) FROM photo_tags GROUP BY photo_id"):
-        sets[tag_ids] += 1
-    for tag_ids, photos in sets.items():
+    # Photos for each distinct set of tags, counted by SQLite (the table is read in photo order, so a photo's ids
+    # come out in one order): most photos share theirs, and Python then sees thousands of sets, not 68,000 photos.
+    sets = conn.execute("SELECT tag_ids, COUNT(*) FROM (SELECT group_concat(tag_id) AS tag_ids FROM photo_tags"
+                        " GROUP BY photo_id) GROUP BY tag_ids").fetchall()
+    for tag_ids, photos in sets:
         reached = set()
         for tag_id in tag_ids.split(","):
             reached.update(upward.get(int(tag_id), ()))

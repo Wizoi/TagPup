@@ -30,9 +30,11 @@ import re
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import NotFound, Refused
 from tagpup.services import damaged_photos, thumbnails
+from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.store import db
 from tagpup.store import library_view as store
+from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
 KINDS = store.KINDS
@@ -41,6 +43,10 @@ SECTIONS = ("folders", "keywords", "people", "dates")
 #: Photos in a page when none is asked for, and the most a page holds.
 DEFAULT_LIMIT = 200
 MAX_LIMIT = 500
+
+#: The most ids `ids` answers for one source, and the most cards `cards_of` answers for one ask.
+MAX_IDS = 200_000
+MAX_CARDS = 200
 
 #: The longest page token read: a token is a few dozen characters; a very large one is refused before it is decoded.
 MAX_TOKEN = 200
@@ -167,6 +173,74 @@ def view(library, kind, value=None, recursive=False, after=None, limit=None):
             "total": total, "ids": [photo_id for photo_id, _taken in rows],
             "next": encode(store.next_cursor(rows[-1])) if more and rows else None,
             "limit": size, "cards": shown}
+
+
+def ids(library, kind, value=None, recursive=False, cap=None):
+    """{"source", "total", "ids", "complete"}: the whole ordered id list of a source, in the order `view` pages it, for
+    a page that jumps to the middle of it. At most `cap` ids (MAX_IDS); `total` is the source's, `complete` false
+    when the list was cut. One read of ids alone: no card, no BLOB."""
+    source = source_of(library, kind, value, recursive)
+    conn = _open(library)
+    try:
+        found, total = store.all_ids(conn, source, MAX_IDS if cap is None else cap)
+    finally:
+        conn.close()
+    return {"source": {"kind": source.kind, "value": source.value, "recursive": source.recursive},
+            "total": total, "ids": found, "complete": len(found) == total}
+
+
+def read_ids(text):
+    """The photo ids a request's `ids=1,2,3` says, each once, in order. Refused for more than MAX_CARDS, for anything
+    that is not a whole number, or for one no photo id could be."""
+    if text is None or not text.strip():
+        raise Refused("ids needs photo ids, as ids=1,2,3.")
+    found = []
+    for part in text.split(","):
+        part = part.strip()
+        if not part.isascii() or not part.isdigit() or len(part) > 18:
+            raise Refused("ids must be whole numbers separated by commas, as ids=1,2,3.")
+        if int(part) not in found:
+            found.append(int(part))
+    if len(found) > MAX_CARDS:
+        raise Refused("Ask for at most %d photos at a time." % MAX_CARDS)
+    return found
+
+
+def photo(library, photo_id, exiftool_path=None):
+    """The photo `photo_id` as the page reads a photo of a folder (services.photos.page_record): what the details panel
+    shows and edits by path. NotFound when the library has no such photo.
+
+    Built as the folder scan builds one: the file's stamp is taken and set against the row's, and the row's tags,
+    people and captions are the record only where it describes the file. A file that differs, or a row with no
+    stamp (made for a photo nobody read), is READ with ExifTool; the panel sends the whole tag list on a save, and a
+    list built from a row that says less than the file would write over what the file holds. The record's mtime and
+    size are the FILE's, which a write then names (tagpup.services.tagging.save_photo). A file that is gone is the
+    row's record with `missing` set."""
+    conn = _open(library)
+    try:
+        row = store.photo_row(conn, photo_id) if 0 < photo_id < 2 ** 62 else None
+    finally:
+        conn.close()
+    if row is None:
+        raise NotFound("There is no photo %d in this library." % photo_id)
+    path, mtime, size, tags, people, captions, raw, year = row
+    stamp = photo_actions.file_stamp(path)
+    if stamp is not None and not store_photos.describes(mtime, size, stamp):
+        record = photo_actions.read_file(library, path, exiftool_path() if callable(exiftool_path) else exiftool_path, stamp)
+    else:
+        record = photo_actions.page_record(path, {
+            "tags": json.loads(tags) if tags else [], "people": json.loads(people) if people else [],
+            "captions": json.loads(captions) if captions else [], "raw_metadata": json.loads(raw) if raw else {},
+            "year": year}, mtime if stamp is None else stamp[0], size if stamp is None else stamp[1])
+        if stamp is None:
+            record["missing"] = True
+    record["id"] = photo_id
+    # What the library records of the photo's damage, as its card says it (the panel shows why, and asks for no
+    # picture of a file recorded unreadable).
+    shown = cards(library, [photo_id])
+    record["damaged"] = bool(shown and shown[0]["damaged"])
+    record["damage"] = shown[0]["damage"] if shown else None
+    return record
 
 
 def _cards(conn, photo_ids):

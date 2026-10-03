@@ -15,6 +15,7 @@ import { clearSelection, keepOnly } from './selected.js';
 import { CACHE_TTL_MS, folderCacheKey, saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
+import { libraryPosition } from './library-source.js';
 
 export function wireChangeDogPark() {
     if (btnChangeDb) {
@@ -203,11 +204,13 @@ export function updateCurrentFolderLabel() {
 }
 
 // Scans a folder
-export function scanFolder(forceRefresh = false) {
+export function scanFolder(forceRefresh = false, { keepTyped = false } = {}) {
     // Opening a folder, or refreshing this one, repopulates the panel from what
     // was scanned -- so it asks first, like any other way off the photo. Staying
     // puts the open folder back in the box rather than leave it naming another.
-    if (hasUnsavedEdits() || openPhotoWrite()) {
+    // `keepTyped`: the open photo's file changed and the folder is read again to show it (edits.js
+    // photoChangedOnDisk); what was typed stays in its fields, so there is nothing to ask about.
+    if (!keepTyped && (hasUnsavedEdits() || openPhotoWrite())) {
         leavePhotoThen(() => scanFolder(forceRefresh), {
             onStay: () => { if (state.scannedFolder) folderPathInput.value = state.scannedFolder; },
         });
@@ -218,6 +221,8 @@ export function scanFolder(forceRefresh = false) {
         flagField(folderPathInput, 'Choose or type a folder to scan');
         return;
     }
+    // A folder opened leaves the library view that was open (library-view.js).
+    if (state.library) upper.leaveLibraryView();
 
     // Reset folder-specific suggestions state to prevent leaks
     state.folderSuggestions = {};
@@ -325,6 +330,7 @@ export function scanFolder(forceRefresh = false) {
         .catch(err => {
             if (err.name === 'AbortError') return;
             console.error(err);
+            state.afterScan = null;
             listStats.textContent = 'Scan failed';
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = 'Error';
@@ -383,6 +389,11 @@ export function showScannedFolder(path, data) {
 
     statusDot.className = 'status-indicator-dot';
     statusText.textContent = 'Ready';
+    if (state.afterScan) {
+        const after = state.afterScan;
+        state.afterScan = null;
+        after();
+    }
 }
 
 /**
@@ -432,6 +443,10 @@ export function visiblePhotos() {
  * know on returning to a folder is how much of it is left.
  */
 export function updateListStats(suffix) {
+    if (state.library) {
+        listStats.textContent = `${state.library.total.toLocaleString()} photos in this view`;
+        return;
+    }
     const { total, tagged, remaining } = taggedCounts();
     if (!total) {
         listStats.textContent = suffix || '0 files loaded';
@@ -447,6 +462,12 @@ export function updateListStats(suffix) {
 export function renderFileList() {
     // Remove old files
     photoList.querySelectorAll('.photo-item-file').forEach(el => el.remove());
+    // A library view has no list: tens of thousands of rows are what the grid's window is for.
+    if (state.library) {
+        updateListStats();
+        updatePhotoPosition();
+        return;
+    }
 
     const filtered = visiblePhotos();
     updateListStats();
@@ -532,6 +553,13 @@ export function renderFileList() {
  */
 export function updatePhotoPosition() {
     if (!photoPosition) return;
+    if (state.library) {
+        // Where the open photo is in the view's order, by its ids -- not the rows of a list.
+        const at = libraryPosition();
+        photoPosition.classList.toggle('hidden', !at);
+        photoPosition.textContent = at ? `${at.index.toLocaleString()} of ${at.total.toLocaleString()}` : '';
+        return;
+    }
     const items = Array.from(photoList.querySelectorAll('.photo-item-file'));
     const index = state.activePhotoPath
         ? items.findIndex(el => el.getAttribute('data-path') === state.activePhotoPath)
@@ -541,6 +569,7 @@ export function updatePhotoPosition() {
 }
 
 export function filterFileList() {
+    if (state.library) return;   // the filter is off in a library view
     if (state.searchTimeout) clearTimeout(state.searchTimeout);
     state.searchTimeout = setTimeout(() => {
         renderFileList();
@@ -572,7 +601,7 @@ export function openFolderView() {
     folderViewContent.classList.remove('hidden');
 
     // Populate Folder View details
-    folderViewStats.textContent = `${state.folderPhotos.length} photos`;
+    folderViewStats.textContent = `${state.library ? state.library.total.toLocaleString() : state.folderPhotos.length} photos`;
     
     upper.renderThumbnails();
     upper.updateSelectedThumbnailsCount();

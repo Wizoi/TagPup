@@ -11,6 +11,8 @@
 //     count()               how many records there are
 //     recordAt(i)           the record at index i, 0 <= i < count()
 //     indexOfKey(key)       optional: where the record with this key is, or -1 (else a scan)
+// A source whose records arrive later (a library view's cards) answers recordAt(i) with a placeholder
+// record of the same key and calls patch([key, ...]) when the real one is there.
 // and the options:
 //     buildCard(record, i)  the card element for a record; an <img data-src="..."> in it is
 //                           given its src by the grid, once it has stayed in view a moment
@@ -427,6 +429,21 @@ export function createVGrid(options) {
             generation++;
             render();
         },
+        /**
+         * These records changed (their cards arrived, or were edited): draw the cards of these keys again from
+         * the source, every other card as it is. A card being edited is left alone.
+         */
+        patch(keys) {
+            let any = false;
+            for (const key of keys) {
+                const entry = live.get(key);
+                if (entry && !isBusy(entry.card)) {
+                    entry.generation = -1;
+                    any = true;
+                }
+            }
+            if (any) render();
+        },
         /** A different list altogether (another folder, a filter): from the top. */
         reset() {
             generation++;
@@ -470,12 +487,16 @@ export function createVGrid(options) {
             const entry = live.get(key);
             return entry ? entry.card : null;
         },
-        /** What is in the DOM: the window's first and last index (exclusive), and the cards. */
+        /**
+         * What is in the DOM: the window's first and last index (exclusive), and the cards; and `viewFrom`, the
+         * first record in the view itself (the window reaches a couple of rows beyond it).
+         */
         extent() {
             return {
                 first: order.length ? order[0].index : 0,
                 end: order.length ? order[order.length - 1].index + 1 : 0,
                 cards: live.size,
+                viewFrom: Math.min(viewFrom, order.length ? order[order.length - 1].index : 0),
             };
         },
         destroy() {

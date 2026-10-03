@@ -141,6 +141,41 @@ class Plans(unittest.TestCase):
             with self.subTest(kind=source.kind):
                 self.assert_searches(lambda conn, s=source: store.total(conn, s), "INDEX")
 
+    # ---- A source's whole id list (phase 9b-2) --------------------------------------------------
+
+    def ids(self, source):
+        return lambda conn: store.all_ids(conn, source, 200000)
+
+    def test_the_whole_id_list_of_all_year_and_month_is_one_read_of_the_date_index_in_order(self):
+        for source, index in ((store.Source(store.ALL), "idx_photos_taken"), (store.Source(store.YEAR, 2016), "idx_photos_year"),
+                              (store.Source(store.MONTH, "2016-02"), "idx_photos_taken (taken>? AND taken<?)")):
+            with self.subTest(kind=source.kind):
+                text = self.assert_searches(self.ids(source), index)
+                self.assertNotIn("TEMP B-TREE", text)
+
+    def test_the_whole_id_list_of_a_folder_a_keyword_and_a_person_scans_no_table(self):
+        self.assert_searches(self.ids(store.Source(store.FOLDER, self.top, True)), "idx_photos_path_nocase (path>? AND path<?)")
+        self.assert_searches(self.ids(store.Source(store.FOLDER, self.folder, False)), "idx_photo_folder_folder (folder_id=?)")
+        self.assert_searches(self.ids(store.Source(store.KEYWORD, "Trips")), "idx_photo_tags_tag (tag_id=?)")
+        found = self.plan_of(self.ids(store.Source(store.PERSON, "Wren Halloway")))
+        self.assertIn("idx_photo_people_name (name=?)", "\n".join("\n".join(lines) for _statement, lines in found))
+
+    def test_id_plans_gives_each_statement_with_its_plan_for_the_measurement_script(self):
+        conn = db.connect(db.readonly_uri(self.vl.path), uri=True)
+        try:
+            statements, elapsed = store.id_plans(conn, store.Source(store.ALL), 1000)
+        finally:
+            conn.close()
+        self.assertEqual(2, len(statements), "the dated photos, then the undated")
+        self.assertTrue(all(lines and lines[0].startswith("SEARCH") for _sql, lines in statements))
+        self.assertGreaterEqual(elapsed, 0)
+
+    def test_the_whole_id_list_reads_the_ids_and_nothing_else(self):
+        for source in (store.Source(store.ALL), store.Source(store.KEYWORD, "Trips"), store.Source(store.FOLDER, self.top, True)):
+            for statement, _lines in self.plan_of(self.ids(source)):
+                for column in ("raw_metadata", "tags", "captions", "embedding", "vector"):
+                    self.assertNotRegex(statement, r"\b%s\b" % column)
+
     # ---- The cards and the navigator ----------------------------------------------------------
 
     def test_the_cards_are_a_lookup_by_primary_key(self):
@@ -155,6 +190,8 @@ class Plans(unittest.TestCase):
                     if "FROM roots" in statement:
                         continue   # the library's roots: a row or two
                     for line in lines:
+                        if line.startswith("SCAN (subquery"):
+                            continue   # the per-set count of the keywords' one pass: its inner scan is checked below
                         if line.startswith("SCAN"):
                             # photo_tags is WITHOUT ROWID: its primary key is the table, read in photo order
                             self.assertTrue("COVERING INDEX" in line or line == "SCAN photo_tags" or "tag_taxonomy" in line

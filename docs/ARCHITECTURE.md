@@ -857,7 +857,8 @@ click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
   total; and the navigator's counts (folder tree, tag tree, people, years and months),
   each one query. Routes and specs; EXPLAIN QUERY PLAN on photo_index for each.
 - **9b. One grid on photo ids.** *(9b-1, built 2026-10-02, not merged: the windowed grid and the folder view on it, see
-  "Phase 9b-1" below; 9b-2, a library source fed by `/api/library/view`, next.)* The grid, the details panel, the selection and the bulk
+  "Phase 9b-1" below; 9b-2, a library source fed by the order of a view and the cards near the window, built 2026-10-03, see
+  "Phase 9b-2" below.)* The grid, the details panel, the selection and the bulk
   edits take a source and work on photo ids; today's folder view becomes the "folder on
   disk" source through the same components. Only the cards on screen (and a screen
   either side) exist in the DOM. Exit: a 20,000-photo keyword scrolls without a stall,
@@ -1182,6 +1183,177 @@ The page only: no route, no migration. A folder opens as it did; what changes is
   of 400 and the bulk write that follows, a card's menu after it was recycled, a title being typed while scrolling away,
   a rename, the filter, a photo opened and closed, two folders, a size change, a damaged photo scrolled to, one owner of the
   selection), `selection-follows-the-photo.test.mjs` (the two fixes, which failed on the trunk).
+
+### Phase 9b-2: a library source for the grid *(built 2026-10-03; branch `arch/phase-9b2-library`)*
+The page, and three routes under it. The grid of 9b-1 shows a view of the library as it shows a folder: the whole library, a year,
+a month, a keyword and everything under it, a person, or a folder and its subfolders, from the database, in the same grid, details
+panel and selection. Nothing is migrated and nothing of a folder's machinery runs while one is open.
+
+- **Three routes** (specified in SPEC_TAGPUP_GUI; loopback only, through the Roots gate and ingress, a library not at migrations 19
+  and 20 answered the same sentence as the others). `GET /api/library/ids?kind=&value=|folder=&recursive=` answers `{source, total,
+  ids, complete}`: the source's whole id list in `view`'s order (Date Taken, then id, the undated after by id), **one read of ids
+  alone**, one statement for the dated photos and one for the undated, each an index-ordered read (`tagpup.store.library_view.all_ids`;
+  the plans are `view`'s without the keyset, `tests/test_library_view_plans.py`), cut at 200,000 with the real `total` and `complete:
+  false`. `GET /api/library/cards?ids=1,2,3` answers `{cards}` for at most 200 ids, the cards 9a-2 builds, in the order asked, each
+  once, an id the library has no photo of simply absent. `GET /api/library/photo?id=` answers `{photo}`, the record a folder's scan
+  gives a photo (`services.photos.page_record`: tags, people, title, mtime, size, year, taken, raw metadata) read from the library's
+  row, no file touched, and `id`: **this third route was not in the brief**; the details panel and every edit work on such a record by
+  path, a card (id, name, path, taken, damaged, thumb) is not one, and the other way to a photo's tags was `/api/folder/scan` of its
+  whole folder, which walks the disk. `/api/library/view` is unchanged and unused by the page: the keyset cannot jump to the middle of
+  68,000 photos.
+- **The address is the view**: `?view=<all|folder|keyword|person|year|month>&value=<v>[&recursive=1]` (a folder by its path, a
+  keyword by its tag, a person by name, a year `2024`, a month `2024-06`; `value` absent for `all`). `library-source.js`
+  (`viewSpecFromSearch`, `viewSearch`) reads and writes it: an unknown kind, a missing value, a year or month that is not one, a value
+  over 1,000 characters is an empty view with a sentence and no request. Opening a view **pushes** an entry (with the scroll offset of
+  the one left saved in its history state), so Back and Forward move between views and between a view and the folder, and a bookmark
+  opens one; a view opened from Back or Forward writes nothing. A `?view` at start wins over a `?path` (kept as the folder Back returns
+  to). Choosing another dog park goes to that library without the `view`, `value` and `recursive` of the address
+  (`common/library.js`, `goToLibrary`): ids belong to a library.
+- **The source** (`web/tagpup/library-source.js`; every bit of its state is `state.library`, state.js). It implements the grid's three
+  questions: `count()` is the ids; `recordAt(i)` is the card if it is held, else **a placeholder** of the same key (`#<id>`), and asks
+  for the cards around the window; `indexOfKey` is the position of an id. Cards are **keyed by the photo's id**, so a rename redraws
+  nothing. The request for cards is made **once the window has stood still for 100 ms** (the first window of a view at once), at most
+  every 100 ms x 5 under a scroll that never stops (so about two a second), for the window and half a window either side, in batches
+  of 200, **two at a time**; a batch for a part of the view the window has left is **cancelled** (the request is aborted, nothing is
+  painted from it), and the cards that arrive are drawn by `vgrid.patch(keys)` (new: the cards of these keys are drawn again from the
+  source, the rest left as they are). **The cards held are the 2,000 last used**; the far ones are let go. A batch that fails is tried
+  once more -- after 2 s or at the next scroll, whichever is first -- and its placeholders then say "Could not load" and are not
+  asked for again until Refresh view: no loop. A photo whose card the library does not return (deleted since the order was read) is
+  dropped from the order and the total, quietly. The order is **one array** (`lib.ids`, the response's own, 68,000 numbers); `indexOf`
+  finds a position on a click, not per frame.
+- **The view** (`web/tagpup/library-view.js`): opening and closing, the strip above the grid (the source, its total, "Opening...",
+  "Refreshing...", "Selecting N of M...", what went wrong; **Refresh view** and **Back to folder view**), the address, and the gear's two
+  items. **Browse the whole library** opens `all`; **Library view of this folder** (greyed with no folder open) opens the open folder
+  and its subfolders. **Refresh view** (and the sidebar's Refresh) asks for the order again, forgets the cards, and scrolls back to the
+  photo that was first in the view; an order that cannot be read leaves the view as it was and says so. The order is **not recomputed
+  by an edit**: a photo edited so that it would sit elsewhere, or no longer be in a keyword view, keeps its place until the view is
+  refreshed, and its card is updated in place (`applyEditedRecords`: path, name, title, date from the record the details panel holds).
+- **The folder's machinery is idle while a view is open** (`quietTheFolder`): the scan under way is aborted, `scannedFolder` is null,
+  the suggestion and index pollers stop, nothing asks `/api/folder/membership` or `/api/folder/damaged` (every photo of a view is held;
+  a card says whether its photo is damaged), the add-folder question cannot open, Suggest, Auto-apply, Smart Rename and Camera Time
+  Shift are off (the last two work on a folder; across folders they arrive with 9d, and the brief's "keep" would have sent the server
+  a folder it does not have), the filter is off with a tooltip, **no list is built** (`renderFileList` returns at once: "68,472 photos
+  in this view" and "N of M" for the open photo), nothing is kept in this browser's folder cache, and a folder opened from the box or
+  by Back closes the view and reads the folder as ever.
+- **A card is its photo's cache thumbnail** (`/api/photo-thumb` by id with its `v`, through `api.image`), name, date written whole
+  (a view spans years), a damaged or incomplete mark from the card's own flag. The card has no title: **the 9a-2 card read has no
+  `captions` (a test holds it), so a library card shows the file name**, which Smart Rename makes of the caption; a title edited in
+  the details panel shows on its card at once. Its title cannot be edited on the card (the card has no tags to send with it).
+- **Selecting stays by path** (`selected.js`, unchanged). A click is the card's path; a Shift-range or Select all over cards not held
+  **fetches those cards for their paths** (3 requests of 200 at a time, "Selecting N of M..." in the strip, replaced by a newer
+  selection, abandoned when the view closes, all or nothing), and **Select all / Invert of more than 5,000 photos asks "Select all
+  N photos?" first**. The selection panel does not tally tags and people of a selection it cannot count ("Not tallied for a library
+  view"); the bulk editor writes by path through the existing routes, a body of 68,000 paths for a Select all.
+- **The details panel** opens a card by id: the record is read (`/api/library/photo`) and is the page's only full record, in
+  `state.folderPhotos` as a folder's photos are (so title, tags, people, date, rotate, delete work as ever, by path). Previous and
+  Next (arrow keys, swipe) and "N of M" follow the view's order by `ids`; two quick presses go two photos on. A photo the library no
+  longer has is dropped from the view. A rotate asks for its card again (its thumbnail's `v` changed); a delete takes its card away,
+  drops the total and opens the next photo. Same-as-previous (Ctrl+D) is off: the photo before is not in the page.
+- **The record is as fresh as a folder scan's, and a write names the file it was built from** *(review of 9b-2, findings #533)*. The panel
+  sends a photo's whole tag list on a tag add, a Date Taken edit and carry forward, and the server writes it as given; a record built from
+  the library's row (a view) or from this browser's half-hour cache of a scan (a folder) says less than the file when another program
+  added a keyword after the index read it, or when the row is Suggest's (a path and no stamp): the next save removed what the file held.
+  So: (1) `/api/library/photo` takes the file's stamp and sets it against the row's (`store.photos.describes`: size equal, time within
+  0.1 s); where they agree the row is the record, where they do not -- or the row has no stamp -- the file is read with ExifTool as the
+  folder scan reads it (`services.photos.read_file`); the record's `mtime` and `size` are the file's; a file that is gone is the row with
+  `missing`. (2) Every metadata write the panel makes -- a save of tags, title or people, the Date Taken edit, carry forward, Apply a
+  suggestion, the card's title in a folder -- sends `stamp: {mtime, size}` of its record, and `tagging.save_photo` (under the lock of
+  changes to files, before it reads) refuses with `409`, `changed_on_disk` and "This photo changed on disk since you opened it: reload it
+  first." when the file's stamp differs or the file is gone, writing nothing; held and file-only (Just look) photos alike, and a call
+  with no stamp (the CLI, the MCP) as ever. The page (`edits.js photoChangedOnDisk`, `photo.js reloadChangedPhoto`) reads the photo again
+  -- a view's by id, a folder's by scanning the folder (`scanFolder(true, {keepTyped})`, which asks nothing about what was typed: it stays
+  in its fields) -- and says so in the status line and the alert; nothing is merged and nothing overwritten. A successful write's reply
+  carries the new `mtime` and `size` (a rename by the caption: of the file under its new name) and the record takes them, so the next save
+  passes; bulk tags reports each photo's (`stamps`; it adds and removes against the file's own tags, so it needs no precondition),
+  rotate reports `size` with `mtime`. Auto-apply and Smart Rename read the folder again, so their records are fresh.
+- **The stamp is the cheap first check; the base is the real one** *(review of the fix, findings #549 to #552)*. A stamp can be kept: a
+  copy keeps its times, and a same-length rename of a tag with the time put back changes the keywords and nothing the stamp sees. So
+  the page also keeps, with each record, what it read of the two things a save overwrites -- `base: {tags, title}` (`edits.js baseOf`,
+  taken from the record the first time it is needed) -- and sends it with every write that carries a whole list or caption: a save of
+  tags, title or people, the Date Taken edit, carry forward, applying a suggestion, a folder card's title. `tagging.save_photo`, under
+  the file-changes lock and after it has read the file's current state, compares the file's keywords (as a SET of paths, `_tags_held`)
+  and caption (the first, trimmed) with `base`; any difference is `409` `changed_on_disk` with the same sentence and nothing written;
+  a field the save does not touch (a rating) is not compared, so another program's rating is no refusal. The page takes the next
+  `base` from each reply (`base`: the tags and caption as written), and from the replies of bulk tags (`written`) and of undo, which
+  also give the stamp (`edits.js takeWritten`: undo had left the record with the old one, so the next save was refused and the old
+  stamp survived in the folder cache); the server's cached scan takes the file's stamp from a bulk write too (`_records_written`).
+  A call with neither `stamp` nor `base` (the CLI, the MCP) is no check, as it was. **A photo ExifTool could not read when it was opened**
+  (`read_error` of the reader, an empty file for one: `page_record` keeps it as `unreadable: true`) is not saved from: the page says
+  "This photo could not be read just now: reopen it." and sends nothing, and the server refuses a page's save (one with a stamp) whose
+  `base` is null with the same sentence, so a record that shows no tags because the read failed never replaces the keywords of a file
+  that reads now. The cost is about a hundred bytes a save (`base` of a photo with three tags and a caption).
+- **A bulk write is asked about and capped** *(findings #535)*. A selection over 200 photos asks "Add Trips/Coast to 3,412 photos?" (the
+  write named, `selection.js confirmBulkWrite`) before any bulk tag, person or removal; the server refuses a request of more than 5,000
+  photos with `400` "Narrow the selection: bulk edits over 5000 photos arrive with the editing stage" -- bulk tags and Smart Rename; the
+  page says the same without sending, **before** a typed name is resolved (resolving may make a tree node: a refused or cancelled bulk
+  makes none, findings #554). A job with progress, cancel and undo of its own is 9d's. Accepted and left: time-shift and auto-apply take a
+  folder and have no cap, and the undo of an auto-apply over 5,000 photos is refused by the cap.
+- **The tag tree's counts are one pass of `photo_tags`** *(findings #534)*. `/api/taxonomy/tree` parsed every photo's tags JSON for
+  `usage_count` (`store.photos.tag_usage`): 350 ms on a synthetic library of photo_index's scale (68,466 photos, 159,651 `photo_tags`
+  rows, 931 nodes), which held the Python process at page start so that `/api/library/ids` and `/api/tags` waited behind it. It now
+  reads `photo_tags` (`library_view.keyword_counts`, whose per-photo grouping SQLite does: Python sees the distinct tag sets, not 68,000
+  photos): **68 ms**, the same counts node for node (`tests/test_tag_usage_from_photo_tags.py`); a library without the derived tables
+  is counted from the JSON as before. **What a count means** *(findings #553)*: it follows the views' derivation, so a keyword with no
+  node counts toward nothing (the old lineage count credited the levels above it: 4 such keywords on 32 uses in photo_index), and a
+  keyword that differs from a node only in case or spacing counts toward that node (`tests/test_tag_usage_from_photo_tags.py` pins both). With the page's first three requests in flight together: tree 785 -> 122 ms, ids 830 -> 170 ms,
+  tags 920 -> 260 ms (`/api/tags` is itself 260 ms there: not looked at). So the "85-330 ms in the page" of the ids request was mostly
+  the tree route holding the process, not the route (30 ms alone). Re-measured on the sandbox copy with `measure_library_view.py` on a
+  machine eight times slower than the earlier runs (copying the library took 219 s, not 15), so its absolute numbers are not comparable;
+  navigation to the ids reply of `?view=all` was 385 ms (304-529) against 458 ms (448-591) before.
+- **A reply about the folder after a view opened shows nothing** *(findings #536)*: an index-status or suggest-status reply that lands
+  once a view is open returns at once (it unhid the progress containers and set `folderSuggestions` over the view). A photo opened from a
+  view carries what the library records of its damage (`damaged`, `damage` in the record), so the panel shows the note and asks for no
+  picture of a file recorded unreadable; `/api/library/photo` reads `id` as digits only.
+- **Measured** with `scripts/measure_library_view.py --run` (plan without `--run`; `--code-root <a git archive of the trunk>` for the
+  baseline, which has no library view, so only the folder view is measured). The sandbox is `scripts/sandbox.py`'s: a copy of
+  photo_index (68,472 photos, 2.6 GB; the server migrated it to 20 as it opened it), a free port, headless Chromium 1600 x 1000, a fresh
+  browser for each open, the thumbnail requests answered by the browser's own routing with a 1-pixel picture (the sandbox has no
+  photos; the requests are counted, not decoded), deleted afterwards. Three rounds, medians; this machine was not quiet (the trunk's
+  759-photo folder opens in 112 ms here, 55 in 9b-1's table). There is **no library view on the trunk to baseline against**, so the
+  library numbers are read against the folder view's of 9b-1 and of the trunk in the same session (last two rows).
+
+  | the click (68,472 photos) | this branch (median of 3; range) |
+  |---|---|
+  | (a) open `?view=all`: the ids reply to the first window of cards painted, main thread idle | 41 ms (40-55) |
+  | the same: thumbnails first asked for (the 120 ms rule) / navigation to painted / navigation to the ids reply | +152 ms / 504 ms (498-631) / 458 ms (448-591) |
+  | the ids request in the page (390 KB, 68,472 ids): the route in-process, 30 ms (23 SQLite, 4 JSON) | 85-330 ms before the tree fix (it waited behind `/api/taxonomy/tree`); a request of one card is 5-6 ms |
+  | (b) open the keyword node of 41,448 photos: the ids reply to painted, idle (ids 236 KB) | 39 ms (38-45); navigation to painted 438 ms; thumbnails asked +151 ms |
+  | (c) scroll `all` top to bottom in 10 s (2.87 million px): frames / longest / over 33 ms / over 100 ms | 601 at 16.8 ms at most / no long task / 0 / 0 |
+  | the same: DOM nodes at the peak / JS heap at the peak (4.4 MB after opening) | 500 / 4.8 MB |
+  | the same: requests made: ids / cards / thumbnails | 0 / 15 (1.5 a second) / 27 |
+  | (d) the scroll bar dragged to the middle, a third, two thirds: until the cards in view are real and painted | 208 ms (48-273; the 48 is a place already drawn); 1 card request; no long task |
+  | (e) the library view of the largest library folder (759): the ids reply to painted, idle | 56 ms |
+  | (e) the 759-photo folder view: scan reply to painted, idle / longest task / scroll 3 s p95 frame, frames over 100 ms | 93 ms / 50 ms / 50.1 ms, 0 (the trunk: 112 ms / 60 ms / 50.1 ms, 0) |
+
+  What the numbers do **not** show: the photos are not in the sandbox (the thumbnail requests were answered by the browser with a
+  1-pixel picture, so the server's 5 ms a cached thumbnail and 47 ms a first one, 9a-2, are not in them), a person's browser is not
+  headless, and the ids request was 3 to 10 times its handler on this machine: that was the tag tree's route holding the process at page
+  start (see the tree's counts above), not the route. `EXPLAIN QUERY PLAN` of the id lists on the copy: `all`, a year and a month
+  `SEARCH ... COVERING INDEX idx_photos_taken` / `idx_photos_year` with no sort; a folder with subfolders `SEARCH p USING INDEX
+  idx_photos_path_nocase (path>? AND path<?)` and a temp b-tree for the order; the keyword two seeks of the tree, `photo_tags` by
+  `tag_id`, `p` by primary key and a temp b-tree (104-124 ms for 41,448 ids in SQLite alone, as 9a-2's page of it); no `SCAN` of photos
+  (`tests/test_library_view_plans.py`).
+- **How it fails**, each a test (`tests/frontend/library-view.test.mjs`, `tests/test_library_ids_routes.py`): a scroll through thirty
+  windows asks for the one it stopped at; a batch for a window left is cancelled and not painted; the scroll bar dragged to the end
+  (placeholders, then the last photos); cards bounded; a failed batch tried once more and then not at all; a partial answer dropped
+  quietly; two quick changes of view (the first's order and cards never painted into the second); Back and Forward between a folder and
+  a view and between two views (the offset restored); a bad address, a keyword with no node, a library behind (the sentence), an
+  unplaced root (the banner); a source of 0 and of 1; the panel open while the view refreshes; a selection through a refresh; Select all of
+  68,000 asking first and selecting every path once; right-click on a placeholder naming no photo; damaged and incomplete cards;
+  thumbnails asked only after 120 ms in view; ids that change under the page (the total as it was until Refresh view); a scan still
+  out when a view opens landing nowhere; another dog park dropping the view.
+- **What 9c must know.** A view is opened by `openLibraryView({kind, value, recursive})` (`library-view.js`); the navigator's Folders,
+  Keywords, People and Dates call it, and `/api/library/navigator` is asked again after an edit (a count is read at each call). The
+  strip is where its "header says which source" lives; the sidebar is empty in a view (the navigator takes its place). A card carries
+  `damaged` and `damage` only: 9c's staleness marks (size and modified time, "missing") are new card fields, and a card whose photo is
+  gone shows a broken picture today (the thumbnail route answers a 404 sentence). `state.libraryReturn` is the folder Back returns to.
+  The folder cache and the folder's scroll are not restored by Back (a folder is read again from the cache of the scan, at the top).
+- **What 9d builds on.** `selected.js` is by path because every write route is; a card has its `id`, and `selectInLibrary` is the one
+  place that turns a range of ids into paths -- with id-based writes it disappears and Select all of 68,000 is instant. The selection
+  panel's tallies need a server answer for a selection by ids. Smart Rename and Camera Time Shift need a form across folders.
+- **Known limits.** The cards of a view show file names, not captions. The order is not live. A body of 68,000 paths is a long request.
+  The first ask of a keyword view of 41,000 photos sorts its ids (100 ms in SQLite); `all`, a year and a month read an index in order.
+  The ids of a source over 200,000 photos are cut there. Tab visits only the cards that exist (as in 9b-1).
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1, the rest design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag

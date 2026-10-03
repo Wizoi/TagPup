@@ -19,7 +19,7 @@ from face_rows import people_of  # noqa: E402
 from tagpup.core import vocabulary  # noqa: E402
 from tagpup.core.result import NotFound, Result  # noqa: E402
 from tagpup.services import tags  # noqa: E402
-from tagpup.store import db, people as store_people, photos as store_photos, taxonomy  # noqa: E402
+from tagpup.store import db, derived, people as store_people, photos as store_photos, taxonomy  # noqa: E402
 
 
 class TreeCase(unittest.TestCase):
@@ -59,6 +59,8 @@ class TreeCase(unittest.TestCase):
         rebuilt from them."""
         path = self.lib.photo(name)
         self.lib.add_row(path, tags=list(tags_) + ["People/" + person for person in people])
+        # A photo's keywords are in photo_tags as the writers keep them (the tree's counts read it, #534).
+        db.write_with_connection(self.lib.library.path, derived.rebuild_all, label="test: derived tables")
         self.rebuild(path)
         return path
 

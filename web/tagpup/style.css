@@ -790,6 +790,72 @@ body {
     overflow: hidden;
 }
 
+/* A view of the library: the strip that says which, above the grid. */
+.library-strip {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 8px 14px;
+    margin-bottom: 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    font-size: 13px;
+}
+
+.library-strip-source {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 50%;
+}
+
+.library-strip-status {
+    color: var(--text-muted);
+}
+
+.library-strip-status.library-strip-problem {
+    color: #f59e0b;
+}
+
+.library-strip-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.library-strip-back {
+    color: var(--accent);
+}
+
+/* The place of a card not fetched yet: a card's shape, quiet, with nothing to click. */
+.thumbnail-card.placeholder {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.thumbnail-card.placeholder:hover {
+    transform: none;
+    border-color: var(--border-color);
+    box-shadow: none;
+}
+
+.thumbnail-placeholder-note {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
 .folder-view-header-card {
     background: rgba(15, 23, 42, 0.4);
     border: 1px solid var(--border-color);

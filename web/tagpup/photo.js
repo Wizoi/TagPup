@@ -2,7 +2,7 @@
 // forward, opening, rotating and deleting it, and editing when it was taken.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { baseName, isUnc } from './common/paths.js';
+import { baseName, isUnc, pathKey } from './common/paths.js';
 import { photoAlreadyHas } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -26,9 +26,10 @@ import {
     leavePhotoThen, postPhotoMetadata, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
 } from './edits.js';
-import { renderFileList, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
+import { renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
 import { damageOf, showPhotoDamage } from './damaged.js';
 import { removeFromSelection } from './selected.js';
+import { cardDamage, fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
 
 // ---- Detected faces ----------------------------------------------------
 // Face recognition already ran for this photo -- the suggester needs it to propose
@@ -156,7 +157,86 @@ export function selectPhoto(path) {
     // Every way to another photo comes through here -- rows, the grid, the
     // context menu, the arrow keys and swipes -- so this is where it asks.
     if (path === state.activePhotoPath) showPhoto(path);
-    else leavePhotoThen(() => showPhoto(path));
+    else leavePhotoThen(() => openPhoto(path));
+}
+
+/** Show a photo: a folder's is in the page; a library view's is read from the library first. */
+function openPhoto(path) {
+    if (!state.library) {
+        showPhoto(path);
+        return;
+    }
+    const held = state.folderPhotos.find(p => p.path === path);
+    if (held) {
+        state.library.activeId = held.id;
+        showPhoto(path);
+        return;
+    }
+    const id = libraryIdOfPath(path);
+    if (id !== null) openLibraryPhoto(id);
+}
+
+/**
+ * Put a library photo's record in the panel: the page's only full record, and what the library records of its
+ * damage, so the panel says why and asks for no picture of a file recorded unreadable.
+ */
+function showLibraryRecord(lib, record) {
+    state.folderPhotos = [record];
+    lib.activeId = record.id;
+    const damage = record.damaged ? cardDamage(record) : null;
+    state.damagedPhotos = damage ? { [pathKey(record.path)]: { ...damage, path: record.path, found: 'by an earlier check' } } : {};
+    showPhoto(record.path);
+}
+
+/**
+ * The photo's file changed since the page read it and a write was refused (edits.js photoChangedOnDisk): read it
+ * again, and show what the file holds now. A library view's photo is read from the library by id; a folder's, by
+ * reading the folder again.
+ */
+export function reloadChangedPhoto(photo, after = () => {}) {
+    const lib = state.library;
+    if (lib && photo.id !== undefined) {
+        return fetchLibraryRecord(photo.id).then(record => {
+            if (!record || lib !== state.library) return;
+            if (state.activePhotoPath === photo.path) showLibraryRecord(lib, record);
+            else state.folderPhotos = [record];
+            upper.renderThumbnails();
+            after();
+        }).catch(err => console.error('Could not read the photo again:', err));
+    }
+    state.afterScan = after;
+    return scanFolder(true, { keepTyped: true });
+}
+
+/**
+ * Open the photo `id` of the library view in the details panel. The panel and every edit work on a record
+ * by path (as a folder's photos are); a library view's photo is read whole from the library when it is
+ * opened, and the page holds it alone. A photo the library no longer has is dropped from the view.
+ */
+export function openLibraryPhoto(id) {
+    const lib = state.library;
+    if (!lib) return Promise.resolve(false);
+    lib.openToken += 1;
+    lib.wantedId = id;
+    const token = lib.openToken;
+    const done = () => { if (token === lib.openToken) lib.wantedId = null; };
+    return fetchLibraryRecord(id).then(record => {
+        if (!record || lib !== state.library || token !== lib.openToken) {
+            done();
+            return false;
+        }
+        leavePhotoThen(() => {
+            done();
+            if (lib !== state.library || token !== lib.openToken) return;
+            showLibraryRecord(lib, record);
+        });
+        return true;
+    }).catch(err => {
+        done();
+        console.error(err);
+        setStatus('error', `Could not open the photo: ${err.message}`, { transient: false });
+        return false;
+    });
 }
 
 export function showPhoto(path) {
@@ -221,6 +301,8 @@ export function showPhoto(path) {
  * backwards from the first photo yields nothing rather than wrapping around.
  */
 export function previousPhotoTags() {
+    // The photo before this one in a library view is not in the page.
+    if (state.library) return { tags: [], from: null };
     const items = Array.from(photoList.querySelectorAll('.photo-item-file'));
     const index = items.findIndex(
         el => el.getAttribute('data-path') === state.activePhotoPath
@@ -556,7 +638,10 @@ export function rotatePhoto(direction) {
             // The photo's new mtime is its images' new URL, here and in the grid.
             const photo = state.folderPhotos.find(p => p.path === path) || { path };
             photo.mtime = data.mtime || Date.now() / 1000;
+            if (Number.isFinite(data.size)) photo.size = data.size;
             mainImage.src = photoFileUrl(photo, 800);
+            // A library view's card has the file's old stamp in its thumbnail's address: asked for again.
+            if (state.library && photo.id !== undefined) refetchCards([photo.id]);
             const thumb = document.querySelector(
                 `#thumbnails-grid [data-path="${CSS.escape(path)}"] img`);
             if (thumb) {
@@ -613,7 +698,21 @@ export function deleteActivePhoto() {
         body: JSON.stringify({ path })
     })
     .then(data => {
-        if (data.success) {
+        if (data.success && state.library) {
+            // The photo leaves the view: its card goes and the total drops. The next one in the order opens.
+            const lib = state.library;
+            const gone = state.folderPhotos[index];
+            const at = lib.ids.indexOf(gone.id);
+            state.folderPhotos = [];
+            lib.activeId = null;
+            removeFromSelection([path]);
+            forgetPhoto(gone.id);
+            const nextId = lib.ids[at] !== undefined ? lib.ids[at] : lib.ids[at - 1];
+            if (nextId === undefined) showFolderView();
+            else openLibraryPhoto(nextId);
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Ready';
+        } else if (data.success) {
             // Remove photo from client folderPhotos array
             state.folderPhotos.splice(index, 1);
 

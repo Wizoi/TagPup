@@ -1,7 +1,7 @@
 // TagPup's page: what the selected photos hold, and tagging them all at once.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { samePath } from './common/paths.js';
+import { pathKey, samePath } from './common/paths.js';
 import { leafOf, photoAlreadyHas, samePerson, tagProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -22,8 +22,8 @@ import {
 } from './tags.js';
 import { renderFileList } from './folder.js';
 import { renderThumbnails } from './grid.js';
-import { queuePhotoWrite } from './edits.js';
-import { isSelected } from './selected.js';
+import { queuePhotoWrite, takeWritten } from './edits.js';
+import { BULK_CONFIRM_ABOVE, BULK_LIMIT, isSelected } from './selected.js';
 
 export function updateSelectedThumbnailsCount() {
     selectedThumbnailsCount.textContent = `Selected: ${state.selectedThumbnails.length}`;
@@ -40,6 +40,10 @@ export function updateSelectedThumbnailsCount() {
         selectionSummaryScroll.classList.toggle('hidden', state.selectedThumbnails.length === 0);
     }
 
+    if (state.library) {
+        showLibrarySelection();
+        return;
+    }
     if (state.selectedThumbnails.length > 0) {
         
         // Gather statistics
@@ -245,6 +249,26 @@ export function updateSelectedThumbnailsCount() {
     }
 }
 
+/**
+ * The selection panel for a selection in a library view. The page holds only the cards near the window, so the
+ * tags and people of the selection are not tallied (a count of a part would read as the whole); the bulk
+ * editor below writes by path, as it does for a folder.
+ */
+function showLibrarySelection() {
+    selectionDateLabel.textContent = 'Date Taken';
+    selectionDateValue.textContent = '--';
+    const note = buildElement('span', {
+        style: 'color: var(--text-muted); font-size: 12px; padding: 4px 0;',
+        text: 'Not tallied for a library view',
+    });
+    if (selectionPeopleList) replaceContent(selectionPeopleList, note.cloneNode(true));
+    if (selectionTagsList) replaceContent(selectionTagsList, note.cloneNode(true));
+    if (selectionSuggestedPeopleList) selectionSuggestedPeopleList.innerHTML = '';
+    if (selectionSuggestedTagsList) selectionSuggestedTagsList.innerHTML = '';
+    btnApplyRename.disabled = true;
+    upper.updateFolderAutoApplyState();
+}
+
 //: Auto-apply writes everything the panel offers, so there is no bar to be below
 //: any more. The score is still shown, because how sure the machine was is worth
 //: knowing before you press a button that writes to every selected photo -- but it
@@ -340,9 +364,15 @@ function queueBulkTags({ label, busy, failed, targets, add = [], remove = [], wr
             }
             // A photo found damaged was skipped, nothing written to it: its record stays.
             const skipped = (data.skipped || []).map(each => each.path);
+            // Each photo written is of the file as it is now: the stamp its next save names.
+            const stamps = new Map(Object.entries(data.stamps || {}).map(([path, stamp]) => [pathKey(path), stamp]));
+            const heldTags = new Map(Object.entries(data.written || {}).map(([path, held]) => [pathKey(path), held]));
             targets.filter(path => !skipped.some(s => samePath(s, path))).forEach(path => {
                 const photo = state.folderPhotos.find(p => p.path === path);
-                if (photo) written(photo);
+                if (photo) {
+                    takeWritten(photo, stamps.get(pathKey(path)), heldTags.get(pathKey(path)));
+                    written(photo);
+                }
             });
             noteSkipped(entry, data.skipped_damaged);
             updateSelectedThumbnailsCount();
@@ -366,6 +396,20 @@ function queueBulkTags({ label, busy, failed, targets, add = [], remove = [], wr
 }
 
 /**
+ * May a bulk write over `count` photos go ahead? One over BULK_LIMIT is refused with the server's sentence; one
+ * over BULK_CONFIRM_ABOVE asks first, naming the write -- "Add Trips/Coast to 3,412 photos?" -- since it runs
+ * under the lock of every write to the library's files, with no progress, for as long as it takes (findings #535).
+ */
+export function confirmBulkWrite(what, count) {
+    if (count > BULK_LIMIT) {
+        alert(`Narrow the selection: bulk edits over ${BULK_LIMIT} photos arrive with the editing stage. ${count.toLocaleString()} are selected.`);
+        return false;
+    }
+    if (count > BULK_CONFIRM_ABOVE) return confirm(`${what} ${count.toLocaleString()} photos?`);
+    return true;
+}
+
+/**
  * Apply a tag to a given set of photos.
  *
  * A suggestion belongs to the photos that produced it, not to whatever happens to
@@ -374,6 +418,7 @@ function queueBulkTags({ label, busy, failed, targets, add = [], remove = [], wr
 export function applyTagToPhotos(tag, isPerson, paths) {
     const targets = (paths || []).filter(Boolean);
     if (targets.length === 0) return;
+    if (!confirmBulkWrite(`Add ${tag} to`, targets.length)) return;
     return queueBulkTags({
         label: `Add ${tag} to ${targets.length} photo(s)`,
         busy: 'Applying tag...',
@@ -405,6 +450,7 @@ export function removeTagFromAllSelected(tagOrTags, isPerson) {
     const tags = Array.isArray(tagOrTags) ? tagOrTags : [tagOrTags];
     if (tags.length === 0) return;
     const leaves = tags.map(t => leafOf(t).toLowerCase());
+    if (!confirmBulkWrite(`Remove ${tags.join(', ')} from`, state.selectedThumbnails.length)) return;
     return queueBulkTags({
         label: `Remove ${tags.join(', ')} from ${state.selectedThumbnails.length} photo(s)`,
         busy: 'Removing tag...',
@@ -435,6 +481,8 @@ export async function bulkAddPeopleToSelection() {
         return;
     }
     const targets = state.selectedThumbnails.slice();
+    // Before a name is resolved: resolving may make a tree node, and a refused or cancelled write makes none.
+    if (!confirmBulkWrite(`Add ${peopleList.join(', ')} to`, targets.length)) return;
 
     const resolvedPeople = [];
     for (const p of peopleList) {
@@ -480,6 +528,7 @@ export async function bulkAddTagsToSelection() {
         return;
     }
     const targets = state.selectedThumbnails.slice();
+    if (!confirmBulkWrite(`Add ${tagsList.join(', ')} to`, targets.length)) return;
 
     const resolvedTags = [];
     for (const t of tagsList) {
