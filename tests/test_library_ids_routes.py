@@ -129,7 +129,9 @@ class TheCards(Routes):
         self.assertEqual([self.b, self.c, self.a], [card["id"] for card in found["cards"]])
         shown = {card["id"]: card for card in self.get("/api/library/view?kind=all").get_json()["cards"]}
         for card in found["cards"]:
-            self.assertEqual(shown[card["id"]], card)
+            # The route's cards are the view's, and say besides (phase 9c) when the file is not as the row says
+            # (tests/test_library_cards_stale.py): these rows have no files.
+            self.assertEqual(shown[card["id"]], {key: value for key, value in card.items() if key != "stale"})
 
     def test_an_id_the_library_has_no_photo_of_is_absent_and_a_repeat_is_once(self):
         _, found = self.cards("%d,999999,%d,%d" % (self.a, self.b, self.a))

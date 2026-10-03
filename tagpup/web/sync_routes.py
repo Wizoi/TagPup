@@ -27,7 +27,7 @@ from tagpup import runtime as runtimes
 from tagpup.services import damaged_photos
 from tagpup.services import settings as settings_service
 from tagpup.services import sync as sync_service
-from tagpup.web import responses, state, tagpup_routes
+from tagpup.web import activity_routes, responses, state, tagpup_routes
 
 logger = logging.getLogger(__name__)
 routes = Blueprint("sync", __name__)
@@ -40,7 +40,8 @@ def sync_state():
         found = sync_service.last(library)
     except Exception as e:
         return responses.error(500, str(e))
-    return jsonify({"library": library.name, **found})
+    # Whether this process is syncing the library now: the pages say "syncing" beside "last in step".
+    return jsonify({"library": library.name, **found, "syncing": activity_routes.is_syncing(library)})
 
 
 @routes.post("/api/sync")

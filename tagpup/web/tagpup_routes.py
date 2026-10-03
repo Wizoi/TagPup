@@ -666,12 +666,14 @@ def library_ids():
 @routes.get("/api/library/cards")
 def library_cards():
     """The cards of the photos named by `ids` (at most 200), in that order; an id the library has no photo of is
-    left out (tagpup.services.library_view.cards)."""
+    left out (tagpup.services.library_view.cards). Each card's file is looked at, once (`stale`: changed on disk, or
+    missing), which the page marks on the card."""
     if (refusal := _this_pc_only()) is not None:
         return refusal
     library = state.require()
     try:
-        return jsonify({"cards": library_view.cards(library, library_view.read_ids(request.args.get("ids")))})
+        return jsonify({"cards": library_view.cards(library, library_view.read_ids(request.args.get("ids")),
+                                                     check_disk=True)})
     except (Refused, NotFound, paths.RootsError) as why:
         return _view_error(why)
     except Exception as e:

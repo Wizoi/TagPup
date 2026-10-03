@@ -152,6 +152,14 @@ def _task(name):
     return background.task(name) if background is not None else None
 
 
+def is_syncing(library):
+    """Is this process's folder watcher syncing `library` right now? False when it runs none (a test server, a
+    TagPup started without its jobs): the answer is what this process knows, not the library's."""
+    watcher = _task(WATCHER)
+    syncing = watcher.status().get("syncing") if watcher is not None and hasattr(watcher, "status") else None
+    return bool(syncing and str(syncing.get("library", "")).lower() == library.name.lower())
+
+
 def _stamp(seconds):
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(seconds)) if seconds else None
 
