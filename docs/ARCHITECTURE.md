@@ -88,7 +88,7 @@ Guard tests, each of which fails the build. The ones marked *exists* are in plac
 - ExifTool and `Image.open` only inside `tagpup.files`.
 - Entry points import services and jobs, never store, files or ml directly.
 - Every POST route returns a `Result`.
-- Derived tables written only by their rebuild functions.
+- Derived tables written only by their rebuild functions. *Exists:* `tests/test_derived_writers.py`, for `photo_tags`, `folders`, `photo_folder` and `photo_meta`: a function that writes a photo's tags, path or metadata, or the tag tree, goes through `tagpup.store.derived`.
 - Pages: `/api/` URLs built only by `web/common/api.js`. Tags split only by the vocabulary helpers (*exists:* `tests/frontend/tag-vocabulary.test.mjs`).
 - What may be set: one rule for each kind of input, `tagpup.core.validation`, which the pages apply from `/api/rules` and keep no copy of. *Exists:* `tests/test_validation.py`, `tests/frontend/validation.test.mjs`.
 - Pages: nothing but a fixed string written into `innerHTML`, `outerHTML` or `insertAdjacentHTML`; elements are built from text by `web/common/dom.js`. *Exists:* `tests/frontend/dom-output.test.mjs`.
@@ -141,6 +141,9 @@ nothing of Flask's), and each mixed module splits along the layers (phase 5.5).
 | `faces` | decision | `id`; `photo_id` → `photos.id`; `box`; `embedding`; `name`; `name_source`; `excluded`; `excluded_reason`. |
 | `face_crops` | derived | `face_id` → `faces.id`; the JPEG. Kept out of `faces`, so reading faces never drags 6 KB crops along. |
 | `photo_people` | derived | `photo_id`, `name`, `source` (keyword or face). Rebuilt for a photo by one function whenever its keywords, its faces or the tag tree change. Replaces the `photos.people` JSON column. |
+| `photo_tags` | derived | `photo_id`, `tag_id` (the tag-tree node's id). Made by `tagpup.store.derived` from `photos.tags` and the tree, kept by every write of a photo's keywords and by the tree's edits; a keyword with no node has no row and makes none (migration 19). |
+| `folders`, `photo_folder` | derived | The folder tree of the photos' paths (`folders`: `id`, `parent_id`, `path` in row form, `name`) and the folder each photo is directly in (migration 19). A folder has a row for each ancestor of a folder holding a photo, and goes with its last one. The adoption of a root rebuilds them. |
+| `photo_meta` | derived | `photo_id`, `rating`, `make`, `model`, `width`, `height`, `latitude`, `longitude`, from `photos.raw_metadata` (migration 19); width and height are empty until the indexer reads the size. |
 | `tag_taxonomy` | decision | The tag tree. The database is its only home; the `*_taxonomy.json` files become an optional export. |
 | `tag_embeddings` | derived | As today. |
 | `embeddings` | derived | `photo_id`, model key, vector. Replaces the path-keyed `embedding_cache` and `photos.embedding`. |
@@ -152,7 +155,7 @@ nothing of Flask's), and each mixed module splits along the layers (phase 5.5).
 | `settings` | decision | The library's settings (phase 7.6): `key`, `value`, written only through the journal. |
 | `roots` | decision | The library's roots (migration 18; "Roots and machines"): `name`, the share's `address`, `added`. Empty until the owner runs `roots adopt`; opening a library only ever makes the empty table. Written by that one change only, in the transaction that converts the rows under the root. |
 
-Each change ships as a migration with a dry run and a backup, and `tools/doctor.py` checks the library's invariants before and after. Migrations 1 to 18 are listed in `tagpup.store.schema.MIGRATIONS`, each with its kind (additive, data-changing or destructive) and why; 18, `roots`, is additive and empty, and converts nothing.
+Each change ships as a migration with a dry run and a backup, and `tools/doctor.py` checks the library's invariants before and after. Migrations 1 to 19 are listed in `tagpup.store.schema.MIGRATIONS`, each with its kind (additive, data-changing or destructive) and why; 18, `roots`, is additive and empty, and converts nothing; 19, the derived tables of phase 9a, is additive and fills them from the photos' rows, which it checks before it commits.
 
 ## Frontend
 
@@ -800,9 +803,10 @@ The design, to be settled before it starts:
   planned fails the edit's precondition: a conflict, reported for sync to settle per
   file, never overwritten. The views show sync's state ("last in step: ...").
 - **What it needs underneath.** Keywords are JSON in `photos.tags`, so "everything under
-  Trips/" reads every row: a derived `photo_tags(photo_id, tag)` table, indexed and
-  rebuilt from `photos.tags` as `photo_people` is. Folder counts scan the same way
-  (findings #168): a derived folders table, or an index-friendly path range. Browsing
+  Trips/" reads every row: a derived `photo_tags(photo_id, tag_id)` table, by the tree node's id,
+  indexed and kept by the writes as `photo_people` is. Folder counts scan the same way
+  (findings #168): derived `folders` and `photo_folder` tables and an index-friendly path range,
+  both built (see "Phase 9a-1" below). Browsing
   thousands of photos needs cached thumbnails (derived, keyed by photo and modified
   time) and a grid that renders only what is on screen -- the Identify Faces work showed
   what rebuilding tens of thousands of cards costs.
@@ -835,12 +839,12 @@ staleness stand on.
 
 **Stages**, each reviewed and merged on its own; the performance ones measured as the
 click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
-- **9a. What views stand on (server only).** A derived `photo_tags(photo_id, tag_id)` table
-  *(owner, 2026-10-02: identity by id, not by name; see "Identity by id" below)*, `tag_id`
-  the `tag_taxonomy` node's id, indexed on `tag_id`, kept by the writes that keep
-  `photo_people` and rebuilt from `photos.tags` by a migration; "a keyword and everything
-  under it" is the node's descendants, a range on `tag_taxonomy.tag` (unique, indexed) that
-  gives ids, joined to `photo_tags`. A
+- **9a. What views stand on (server only).** In two. **9a-1, built** *(2026-10-02, migration 19; see
+  "Phase 9a-1" below)*: the derived tables `photo_tags(photo_id, tag_id)` *(owner, 2026-10-02: identity by id,
+  not by name; see "Identity by id" below)*, `folders` and `photo_folder`, and `photo_meta`, kept by the writes
+  that keep `photo_people` and rebuilt by the migration and the doctor; "a keyword and everything under it" is
+  the node's descendants, a range on `tag_taxonomy.tag` (unique, indexed) that gives ids, joined to
+  `photo_tags`. **9a-2, to build**: A
   thumbnail cache on disk: derived, keyed by photo id and the file's size and modified
   time, under `data/cache/<library>/thumbs`, made when a photo is indexed or its file
   changes (queued, phase 8's events) and on first ask, dropped when its stamp changes or it
@@ -876,7 +880,92 @@ Exit: the owner can open the whole library by folder, keyword, person or date, m
 between a disk folder and its library view without losing place, and edit from either,
 with every edit undoable and nothing overwritten that changed outside.
 
-### Identity by id *(owner, 2026-10-02; design, not built)*
+### Phase 9a-1: the derived tables the views stand on *(built 2026-10-02; migration 19; branch `arch/phase-9a-derived`)*
+Server and store only: no page, no route, nothing the owner sees until 9a-2 reads them. One additive
+migration makes four tables from the photos' own rows, and `tagpup.store.derived` owns them (docs/DATABASE.md,
+tables 21 to 24):
+- **`photo_tags(photo_id, tag_id)`**, `tag_id` the `tag_taxonomy` node's id *(owner: identity by id)*, indexed on
+  (`tag_id`, `photo_id`). A keyword is matched to the node whose tag it is, else the node it is without case, with
+  its segments trimmed and `|` and `\` read as `/` (`vocabulary.normalize`), the lowest id when two nodes differ only
+  in case (none do on photo_index). **A keyword with no node gets no row and no node is made**: the owner's tree
+  does not change by indexing a photo. On photo_index that is 4 distinct keywords on 32 uses (counted 2026-10-02:
+  151,425 uses on 876 keywords, 872 of them a node's exact tag, none differing only in case or spacing); the doctor
+  lists them by count and, with `--show`, by keyword (`photo tags with no tree node`), reported and not broken. A bare
+  leaf is such a keyword: it is the people rule's to resolve, not the tree's. "A keyword and everything under it" is
+  two seeks of the tree's unique index (`tag = ?` and `tag >= 'tag/' AND tag < 'tag0'`, never LIKE) giving ids, joined
+  to `photo_tags` by `tag_id` (`derived.under`, `photos_under_tag`, `count_under_tag`). A node renamed or moved keeps its
+  id, so its rows are unchanged and its range follows its new path -- the photos' keyword text is rewritten in the files
+  by TagTuner, one transaction after the tree's, and until each is, a photo's old text names no node and is reported; a
+  node deleted takes its rows by a trigger and the keyword is reported, not made again.
+- **`folders(id, parent_id, path, name)` and `photo_folder(photo_id, folder_id)`**, derived from `photos.path`: the
+  folder tree and the folder each photo is directly in. There is **no `folder_id` on `photos`**: it would have been a
+  second migration of every photo row beside the roots one, and a join through `photo_folder` costs one seek. `path`
+  is a path column like the others: the folder in ROW form (`@pictures/2024/Coast` in a library that holds a root,
+  native in one that holds none), unique, compared without case where the filesystem is, `from_row`ed on the way out
+  (`derived.folder_tree`). A folder has a row for every ancestor of a photo's folder up to the top of its spelling --
+  the root of a rooted path, the drive or share of a native one (photo_index would have 2,746 folders: its 2,674 and
+  72 above them, in 3 trees: `@pictures` and two native tops) -- so the navigator can draw the tree. **A folder
+  emptied goes**: its row, and the ancestors only it held, are pruned in the transaction that emptied it
+  (`derived.prune`, called by `move_rows_in`, `forget_photo`, `remove`, `remove_under`); a delete that did not come
+  through the store leaves them, which the doctor reports and does not count as broken (`folders holding no photo`).
+  **The roots' adoption and its undo rebuild the folders** in their own transaction (`derived.rebuild_folders`), verified
+  before it commits, with a step (`folders rebuilt`) the tests stop the process at; an adopted library's folders are those
+  of an unconverted twin, by `from_row`, except that the root is a top (`tests/test_derived_follow_writes.py`). A folder's
+  id is kept while the folder is (AUTOINCREMENT, never reused) and **not kept across an adoption or its undo**, which
+  change every path's spelling: a page names a folder by its path. Per-folder counts: the photos directly in a folder are
+  one GROUP BY of `photo_folder`, those in it and below that rolled up the tree in Python (`derived.folder_tree`, 7 ms for
+  2,700 folders), or one range of `photos.path` (`derived.recursive_count`, which agrees with the roll-up).
+- **`photo_meta(photo_id, rating, make, model, width, height, latitude, longitude)`**, one row for every photo, from
+  `photos.raw_metadata` by one pure function (`tagpup.core.photo_meta`) written after counting the spellings on photo_index:
+  `XMP:Rating` over `EXIF:Rating` (never disagree), an integer from -1 (rejected) to 5; `EXIF:Make`/`Model` over `XMP:`;
+  the signed `Composite:GPSLatitude`/`Longitude` (the EXIF pair has no sign), both or neither, in range, and not the pair
+  0, 0 that a camera without a fix writes (83 latitudes and 107 longitudes on photo_index are exactly 0). **`width` and
+  `height` are empty in every row: no row of photo_index holds `ImageWidth`, `ImageHeight`, `ExifImageWidth` or
+  `Orientation`**, since the indexer does not ask ExifTool for them (`fields.METADATA_FIELDS`). The extraction reads them
+  where a row has them (the picture's own size, then the one EXIF declares, swapped for Orientation 5 to 8 so they are as
+  shown). Asking for them changes what every read records, makes every row of the library differ from a fresh read, and is
+  **the owner's decision, not made here**: until then a size filter has nothing to filter. photo_index would fill 58,551
+  ratings (most 0), 65,011 makes, 63,020 models and 1,485 places.
+
+**Kept by the writes, in their transactions** (the lesson of the bulk tag writes that once did not tell the index): the
+index's `record_indexed` (the batch shares one `derived.Batch`, the tree read inside its transaction, so a record costs 0.103 s
+for 500 photos where it cost 0.080 s), `record_tags`, `record_saved`, `follow_fields` (so a change of files and its undo),
+`record_reads`, `move_rows_in` and `ensure_row`; the tree's edits (`people.tree_edit` reads every photo's keywords once, as
+`people.follow_tree` does, to find those a changed node names: 0.31 s on photo_index warm, measured read-only, under the
+write lock of an edit that adds, moves or takes away a node, and nothing for a flag); the journal's `_derive` after an apply, an undo or a settle,
+and its rehearsal, which compares the derived rows too. A photo deleted, or a node, takes its rows by trigger on any
+connection. They are `journal.DERIVED` and `schema.UNWATCHED`: never journaled, rebuilt, and a migration that makes or
+fills one no longer blocks the undo of an older change (`journal.schema_gap_blocker` asks only of `journal.KEYS`).
+`tests/test_derived_writers.py` fails the build on a function of `tagpup/` that writes a photo's tags, path or
+raw_metadata, inserts or deletes a photo, or writes the tag tree outside `people.tree_edit`, without going through
+`derived`.
+
+**Checks and repair.** `photo_tags_out_of_date`, `photo_folders_out_of_date`, `folders_out_of_date` (the parent chain complete,
+every folder a photo needs there) and `photo_meta_out_of_date` are in `checks.RULES`, so the doctor and the MCP pick them up;
+`tools/doctor.py --rebuild-derived` is a dry run and `--apply` one write that makes the four tables what the photos say and
+verifies it, touching no photo, tag or file (so no backup). Migration 19 itself checks, before it commits, that what it made
+is what a read of the photos finds (`derived tables agree with the photos`). A version of the app from before 19 still writing
+photos to a library at 19 leaves the rows stale; the doctor says so and the repair is the one above.
+
+**Measured** on a synthetic library of photo_index's scale (68,466 photos, 157,000 keyword uses, 2,674 folders, 889 nodes; rows
+as the indexer stores them): migration 19 takes 3.6 s under the write lock, of which 1.6 s is its own check; the plans, with
+no SCAN of the photos' or the tree's tables (checked on photo_index, read-only: a folder's range `SEARCH photos USING COVERING
+INDEX idx_photos_path_nocase`, photos by id `SEARCH ... INTEGER PRIMARY KEY`; the one-per-run reads of every photo, a tree edit's
+and the doctor's, are a `SCAN photos` by design): a tag's ids `SEARCH tag_taxonomy USING COVERING INDEX ... (tag=?)` and
+`(tag>? AND tag<?)`; its photos `SEARCH photo_tags USING COVERING INDEX idx_photo_tags_tag (tag_id=?)` and a temp b-tree for the
+order; the direct counts `SCAN photo_folder USING COVERING INDEX idx_photo_folder_folder` (a scan of the index, 4 ms); a folder
+by path `SEARCH folders USING COVERING INDEX ... (path=?)`. A filter on rating or camera scans `photo_meta` (2.5 ms); an index is
+9e's if a measured click needs it.
+
+**What 9a-2 uses.** `derived.photos_under_tag(conn, tag, limit, offset)` and `count_under_tag` for a keyword source;
+`derived.folder_tree(conn)` for the navigator's Folders (native paths, counts direct and recursive, one query) and
+`photo_folder` (`folder_id` -> photo ids) or the `photos.path` range for a folder's photos; `photo_people` for a person; `photos.taken`
+and `photos.year` for dates; `photo_meta` for the rest. The navigator's Keywords counts are a roll-up over `photo_tags` (151,393
+rows on photo_index) by the tree's parents, one query and a pass in Python, as the folders' are. The thumbnail cache is keyed
+by the photo's id and stamp, as before. `folders.path` is row form: ask for a folder by path through `store.roots.sql_equals`-style
+conversion, never by an id kept in a page.
+
+### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1, the rest design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag
 is a path (`People/<name>`) in the files and in `photos.tags`; CLAUDE.md's rule exists because
 every site converting between the two by hand shipped a bug. `tag_taxonomy` already gives every
@@ -885,7 +974,7 @@ node an integer id and a parent id, and a person is a node with `has_face` set. 
   source of truth; nothing outside the store learns an id. The conversion lives at the store
   boundary, as root-relative paths do (`to_row` / `from_row`), in one module, with the same
   single-owner test.
-- **`photo_tags(photo_id, tag_id)`** (9a, new) and, in a later migration, **`photo_people`
+- **`photo_tags(photo_id, tag_id)`** (9a-1, built 2026-10-02) and, in a later migration, **`photo_people`
   and `faces` naming a person by `tag_id`** (a column beside `name` first, filled and checked,
   then the name column read from the taxonomy). That later migration touches the 225,000 faces
   of photo_index and every identity path, so it follows 9b-9e and is asked about before it runs.
@@ -915,11 +1004,15 @@ compared. What is worth lifting, in the order it would be decided:
   "in the library" or not) and file name apart, so renaming or moving a folder is one row and
   a folder's counts are a join. TagPup's `photos.path` repeats the whole path in 68,466 rows.
   A `folder_id` on `photos` is the cheap form; decide when 9a is designed, not before, because
-  it is a second migration of every photo row beside the roots one.
+  it is a second migration of every photo row beside the roots one. *Decided in 9a-1: no
+  `folder_id` on `photos`; `folders` and `photo_folder` are derived tables, with no second
+  migration of the photo rows, and a flag for "in the library" is not needed (a folder has a row
+  because a photo is in it).*
 - **Derived metadata columns**, as `taken` and `year` already are (phase 9a): rating, camera
   make and model, dimensions, GPS. WLPG keeps all of them as columns and the 2011 Find tab
   filtered on them; ours sit inside `raw_metadata` JSON, so a filter reads every row. Rebuilt
-  from the file's metadata, never edited.
+  from the file's metadata, never edited. *Built in 9a-1 as `photo_meta`; its width and height are
+  empty until the indexer reads the size, which is the owner's to decide.*
 - **Full-text search by SQLite FTS5** (phase 9e): WLPG built its own word index over file name,
   tags, title, caption and author. FTS5 over the same fields does that without a hand-made
   index, and the words-AND, tags-OR behaviour of the owner's notes sits on top of it.
@@ -1034,5 +1127,5 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 7.6. Settings in the library, and a gear on each page | done, 2026-09-25 |
 | 8. Sync | done, 2026-09-26 (8a jobs, 8b snapshots, 8c sync with library roots, 8d always on with self-update, the folder watcher and idle memory); installing it at login waits for the owner |
 | 8.5. Activity | done, 2026-09-26 (the page, runs in the logs, the indexer's own log, bounded reads) |
-| 9. Library views | planned for October 2026 *(owner, 2026-09-25)*; design questions open |
+| 9. Library views | planned for October 2026 *(owner, 2026-09-25)*; design questions open. 9a-1, the derived tables (`photo_tags`, `folders`, `photo_folder`, `photo_meta`; migration 19), built on a branch 2026-10-02, not merged |
 | 10. Family albums from many sources | idea *(owner, 2026-09-25)*, after phase 9; design questions open |
