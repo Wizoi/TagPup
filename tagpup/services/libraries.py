@@ -14,7 +14,7 @@ import os
 from tagpup.core import paths, validation
 from tagpup.core.library import Library, picker_name
 from tagpup.core.result import DAMAGED_PHOTOS, NOT_IN_LIBRARY, Result
-from tagpup.files import images
+from tagpup.files import images, recycle_bin
 from tagpup.services import damaged_photos, settings
 from tagpup.services import roots as roots_service
 from tagpup.store import added_folders, db, photos, schema, taxonomy
@@ -97,9 +97,12 @@ def not_held(library, photo_paths, ignored=None, leave_out_ignored=True):
 
     def read(conn):
         found = store_folders.ignored(conn) if ignored is None else list(ignored)
+        # A write keeps a folder with rows of its own held whatever is ignored (leave_out_ignored False):
+        # the rows are the library's and the settings promise they stay in step (#521).
         return [folder for folder in ordered
                 if not (leave_out_ignored and store_folders.is_ignored(folder, found))
-                and not store_folders.holds(conn, folder, found)]
+                and not (store_folders.holds(conn, folder, found)
+                         or (not leave_out_ignored and store_folders.has_rows(conn, folder)))]
 
     there = [f for f in ordered if not (leave_out_ignored and ignored and store_folders.is_ignored(f, ignored))]
     return _read(library.path, read, there)
@@ -119,34 +122,23 @@ def is_ignored(photo_path, ignored):
     return store_folders.is_ignored(os.path.dirname(paths.stored(photo_path)), ignored)
 
 
-def membership(library, folder, roots=(), ignored=(), others=()):
+def membership(library, folder, roots=(), ignored=()):
     """What `library` holds of `folder`, for the page to say before anything is done in it:
     {"library" (its name, as the address bar has it), "folder" (as stored), "photos" (on
     disk under it, at any depth), "photos_held" (the library's rows under it),
     "photos_ignored" (photos in its ignored folders, never offered),
     "photos_not_held" (photos in folders under it the library holds none directly in,
     ignored folders left out),
-    "folders_not_held", "first_not_held" (the first such folder, or None), "has_roots",
+    "folders_not_held", "first_not_held" (the first such folder, or None),
+    "permanent_delete" (a photo deleted there is deleted for good: no Recycle Bin on a network share,
+    tagpup.files.recycle_bin.goes_to_bin), "has_roots",
     "under_roots" (the folder is one of `roots` or under one), "ignored" (likewise, of
-    `ignored`), "others": [{"library", "photos"}] -- each library of `others` holding
-    photos under it, and how many}. One walk of the folder, no file read; the other
-    libraries are only read."""
+    `ignored`)}. One walk of the folder, no file read. Only `library` is opened: the page
+    asking is in one library, which does not open, read or name another (2026-10-02)."""
     folder = paths.stored(folder)
     on_disk = images.photos_under(folder)
     unheld = not_held(library, on_disk, ignored)
     unheld_keys = {paths.key(each) for each in unheld}
-    elsewhere = []
-    for other in others:
-        if other == library:
-            continue
-        try:
-            count = held_under(other, folder)
-        except Exception as e:
-            # Another library's count is for the dialog's information only.
-            logger.warning("Could not read %s to count its photos under a folder: %s", other.name, e)
-            continue
-        if count:
-            elsewhere.append({"library": picker_name(os.path.basename(other.path)), "photos": count})
     return {
         "library": picker_name(os.path.basename(library.path)),
         "folder": folder,
@@ -159,7 +151,7 @@ def membership(library, folder, roots=(), ignored=(), others=()):
         "has_roots": bool(roots),
         "under_roots": _under_any(folder, roots),
         "ignored": _under_any(folder, ignored),
-        "others": elsewhere,
+        "permanent_delete": not recycle_bin.goes_to_bin(folder),
     }
 
 
@@ -184,6 +176,22 @@ def not_in(library, folder, ignored=None):
         return "%s is not in %s. Add it to %s first." % (folder, name, name)
     return ("%d folder(s) under %s are not in %s, %s first. Add the folder to %s first."
             % (len(unheld), folder, name, unheld[0], name))
+
+
+def split(library, photo_paths):
+    """(the photos of `photo_paths` in a folder the library holds, those in one it does not),
+    each in the order given: decided here, now, by the library's own answer (tagpup.store.
+    folders.holds) and never by what a page says. A photo of the first is written as
+    always -- its row, the journal, what derives from it. A photo of the second is written
+    to its file only (tagpup.services.file_only): Just look in TagPup. An ignored folder
+    is not held unless it has rows (#521). A library that cannot be read just now raises, as not_held does: a moment's
+    lock must not write rows for photos the library does not hold, nor skip them for ones
+    it does."""
+    unheld = {paths.key(folder) for folder in not_held(library, photo_paths, leave_out_ignored=False)}
+    held, loose = [], []
+    for photo_path in photo_paths:
+        (loose if paths.key(os.path.dirname(paths.stored(photo_path))) in unheld else held).append(photo_path)
+    return held, loose
 
 
 def refuse_writes(result, library, photo_paths, damaged_ok=False):

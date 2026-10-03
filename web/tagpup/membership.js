@@ -5,53 +5,42 @@
 // share outside kr-track's root folders; Suggest made rows for its photos in kr-track
 // without asking, and the folder was kr-track's from then on (2026-09-28). Now opening a
 // folder the library holds photos in none of the folders of asks: "Add this folder to
-// kr-track?", with how many photos it holds, whether it is outside the library's root
-// folders, and which other library holds them already. Add adds it (POST
-// /api/folder/add); Open in <other> goes to the library that holds it; Just look shows
-// its photos with Suggest and every change held back until it is added. The server
-// refuses Suggest in a folder not added (409) whatever the page does.
+// kr-track?", with how many photos it holds and whether it is outside the library's root
+// folders. It names only this library: no other library is opened or mentioned. Add adds
+// it (POST /api/folder/add); Just look shows its photos and lets the owner edit their
+// files (below) without adding it. The server refuses Suggest in a folder not added (409)
+// whatever the page does.
+//
+// Just look is not read-only (2026-10-02): "that should still let me change captions on
+// photos, do smart renames, and add/update tags if it does not go into an index". Captions,
+// tags, Smart Rename, rotating, deleting and the date changes write the photo FILES and
+// nothing of the library's (tagpup.services.file_only); the server decides, photo by photo,
+// by whether the library holds the photo's folder -- never by this page. What stays held
+// back here is what needs the library's database: Suggest, applying what it offered
+// (Apply All, carry-forward) and naming faces.
 import { api, libraryIn } from './common/api.js';
-import { goToLibrary } from './common/library.js';
 import { samePath } from './common/paths.js';
 import { state } from './state.js';
+import { isJustLooking, libraryName } from './looking.js';
 import {
     addFolderFacts, addFolderLibrary, addFolderModal, addFolderPath, addFolderTitle,
-    btnAddFolder, btnAddFolderFromNote, btnJustLook, btnOpenInOtherLibrary, justLookingNote,
+    btnAddFolder, btnAddFolderFromNote, btnJustLook, justLookingNote,
     justLookingText, libraryNameBadge
 } from './elements.js';
 import { setStatus } from './status.js';
 import { checkIndexingStatus, updateSuggestButtonState } from './suggestions.js';
 
 /**
- * What changes a photo, the library or its suggestions, held back while just looking.
- * Clicks on these, and Enter in the fields, are stopped before any feature hears them.
+ * What needs the library's database, held back while just looking: Suggest and what it
+ * offered, and naming faces. Clicks on these, and Ctrl+D, are stopped before any feature
+ * hears them. (A caption, a tag, a rename, a turn, a delete and a date are not here: they
+ * write the files, and are allowed.)
  */
 const WRITE_CONTROLS = [
-    '#btn-suggest-tags', '#btn-rotate-left', '#btn-rotate-right', '#btn-delete-photo',
-    '#btn-save-details', '#btn-edit-date-taken', '#btn-save-title', '#btn-suggest-title-wand',
-    '#btn-add-person', '#btn-add-tag', '#btn-carry-forward', '#btn-apply-all-single-sugg',
-    '#suggested-people-container', '#suggested-tags-container', '#detail-people', '#detail-tags',
-    '#btn-apply-rename', '#btn-apply-timeshift', '#btn-bulk-add-people', '#btn-bulk-add-tags',
-    '#btn-folder-auto-apply', '#selection-people-list', '#selection-tags-list',
-    '#selection-suggested-people-list', '#selection-suggested-tags-list', '#btn-save-date-modal',
-    '#faces-strip', '.editable-title',
+    '#btn-suggest-tags', '#btn-suggest-title-wand', '#btn-carry-forward', '#btn-apply-all-single-sugg',
+    '#suggested-people-container', '#suggested-tags-container', '#btn-folder-auto-apply',
+    '#selection-suggested-people-list', '#selection-suggested-tags-list', '#faces-strip',
 ].join(', ');
-
-/** The fields whose Enter writes; read-only while just looking. */
-const WRITE_FIELDS = [
-    'input-photo-title', 'input-add-person', 'input-add-tag', 'bulk-add-people-input',
-    'bulk-add-tags-input', 'rename-grouping-input', 'timeshift-minutes-input',
-];
-
-/** The library the page works in: the first part of its address. */
-export function libraryName() {
-    return libraryIn(window.location.pathname);
-}
-
-/** Is the folder open being looked at without being added? */
-export function isJustLooking() {
-    return Boolean(state.justLooking && state.scannedFolder && samePath(state.justLooking, state.scannedFolder));
-}
 
 /** Say which library the page works in, in the header, all the time. */
 export function showLibraryName() {
@@ -109,14 +98,7 @@ function plural(count, one, many) {
     return `${count} ${count === 1 ? one : many}`;
 }
 
-/** The other libraries holding photos of the folder, the fullest first. */
-function othersOf(found) {
-    return (Array.isArray(found.others) ? found.others : [])
-        .filter(other => other && other.library && other.library !== libraryName())
-        .sort((a, b) => (b.photos || 0) - (a.photos || 0));
-}
-
-/** "Add this folder to kr-track?", with what it holds and who holds it already. */
+/** "Add this folder to kr-track?", with what it holds. */
 export function askToAdd(found) {
     const name = libraryName();
     const held = found.photos_held || 0;
@@ -146,23 +128,12 @@ export function askToAdd(found) {
     if (found.ignored) {
         fact(`${name}'s settings ignore this folder; adding it keeps it in step all the same.`, 'add-folder-warning');
     }
-    const others = othersOf(found);
-    others.forEach(other => {
-        fact(`${other.library} already holds ${other.photos} of these photos.`, 'add-folder-warning');
-    });
     fact('Adding it gives each photo a place in the library, indexes it, and keeps it in step from then on. '
-        + 'Just look shows the photos and changes nothing.', 'add-folder-note');
+        + 'Just look does not add it: tags, captions, renames, rotating, deleting and date changes would be made '
+        + 'to the photo files only, and Suggest and face naming stay off.', 'add-folder-note');
 
     btnAddFolder.textContent = `Add to ${name}`;
     btnAddFolderFromNote.textContent = `Add to ${name}`;
-    if (others.length) {
-        btnOpenInOtherLibrary.textContent = `Open in ${others[0].library}`;
-        btnOpenInOtherLibrary.dataset.library = others[0].library;
-        btnOpenInOtherLibrary.classList.remove('hidden');
-    } else {
-        delete btnOpenInOtherLibrary.dataset.library;
-        btnOpenInOtherLibrary.classList.add('hidden');
-    }
     addFolderModal.classList.add('active');
     btnJustLook.focus();
 }
@@ -171,7 +142,7 @@ function closeDialog() {
     addFolderModal.classList.remove('active');
 }
 
-/** Just look: the photos, with Suggest and every change held back until added. */
+/** Just look: the photos, edited in their files only, with Suggest and face naming held back until added. */
 export function justLook() {
     closeDialog();
     state.justLooking = state.scannedFolder || null;
@@ -186,23 +157,12 @@ export function applyJustLooking() {
         justLookingNote.classList.toggle('hidden', !looking);
         const name = libraryName();
         justLookingText.textContent = looking
-            ? `Just looking: ${name} does not hold this folder. Suggest and every change are off until you add it.`
+            ? `Just looking: ${name} does not hold this folder. Tags, captions, renames, rotating, deleting and date `
+                + `changes are made to the photo files only, not to ${name}. Suggest and face naming are off until you add it.`
             : '';
         btnAddFolderFromNote.textContent = `Add to ${name}`;
     }
-    WRITE_FIELDS.forEach(id => {
-        const field = document.getElementById(id);
-        if (field) field.readOnly = looking;
-    });
     updateSuggestButtonState();
-}
-
-/** Open the folder in the library that holds it: the same address, that library's. */
-export function openInOtherLibrary() {
-    const other = btnOpenInOtherLibrary.dataset.library;
-    if (!other) return;
-    closeDialog();
-    goToLibrary(other);
 }
 
 /** Add the open folder to the library, as the person asked: POST /api/folder/add. */
@@ -251,8 +211,8 @@ function stop(event) {
 }
 
 /**
- * The dialog's buttons, the header's name, and the guard that holds every change back
- * while just looking: on the window, capturing, so it hears a click or a key before
+ * The dialog's buttons, the header's name, and the guard that holds back what needs the
+ * library's database while just looking: on the window, capturing, so it hears a click or a key before
  * any feature's own listener on the document does.
  */
 export function wireMembership() {
@@ -260,7 +220,6 @@ export function wireMembership() {
     btnAddFolder.addEventListener('click', addFolderToLibrary);
     btnAddFolderFromNote.addEventListener('click', addFolderToLibrary);
     btnJustLook.addEventListener('click', justLook);
-    btnOpenInOtherLibrary.addEventListener('click', openInOtherLibrary);
     addFolderModal.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             e.preventDefault();
@@ -275,10 +234,6 @@ export function wireMembership() {
     window.addEventListener('keydown', (e) => {
         if (!isJustLooking()) return;
         const key = e.key || '';
-        if ((e.ctrlKey || e.metaKey) && !e.altKey && ['s', 'S', 'd', 'D'].includes(key)) {
-            stop(e);
-            return;
-        }
-        if (key === 'Enter' && e.target && WRITE_FIELDS.includes(e.target.id)) stop(e);
+        if ((e.ctrlKey || e.metaKey) && !e.altKey && ['d', 'D'].includes(key)) stop(e);
     }, true);
 }

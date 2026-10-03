@@ -73,8 +73,8 @@ export const state = {
     indexProgressTimer: null,
 
     // What the library holds of the open folder (GET /api/folder/membership), and the
-    // folder being looked at without adding it, if any: Suggest and every change are
-    // held back there until it is added (membership.js).
+    // folder being looked at without adding it, if any: edits go to the photo files only, and
+    // Suggest and face naming are held back there until it is added (membership.js).
     folderMembership: null,
     justLooking: null,
 

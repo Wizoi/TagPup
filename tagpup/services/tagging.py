@@ -7,7 +7,7 @@ from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, metadata, names
-from tagpup.services import file_changes, libraries
+from tagpup.services import file_changes, file_only, libraries
 from tagpup.services import roots as roots_service
 from tagpup.store import photos, taxonomy
 
@@ -39,12 +39,22 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     rename hold the lock of changes of photo files (file_changes.exclusively): a write
     between the read and the write was overwritten.
 
+    A photo in a folder the library does not hold (Just look) is written to its file only
+    (tagpup.services.file_only): no row, no journal change (`change` is None), nothing
+    derived, nothing recorded of it afterwards; the caption still renames it after itself.
+    The library's own answer decides, here, now. A photo that does not decode is refused.
+
     details: `new_path`, `renamed`, `tags` as written, `flat` and `hierarchical` as
     written, `change`, and `index_warning` when the renamed photo's new name already had
-    rows.
+    rows; `file_only` and `with_rows`, how many files (0 or 1) were written each way.
     """
     result = Result(attempted=1)
-    if libraries.refuse_writes(result, library, [photo_path]):
+    _held, loose = libraries.split(library, [photo_path])
+    files_only = bool(loose)
+    if files_only:
+        if file_only.refuse_unwritable(result, [photo_path]):
+            return result
+    elif libraries.refuse_writes(result, library, [photo_path]):
         return result
     wanted = fields.caption_fields(title or "")
     if date_taken:
@@ -66,10 +76,15 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         flat, hierarchical = fields.expand_tag_fields(vocabulary.resolve_people(tags, people))
         after = dict(fields.keyword_fields(flat, hierarchical))
         after.update(wanted)
-        written = file_changes.write_fields(library, "save photo", exiftool_path, [photo_path], list(after),
-                                            lambda _path, _held: file_changes.Plan(after=after),
-                                            summary={"photos": 1}, et=et, held={paths.key(photo_path): now},
-                                            read_back_also=fields.METADATA_FIELDS)
+        plan = lambda _path, _held: file_changes.Plan(after=after)   # noqa: E731
+        if files_only:
+            written = file_only.write_fields(exiftool_path, [photo_path], list(after), plan, et=et,
+                                             held={paths.key(photo_path): now}, read_back_also=fields.METADATA_FIELDS)
+        else:
+            written = file_changes.write_fields(library, "save photo", exiftool_path, [photo_path], list(after),
+                                                plan, summary={"photos": 1}, et=et,
+                                                held={paths.key(photo_path): now},
+                                                read_back_also=fields.METADATA_FIELDS)
         if not written.ok:
             raise RuntimeError(written.message())
         result.changed = written.changed
@@ -79,6 +94,9 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         renamed = not paths.same(new_path, photo_path)
         result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
                               hierarchical=hierarchical, index_warning=None, change=written.details["change"])
+        touched = 1 if (written.changed or renamed) else 0
+        result.details.update({file_only.FILE_ONLY: touched if files_only else 0,
+                               file_only.WITH_ROWS: 0 if files_only else touched})
         try:
             # What the write's read back found; where nothing was written, or the file
             # was renamed since (its SourceFile is its old name), a read now.
@@ -87,6 +105,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         except Exception as e:
             logger.warning("Could not read back %s: %s", new_path, e)
             return result
+    if files_only:
+        return result   # no row to tell: the index reads the file when the folder is added
     try:
         recorded_tags = vocabulary.extract_tags(raw_meta)
         skipped = photos.move_rows(library.path, {photo_path: new_path})[1] if renamed else []
@@ -127,15 +147,32 @@ def change_tags(library, photo_paths, add, remove, exiftool_path):
     if problem:
         return _refused(len(photo_paths), problem)
     refused = _refused(len(photo_paths), None)
-    if libraries.refuse_writes(refused, library, photo_paths, damaged_ok=True):
+    held, loose = libraries.split(library, photo_paths)
+    if held and libraries.refuse_writes(refused, library, held, damaged_ok=True):
         return refused
     # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
-    photo_paths, left = libraries.leave_out_damaged(refused, library, photo_paths)
-    if photo_paths is None:
+    kept, left = libraries.leave_out_damaged(refused, library, held) if held else ([], [])
+    if kept is None:
         return refused
     add = [vocabulary.normalize(tag) for tag in add]
-    return libraries.with_skipped(_change_each(library, [(path, add, remove) for path in photo_paths],
-                                               exiftool_path, "add to all selected"), left)
+    done = None
+    if held or not loose:
+        done = libraries.with_skipped(_change_each(library, [(path, add, remove) for path in kept],
+                                                   exiftool_path, "add to all selected"), left)
+    if not loose:
+        return file_only.combined(done, None)
+    # The photos of folders the library does not hold: their files only, in the same request
+    # (tagpup.services.file_only). After the others: a failure stops the run, as always.
+    if done is not None and not done.ok:
+        done.attempted += len(loose)
+        for path in loose:
+            done.skip(path, "not written: an earlier photo failed")
+        return file_only.combined(done, None)
+    writable, skipped = file_only.leave_out_unwritable(loose)
+    files = libraries.with_skipped(
+        _change_each(library, [(path, add, remove) for path in writable], exiftool_path, "add to all selected",
+                     files_only=True) if writable else _refused(0, None), skipped)
+    return file_only.combined(done, files)
 
 
 @roots_service.canonical_args("additions")
@@ -189,7 +226,7 @@ def _tags_held(held):
     return vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS})
 
 
-def _change_each(library, plan, exiftool_path, operation):
+def _change_each(library, plan, exiftool_path, operation, files_only=False):
     """Write each photo in `plan` -- (path, tags to add, tags to take off) -- as one change
     of photo files (tagpup.services.file_changes): planned from what every file holds,
     committed, then written a file at a time, each recorded in its row as it is marked
@@ -203,7 +240,9 @@ def _change_each(library, plan, exiftool_path, operation):
 
     Stops at the first photo that cannot be read or written, which is the error; the
     photos before it keep their changes. details: `written`, path -> (tags, flat,
-    hierarchical) for each photo written, and `change`.
+    hierarchical) for each photo written, and `change`. With `files_only` (photos of folders
+    the library does not hold: tagpup.services.file_only) the files are written and nothing
+    else is: no journal change (`change` is None), no row.
     """
     people = taxonomy.people_paths(library.path)
     wanted = {paths.key(path): (add, remove) for path, add, remove in plan}
@@ -215,6 +254,9 @@ def _change_each(library, plan, exiftool_path, operation):
         tags = [tag for tag in dict.fromkeys(list(_tags_held(held)) + list(add)) if tag not in set(remove)]
         return _keywords_plan(vocabulary.resolve_people(tags, people))
 
+    if files_only:
+        return file_only.write_fields(exiftool_path, [path for path, _a, _r in plan], KEYWORD_READ, plan_one,
+                                      stop_at_first_error=True)
     return file_changes.write_fields(library, operation, exiftool_path, [path for path, _a, _r in plan],
                                      KEYWORD_READ, plan_one, summary={"photos": len(plan)},
                                      stop_at_first_error=True)

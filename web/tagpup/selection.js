@@ -12,7 +12,7 @@ import {
     selectionSummaryCount, selectionSummaryScroll, selectionTagsList, statusDot, statusText
 } from './elements.js';
 import { saveToLocalStorageCache } from './cache.js';
-import { noteSkipped } from './write-queue.js';
+import { noteSkipped, whereWritten } from './write-queue.js';
 import {
     formatFriendlyDateRange, formatFriendlyDateSingle, getFolderDateStats,
     parseExifDateToLocalDate, takenOf
@@ -351,7 +351,7 @@ function queueBulkTags({ label, busy, failed, targets, add = [], remove = [], wr
             datalist();
             saveToLocalStorageCache();
             statusDot.className = 'status-indicator-dot';
-            statusText.textContent = 'Ready';
+            statusText.textContent = data.file_only ? `Saved.${whereWritten(data)}` : 'Ready';
             return true;
         })
         .catch(err => {

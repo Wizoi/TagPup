@@ -36,6 +36,13 @@ def is_ignored(folder, ignored_folders):
     return any(paths.same(folder, other) or paths.is_under(folder, other) for other in ignored_folders)
 
 
+def has_rows(conn, folder):
+    """Does the library hold a photo directly in `folder`, whatever its settings ignore? Rows are the
+    library's: a write to a photo with a row keeps the row true (#521). One point query."""
+    where, params = store_roots.sql_in(conn, "path", folder)
+    return conn.execute("SELECT 1 FROM photos WHERE " + where + " LIMIT 1", params).fetchone() is not None
+
+
 def holds(conn, folder, ignored_folders=None):
     """Is `folder` the library's? `ignored_folders` are the library's ignored folders,
     read from its settings unless given. Two point queries and the added folders, a

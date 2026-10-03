@@ -143,6 +143,56 @@ def is_damage(error):
     return _decoder_failed(error)
 
 
+#: What a whole file of each kind ends in, past the zero bytes some cameras pad with: a JPEG's end-of-image
+#: marker, a PNG's IEND chunk and its checksum.
+_ENDS = {".jpg": b"\xff\xd9", ".jpeg": b"\xff\xd9", ".png": b"IEND\xaeB`\x82"}
+
+
+def tail_check(photo_path):
+    """How many zero bytes the file at `photo_path` ends in (zero_tail_of), having read only the end of
+    it: for a write that wants to refuse a damaged photo without decoding it (#523). Raises Unreadable
+    for a file that is empty, or a JPEG or PNG that does not end as one whole does -- a copy that stopped
+    early -- and what the system raised for a file that cannot be read. It cannot see damage in the middle
+    of a picture (the indexer's full decode, `opened`, does); ExifTool's own failure to read the file is
+    the other signal, and a write that needs the picture itself (a rotate) decodes it
+    (zero_tail_if_whole)."""
+    size = os.path.getsize(photo_path)
+    if size == 0:
+        raise Unreadable("empty", "the file is empty")
+    zeros = zero_tail_of(photo_path)
+    if zeros >= ZERO_TAIL:
+        return zeros
+    ending = _ENDS.get(os.path.splitext(photo_path)[1].lower())
+    if ending:
+        with open(photo_path, "rb") as handle:
+            handle.seek(max(0, size - 4096))
+            tail = handle.read().rstrip(bytes(1))
+        if not tail.endswith(ending):
+            raise Unreadable("truncated", "the file does not end where a whole picture does", zeros)
+    return zeros
+
+
+def zero_tail_if_whole(photo_path):
+    """How many zero bytes the file at `photo_path` ends in, once its picture has been
+    decoded to the end; raises Unreadable when it does not decode (damage), or what the
+    system raised when it cannot be read. Nothing is kept: for a write that has no row to
+    record a photo found damaged in (a photo of a folder the library does not hold), which
+    must still not be written into one. A JPEG is decoded at a fraction of its size
+    (`draft`), which still reads every byte of the stream."""
+    with open(photo_path, "rb") as handle:
+        data = handle.read()
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            if img.format == "JPEG":
+                img.draft("RGB", (128, 128))
+            img.load()
+    except Exception as error:
+        if not _decoder_failed(error):
+            raise
+        raise damage(data, error) from error
+    return zero_tail(data)
+
+
 def shown_size(photo_path):
     """(width, height, oriented): the size Pillow shows a photo at, and whether it
     turned the picture by its Orientation as it loaded it.

@@ -29,7 +29,7 @@ from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import damaged_photos
 from tagpup.services import faces as face_actions
-from tagpup.services import file_changes
+from tagpup.services import file_changes, file_only
 from tagpup.services import indexing
 from tagpup.services import libraries as library_actions
 from tagpup.services import library_view
@@ -39,7 +39,6 @@ from tagpup.services import tagging as tagging_actions
 from tagpup.services import tags as tags_service
 from tagpup.services import thumbnails
 from tagpup.web import activity_routes, desktop, responses, state
-from tagpup.web import libraries as web_libraries
 
 logger = logging.getLogger(__name__)
 
@@ -251,9 +250,9 @@ def folder_damaged():
 
 @routes.get("/api/folder/membership")
 def folder_membership():
-    """What this library holds of a folder, and which other libraries of the home hold
-    photos in it (tagpup.services.libraries.membership): what the page asks as a folder
-    opens, to ask before adding one the library does not hold."""
+    """What this library holds of a folder (tagpup.services.libraries.membership): what the
+    page asks as a folder opens, to ask before adding one the library does not hold. No
+    other library is opened."""
     library = state.require()
     folder = _wanted_path()
     if not folder:
@@ -261,8 +260,7 @@ def folder_membership():
     if not os.path.isdir(folder):
         return responses.error(400, "Path is not a valid directory: %s" % folder)
     settings = runtimes.peek_settings(library)
-    return jsonify(library_actions.membership(library, folder, settings.roots, settings.ignored,
-                                              web_libraries.home_libraries()))
+    return jsonify(library_actions.membership(library, folder, settings.roots, settings.ignored))
 
 
 @routes.get("/api/folder/index-status")
@@ -426,7 +424,7 @@ def folder_time_shift():
         return responses.error(500, str(e))
     return jsonify({"success": True, "updated_photos": list(photos.values()),
                     "updated_count": result.changed, "requested_count": result.attempted,
-                    **_skipped_damaged(result)})
+                    **_skipped_damaged(result), **_where(result)})
 
 
 @routes.post("/api/folder/rename-photos")
@@ -464,6 +462,14 @@ def folder_rename_photos():
         if result.refused:
             return responses.refused(result)
         if not result.ok:
+            if result.details.get("renamed"):
+                # Some were renamed before it stopped (the second part of a mixed rename): the cache is read
+                # again and the page told which names changed, so it shows them instead of the old ones.
+                cache.pop(folder)
+                changed = photo_actions.read_folder(library, folder, state.exiftool(library))
+                cache.put(folder, changed)
+                return responses.error(500, result.message(), updated_paths=result.details["updated_paths"],
+                                       updated_photos=_sorted(changed))
             return responses.error(500, result.message())
         # Their saved suggestions are kept by the photo's id, and went with the rows.
         # The folder is read again from its files, as the page is about to show it.
@@ -479,7 +485,7 @@ def folder_rename_photos():
         "updated_photos": _sorted(photos),
         "index_rows_moved": result.details["index_rows_moved"],
         "index_skipped": [new for _, new in result.details["index_skipped"]],
-        **_skipped_damaged(result),
+        **_skipped_damaged(result), **_where(result),
     })
 
 
@@ -685,7 +691,7 @@ def photo_rotate():
         return responses.error(500, str(e))
     # The new mtime, which versions the page's image URLs: thumbnails are cached for a
     # day, so without a new URL the grid kept the old turn.
-    return jsonify({"success": True, "mtime": result.details["mtime"]})
+    return jsonify({"success": True, "mtime": result.details["mtime"], **_where(result)})
 
 
 @routes.post("/api/photo/delete")
@@ -706,7 +712,18 @@ def photo_delete():
     except Exception as e:
         logger.error("Error deleting image %s: %s", photo_path, e)
         return responses.error(500, str(e))
-    return jsonify({"success": True})
+    # What happened, never what was meant: a file on a network share has no Recycle Bin to go to.
+    permanent = bool(result.details.get("permanent"))
+    name = picker_name(os.path.basename(library.path))
+    where = ("The file was deleted permanently: it is on a network share, which has no Recycle Bin."
+             if permanent else "Moved to the Recycle Bin.")
+    reply = {"success": True, "permanent": permanent, **_where(result)}
+    if result.details.get(file_only.FILE_ONLY):
+        # A photo of a folder the library does not hold: the file only.
+        reply["message"] = "%s Nothing in %s changed: it does not hold this folder." % (where, name)
+    elif permanent:
+        reply["message"] = where
+    return jsonify(reply)
 
 
 @routes.post("/api/photo/save-metadata")
@@ -744,7 +761,7 @@ def photo_save_metadata():
     except Exception as e:
         logger.error("Error saving metadata for %s: %s", photo_path, e)
         return responses.error(500, str(e))
-    reply = {"success": True, "new_path": new_path}
+    reply = {"success": True, "new_path": new_path, **_where(result)}
     if result.details["index_warning"]:
         reply["index_warning"] = result.details["index_warning"]
     return jsonify(reply)
@@ -782,7 +799,16 @@ def photos_bulk_tags():
         # so that its records say what the files hold.
         logger.error("Error in bulk tags write: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
-    return jsonify({"success": True, "written": _written_tags(result), **_skipped_damaged(result)})
+    return jsonify({"success": True, "written": _written_tags(result), **_skipped_damaged(result),
+                    **_where(result)})
+
+
+def _where(result):
+    """What a write says of where it wrote (tagpup.services.file_only): {"file_only": files
+    written with no row, because the library does not hold their folder, "with_rows": files
+    written with their rows}. What was written, not attempted."""
+    return {file_only.FILE_ONLY: result.details.get(file_only.FILE_ONLY, 0),
+            file_only.WITH_ROWS: result.details.get(file_only.WITH_ROWS, 0)}
 
 
 def _skipped_damaged(result):
@@ -790,8 +816,10 @@ def _skipped_damaged(result):
     (tagpup.services.libraries.leave_out_damaged): {"skipped_damaged": n, "skipped":
     [{"path", "why"}]}, the photos the page shows."""
     count = result.details.get(library_actions.SKIPPED_DAMAGED, 0)
-    return {"skipped_damaged": count,
-            "skipped": [{"path": what, "why": why} for what, why in result.skipped[-count:]] if count else []}
+    # By what they say, not by position: a write of two parts (held photos and the others)
+    # skips in each.
+    damaged = [{"path": what, "why": why} for what, why in result.skipped if why.startswith("damaged, ")]
+    return {"skipped_damaged": count, "skipped": damaged if count else []}
 
 
 def _written_tags(result):

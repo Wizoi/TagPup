@@ -176,6 +176,11 @@ class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
     #: CLI's `write` among them.
     SOURCES = (os.path.join("tagpup", "web", "tagpup_routes.py"),)
 
+    #: Writes that tell no index on purpose: the photos of a folder the library does not hold
+    #: have no row, and none is made (tagpup.services.file_only). That module imports nothing
+    #: of the store and never opens a database; tests/test_just_look_edits.py checks both.
+    FILE_ONLY = os.path.join("tagpup", "services", "file_only.py")
+
     def write_sites(self):
         """(where, the source from there on) of every keyword write in the routes, the
         services and the writer."""
@@ -184,6 +189,8 @@ class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
             os.path.join("tagpup", "services", name) for name in sorted(os.listdir(services))
             if name.endswith(".py")]
         for relative in sources:
+            if relative == self.FILE_ONLY:
+                continue
             with open(os.path.join(WORKSPACE_DIR, relative), encoding="utf-8") as f:
                 lines = f.read().split("\n")
             for i, line in enumerate(lines):

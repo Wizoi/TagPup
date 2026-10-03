@@ -8,9 +8,9 @@
  * adding it." The page names its library in the header at all times, and a folder the
  * library holds photos in none of the folders of opens with a question: "Add this
  * folder to kr-track?", the folder, its photos, whether it is outside the library's
- * roots, and which other library holds them. Add adds it (POST /api/folder/add); Open
- * in <other> goes to the library holding it; Just look shows it with Suggest and every
- * change held back until it is added.
+ * roots. It names only the open library, never another (2026-10-02). Add adds it (POST
+ * /api/folder/add); Just look shows it with Suggest and what needs the library held back,
+ * and edits to the photo files allowed (tests/frontend/just-look-edits.test.mjs).
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -23,11 +23,10 @@ const FOLDER = "\\\\harbour-nas\\photos\\2019\\Lighthouse Trip";
 const NOT_HELD = {
   library: "kr-track", folder: FOLDER, photos: 25, photos_held: 0, photos_not_held: 25,
   folders_not_held: 1, first_not_held: FOLDER, has_roots: true, under_roots: false, ignored: false,
-  others: [{ library: "photo_index", photos: 25 }],
 };
 
 const HELD = { ...NOT_HELD, photos_held: 25, photos_not_held: 0, folders_not_held: 0, first_not_held: null,
-  under_roots: true, others: [] };
+  under_roots: true };
 
 function server(membership, indexing = { status: "completed", percent: 100, message: "Ready" },
   scanned = [photoRecord({ filename: "IMG_0001.jpg" }), photoRecord({ filename: "IMG_0002.jpg" })]) {
@@ -69,7 +68,7 @@ describe("the library is named", () => {
 });
 
 describe("a folder the library does not hold", () => {
-  test("asks, naming the library, the folder, its photos, the roots and who holds it", async (t) => {
+  test("asks, naming only the library, the folder, its photos and the roots", async (t) => {
     const ctx = await open(t);
     assert.ok(ctx.dialogOpen(), "no question was asked");
     assert.equal(ctx.$("add-folder-title").textContent, "Add this folder to kr-track?");
@@ -78,11 +77,17 @@ describe("a folder the library does not hold", () => {
     const facts = ctx.$("add-folder-facts").textContent;
     assert.match(facts, /25 photos, none of them in kr-track/);
     assert.match(facts, /Outside kr-track's root folders/);
-    assert.match(facts, /photo_index already holds 25 of these photos/);
+    assert.doesNotMatch(ctx.$("add-folder-modal").textContent, /photo_index/, "another library was named");
+    assert.equal(ctx.$("btn-open-in-other-library"), null, "a button to open another library is back");
     assert.equal(ctx.$("btn-add-folder").textContent, "Add to kr-track");
-    assert.equal(ctx.$("btn-open-in-other-library").textContent, "Open in photo_index");
-    assert.ok(!ctx.$("btn-open-in-other-library").classList.contains("hidden"));
     assert.equal(ctx.posts("/api/folder/add").length, 0, "it was added without asking");
+  });
+
+  test("the fact line about Just look is true: the files are edited, the folder is not added", async (t) => {
+    const ctx = await open(t);
+    const facts = ctx.$("add-folder-facts").textContent;
+    assert.doesNotMatch(facts, /changes nothing/);
+    assert.match(facts, /Just look does not add it: tags, captions, renames, rotating, deleting and date changes would be made to the photo files only, and Suggest and face naming stay off/);
   });
 
   test("Add adds it, and Suggest may start", async (t) => {
@@ -100,40 +105,31 @@ describe("a folder the library does not hold", () => {
     assert.match(ctx.$("status-text").textContent, /Added to kr-track; indexing it now/);
   });
 
-  test("Open in the other library goes there, with the folder", async (t) => {
-    const ctx = await open(t);
-    click(ctx.window, ctx.$("btn-open-in-other-library"));
-    await flush(ctx.window);
-    const navigated = ctx.consoleErrors.some((e) => /navigation/i.test(e && e.message ? e.message : String(e)));
-    assert.ok(navigated, "the page did not go to photo_index");
-    assert.equal(ctx.posts("/api/folder/add").length, 0);
-  });
-
-  test("Just look shows it, with Suggest and every change held back", async (t) => {
+  test("Just look shows it, with Suggest and what needs the library held back", async (t) => {
     const ctx = await open(t);
     click(ctx.window, ctx.$("btn-just-look"));
     await flush(ctx.window);
     assert.ok(!ctx.dialogOpen());
     assert.ok(ctx.document.body.classList.contains("just-looking"));
     assert.ok(!ctx.$("just-looking-note").classList.contains("hidden"));
-    assert.match(ctx.$("just-looking-text").textContent, /kr-track does not hold this folder/);
+    assert.equal(ctx.$("just-looking-text").textContent,
+      "Just looking: kr-track does not hold this folder. Tags, captions, renames, rotating, deleting and date "
+      + "changes are made to the photo files only, not to kr-track. Suggest and face naming are off until you add it.");
     assert.ok(ctx.$("btn-suggest-tags").disabled, "Suggest can still be started");
 
-    // Suggest, a bulk tag and a title: none of them is sent.
+    // Suggest, Apply All and carrying tags forward need the library: none is sent.
     ctx.$("btn-suggest-tags").disabled = false;   // whatever enabled it, the click is held
     click(ctx.window, ctx.$("btn-suggest-tags"));
-    ctx.$("bulk-add-tags-input").value = "Trips/Lighthouse";
-    click(ctx.window, ctx.$("btn-bulk-add-tags"));
+    click(ctx.window, ctx.$("btn-folder-auto-apply"));
+    click(ctx.window, ctx.$("btn-carry-forward"));
     click(ctx.window, ctx.document.querySelectorAll(".photo-item-file")[0]);
     await flush(ctx.window, 6);
-    assert.ok(ctx.$("input-photo-title").readOnly, "the title can still be typed");
-    const save = new ctx.window.KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true });
-    ctx.$("input-photo-title").dispatchEvent(save);
-    click(ctx.window, ctx.$("btn-save-details"));
-    await flush(ctx.window, 6);
-    for (const route of ["/api/folder/suggest-start", "/api/photos/bulk-tags", "/api/photo/save-metadata"]) {
+    for (const route of ["/api/folder/suggest-start", "/api/folder/auto-apply"]) {
       assert.equal(ctx.posts(route).length, 0, `${route} was sent while just looking`);
     }
+    // The fields are the owner's to type in: a caption and tags are written to the files.
+    assert.ok(!ctx.$("input-photo-title").readOnly, "the title cannot be typed");
+    assert.ok(!ctx.$("bulk-add-tags-input").readOnly);
   });
 
   test("the note adds it too, and the changes come back", async (t) => {
@@ -158,20 +154,20 @@ describe("a folder the library does not hold", () => {
   });
 
   test("a folder only partly held asks to add the rest", async (t) => {
-    const ctx = await open(t, { ...NOT_HELD, photos: 30, photos_held: 25, photos_not_held: 5, others: [] });
+    const ctx = await open(t, { ...NOT_HELD, photos: 30, photos_held: 25, photos_not_held: 5 });
     assert.ok(ctx.dialogOpen());
     assert.equal(ctx.$("add-folder-title").textContent, "Add the rest of this folder to kr-track?");
     assert.match(ctx.$("add-folder-facts").textContent, /kr-track holds 25 of its 30 photos/);
-    assert.ok(ctx.$("btn-open-in-other-library").classList.contains("hidden"));
   });
 });
 
 describe("the write queue while just looking", () => {
   const HELD_FOLDER = "D:/Library/2020";
 
-  test("takes no write -- an undo of an earlier one waits -- and counts none", async (t) => {
-    // Undo and a failed write's Retry reach the queue without a control the page
-    // dims; the queue itself holds them back, and they are not shown as saving.
+  test("takes the writes that need the library no more; an undo of an earlier write goes through", async (t) => {
+    // Carry-forward writes a suggestion-like copy and needs the library; the queue itself
+    // holds it back, and it is not shown as saving. Undo re-writes earlier tags, which a
+    // file-only edit needs too: the server says per photo where it writes.
     const photos = [photoRecord({ filename: "a.jpg", tags: ["Beach"] }), photoRecord({ filename: "b.jpg" })];
     const s = server((url) => (url.includes(encodeURIComponent(HELD_FOLDER)) ? HELD : NOT_HELD), undefined, photos);
     const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/kr-track/", server: s });
@@ -196,14 +192,16 @@ describe("the write queue while just looking", () => {
     await openFolder(ctx, FOLDER);
     click(ctx.window, $("btn-just-look"));
     await flush(ctx.window);
-    click(ctx.window, $("btn-undo"));
-    press("z", { ctrlKey: true });
+    press("d", { ctrlKey: true });
+    click(ctx.window, $("btn-carry-forward"));
     await flush(ctx.window, 8);
-    assert.equal(writes(), before, "a write was sent while just looking");
-    assert.equal(entries(), queued, "a write held back was put on the queue");
-    assert.doesNotMatch($("write-queue").textContent, /Saving|failed/);
-    assert.ok(!$("btn-undo").disabled, "the undo was lost instead of waiting");
-    assert.match($("status-text").textContent, /kr-track does not hold this folder/);
+    assert.equal(writes(), before, "a carry-forward was sent while just looking");
+    assert.equal(entries(), queued, "a write that needs the library was put on the queue");
+
+    click(ctx.window, $("btn-undo"));
+    await flush(ctx.window, 8);
+    assert.equal(writes(), before + 1, "the undo was held back");
+    assert.doesNotMatch($("write-queue").textContent, /failed/);
   });
 });
 

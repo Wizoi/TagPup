@@ -8,7 +8,7 @@ import { saveToLocalStorageCache } from './cache.js';
 import { renderFileList } from './folder.js';
 import { renderTags } from './photo.js';
 import { renderThumbnails } from './grid.js';
-import { queuePhotoWrite, writesHeldBack } from './edits.js';
+import { queuePhotoWrite } from './edits.js';
 
 export function recordUndo(entry) {
     state.lastUndoable = entry;
@@ -39,8 +39,7 @@ export function undoLastOperation() {
         setStatus('ready', 'Nothing to undo');
         return;
     }
-    // Kept for later while just looking at a folder the library does not hold.
-    if (writesHeldBack()) return;
+    // Undo re-writes the earlier tags, so it works for an edit of files only as for any other.
     const entry = state.lastUndoable;
     state.lastUndoable = null;
     updateUndoButton();
