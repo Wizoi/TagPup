@@ -161,7 +161,7 @@ describe("TagPup's gear", () => {
     assert.ok(editor.classList.contains("active"), "the editor did not open");
     assert.ok(menu.classList.contains("hidden"), "the menu stayed open under it");
     const names = [...editor.querySelectorAll(".taxonomy-node-name")].map((n) => n.textContent);
-    assert.deepEqual(names, ["People", "Hazel Brookmire", "Activity"]);
+    assert.deepEqual(names, ["Activity", "People", "Hazel Brookmire"]);
     assert.equal(server.urls().filter((u) => u.includes("/api/taxonomy/tree")).length, treeReads,
       "TagPup's editor shows the tree the page already read, as Manage Tags did");
 
@@ -289,7 +289,7 @@ describe("TagTuner's gear", () => {
     assert.ok(editor.classList.contains("active"), "the editor did not open");
     assert.ok(server.urls().includes(`/${LIBRARY}/api/taxonomy/tree`), "the tree was not read from this library");
     const names = [...editor.querySelectorAll(".taxonomy-node-name")].map((n) => n.textContent);
-    assert.deepEqual(names, ["People", "Hazel Brookmire", "Activity"]);
+    assert.deepEqual(names, ["Activity", "People", "Hazel Brookmire"]);
   });
 
   test("an edit made there is sent to this library, and the tree read again", async (t) => {

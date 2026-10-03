@@ -278,3 +278,50 @@
 .tag-editor input:checked + .slider:before {
     transform: translateX(14px);
 }
+
+/* What an action in flight, a tag just made or moved, and a note to the person look like.
+   [hidden] is said again because the rows set their own display. */
+.tag-editor [hidden] {
+    display: none !important;
+}
+
+.tag-editor .taxonomy-node-busy {
+    font-size: 12px;
+    font-style: italic;
+    color: var(--accent);
+    margin-right: 8px;
+}
+
+.tag-editor .taxonomy-busy > .taxonomy-node-content {
+    border-color: var(--accent);
+}
+
+.tag-editor .taxonomy-node-content.taxonomy-flash {
+    background-color: rgba(99, 102, 241, 0.25);
+    border-color: var(--accent);
+}
+
+.tag-editor .tag-editor-empty {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 20px;
+}
+
+.tag-editor .tag-editor-queue {
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: var(--accent);
+}
+
+.tag-editor .tag-editor-queue ul {
+    margin: 4px 0 0 18px;
+    padding: 0;
+    color: var(--text-secondary);
+}
+
+.tag-editor .tag-editor-notice {
+    min-height: 18px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
