@@ -268,7 +268,8 @@ def disk_mark(path, mtime, size):
 
 def find(library, photo_path):
     """The id of the photo at `photo_path`, as the move from a folder on disk to its library view looks for the photo it
-    was looking at (phase 9c). Refused for a path that is not text; NotFound when the library holds no photo there."""
+    was looking at (phase 9c): None when the library holds no photo there (asked speculatively, so not an error: a 404 is
+    a line in the browser's console each time). Refused for a path that is not text."""
     if not isinstance(photo_path, str) or not photo_path.strip():
         raise Refused("find needs the path of a photo.")
     conn = _open(library)
@@ -276,8 +277,6 @@ def find(library, photo_path):
         found = store.photo_id_of(conn, paths.stored(photo_path.strip()))
     finally:
         conn.close()
-    if found is None:
-        raise NotFound("The library holds no photo at that path.")
     return found
 
 

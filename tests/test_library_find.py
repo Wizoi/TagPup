@@ -37,11 +37,12 @@ class Find(unittest.TestCase):
         spelled = os.path.join(self.vl.pictures, "COAST", "img_0001.JPG")
         self.assertEqual(self.a, self.find(spelled).get_json()["id"])
 
-    def test_no_photo_there_is_a_404_with_a_sentence_and_no_path_is_a_400(self):
+    def test_no_photo_there_is_a_null_id_not_an_error_and_no_path_is_a_400(self):
         reply = self.find(os.path.join(self.vl.pictures, "Coast", "nothing.jpg"))
-        self.assertEqual(404, reply.status_code)
-        self.assertNotIn("Traceback", reply.get_json()["error"])
-        self.assertEqual(400, self.find(None).status_code)
+        self.assertEqual((200, {"id": None}), (reply.status_code, reply.get_json()))
+        bad = self.find(None)
+        self.assertEqual(400, bad.status_code)
+        self.assertNotIn("Traceback", bad.get_json()["error"])
         self.assertEqual(400, self.find("   ").status_code)
 
     def test_this_pc_only(self):

@@ -705,7 +705,7 @@ def library_photo():
 @routes.get("/api/library/find")
 def library_find():
     """The id of the photo at `path`, to land on it in a library view when the move is made from the folder it is in
-    (tagpup.services.library_view.find); 404 with a sentence when the library holds no photo there."""
+    (tagpup.services.library_view.find); `id` null when the library holds no photo there."""
     if (refusal := _this_pc_only()) is not None:
         return refusal
     library = state.require()
