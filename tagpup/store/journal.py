@@ -65,7 +65,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from tagpup.core import paths
-from tagpup.store import db, file_journal, people, schema
+from tagpup.store import db, derived, file_journal, people, schema
 from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
@@ -709,8 +709,10 @@ def _newer_overlapping(conn, change_id):
 
 def _touched(conn, changes):
     """(the photos whose people come from rows the change touched, the photos whose date
-    it may have moved, the tree nodes it touched as (tag, name) before and after)."""
-    photo_ids, dated, nodes = set(), set(), []
+    it may have moved, the tree nodes it touched as (tag, name) before and after, the photos
+    whose keyword, folder or metadata rows (tagpup.store.derived) it may have moved, the ids of
+    the nodes)."""
+    photo_ids, dated, nodes, listed, node_ids = set(), set(), [], set(), set()
     for change in changes:
         values = [d for d in (change.old, change.new) if d]
         columns = set().union(*values) if values else set()
@@ -722,6 +724,8 @@ def _touched(conn, changes):
             photo_ids.add(change.key[0])
             if change.action != "update" or columns & {"path", "raw_metadata"}:
                 dated.add(change.key[0])
+            if change.action != "update" or columns & {"tags", "path", "raw_metadata"}:
+                listed.add(change.key[0])
         elif change.table == "faces":
             found = {d["photo_id"] for d in values if "photo_id" in d}
             if not found and change.key is not None:
@@ -729,20 +733,24 @@ def _touched(conn, changes):
                 found = {row["photo_id"]} if row else set()
             photo_ids |= found
         elif change.table == "tag_taxonomy":
+            if change.key is not None:
+                node_ids.add(change.key[0])
             nodes += [(d.get("tag"), d.get("name")) for d in values]
             if not {"tag", "name"} <= columns and change.key is not None:
                 row = _read(conn, "tag_taxonomy", change.key, ["tag", "name"])
                 if row:
                     nodes.append((row["tag"], row["name"]))
-    return photo_ids, dated, nodes
+    return photo_ids, dated, nodes, listed, node_ids
 
 
 def _derive(conn, changes):
     """Rebuild what `changes` touched of the derived data: the people of each photo whose
-    keywords or faces changed or whose keywords a changed node names, and the dates of
-    each photo whose metadata or path changed. The generations move by their triggers.
-    Returns how many photos' people changed."""
-    photo_ids, dated, nodes = _touched(conn, changes)
+    keywords or faces changed or whose keywords a changed node names, the dates of each photo
+    whose metadata or path changed, and the keyword, folder and metadata rows of each photo whose
+    keywords, path or metadata changed, was made or was deleted and of each whose keywords a changed
+    node names (tagpup.store.derived). The generations move by their triggers. Returns how many
+    photos' people changed."""
+    photo_ids, dated, nodes, listed, _node_ids = _touched(conn, changes)
     changed = 0
     if nodes:
         changed += people.follow_nodes(conn, nodes)
@@ -750,6 +758,10 @@ def _derive(conn, changes):
         changed += people.rebuild(conn, sorted(photo_ids))
     if dated:
         store_photos.date_photos(conn, sorted(dated))
+    if listed:
+        derived.refresh_photos(conn, sorted(listed))
+    if nodes:
+        derived.follow_nodes(conn, [tag for tag, _name in nodes])
     return changed
 
 
@@ -1035,14 +1047,14 @@ def _snapshot(conn, changes):
         if change.table not in columns:
             columns[change.table] = _columns(conn, change.table)
         rows[(change.table, change.key)] = _read(conn, change.table, change.key, columns[change.table])
-    photo_ids, _dated, nodes = _touched(conn, changes)
+    photo_ids, _dated, nodes, kept, node_ids = _touched(conn, changes)
     photo_ids = sorted(photo_ids | set(people.photos_named_by(conn, nodes) if nodes else ()))
     listed = []
     for start in range(0, len(photo_ids), CHUNK):
         chunk = photo_ids[start:start + CHUNK]
         listed += conn.execute("SELECT photo_id, position, name, source FROM photo_people WHERE photo_id IN (%s)"
                                " ORDER BY photo_id, position" % ",".join("?" * len(chunk)), chunk).fetchall()
-    return rows, listed
+    return rows, (listed, derived.listing(conn, set(photo_ids) | kept, node_ids))
 
 
 def _differences(before, after):

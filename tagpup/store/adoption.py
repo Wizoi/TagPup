@@ -56,7 +56,7 @@ import time
 
 from tagpup.core import machine, paths, validation
 from tagpup.core.library import Library
-from tagpup.store import db, journal, schema
+from tagpup.store import db, derived, journal, schema
 from tagpup.store import roots as store_roots
 
 logger = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ MIN_BACKUP_RATE = 1024 * 1024
 
 #: The steps of an adoption, in order; `_reached` is told of each.
 STEPS = ("photos converted", "other tables converted", "settings converted", "root recorded",
-         "verified", "change recorded")
+         "folders rebuilt", "verified", "change recorded")
 
 #: Where each path column is, by table: (key column, the columns that are a path, the columns of
 #: JSON holding paths and how to convert them).
@@ -618,8 +618,14 @@ def adopt(db_path, name, address, locations):
                     raise Refused(reasons)
                 store_roots.insert(conn, name, address or "")
                 _reached("root recorded")
+                # The folder tree holds the folders in the form the rows are in now (the paths of
+                # the derived tables are path columns too): made again, in this transaction.
+                report["derived"] = dict(zip(("folders", "photos_in_one"), derived.rebuild_folders(conn)))
+                _reached("folders rebuilt")
                 actual = _held_roots(conn)
                 problems = verify(conn, actual)
+                if any(derived.stale_folders(conn)):
+                    problems.append("the folder tree is not what the converted paths give")
                 if tuple(actual.locations.get(name, ())) != tuple(roots.locations.get(name, ())):
                     problems.append("the machine's map places the root at %r, not where its rows were converted by"
                                     % (list(actual.locations.get(name, ())),))
@@ -807,6 +813,9 @@ def undo_in(conn, change_id):
     if left:
         raise journal.Refusal(["%d row(s) still name the root %r after converting them back" % (left, name)])
     store_roots.delete(conn, name)
+    derived.rebuild_folders(conn)   # the folder tree in the native form the rows are in again
+    if any(derived.stale_folders(conn)):
+        raise journal.Refusal(["the folder tree is not what the paths converted back give"])
     after = _counted(conn)
     if after != before:
         raise journal.Refusal(["the tables' row counts changed: %r then %r" % (before, after)])

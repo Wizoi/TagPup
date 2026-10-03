@@ -142,8 +142,17 @@ class Batch:
     by the write for itself. Used inside one transaction: a rollback ends it."""
 
     def __init__(self, conn):
-        self.tree = Tree.read(conn)
+        self.conn = conn
+        self._tree = None
         self.folders = {}
+
+    @property
+    def tree(self):
+        """The tree, read at first use: inside the transaction of the first write that needs it,
+        so a tree another process edited before that write is the one used."""
+        if self._tree is None:
+            self._tree = Tree.read(self.conn)
+        return self._tree
 
 
 def _folder_id(conn, folder, cache):
@@ -255,6 +264,8 @@ def prune(conn, candidates=None):
     """Take the folders with no photo at or below them: those in `candidates` (ids) and the
     ancestors they leave empty, or, without, every one. A delete of photos leaves them, since a
     trigger cannot walk up a tree. Returns how many were taken."""
+    if not present(conn):
+        return 0
     taken = 0
     if candidates is None:
         while True:
@@ -401,6 +412,29 @@ def rebuild_all(conn):
     folders, in_a_folder = _write_folders(conn, placed, _wanted(set(f for f in placed.values() if f is not None)))
     return {"photos": len(placed), "tag_rows": len(tag_rows), "folders": folders, "in_a_folder": in_a_folder,
             "meta_rows": len(meta_rows)}
+
+
+def listing(conn, photo_ids, node_ids=()):
+    """The rows of the four tables for the photos `photo_ids`, and the (photo, node) rows of the
+    nodes `node_ids`, as lists to compare: ([(photo, node)], [(photo, folder path)], [meta rows]).
+    The folder by its path, not its id: a folder pruned and made again is the same folder. What
+    the journal's rehearsal compares before a change and after its undo. Reads only."""
+    if not present(conn):
+        return [], [], []
+    tags, folders, meta = [], [], []
+    ids = sorted(set(photo_ids))
+    for start in range(0, len(ids), CHUNK):
+        chunk = ids[start:start + CHUNK]
+        tags += conn.execute("SELECT photo_id, tag_id FROM photo_tags WHERE photo_id IN (%s)" % _marks(chunk), chunk)
+        folders += conn.execute("SELECT pf.photo_id, f.path FROM photo_folder pf JOIN folders f ON f.id = pf.folder_id"
+                                " WHERE pf.photo_id IN (%s)" % _marks(chunk), chunk)
+        meta += conn.execute("SELECT photo_id, rating, make, model, width, height, latitude, longitude FROM photo_meta"
+                             " WHERE photo_id IN (%s)" % _marks(chunk), chunk)
+    nodes = sorted(set(node_ids))
+    for start in range(0, len(nodes), CHUNK):
+        chunk = nodes[start:start + CHUNK]
+        tags += conn.execute("SELECT photo_id, tag_id FROM photo_tags WHERE tag_id IN (%s)" % _marks(chunk), chunk)
+    return sorted(set(map(tuple, tags))), sorted(map(tuple, folders)), sorted(map(tuple, meta))
 
 
 # ---- What a rule would say: the rows against the photos --------------------------------------

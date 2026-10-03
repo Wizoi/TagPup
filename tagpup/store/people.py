@@ -20,7 +20,7 @@ import os
 
 from tagpup.core import vocabulary
 from tagpup.store import roots as store_roots
-from tagpup.store import db
+from tagpup.store import db, derived
 
 #: A photo's people as a JSON list, in order, for a query whose photos are `p`: what
 #: `photos.people` held, so every reader gets the shape it always had.
@@ -184,11 +184,14 @@ def follow_nodes(conn, nodes):
 @contextlib.contextmanager
 def tree_edit(conn):
     """An edit of the tag tree on `conn`, after which the photos whose people it changed
-    are rebuilt (follow_tree). The caller commits."""
+    are rebuilt (follow_tree), and those whose keywords name a node it made, moved or took away
+    have their keyword rows made again (derived.follow_tree). The caller commits."""
     from tagpup.store import taxonomy   # taxonomy imports this module
     before = taxonomy.read_people_vocabulary(conn)
+    nodes = derived.tree_before(conn)
     yield
     follow_tree(conn, before)
+    derived.follow_tree(conn, nodes)
 
 
 def names(db_path, keywords_too=False, include_hidden=False):

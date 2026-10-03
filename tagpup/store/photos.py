@@ -16,7 +16,7 @@ import os
 
 from tagpup.core import dates, fields, paths, vocabulary
 from tagpup.core.result import NotHeld
-from tagpup.store import added_folders, damaged_files, db, embeddings, faces, folders, people
+from tagpup.store import added_folders, damaged_files, db, derived, embeddings, faces, folders, people
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -47,12 +47,16 @@ def date_photos(conn, photo_ids=None):
     conn.executemany("UPDATE photos SET taken = ?, year = ? WHERE id = ?", dated)
 
 
-def _dated_paths(conn, photo_paths):
+def _ids_of(conn, photo_paths):
     ids = []
     for photo_path in photo_paths:
         where, params = store_roots.sql_equals(conn, "path", photo_path)
         ids += [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)]
-    date_photos(conn, ids)
+    return ids
+
+
+def _dated_paths(conn, photo_paths):
+    date_photos(conn, _ids_of(conn, photo_paths))
 
 
 #: How far a row's mtime may be from its file's and the row still describe the file:
@@ -144,6 +148,7 @@ def forget_photo(db_path, photo_path):
         removed = {"faces": faces.remove_for_photo(conn, photo_path)}
         where, params = store_roots.sql_equals(conn, "path", photo_path)
         removed["photos"] = conn.execute("DELETE FROM photos WHERE " + where, params).rowcount
+        derived.prune(conn)   # the photo's rows went with it; the folders it emptied do not
         return removed
 
     removed = db.write_with_connection(
@@ -181,6 +186,7 @@ def record_reads(db_path, records, label="photos read back", before=None):
                 # shift changes when it was taken.
                 people.rebuild_photos(conn, [entry["path"]])
                 _dated_paths(conn, [entry["path"]])
+                derived.refresh_photos(conn, _ids_of(conn, [entry["path"]]))
             changed += written
         return changed
 
@@ -259,6 +265,7 @@ def move_rows_in(conn, renames):
             cursor.execute("UPDATE photos SET path = ? WHERE id = ?", (new_stored, photo_id))
             moved += cursor.rowcount
         date_photos(conn, photo_ids)   # a year may be in the new name
+        derived.refresh_photos(conn, photo_ids)   # the photo's folder, and the one it left
     return moved, skipped
 
 
@@ -344,6 +351,7 @@ def follow_fields(conn, photo_path, written, stat=None, before=None):
         embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
     people.rebuild(conn, [photo_id])
     date_photos(conn, [photo_id])
+    derived.refresh_photos(conn, [photo_id])
     return photo_id
 
 
@@ -404,6 +412,7 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None, before=
         changed = cursor.rowcount > 0
         people.rebuild(conn, [photo_id])
         date_photos(conn, [photo_id])
+        derived.refresh_photos(conn, [photo_id])
         return changed
 
     try:
@@ -517,6 +526,7 @@ def record_saved(db_path, photo_path, tags, captions, raw_meta, before=None):
         if photo_id is not None:
             people.rebuild(conn, [photo_id])
             date_photos(conn, [photo_id])
+            derived.refresh_photos(conn, [photo_id])
         return changed
 
     return db.write_with_connection(
@@ -615,6 +625,7 @@ def ensure_row(conn, photo_path, admit=False):
             raise NotHeld(folder)
     photo_id = _unread_row(conn, photo_path)
     date_photos(conn, [photo_id])
+    derived.refresh_photos(conn, [photo_id])
     return photo_id
 
 
@@ -626,7 +637,7 @@ def stored_spelling(conn, photo_path):
     return store_roots.from_row(conn, row[0]) if row else None
 
 
-def record_indexed(conn, photo_path, row, model=None, known=None):
+def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     """Record what indexing read of a photo: `row` has mtime, size, tags, captions,
     raw_metadata (as values), embedding (bytes) and document_id; the embedding is kept
     under `model`, stamped with the row's mtime and size, and the photo's people are
@@ -640,11 +651,14 @@ def record_indexed(conn, photo_path, row, model=None, known=None):
 
     Begins a write transaction first, if none is open (store_roots.begin_write): the index
     writes a batch on a connection it commits, and every path of the batch is converted by the
-    roots the library has as the write lock is taken.
+    roots the library has as the write lock is taken. `batch` is the run's derived.Batch: the
+    tag tree and the folders found, shared by the photos of one transaction so that each costs
+    no read of either.
     """
     store_roots.begin_write(conn)
     roots = store_roots.roots_for(conn)
     stored = stored_spelling(conn, photo_path) or paths.stored(photo_path)
+    row_path = paths.to_row(stored, roots)
     conn.execute(
         "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata, document_id)"
         " VALUES (?, ?, ?, ?, ?, ?, ?)"
@@ -652,11 +666,13 @@ def record_indexed(conn, photo_path, row, model=None, known=None):
         " mtime = excluded.mtime, size = excluded.size, tags = excluded.tags,"
         " captions = excluded.captions, raw_metadata = excluded.raw_metadata,"
         " document_id = COALESCE(excluded.document_id, photos.document_id)",
-        (paths.to_row(stored, roots), row.get("mtime", 0.0), row.get("size", 0), json.dumps(row.get("tags", [])),
+        (row_path, row.get("mtime", 0.0), row.get("size", 0), json.dumps(row.get("tags", [])),
          json.dumps(row.get("captions", [])),
          store_roots.raw_to_row(json.dumps(row.get("raw_metadata", {})), roots), row.get("document_id")))
     people.rebuild_photos(conn, [stored], known)
     _dated_paths(conn, [stored])
+    photo_id = _row_id(conn, stored)
+    derived.record(conn, photo_id, row_path, row.get("tags", []), row.get("raw_metadata", {}), batch)
     if row.get("embedding") is not None:
         if model is None:
             # Dropped without a word, it left a library without the vector (#85).
@@ -673,6 +689,7 @@ def remove(conn, photo_paths):
         faces.remove_for_photo(conn, photo_path)
         clause, params = store_roots.sql_equals(conn, "path", photo_path)
         removed += conn.execute("DELETE FROM photos WHERE " + clause, params).rowcount
+    derived.prune(conn)
     return removed
 
 
@@ -699,6 +716,7 @@ def remove_under(conn, folder):
                             + " AND excluded = 1", faces_params).fetchone()[0]
     faces_removed = conn.execute("DELETE FROM faces WHERE " + faces_where, faces_params).rowcount
     photos_removed = conn.execute("DELETE FROM photos WHERE " + photos_where, photos_params).rowcount
+    derived.prune(conn)
     # Out of the library: what was asked to be added there goes too, or a Suggest would
     # make it the library's again unasked.
     added_folders.forget_under(conn, folder)

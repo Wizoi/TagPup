@@ -203,16 +203,17 @@ class AKeywordAndEverythingUnderIt(ALibrary):
         self.assertEqual([], derived.photos_under_tag(self.conn, "Nowhere"))
         self.assertEqual(0, derived.count_under_tag(self.conn, "Nowhere"))
 
-    def test_a_node_moved_by_the_tree_keeps_its_id_and_its_range_follows_the_new_path(self):
-        """TagTuner renames a branch: the nodes keep their ids and take new paths, the photos' rows
-        are the nodes' ids, so they are untouched; the range is over the tree as it is now."""
-        before = self.rows("SELECT photo_id, tag_id FROM photo_tags ORDER BY photo_id, tag_id")
+    def test_a_range_over_the_tree_is_where_the_tree_is_now(self):
+        """The nodes keep their ids when the tree moves them, and the range is over the tree as it
+        is: the node's new path and its descendants' (tests/test_derived_follow_writes.py has the
+        photos' side of a rename)."""
+        wanted = {self.node("People/Rowan"), self.node("People/Rowan/Swim Team")}
         taxonomy.move_branch(self.conn, "People/Rowan", "Family/Rowan")
         self.conn.commit()
-        self.assertEqual(before, self.rows("SELECT photo_id, tag_id FROM photo_tags ORDER BY photo_id, tag_id"),
-                         "move_branch alone: no photo's keyword text changed")
-        self.assertEqual(3, derived.count_under_tag(self.conn, "Family/Rowan"))
-        self.assertEqual(0, derived.count_under_tag(self.conn, "People/Rowan"))
+        sql, params = derived.under("Family/Rowan")
+        self.assertEqual(wanted, {row[0] for row in self.rows(sql, *params)})
+        sql, params = derived.under("People/Rowan")
+        self.assertEqual([], self.rows(sql, *params))
 
     def test_the_plans_search_the_indexes_and_scan_nothing(self):
         sql, params = derived.under("People/Rowan")

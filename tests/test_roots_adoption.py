@@ -36,7 +36,11 @@ from tagpup.store import roots as store_roots  # noqa: E402
 WINDOWS = os.name == "nt"
 
 #: What a conversion moves, and what the journal and counters add on their own.
-NOT_COMPARED = ("generations", "changes", "change_rows", "roots", "schema_version", "photo_people")
+# The folder tree is derived from the paths and made again, in the same transaction, by the adoption and
+# by its undo: its ids are not kept (a folder is named by its path), so it is compared by path
+# (tests/test_derived_follow_writes.py), not row by row.
+NOT_COMPARED = ("generations", "changes", "change_rows", "roots", "schema_version", "photo_people",
+                "folders", "photo_folder")
 
 
 def tagpup_cli_console():
