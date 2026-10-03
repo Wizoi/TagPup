@@ -33,7 +33,16 @@ export function baseName(p) {
     return String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
 }
 
-/** Whether two spellings name the same file or folder. */
+/** Whether two spellings name the same file or folder. *//**
+ * Is `p` spelled as a network share (\\\\server\\share\\..., or //server/share/...)? Windows has no
+ * Recycle Bin there: a delete is permanent. (A mapped drive letter is not told by its spelling; the
+ * server says it in the folder's membership, `permanent_delete`.)
+ */
+export function isUnc(p) {
+    return /^[\\/]{2}[^\\/]/.test(String(p || '').trim());
+}
+
+
 export function samePath(a, b) {
     if (!a || !b) return false;
     return pathKey(a) === pathKey(b);

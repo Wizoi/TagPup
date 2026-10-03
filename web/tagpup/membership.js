@@ -7,8 +7,8 @@
 // folder the library holds photos in none of the folders of asks: "Add this folder to
 // kr-track?", with how many photos it holds and whether it is outside the library's root
 // folders. It names only this library: no other library is opened or mentioned. Add adds
-// it (POST /api/folder/add); Just look shows its photos with Suggest and every change
-// held back until it is added. The server refuses Suggest in a folder not added (409)
+// it (POST /api/folder/add); Just look shows its photos and lets the owner edit their
+// files (below) without adding it. The server refuses Suggest in a folder not added (409)
 // whatever the page does.
 //
 // Just look is not read-only (2026-10-02): "that should still let me change captions on
@@ -129,7 +129,8 @@ export function askToAdd(found) {
         fact(`${name}'s settings ignore this folder; adding it keeps it in step all the same.`, 'add-folder-warning');
     }
     fact('Adding it gives each photo a place in the library, indexes it, and keeps it in step from then on. '
-        + 'Just look shows the photos and changes nothing.', 'add-folder-note');
+        + 'Just look does not add it: tags, captions, renames, rotating, deleting and date changes would be made '
+        + 'to the photo files only, and Suggest and face naming stay off.', 'add-folder-note');
 
     btnAddFolder.textContent = `Add to ${name}`;
     btnAddFolderFromNote.textContent = `Add to ${name}`;
@@ -141,7 +142,7 @@ function closeDialog() {
     addFolderModal.classList.remove('active');
 }
 
-/** Just look: the photos, with Suggest and every change held back until added. */
+/** Just look: the photos, edited in their files only, with Suggest and face naming held back until added. */
 export function justLook() {
     closeDialog();
     state.justLooking = state.scannedFolder || null;
@@ -210,8 +211,8 @@ function stop(event) {
 }
 
 /**
- * The dialog's buttons, the header's name, and the guard that holds every change back
- * while just looking: on the window, capturing, so it hears a click or a key before
+ * The dialog's buttons, the header's name, and the guard that holds back what needs the
+ * library's database while just looking: on the window, capturing, so it hears a click or a key before
  * any feature's own listener on the document does.
  */
 export function wireMembership() {

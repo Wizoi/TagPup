@@ -74,7 +74,21 @@ export function wireRenameAndTimeShift() {
             })
         })
         .then(res => {
-            if (!res.ok) return res.json().then(e => { throw new Error(e.error || 'Rename failed') });
+            if (!res.ok) {
+                return res.json().then(e => {
+                    // Stopped part-way (the second part of a mixed rename): the names that DID change are shown.
+                    if (Array.isArray(e.updated_photos)) {
+                        state.folderPhotos = e.updated_photos;
+                        state.selectedThumbnails = [];
+                        state.lastSelectedPath = null;
+                        renderFileList();
+                        renderThumbnails();
+                        updateSelectedThumbnailsCount();
+                        saveToLocalStorageCache();
+                    }
+                    throw new Error(e.error || 'Rename failed');
+                });
+            }
             return res.json();
         })
         .then(data => {

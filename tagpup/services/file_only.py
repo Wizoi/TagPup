@@ -49,16 +49,19 @@ INCOMPLETE_REASON = ("possibly an incomplete copy: the file ends in zero bytes, 
 
 # ---- Which photos may be written into -----------------------------------------------------
 
-def unwritable(photo_paths):
+def unwritable(photo_paths, full=False):
     """[(path, what is wrong)] of the photos of `photo_paths` nothing may be written into:
-    the picture does not decode ("was found damaged -- <how> --"), the file ends in zeros as
-    an interrupted copy leaves it, or it cannot be read ("could not be read -- <why> --").
-    Each is decoded now, which is all there is to go by: no record is read or made. A
+    the file is cut short, empty, or ends in zeros as an interrupted copy leaves it ("was found
+    damaged -- <how> --"), or cannot be read ("could not be read -- <why> --"). The end of each
+    file is read (images.tail_check) and ExifTool's own failure to read it, which fails the write,
+    is the other signal; with `full` -- a rotate, which rewrites picture data -- the whole picture
+    is decoded as the indexer decodes it (images.zero_tail_if_whole). No record is read or made. A
     share that does not answer is a photo that could not be read, and not written."""
     found = []
+    check = images.zero_tail_if_whole if full else images.tail_check
     for photo_path in photo_paths:
         try:
-            zeros = images.zero_tail_if_whole(photo_path)
+            zeros = check(photo_path)
         except images.Unreadable as damage:
             found.append((photo_path, "was found damaged -- %s --" % images.DAMAGE.get(damage.kind, damage.kind)))
             continue
@@ -70,11 +73,11 @@ def unwritable(photo_paths):
     return found
 
 
-def refuse_unwritable(result, photo_paths):
+def refuse_unwritable(result, photo_paths, full=False):
     """Refuse `result` -- a write of files, nothing written yet -- when a photo of `photo_paths`
     is unwritable. Returns True when refused. details[DAMAGED_PHOTOS] holds them, answered 409
     as the journaled writes' refusal is."""
-    found = unwritable(photo_paths)
+    found = unwritable(photo_paths, full)
     if not found:
         return False
     more = "" if len(found) == 1 else " (and %d more)" % (len(found) - 1)
@@ -257,7 +260,9 @@ def _read_back(et, wrote, also, result):
 def rename(renames, aside):
     """Rename photos -- `renames`, old -> new, and first the files in the way, `aside`
     (tagpup.files.names.aside_for) -- all together or not at all (tagpup.files.names.rename_all,
-    which puts every one back under its old name when one fails). No journal, no row.
+    which puts every one back under its old name when one fails). No journal, no row, so no way back
+    from History: if the process dies between its two passes, run Smart Rename on the folder again (it
+    regenerates the same names); a file left named tmp_rename_* is a photo waiting for its new name.
     Raises names.RenameFailed. Returns file_changes.Renamed: nothing moved in any index."""
     done, moved_aside = names.rename_all(renames, aside=aside)
     return file_changes.Renamed(done, moved_aside, 0, [], None)

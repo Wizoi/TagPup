@@ -206,11 +206,58 @@ describe("the other file edits", () => {
     ctx.window.confirm = (text) => { asked = text; return true; };
     click(ctx.window, ctx.$("btn-delete-photo"));
     await flush(ctx.window, 8);
-    assert.match(asked, /Are you sure you want to delete "IMG_0001\.jpg" and move it to the Windows Recycle Bin\?/);
-    assert.match(asked, /kr-track does not hold this folder: only the file is moved, and nothing in kr-track changes/);
+    // FOLDER is a network share: no Recycle Bin, said BEFORE the delete (#520).
+    assert.match(asked, /This file is on a network share: it will be deleted permanently, not moved to the Recycle Bin/);
+    assert.doesNotMatch(asked, /and move it to the Windows Recycle Bin/);
+    assert.match(asked, /kr-track does not hold this folder: only the file is deleted, and nothing in kr-track changes/);
     assert.equal(ctx.posts("/api/photo/delete").length, 1, "Delete was held back");
-    assert.match(ctx.$("status-text").textContent, /Recycle Bin\. Nothing in kr-track changed/);
+    assert.match(ctx.$("status-text").textContent, /Nothing in kr-track changed/);
     assert.equal(ctx.document.querySelectorAll(".photo-item-file").length, 1, "the photo stayed in the list");
+  });
+
+  test("a local photo's delete says the Recycle Bin; a mapped drive the server names is permanent too", async (t) => {
+    const s = server().first("/api/folder/membership", () => ({ ...HELD, permanent_delete: false }));
+    const local = await loadApp("tagpup", { t, url: "http://localhost:8090/kr-track/", server: s });
+    local.window.alert = () => {};
+    let asked = "";
+    local.window.confirm = (text) => { asked = text; return false; };
+    await openFolder(local, HELD_FOLDER);
+    click(local.window, local.document.querySelectorAll(".photo-item-file")[0]);
+    await flush(local.window, 6);
+    click(local.window, local.document.getElementById("btn-delete-photo"));
+    assert.match(asked, /move it to the Windows Recycle Bin\?/);
+    assert.doesNotMatch(asked, /permanently/);
+    closeAllApps();
+
+    const mapped = server().first("/api/folder/membership", () => ({ ...HELD, permanent_delete: true }));
+    const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/kr-track/", server: mapped });
+    ctx.window.alert = () => {};
+    ctx.window.confirm = (text) => { asked = text; return false; };
+    await openFolder(ctx, HELD_FOLDER);
+    click(ctx.window, ctx.document.querySelectorAll(".photo-item-file")[0]);
+    await flush(ctx.window, 6);
+    click(ctx.window, ctx.document.getElementById("btn-delete-photo"));
+    assert.match(asked, /deleted permanently, not moved to the Recycle Bin/);
+  });
+
+  test("a Smart Rename that stopped part-way shows the names that did change, and says how to recover", async (t) => {
+    const renamed = { ...photos()[0], path: `${FOLDER}\\Lighthouse - 1.jpg`, filename: "Lighthouse - 1.jpg" };
+    const s = server().first("/api/folder/rename-photos", { success: false, updated_paths: { [A]: renamed.path },
+      updated_photos: [renamed, photos()[1]],
+      error: "Could not rename: gone. If it stops part-way, run Smart Rename on the folder again: it regenerates the same names." },
+    { status: 500 });
+    const ctx = await looking(t, s);
+    ctx.select(0, 1);
+    ctx.$("rename-grouping-input").value = "Lighthouse";
+    const apply = ctx.$("btn-apply-rename");
+    apply.disabled = false;
+    let alerted = "";
+    ctx.window.alert = (text) => { alerted = text; };
+    click(ctx.window, apply);
+    await flush(ctx.window, 10);
+    const shown = [...ctx.document.querySelectorAll(".photo-item-file")].map((e) => e.getAttribute("data-path"));
+    assert.ok(shown.includes(renamed.path), "the page still shows the old names");
+    assert.match(alerted, /run Smart Rename on the folder again/);
   });
 
   test("a delete the owner declines sends nothing", async (t) => {

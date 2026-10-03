@@ -2,7 +2,7 @@
 // forward, opening, rotating and deleting it, and editing when it was taken.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { baseName } from './common/paths.js';
+import { baseName, isUnc } from './common/paths.js';
 import { photoAlreadyHas } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -583,11 +583,17 @@ export function deleteActivePhoto() {
     if (index === -1) return;
 
     const filename = state.folderPhotos[index].filename || 'this photo';
-    // A photo of a folder the library does not hold: say that only the file moves.
+    // A photo of a folder the library does not hold: say that only the file moves. And on a network
+    // share there is no Recycle Bin: say it is gone for good, before it goes.
     const alone = isJustLooking()
-        ? `\n\n${libraryName()} does not hold this folder: only the file is moved, and nothing in ${libraryName()} changes.`
+        ? `\n\n${libraryName()} does not hold this folder: only the file is deleted, and nothing in ${libraryName()} changes.`
         : '';
-    if (!confirm(`Are you sure you want to delete "${filename}" and move it to the Windows Recycle Bin?${alone}`)) {
+    const permanent = isUnc(path) || Boolean(state.folderMembership && state.folderMembership.permanent_delete);
+    const question = permanent
+        ? `This file is on a network share: it will be deleted permanently, not moved to the Recycle Bin.\n\n`
+            + `Are you sure you want to delete "${filename}"?`
+        : `Are you sure you want to delete "${filename}" and move it to the Windows Recycle Bin?`;
+    if (!confirm(question + alone)) {
         return;
     }
 

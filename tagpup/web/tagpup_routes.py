@@ -462,6 +462,14 @@ def folder_rename_photos():
         if result.refused:
             return responses.refused(result)
         if not result.ok:
+            if result.details.get("renamed"):
+                # Some were renamed before it stopped (the second part of a mixed rename): the cache is read
+                # again and the page told which names changed, so it shows them instead of the old ones.
+                cache.pop(folder)
+                changed = photo_actions.read_folder(library, folder, state.exiftool(library))
+                cache.put(folder, changed)
+                return responses.error(500, result.message(), updated_paths=result.details["updated_paths"],
+                                       updated_photos=_sorted(changed))
             return responses.error(500, result.message())
         # Their saved suggestions are kept by the photo's id, and went with the rows.
         # The folder is read again from its files, as the page is about to show it.
@@ -704,11 +712,17 @@ def photo_delete():
     except Exception as e:
         logger.error("Error deleting image %s: %s", photo_path, e)
         return responses.error(500, str(e))
-    reply = {"success": True, **_where(result)}
+    # What happened, never what was meant: a file on a network share has no Recycle Bin to go to.
+    permanent = bool(result.details.get("permanent"))
+    name = picker_name(os.path.basename(library.path))
+    where = ("The file was deleted permanently: it is on a network share, which has no Recycle Bin."
+             if permanent else "Moved to the Recycle Bin.")
+    reply = {"success": True, "permanent": permanent, **_where(result)}
     if result.details.get(file_only.FILE_ONLY):
         # A photo of a folder the library does not hold: the file only.
-        reply["message"] = ("Moved to the Recycle Bin. Nothing in %s changed: it does not hold this folder."
-                            % picker_name(os.path.basename(library.path)))
+        reply["message"] = "%s Nothing in %s changed: it does not hold this folder." % (where, name)
+    elif permanent:
+        reply["message"] = where
     return jsonify(reply)
 
 

@@ -83,6 +83,13 @@ describe("a folder the library does not hold", () => {
     assert.equal(ctx.posts("/api/folder/add").length, 0, "it was added without asking");
   });
 
+  test("the fact line about Just look is true: the files are edited, the folder is not added", async (t) => {
+    const ctx = await open(t);
+    const facts = ctx.$("add-folder-facts").textContent;
+    assert.doesNotMatch(facts, /changes nothing/);
+    assert.match(facts, /Just look does not add it: tags, captions, renames, rotating, deleting and date changes would be made to the photo files only, and Suggest and face naming stay off/);
+  });
+
   test("Add adds it, and Suggest may start", async (t) => {
     // The index waits behind another: what the queue says of a folder just added.
     const ctx = await open(t, NOT_HELD, { status: "queued", percent: 0, message: "Waiting", folder: FOLDER });

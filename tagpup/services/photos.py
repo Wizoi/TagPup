@@ -199,7 +199,7 @@ def face_crop(library, face_id):
 
 
 @roots_service.canonical_args("photo_paths")
-def preserve_names(library, photo_paths, exiftool_path):
+def preserve_names(library, photo_paths, exiftool_path, split=None):
     """Write each photo's current name into its XMP-xmpMM:PreservedFileName where it holds
     none -- the name it had before Smart Rename first renamed it, which later renames
     leave alone, and which relink_photos finds a renamed photo by -- as one change of
@@ -207,13 +207,24 @@ def preserve_names(library, photo_paths, exiftool_path):
     can be undone. A photo holding one already is skipped; one that cannot be read is
     skipped too, as the rename leaves it be. A Result, as write_fields'. A photo of a folder
     the library does not hold has the name written to its file only (tagpup.services.
-    file_only): no journal change, no row."""
+    file_only): no journal change, no row. `split` is (held, loose) as the caller decided it
+    (libraries.split): Smart Rename decides once and hands it on, so the folder added in between
+    cannot send the names one way and the renames the other (#524).
+
+    A file-only rename has no journal: if it stops part-way, run Smart Rename on the folder again
+    -- it regenerates the same names -- and a file left named tmp_rename_* is a photo waiting for
+    its new name.
+    """
     def plan_one(path, held):
         if held.get(names.PRESERVED_NAME):
             return file_changes.skip("keeps the name it had before it was first renamed")
         return file_changes.Plan(after={names.PRESERVED_NAME: os.path.basename(path)})
 
-    held, loose = libraries.split(library, photo_paths)
+    if split is None:
+        held, loose = libraries.split(library, photo_paths)
+    else:
+        wanted = {paths.key(path) for path in photo_paths}
+        held, loose = [[path for path in side if paths.key(path) in wanted] for side in split]
     journaled = file_changes.write_fields(
         library, "smart rename: original names", exiftool_path, held, [names.PRESERVED_NAME], plan_one,
         summary={"photos": len(held)}, unreadable="skip") if held else None
@@ -273,7 +284,7 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     width = len(str(len(photo_paths)))
     present = [p for p in photo_paths if os.path.exists(p)]
     captions = names.read_for_renaming(exiftool_path, present)
-    kept = preserve_names(library, [p for p in present if p in captions], exiftool_path)
+    kept = preserve_names(library, [p for p in present if p in captions], exiftool_path, split=(held, loose))
     if kept.errors:
         # Nothing is renamed, as when this write raised: a photo renamed without the
         # name it had is found again only by its identity.
@@ -300,6 +311,7 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
                               index_rows_moved=moved, index_skipped=skipped, change=change,
                               **{file_only.WITH_ROWS: with_rows, file_only.FILE_ONLY: files_only})
 
+    stage = "held"
     try:
         if held_renames:
             # The rows move in the transaction that marks the files done, the files moved
@@ -312,6 +324,7 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
             skipped, moved, change = list(outcome.skipped or []), outcome.moved, outcome.change_id
             with_rows = sum(1 for old, new in outcome.done.items() if old != new)
         if loose_renames:
+            stage = "files only"
             outcome = file_only.rename(loose_renames, names.aside_for(loose_renames))
             done.update(outcome.done)
             moved_aside.update(outcome.moved_aside)
@@ -322,6 +335,8 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
         if done:
             said += " The photos of %s were renamed, and stay so." % (
                 "the folders the library holds" if held_renames else "the other folders")
+        if stage == "files only":
+            said += " If it stops part-way, run Smart Rename on the folder again: it regenerates the same names. A file left named tmp_rename_* is a photo waiting for its new name; the name it had is in its PreservedFileName."
         result.fail("smart rename", said)
         return result
 
@@ -405,14 +420,25 @@ def delete(library, photo_path):
     A photo of a folder the library does not hold (Just look) is sent to the Recycle Bin
     and nothing else happens: it has no row to forget (tagpup.services.file_only).
 
+    Only an existing photo FILE is deleted, in a held folder or not: a folder, a .txt, a path
+    that is not there or ends in a separator is refused, and nothing is moved (#520). A file on
+    a network share, or a drive with no Recycle Bin, is deleted permanently (the Bin is per local
+    volume; tagpup.files.recycle_bin): `permanent` says so, for the reply to say it, never "the
+    Bin" when it was not.
+
     details: `removed`, the rows removed from each table (None for such a photo);
-    `file_only` and `with_rows`, 1 for the way it was done.
+    `file_only` and `with_rows`, 1 for the way it was done; `permanent`.
     """
     result = Result(attempted=1)
+    why = recycle_bin.problem(photo_path)
+    if why:
+        result.refuse(why)
+        return result
+    permanent = not recycle_bin.goes_to_bin(photo_path)
     _held, loose = libraries.split(library, [photo_path])
     if loose:
         result = file_only.delete(photo_path)
-        result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0})
+        result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0, "permanent": permanent})
         return result
     # A damaged photo may be deleted: nothing is written into it.
     if libraries.refuse_writes(result, library, [photo_path], damaged_ok=True):
@@ -430,7 +456,7 @@ def delete(library, photo_path):
     ids = thumbnails.ids_of(library, [photo_path])
     result.details["removed"] = photos.forget_photo(library.path, photo_path)
     thumbnails.forget(library, ids)
-    result.details.update({file_only.FILE_ONLY: 0, file_only.WITH_ROWS: 1})
+    result.details.update({file_only.FILE_ONLY: 0, file_only.WITH_ROWS: 1, "permanent": permanent})
     return result
 
 
@@ -458,7 +484,7 @@ def rotate(library, photo_path, direction, exiftool_path):
     _held, loose = libraries.split(library, [photo_path])
     if loose:
         # A photo of a folder the library does not hold: its file only, but only if it decodes.
-        if file_only.refuse_unwritable(result, [photo_path]):
+        if file_only.refuse_unwritable(result, [photo_path], full=True):
             return result
         turned = file_only.rotate(photo_path, direction, exiftool_path)
         turned.details.update({file_only.FILE_ONLY: turned.changed, file_only.WITH_ROWS: 0})
