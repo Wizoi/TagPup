@@ -80,7 +80,7 @@ export function wireRenameAndTimeShift() {
                     // Stopped part-way (the second part of a mixed rename): the names that DID change are shown.
                     if (Array.isArray(e.updated_photos)) {
                         state.folderPhotos = e.updated_photos;
-                        state.selectedThumbnails = [];
+                        clearSelection();
                         state.lastSelectedPath = null;
                         renderFileList();
                         renderThumbnails();
