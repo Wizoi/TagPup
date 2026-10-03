@@ -86,6 +86,8 @@ export function createTagTree(container, handlers) {
         'No tags match your search or taxonomy is empty.');
     emptyNote.hidden = true;
     container.replaceChildren(rootList, emptyNote);
+    // Where the focus goes when the row that had it is removed: keys (Escape) still reach the dialog.
+    container.tabIndex = -1;
 
     // ---- the node list ------------------------------------------------------------
 
@@ -206,6 +208,7 @@ export function createTagTree(container, handlers) {
             toggle(li.tagId);
         };
         const name = element('span', 'taxonomy-node-name');
+        name.tabIndex = -1;
         const meta = element('span', 'taxonomy-node-meta');
         const marker = element('span', 'taxonomy-node-busy');
         marker.setAttribute('role', 'status');
@@ -452,12 +455,22 @@ export function createTagTree(container, handlers) {
         return mine;
     }
 
-    /** Take a node and its branch out. Returns the ids gone. */
-    function remove(id) {
+    /**
+     * Take a node and its branch out. Returns the ids gone. If the focus was in a row
+     * that goes -- or, with `rescue`, is nowhere in the page -- it moves to the name of
+     * the row beside it (not a button: an extra Enter must not ask a second question),
+     * or to the tree itself when there is none, so the dialog's keys still reach it.
+     */
+    function remove(id, { rescue = false } = {}) {
         const node = nodes.get(id);
         if (!node) return [];
         const key = focusKey();
         const parent = parentOf(node);
+        const active = document.activeElement;
+        const goneLi = lis.get(id);
+        const focusLost = (goneLi && active && goneLi.contains(active))
+            || (rescue && (!active || active === document.body));
+        const beside = focusLost ? neighbour(id) : null;
         const gone = [...branch(node)];
         unlink(node);
         for (const member of gone) {
@@ -473,7 +486,12 @@ export function createTagTree(container, handlers) {
         if (li) li.remove();
         if (parent) dropSublistIfEmpty(parent);
         paintEmpty();
-        restoreFocus(key);
+        if (focusLost) {
+            const next = beside !== null ? lis.get(beside) : null;
+            (next ? next.parts.name : container).focus({ preventScroll: true });
+        } else {
+            restoreFocus(key);
+        }
         return gone.map(member => member.id);
     }
 
@@ -650,6 +668,7 @@ export function createTagTree(container, handlers) {
         node: (id) => nodes.get(id),
         has: (id) => nodes.has(id),
         isBusy: (id) => busy.has(id),
+        isUnderBusy: (id) => { const node = nodes.get(id); return Boolean(node) && underBusy(node); },
         busyCount: () => busy.size,
         repaint: (id) => { const node = nodes.get(id); if (node) paintRow(node); },
         siblingNamed: (parentId, name) =>

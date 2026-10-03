@@ -307,6 +307,18 @@
     padding: 20px;
 }
 
+.tag-editor .tag-editor-queue {
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: var(--accent);
+}
+
+.tag-editor .tag-editor-queue ul {
+    margin: 4px 0 0 18px;
+    padding: 0;
+    color: var(--text-secondary);
+}
+
 .tag-editor .tag-editor-notice {
     min-height: 18px;
     margin-bottom: 8px;

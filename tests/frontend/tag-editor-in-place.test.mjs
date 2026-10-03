@@ -232,15 +232,17 @@ describe("a rename is shown at once", () => {
   test("a rename the server refuses puts the old name back in its old place and says why", async (t) => {
     const ctx = await openEditor(t);
     const { window, document, server } = ctx;
-    const gate = gated(server, "/api/taxonomy/rename", { success: false, error: "A tag with path 'Activity/Swimming' already exists." });
+    // The settling read comes back empty, as TagPup's loader answers a failed one: only the rollback restores the name.
+    const gate = gated(server, "/api/taxonomy/rename", { success: false, error: "Could not rename: it already exists." },
+      () => { ctx.world.tree = []; });
     expand(window, document, 3);
-    ctx.answers.prompt = "Swimming";
+    ctx.answers.prompt = "Zzz";
     const before = childNames(document, 3);
     expand(window, document, 1);
     const row = rowOf(document, 7);
 
     click(window, control(document, 7, "rename"));
-    assert.deepEqual(childNames(document, 3), ["Swimming", "Swimming"], "not shown at once");
+    assert.deepEqual(childNames(document, 3), ["Swimming", "Zzz"], "not shown at once");
     gate.resolve();
     await flush(window, 8);
 
@@ -701,5 +703,228 @@ describe("what an action costs", () => {
     assert.ok(rows <= 2, `a rename touched ${rows} rows`);
     assert.ok(records < 30, `a rename made ${records} changes to the page`);
     console.log(`# a rename in 900 tags: ${rows} row(s), ${records} DOM change(s)`);
+  });
+});
+
+describe("the review's findings", () => {
+  const openDeleteOf = async (ctx, id) => {
+    click(ctx.window, control(ctx.document, id, "delete"));
+    await flush(ctx.window, 4);
+    // A question just answered stays in the page a moment, closing: the open one is the last.
+    return [...ctx.document.querySelectorAll(".tag-editor-conflict.active")].pop();
+  };
+  const offered = (conflict) => [...conflict.querySelectorAll("#move-target-select option")].map((o) => o.value).filter(Boolean);
+  const used = (s) => s.on("/api/taxonomy/delete-check", { success: true, used: true, count: 2 });
+
+  test("#538: the move-to list leaves out a branch with a rename in flight, and one being deleted", async (t) => {
+    const ctx = await openEditor(t, { routes: used });
+    const { window, document, server } = ctx;
+    gated(server, "/api/taxonomy/rename", { success: true });
+    ctx.answers.prompt = "Venues";
+    click(window, control(document, 4, "rename"));
+    const list = offered(await openDeleteOf(ctx, 6));
+    assert.ok(!list.some((tag) => tag.startsWith("Venues") || tag.startsWith("Places")), `offered ${list}`);
+    assert.ok(list.includes("People") && list.includes("Activity/Archery"));
+    assert.ok(!list.includes("Activity/Swimming"));
+  });
+
+  test("#538: the branch of a delete waiting in the queue is not offered either", async (t) => {
+    const ctx = await openEditor(t, { routes: used });
+    const { window, document, server } = ctx;
+    gated(server, "/api/taxonomy/delete-confirm", { success: true, photos_affected: 2, photos_rewritten: 2 });
+    click(window, control(document, 3, "delete"));
+    await flush(window, 4);
+    click(window, document.querySelector(".tag-editor-conflict .btn-confirm"));
+    await flush(window, 4);
+    const list = offered(await openDeleteOf(ctx, 4));
+    assert.ok(!list.some((tag) => tag.startsWith("Activity")), `offered ${list}`);
+    assert.ok(list.includes("People"));
+  });
+
+  test("#538: a target renamed after the question was asked is not sent, so nothing is made", async (t) => {
+    const ctx = await openEditor(t, { routes: used });
+    const { window, document, server } = ctx;
+    const conflict = await openDeleteOf(ctx, 6);
+    assert.ok(offered(conflict).includes("Places/Harbor Town"));
+    const gate = gated(server, "/api/taxonomy/rename", { success: true },
+      () => { ctx.world.tree[3].name = "Venues"; ctx.world.tree[3].tag = "Venues"; ctx.world.tree[7].tag = "Venues/Harbor Town"; });
+    ctx.answers.prompt = "Venues";
+    click(window, control(document, 4, "rename"));
+    click(window, conflict.querySelector('input[value="move"]'));
+    conflict.querySelector("#move-target-select").value = "Places/Harbor Town";
+    click(window, conflict.querySelector(".btn-confirm"));
+    gate.resolve();
+    await flush(window, 10);
+    assert.equal(server.calls.filter((c) => c.url.includes("delete-confirm")).length, 0);
+    assert.match(notice(document), /Not deleted/);
+    assert.equal(marker(document, 6), "");
+  });
+
+  test("#539: closing the page asks while a change is queued or under way, and not otherwise", async (t) => {
+    const ctx = await openEditor(t);
+    const { window, document, server } = ctx;
+    const leave = () => { const e = new window.Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
+    assert.equal(leave(), false);
+    const gate = gated(server, "/api/taxonomy/rename", { success: true },
+      () => { ctx.world.tree[3].name = "Venues"; ctx.world.tree[3].tag = "Venues"; ctx.world.tree[7].tag = "Venues/Harbor Town"; });
+    ctx.answers.prompt = "Venues";
+    click(window, control(document, 4, "rename"));
+    assert.equal(leave(), true);
+    gate.resolve();
+    await flush(window, 8);
+    assert.equal(leave(), false);
+  });
+
+  /** The page's timers, held: the ones the queue sets for 30 s and 5 minutes are kept to be let off. */
+  function holdTimers(window) {
+    const held = [];
+    window.setTimeout = (fn, ms) => { held.push({ fn, ms, off: false }); return held.length; };
+    window.clearTimeout = (id) => { if (held[id - 1]) held[id - 1].off = true; };
+    return { fire: (ms) => held.filter((h) => h.ms === ms && !h.off).forEach((h) => h.fn()), held };
+  }
+  const queueBox = (document) => document.querySelector("#taxonomy-modal .tag-editor-queue");
+
+  test("#539: a change waiting over 30 s is said so, with what is queued; the notice goes when it is answered", async (t) => {
+    const ctx = await openEditor(t);
+    const { window, document, server } = ctx;
+    const timers = holdTimers(window);
+    const gate = gated(server, "/api/taxonomy/rename", { success: true },
+      () => { ctx.world.tree[3].name = "Venues"; ctx.world.tree[3].tag = "Venues"; ctx.world.tree[7].tag = "Venues/Harbor Town"; });
+    ctx.answers.prompt = "Venues";
+    click(window, control(document, 4, "rename"));
+    ctx.answers.prompt = "Beta";
+    click(window, control(document, 3, "rename"));
+    await flush(window, 3);
+    assert.equal(queueBox(document).hidden, true, "said before it had waited");
+    timers.fire(30000);
+    assert.equal(queueBox(document).hidden, false);
+    assert.match(queueBox(document).textContent, /Still waiting for the server: 2 changes are queued\. They are sent in order\./);
+    const items = [...queueBox(document).querySelectorAll("li")].map((li) => li.textContent);
+    assert.deepEqual(items, ['Rename "Places" to "Venues"', 'Rename "Activity" to "Beta"']);
+    gate.resolve();
+    await flush(window, 10);
+    assert.equal(queueBox(document).hidden, true);
+  });
+
+  test("#539: a request that never answers is called stuck after 5 minutes; later changes are queued, not dropped", async (t) => {
+    const ctx = await openEditor(t);
+    const { window, document, server } = ctx;
+    const timers = holdTimers(window);
+    const never = deferred();
+    let calls = 0;
+    server.first("/api/taxonomy/rename", () => (++calls === 1 ? never.promise : Promise.resolve({ success: true })));
+    ctx.answers.prompt = "Venues";
+    click(window, control(document, 4, "rename"));
+    await flush(window, 3);
+    timers.fire(300000);
+    assert.match(queueBox(document).textContent, /reload the page to see what it holds/);
+    assert.match(marker(document, 4), /renaming/, "the stuck change was dropped or settled by guessing");
+    ctx.answers.prompt = "Beta";
+    click(window, control(document, 3, "rename"));
+    await flush(window, 6);
+    assert.equal(calls, 1, "a later change was sent past the one that never answered");
+    assert.equal(labelOf(rowOf(document, 3)), "Beta");
+    assert.match(marker(document, 3), /renaming/);
+    assert.equal(window.dispatchEvent(new window.Event("beforeunload", { cancelable: true })), false);
+    never.resolve({ success: true });
+    await flush(window, 10);
+    assert.equal(calls, 2);
+    assert.equal(marker(document, 3), "");
+  });
+
+  test("#540: TagTuner opened again while a rename is under way neither reverts nor repeats it", async (t) => {
+    const ctx = await openEditor(t, { app: "tagtuner" });
+    const { window, document, server } = ctx;
+    const gate = gated(server, "/api/taxonomy/rename", { success: true },
+      () => { ctx.world.tree[3].name = "Venues"; ctx.world.tree[3].tag = "Venues"; ctx.world.tree[7].tag = "Venues/Harbor Town"; });
+    ctx.answers.prompt = "Venues";
+    click(window, control(document, 4, "rename"));
+    ctx.close();
+    await ctx.open();
+    await flush(window, 4);
+    assert.equal(labelOf(rowOf(document, 4)), "Venues");
+    assert.match(marker(document, 4), /renaming/);
+    gate.resolve();
+    await flush(window, 10);
+    assert.equal(labelOf(rowOf(document, 4)), "Venues");
+    assert.equal(marker(document, 4), "");
+    assert.equal(server.calls.filter((c) => c.url.includes("/rename")).length, 1);
+  });
+
+  test("#541: a new tag under a hidden parent is shown as the server stores it, and does not change when answered", async (t) => {
+    const tree = BASE();
+    tree[0].hidden_from_autocomplete = 1;
+    const ctx = await openEditor(t, { tree });
+    const { window, document, server } = ctx;
+    const gate = gated(server, "/api/taxonomy/create", { success: true, id: 9, tag: "People/Zed Quarry" },
+      () => ctx.world.tree.push({ id: 9, tag: "People/Zed Quarry", name: "Zed Quarry", parent_id: 1, has_face: 1, hidden_from_autocomplete: 0, usage_count: 0 }));
+    ctx.answers.prompt = "Zed Quarry";
+    click(window, control(document, 1, "add"));
+    const made = [...sublistOf(rowOf(document, 1)).children].find((li) => labelOf(li) === "Zed Quarry");
+    const hide = () => made.firstElementChild.querySelector('[data-control="hide"]').checked;
+    const before = hide();
+    gate.resolve();
+    await flush(window, 8);
+    assert.equal(before, false);
+    assert.equal(hide(), before, "the Hide box flipped when the server answered");
+  });
+
+  test("#541: after a delete the focus goes to the name of the row beside it, and Escape still closes the editor", async (t) => {
+    const ctx = await openEditor(t, { routes: (s) => s.on("/api/taxonomy/delete-check", { success: true, used: false, count: 0 }) });
+    const { window, document, server } = ctx;
+    gated(server, "/api/taxonomy/delete-confirm", { success: true, photos_affected: 0, photos_rewritten: 0 },
+      () => { ctx.world.tree = ctx.world.tree.filter((n) => n.id !== 7); }).resolve();
+    expand(window, document, 3);
+    const button = control(document, 7, "delete");
+    button.focus();
+    click(window, button);
+    await flush(window, 8);
+    assert.equal(rowOf(document, 7), null);
+    const active = document.activeElement;
+    assert.ok(active.classList.contains("taxonomy-node-name"), `focus is on ${active.tagName}.${active.className}`);
+    assert.equal(active.textContent, "Swimming");
+    active.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    assert.ok(!document.getElementById("taxonomy-modal").classList.contains("active"));
+  });
+
+  test("#541: with no row beside it the focus goes to the tree; a row removed by a reread under the focus does the same", async (t) => {
+    const ctx = await openEditor(t, { tree: treeOf([[1, "Only", null]]),
+      routes: (s) => s.on("/api/taxonomy/delete-check", { success: true, used: false, count: 0 }) });
+    const { window, document, server } = ctx;
+    gated(server, "/api/taxonomy/delete-confirm", { success: true, photos_affected: 0, photos_rewritten: 0 },
+      () => { ctx.world.tree = []; }).resolve();
+    const button = control(document, 1, "delete");
+    button.focus();
+    click(window, button);
+    await flush(window, 8);
+    assert.equal(document.activeElement, document.getElementById("taxonomy-tree-container"));
+
+    const second = await openEditor(t);
+    const w2 = second.window;
+    gated(second.server, "/api/taxonomy/update", { success: true }, () => { second.world.tree = second.world.tree.filter((n) => n.id !== 7); }).resolve();
+    expand(w2, second.document, 3);
+    control(second.document, 7, "rename").focus();
+    const box = control(second.document, 3, "hide");
+    box.checked = true;
+    box.dispatchEvent(new w2.Event("change", { bubbles: true }));
+    await flush(w2, 8);
+    assert.equal(rowOf(second.document, 7), null);
+    assert.ok(second.document.getElementById("taxonomy-modal").contains(second.document.activeElement), "the focus fell out of the editor");
+  });
+
+  test("#542: a rename to a name a sibling has, in other case, is refused at once with the same note as a new tag", async (t) => {
+    const ctx = await openEditor(t);
+    const { window, document, server } = ctx;
+    ctx.answers.prompt = "swimming";
+    click(window, control(document, 7, "rename"));
+    assert.equal(server.calls.filter((c) => c.url.includes("/rename")).length, 0);
+    assert.match(notice(document), /"Activity\/Swimming" is already there\./);
+    assert.equal(labelOf(rowOf(document, 7)), "Archery");
+    assert.equal(marker(document, 7), "");
+    // The node's own name in other case is a rename, not a collision.
+    gated(server, "/api/taxonomy/rename", { success: true });
+    ctx.answers.prompt = "archery";
+    click(window, control(document, 7, "rename"));
+    assert.equal(labelOf(rowOf(document, 7)), "archery");
   });
 });

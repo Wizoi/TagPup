@@ -28,6 +28,9 @@ import { createTagTree } from './tag-tree.js';
 /** What makes a name more than one level, as the server reads it (tagpup.core.vocabulary.segments). */
 const PATH_SEPARATORS = /[/|\\]/;
 const NOTICE_MS = 6000;
+/** How long the first queued job may wait before the editor says so, and before it calls it stuck. */
+const WAIT_MS = 30000;
+const STUCK_MS = 300000;
 
 const tagEditor = {
     hooks: null,
@@ -38,6 +41,8 @@ const tagEditor = {
     noticeTimer: null,
     tail: Promise.resolve(),
     inflight: 0,
+    queue: [],
+    queueBox: null,
     failed: false,
     made: 0,
     overlay: null,
@@ -118,9 +123,14 @@ function buildTagEditor() {
     const note = editorElement('div', 'tag-editor-notice');
     note.setAttribute('role', 'status');
     tagEditor.notice = note;
+    const queued = editorElement('div', 'tag-editor-queue');
+    queued.setAttribute('role', 'status');
+    queued.hidden = true;
+    queued.append(editorElement('span'), editorElement('ul'));
+    tagEditor.queueBox = queued;
     const tree = editorElement('div', 'tag-editor-tree');
     tree.id = 'taxonomy-tree-container';
-    body.append(controls, note, tree);
+    body.append(controls, note, queued, tree);
 
     const footer = editorElement('div', 'tag-editor-footer');
     if (!tagEditor.hooks.status) {
@@ -190,6 +200,12 @@ function askNewName(id) {
 export function wireTagEditor(hooks = {}) {
     tagEditor.hooks = { edited: () => {}, ...hooks };
     buildTagEditor();
+    // The changes queued here are in this page's memory only: closing it loses the ones not yet sent.
+    window.addEventListener('beforeunload', (e) => {
+        if (tagEditor.inflight === 0) return;
+        e.preventDefault();
+        e.returnValue = 'Tag changes are still being sent to the server';
+    });
     return { open: openTagEditor, close: closeTagEditor, isOpen: () => tagEditor.overlay.classList.contains('active') };
 }
 
@@ -257,20 +273,63 @@ function settled() {
  * or a delete, and two of those running at once -- a branch and a node in it -- would
  * write the same file twice at the same time; so they go one at a time, in the order
  * they were asked. What is shown does not wait: each action shows its result at once.
+ *
+ * `label` says what the job is, for the list of what is queued. Closing the page while
+ * any is queued or under way asks first (beforeunload, below): they are in memory only.
+ * A job that has waited WAIT_MS is said to be slow, with what is queued behind it; one that
+ * has waited STUCK_MS is said to be stuck. It stays in flight either way -- nothing says
+ * what the server did with it -- and later actions are queued behind it, never dropped.
  */
-function enqueue(job) {
+function enqueue(label, job) {
     if (tagEditor.inflight === 0) tagEditor.failed = false;
     tagEditor.inflight += 1;
-    const run = tagEditor.tail.then(job).catch((err) => {
+    const entry = { label, timers: [], slow: false, stuck: false };
+    tagEditor.queue.push(entry);
+    paintQueue();
+    const run = tagEditor.tail.then(() => {
+        entry.timers = [
+            setTimeout(() => { entry.slow = true; paintQueue(); }, WAIT_MS),
+            setTimeout(() => { entry.stuck = true; paintQueue(); }, STUCK_MS),
+        ];
+        return job();
+    }).catch((err) => {
         console.error(err);
         tagEditor.failed = true;
         editorSay('Error');
     }).then(() => {
+        entry.timers.forEach(clearTimeout);
+        tagEditor.queue.splice(tagEditor.queue.indexOf(entry), 1);
         tagEditor.inflight -= 1;
+        paintQueue();
         settled();
     });
     tagEditor.tail = run;
     return run;
+}
+
+/** The queue's line in the editor: silent until the first job has waited a long time. */
+function paintQueue() {
+    const box = tagEditor.queueBox;
+    if (!box) return;
+    const head = tagEditor.queue[0];
+    const text = box.firstChild;
+    const list = box.lastChild;
+    list.replaceChildren();
+    if (!head || !(head.slow || head.stuck)) {
+        box.hidden = true;
+        text.textContent = '';
+        return;
+    }
+    box.hidden = false;
+    text.textContent = head.stuck
+        ? 'The server has not answered a change for 5 minutes. It may still be working: reload the page to see what '
+            + 'it holds. Changes made since are still queued, and are sent in order.'
+        : `Still waiting for the server: ${tagEditor.queue.length} change${tagEditor.queue.length === 1 ? ' is' : 's are'} queued. `
+            + 'They are sent in order.';
+    for (const entry of tagEditor.queue) {
+        const item = editorElement('li', null, entry.label);
+        list.appendChild(item);
+    }
 }
 
 /** A second action on a node still being changed is refused, in words, and its row repainted. */
@@ -292,7 +351,7 @@ export function updateTaxonomyNode(id, fields) {
     view.setBusy(id, 'saving…');
     editorSay('Updating taxonomy...', true);
 
-    return enqueue(async () => {
+    return enqueue(`Change the flags of "${node.tag}"`, async () => {
         let data;
         try {
             data = await api.json('/api/taxonomy/update', {
@@ -345,7 +404,8 @@ export function createTaxonomyNode(name, parentId = null, hasFace = 0) {
             id: `new-${tagEditor.made}`, temp: true, name, parent_id: parentId,
             tag: parent ? joinTag(parent.tag, name) : name,
             has_face: parent ? parent.has_face : hasFace,
-            hidden_from_autocomplete: parent ? parent.hidden_from_autocomplete : 0,
+            // The server stores a new node unhidden (taxonomy.add_path); a hidden parent hides it by lineage.
+            hidden_from_autocomplete: 0,
             usage_count: 0,
         }, { show: true });
         view.setBusy(temp.id, 'adding…');
@@ -355,7 +415,7 @@ export function createTaxonomyNode(name, parentId = null, hasFace = 0) {
     const undo = () => {
         if (temp && view.node(temp.id) === temp) view.remove(temp.id);
     };
-    return enqueue(async () => {
+    return enqueue(`Add "${name}"`, async () => {
         if (parent && view.node(parent.id) !== parent) {
             undo();
             notice('Not added: the tag it was to go under is gone.');
@@ -423,8 +483,11 @@ export function deleteTaxonomyNode(id, tagPath) {
 
             let confirmResult = { action: 'remove' };
             if (data.used) {
+                // Only tags whose names the server has: one in a branch with a rename, a
+                // delete or a create in flight is under a name that may not be, and a
+                // move to a path that is not there makes it (docs/findings.md, #538).
                 const possibleTargets = view.ordered()
-                    .filter(n => !n.temp && n.id !== id && !n.tag.startsWith(tagPath + "/"))
+                    .filter(n => !n.temp && n.id !== id && !view.isUnderBusy(n.id) && !n.tag.startsWith(tagPath + "/"))
                     .map(n => n.tag);
                 confirmResult = await showDeleteConflictModal(tagPath, data.count, possibleTargets);
                 if (!confirmResult) return;
@@ -434,8 +497,15 @@ export function deleteTaxonomyNode(id, tagPath) {
 
             view.setBusy(id, data.used ? 'deleting… the photos are being rewritten' : 'deleting…');
             editorSay('Deleting tag...', true);
-            await enqueue(async () => {
+            await enqueue(`Delete "${tagPath}"`, async () => {
                 let resData;
+                // The question was answered before the actions ahead of it ran: a target one of them
+                // renamed or removed is no tag the server has, and the move would make it (#538).
+                if (confirmResult.action === 'move'
+                    && !view.ordered().some(n => !n.temp && n.tag === confirmResult.target_tag)) {
+                    notice('Not deleted: the tag the photos were to move to has changed. Ask again.');
+                    return;
+                }
                 try {
                     resData = await api.json('/api/taxonomy/delete-confirm', {
                         method: 'POST',
@@ -454,12 +524,8 @@ export function deleteTaxonomyNode(id, tagPath) {
                     return settleAfterFailure(view);
                 }
                 if (resData.success) {
-                    const next = view.neighbour(id);
-                    view.remove(id);
-                    // The row that had the focus is gone: it goes to the one beside it.
-                    if (next !== null && !tagEditor.overlay.contains(document.activeElement)) {
-                        view.focusOn(next, 'delete');
-                    }
+                    // The question had taken the focus; it goes to the row beside, never a button.
+                    view.remove(id, { rescue: true });
                     return afterTreeEdit(Boolean(data.used), view);
                 }
                 alert("Error deleting tag: " + resData.error);
@@ -493,6 +559,12 @@ export function renameTaxonomyNode(tagId, newName) {
     const view = tagEditor.view;
     const node = view.node(tagId);
     if (!node || refuseIfBusy(tagId) || node.name === newName) return Promise.resolve();
+    const already = view.siblingNamed(node.parent_id, newName);
+    if (already && already.id !== tagId) {
+        view.reveal(already.id);
+        notice(`"${already.tag}" is already there.`);
+        return Promise.resolve();
+    }
     notice('');
     const oldName = node.name;
     view.rename(tagId, newName);
@@ -503,7 +575,7 @@ export function renameTaxonomyNode(tagId, newName) {
         view.setBusy(tagId, null);
         if (view.node(tagId) === node) view.rename(tagId, oldName);
     };
-    return enqueue(async () => {
+    return enqueue(`Rename "${oldName}" to "${newName}"`, async () => {
         let data;
         try {
             data = await api.json('/api/taxonomy/rename', {
