@@ -865,7 +865,7 @@ click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
   disk" source through the same components. Only the cards on screen (and a screen
   either side) exist in the DOM. Exit: a 20,000-photo keyword scrolls without a stall,
   measured; the folder view's behaviour and tests unchanged.
-- **9c. The navigator and the move between views.** Folders, Keywords, People and Dates
+- **9c. The navigator and the move between views.** *(Built 2026-10-03; see "Phase 9c" below.)* Folders, Keywords, People and Dates
   beside the grid, with counts; the header and the URL name the source, so Back and a
   bookmark work; "Show in library" from a disk folder; a banner where the disk holds
   files the library does not (offering to index them, through sync); staleness marks on
@@ -1355,7 +1355,119 @@ panel and selection. Nothing is migrated and nothing of a folder's machinery run
   panel's tallies need a server answer for a selection by ids. Smart Rename and Camera Time Shift need a form across folders.
 - **Known limits.** The cards of a view show file names, not captions. The order is not live. A body of 68,000 paths is a long request.
   The first ask of a keyword view of 41,000 photos sorts its ids (100 ms in SQLite); `all`, a year and a month read an index in order.
-  The ids of a source over 200,000 photos are cut there. Tab visits only the cards that exist (as in 9b-1).
+  The ids of a source over 200,000 photos are cut there. Tab visited only the cards that existed (as in 9b-1): 9c made the grid one tab stop.
+
+### Phase 9c: the navigator, the move between a folder and its view, stale marks, the grid's keys *(built 2026-10-03; branch `arch/phase-9c-navigator`)*
+The page, and two small routes and a card field under it. Nothing is migrated. The owner sees: a switch at the top of the sidebar, **Library** and
+**Folder**; behind Library, four tabs of what the whole library holds; a click opens the view; and a grid that can be walked with the keyboard.
+
+- **The sidebar is two panes** (`index.html`, `navigator.js`): **Folder** is what it was (the folder box, Suggest, the open folder's file list), **Library** is
+  the navigator. A library view shows the Library pane and a folder view the Folder pane; a person who chooses the other keeps it for that kind of view until
+  the page is left (`state.nav.choice`, never written anywhere). The switch is an ARIA tab list (arrow keys), as the navigator's four tabs are.
+- **The navigator** is three modules. `navigator-model.js` is data only: the route's lists made into the rows a tree shows (`indexFolders`, `indexKeywords`,
+  `indexPeople`, `indexDates`, `sectionRows`, `locate`, `sectionOf`); `navigator-tree.js` draws rows as the ARIA tree (or listbox) pattern asks and owns the
+  keys' arithmetic (`paintRows`, `treeKeyAction`, `tabKeyTarget`, all pure but the draw); `navigator.js` asks, listens and keeps the state (`state.nav`).
+  *Folders* and *Keywords* are lazy trees from the route's flat list by parent (a branch is drawn only when open; folders in the route's order, keywords
+  alphabetical by `compareTagNames`), *People* an alphabetical list, *Dates* the years newest first opening to January..December (and an "Other" row for the
+  photos of the year whose date names no month). **At most 400 rows are drawn** whatever is open, and a line says how many were left out; a filter box
+  (120 ms after the last key) lists what matches wherever it is filed, with its place. **Years before 1970 or after next year** are one collapsed
+  **Other years (N)** entry at the end, still reachable. A folder row shows the photos with its subfolders (the direct count is in its tooltip and its
+  label); a click on a row opens the view of it **and** opens the branch; a click on the arrow only opens the branch. A keyword no tree node holds cannot be
+  navigated and is not listed: the route does not say how many there are, so nothing says so under the tree (the doctor lists them).
+- **Reading.** A section is read from `/api/library/navigator?section=` when its tab is first shown. Each ask has a number, and an answer that is not the
+  newest of its section is dropped; a section is drawn into its own panel only, and only while it is on screen (else when its tab is shown). It says
+  "Loading the folders...", "The library holds no photos in any folder yet." and the server's own sentence for a library behind or a root this computer
+  does not place (a 409; logged as a warning, not an error), or "Could not read the people (Failed to fetch)." and is read again when its tab is opened. A
+  section already read stays on screen when a re-read fails. **Counts are read again** when a write finishes (`write-queue.js markEntry` -> `upper.navigatorCountsChanged`:
+  every write of this page goes through the one queue) after 1.2 s, once for a run of writes; and at once on Refresh view. The re-read is quiet: the rows are
+  the same elements, what is open stays open, the focus stays; only the numbers change. A section not on screen is marked out of date and read when its tab is shown.
+- **The view is followed** (`library-view.js` calls `upper.navigatorFollows` as a view opens or closes): the source is highlighted in its tab (`aria-selected`),
+  the tab is selected and the path to the row opened -- also for a view opened from the address, by Back and Forward -- by `locate` over the parents the route
+  gives (a keyword by its tag, else without case; a person without case; a folder by `pathKey`; a month opens its year; a year among the odd ones opens the group).
+  A source with no row (a keyword with no node, a folder the library holds nothing in) is an empty view with its sentence and no highlight. Two libraries are two
+  pages: nothing of one's navigator can reach the other's.
+- **The move between disk and library** (`library-moves.js`): **Show in library** (beside Select All, with a folder open on disk) opens the folder's library
+  view with its subfolders; **Show on disk** (in the strip of a folder's view) opens the folder on disk through the history entry Back to folder view uses;
+  **This folder only / With subfolders** is another view of the same folder. The selection is cleared by every one (a view opening or closing clears it, 9b-1). The
+  photo at the top of the grid is the one to land on: a folder view finds it by `pathKey` in `shownIndex`, a library view asks the library which id a path is
+  (`GET /api/library/find?path=` -> `{id}`, `null` for a photo it does not hold: one seek of `idx_photos_path_nocase`, `COVERING INDEX (path=?)` on photo_index) and
+  `scrollToIndex(..., 'start')`s there, below the sticky strip (`topInset`). Best effort: a photo in neither leaves the grid at the top.
+- **The banner** (`library-banner.js`): a library view of a *folder* asks, once it has painted (never before), what the disk holds of it
+  (`/api/folder/membership`, the call a folder opened makes) and, if `photos_not_held > 0`, says "N photos in this folder are not in <library>." with **Add them** and
+  **Dismiss**. Add them opens the add-folder question of a folder opened -- the library's name, what it holds and lacks, the warnings -- with **Not now** in place of Just
+  look; nothing is indexed until **Add to <library>** is pressed (`/api/folder/add` for the banner's folder, `state.moves.addFor`; a folder view's own Add still adds the
+  open folder), and then the banner goes and the strip says it is being indexed and to Refresh view when it has finished (the folder's index pollers are idle in a view). The
+  question has a deadline (8 s, then the request is aborted) and **any** failure -- a share away, a folder gone from the disk (400), a library that cannot say, the
+  view left meanwhile -- shows nothing and logs nothing: it is an offer. Dismiss lasts until the page is left, per folder.
+- **When the library was last in step** (`sync-state.js`): the strip says "Library last in step with its folders: 5 min ago" (or "never"; ". A sync is running now." while one is) from
+  `GET /api/sync` -- the answer the Activity page's "Last in step" is made of, plus `syncing` (new: whether this process's folder watcher is syncing the library now, `activity_routes.is_syncing`;
+  false when it runs none). Asked once as a view opens and again with Refresh view; a request that fails says "Could not read when the library was last in step with its
+  folders." and nothing else changes; an older answer arriving late is dropped.
+- **Stale marks** (`library_view.cards(check_disk=True)`, what `GET /api/library/cards` asks; `view` and the CLI do not): one `os.stat` for each card through
+  `damaged_photos.stamp_of` (the bounded stat a page's request already uses: a share is asked within a second, one found away is answered at once for 30 s, so a page of
+  cards on it waits once), at most 200 a request. A card gains `stale`: `"changed"` when the file's size and time no longer describe the row (`store.photos.describes`, the
+  folder scan's own test), `"missing"` when the file is gone, and **no key** otherwise -- for a file that cannot be read, a share that did not answer, and a row nobody
+  stamped (Suggest's row for a photo never read: "changed" would claim a difference nothing knows of; photo_index has none, counted 2026-10-03: 0 of 68,472 rows lack a size or time).
+  The card carries a small badge ("changed on disk" at its bottom right, red "missing"), the picture that cannot be had is a grey card, and a screen reader hears it. A **missing**
+  photo is shown (the library still holds its row) and **not editable**: opening it (`photo.missing` from `/api/library/photo`) shows a notice, hides the picture, and every
+  element marked `data-writes` in the page -- rotation and delete, the date, title, people and keywords, the suggestions -- is `inert` and `aria-disabled` (`stale.js`; the server
+  already refused a write to a file that is not there). A **changed** photo, opened, is read from its file (9b-2's rule), and its badge clears on the card; the library's row is
+  sync's to bring up to date, so a view refreshed before it has says "changed" again, which is true. Of 400 rows of photo_index sampled evenly (read-only; counts), 400 were as their
+  row said: the marks are rare on this library, and a person will mostly meet them after editing in another program.
+- **The keyboard** (`grid-keys.js`, `vgrid.js`): the grid is a listbox and **one tab stop** (roving tabindex: the card the keys are on has `tabindex=0`, every other card, its
+  checkbox and its detail button `-1`, a placeholder none). Arrows: one card, one row (the last short row's last card below a column with none); Home / End: the first / last photo
+  of the view; PageUp / PageDown: the rows in view (`vgrid.geometry()`); Enter: opens the photo (a placeholder's too, by its id); Space: selects or deselects it (Shift+Space: from the last
+  one picked, as Shift-click); Shift with an arrow: every photo from where the run began to the new one is **added** (stepping back does not take away). Keys move by index in the
+  view's order, so they cross the window's edge and 20,000 photos: the grid scrolls to the index (`scrollToIndex`, below the sticky strip) and the focus goes to its card, or --
+  a place is not focusable until its card arrives -- waits on the grid itself and goes to the card when it is drawn (`afterDraw`). The shortcuts of the photo panel and Ctrl+D/Ctrl+Z are
+  unchanged and everyone's; the arrow keys stay the photo's when the focus is not in something marked `data-own-keys` (the grid, the navigator's trees and tabs, the sidebar's switch),
+  and never fire from a filter box or a dialog. Cards are options of the listbox, named "file name, date, selected / not selected, damaged, changed on disk / file missing"; the
+  navigator's tabs and trees follow the ARIA tabs and tree patterns (arrow keys, Home/End, Right/Left to open and close, Enter, `aria-expanded`, `aria-selected`, `aria-level`).
+  **vgrid.js** learned three things for this: `afterDraw` (after every draw), `topInset` (a card scrolled to goes below what is sticky over the scroller), `geometry()`; and
+  **the focused card is never taken from under the focus**: where a draw would release it (it left the window) it is kept, laid out of sight as a card being typed in is, and
+  one rebuilt for changed data (a refresh, an edit) gives the focus to the card built in its place.
+- **Measured** with `scripts/measure_navigator.py --run` (plan without `--run`; `--code-root <a git archive of the trunk>` runs only (f) and (g) on the trunk): a sandbox copy of
+  photo_index (68,472 photos, 2,746 folders, 895 keyword nodes, 413 people, 61 years), headless Chromium 1600 x 1000, a fresh browser for each, 3 rounds, thumbnail requests answered by the
+  browser. **There is no navigator on the trunk, so (a) to (e) have no baseline**: they are read against 9b-2's budgets (a window of cards painted in 40 to 60 ms, no task over 50 ms
+  while scrolling); (f) and (g) are on both. The machine was not quiet; run to run these move by up to 40%.
+
+  | the action | this branch (median; range) |
+  |---|---|
+  | (a) click Library: Folders rows painted, main thread idle -- cold (first after the server started) | 115 ms (the request 55 ms; the reply 792 KB, the 2,746 folders) |
+  | (a) the same, warm | 151 ms (109-162; the request 57-122) |
+  | (b) the folder tree opened to depth 3: each of three clicks until painted and idle | 47 / 46 / 47 ms (45-48), 74 rows after, no task over 50 ms |
+  | (c) a click on the largest keyword node (41,448 photos): click to the first window of cards painted and idle | 480 ms (6 rounds: 413-597); the same view by its address: navigation to painted and idle 500 ms (440-1,119) |
+  | (d) five letters typed in the People filter, 60 ms between keys | the list redrawn 17 ms after the filter's own 120 ms wait (15-21); no task over 50 ms; 400 rows to 2-118 |
+  | (e) ArrowDown held through 2,000 photos (5 columns, 400 keys at 30 a second, 17.6 s) | 1,056 frames, p95 16.8 ms, longest 16.8 ms, none over 100 ms, no long task, peak 550 grid nodes, the focus in the grid at every frame and on a card at the end |
+  | (f) `GET /api/library/cards` for 200 ids, the sandbox holds no photo file so all 200 are `missing`: branch / trunk | 18.9 ms (17.8-20.9) / 12.7 ms (9.8-16.8): the 200 stats cost 6 ms; 200 stats of files that are there, on a local disk, 5.2-5.9 ms (26-29 us each), of files that are gone 3.0-3.2 ms |
+  | (g) open the 759-photo folder view, scan reply to painted and idle: branch / trunk | 93 (90-95) / 94 (52-103) ms |
+  | (g) the same, scrolled top to bottom in 3 s: p95 frame, frames over 100 ms, peak nodes | 50.0 ms, 0, 500 on both |
+
+  What the numbers do **not** show: the click on a 41,000-photo keyword is the server's ids request (190-440 ms in the page, the same 9b-2 measured, 100 ms of it a sort in
+  SQLite), and in some of its rounds (not in address-opened ones) the page acted on the reply about 190 ms after it was on the wire, with no long task: not attributed, and absent
+  from headless runs of the other flows. Headless Chromium at 16.7 ms a frame has no compositor to fall behind; the photos are not in the sandbox (the stat is of a file that is gone, the
+  thumbnail a 1-pixel picture); and nothing is measured on a network share, where each stat of a share that answers is a thread (`shares.bounded`) and one that does not costs the one
+  second, once.
+- **How it fails**, each a test (`tests/frontend/navigator.test.mjs`, `library-moves.test.mjs`, `stale-cards.test.mjs`, `grid-keys.test.mjs`, `vgrid.test.mjs`;
+  `tests/test_library_cards_stale.py`, `test_library_find.py`): the four tabs at photo_index's size (rows bounded at 400, the first 400 of 413 people, 895 nodes never at once); a tab
+  opened while another loads, an older answer for the same section dropped, a click while a view is loading; Back and Forward restoring the view, the highlight and the tab; the address
+  opened cold to a folder, a keyword, a person, a month and a year among the odd ones; a folder or keyword that is gone; counts after a write (quiet, once for five writes, the section off
+  screen read when shown); a library with nothing, one at schema 18, an unplaced root, a network failure; two libraries; the banner after the paint, for a folder's view only, with a
+  share away, a folder gone, a library that cannot say, a question that never answers (the deadline), a view left meanwhile, Add them (nothing indexed until answered), Dismiss, Refresh
+  view; "last in step" never / running / failing / an older answer late; Show in library and on disk (selection cleared, landing on the photo, the photo not held, a folder not on disk);
+  stale badges, a missing photo inert, a changed one cleared, 200 in a batch, an away share (no mark); the keys at 20,000 photos with the DOM bounded, Enter and Space on a place, a
+  Shift range across unloaded cards, the focus across a refresh and a wheel scroll, Ctrl+Z with the focus on a card. The server's: a file as the row says, edited, deleted, touched, a
+  row nobody stamped, a share away or a file unreadable (no mark), `view` that looks at no disk, one stat each.
+- **What 9d builds on.** A write of a selection that spans folders is by path today and `selectInLibrary` is the one place that turns ids into paths (Shift+arrows and Select all use
+  it): with id-based writes it goes and a range is instant. A card says `stale`: a bulk edit must skip a **missing** photo and say how many (the server refuses it), and take the new
+  stamp a write returns into the card (`applyEditedRecords`). Every write of the page goes through `queuePhotoWrite`, which is what re-reads the navigator's counts: a new write path that
+  does not will leave the counts as they were until Refresh view. The grid's keys call `handleCardSelectionClick`, `selectInLibrary` and `openLibraryPhoto` and know nothing else of a photo.
+  `state.nav` is the place the search (9e) reads "within what the navigator has selected": `state.nav.followed`.
+- **Known limits.** Shift+arrows only add. After Enter the photo panel hides the grid and the focus is on nothing; Tab starts from the top of the page (the card the keys were on is still the
+  grid's tab stop). **Show on disk** for a folder that is not on disk closes the view first and the scan says so in an alert (the folder is not probed first). Adding from the banner shows no
+  progress (the folder's pollers are idle in a view): Refresh view when it has finished. The banner's question walks the folder on disk (the route a folder opened asks), and a request
+  abandoned at its deadline leaves the server's thread to finish. The folders reply is 792 KB uncompressed. Counts shown are `toLocaleString()`, so a thousands separator is the browser's.
+  A card's title is still the file name. A library view of a folder with a very long path names it on several lines in its header. The navigator cannot show a folder "gone from disk" (the route does not say).
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1, the rest design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag
