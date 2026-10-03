@@ -274,6 +274,7 @@ def person_filer(library):
     filed, roots = taxonomy.people_filing(library.path)
 
     def file_person(name):
+        name = (name or "").strip()
         return vocabulary.person_tag(name, filed.get(vocabulary.key(name), []), roots) or name
     return file_person
 
@@ -289,7 +290,7 @@ def apply_suggestions(library, suggestions, exiftool_path, threshold=0.0):
     for path, entry in suggestions.items():
         additions[path] = suggesting.offered_tags(entry, threshold, file_person)
         offered = {file_person(person["name"]) for person in entry.get("people") or []
-                   if person.get("score", 0.0) >= threshold}
+                   if person.get("score", 0.0) >= threshold and (person.get("name") or "").strip()}
         persons[paths.key(path)] = offered
     return add_tags(library, additions, exiftool_path, persons=persons)
 

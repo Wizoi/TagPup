@@ -74,7 +74,7 @@ def offered_tags(entry, threshold=0.0, file_person=None):
     offered_people = list(entry.get("people") or [])
     chosen = [t["tag"] for t in offered if t.get("score", 0.0) >= threshold]
     chosen += [file_person(p["name"]) if file_person else p["name"]
-               for p in offered_people if p.get("score", 0.0) >= threshold]
+               for p in offered_people if p.get("score", 0.0) >= threshold and (p.get("name") or "").strip()]
     return chosen
 
 

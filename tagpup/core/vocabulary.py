@@ -89,7 +89,11 @@ def person_tag(name, filed, roots):
     `filed` are the paths the tree files the name under, under its people roots; `roots` the
     people roots' names as the tree spells them. A name the tree files once is that path; filed
     twice, None (which folder?). Not filed: under the one people root, under People when the tree
-    has none, and None when it has several. A name that is already a path is as it is."""
+    has none, and None when it has several. A name that is already a path is as it is. The name is
+    trimmed, as the page's resolveTagOrPerson trims it, and a name with nothing in it is None."""
+    name = (name or "").strip()
+    if not name:
+        return None
     if "/" in name:
         return name
     if len(filed) == 1:
