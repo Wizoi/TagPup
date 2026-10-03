@@ -40,6 +40,10 @@ export function updateSelectedThumbnailsCount() {
         selectionSummaryScroll.classList.toggle('hidden', state.selectedThumbnails.length === 0);
     }
 
+    if (state.library) {
+        showLibrarySelection();
+        return;
+    }
     if (state.selectedThumbnails.length > 0) {
         
         // Gather statistics
@@ -243,6 +247,26 @@ export function updateSelectedThumbnailsCount() {
         btnApplyRename.disabled = true;
         upper.updateFolderAutoApplyState();
     }
+}
+
+/**
+ * The selection panel for a selection in a library view. The page holds only the cards near the window, so the
+ * tags and people of the selection are not tallied (a count of a part would read as the whole); the bulk
+ * editor below writes by path, as it does for a folder.
+ */
+function showLibrarySelection() {
+    selectionDateLabel.textContent = 'Date Taken';
+    selectionDateValue.textContent = '--';
+    const note = buildElement('span', {
+        style: 'color: var(--text-muted); font-size: 12px; padding: 4px 0;',
+        text: 'Not tallied for a library view',
+    });
+    if (selectionPeopleList) replaceContent(selectionPeopleList, note.cloneNode(true));
+    if (selectionTagsList) replaceContent(selectionTagsList, note.cloneNode(true));
+    if (selectionSuggestedPeopleList) selectionSuggestedPeopleList.innerHTML = '';
+    if (selectionSuggestedTagsList) selectionSuggestedTagsList.innerHTML = '';
+    btnApplyRename.disabled = true;
+    upper.updateFolderAutoApplyState();
 }
 
 //: Auto-apply writes everything the panel offers, so there is no bar to be below

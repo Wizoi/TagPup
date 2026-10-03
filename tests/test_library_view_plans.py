@@ -141,6 +141,31 @@ class Plans(unittest.TestCase):
             with self.subTest(kind=source.kind):
                 self.assert_searches(lambda conn, s=source: store.total(conn, s), "INDEX")
 
+    # ---- A source's whole id list (phase 9b-2) --------------------------------------------------
+
+    def ids(self, source):
+        return lambda conn: store.all_ids(conn, source, 200000)
+
+    def test_the_whole_id_list_of_all_year_and_month_is_one_read_of_the_date_index_in_order(self):
+        for source, index in ((store.Source(store.ALL), "idx_photos_taken"), (store.Source(store.YEAR, 2016), "idx_photos_year"),
+                              (store.Source(store.MONTH, "2016-02"), "idx_photos_taken (taken>? AND taken<?)")):
+            with self.subTest(kind=source.kind):
+                text = self.assert_searches(self.ids(source), index)
+                self.assertNotIn("TEMP B-TREE", text)
+
+    def test_the_whole_id_list_of_a_folder_a_keyword_and_a_person_scans_no_table(self):
+        self.assert_searches(self.ids(store.Source(store.FOLDER, self.top, True)), "idx_photos_path_nocase (path>? AND path<?)")
+        self.assert_searches(self.ids(store.Source(store.FOLDER, self.folder, False)), "idx_photo_folder_folder (folder_id=?)")
+        self.assert_searches(self.ids(store.Source(store.KEYWORD, "Trips")), "idx_photo_tags_tag (tag_id=?)")
+        found = self.plan_of(self.ids(store.Source(store.PERSON, "Wren Halloway")))
+        self.assertIn("idx_photo_people_name (name=?)", "\n".join("\n".join(lines) for _statement, lines in found))
+
+    def test_the_whole_id_list_reads_the_ids_and_nothing_else(self):
+        for source in (store.Source(store.ALL), store.Source(store.KEYWORD, "Trips"), store.Source(store.FOLDER, self.top, True)):
+            for statement, _lines in self.plan_of(self.ids(source)):
+                for column in ("raw_metadata", "tags", "captions", "embedding", "vector"):
+                    self.assertNotRegex(statement, r"\b%s\b" % column)
+
     # ---- The cards and the navigator ----------------------------------------------------------
 
     def test_the_cards_are_a_lookup_by_primary_key(self):

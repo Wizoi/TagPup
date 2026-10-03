@@ -26,8 +26,12 @@ export function rememberLibrary(name) {
     } catch (e) { /* a browser that keeps nothing: the picker asks each time */ }
 }
 
+/** The page's address for another library: its folder (?path) goes with it, a view of this library does not. */
 export function goToLibrary(name) {
-    window.location.href = '/' + name + '/' + window.location.search;
+    const params = new URLSearchParams(window.location.search);
+    for (const own of ['view', 'value', 'recursive']) params.delete(own);
+    const search = params.toString();
+    window.location.href = '/' + name + '/' + (search ? '?' + search : '');
 }
 
 /**

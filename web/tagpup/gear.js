@@ -10,6 +10,7 @@ import { state } from './state.js';
 import { statusDot, statusText } from './elements.js';
 import { fetchKnownTagsAndPeople, loadTaxonomy } from './tags.js';
 import { scanFolder } from './folder.js';
+import { browseWholeLibrary, libraryViewOfFolder, syncLibraryMenu } from './library-view.js';
 
 /**
  * The tag editor, over the tree this page keeps (state.taxonomyNodes, read by
@@ -30,7 +31,13 @@ export function wireTagPupGear() {
             if (photosChanged && state.scannedFolder) scanFolder(true);
         },
     });
-    return wireGear(document.getElementById('btn-gear'), document.getElementById('gear-menu'), {
+    const button = document.getElementById('btn-gear');
+    const menu = document.getElementById('gear-menu');
+    // The menu's library views: the whole library, or the folder that is open (library-view.js).
+    if (button) button.addEventListener('click', () => syncLibraryMenu(menu));
+    return wireGear(button, menu, {
+        'browse-library': browseWholeLibrary,
+        'library-of-folder': libraryViewOfFolder,
         'tag-editor': editor.open,
         'library-settings': openSettings,
         // An undo may have put back tags, captions and names: what the page shows is read again.

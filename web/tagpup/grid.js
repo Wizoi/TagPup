@@ -21,6 +21,10 @@ import { renderFileList, visiblePhotos } from './folder.js';
 import { photoFileUrl, selectPhoto } from './photo.js';
 import { createVGrid } from './vgrid.js';
 import {
+    applyEditedRecords, ASK_SELECT_ABOVE, cancelLibrarySelection, cardDamage, idsBetween, libraryCardKey,
+    libraryCount, libraryIdOfPath, libraryIndexOfKey, libraryRecordAt, selectInLibrary
+} from './library-source.js';
+import {
     addToSelection, isSelected, removeFromSelection, renameInSelection, setSelection
 } from './selected.js';
 
@@ -65,7 +69,7 @@ export function hideGridContextMenu() {
 export function showGridContextMenu(x, y, pathUnderCursor) {
     if (!gridContextMenu) return;
     const count = state.selectedThumbnails.length;
-    const total = state.folderPhotos.length;
+    const total = state.library ? state.library.ids.length : state.folderPhotos.length;
 
     gridContextMenu.querySelectorAll('[data-requires-selection]').forEach(el => {
         el.classList.toggle('disabled', count === 0);
@@ -73,7 +77,7 @@ export function showGridContextMenu(x, y, pathUnderCursor) {
     const countLabel = gridContextMenu.querySelector('#context-menu-count');
     if (countLabel) {
         countLabel.textContent = count === 0
-            ? `No photos selected (${total} in folder)`
+            ? `No photos selected (${total} in ${state.library ? 'view' : 'folder'})`
             : `${count} of ${total} selected`;
     }
 
@@ -91,7 +95,7 @@ export function showGridContextMenu(x, y, pathUnderCursor) {
 }
 
 /** The cards on screen show what is selected: the mark and the checkbox. */
-function syncSelectionMarks() {
+export function syncSelectionMarks() {
     if (!state.grid) return;
     state.grid.eachCard((card, photo) => {
         const on = isSelected(photo.path);
@@ -102,6 +106,10 @@ function syncSelectionMarks() {
 }
 
 export function invertThumbnailSelection() {
+    if (state.library) {
+        selectEverything('invert');
+        return;
+    }
     // The photos the filter shows are inverted; those it hides keep whatever they had.
     const shown = visiblePhotos();
     const showing = new Set(shown.map(photo => pathKey(photo.path)));
@@ -171,9 +179,11 @@ function cardIsBeingEdited(card) {
 }
 
 function noPhotosFound() {
+    const lib = state.library;
     return buildElement('div', {
         style: 'grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 40px;',
-        text: 'No photos found matching filter.',
+        text: !lib ? 'No photos found matching filter.'
+            : lib.status === 'loading' ? 'Opening the view...' : (lib.message || 'This view holds no photos.'),
     });
 }
 
@@ -185,13 +195,18 @@ export function wireThumbnailGrid() {
     state.grid = createVGrid({
         container: thumbnailsGrid,
         scroller: folderViewMain,
+        // A folder's photos, or a library view's order and the cards of it that are held
+        // (library-source.js): the grid asks the same three questions of either.
         source: {
-            count: () => state.shownPhotos.length,
-            recordAt: (index) => state.shownPhotos[index],
-            indexOfKey: (key) => state.shownIndex.has(key) ? state.shownIndex.get(key) : -1,
+            count: () => state.library ? libraryCount() : state.shownPhotos.length,
+            recordAt: (index) => state.library ? libraryRecordAt(index) : state.shownPhotos[index],
+            indexOfKey: (key) => {
+                if (state.library) return libraryIndexOfKey(key);
+                return state.shownIndex.has(key) ? state.shownIndex.get(key) : -1;
+            },
         },
         buildCard: buildThumbnailCard,
-        cardKey: (photo) => pathKey(photo.path),
+        cardKey: (photo) => state.library ? libraryCardKey(photo) : pathKey(photo.path),
         isBusy: cardIsBeingEdited,
         afterBuild: () => upper.updateCameraHighlights(),
         empty: noPhotosFound,
@@ -204,6 +219,10 @@ export function wireThumbnailGrid() {
  * starts from the top.
  */
 export function renderThumbnails() {
+    if (state.library) {
+        renderLibraryThumbnails();
+        return;
+    }
     const shown = visiblePhotos();
     const index = new Map();
     shown.forEach((photo, at) => index.set(pathKey(photo.path), at));
@@ -219,7 +238,56 @@ export function renderThumbnails() {
     }
 }
 
+/**
+ * A library view drawn: another view from the top, the same view again with the cards of the photos
+ * edited since brought up to date where they are (the order is not recomputed: Refresh view does that).
+ */
+function renderLibraryThumbnails() {
+    const source = `library:${state.library.token}`;
+    state.shownPhotos = [];
+    state.shownIndex = new Map();
+    if (state.shownSource !== source) {
+        state.shownSource = source;
+        state.grid.reset();
+        return;
+    }
+    applyEditedRecords();
+    state.grid.refresh();
+}
+
+/**
+ * The place of a card not yet fetched: the shape of a card, so the rows are the height they will be.
+ * Nothing in it is clickable, has a path, or takes the keyboard; a card that gave up says so.
+ */
+function buildPlaceholderCard(record) {
+    const card = document.createElement('div');
+    card.className = 'thumbnail-card placeholder' + (record.failed ? ' failed' : '');
+    card.setAttribute('aria-hidden', 'true');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'thumbnail-img-wrapper';
+    if (record.failed) {
+        wrapper.appendChild(buildElement('div', { className: 'thumbnail-placeholder-note', text: 'Could not load' }));
+    }
+    card.appendChild(wrapper);
+    const infoRow = document.createElement('div');
+    infoRow.className = 'thumbnail-info-row';
+    const textInfo = document.createElement('div');
+    textInfo.className = 'thumbnail-text-info';
+    textInfo.appendChild(buildElement('span', { className: 'thumbnail-filename', text: '\u00A0' }));
+    textInfo.appendChild(buildElement('span', { className: 'thumbnail-date', text: '\u00A0' }));
+    infoRow.appendChild(textInfo);
+    const spacer = document.createElement('button');
+    spacer.className = 'btn-thumbnail-detail';
+    spacer.style.visibility = 'hidden';
+    spacer.tabIndex = -1;
+    spacer.textContent = '\u{1F50D}';
+    infoRow.appendChild(spacer);
+    card.appendChild(infoRow);
+    return card;
+}
+
 function buildThumbnailCard(photo) {
+    if (photo.placeholder) return buildPlaceholderCard(photo);
     const card = document.createElement('div');
     card.className = 'thumbnail-card';
     const selected = isSelected(photo.path);
@@ -227,6 +295,10 @@ function buildThumbnailCard(photo) {
         card.classList.add('selected');
     }
     card.setAttribute('data-path', photo.path);
+    // A card of a library view is its photo's `thumb` (the cache's thumbnail by id) and cannot be
+    // edited in place: its title is not in the card, and a save from it would write a title over tags it lacks.
+    const inLibrary = Boolean(photo.thumb);
+    if (inLibrary) card.setAttribute('data-id', String(photo.id));
 
     const chkContainer = document.createElement('div');
     chkContainer.className = 'thumbnail-checkbox-container';
@@ -254,10 +326,10 @@ function buildThumbnailCard(photo) {
 
     // A photo that cannot be read has no picture to ask for: its card says why (damaged.js).
     // The picture is asked for by the grid, once the card has stayed in view (vgrid.js).
-    const damage = damageOf(photo.path);
+    const damage = inLibrary ? cardDamage(photo) : damageOf(photo.path);
     if (!damage || damage.indexed) {
         const img = document.createElement('img');
-        img.dataset.src = photoFileUrl(photo, 300);
+        img.dataset.src = inLibrary ? api.image(photo.thumb) : photoFileUrl(photo, 300);
         img.alt = photo.filename;
         imgWrapper.appendChild(img);
     }
@@ -279,13 +351,14 @@ function buildThumbnailCard(photo) {
     if (photo.title) {
         name.textContent = photo.title;
         name.classList.add('has-title');
-        name.title = `Title: ${photo.title}\nFile: ${fullName}\n(Click to edit title)`;
+        name.title = `Title: ${photo.title}\nFile: ${fullName}${inLibrary ? '' : '\n(Click to edit title)'}`;
     } else {
         name.textContent = displayName;
-        name.title = `File: ${fullName}\n(Click to add title)`;
+        name.title = `File: ${fullName}${inLibrary ? '' : '\n(Click to add title)'}`;
     }
 
     name.addEventListener('click', (e) => {
+        if (inLibrary) return;   // the card selects; the title is edited in the details panel
         e.stopPropagation(); // prevent card selection trigger!
 
         const input = document.createElement('input');
@@ -414,7 +487,32 @@ function buildThumbnailCard(photo) {
 // By photo, never by card: most of the photos have no card at the moment. The range of a
 // Shift-click is read from the grid's order (state.shownPhotos), the cards on screen follow.
 
+/**
+ * A click in a library view. A range is by the view's order, over cards that may not be held: the
+ * ones missing are fetched (for their paths) and the selection changes when they are here.
+ */
+function handleLibraryClick(path, isChecked, cardElement, isShiftKey) {
+    const lib = state.library;
+    const id = libraryIdOfPath(path);
+    if (isShiftKey && lib.lastId !== null && id !== null) {
+        const range = idsBetween(lib.lastId, id);
+        if (range) {
+            selectInLibrary(isChecked ? 'add' : 'remove', range);
+            lib.lastId = id;
+            state.lastSelectedPath = path;
+            return;
+        }
+    }
+    toggleThumbnailSelection(path, isChecked, cardElement);
+    state.lastSelectedPath = path;
+    lib.lastId = id;
+}
+
 export function handleCardSelectionClick(path, isChecked, cardElement, isShiftKey) {
+    if (state.library) {
+        handleLibraryClick(path, isChecked, cardElement, isShiftKey);
+        return;
+    }
     if (isShiftKey && state.lastSelectedPath) {
         const startIdx = state.shownIndex.has(pathKey(state.lastSelectedPath))
             ? state.shownIndex.get(pathKey(state.lastSelectedPath)) : -1;
@@ -445,7 +543,21 @@ export function toggleThumbnailSelection(path, isChecked, cardElement) {
     upper.updateSelectedThumbnailsCount();
 }
 
+/** Select all, or invert, over a whole library view: asked about first when it is large. */
+function selectEverything(mode) {
+    const lib = state.library;
+    if (!lib || lib.ids.length === 0) return;
+    const count = lib.ids.length.toLocaleString();
+    const question = mode === 'invert' ? `Invert the selection over ${count} photos?` : `Select all ${count} photos?`;
+    if (lib.ids.length > ASK_SELECT_ABOVE && !window.confirm(question)) return;
+    selectInLibrary(mode, lib.ids);
+}
+
 export function selectAllThumbnails() {
+    if (state.library) {
+        selectEverything('replace');
+        return;
+    }
     // What the filter shows: the count and a bulk write then match what is on the screen.
     setSelection(visiblePhotos().map(p => p.path));
     syncSelectionMarks();
@@ -453,6 +565,7 @@ export function selectAllThumbnails() {
 }
 
 export function selectNoneThumbnails() {
+    if (state.library) cancelLibrarySelection();
     setSelection([]);
     syncSelectionMarks();
     upper.updateSelectedThumbnailsCount();

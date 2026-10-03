@@ -20,6 +20,9 @@ import {
     wireChangeDogPark, wireFolderPathInput, wireSidebarResizer
 } from './folder.js';
 import { wireTagPupGear } from './gear.js';
+import {
+    leaveLibraryView, libraryChanged, openViewFromAddress, refreshFolderOrView, wireLibraryView
+} from './library-view.js';
 import { checkFolderMembership, wireMembership } from './membership.js';
 import { checkDamagedPhotos, showLibraryDamage } from './damaged.js';
 import {
@@ -28,7 +31,7 @@ import {
     updateCarryForwardState, wireDateTakenModal, wireZoom
 } from './photo.js';
 import {
-    renderThumbnails, selectAllThumbnails, selectNoneThumbnails, wireGridContextMenu,
+    renderThumbnails, selectAllThumbnails, selectNoneThumbnails, syncSelectionMarks, wireGridContextMenu,
     wireThumbnailGrid, wireThumbnailSize
 } from './grid.js';
 import { recordUndo, undoLastOperation } from './undo.js';
@@ -50,6 +53,7 @@ import {
 Object.assign(upper, {
     applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, populateCameraModelsDropdown, recordUndo,
     renderFileList, renderSuggestionsPanel, renderTags, renderThumbnails, selectPhoto,
+    leaveLibraryView, libraryChanged, syncSelectionMarks,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
 });
@@ -78,7 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnBrowseFolder.addEventListener('click', browseFolder);
     wireFolderPathInput();
     btnSuggestTags.addEventListener('click', startSuggestions);
-    btnRefreshList.addEventListener('click', () => scanFolder(true));
+    btnRefreshList.addEventListener('click', refreshFolderOrView);
     
     photoSearch.addEventListener('input', filterFileList);
     folderViewHeader.addEventListener('click', showFolderView);
@@ -120,6 +124,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     wireGridContextMenu();
 
+    // Views of the library: the strip above the grid, and Back and Forward between views and folders.
+    wireLibraryView();
+
     enableSwipeNavigation(mainImage);
 
     if (btnCarryForward) btnCarryForward.addEventListener('click', carryTagsForward);
@@ -155,7 +162,8 @@ document.addEventListener('DOMContentLoaded', () => {
     showLibraryDamage();
     const params = new URLSearchParams(window.location.search);
     const initialPath = params.get('path');
-    if (initialPath) {
+    // A `?view` in the address names the library view to open, and wins over a `?path`.
+    if (!openViewFromAddress() && initialPath) {
         folderPathInput.value = initialPath;
         scanFolder(false);
         checkIndexingStatus(initialPath);

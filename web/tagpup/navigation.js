@@ -3,7 +3,8 @@ import { state } from './state.js';
 import { dialogOpen } from './common/dialog.js';
 import { photoList, photoSearch } from './elements.js';
 import { hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
-import { carryTagsForward, selectPhoto } from './photo.js';
+import { carryTagsForward, openLibraryPhoto, selectPhoto } from './photo.js';
+import { libraryStepTarget } from './library-source.js';
 import { undoLastOperation } from './undo.js';
 
 /**
@@ -19,6 +20,13 @@ export function stepPhoto(delta) {
     if (hasUnsavedEdits() || openPhotoWrite()) {
         leavePhotoThen(() => stepPhoto(delta));
         return false;
+    }
+    // A library view steps through its own order (its ids), not through rows of a list.
+    if (state.library) {
+        const id = libraryStepTarget(delta);
+        if (id === null) return false;
+        openLibraryPhoto(id);
+        return true;
     }
     const items = Array.from(photoList.querySelectorAll('.photo-item-file'));
     if (items.length === 0) return false;

@@ -134,6 +134,13 @@ export const btnAddFolder = document.getElementById('btn-add-folder');
 export const btnJustLook = document.getElementById('btn-just-look');
 export const justLookingNote = document.getElementById('just-looking-note');
 export const damagedBadge = document.getElementById('damaged-badge');
+// The strip above the grid that says which view of the library is open (library-view.js)
+export const libraryStrip = document.getElementById('library-strip');
+export const libraryStripSource = document.getElementById('library-strip-source');
+export const libraryStripTotal = document.getElementById('library-strip-total');
+export const libraryStripStatus = document.getElementById('library-strip-status');
+export const libraryStripBack = document.getElementById('library-strip-back');
+export const btnLibraryRefresh = document.getElementById('btn-library-refresh');
 export const damagedNotice = document.getElementById('damaged-notice');
 export const photoDamagedNote = document.getElementById('photo-damaged-note');
 export const justLookingText = document.getElementById('just-looking-text');
