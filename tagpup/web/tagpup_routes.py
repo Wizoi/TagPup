@@ -22,7 +22,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
-from tagpup.core import fields, paths, suggesting, vocabulary
+from tagpup.core import fields, paths, vocabulary
 from tagpup.core.library import picker_name
 from tagpup.core.result import NotFound, Refused
 from tagpup.jobs import indexing as indexing_jobs
@@ -113,9 +113,11 @@ folders = state.PerLibrary(lambda library: FolderCache())
 
 @routes.before_request
 def _a_page_is_looking():
-    """Whatever the page asks counts as use of what Suggest only looked at and kept in memory, so it is not
-    let go under an owner who is reviewing it (tagpup.jobs.suggestions.touch_looks)."""
-    suggestion_jobs.touch_looks()
+    """Whatever the page asks counts as use of what Suggest only looked at and kept in memory in the library
+    the page is in, so it is not let go under an owner who is reviewing it
+    (tagpup.jobs.suggestions.touch_looks)."""
+    library = state.current()
+    suggestion_jobs.touch_looks(library.key if library is not None else None)
 
 #: The name the folder scans are kept under in the process's idle registry.
 FOLDER_SCANS = "folder scans"
@@ -131,8 +133,13 @@ def idle_caches(idle):
     idle.register(FOLDER_SCANS, folders.release, in_use=lambda: suggestion_jobs.running() > 0)
     folders.on_use = lambda: idle.used(FOLDER_SCANS)
     # What a Suggest in a folder the library does not hold found, kept in memory only.
-    idle.register(LOOKED_SUGGESTIONS, suggestion_jobs.release_looks, in_use=lambda: suggestion_jobs.running() > 0)
-    suggestion_jobs.on_looks_use = lambda: idle.used(LOOKED_SUGGESTIONS)
+    # One entry for each library, so one the owner is not working in is let go whatever the other is used for.
+    def looks_used(library_key):
+        name = "%s (%s)" % (LOOKED_SUGGESTIONS, library_key)
+        idle.register(name, lambda: suggestion_jobs.release_looks(library_key),
+                      in_use=lambda: suggestion_jobs.running_in(library_key) > 0)
+        idle.used(name)
+    suggestion_jobs.on_looks_use = looks_used
 
 
 def forget_scans(library):
@@ -295,6 +302,7 @@ def folder_index_start():
     cluster = bool(body.get("cluster", False))
     result = library_actions.add(library, [body.get("folder_path")], lambda folders: indexing_jobs.queue_for(
         library).start(folders, _folder_indexer(library), cluster=cluster))
+    suggestion_jobs.dropped_by_add(library, [body.get("folder_path")])
     if result.refused:
         return responses.error(400, result.message())
     return jsonify({"success": True, "status": "running", **result.details})
@@ -312,6 +320,7 @@ def folder_add():
         return responses.error(400, "Path is not a valid directory: %s" % folder)
     result = library_actions.add(library, [folder], lambda folders: indexing_jobs.queue_for(library).start(
         folders, _folder_indexer(library)))
+    suggestion_jobs.dropped_by_add(library, [folder])
     if result.refused:
         return responses.error(400, result.message())
     return jsonify({"success": result.ok, "status": "running", "library": picker_name(os.path.basename(library.path)),
@@ -358,7 +367,9 @@ def folder_suggest_start():
     def photos():
         return {key: meta for key, meta in _folder_photos(library, folder).items()
                 if not library_actions.is_ignored(meta["path"], ignored)}
-    work = suggestion_jobs.work_for(library, photos, state.runtime(), looking=looking)
+    work = suggestion_jobs.work_for(library, photos, state.runtime(), looking=looking,
+                                    held_now=(lambda: not library_actions.suggest_how(library, folder, ignored)[1])
+                                    if looking else None)
     return jsonify({"success": True, "status": suggestion_jobs.runs_for(library).start(folder, work),
                     "in_memory": looking})
 
@@ -383,12 +394,10 @@ def folder_auto_apply():
         suggestions = {k: v for k, v in suggestions.items() if paths.key(k) in wanted}
     # Apply exactly what the panel offered (tagpup.core.suggesting.offered_tags), a person filed as a
     # click on their chip files them (tagging.person_filer), the tree read once.
-    file_person = tagging_actions.person_filer(library)
-    additions = {path: suggesting.offered_tags(entry, threshold, file_person) for path, entry in suggestions.items()}
     try:
         # The page's records are told in the order the files were written.
         with file_changes.exclusively():
-            result = tagging_actions.add_tags(library, additions, state.exiftool(library))
+            result = tagging_actions.apply_suggestions(library, suggestions, state.exiftool(library), threshold)
             if result.refused:
                 return responses.refused(result)
             _records_written(library, result)

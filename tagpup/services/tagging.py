@@ -220,7 +220,7 @@ def change_tags(library, photo_paths, add, remove, exiftool_path):
 
 
 @roots_service.canonical_args("additions")
-def add_tags(library, additions, exiftool_path):
+def add_tags(library, additions, exiftool_path, persons=None):
     """Add each photo in `additions` (path -> tags) its own tags. Apply All on a folder's
     suggestions: suggestions deal in people's bare names, which are written as the tags
     they are filed under. A photo with nothing to add is left alone. See _change_each.
@@ -230,7 +230,10 @@ def add_tags(library, additions, exiftool_path):
     analysed in memory) is written to its file only, as change_tags does
     (tagpup.services.file_only): no row, no journal change, and the tag tree is only read, so a
     person or tag the tree does not hold is written as it is offered. The library's own answer
-    decides, per photo, now."""
+    decides, per photo, now.
+
+    `persons` ({paths.key(path): the tags of `additions` that are people}): a person the file already
+    names by their leaf is not added again (_change_each)."""
     problem = validation.first_problem("tag", dict.fromkeys(t for tags in additions.values() for t in tags))
     if problem:
         return _refused(len(additions), problem)
@@ -245,7 +248,7 @@ def add_tags(library, additions, exiftool_path):
     done = None
     if held or not loose:
         done = libraries.with_skipped(_change_each(library, [(path, additions[path], ()) for path in kept],
-                                                   exiftool_path, "apply all suggestions"), left)
+                                                   exiftool_path, "apply all suggestions", persons=persons), left)
     if not loose:
         return file_only.combined(done, None)
     if done is not None and not done.ok:
@@ -256,7 +259,8 @@ def add_tags(library, additions, exiftool_path):
     writable, skipped = file_only.leave_out_unwritable(loose)
     files = libraries.with_skipped(
         _change_each(library, [(path, additions[path], ()) for path in writable], exiftool_path,
-                     "apply all suggestions", files_only=True) if writable else _refused(0, None), skipped)
+                     "apply all suggestions", files_only=True, persons=persons) if writable
+        else _refused(0, None), skipped)
     return file_only.combined(done, files)
 
 
@@ -270,15 +274,24 @@ def person_filer(library):
     filed, roots = taxonomy.people_filing(library.path)
 
     def file_person(name):
-        if "/" in name:
-            return name
-        found = filed.get(vocabulary.key(name), [])
-        if len(found) == 1:
-            return found[0]
-        if not found and len(roots) == 1:
-            return "%s%s%s" % (roots[0], vocabulary.SEPARATOR, name)
-        return name
+        return vocabulary.person_tag(name, filed.get(vocabulary.key(name), []), roots) or name
     return file_person
+
+
+def apply_suggestions(library, suggestions, exiftool_path, threshold=0.0):
+    """Apply All: write each photo of `suggestions` ({path: its entry}, what Suggest offered) the tags and
+    people the panel showed, scoring at least `threshold` (tagpup.core.suggesting.offered_tags), and nothing
+    else. A person is filed as a click on their chip files them (person_filer) and is left out when the file
+    already names them by their leaf, whatever the spelling or the path -- the page's photoAlreadyHas -- read
+    from the file as it is under the write's lock. Held or not held (add_tags)."""
+    file_person = person_filer(library)
+    additions, persons = {}, {}
+    for path, entry in suggestions.items():
+        additions[path] = suggesting.offered_tags(entry, threshold, file_person)
+        offered = {file_person(person["name"]) for person in entry.get("people") or []
+                   if person.get("score", 0.0) >= threshold}
+        persons[paths.key(path)] = offered
+    return add_tags(library, additions, exiftool_path, persons=persons)
 
 
 def _refused(attempted, problem):
@@ -312,7 +325,7 @@ def _tags_held(held):
     return vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS})
 
 
-def _change_each(library, plan, exiftool_path, operation, files_only=False):
+def _change_each(library, plan, exiftool_path, operation, files_only=False, persons=None):
     """Write each photo in `plan` -- (path, tags to add, tags to take off) -- as one change
     of photo files (tagpup.services.file_changes): planned from what every file holds,
     committed, then written a file at a time, each recorded in its row as it is marked
@@ -329,15 +342,23 @@ def _change_each(library, plan, exiftool_path, operation, files_only=False):
     hierarchical) for each photo written, and `change`. With `files_only` (photos of folders
     the library does not hold: tagpup.services.file_only) the files are written and nothing
     else is: no journal change (`change` is None), no row.
+
+    `persons` ({paths.key(path): tags that are people}): of what is added, a person the file already names
+    by their leaf is left out -- read from the file here, under the lock, as the page leaves out one the
+    photo already has.
     """
     people = taxonomy.people_paths(library.path)
     wanted = {paths.key(path): (add, remove) for path, add, remove in plan}
 
     def plan_one(path, held):
         add, remove = wanted[paths.key(path)]
+        held_tags = list(_tags_held(held))
+        mine = (persons or {}).get(paths.key(path), ())
+        add = [tag for tag in add
+               if not (tag in mine and any(vocabulary.same_person(tag, there) for there in held_tags))]
         # In the file's order, what is added after: a set's order changed from run to
         # run, and a file holding every tag already was written again for its order.
-        tags = [tag for tag in dict.fromkeys(list(_tags_held(held)) + list(add)) if tag not in set(remove)]
+        tags = [tag for tag in dict.fromkeys(held_tags + list(add)) if tag not in set(remove)]
         return _keywords_plan(vocabulary.resolve_people(tags, people))
 
     if files_only:

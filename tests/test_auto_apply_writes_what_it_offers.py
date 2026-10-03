@@ -96,7 +96,10 @@ class TestTheRouteUsesTheOfferedLists(unittest.TestCase):
             "raw_suggestions", body,
             "auto-apply is reading the unfiltered list again; it must write what the "
             "panel was shown, which offered_tags selects from entry['tags'] and entry['people']")
-        self.assertIn("offered_tags(", body)
+        # The route hands the entries to Apply All, which selects with offered_tags.
+        self.assertIn("apply_suggestions(", body)
+        from tagpup.services import tagging
+        self.assertIn("offered_tags(", inspect.getsource(tagging.apply_suggestions))
 
     def test_the_selection_reads_only_the_shown_lists(self):
         import ast

@@ -298,7 +298,7 @@ class TheGuardDoesNotRestOnTheRefusalOfRows(Base):
         with mock.patch.object(library_actions, "suggest_how", return_value=(None, True)):
             reply = self.start(folder)
         self.assertTrue(reply["in_memory"])
-        self.assertEqual("completed", self.status(folder)["status"])
+        self.assertEqual(3, len([p for p in self.clip.images if p.startswith(folder)]), "the run did not analyse the photos")
         self.assertEqual(counts, self.counts(), "a photo row or a vector was made")
         self.assert_library_unchanged()
 
@@ -321,7 +321,7 @@ class TheGuardDoesNotRestOnTheRefusalOfRows(Base):
         counts = self.counts()
         reply = self.start(mixed)
         self.assertTrue(reply["in_memory"], "a folder holding one the library does not is looked at")
-        self.assertEqual(2, len(self.status(mixed)["suggestions"]))
+        self.assertEqual(2, len(self.status(mixed)["suggestions"]), "still not all held: the look is kept")
         self.assertEqual(counts, self.counts(), "the held photo was given a vector")
         self.assert_library_unchanged()
 
@@ -349,8 +349,9 @@ class TheFolderIsAddedWhileTheRunIsGoing(Base):
             self.before = library_dump.dump(self.library.path)
             photos, vectors = self.counts()
             Deferred.waiting[0].run()
+        # The folder is the library's when the run ends (#557): what it found is let go, not served as in memory.
         found = self.status(self.cup)
-        self.assertEqual(("completed", True), (found["status"], found["in_memory"]))
+        self.assertEqual("idle", found["status"])
         self.assertEqual((photos, vectors), self.counts(), "a photo row or a vector was made")
         self.assert_library_unchanged()
         self.assertEqual([], self.rows("SELECT * FROM suggestions"), "the run was decided in memory at its start")

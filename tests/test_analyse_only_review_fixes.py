@@ -78,18 +78,62 @@ class TheLookIsLetGoWhenTheFolderBecomesTheLibrarys(WithIndexing):
         self.assertEqual(4, self.rows("SELECT COUNT(*) FROM suggestions s JOIN photos p ON p.id = s.photo_id "
                                       "WHERE p.path LIKE '%Harbour Cup%'")[0][0])
 
-    def test_a_run_in_flight_when_the_folder_is_added_is_dropped_when_its_indexing_completes(self):
-        self.index.gate = threading.Event()
+    def test_the_index_finishing_before_a_run_that_was_going_drops_what_it_found(self):
+        """#557: the folder added while a run is going, its indexing done first: the run ends in a folder the
+        library holds, and nothing is left in memory to answer in_memory for it."""
         with mock.patch.object(suggestion_jobs, "threading",
                                types.SimpleNamespace(Lock=threading.Lock, Thread=base.Deferred)):
             self.start(self.cup)
             self.add(self.cup)
+            indexing_jobs.queue_for(self.library).wait()
             base.Deferred.waiting[0].run()
-        self.assertTrue(self.status(self.cup)["in_memory"], "the run finishes in memory")
-        self.index.gate.set()
-        indexing_jobs.queue_for(self.library).wait()
         self.assertEqual("idle", self.status(self.cup)["status"])
         self.assertEqual({}, self.runs.looks)
+
+    def test_a_run_ending_while_the_folder_is_still_not_held_keeps_its_look(self):
+        self.start(self.cup)
+        self.assertTrue(self.status(self.cup)["in_memory"])
+
+    def test_a_sync_queuing_a_held_folder_keeps_the_look_of_a_subfolder_not_held(self):
+        """#556: a held folder does not hold its subfolders; the index of Regatta is not an Add of Extra."""
+        extra = os.path.join(self.regatta, "Extra")
+        base.damaged_photos.whole_jpeg(os.path.join(extra, "extra_01.jpg"), seed=95)
+        self.start(extra)
+        self.assertTrue(self.status(extra)["in_memory"], "Extra is not the library's: it is looked at")
+        # As sync queues a folder: the indexer is handed the folder, not the library.
+        indexing_jobs.queue_for(self.library).start(
+            [self.regatta], lambda folder, cluster, report: self.index(self.library, folder, None), together=False)
+        indexing_jobs.queue_for(self.library).wait()
+        self.assertTrue(self.status(extra)["in_memory"], "the index of the parent dropped its subfolder's look")
+        self.assertIn(self.regatta, self.index.folders)
+
+    def test_an_add_drops_the_folder_and_its_subfolders_and_nothing_else(self):
+        later = os.path.join(self.cup, "Day 2")
+        other = os.path.join(self.home.root, "Share", "Other")
+        base.damaged_photos.whole_jpeg(os.path.join(later, "day_01.jpg"), seed=96)
+        base.damaged_photos.whole_jpeg(os.path.join(other, "other_01.jpg"), seed=97)
+        for folder in (self.cup, later, other):
+            self.start(folder)
+        self.add(self.cup)
+        indexing_jobs.queue_for(self.library).wait()
+        self.assertEqual("idle", self.status(self.cup)["status"])
+        self.assertEqual("idle", self.status(later)["status"], "added with its subfolders")
+        self.assertTrue(self.status(other)["in_memory"])
+
+    def test_a_folder_added_without_its_subfolders_drops_its_own_look_only(self):
+        later = os.path.join(self.cup, "Day 2")
+        base.damaged_photos.whole_jpeg(os.path.join(later, "day_01.jpg"), seed=96)
+        self.start(self.cup)
+        self.start(later)
+        self.assertEqual(1, suggestion_jobs.drop_looks(self.library.key, self.cup, subfolders=False))
+        self.assertEqual("idle", self.status(self.cup)["status"])
+        self.assertTrue(self.status(later)["in_memory"])
+
+    def test_a_look_of_a_folder_the_library_does_not_hold_yet_is_kept(self):
+        self.start(self.cup)
+        self.assertEqual(0, suggestion_jobs.drop_looks(self.library.key, self.cup, held=lambda folder: False))
+        self.assertTrue(self.status(self.cup)["in_memory"])
+
 
     def test_another_folders_look_is_left_alone(self):
         other = os.path.join(self.home.root, "Share", "Other")
@@ -107,7 +151,7 @@ class AnOwnerReviewingIsNotStranded(WithIndexing):
     def test_each_counts_as_use(self):
         self.start(self.cup)
         touched = []
-        with mock.patch.object(suggestion_jobs, "on_looks_use", lambda: touched.append(1)):
+        with mock.patch.object(suggestion_jobs, "on_looks_use", touched.append):
             for what, call in (("a status poll", lambda: self.status(self.cup)),
                                ("an Apply", lambda: self.post("/folder/auto-apply",
                                                               {"folder_path": self.cup, "threshold": 0.0})),
@@ -119,9 +163,42 @@ class AnOwnerReviewingIsNotStranded(WithIndexing):
 
     def test_nothing_is_touched_when_there_is_no_look(self):
         touched = []
-        with mock.patch.object(suggestion_jobs, "on_looks_use", lambda: touched.append(1)):
+        with mock.patch.object(suggestion_jobs, "on_looks_use", touched.append):
             self.client.get("/library/api/folder/scan", query_string={"path": self.cup})
         self.assertEqual([], touched)
+
+    def test_only_the_library_the_request_is_for_is_touched(self):
+        """#558: A's looks are not kept alive while the owner works in B."""
+        self.start(self.cup)
+        other = base.Library(self.home.library("second.db"))
+        base.library_actions.create(other.path)
+        self.addCleanup(tagpup_routes.folders.forget, other)
+        touched = []
+        with mock.patch.object(suggestion_jobs, "on_looks_use", touched.append):
+            self.client.get("/second/api/folder/scan", query_string={"path": self.cup})
+            self.assertEqual([], touched, "a request for another library touched this one's looks")
+            self.client.get("/library/api/folder/scan", query_string={"path": self.cup})
+        self.assertEqual([self.library.key], touched)
+
+    def test_the_release_of_one_library_leaves_the_others_looks(self):
+        self.start(self.cup)
+        self.assertEqual(0, suggestion_jobs.release_looks("another library's key"))
+        self.assertTrue(self.status(self.cup)["in_memory"])
+        self.assertEqual(1, suggestion_jobs.release_looks(self.library.key))
+
+
+class AnErrorEndsWithAFullStopBeforeItsSentence(Base):
+    """#558."""
+
+    def test_a_scan_that_failed(self):
+        with mock.patch.object(tagpup_routes, "_folder_photos", side_effect=RuntimeError("the share went away")):
+            self.start(self.cup)
+        self.assertEqual("the share went away. Nothing was changed.", self.status(self.cup)["message"])
+
+    def test_a_message_with_its_own_stop(self):
+        with mock.patch.object(tagpup_routes, "_folder_photos", side_effect=RuntimeError("Could not read it.")):
+            self.start(self.cup)
+        self.assertEqual("Could not read it. Nothing was changed.", self.status(self.cup)["message"])
 
 
 class ASmartRenameRenamesWhatIsKept(Base):

@@ -1,0 +1,17 @@
+{
+  "about": "How a suggested person is filed: one table, fed to the server (tests/test_person_filing_table.py: Apply All of a real photo with real ExifTool) and to the page (tests/frontend/person-filing-table.test.mjs: a click on the suggestion's chip). The page's rule is resolveTagOrPerson (web/tagpup/tags.js); the server's is tagpup.core.vocabulary.person_tag, expressed once. `roots` are the tree's roots (has_face 1 holds people), `paths` the nodes below them, `file` the keywords the photo's file holds, `known` the people the library knows (the page's /api/people). `expect`: the tag written (the person added to `file`), \"already\" (the file names the person: nothing is written), or \"ask\" (the page asks which people folder; the server leaves the name as it is).",
+  "name": "Wren Okafor",
+  "cases": [
+    {"why": "one people root, the person absent", "roots": [["People", 1], ["Trips", 0]], "paths": ["People/Rowan Thackeray"], "file": [], "known": ["Rowan Thackeray", "Wren Okafor"], "expect": "People/Wren Okafor"},
+    {"why": "the one people root is not called People", "roots": [["Family", 1]], "paths": [], "file": [], "known": ["Wren Okafor"], "expect": "Family/Wren Okafor"},
+    {"why": "the tree files the person once, under the second of two roots", "roots": [["People", 1], ["Family", 1]], "paths": ["Family/Wren Okafor"], "file": [], "known": ["Wren Okafor"], "expect": "Family/Wren Okafor"},
+    {"why": "a tree with nodes and no people root", "roots": [["Trips", 0]], "paths": [], "file": [], "known": ["Wren Okafor"], "expect": "People/Wren Okafor"},
+    {"why": "two people roots, the person absent", "roots": [["People", 1], ["Family", 1]], "paths": [], "file": [], "known": ["Wren Okafor"], "expect": "ask"},
+    {"why": "the person filed twice", "roots": [["People", 1], ["Family", 1]], "paths": ["People/Wren Okafor", "Family/Wren Okafor"], "file": [], "known": ["Wren Okafor"], "expect": "ask"},
+    {"why": "a node of that name under a root that holds no people", "roots": [["People", 1], ["Trips", 0]], "paths": ["Trips/Wren Okafor"], "file": [], "known": ["Wren Okafor"], "expect": "People/Wren Okafor"},
+    {"why": "the file names her under another root; the tree files Rowan, not her", "roots": [["People", 1], ["Family", 0]], "paths": ["People/Rowan Thackeray"], "file": ["Family/Wren Okafor"], "known": ["Rowan Thackeray", "Wren Okafor"], "expect": "already"},
+    {"why": "the file holds her bare, and the people root files nobody", "roots": [["People", 1]], "paths": [], "file": ["Wren Okafor"], "known": ["Wren Okafor"], "expect": "already"},
+    {"why": "the file holds her filed as the tree files her", "roots": [["People", 1]], "paths": ["People/Wren Okafor"], "file": ["People/Wren Okafor"], "known": ["Wren Okafor"], "expect": "already"},
+    {"why": "the file holds only other keywords", "roots": [["People", 1], ["Trips", 0]], "paths": [], "file": ["Trips/Regatta"], "known": ["Wren Okafor"], "expect": "People/Wren Okafor"}
+  ]
+}

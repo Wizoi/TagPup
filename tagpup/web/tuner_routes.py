@@ -606,6 +606,7 @@ def folder_index_start():
     # Adding a folder, as TagPup's Add does (tagpup.services.libraries.add).
     result = library_actions.add(library, requested, lambda folders: indexing_jobs.queue_for(library).start(
         folders, folder_indexer(library), cluster=cluster))
+    suggestion_jobs.dropped_by_add(library, requested)
     if result.refused:
         _refuse(400, result.message())
     return jsonify({"success": True, "status": "running", **result.details})

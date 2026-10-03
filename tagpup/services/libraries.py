@@ -108,6 +108,12 @@ def not_held(library, photo_paths, ignored=None, leave_out_ignored=True):
     return _read(library.path, read, there)
 
 
+def holds(library, folder, ignored=None):
+    """Does the library hold `folder` itself -- it has a row directly in it, or it was added -- now? Its
+    own answer (tagpup.store.folders.holds); a library that cannot be read just now raises, as not_held does."""
+    return not not_held(library, [os.path.join(folder, "-")], ignored, leave_out_ignored=False)
+
+
 def held_under(library, folder):
     """How many photos under `folder`, at any depth, the library holds; 0 for one not there."""
     return _read(library.path, lambda conn: photos.count_under(conn, folder), 0)

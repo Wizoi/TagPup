@@ -36,7 +36,7 @@ import threading
 import numpy as np
 
 from tagpup.core import paths
-from tagpup.services import suggester
+from tagpup.services import libraries, suggester
 from tagpup.services import suggestions as saved
 
 logger = logging.getLogger(__name__)
@@ -49,15 +49,15 @@ WORKERS = min(4, os.cpu_count() or 1)
 MAX_LOOKED_PHOTOS = 2000
 MAX_LOOKED_FOLDERS = 3
 
-#: Called when a looking run's memory is used, to say the process's idle registry so (the
-#: web fills it in: tagpup.web.tagpup_routes.idle_caches).
+#: Called with a library's key when its looking runs' memory is used, to say the process's idle registry
+#: so (the web fills it in: tagpup.web.tagpup_routes.idle_caches): each library's is its own entry.
 on_looks_use = None
 
 _runs = {}
 _runs_lock = threading.Lock()
 
 
-def work_for(library, photos, models, looking=False):
+def work_for(library, photos, models, looking=False, held_now=None):
     """What a run over one folder of `library` runs (SuggestionRuns.start): `photos()`,
     the folder's photos as {key: metadata with "path"}, and the model `models` readies
     for the library -- something with `begin(library)` (tagpup.runtime.Runtime), which
@@ -66,7 +66,9 @@ def work_for(library, photos, models, looking=False):
     never asks which library a request was for (docs/findings.md, #44). Without models,
     a run over a folder with photos fails with a message saying so. `looking`: the folder is
     not the library's, and the run keeps what it finds in memory and adds nothing to the
-    library (decided by the route, from the library's own answer)."""
+    library (decided by the route, from the library's own answer). `held_now()`, for such a run: does
+    the library hold every folder of it now (suggest_how no longer says to look)? Asked when the run ends: a folder added meanwhile, whose
+    indexing finished first, is the library's and what the run found is let go (#557)."""
 
     class Work:
         def photos(self):
@@ -79,6 +81,7 @@ def work_for(library, photos, models, looking=False):
             return models.begin(library, remember=False) if looking else models.begin(library)
 
     Work.looking = looking
+    Work.held_now = staticmethod(held_now) if held_now else None
     return Work()
 
 
@@ -98,7 +101,7 @@ def runs_for(library):
     with _runs_lock:
         runs = _runs.get(library.key)
         if runs is None:
-            runs = _runs[library.key] = SuggestionRuns(library.path)
+            runs = _runs[library.key] = SuggestionRuns(library.path, library.key)
         return runs
 
 
@@ -115,13 +118,23 @@ def running():
     return count
 
 
-def release_looks():
-    """Let go of what runs that only looked kept in memory, in every library, for each
-    folder not under way (the idle registry's call: tagpup.web.tagpup_routes). How many
-    folders."""
+def release_looks(library_key=None):
+    """Let go of what runs that only looked kept in memory, for each folder not under way, in the
+    library `library_key` (its Library.key) or, without one, in every library (the idle registry's
+    call: tagpup.web.tagpup_routes). How many folders."""
     with _runs_lock:
-        every = list(_runs.values())
+        every = [runs for key, runs in _runs.items() if library_key is None or key == library_key]
     return sum(runs.release_looks() for runs in every)
+
+
+def running_in(library_key):
+    """How many suggestion runs are under way in one library."""
+    with _runs_lock:
+        runs = _runs.get(library_key)
+    if runs is None:
+        return 0
+    with runs.lock:
+        return sum(1 for status in runs.statuses.values() if status.get("status") in ("preparing", "running"))
 
 
 def under_way():
@@ -150,26 +163,48 @@ def forget(library):
     suggester.forget_looking_text_embeddings(library.path)
 
 
-def touch_looks():
-    """Say the process's idle registry that what runs that only looked kept in memory is in use,
-    when any is kept: every request of the page counts, so an owner reviewing what was found is
-    not stranded by the idle release (#547). Cheap: no library is asked."""
-    if on_looks_use is None:
+def touch_looks(library_key):
+    """Say the idle registry that what runs that only looked kept in memory, in the library a request is
+    for, is in use, when any is kept: every request of the page counts, so an owner reviewing what was
+    found is not stranded by the idle release (#547) -- and another library's, which the owner is not
+    working in, is not kept alive by it (#558). Cheap: no library is asked."""
+    if on_looks_use is None or not library_key:
         return
     with _runs_lock:
-        every = list(_runs.values())
-    if any(runs.looks for runs in every):
-        on_looks_use()
+        runs = _runs.get(library_key)
+    if runs is not None and runs.looks:
+        on_looks_use(library_key)
 
 
-def drop_looks(library_key, folder):
-    """The folder is, or is becoming, the library's (`library_key`: its Library.key) -- it was added, or its indexing completed: what a
-    run that only looked kept for it, and for any folder under it, is let go, so the status answers
-    from the library and the next Suggest is the run that saves (#545). A folder with a run under way
-    is left; its indexing completing drops it. How many folders."""
+def drop_looks(library_key, folder, subfolders=True, held=None):
+    """A folder is being ADDED to the library (`library_key`: its Library.key): what a run that only
+    looked kept for it, and with `subfolders` -- as added, a folder and everything under it -- for each
+    folder under it, is let go, so the status answers from the library and the next Suggest is the run
+    that saves (#545). Only where a folder is added, never for a sync or an index of new files: a held
+    folder does not hold its subfolders (#556). `held(folder)`, when given, is asked of each: one the library
+    does not hold yet keeps its look. A folder with a run under way is left (its run ends by asking
+    again: SuggestionRuns.run_looking). How many folders."""
     with _runs_lock:
         runs = _runs.get(library_key) if library_key else None
-    return runs.drop_looks(folder) if runs is not None else 0
+    return runs.drop_looks(folder, subfolders, held) if runs is not None else 0
+
+
+def dropped_by_add(library, folders, subfolders=True):
+    """The routes' call after `tagpup.services.libraries.add`: drop the looks of each folder added
+    (drop_looks), the library's own answer deciding which are held now. A library that cannot be
+    asked keeps every look."""
+    def held(folder):
+        return libraries.holds(library, folder)
+
+    dropped = 0
+    for folder in folders:
+        if not isinstance(folder, str) or not folder:
+            continue
+        try:
+            dropped += drop_looks(library.key, folder, subfolders, held)
+        except Exception as e:
+            logger.warning("Could not tell whether %s holds %s; its look is kept: %s", library.name, folder, e)
+    return dropped
 
 
 def plain(value):
@@ -195,8 +230,10 @@ class SuggestionRuns:
     """One library's folders' suggestion runs. `statuses` maps a folder's key to its run:
     {"status", "completed", "total"[, "message"]}. Changed only under `lock`."""
 
-    def __init__(self, db_path):
+    def __init__(self, db_path, key=None):
         self.db_path = db_path
+        #: The library's key (Library.key), told to on_looks_use.
+        self.key = key
         self.lock = threading.Lock()
         self.statuses = {}
         #: {folder key: {photo as the run was handed it: entry}}: what runs that only look
@@ -262,8 +299,8 @@ class SuggestionRuns:
         a snapshot."""
         if key not in self.looks:
             return None
-        if on_looks_use:
-            on_looks_use()
+        if on_looks_use and self.key:
+            on_looks_use(self.key)
         return dict(self.looks[key])
 
     @staticmethod
@@ -287,13 +324,18 @@ class SuggestionRuns:
                 self._drop_look(key)
         return len(let_go)
 
-    def drop_looks(self, folder):
-        """Let go of the looks of `folder` and every folder under it not under way. How many."""
+    def drop_looks(self, folder, subfolders=True, held=None):
+        """Let go of the look of `folder`, and with `subfolders` of every folder under it, not under way
+        and (when `held` is given) held by the library now. How many."""
         top = paths.key(folder)
         with self.lock:
-            let_go = [key for key in self.looks
-                      if (key == top or paths.is_under(key, top))
-                      and self.statuses.get(key, {}).get("status") not in ("preparing", "running")]
+            asked = [(key, self.folders.get(key) or key) for key in self.looks
+                     if (key == top or (subfolders and paths.is_under(key, top)))
+                     and self.statuses.get(key, {}).get("status") not in ("preparing", "running")]
+        # The library is asked outside the lock a poll waits on.
+        let_go = [key for key, where in asked if held is None or held(where)]
+        with self.lock:
+            let_go = [key for key in let_go if self.statuses.get(key, {}).get("status") not in ("preparing", "running")]
             for key in let_go:
                 self._drop_look(key)
         return len(let_go)
@@ -485,13 +527,32 @@ class SuggestionRuns:
                     entry = self.statuses[key]
                     entry.update(found)
                     entry["status"] = "completed"
+                self._let_go_if_held(key, work)
             finally:
                 _end(model)
         except Exception as e:
             logger.exception("Error analysing the photos of %s without saving: %s", folder, e)
-            said = str(e)
+            said = str(e).strip()
             # Whatever failed -- the scan, the models -- a run that only looks has written nothing to the library.
-            self._say_error(key, said if "nothing was changed" in said.lower() else "%s Nothing was changed." % said)
+            if "nothing was changed" not in said.lower():
+                said = "%s%s Nothing was changed." % (said, "" if said.endswith((".", "!", "?")) else ".")
+            self._say_error(key, said)
+
+    def _let_go_if_held(self, key, work):
+        """A folder added while the run was going, whose indexing finished first, is the library's now: what the
+        run found stays out of memory, so the status answers from the library (#557). The library is asked
+        outside the lock; one that cannot be asked keeps the look."""
+        held_now = getattr(work, "held_now", None)
+        if held_now is None:
+            return
+        try:
+            held = held_now()
+        except Exception as e:
+            logger.warning("Could not tell whether the library holds the folder now; its look is kept: %s", e)
+            return
+        if held:
+            with self.lock:
+                self._drop_look(key)
 
     def _say_error(self, key, message):
         """Always said, even with the entry gone, so the page stops polling."""
