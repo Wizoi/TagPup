@@ -702,6 +702,22 @@ def library_photo():
         return responses.error(500, str(e))
 
 
+@routes.get("/api/library/find")
+def library_find():
+    """The id of the photo at `path`, to land on it in a library view when the move is made from the folder it is in
+    (tagpup.services.library_view.find); 404 with a sentence when the library holds no photo there."""
+    if (refusal := _this_pc_only()) is not None:
+        return refusal
+    library = state.require()
+    try:
+        return jsonify({"id": library_view.find(library, request.args.get("path"))})
+    except (Refused, NotFound, paths.RootsError) as why:
+        return _view_error(why)
+    except Exception as e:
+        logger.error("Error finding a photo of the library: %s", e, exc_info=True)
+        return responses.error(500, str(e))
+
+
 @routes.get("/api/photo-thumb")
 def photo_thumb():
     """A photo's thumbnail by id, from the cache (tagpup.services.thumbnails). The URL carries the file's stamp

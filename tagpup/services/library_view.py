@@ -266,6 +266,21 @@ def disk_mark(path, mtime, size):
     return None if store_photos.describes(mtime, size, stamp) else CHANGED
 
 
+def find(library, photo_path):
+    """The id of the photo at `photo_path`, as the move from a folder on disk to its library view looks for the photo it
+    was looking at (phase 9c). Refused for a path that is not text; NotFound when the library holds no photo there."""
+    if not isinstance(photo_path, str) or not photo_path.strip():
+        raise Refused("find needs the path of a photo.")
+    conn = _open(library)
+    try:
+        found = store.photo_id_of(conn, paths.stored(photo_path.strip()))
+    finally:
+        conn.close()
+    if found is None:
+        raise NotFound("The library holds no photo at that path.")
+    return found
+
+
 def _cards(conn, photo_ids, check_disk=False):
     held = store.card_rows(conn, photo_ids)
     recorded = store.damaged(conn)

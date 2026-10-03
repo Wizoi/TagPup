@@ -231,6 +231,14 @@ def card_rows(conn, photo_ids):
     return found
 
 
+def photo_id_of(conn, photo_path):
+    """The id of the photo whose row is at `photo_path` (any spelling the filesystem treats as one: paths.sql_equals), or
+    None: one seek of the path index."""
+    where, params = store_roots.sql_equals(conn, "path", photo_path)
+    row = conn.execute("SELECT id FROM photos WHERE " + where + " LIMIT 1", params).fetchone()
+    return row[0] if row else None
+
+
 def photo_row(conn, photo_id):
     """(path -- native --, mtime, size, tags JSON, people JSON, captions JSON, raw_metadata JSON, year) of the photo
     `photo_id`, or None: one row by its primary key, what the details panel shows of a photo. Raises
