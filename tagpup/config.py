@@ -427,7 +427,10 @@ def set_location(name, new_location, path=None, expected=None, must_exist=True):
         if expected is not None and (not before or paths.key(before[0]) != paths.key(expected)):
             raise MachineMapError("The map has changed since you looked: %s is now at %s, not %s. Nothing was changed."
                                   % (folded, before[0] if before else "no place on this machine", expected))
-        places = [new_location] + [place for place in before if paths.key(place) != paths.key(new_location)]
+        # Only the current and the previous place are kept: anything older is dropped, since a place the
+        # map still lists is a place a stale spelling is recognised by.
+        places = [new_location] + before[:1]
+
         merged = {each: list(listed) for each, listed in held.items()}
         merged[folded] = places
         _write_map(merged, path)
@@ -449,7 +452,7 @@ def change_back(name, path=None, expected=None):
         if expected is not None and paths.key(before[0]) != paths.key(expected):
             raise MachineMapError("The map has changed since you looked: %s is now at %s, not %s. Nothing was changed."
                                   % (folded, before[0], expected))
-        places = [before[1], before[0]] + before[2:]
+        places = [before[1], before[0]]
         merged = {each: list(listed) for each, listed in held.items()}
         merged[folded] = places
         _write_map(merged, path)

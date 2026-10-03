@@ -252,6 +252,17 @@ describe("Verify", () => {
     assert.equal(ctx.consoleErrors.length > 0 ? ctx.consoleErrors.filter((e) => /roots/i.test(String(e))).length : 0, 0);
   });
 
+  test("a run that is gone when the server restarted is said so, and the progress goes away (#471)", async (t) => {
+    const running = entry({ verifying: { root: "pictures", state: "running", checked: 5, rows: 100, folders: 1, cancelling: false } });
+    const ctx = await tuner(t, { roots: [running] });
+    const dialog = await openFromGear(ctx);
+    assert.ok(!dialog.querySelector(".roots-progress").classList.contains("hidden"));
+    ctx.server.first("/api/roots", () => listing([entry({ verifying: null })]));   // the server restarted: no run in memory
+    for (let i = 0; i < 40 && !dialog.querySelector(".roots-progress").classList.contains("hidden"); i++) await wait(ctx.window, 20);
+    assert.ok(dialog.querySelector(".roots-progress").classList.contains("hidden"), "it kept saying it was looking");
+    assert.match(text(dialog.querySelector(".roots-result")), /The check stopped \(the server restarted\); run it again\./);
+  });
+
   test("closing the dialog stops asking how the run is going", async (t) => {
     const ctx = await tuner(t, { roots: [entry({ verifying: { root: "pictures", state: "running", checked: 5, rows: 100,
       folders: 1, cancelling: false } })] });
@@ -262,6 +273,24 @@ describe("Verify", () => {
     click(ctx.window, ctx.document.querySelector("#roots-modal .btn.btn-secondary:not(.btn-sm)"));
     await wait(ctx.window, 80);
     assert.equal(ctx.server.urls().filter((u) => u.includes("/api/roots")).length, before);
+  });
+});
+
+describe("what the owner is told before a move (#467, #472)", () => {
+  test("the panel says what TagTuner cannot see, and that only two places are kept", async (t) => {
+    const ctx = await tuner(t);
+    const dialog = await openFromGear(ctx);
+    click(ctx.window, dialog.querySelector(".roots-move"));
+    const note = text(dialog.querySelector(".roots-note"));
+    assert.match(note, /TagTuner sees only its own runs/);
+    assert.match(note, /Stop Suggest in TagPup, any index you started from the command line, and a sync/);
+    assert.match(note, /Only the current and the previous place are kept/);
+  });
+
+  test("a root with an earlier place says moving again forgets it", async (t) => {
+    const ctx = await tuner(t, { roots: [entry({ places: [NEW, OLD], active: NEW, previous: OLD })] });
+    const row = (await openFromGear(ctx)).querySelector(".roots-root");
+    assert.match(text(row.querySelector(".roots-previous")), /Moving again forgets it/);
   });
 });
 

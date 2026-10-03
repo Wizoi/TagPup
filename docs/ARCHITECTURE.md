@@ -662,16 +662,20 @@ the design assumes a GPU and more memory later and does not wait for them.
       deadlines bound.
     - **Moving a root** (`tagpup.config.set_location` / `change_back`, `tagpup.services.roots_location`): the map's edit
       alone, never a row. `set_location` puts the new place first and keeps the old after it (so Change back is the
-      reverse: the first two swap), written whole to a temp file and `os.replace`d under the one `_edit_lock`; it
+      reverse: the first two swap); **only the current and the previous place are kept**: a move drops anything older
+      (a place the map still lists is a place a stale spelling is recognised by), and the dialog says so, written whole to a temp file and `os.replace`d under the one `_edit_lock`; it
       refuses a place that is not absolute, has the long-path or device prefix, does not exist, is another root's, or
       is nested with the root's own other places, and, given `expected` (the place the page saw), a map that moved
       since -- another tab, a hand edit. The service asks first: a **dry run** shows Verify's sample of the new place;
       a **poor result** (more than 5% of the rows looked at missing, an unreachable place, rows kept native where it
       would be) is refused unless the request says `override` -- but a drive or folder that is not there is refused
       whatever is said, and so is a place that would put the root inside or over another root of the library (the same
-      photos reachable under two roots). It is refused **while anything of the library is running or queued** -- an
-      index run, Suggest, a sync, a verify (the web layer says what this process knows, the service reads the library's
-      own `job_runs`, any process's, ignoring a run whose process has ended) -- and names which. The machine's map is one for
+      photos reachable under two roots). It is refused **while TagTuner's own runs or a Roots verify are running or queued** -- an index
+      run or Suggest in this process, its watcher's sync, a verify -- and, from the library's own `job_runs`
+      (any process's, ignoring a run whose process has ended), a recurring job; and names which. **TagTuner cannot see
+      TagPup's Suggest, a CLI index or a CLI sync** (no cross-process lock was built, *owner, 2026-10-02*): the refusal
+      and the dialog tell the owner to stop those before moving a root. A run that is going keeps the map it started
+      with (pinned) and so keeps writing to the old copy until it ends. The machine's map is one for
       every library of the home, so a root of one name in two libraries moves in both: the dialog says which others use
       it, and a run queued or running in any of them holds the move up too. Two requests at once:
       the claim of the change in `job_runs` lets one in and tells the other; a second Confirm, or a tab that came after
@@ -708,6 +712,23 @@ the design assumes a GPU and more memory later and does not wait for them.
       did not place, a place outside the sandbox, or a map that is not the sandbox's: a converted copy would otherwise
       point, through the machine's map, at the real photos. `generate_screenshots.py` finds its photos from its own
       checkout.
+    - **An old place's spelling** *(review of stage 3, #465)*: after a move the previous place is still recognised, so a page that
+      still holds a path spelled by it, a bookmark, or a folder typed under it, names the same row. No file operation
+      takes such a path as written: every service that touches a file or a row by a caller's path -- the writes
+      (`tagging`, `photos` delete / rotate / Smart Rename / time shift, `file_changes.write_fields` and `rename`), the
+      folder scans, Add, `sync` and `index_folder`, the photo's details -- is decorated with
+      `services.roots.canonical_args`, which resolves the path through the first place (`paths.canonical`: `from_row(to_row(path))`
+      for a path under another listed place of the root, the path as given for any other) before the service sees it. A
+      request with an old spelling therefore reads and writes at the first place and answers with first-place paths,
+      so the page converges, and a folder made later under an old place is added and indexed at the first place.
+    - **Verify, as reviewed**: a result is also poor when more than half the rows checked differ (a stale copy: sync
+      would re-read those rows from the files there, replacing tags newer in the rows than in those files, which the
+      dry run says and counts); a row the index never read is counted apart ("never read"), not as "differs"; a library
+      older than the schema says to open it with TagPup or the CLI once. A write stopped half-way by `RootsChanged`
+      says how many files it wrote and the change that recorded them. "A share is away" has one owner,
+      `tagpup.files.shares`, which Verify and the damaged photos' lists both use. An unplaced root is a check result
+      (`roots_placed`, its sentence in `message`) in `inspect.all_checks` / `check` / `summary` and the MCP tools, and
+      the Activity page's attention list carries the sentence.
     - **Not built**: `roots remove` (an undo is the way back); Verify from the CLI or the MCP; moving a root while a
       run is under way (refused, by design); a library behind more than one machine map (one map per `TAGPUP_HOME`).
 - **Changing where a root lives, in TagTuner** *(owner, 2026-10-02; built, see "Stages 3 and 4")*: for now the libraries stay on

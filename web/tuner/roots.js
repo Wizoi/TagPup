@@ -34,6 +34,11 @@ function post(path, body) {
     });
 }
 
+/** What the owner is told before a move, since TagTuner sees only its own runs, and what is kept. */
+export const BEFORE_MOVING = 'Before you move a root: TagTuner sees only its own runs and a Roots check. Stop Suggest in '
+    + 'TagPup, any index you started from the command line, and a sync first. Only the current and the previous '
+    + 'place are kept: moving again forgets the one before.';
+
 /** What the last Verify found, from its counts, as a sentence. */
 export function lastVerifyText(last) {
     if (!last) return 'Not checked yet.';
@@ -109,7 +114,17 @@ export function pollRoots() {
         for (const entry of data.roots) {
             const element = rootElement(entry.name);
             const status = entry.verifying;
-            if (!element || !status) continue;
+            if (!element) continue;
+            if (!status) {
+                // The run the dialog was following is gone: the server restarted, and a run is in its memory.
+                if (state.roots.watching.has(entry.name)) {
+                    state.roots.watching.delete(entry.name);
+                    hideProgress(element);
+                    lines(element.querySelector('.roots-result'),
+                        ['The check stopped (the server restarted); run it again.'], 'validation-error');
+                }
+                continue;
+            }
             if (status.state === 'running') {
                 running = true;
                 state.roots.watching.add(entry.name);
@@ -220,6 +235,7 @@ function openPanel(entry, element, mode) {
             }
         });
     }
+    parts.unshift(buildElement('p', { className: 'roots-note', text: BEFORE_MOVING }));
     parts.push(check, overrideLabel, buildElement('div', { className: 'roots-row' }, [confirm, cancel]));
     show(panel, parts);
     panel.classList.remove('hidden');
@@ -351,7 +367,8 @@ function rootRow(entry) {
         facts.push(buildElement('p', { className: 'roots-writes', text: entry.writes_to }));
         if (entry.previous) {
             facts.push(buildElement('p', { className: 'roots-previous',
-                text: `Before that: ${entry.previous}. It is a separate copy: nothing written now goes there.` }));
+                text: `Before that: ${entry.previous}. It is a separate copy: nothing written now goes there. `
+                    + 'Moving again forgets it.' }));
         }
         if (entry.shared_with && entry.shared_with.length) {
             facts.push(buildElement('p', { className: 'roots-shared',

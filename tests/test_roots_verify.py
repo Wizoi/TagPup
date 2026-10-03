@@ -100,7 +100,10 @@ class WhatItCounts(VerifyCase):
                 os.utime(os.path.join(folder, name), (stamp, stamp))
         found = self.verify(copy)
         self.assertEqual((0, 18, 0), (found["matches"], found["differs"], found["missing"]), found["summary"])
-        self.assertFalse(found["poor"], "a copy of every photo is not a poor result: %s" % found["poor_why"])
+        # Every row differs: a move there is refused unless overridden (#466), and the dry run says what sync
+        # does -- but the files are never called missing.
+        self.assertTrue(found["poor"])
+        self.assertNotIn("not there", " ".join(found["poor_why"]))
 
     def test_a_photo_fixed_since_it_was_indexed_differs(self):
         target = self.side.real[0]

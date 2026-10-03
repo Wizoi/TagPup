@@ -12,6 +12,8 @@ machine's own map is never touched), and looks at the disk. For each row:
 - **differs**: the file is there and is not what the row recorded -- changed since it was indexed,
   or a copy whose times are not the original's; sync settles it, and it is never "missing";
 - **missing**: the folder is there (or the location is) and the file is not;
+- **never read**: the file is there and the row has no stamp -- Suggest made it for a photo the index
+  never read; sync reads it, and it is not "changed since indexed";
 - **unreadable**: the disk refused the folder or the file's stamp.
 
 And, in a full run, how many photos lie at the location that no row has, the rows held under no
@@ -39,12 +41,11 @@ each folder once, so the rows and the photos no row has are counted by the one w
 import logging
 import os
 import random
-import threading
 import time
 
 from tagpup.core import paths
 from tagpup.core.result import NotFound, Refused
-from tagpup.files import images
+from tagpup.files import images, shares
 from tagpup.store import photos as store_photos
 from tagpup.store import root_rows
 from tagpup.store import roots as store_roots
@@ -57,7 +58,7 @@ SAMPLE = 2000
 #: How long one look at the disk -- a folder, the location itself -- is waited for, in seconds,
 #: and how long a share that did not answer in time is taken as away.
 LIST_SECONDS = 15.0
-AWAY_SECONDS = 30.0
+AWAY_SECONDS = shares.AWAY_SECONDS
 
 #: How long a sample may take altogether, before it says what it has and stops.
 SAMPLE_BUDGET = 25.0
@@ -66,72 +67,22 @@ SAMPLE_BUDGET = 25.0
 #: folder, or another copy.
 POOR_MISSING = 0.05
 
-_away = {}
-_blocked = {}
-_guard = threading.Lock()
-
+#: More of the checked rows than this DIFFERING is a poor result too: a stale copy -- every file there,
+#: other times or sizes -- passes the missing test, and the sync that follows a move re-reads those rows
+#: from the files at the new place, replacing tags newer in the rows than in those files.
+POOR_DIFFERS = 0.5
 
 # ---- Looking at the disk, never for long -----------------------------------------------------
 
-def _anchor_of(location):
-    """The key of what a location is on -- its drive, or its server and share -- which is what is
-    away when it is."""
-    spelled = paths.stored(location)
-    drive = os.path.splitdrive(spelled)[0]
-    return paths.key(drive) if drive else os.sep
-
-
 def _bounded(location, call, seconds):
-    """("ok", what `call()` returned) | ("error", the OSError it raised) | ("away", None): `call`
-    on a thread of its own, waited for `seconds`. A thread that did not answer is left to end
-    when the system lets it (it is a daemon), its share away for AWAY_SECONDS, and no other look
-    at the same drive or share is started until it is back or that long has passed."""
-    anchor = _anchor_of(location)
-    with _guard:
-        since = _away.get(anchor)
-        blocked = _blocked.get(anchor)
-    if since is not None and time.monotonic() - since < AWAY_SECONDS:
-        return "away", None
-    if blocked is not None and blocked.is_alive():
-        blocked.join(seconds)
-        if blocked.is_alive():
-            with _guard:
-                _away[anchor] = time.monotonic()
-            return "away", None
-    box = {}
-
-    def look():
-        try:
-            box["value"] = call()
-        except OSError as problem:
-            box["error"] = problem
-        except Exception as problem:   # a bug in what was asked is its own message, not a hung thread
-            logger.exception("Verify's look at %s failed", location)
-            box["error"] = OSError(str(problem))
-
-    thread = threading.Thread(target=look, name="VerifyLook", daemon=True)
-    with _guard:
-        _blocked[anchor] = thread
-    thread.start()
-    thread.join(seconds)
-    if thread.is_alive():
-        logger.info("%s did not answer within %s s; it is taken as away for %s s.", location, seconds, AWAY_SECONDS)
-        with _guard:
-            _away[anchor] = time.monotonic()
-        return "away", None
-    with _guard:
-        _away.pop(anchor, None)
-        if _blocked.get(anchor) is thread:
-            del _blocked[anchor]
-    if "error" in box:
-        return "error", box["error"]
-    return "ok", box["value"]
+    """("ok", what `call()` returned) | ("error", the OSError it raised) | ("away", None), within
+    `seconds`, a share that did not answer being away for AWAY_SECONDS (tagpup.files.shares)."""
+    return shares.bounded(location, call, seconds, AWAY_SECONDS)
 
 
 def forget_away():
     """Forget which shares were taken as away: what a test, or a Retry, starts from."""
-    with _guard:
-        _away.clear()
+    shares.forget()
 
 
 def _probe(location):
@@ -277,7 +228,7 @@ class _Tally:
     """What a run has counted."""
 
     def __init__(self):
-        self.matches = self.differs = self.missing = self.unreadable = 0
+        self.matches = self.differs = self.missing = self.unreadable = self.unread = 0
         self.extra = 0
         self.checked = 0
         self.folders = 0
@@ -291,6 +242,8 @@ class _Tally:
             self.missing += 1
         elif found[1] is None or found[2] is None:
             self.unreadable += 1
+        elif row[2] is None or row[3] is None:
+            self.unread += 1
         elif store_photos.describes(row[2], row[3], (found[1], found[2])):
             self.matches += 1
         else:
@@ -426,7 +379,8 @@ def verify(library, name, location, machine, full=False, sample=SAMPLE, cancel=N
     by_folder = _group(ours)
     total = len(ours) + counts["not_converting"]
     answer = {"root": name, "location": location, "mode": "all" if full else "sample", "rows": total,
-              "checked": 0, "matches": 0, "differs": 0, "missing": 0, "unreadable": counts["not_converting"],
+              "checked": 0, "matches": 0, "differs": 0, "unread": 0, "missing": 0,
+              "unreadable": counts["not_converting"],
               "folders": 0, "not_in_library": None, "other_rows": counts["other_roots"],
               "native_inside": counts["native_inside"], "not_converting": counts["not_converting"],
               "outside": paths.outside_roots(counts["outside"], roots), "outside_rows": len(counts["outside"]),
@@ -444,7 +398,7 @@ def verify(library, name, location, machine, full=False, sample=SAMPLE, cancel=N
         chosen = sample_of(by_folder, sample)
         deadline = None if budget is None else time.monotonic() + budget
         _sample_run(location, chosen, by_folder, tally, cancel, progress, deadline, total, seconds)
-    answer.update(checked=tally.checked, matches=tally.matches, differs=tally.differs, missing=tally.missing,
+    answer.update(checked=tally.checked, matches=tally.matches, differs=tally.differs, unread=tally.unread, missing=tally.missing,
                   unreadable=tally.unreadable + counts["not_converting"], folders=tally.folders,
                   stopped=tally.stopped)
     if full and not tally.stopped:
@@ -457,6 +411,11 @@ def verify(library, name, location, machine, full=False, sample=SAMPLE, cancel=N
     return _conclude(answer, total)
 
 
+#: What sync does with a row whose file differs, said wherever a count of them is.
+SYNC_REPLACES = ("Sync re-reads those rows from the files there, so a tag newer in a row than in its file "
+                 "is replaced by the file's.")
+
+
 def _conclude(answer, total):
     """The verdict: whether the result is poor, why, and the summary sentence."""
     why = []
@@ -466,6 +425,10 @@ def _conclude(answer, total):
     if checked and answer["missing"] > POOR_MISSING * checked:
         why.append("%d of the %d rows looked at (%d%%) are not there: this looks like another folder, or another "
                    "copy." % (answer["missing"], checked, round(100 * answer["missing"] / checked)))
+    if checked and answer["differs"] > POOR_DIFFERS * checked:
+        why.append("%d of the %d rows looked at (%d%%) differ from their files (other size or modified time): "
+                   "this looks like an older or edited copy. %s" % (
+                       answer["differs"], checked, round(100 * answer["differs"] / checked), SYNC_REPLACES))
     if answer["native_inside"]:
         why.append("%d row(s) are held by this machine's own spelling of a place that would be this root's: "
                    "they would be missed, and indexed again as new photos." % answer["native_inside"])
@@ -484,9 +447,13 @@ def _summary(answer, total):
         kind = "a sample of %d of %d rows covering %d folder(s)" % (answer["checked"], total, answer["folders"])
     parts = ["%d match" % answer["matches"], "%d differ (changed since indexed; sync settles them)" % answer["differs"],
              "%d are missing" % answer["missing"]]
+    if answer["unread"]:
+        parts.append("%d never read by the index (sync reads them)" % answer["unread"])
     if answer["unreadable"]:
         parts.append("%d could not be read" % answer["unreadable"])
     text = "Looked at %s: %s." % (kind, ", ".join(parts))
+    if answer["differs"]:
+        text += " " + SYNC_REPLACES
     if answer["not_in_library"]:
         text += " %d photo(s) at the location have no row." % answer["not_in_library"]
     if answer["stopped"] == "cancelled":

@@ -52,13 +52,11 @@ class TheMcpServerOpeningALibrary(unittest.TestCase):
             self.call("folders", {"library": self.name})
         self.assertIn("machine_roots.json", str(why.exception))
 
-    def test_the_checks_say_it_too_not_an_exception_name(self):
+    def test_the_checks_report_it_as_a_result_not_an_exception_name(self):
         os.remove(config.machine_roots_path())
         for tool, arguments in (("checks", {"library": self.name}),
                                 ("check", {"library": self.name, "name": "rooted_rows_convert"})):
-            with self.assertRaises(ToolError) as why:
-                self.call(tool, arguments)
-            self.assertIn("machine_roots.json", str(why.exception), tool)
+            self.assertIn("machine_roots.json", str(self.call(tool, arguments)), tool)
 
     def test_what_reads_no_photo_path_still_answers_so_the_owner_can_undo_what_put_the_library_there(self):
         os.remove(config.machine_roots_path())

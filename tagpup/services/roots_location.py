@@ -48,6 +48,14 @@ logger = logging.getLogger(__name__)
 VERIFY_JOB = "verify root %s"
 MOVE_JOB = "change location of root %s"
 
+#: What a library older than the schema says when asked to claim a run (tagpup.store.job_runs: "behind").
+BEHIND = ("This library is older than this version of TagPup: open it with TagPup or the CLI once so that it "
+          "updates, then try again.")
+
+#: What TagTuner can and cannot see of what runs, said wherever a move is refused or offered.
+SEES_ONLY_ITS_OWN = ("TagTuner sees only its own runs and a Roots verify: before moving a root, stop Suggest in "
+                     "TagPup, any index you started from the command line, and a sync.")
+
 #: How to adopt a root, which is all a library with none can do (the CLI).
 ADOPT_HINT = ('TagPup CLI.cmd --db <library> roots adopt --name pictures --address "\\\\server\\share\\Pictures" '
               '--location "D:\\where\\the\\photos\\are"   (a dry run; add --apply to convert)')
@@ -76,7 +84,7 @@ def last_verify(library, name):
     if not found:
         return None
     run = found[0]
-    keep = ("mode", "location", "checked", "matches", "differs", "missing", "unreadable", "rows", "not_in_library",
+    keep = ("mode", "location", "checked", "matches", "differs", "unread", "missing", "unreadable", "rows", "not_in_library",
             "partial")
     return dict({key: run.changed[key] for key in keep if key in run.changed},
                 when=run.finished or run.started, outcome=run.outcome)
@@ -157,8 +165,9 @@ def begin_verify(library, name, now=time.time):
     name = paths.root_name(name)
     claim = job_runs.claim(library.path, VERIFY_JOB % name, library.name, now())
     if not claim:
-        raise Conflict("A verify of %s is under way already%s; wait for it, or cancel it." % (
-            name, "" if claim.why == "running" else " (%s)" % claim.why))
+        if claim.why == "behind":
+            raise Conflict(BEHIND)
+        raise Conflict("A verify of %s is under way already; wait for it, or cancel it." % name)
     return claim
 
 
@@ -178,7 +187,7 @@ def run_verify(library, name, location, machine, full=False, cancel=None, progre
         job_runs.finish(library.path, claim.run_id, job_runs.FAILED, now(), {"what": "verify of root %s refused" % name},
                         str(problem))
         raise
-    counts = {key: answer[key] for key in ("rows", "checked", "matches", "differs", "missing", "unreadable",
+    counts = {key: answer[key] for key in ("rows", "checked", "matches", "differs", "unread", "missing", "unreadable",
                                            "folders") if key in answer}
     if answer["not_in_library"] is not None:
         counts["not_in_library"] = answer["not_in_library"]
@@ -301,14 +310,16 @@ def change_location(library, name, location, machine, apply=False, override=Fals
         running += ["in %s, which uses this root too, %s" % (other.name, said) for said in _running_here(other)]
     if running:
         result.details["conflict"] = True
-        result.refuse("Not changed: %s. Wait for it to finish or cancel it, then try again." % "; ".join(running))
+        result.refuse("Not changed: %s. Wait for it to finish or cancel it, then try again. %s" % (
+            "; ".join(running), SEES_ONLY_ITS_OWN))
         return result
     job = MOVE_JOB % name
     started = now()
     claim = job_runs.claim(library.path, job, library.name, started)
     if not claim:
         result.details["conflict"] = True
-        result.refuse("Not changed: another change of %s is under way; try again in a moment." % name)
+        result.refuse("Not changed: " + (BEHIND if claim.why == "behind" else
+                                         "another change of %s is under way; try again in a moment." % name))
         return result
     try:
         if back:

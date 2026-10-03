@@ -126,6 +126,16 @@ def find_library(name, photos=True):
     return found
 
 
+def _embedder(library):
+    """The CLIP settings the library's vectors are counted against, or None where the library's settings
+    cannot be read -- its folder settings hold paths, which a root this machine does not place cannot
+    name: the checks then say so (tagpup.services.inspect), and count nothing against a model."""
+    try:
+        return runtimes.peek_settings(library).embedder
+    except ValueError:
+        return None
+
+
 def _answer(action, reveal=False):
     """Run `action`, turning what the service refuses into the tool's error. An error
     the service did not expect is logged whole and answered by its kind alone, unless
@@ -162,8 +172,8 @@ def build():
           "list, and photos without a CLIP vector for the library's CLIP model. Counts only.")
     def summary(library: str) -> dict[str, Any]:
         def read():
-            found = find_library(library)
-            return inspect.summary(found, runtimes.peek_settings(found).embedder)
+            found = find_library(library, photos=False)
+            return inspect.summary(found, _embedder(found))
         return _answer(read)
 
     @tool("The folders a library's photos are directly in, the fullest first: each one's number, "
@@ -200,7 +210,7 @@ def build():
     @tool("One consistency check of tools/doctor.py, by name: how many rows break it, and a few "
           "of them as ids. The checks: " + ", ".join(inspect.CHECKS) + "." + REVEAL)
     def check(library: str, name: str, reveal: bool = False) -> dict[str, Any]:
-        return _answer(lambda: inspect.check(find_library(library), name, reveal), reveal)
+        return _answer(lambda: inspect.check(find_library(library, photos=False), name, reveal), reveal)
 
     @tool("Every consistency check tools/doctor.py runs, in its order, with how many rows break "
           "each and how many checks are broken; and how many photos have no CLIP vector for the "
@@ -208,8 +218,8 @@ def build():
           + REVEAL)
     def checks(library: str, reveal: bool = False) -> dict[str, Any]:
         def read():
-            found = find_library(library)
-            return inspect.all_checks(found, reveal, runtimes.peek_settings(found).embedder)
+            found = find_library(library, photos=False)
+            return inspect.all_checks(found, reveal, _embedder(found))
         return _answer(read, reveal)
 
     @tool("The rows whose file is not on disk, by folder: whether each folder is gone entirely, its "

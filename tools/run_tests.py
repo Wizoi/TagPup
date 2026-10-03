@@ -171,10 +171,18 @@ def keep_failed_run(text):
         return None
 
 
+#: Files that run alone, after every other has finished: their own deadlines are real time -- they start
+#: server processes and wait for them -- and a full run's eight processes at once made two of them fail
+#: that wait (docs/findings.md, #476); alone, the file takes about 45 s.
+ALONE = ("test_supervisor",)
+
+
 def run(modules, jobs):
     """Run `modules`; returns [(module, passed, tests run, seconds, output)]."""
     durations = load_durations()
     order = sorted(modules, key=lambda m: -durations.get(m, 1.0))
+    alone = [m for m in order if m in ALONE]
+    order = [m for m in order if m not in ALONE]
     shared = [m for m in order if uses_the_checkout(m)]
     spread = [m for m in order if m not in shared]
     results = []
@@ -200,6 +208,8 @@ def run(modules, jobs):
         for future in concurrent.futures.as_completed([pool.submit(run_one, m) for m in spread]):
             record(future.result())
         lane_thread.join()
+    for module in alone:
+        record(run_one(module))
     save_durations(durations)
     return results
 

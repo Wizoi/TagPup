@@ -139,8 +139,8 @@ class TheMapsWriter(unittest.TestCase):
             thread.join(60)
         self.assertEqual([], failures)
         listed = self.places()
-        self.assertEqual(len(places) + 1, len(listed))
-        self.assertEqual({os.path.normcase(p) for p in places + [self.old]}, {os.path.normcase(p) for p in listed})
+        self.assertEqual(2, len(listed), "only the current and the previous place are kept (#472)")
+        self.assertIn(listed[0], places + [self.old])
         json.loads(open(self.file, encoding="utf-8").read())
 
 
