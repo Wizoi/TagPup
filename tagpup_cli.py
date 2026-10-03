@@ -68,6 +68,7 @@ from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
 from tagpup.services import identities
 from tagpup.services import damaged_photos
+from tagpup.services import thumbnails
 from tagpup.core import runs as run_tags
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
@@ -252,6 +253,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             try:
                 os.remove(db_path)
                 console.print(f"  Removed {db_path}")
+                # Its photos start again from id 1: no thumbnail of the old library is theirs.
+                thumbnails.clear(Library(db_path))
             except Exception as e:
                 console.print(f"[bold red]Failed to delete {db_path}: {e}[/bold red]")
         if kept_settings is not None and not os.path.exists(db_path):
@@ -1395,6 +1398,85 @@ def roots_check(ctx):
     for problem in problems:
         console.print(problem, markup=False, soft_wrap=True)
     raise SystemExit(1)
+
+
+@cli.group("thumbs")
+def thumbs_command():
+    """The thumbnail cache (tagpup.services.thumbnails): a small picture of each photo, kept beside the library
+    so that browsing it by folder, keyword, person or date does not decode every photo's file again. Derived and
+    not bounded: every one can be made again from its photo."""
+
+
+def _megabytes(size):
+    if size < 1e6:
+        return "%d KB" % round(size / 1e3)
+    return "%.1f MB" % (size / 1e6) if size < 1e9 else "%.2f GB" % (size / 1e9)
+
+
+@thumbs_command.command("warm")
+@click.option("--folder", default=None, help="Only the photos under this folder, at any depth.")
+@click.option("--limit", type=click.IntRange(min=1), default=None,
+              help="Stop after making this many; run it again to go on from there.")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Make the thumbnails. Without it, only counts what is there and what would be made.")
+@click.pass_context
+def thumbs_warm(ctx, folder, limit, apply_):
+    """Make the thumbnails the library's photos lack, ahead of the first time each is asked for. A dry run unless
+    --apply: it counts the photos that have a thumbnail for their file as it is now, those that need one (and
+    about how much they will take), those whose file is not there, damaged ones, which are not decoded, and
+    reads nothing but the library and the files' sizes and times. It can be stopped and run again: what is made is
+    kept, and the run goes on from it (--limit makes that many at a time). Writes only the cache folder; --apply
+    first brings a library behind this version up to date."""
+    library = _existing_library(ctx)
+    if folder:
+        canonical = library_roots.canonicaliser(library)
+        folder = canonical(paths.stored(folder)) if canonical else paths.stored(folder)
+    if apply_:
+        applied = library_actions.bring_up_to_date(library.path)
+        if applied:
+            console.print("Brought the library up to date: %s." % ", ".join(applied), markup=False, soft_wrap=True)
+    held, size = thumbnails.stats(library)
+    console.print("Thumbnail cache of %s: %d thumbnail(s), %s, in %s." % (library.name, held, _megabytes(size), library.thumbs),
+                  markup=False, soft_wrap=True)
+
+    def progress(counts):
+        console.print("  looked at %d photo(s): %d made, %d already there, %d to make" % (
+            counts["photos"], counts["made"], counts["present"], counts["to_make"]), markup=False)
+
+    try:
+        with library_roots.pinned(library):
+            counts = thumbnails.warm(library, folder=folder, limit=limit, apply=apply_,
+                                     progress=progress if apply_ else None)
+    except library_roots.RootsChanged:
+        console.print(library_roots.STOPPED, markup=False, soft_wrap=True)
+        raise SystemExit(library_roots.EXIT_ROOTS_CHANGED) from None
+    except (library_roots.Unplaced, ValueError) as why:
+        console.print("Not run: %s" % why, markup=False, soft_wrap=True)
+        raise SystemExit(1) from None
+    except KeyboardInterrupt:
+        console.print("Stopped. What was made is kept: run it again to go on.", markup=False)
+        raise SystemExit(130) from None
+    console.print("%d photo(s) looked at: %d already have a thumbnail, %d need one, %d have no file, %d are damaged "
+                  "(not decoded), %d could not be reached." % (
+                      counts["photos"], counts["present"], counts["to_make"], counts["missing"], counts["damaged"], counts["failed"]),
+                  markup=False, soft_wrap=True)
+    if not apply_:
+        shown = counts["to_make"] if limit is None else min(counts["to_make"], limit)
+        console.print("--apply would make %d, about %s at %s each. Nothing was written." % (
+            shown, _megabytes(shown * counts["average"]), _megabytes(counts["average"])), markup=False, soft_wrap=True)
+        return
+    console.print("Made %d, %s." % (counts["made"], _megabytes(counts["bytes_made"])), markup=False)
+    if counts["swept"]:
+        console.print("Deleted %d thumbnail(s) of photos the library no longer holds." % counts["swept"], markup=False)
+    if counts["away"]:
+        console.print("Not walked: %s did not answer (taken as away) and its %d photo(s) were left; run it again when it "
+                      "is back." % (", ".join(counts["away"]), counts["skipped_away"]), markup=False, soft_wrap=True)
+    if counts["unwritable"]:
+        console.print("Stopped at the first thumbnail that could not be kept: the cache folder cannot be written "
+                      "(read-only or full), and nothing more was decoded.", markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    if counts["stopped"]:
+        console.print("Stopped at --limit; run it again to go on.", markup=False)
 
 
 @cli.group(invoke_without_command=True)

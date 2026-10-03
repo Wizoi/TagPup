@@ -49,7 +49,12 @@ KINDS = {
     17: schema.ADDITIVE,     # the faces_pending table
     18: schema.ADDITIVE,     # the roots table, empty
     19: schema.ADDITIVE,     # photo_tags, folders, photo_folder and photo_meta, derived from the photos
+    20: schema.ADDITIVE,     # idx_photos_taken and idx_photos_year: the indexes the library views page by
 }
+
+
+#: The migrations that only make indexes.
+INDEX_ONLY = (20,)
 
 
 def backups(db_path):
@@ -400,7 +405,8 @@ class TheClassification(unittest.TestCase):
             with self.subTest(m.version):
                 self.assertIn(m.kind, schema.KINDS)
                 self.assertTrue(m.why and "\n" not in m.why)
-                self.assertTrue(m.touches)
+                # An index-only migration changes no row of any table, so it touches none (and blocks no undo).
+                self.assertTrue(m.touches or m.version in INDEX_ONLY)
                 names = [check.name for check in m.checks]
                 self.assertIn("foreign keys", names)
                 self.assertIn("integrity", names)
@@ -546,7 +552,7 @@ class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
                               "the runs of recurring jobs", "when the library was last in step",
                               "the folders asked to be added", "the photo files found damaged",
                               "the photos whose faces are to be detected", "the library's roots",
-                              "the tables the library views stand on"],
+                              "the tables the library views stand on", "photos by when they were taken"],
                              schema.ensure(path))
         # What it touches: change_files, which it makes, and changes, the runner's own;
         # migration 12 touches change_files alone, 13 job_runs, 14 sync_runs, 15

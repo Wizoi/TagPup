@@ -56,6 +56,12 @@ class Library:
         return os.path.join(self.folder, "backups")
 
     @property
+    def thumbs(self):
+        """Where the library's thumbnail cache is kept: cache/<name>/thumbs beside the library, in
+        the folder the library is in. Derived and never backed up; every entry can be made again."""
+        return os.path.join(self.folder, "cache", self.name, "thumbs")
+
+    @property
     def snapshots(self):
         """Where the library's snapshots are kept, a folder for each kind: backups/<name>/
         daily, weekly and monthly (tagpup.store.snapshots)."""

@@ -29,7 +29,6 @@ re-detects a photo's faces keeping the decided ones by where they are.
 """
 import logging
 import os
-import threading
 
 from tagpup.core import paths
 from tagpup.files import images, shares
@@ -304,17 +303,46 @@ def listed(library, folder=None):
 UNANSWERED = object()
 
 
-def _stamp_within(photo_path):
-    """_stamp(photo_path) -- within SHARE_WAIT for a file on a network share, UNANSWERED when
-    it did not answer in time."""
+def _within(photo_path, look):
+    """`look(photo_path)` -- within SHARE_WAIT for a file on a network share, UNANSWERED when it did not
+    answer in time. One memory of what is away with the folder listings (tagpup.files.shares): a share found
+    away is answered UNANSWERED at once for SHARE_AWAY seconds and no second thread is started while one still
+    waits, so a page of cards on an away share costs one wait and not one for each."""
     if not _on_a_share(photo_path):
-        return _stamp(photo_path)
-    answer = {}
-    reader = threading.Thread(target=lambda: answer.update(stamp=_stamp(photo_path)),
-                              name="DamagedPhotosShareStat", daemon=True)
-    reader.start()
-    reader.join(SHARE_WAIT)
-    return answer["stamp"] if "stamp" in answer else UNANSWERED
+        return look(photo_path)
+    state, found = shares.bounded(photo_path, lambda: look(photo_path), SHARE_WAIT, SHARE_AWAY)
+    return found if state == "ok" else UNANSWERED
+
+
+def _stamp_within(photo_path):
+    """_stamp(photo_path), bounded (_within): None for a file that cannot be read, whatever the reason. What
+    the write checks (for_write) ask: an unreadable file is not found damaged, and the write meets it itself."""
+    return _within(photo_path, _stamp)
+
+
+#: What stamp_of answers for a file that is there and cannot be read (permissions, a lock): not "not there".
+CANNOT_READ = object()
+
+
+def _stat_state(photo_path):
+    """(mtime, size); None for a file that is not there; CANNOT_READ for any other OSError."""
+    try:
+        stat = os.stat(photo_path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except OSError:
+        return CANNOT_READ
+    return (stat.st_mtime, stat.st_size)
+
+
+def stamp_of(photo_path):
+    """(mtime, size) of the file now; None when it is not there; CANNOT_READ when it is there and cannot be
+    read; UNANSWERED when it is on a share that did not answer within SHARE_WAIT (or is away: _within). What a
+    page's request asks of one file, without waiting on a share gone away, and without taking a file it cannot
+    read for one that is gone. The other callers keep `_stamp`, which says None for both: forget_to_reindex and
+    prune treat None as gone (an unreadable file's damage record is forgotten there, as it was), check_again
+    counts it unreachable, and for_write does not find an unreadable file damaged."""
+    return _within(photo_path, _stat_state)
 
 
 def for_write(library, photo_paths):
