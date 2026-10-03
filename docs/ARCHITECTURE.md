@@ -871,7 +871,7 @@ click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
   files the library does not (offering to index them, through sync); staleness marks on
   the cards on screen (size and modified time, no ExifTool) and a missing photo shown
   but not editable; "last in step" from sync.
-- **9d. Editing from a library view.** *(9d-1, the server's half -- bulk edits by photo id as a job, a selection's tally -- built 2026-10-03, see "Phase 9d-1" below; 9d-2, the page.)* Bulk edits on a selection that spans folders,
+- **9d. Editing from a library view.** *(9d-1, the server's half -- bulk edits by photo id as a job, a selection's tally -- built 2026-10-03, see "Phase 9d-1" below; 9d-2, the page: the selection by id, the edits through the job, the strip and the tally, built 2026-10-03, see "Phase 9d-2" below.)* Bulk edits on a selection that spans folders,
   through the same journaled writes (History lists and undoes them); a file changed
   outside while an edit is planned is a conflict for sync to settle, never overwritten.
 - **9e. Search.** A search is a source: *all of* these tags or people, *any of* those,
@@ -1241,7 +1241,7 @@ panel and selection. Nothing is migrated and nothing of a folder's machinery run
   (a view spans years), a damaged or incomplete mark from the card's own flag. The card has no title: **the 9a-2 card read has no
   `captions` (a test holds it), so a library card shows the file name**, which Smart Rename makes of the caption; a title edited in
   the details panel shows on its card at once. Its title cannot be edited on the card (the card has no tags to send with it).
-- **Selecting stays by path** (`selected.js`, unchanged). A click is the card's path; a Shift-range or Select all over cards not held
+- **Selecting stays by path** (`selected.js`, unchanged) *(superseded in a library view by 9d-2: selection by photo id, see "Phase 9d-2")*. A click is the card's path; a Shift-range or Select all over cards not held
   **fetches those cards for their paths** (3 requests of 200 at a time, "Selecting N of M..." in the strip, replaced by a newer
   selection, abandoned when the view closes, all or nothing), and **Select all / Invert of more than 5,000 photos asks "Select all
   N photos?" first**. The selection panel does not tally tags and people of a selection it cannot count ("Not tallied for a library
@@ -1485,7 +1485,7 @@ The page, and two small routes and a card field under it. Nothing is migrated. T
   never stops a batch; 9d's other bulk writes should take the same two steps. Every write of the page goes through `queuePhotoWrite`, which is what re-reads the navigator's counts: a new write path that
   does not will leave the counts as they were until Refresh view. The grid's keys call `handleCardSelectionClick`, `selectInLibrary` and `openLibraryPhoto` and know nothing else of a photo.
   `state.nav` is the place the search (9e) reads "within what the navigator has selected": `state.nav.followed`.
-- **Known limits.** Shift+arrows only add. After Enter the photo panel hides the grid and the focus is on nothing; Tab starts from the top of the page (the card the keys were on is still the
+- **Known limits.** Shift+arrows only add *(in a library view 9d-2 lets a step back take away)*. After Enter the photo panel hides the grid and the focus is on nothing; Tab starts from the top of the page (the card the keys were on is still the
   grid's tab stop). Adding from the banner shows no
   progress (the folder's pollers are idle in a view): Refresh view when it has finished. A membership walk abandoned at its deadline goes on to its end (the next asker is answered by it);
   a view with subfolders of 1,000 photos or more asks for the disk only when told to, so it can be a day behind the disk. The card stat budget is 1.5 s a batch: past it the cards are
@@ -1696,6 +1696,116 @@ untouched.
   selection; it is not capped at 200,000 and its lists carry `more_*`. (f) A person's name is sent bare (`params.add: ["Rowan Thackeray"]`
   for op `people`, or a full path, `People/Friends/Rowan Thackeray`, for a person filed twice); a refused name comes back as a `400` sentence.
   (g) History will show a job as one change per 25 photos.
+
+### Phase 9d-2: editing across folders -- the selection by id, bulk edits through the job, the strip, the tally *(built 2026-10-03; branch `arch/phase-9d2-bulk-page`)*
+The page for 9d-1's server. Nothing is migrated. The one server addition is `GET /api/library/bulk/current` (below). The owner sees: **Select all** of
+the whole library selects at once and asks nothing; a Shift-click across 20,000 photos the grid never held selects them at once; the selection panel lists
+the tags and people of the selection with their counts; **Add tag**, **Add person**, the **x** of a tag or person in that panel and **Shift Date Taken** each ask
+once by name and count and then run as a job that has a strip under the header -- a bar, "done of total", what was changed, left as it was, missing, damaged
+and refused, the time left, **Cancel** -- which is still there after the view changes or the page is reloaded.
+
+- **A library view's selection is photo ids** (`selected.js`; `state.library.sel`, so it is the view's and goes with it). Two shapes, one at a time:
+  `{mode: 'ids', ids: Set}` -- the photos picked -- and `{mode: 'source', excluded: Set}` -- every photo of the view's source but those. The count is `ids.size`, or the
+  view's total less `excluded.size`. **Select all** assigns `{source, excluded: {}}`: no request, no id, 68,472 photos in 57 ms to the count shown and every card painted
+  selected (it was 5.9 s). A click toggles an id (in `source` mode: membership of `excluded`). A **Shift range** (Shift-click, Shift+Space, Shift+arrows) is a loop over
+  `lib.ids` between two indexes -- the card need not be there, nothing is fetched -- and **stepping a Shift+arrow back toward where the run began now takes
+  the photos off** (the 9c limit is lifted for a library view; a folder view's keys are as they were). **Invert** swaps the shapes (picked ids become the excluded ones and
+  back) while the list swapped is at most 20,000; past that it says "Too many to invert: use Select all and deselect." and changes nothing. `state.selectedThumbnails` and
+  `selectedKeys` stay empty in a view (every reader audited: the folder's panel, Smart Rename and Suggest work on a folder and read nothing else); cards show
+  `isIdSelected(photo.id)`. The selection is cleared by every view change (9b-1's rule), kept by Refresh view (ids the refreshed view no longer holds are let go:
+  `reconcileIdSelection`) and by edits; a photo found deleted when its card is asked for leaves the view and the selection (`dropPhotos`).
+  `selectInLibrary`, `pathsOfIds`, `idsBetween`, `cancelLibrarySelection`, "Selecting N of M..." and "Select all N photos?" are gone; so are `leaveOutMissing` and the page's own
+  "N photos are missing" count: the server skips and counts a missing photo (9d-1) and the strip's summary says how many.
+- **What a request can carry** (`selected.js selectionRequest`, decided from the counts, nothing built until it is sent): `{ids}` for at most 20,000 picked, in the view's
+  order; `{source, excluded}` for at most 20,000 excluded; and -- **added here, not in the brief** -- the same selection said the other way round when only that way fits: 50,000
+  picked of 68,000 is sent as the source and the 18,000 left out, a Select all less 50,000 as the 18,000 ids that remain (only when the page holds the whole order). What fits neither
+  (30,000 picked of 68,000: not 30,000 ids, not all but 38,000) is **said in a sentence in the panel as soon as it is so** ("30,000 photos are selected and 38,000 are not: a bulk
+  edit can name at most 20,000 photos one by one, or everything in the view but 20,000. Select fewer, or Select all and deselect.") and again, as an alert, if an edit is tried;
+  more than 200,000 photos selected is refused the same way. Nothing is asked of the server for any of these. **Honest limit:** that last case is a real hole between the two
+  shapes the server takes -- a selection in the middle of a large view, between 20,000 and all-but-20,000, cannot be sent. The way round is Select all and deselect, or the
+  navigator to a smaller view.
+- **The edits** (`bulk-edit.js`; the words are `bulk-words.js`, plain functions). Each is asked by name and count, always in a view even for one photo -- "Add Trips/Lighthouse
+  to 3,412 photos? This changes the photo files and takes about 4 minutes. It cannot be undone as one step; remove the tag to reverse it." (the time at an assumed 15 photos a
+  second until the job reports its own; 9d-1 measured 18 to 23) -- and over 5,000 a second time, "This is 67,997 photos. Continue?". **The selection is read before the question
+  and that is what is sent**: a click made while a placement dialog is open changes nothing that was asked; a second click on Add while the first one's question or dialog is open
+  asks nothing (`state.bulk.asking`: four rapid clicks and Enter are one question and one request). A name is resolved (`resolveTagOrPerson`, which may make a node of the tag tree
+  and may ask where a new person goes) only **after** the question, as in a folder, and a person is sent as the path it resolved, op `people`. The pills of the tally: **x** removes the
+  tag or person from the whole selection (op `tags` or `people`, `params.remove`), the arrow adds it to every photo (shown only when the count is below the total). **Shift Date Taken**
+  in a view is the minutes and a direction (Later or Earlier; the camera filter is not offered), checked beside the field: 0, negative ("Enter the minutes as a positive number and
+  choose Earlier or Later."), a fraction, empty, and more than ten years of minutes (5,256,000; **a limit of the page's own, not a rule of the server's**: a mistyped zero otherwise
+  asks ExifTool to move a date out of the file's range) are each a sentence and nothing is asked. A note on the panel says both Date Taken fields of a photo move and one with none is
+  left as it is. Smart Rename stays off in a view (a name is per folder) and so does Ctrl+D.
+- **The job's client** (`bulk-job.js`; state is `state.bulk`). `startBulk` POSTs `{op, selection, params}`; **one bulk job at a time**: while one runs (or one is being started) the view's
+  Add buttons, Apply Time Shift and the tally's pills are disabled with the tooltip "A bulk edit is running (see the strip at the top)..." (`lockBulkControls`; a folder's own bulk
+  writes are another route and are never disabled), and a `409` from the server shows its sentence in the strip with **Show it**, which asks which job runs and picks it up. A start whose
+  answer is lost (the network dropped after the server took it) says so and asks what runs, once, two seconds later. **The status is polled about once a second** (`POLL_MS`;
+  every 5 s while the tab is hidden, and at once when it is brought back); a request unanswered in 15 s is a miss and is asked again; after 3 misses in a row the strip says "TagPup
+  is not answering (...). The edit goes on if TagPup is running; still trying."; the pause between tries grows to six times as long; **after 40 in a row it stops** ("has not answered for a
+  long time") and offers **Ask again** -- never for ever; the first answer clears the message. A `404` for the job stops the asking at once. The status of a finished job is never polled. **Cancel**
+  is one request however often it is pressed ("Cancelling..."), and the job stops after the chunk it is writing; pressed as the job ends, the server's `200` carries the end and the strip shows
+  that. **Resume** (a time shift that was cancelled, failed or abandoned: `resumable`) calls `/api/library/bulk/resume` for the same job; **Start again** (a tags or people job that
+  was cancelled, failed or abandoned) sends the same selection and edit it started with, kept in memory -- so after a reload, when the page no longer knows the edit, the strip says what
+  was done and "Select the photos and make the edit again to finish it: adding or removing what a photo holds already changes nothing", with no button to a guess.
+- **Finding it again** (`GET /api/library/bulk/current`, new: `tagpup.jobs.bulk_edits.current`). The job is the library's: the strip is under the header, not in the view or the folder,
+  and it survives opening another view or going back to the folder. The page asks as it starts and as a view opens (one question when they come together, none within five seconds of
+  the last); it answers `{job: status}` for the job running (here or in another process), else the latest that stopped part-way -- cancelled, failed, abandoned by a restart -- if
+  it began within 30 days (the cache folder sweeps its list of photos then), else `null`; `done` is never offered. A stopped job that was **Dismiss**ed is not offered again to
+  this browser (`localStorage`, per library). A different library's page asks under its own name: it cannot show this one's strip. A read that fails shows nothing and logs a warning
+  (the strip is an offer; a second start is refused by the server anyway).
+- **When a job ends** (`bulk-job.js jobEnded`, once for each end): the status line says the summary -- "Added Trips/Lighthouse to 3,380 photos; 32 missing on disk were skipped; 0
+  errors." (a time shift: "Shifted Date Taken 90 minutes later in 4 photos; 1 with no Date Taken was left as it was; 0 errors.") -- in the error colour if the job did not finish
+  or had errors; the navigator's counts are read again at once; **every folder scan this browser kept is forgotten** (`forgetFolderCaches`: they name the old stamps and tags); the
+  cards in the window are asked for again (`refreshHeldCards`: their `thumb` carries the file's new stamp, and `stale` is what the file is now; the others are let go and asked for when
+  scrolled to); the photo in the details panel is read again unless it has edits of its own (`reloadChangedPhoto`; else the next save is refused as changed on disk, which is right); and the
+  selection is counted again. The strip keeps the sentence, **the first 50 errors** (`<details>`: file name, why; the rest "N more, not listed"; long names wrap) and the counts until
+  **Dismiss**. A job is not in `queuePhotoWrite`: single saves interleave between its chunks (9d-1). "Shown on the Activity page too" links to it.
+- **Reading it** (a11y). The strip is a labelled region with a native `<progress>`; the buttons are buttons; it never takes the focus when it appears (Dismiss moves the focus to the grid, not
+  to the top of the page); a separate polite live region is told at the start, at each tenth, and at the end -- 25 polls with the same answer say nothing.
+- **The tally** (`tally.js`; `POST /api/library/selection/tally` from 9d-1). 250 ms after the selection stops changing the selection is counted on the server; the two lists say
+  "counting..." meanwhile (never the last selection's chips); a request the selection has left behind is aborted and an answer that is not the newest, or is for a view that has closed,
+  is dropped; none selected asks nothing; alphabetical by `compareTagNames`; at most 500 each with "N more, not listed"; names are text, never markup. A selection that cannot be sent
+  says "Not counted: see the note above." (the whole library may be counted: a tally is not limited to what a job takes). The folder view's panel is its own and is untouched.
+- **Measured** with `scripts/measure_bulk_page.py --run` (plan without `--run`; `--code-root <git archive of the trunk> --only abc` runs only (a) to (c) on the trunk, the baseline): a
+  sandbox copy of photo_index (68,472 photos) and a small library of 500 JPEGs of its own, headless Chromium 1600 x 1000, a fresh browser for each, 3 rounds, thumbnails answered by the browser's
+  routing, dialogs accepted. **The trunk has no selection by id**: its Select all, Shift range and Invert fetch the card of every photo for its path (`selectInLibrary`), so (a) to (c) are the
+  same clicks on both. The machine was not quiet; run to run these move by up to 40%.
+
+  | the action | trunk (`selectInLibrary`; median; range) | this branch |
+  |---|---|---|
+  | (a) Select all of 68,472: click to the count shown and every card painted selected, main thread idle | 5,858 ms (5,601-7,501); JS heap 61 MB | 57 ms (46-69); heap 6.9 MB |
+  | (b) Shift-click from the first photo to the 19,948th (the grid scrolled there; the cards between are not held) | 1,588 ms (1,463-3,492); heap 47 MB | 49 ms (41-59); heap 10 MB |
+  | (c) Invert of that (68,472 less 19,948 = 48,524) | 6,316 ms (5,433-6,972) | 63 ms (51-458) |
+  | (d) the tally panel for all 68,472 selected: click on Select all to the tags and people painted | no tally | 731 ms (664-768): 250 ms is the wait, the request 224 ms (211-320; a 34 KB reply, 500 tags and 413 people), and about 250 ms after the reply is not attributed (913 chips, 2,779 nodes; no task over 50 ms) |
+  | (e) a tags job over 500 small JPEGs, the real ExifTool: click on Add to the strip shown / to the first progress shown | no job | 66 ms / 2,136 ms (the first poll at 1 s, and the first chunk of 25 takes 1.3 s) |
+  | (e) the page while it polled: 28 status requests in 28.7 s (17.4 photos a second) | | longest task 0 (none over 50 ms), the main thread busy 1.2% of the time, 12.7 ms of it per poll (everything the page did) |
+  | (f) the strip when the server reports 3,000 errors (50 named): the answer to the 51 rows painted | | 1.9 ms; 120 nodes in the strip; the longest task of the page's life 57 ms (its start, not the strip) |
+
+  The sandbox was deleted afterwards. What the numbers do **not** show: a browser with a GPU and an extension or two; a library on a network share (the job's cost is the server's: 9d-1); and
+  the (d) cost after the reply, which is unattributed.
+- **How it fails**, each a test (`tests/frontend/library-selection.test.mjs`, `bulk-edit.test.mjs`, `bulk-job.test.mjs`, `library-tally.test.mjs`; `tests/test_bulk_edits.py` for `current`):
+  Select all of 68,000, 3 excluded, Add tag (the request is the source and the 3 ids, never ids or paths, and not the folder's route); a range across 20,000 unloaded cards (no card request); invert
+  at exactly 20,000 and at 20,001; 30,000 picked, more than 20,000 excluded, 60,000 of 68,000, a Select all less 50,000 and more than 200,000 (sentence or the other way round, no request); the
+  question refused, the second question refused, the selection edited while the question was open, a tag the rules refuse, nothing selected, four rapid clicks and Enter; time shift 0, -5, 1.5, empty,
+  more than ten years, exactly ten, earlier, the both-fields note, a folder's panel unchanged; the pills (alphabetical, tags with markup in them as text, a person, the arrow only below the total); a
+  start while one runs (controls disabled with a tooltip, the 409 sentence, Show it, a folder's controls not disabled); the strip's bar and counts, the ETA at 15 photos a second and then the job's own,
+  once a second and every 5 s hidden, no announcement for 25 identical polls, the focus left where it was; the end (summary, polling stops, navigator counts, cards, folder scans, tally), every photo
+  missing, a time shift's summary, 3,000 errors with long names in 51 rows; Cancel twice, after the end, and unsent; three misses, an answer that never comes, giving up and Ask again; a restart
+  (abandoned, Resume, Start again); a page reloaded mid-job, another library's page, a dismissed job, a start whose answer was lost; the tally for 1, 68,000 and 0 selected, three quick clicks (one
+  request), a stale answer dropped, counting..., over 500, a failure, a view left meanwhile. The server's: `current` with no job, a running one, an abandoned one after a restart, a resumed one,
+  a cancelled one and one older than 30 days.
+- **Decisions made, not copied.** (1) The selection lives on the view (`state.library.sel`), not in `state`. (2) The 20,000 limits are enforced when a request is made, not when a selection is
+  made (a Shift range of 30,000 is allowed to exist; Invert refuses past 20,000 as decided), and the other way round is used when only it fits. (3) A question is asked even for one photo. (4) The
+  ten-year limit of a shift. (5) 15 photos a second. (6) The poll's 15 s, the 40 misses and the six-fold pause. (7) `current` offers a stopped job for 30 days and a Dismiss is remembered per
+  library in the browser. (8) Every folder scan in this browser's storage is forgotten when a job ends. (9) The panel's "missing" note became the limit note (`selection-note`). (10) The page
+  sends a person as the path `resolveTagOrPerson` found, not the bare name, so the placement dialog a folder shows is shown here too.
+- **What could not be made safe.** (1) The hole between the two shapes (above). (2) A job started from a selection read just before another program changed the library: the server resolves the
+  source when it starts, so "3,412 photos" in the question can be 3,400 when it runs; the strip says what was done. (3) Nothing on the page can undo a job as one step (the question says so); each 25
+  photos is a change in History (9d-1). (4) A page reloaded after a tags job was cancelled cannot offer Start again (it does not know the edit). (5) The 9d-1 limit on a share that stops answering
+  mid-command (a chunk can stall much longer than a chunk should; Cancel waits for it) is the server's.
+- **What 9e builds on.** A search is a source: `selection.js`'s two shapes already name "the view's source but these" and "these", and the `source` object of `selectionRequest` is the one place that says it
+  (`{kind, value, recursive}` of `/api/library/ids`); a search view needs a new `kind` in `library-source.js` and the same in `tagpup.services.library_view.source_of`, and Select all, ranges, the tally, every
+  bulk edit and the strip work on it unchanged. `state.nav.followed` is still where "within what the navigator has selected" is read. `lockBulkControls` and `bulkBusy` are the one place that says an
+  edit may not start.
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1, the rest design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag
