@@ -125,6 +125,20 @@ class TheRoute(unittest.TestCase):
 
 
 class TheCardStatsHaveABudget(unittest.TestCase):
+    def setUp(self):
+        from tagpup.files import recycle_bin
+        recycle_bin._drive_kinds.clear()
+        self.addCleanup(recycle_bin._drive_kinds.clear)
+
+    def test_a_drives_type_is_asked_of_windows_once_for_a_batch_not_once_for_each_card(self):
+        # Asked 200 times it cost 0.6 ms each: 130 ms for a batch of 200 cards, seven times the stats themselves.
+        from tagpup.files import shares
+        with mock.patch("tagpup.files.recycle_bin._drive_type", return_value=3) as kind, \
+                mock.patch("tagpup.files.recycle_bin._mount_point", return_value="C:\\"):
+            for n in range(200):
+                shares.on_a_network_drive("C:\\Photos\\p%d.jpg" % n)
+        self.assertEqual(1, kind.call_count)
+
     def test_a_share_that_answers_every_stat_slowly_ends_the_batch_within_the_budget_and_leaves_the_rest_unmarked(self):
         vl = ViewLibrary(self)
         ids = [vl.photo("Coast", "p%d.jpg" % n, taken="2024:06:01 10:00:00") for n in range(6)]

@@ -14,7 +14,10 @@ written; 2,746 folders, 895 keyword nodes, 413 people) it measures, each a perso
   (f) the stale marks: GET /api/library/cards for 200 ids, the cost of the 200 stats (the sandbox holds no photos, so
       every file is missing; the cost of a stat of a file that is there is measured on 200 real local files here);
   (g) the folder view of a 759-photo folder opened and scrolled, which this stage changed the cards of (labels, roles,
-      a tab stop): run the trunk's code the same way (--code-root) to see it did not slow.
+      a tab stop): run the trunk's code the same way (--code-root) to see it did not slow;
+  (h) a click on the library's largest folder row (68,000+ photos, with 68,000 empty photo files made under it, so that a
+      walk of it has something to walk): the membership requests it makes, how long they take, and click to painted and idle --
+      the banner must not walk a folder that large unasked.
 
     .venv/Scripts/python.exe scripts/measure_navigator.py                  # prints the plan, does nothing
     .venv/Scripts/python.exe scripts/measure_navigator.py --run
@@ -34,7 +37,6 @@ import json
 import math
 import os
 import random
-import shutil
 import statistics
 import subprocess
 import sys
@@ -51,7 +53,7 @@ from code_snapshot import REPO_ROOT, copy_code  # noqa: E402
 from sandbox import copy_library, free_port, place_roots, remove_sandbox  # noqa: E402
 
 LIBRARY = "measured"
-EVERYTHING = "abcdefg"
+EVERYTHING = "abcdefgh"
 
 INIT = r"""
 window.__m = { longtasks: [], marks: {} };
@@ -133,6 +135,14 @@ def make_photos(folder, count):
             d.rectangle([x, y, x + rng.randrange(20, 200), y + rng.randrange(20, 200)],
                         fill=(rng.randrange(256), rng.randrange(256), rng.randrange(256)))
         im.save(os.path.join(folder, "IMG_%04d.jpg" % i), quality=80)
+
+
+def make_empty_photos(folder, count, per_folder=1000):
+    """`count` empty files named like photos, `per_folder` to a folder: enough for a walk of the folder to have something to walk."""
+    for n in range(count):
+        if n % per_folder == 0:
+            os.makedirs(os.path.join(folder, "d%03d" % (n // per_folder)), exist_ok=True)
+        open(os.path.join(folder, "d%03d" % (n // per_folder), "IMG_%06d.jpg" % n), "wb").close()
 
 
 def start_server(sandbox, db_path, tuner_port, tagpup_port):
@@ -424,7 +434,8 @@ def drive(base, library_folder, args, results):
                         damaged_photos.stamp_of(path + ".gone")
                     missing.append((time.perf_counter() - t) * 1000)
             finally:
-                shutil.rmtree(folder, ignore_errors=True)
+                # Retried and reported, never quietly left behind (findings #572; scripts/sandbox.py).
+                print("    the 200 files made for the stat timing deleted: %s" % remove_sandbox(folder))
             results["stat_200_local"] = {"present_ms": costs, "gone_ms": missing}
             print("    200 stats of files that are there, local disk: median %.2f ms (%.1f us each); of files that are gone: %.2f ms"
                   % (med(costs), med(costs) * 1000 / 200, med(missing)))
@@ -471,6 +482,34 @@ def drive(base, library_folder, args, results):
             results["scroll_folder"] = fly
             show("(g) scroll the folder view top to bottom in 3 s", fly)
             ctx.close()
+        if navigator and "h" in wanted:
+            big = os.path.join(os.path.dirname(library_folder), "walk_big")
+            if not os.path.isdir(big):
+                make_empty_photos(big, 68000)
+                print("    made 68,000 empty photo files in %d folders under the root place, for a walk to have something to walk" % 68)
+            rows = []
+            for n in range(args.rounds):
+                ctx, page, seen = new_page()
+                ready(page, root)
+                page.click("#sidebar-tab-library")
+                page.wait_for_selector("#nav-panel-folders .nav-row", timeout=60000)
+                page.evaluate("() => window.__n.idle()")
+                index = page.evaluate("""() => { const r = window.__n.rows('folders'); let best = 0;
+                    r.forEach((x, i) => { if (window.__n.count(x) > window.__n.count(r[best])) best = i; }); return best; }""")
+                del seen[:]
+                page.evaluate("() => { window.__m.marks = {}; }")
+                page.evaluate("() => window.__n.timed(() => window.__m.marks.paintedIdle, 120000)")
+                page.locator("#nav-panel-folders .nav-row").nth(index).click()
+                r = page.evaluate("() => window.__p")
+                page.wait_for_timeout(4000)         # long enough for any walk to be asked for and answered
+                asked = [url for url in seen if "/api/folder/membership" in url]
+                walk = page.evaluate("""() => { const e = performance.getEntriesByType('resource').filter(e => e.name.includes('/api/folder/membership'))[0];
+                    return e ? e.responseEnd - e.startTime : null; }""")
+                rows.append({"click_to_painted_and_idle_ms": r.get("ms"), "membership_requests": len(asked), "membership_ms": walk,
+                             "quiet_link_shown": 1 if page.evaluate("() => { const b = document.getElementById('btn-moves-check'); return Boolean(b) && !b.classList.contains('hidden'); }") else 0})
+                ctx.close()
+            results["root_click"] = rows
+            show("(h) a click on the largest folder row, with 68,000 files on disk under it", rows)
         browser.close()
 
 
@@ -499,7 +538,7 @@ def print_plan(args):
     print("  in headless Chromium, %d fresh browsers each: (a) open the Library pane, cold and warm; (b) open the folder tree to"
           " depth 3 in three clicks; (c) click the largest keyword node, and open it by its address; (d) type in the People"
           " filter; (e) hold ArrowDown through 2,000 photos; (f) a card batch of 200 with its stats; (g) open and scroll a"
-          " %d-photo folder view" % (args.rounds, args.photos))
+          " %d-photo folder view; (h) click the largest folder with 68,000 files on disk" % (args.rounds, args.photos))
     print("  run only: %s" % ", ".join(args.only))
     print("  print the numbers, then delete the sandbox")
     print("Nothing was done.")
@@ -520,7 +559,8 @@ def main():
         db_path = os.path.join(sandbox, "data", LIBRARY + ".db")
         if args.keep_sandbox and os.path.exists(db_path):
             for name in ("scripts", "tagpup", "web"):
-                shutil.rmtree(os.path.join(sandbox, name), ignore_errors=True)
+                if not remove_sandbox(os.path.join(sandbox, name)):
+                    sys.exit("could not replace the sandbox's code; the sandbox is kept at %s" % sandbox)
             copy_code(sandbox, code_root=args.code_root, launchers=True)
         else:
             os.makedirs(os.path.join(sandbox, "data"), exist_ok=True)
