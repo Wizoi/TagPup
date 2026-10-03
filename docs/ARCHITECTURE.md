@@ -1575,7 +1575,7 @@ untouched.
     `tagpup.files.job_files`: atomic replace, fsync, a damaged file reads as none; nothing the rows or the files
     depend on). **They are kept only while a resume is possible** *(review, #580)*: the state file can hold an edit's tags and people and the
     names of files that failed, so a tags or people job removes both files when it ends (done, cancelled, failed), and a time shift when it
-    ends done; a time shift that is cancelled or failed keeps them, and anything untouched for **7 days** is swept when the next job starts.
+    ends done; a time shift that is cancelled or failed keeps them, and a job's files are swept together by its last activity (30 days when a resume is possible, 7 otherwise; see below) when the next job starts.
     A finished job's status then comes from the library's record of the run (`job_runs`: `state`, `op`, the counts; the first 50 errors are
     lost with the file). Nothing a person or an exception wrote is kept in `job_runs.note` or the state: a failed job's message is a fixed
     sentence and the exception's class name ("It could not go on (FileNotFoundError); the server's log says why."), the detail is logged;
@@ -1637,6 +1637,48 @@ untouched.
   photo alone), and `validation` refuses a shift of more than 100 years (52,560,000 minutes) up front; the journal's question
   (`file_journal.photo_ids_done`) drives from `changes` and finds each change's files by `idx_change_files_change` (the plan was a scan
   of every `change_files` row; no migration was needed; 67,500 rows in 2,700 changes asked in well under 0.5 s, a plan test holds it).
+- **The durable-record principle** *(follow-up review, #583-#589)*. A time shift is the one operation that cannot be done twice, and every
+  way it could be done twice was a way its progress record was missing, stale or false. The rule now: **nothing is written to a photo file
+  until the record that lets a resume know about it is durably written, and a record is never older than the files.**
+  - **The record before the chunk is mandatory** (#583). `inflight` (the end of the chunk about to be written) is written before the chunk's
+    first file, tried 5 times with a doubling wait (0.1 s) -- and `job_files` itself replaces the file with 5 tries of its own for the
+    Windows error of replacing a file another handle holds open (the other TagPup process's status poll, Defender, the search indexer);
+    if it still cannot be written the job stops as `failed`, resumable, with "It stopped before writing the next chunk because it could not
+    record where it had got to; nothing of that chunk was written", before the chunk's first file. The write AFTER a chunk is progress and
+    best-effort: if it fails, the older record still covers the chunk (the journal says what it wrote) and the next before-chunk write is
+    the mandatory one. Readers (`read_state`) open the file only for the read and ask again a few times when it is being replaced; a
+    running job's status is memory and reads no file. A write that failed does not use up the sequence number (#589).
+  - **A command that stalls leaves the chunk's files UNKNOWN until they are read** (#584). After a timeout in a time shift's chunk the
+    chunk's session stays dead; the job then opens a fresh session (`CHUNK_TIMEOUT`, 60 s), under the same lock, and reads every planned
+    file that is not recorded done (`file_changes.reconcile`): one holding the shift is DONE (its conflict row recorded done, counted
+    changed -- a conflict for a file that holds the target is not a conflict), one holding what it held is NOT WRITTEN (its row taken out
+    of the change; the error says "read afterwards, the file was not shifted"), one holding neither is a conflict ("could not confirm
+    whether it was shifted"), and one that cannot be read is UNKNOWN: the job stops as `failed` with the chunk still IN FLIGHT in its
+    record and counts nothing of it. A resume reads the journal's conflict rows of the job for the chunk in flight the same way (and
+    refuses, changing nothing, if it cannot), so it never plans again from a file that may be shifted. Tags are idempotent and are not
+    reconciled.
+  - **All or nothing around the thread** (#585). `start` and `resume` register the job, write its files and start its thread inside one
+    block: if anything raises before the thread runs, the job is unregistered (the job it replaced is put back), the claim's row is
+    deleted, the files a start made are removed, and the caller gets a `409` "The bulk edit could not be set up (OSError): nothing was
+    changed. Try again in a moment." -- never a registered job with no thread, which would refuse every start, ignore a cancel and hold
+    an update's drain.
+  - **One identity across runs** (#586). The job id is its first run's id; every later run of it carries `job` in its counts, and the
+    status resolves the id to the LATEST run of the chain (`_chain`), so a resumed job that finished is `done` and not resumable after a
+    restart, from the other process, or once it has left the 20 kept in memory. `resumable` is true only where a resume would work:
+    the list of photos AND the state both exist (`has_record`); a job whose record is gone is never promised a Resume. A process dying
+    between removing the record and ending the run is reported as `abandoned`, not resumable, with "Its record is gone, so it cannot be
+    resumed (History lists what was shifted)."
+  - **The sweep goes by the job's last activity, and a job's files go together** (#587). A job's `.ids` and `.state.json` are one unit,
+    aged by the newest of them (the state file is rewritten whenever the job runs or is resumed), kept **30 days** when both exist (a
+    time shift that can be resumed) and **7 days** otherwise; an expired resumable job's last run in `job_runs` is amended `state:
+    "expired"` and the status says "Too old to resume: its record was removed after 30 days." (`state` `expired`, `resumable` false,
+    Resume `400`).
+  - **The library keeps a resumable job's first run** (#588): `job_runs` keeps 50 runs per job, but never deletes a run whose id is a
+    job a resume can still carry on (`job_runs.finish(keep=...)`); a resume that is refused deletes the row its claim made instead of
+    ending it as a failed run, so refusals do not use the rows up (sixty refused resumes leave the job resumable).
+  - **Limits stated** (#589). A command of a bulk chunk has **60 seconds** (`CHUNK_TIMEOUT`): one very large file on a very slow share can
+    never be written by a job -- it fails with "ExifTool did not answer in 60 s", a clear error, not a hang. The claim's refusal says
+    "in another TagPup process" only when the claim is another process's.
 - **What could not be made safe.** (1) (see above: made safe.) (2) A tag no tree node holds is not in the tally. (3) A
   time shift of a photo whose row vanishes between the chunk's lookup and its write is written to its file without a record; a resume
   cannot tell it (milliseconds, on a photo being deleted).

@@ -33,6 +33,8 @@ row, so its folder is the library's and its write is journaled, and the journal 
 The job holds its Library, not the page's: the page may switch library or be closed and the job goes on, its status reachable.
 """
 import logging
+import os
+import re
 import threading
 import time
 
@@ -65,6 +67,21 @@ MOST_WAIT = 5.0
 KEPT = 20
 
 RUNNING, DONE, CANCELLED, FAILED, ABANDONED = "running", "done", "cancelled", "failed", "abandoned"
+#: The state of a time shift whose record was removed for age: too old to resume.
+EXPIRED = "expired"
+
+#: The record a chunk is written under is written, durably, BEFORE the chunk's first file: this many tries, waiting this long
+#: (doubling) between. A resume knows of a chunk only by that record.
+PERSIST_TRIES = 5
+PERSIST_SECONDS = 0.1
+
+#: What is said when the record could not be written and so the chunk was not.
+NOT_RECORDED = ("It stopped before writing the next chunk because it could not record where it had got to; nothing of that chunk "
+                "was written. %s of %s photos were done.")
+
+#: What is said of a bulk edit that could not be set up, and of a resume that could not be.
+SETUP_FAILED = "The bulk edit could not be set up (%s): nothing was changed. Try again in a moment."
+EXPIRED_SAYS = "Too old to resume: its record was removed after 30 days."
 
 _jobs = {}            # {library.key: {handle: Job}}
 _lock = threading.Lock()
@@ -124,10 +141,10 @@ class Job:
         self.run_ids = list(state.get("run_ids") or []) + [self.run_id]
 
     def snapshot(self, inflight=None):
-        """What the state file and the library's record of the run hold, as a dict."""
+        """What the state file holds, as a dict, with the sequence number the next write will carry (this one is not used up
+        until the write has worked)."""
         with self.lock:
-            self.seq += 1
-            return {"job": self.handle, "op": self.edit.op, "edit": self.edit.to_json(), "state": self.state, "seq": self.seq,
+            return {"job": self.handle, "op": self.edit.op, "edit": self.edit.to_json(), "state": self.state, "seq": self.seq + 1,
                     "message": self.message, "total": self.total, "done": self.done,
                     "inflight": self.inflight if inflight is None else inflight, "changed": self.changed - self.credit,
                     "unchanged": self.unchanged, "skipped_missing": self.skipped_missing,
@@ -164,13 +181,36 @@ class Job:
                     "eta_seconds": eta, "message": self.message, "cancelling": running and self.cancel.is_set(),
                     "resumable": resumable(self.edit.op, self.state), "what": self._what()}
 
+    def checked_status(self):
+        """status(), with `resumable` true only where a resume would work: the record (list of photos and state) is there."""
+        found = self.status()
+        if found["resumable"] and not bulk_edit.has_record(self.library, self.handle):
+            found["resumable"] = False
+            found["message"] = (found["message"] or "") + " Its record is gone, so it cannot be resumed."
+        return found
+
     # ---- running ------------------------------------------------------------------------------
 
-    def _persist(self, inflight=None):
-        try:
-            bulk_edit.write_state(self.library, self.handle, self.snapshot(inflight))
-        except Exception as problem:
-            logger.warning("Could not record how far bulk edit %s of %s got: %s", self.handle, self.library.name, problem)
+    def _persist(self, inflight=None, mandatory=False):
+        """Write the state file. True when it was written. A `mandatory` write (the record of the chunk about to be written) is
+        tried PERSIST_TRIES times; any other (progress) once, and a failure is logged: the next mandatory write supersedes it,
+        and what it would have said is in the journal. The sequence number is used up only by a write that worked."""
+        delay = PERSIST_SECONDS
+        for attempt in range(PERSIST_TRIES if mandatory else 1):
+            state = self.snapshot(inflight)
+            try:
+                bulk_edit.write_state(self.library, self.handle, state)
+            except Exception as problem:
+                logger.warning("Could not record how far bulk edit %s of %s got (try %d): %s", self.handle, self.library.name,
+                               attempt + 1, problem)
+                if mandatory and attempt < PERSIST_TRIES - 1:
+                    time.sleep(delay)
+                    delay *= 2
+                continue
+            with self.lock:
+                self.seq = state["seq"]
+            return True
+        return False
 
     def _flush(self, force=False):
         """Record the counts in the library's run and the state file, at most every FLUSH_SECONDS; and tell the page's caches
@@ -217,7 +257,7 @@ class Job:
             bulk_edit.forget(self.library, self.handle)
         try:
             runs_service.end(self.library, self.run_id, time.time(), self.counts(), failed=state == FAILED,
-                             note=message if state == FAILED else None)
+                             note=message if state == FAILED else None, keep=bulk_edit.resumable_heads(self.library))
         except Exception as problem:
             logger.warning("Could not record the end of bulk edit %s of %s: %s", self.handle, self.library.name, problem)
         self._wrote()
@@ -242,9 +282,14 @@ class Job:
             chunk = self.ids[position:position + CHUNK]
             wanted = [photo_id for photo_id in chunk if photo_id not in self.skip]
             if keeps_cursor:
-                # Which chunk is in flight, kept BEFORE it is written: a resume tells what it wrote by the journal.
+                # Which chunk is in flight, kept BEFORE it is written, and DURABLY: a resume tells what the chunk wrote only by
+                # this record and the journal, and a record older than the files would let it plan a shifted photo again. If it
+                # cannot be written the chunk is not.
+                before = self.inflight
                 self.inflight = position + len(chunk)
-                self._persist()
+                if not self._persist(mandatory=True):
+                    self.inflight = before
+                    return self._end(FAILED, NOT_RECORDED % (_number(self.done), _number(self.total)))
             try:
                 out = bulk_edit.run_chunk(self.library, self.edit, wanted, self.exiftool_path, self.operation) if wanted \
                     else bulk_edit.Outcome()
@@ -272,6 +317,9 @@ class Job:
 def _stopped_by(problem):
     """The sentence for an exception that is not one photo's: a fixed one and the kind of exception, never its text, which can
     name a path or a file (it is in the server's log, with the traceback)."""
+    if isinstance(problem, bulk_edit.ChunkUndecided):
+        return ("ExifTool stopped answering in the middle of a chunk and its files could not be read afterwards, so it is not known "
+                "which of them were shifted. Resume decides from the files and the journal.")
     return "It could not go on (%s); the server's log says why." % type(problem).__name__
 
 
@@ -315,16 +363,19 @@ def _claim(library):
     if not claim:
         if claim.why == "behind":
             raise Conflict("%s has not been brought up to date yet: open it in TagPup once and try again." % library.name)
-        raise Conflict("A bulk edit is already running in %s, in another TagPup process. Wait for it to finish." % library.name)
+        where = "in this TagPup" if bulk_edit.is_this_process(claim.holder) else "in another TagPup process"
+        raise Conflict("A bulk edit is already running in %s, %s. Wait for it to finish." % (library.name, where))
     return claim
 
 
 def _give_back(library, claim, why="it was not begun"):
-    """End a claim that is not going to be a run (a refusal after it was made): the run is failed with a fixed sentence and the
-    next claim is not refused by it. Never raises."""
+    """End a claim that is not going to be a run (a refusal after it was made): the row is deleted, as though never claimed, so
+    that refusals do not use up the rows a job's history is kept in (and the next claim is not refused by it); where that fails the
+    run is failed with a fixed sentence. Never raises."""
     try:
-        runs_service.end(library, claim.run_id, time.time(), {"what": "bulk edit not begun", "state": FAILED}, failed=True,
-                         note="It was not begun: %s." % why)
+        if not runs_service.discard(library, claim.run_id):
+            runs_service.end(library, claim.run_id, time.time(), {"what": "bulk edit not begun", "state": FAILED}, failed=True,
+                             note="It was not begun: %s." % why)
     except Exception as problem:
         logger.warning("Could not give back the claim of run %s of %s: %s", claim.run_id, library.name, problem)
 
@@ -344,32 +395,80 @@ def _launch(job):
     job.thread.start()
 
 
+def _unregister(library, job, previous=None):
+    """Take `job` out of the registry again (a start or resume that did not get as far as a running thread), putting back the
+    Job it replaced, if any. A registered job with no thread would be 'running' for ever: the next start refused for it, a cancel
+    that ends nothing, an update drain that waits for it."""
+    with _lock:
+        held = _held(library)
+        if held.get(job.handle) is job:
+            if previous is not None:
+                held[job.handle] = previous
+            else:
+                del held[job.handle]
+
+
+def _set_up_failed(problem):
+    """The Conflict a start or resume that failed while being set up raises in place of the exception, which can name a path:
+    only its kind, and the log has the rest."""
+    return Conflict(SETUP_FAILED % type(problem).__name__)
+
+
+def _mark_expired(library, expired):
+    """Say, in the library's record of each job whose files were swept for age, that it is too old to resume: its status then
+    says so and offers nothing that would be refused."""
+    for handle in expired:
+        with _lock:
+            job = _held(library).get(handle)
+            if job is not None and job.state != RUNNING:
+                job.state, job.message = EXPIRED, EXPIRED_SAYS
+        try:
+            _head, latest = _chain(library, handle)
+            if latest is None:
+                continue
+            counts = dict(latest.changed or {})
+            counts["state"] = EXPIRED
+            counts["what"] = re.sub(r" \[\w+\]$", "", counts.get("what") or "bulk time shift") + " [expired]"
+            runs_service.amend(library, latest.id, counts, EXPIRED_SAYS)
+        except Exception as problem:
+            logger.warning("Could not note that bulk edit %s of %s is too old to resume: %s", handle, library.name, problem)
+
+
 def start(library, edit, ids, exiftool_path, after_write=None):
     """Begin `edit` on the photos `ids` (resolved, in order) on a thread of its own, and return the Job. Conflict, nothing
     begun, when a bulk edit is running in the library (here, or in another process). A time shift keeps its list of photos
-    for a resume."""
+    for a resume. All or nothing: if anything between the claim and the running thread fails, the job is unregistered, the claim
+    given back and the files removed, and the caller gets a Conflict with a sentence."""
     if not ids:
         raise Refused("The selection holds no photos.")
     with _lock:
         _refuse_if_running(library)
     claim = _claim(library)           # outside the lock: it may ask the system who is alive, which takes seconds
-    with _lock:
-        try:
-            _refuse_if_running(library)
-        except Conflict:
-            _give_back(library, claim)
-            raise
-        job = Job(library, claim.run_id, claim.run_id, edit, list(ids), exiftool_path, after_write)
-        _register(library, job)
-    bulk_edit.sweep(library)
-    if edit.op == bulk_edit.TIME_SHIFT:
-        bulk_edit.write_ids(library, job.handle, job.ids)
-    job._persist(inflight=0)
+    job = None
     try:
-        runs_service.progress(library, job.run_id, job.counts())
-    except Exception as problem:
-        logger.warning("Could not record the start of bulk edit %s of %s: %s", job.handle, library.name, problem)
-    _launch(job)
+        with _lock:
+            _refuse_if_running(library)
+            job = Job(library, claim.run_id, claim.run_id, edit, list(ids), exiftool_path, after_write)
+            _register(library, job)
+        _mark_expired(library, bulk_edit.sweep(library))
+        if edit.op == bulk_edit.TIME_SHIFT:
+            bulk_edit.write_ids(library, job.handle, job.ids)
+        if not job._persist(inflight=0, mandatory=True):
+            raise OSError("the job's record could not be written")
+        try:
+            runs_service.progress(library, job.run_id, job.counts())
+        except Exception as problem:
+            logger.warning("Could not record the start of bulk edit %s of %s: %s", job.handle, library.name, problem)
+        _launch(job)
+    except BaseException as problem:
+        if job is not None:
+            _unregister(library, job)
+            bulk_edit.forget(library, job.handle)
+        _give_back(library, claim, "it could not be set up")
+        if isinstance(problem, Exception) and not isinstance(problem, (Refused, Conflict, NotFound)):
+            logger.exception("Could not set up a bulk edit of %s", library.name)
+            raise _set_up_failed(problem) from None
+        raise
     return job
 
 
@@ -386,46 +485,71 @@ def status(library, handle):
         # the library): the state file, written on every change, is the record; this process's memory is only older or the same.
         moved = bulk_edit.read_state(library, handle)
         if moved is None or int(moved.get("seq", 0)) <= job.seq:
-            return job.status()
+            return job.checked_status()
     return _stored_status(library, handle)
 
 
+#: How many of a job's latest runs are looked through for its chain.
+CHAIN_LOOK = 50
+
+
+def _chain(library, handle):
+    """(the run whose id is the job's, if it is still there; the NEWEST run of the job). A job is one identity across its runs:
+    a resume is a run of its own, and says which job it carries on in its counts (`job`). The newest run is the one that says how
+    the job stands."""
+    head = runs_service.get(library, handle)
+    latest = head
+    for run in runs_service.runs(library, JOB, CHAIN_LOOK):     # newest first
+        if run.id == handle or (run.changed or {}).get("job") == handle:
+            latest = run
+            break
+    return (head if head is not None and head.job == JOB else None), (latest if latest is not None and latest.job == JOB else None)
+
+
 def _stored_status(library, handle):
-    run = runs_service.get(library, handle)
-    if run is None or run.job != JOB:
+    head, latest = _chain(library, handle)
+    if latest is None:
         return None
     state = bulk_edit.read_state(library, handle)
-    latest = runs_service.get(library, state["run_id"]) if state and state.get("run_id") else run
-    latest = latest or run
-    if state is None:
-        # Nothing but the library's record of the run: its counts, as the Activity page has them.
-        state = {"job": handle, "op": latest.changed.get("op"), "state": latest.changed.get("state"), "total": latest.changed.get("total", 0),
-                 "done": latest.changed.get("done", 0), "changed": latest.changed.get("changed", 0),
-                 "unchanged": latest.changed.get("unchanged", 0), "skipped_missing": latest.changed.get("skipped_missing", 0),
-                 "skipped_damaged": latest.changed.get("skipped_damaged", 0), "error_count": latest.changed.get("errors", 0),
-                 "errors": [], "started": latest.started_at, "finished": None, "message": latest.note}
-    if state.get("state") in (DONE, CANCELLED, FAILED):
+    counts = latest.changed or {}
+    op = (state or {}).get("op") or counts.get("op") or ((head.changed or {}).get("op") if head is not None else None)
+    source = state if state is not None else {
+        "total": counts.get("total", 0), "done": counts.get("done", 0), "changed": counts.get("changed", 0),
+        "unchanged": counts.get("unchanged", 0), "skipped_missing": counts.get("skipped_missing", 0),
+        "skipped_damaged": counts.get("skipped_damaged", 0), "error_count": counts.get("errors", 0), "errors": [],
+        "started": latest.started_at, "finished": None, "message": latest.note}
+    if counts.get("state") == EXPIRED:
+        shown = EXPIRED
+    elif state is not None and state.get("state") in (DONE, CANCELLED, FAILED) and state.get("run_id") == latest.id:
         shown = state["state"]
     elif latest.outcome == "running":
         # A thread of this process would be in memory. Another process's is running while that process lives.
         shown = RUNNING if bulk_edit.process_alive(latest.owner) else ABANDONED
     elif latest.outcome == "abandoned":
         shown = ABANDONED
+    elif counts.get("state") in (DONE, CANCELLED, FAILED):
+        shown = counts["state"]
     else:
-        shown = DONE if latest.outcome == "done" else FAILED   # its end was recorded in the library and not in the file
-    message = state.get("message")
-    if shown == ABANDONED:
+        shown = DONE if latest.outcome == "done" else FAILED
+    can = resumable(op, shown) and bulk_edit.has_record(library, handle)
+    message = source.get("message")
+    if shown == EXPIRED:
+        message = EXPIRED_SAYS
+    elif shown == ABANDONED:
         message = ("TagPup was closed before this finished: %s of %s photos were done."
-                   % (_number(state.get("done", 0)), _number(state.get("total", 0))))
-        if state.get("op") == bulk_edit.TIME_SHIFT:
+                   % (_number(source.get("done", 0)), _number(source.get("total", 0))))
+        if can:
             message += " Resume it to carry on from there; no photo already shifted is shifted again."
-    return {"job": handle, "op": state.get("op"), "state": shown, "total": state.get("total", 0), "done": state.get("done", 0),
-            "changed": state.get("changed", 0), "unchanged": state.get("unchanged", 0),
-            "skipped_missing": state.get("skipped_missing", 0), "skipped_damaged": state.get("skipped_damaged", 0),
-            "errors": list(state.get("errors") or [])[:MOST_ERRORS], "error_count": state.get("error_count", 0),
-            "started": state.get("started"), "finished": state.get("finished"), "eta_seconds": None, "message": message,
-            "cancelling": False, "resumable": resumable(state.get("op"), shown),
-            "what": (latest.changed or {}).get("what")}
+        elif op == bulk_edit.TIME_SHIFT:
+            message += " Its record is gone, so it cannot be resumed (History lists what was shifted)."
+    elif resumable(op, shown) and not can:
+        message = (message or "") + " Its record is gone, so it cannot be resumed."
+    return {"job": handle, "op": op, "state": shown, "total": source.get("total", 0), "done": source.get("done", 0),
+            "changed": source.get("changed", 0), "unchanged": source.get("unchanged", 0),
+            "skipped_missing": source.get("skipped_missing", 0), "skipped_damaged": source.get("skipped_damaged", 0),
+            "errors": list(source.get("errors") or [])[:MOST_ERRORS], "error_count": source.get("error_count", 0),
+            "started": source.get("started"), "finished": source.get("finished"), "eta_seconds": None, "message": message,
+            "cancelling": False, "resumable": can, "what": counts.get("what")}
 
 
 def cancel(library, handle):
@@ -441,7 +565,7 @@ def cancel(library, handle):
         return found
     if job.state == RUNNING:
         job.cancel.set()
-    return job.status()
+    return job.checked_status()
 
 
 #: What a resume that could not settle the chunk in flight says. Nothing was changed: the record is as it was.
@@ -455,13 +579,14 @@ def resume(library, handle, exiftool_path, after_write=None):
     """Carry on a time shift that stopped part-way (cancelled, abandoned by a restart, or failed), from where its record says,
     shifting no photo twice. The Job; Refused for a job that is not resumable, or whose list of photos is gone; Conflict for
     one that is running, when another bulk edit runs in the library, when the last chunk could not be settled just now
-    (COULD_NOT_SETTLE) or when another process moved the job on meanwhile (MOVED).
+    (COULD_NOT_SETTLE), when another process moved the job on meanwhile (MOVED) or when it could not be set up (SETUP_FAILED).
 
     The record is the state file and the journal, read here and never this process's memory of the job, which may be older (two
     processes share a library). The claim is taken first, so no other process is running one; the state is read under it, and the
-    journal settled, and the job is registered, written and started only when all of it has worked: a resume that fails leaves the
-    state file and the job exactly as they were, and the next resume starts from the same record. The sequence number the state was
-    read at must still be the file's just before it is written."""
+    journal settled, and the job is registered, written and started only when all of it has worked, and if anything fails
+    before the thread runs it is unregistered, the claim given back (its row deleted) and the state file left exactly as it was:
+    the next resume starts from the same record. The sequence number the state was read at must still be the file's just before
+    it is written."""
     with _lock:
         _refuse_if_running(library)
     found = _stored_status(library, handle)
@@ -472,20 +597,35 @@ def resume(library, handle, exiftool_path, after_write=None):
                       "nothing a photo already holds.")
     if found["state"] == DONE:
         raise Refused("Bulk edit %s has finished: there is nothing to resume." % handle)
+    if found["state"] == EXPIRED:
+        raise Refused(EXPIRED_SAYS)
     if not resumable(found["op"], found["state"]):
         raise Conflict("Bulk edit %s is %s: only a job that was cancelled, stopped or abandoned is resumed." % (handle, found["state"]))
+    if not found["resumable"]:
+        raise Refused("The record of bulk edit %s (its list of photos or its state) is gone, so it cannot be resumed without "
+                      "risking shifting a photo twice. Its journal changes are in History." % handle)
     claim = _claim(library)           # outside the lock
+    with _lock:
+        previous = _held(library).get(handle)
+    job = None
     try:
         job = _prepare_resume(library, handle, claim, exiftool_path, after_write)
+        job.began_at = time.time()
+        if not job._persist(mandatory=True):
+            raise OSError("the job's record could not be written")
+        try:
+            runs_service.progress(library, job.run_id, job.counts())     # the run says which job it carries on, at once
+        except Exception as problem:
+            logger.warning("Could not record the resume of bulk edit %s of %s: %s", handle, library.name, problem)
+        _launch(job)
     except BaseException as problem:
+        if job is not None:
+            _unregister(library, job, previous)
         _give_back(library, claim, "the job was not resumed")
         if isinstance(problem, Exception) and not isinstance(problem, (Refused, Conflict, NotFound)):
             logger.exception("Could not resume bulk edit %s of %s", handle, library.name)
-            raise Conflict(COULD_NOT_SETTLE) from None
+            raise (Conflict(COULD_NOT_SETTLE) if job is None else _set_up_failed(problem)) from None
         raise
-    job.began_at = time.time()
-    job._persist()
-    _launch(job)
     return job
 
 
@@ -512,14 +652,29 @@ def _prepare_resume(library, handle, claim, exiftool_path, after_write):
 
 
 def _settle_flight(library, job, state):
-    """The chunk a stop left in flight: finish what the journal left half done (settle), then take out of the work every
-    photo a change of this job left done, counted as changed (`credit`: until that chunk is finished the state's own count does
-    not include them). Raises if the journal cannot be settled or read: the caller then writes nothing."""
+    """The chunk a stop left in flight: finish what the journal left half done (settle); read the files the journal holds as
+    conflicts for this job -- a command that stalled may have written a file and not said so -- and record those that hold the
+    shift as done; then take out of the work every photo a change of this job left done, counted as changed (`credit`: until that
+    chunk is finished the state's own count does not include them), and every photo whose file could not be told either way
+    (changed by something else), counted as an error and left alone. Raises if the journal cannot be settled or read, or a file
+    cannot be read to decide: the caller then writes nothing."""
     done, flight = int(state.get("done", 0)), int(state.get("inflight", 0))
     if flight <= done:
         return
     file_changes.settle(library, job.exiftool_path)
     asked = job.ids[done:flight]
+    wanted = set(asked)
+    doubtful = [row for row in bulk_edit.conflicts(library, job.operation) if row.photo_id in wanted]
+    if doubtful:
+        _landed, _not_written, elsewhere = bulk_edit.decide(library, doubtful, job.exiftool_path)
+        known = {each.get("id") for each in job.errors}
+        for row in elsewhere:
+            job.skip.add(row.photo_id)
+            if row.photo_id not in known:
+                job.error_count += 1
+                if len(job.errors) < MOST_ERRORS:
+                    job.errors.append({"id": row.photo_id, "name": os.path.basename(row.path)[:bulk_edit.MOST_TEXT],
+                                       "why": bulk_edit.UNCONFIRMED})
     written = bulk_edit.shifted_ids(library, job.operation)
     shifted = [photo_id for photo_id in asked if photo_id in written]
     job.skip.update(shifted)
