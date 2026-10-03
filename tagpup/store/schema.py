@@ -710,6 +710,17 @@ def _derived_tables(conn):
     derived.rebuild_all(conn)
 
 
+def _taken_indexes(conn):
+    """The two indexes a library view pages by (tagpup.store.library_view; docs/ARCHITECTURE.md, phase 9a-2):
+    `idx_photos_taken` (taken, id), which orders the whole library by when its photos were taken and
+    serves a month as a range of it, and `idx_photos_year` (year, taken, id), which does the same
+    for one year. Without them "all photos" and a year are a scan of photos and a sort. A
+    keyset page -- the photos after (taken, id) -- is a seek of either. Indexes only: no row of any
+    table changes, nothing is recorded in the journal, and the migration needs no backup."""
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_photos_taken ON photos(taken, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_photos_year ON photos(year, taken, id)")
+
+
 # ---- What a migration holds true before it commits ----------------------------------------
 
 #: The runner's own tables: it writes them as it records each migration.
@@ -1219,6 +1230,11 @@ MIGRATIONS = (
               "was there changes",
               ("photo_tags", "folders", "photo_folder", "photo_meta"),
               (RowsKept(), DerivedAgree()) + STANDARD),
+    Migration(20, "photos by when they were taken", _taken_indexes, ADDITIVE,
+              "adds idx_photos_taken and idx_photos_year, indexes the library views page by; no row of any table changes, "
+              "so it touches none and blocks no undo",
+              (),
+              (RowsKept(),) + STANDARD),
 )
 
 LATEST = MIGRATIONS[-1].version
