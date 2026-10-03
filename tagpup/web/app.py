@@ -190,11 +190,29 @@ def _never_cache_json(response):
 GZIP_FROM = 100_000
 
 
+def _accepts_gzip(header):
+    """Does an Accept-Encoding header accept gzip? `gzip;q=0` and `identity;q=1, gzip;q=0` say no (RFC 9110)."""
+    for item in header.lower().split(","):
+        name, _, params = item.partition(";")
+        if name.strip() not in ("gzip", "x-gzip"):
+            continue
+        quality = 1.0
+        for param in params.split(";"):
+            key, _, value = param.partition("=")
+            if key.strip() == "q":
+                try:
+                    quality = float(value)
+                except ValueError:
+                    quality = 0.0
+        return quality > 0
+    return False
+
+
 def _gzip_big_json(response):
     """Compress a long JSON reply when the client sent Accept-Encoding: gzip (findings #572). The page's fetch undoes it
     unseen. A reply that is streamed, already encoded, or not a plain 200 is left as it is."""
     if (response.status_code != 200 or response.mimetype != "application/json" or response.direct_passthrough
-            or "Content-Encoding" in response.headers or "gzip" not in request.headers.get("Accept-Encoding", "").lower()):
+            or "Content-Encoding" in response.headers or not _accepts_gzip(request.headers.get("Accept-Encoding", ""))):
         return response
     data = response.get_data()
     if len(data) < GZIP_FROM:

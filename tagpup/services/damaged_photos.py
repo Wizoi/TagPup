@@ -324,12 +324,23 @@ def _stamp_within(photo_path):
 CANNOT_READ = object()
 
 
+def _root_answers(photo_path):
+    """Does the drive or share the path is on answer? Windows says "not found" at once for a server that is
+    asleep (WinError 53), a share name that is not there (67) and a drive letter that is not connected (3), the
+    same words it uses for a file that was deleted: a file is gone only when the place it was on is there."""
+    root = os.path.splitdrive(photo_path)[0]
+    if not root:
+        return True
+    return os.path.exists(root + os.sep)
+
+
 def _stat_state(photo_path):
-    """(mtime, size); None for a file that is not there; CANNOT_READ for any other OSError."""
+    """(mtime, size); None for a file that is not there; CANNOT_READ for any other OSError, and for a file
+    "not found" on a drive or share that does not answer (it is not known to be gone)."""
     try:
         stat = os.stat(photo_path)
     except (FileNotFoundError, NotADirectoryError):
-        return None
+        return None if _root_answers(photo_path) else CANNOT_READ
     except OSError:
         return CANNOT_READ
     return (stat.st_mtime, stat.st_size)
