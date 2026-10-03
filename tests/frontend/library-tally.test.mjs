@@ -39,7 +39,7 @@ describe("counting what the selection carries", () => {
     pick(ctx, 4);
     assert.equal(tallies(ctx).length, 0, "not before the selection settles");
     assert.equal(listText(ctx, "selection-tags-list"), "counting\u2026");
-    await ctx.settle(400);
+    await ctx.settle(700);
     assert.equal(tallies(ctx).length, 1, "one request for three clicks");
     assert.deepEqual(plain(tallies(ctx)[0].body), { selection: { ids: [2, 3, 4] } });
     assert.deepEqual(chips(ctx, "selection-tags-list"), ["Animals/Dogs (3)", "Trips/Coast (2)", "Zoo/Cats (1)"]);
@@ -52,7 +52,7 @@ describe("counting what the selection carries", () => {
     ctx.bulk.tally = { total: 67999, tags: [{ tag: "Trips/Coast", count: 40 }], more_tags: 0, people: [], more_people: 0 };
     el(ctx, "btn-select-all-thumbnails").click();
     pick(ctx, 5);
-    await ctx.settle(400);
+    await ctx.settle(700);
     assert.deepEqual(plain(tallies(ctx)[0].body), { selection: { source: { kind: "all", value: null, recursive: false }, excluded: [5] } });
     assert.deepEqual(chips(ctx, "selection-tags-list"), ["Trips/Coast (40)"]);
     assert.equal(listText(ctx, "selection-people-list"), "None");
@@ -61,10 +61,10 @@ describe("counting what the selection carries", () => {
   test("a selection of 0 shows no tally and asks nothing; the lists are empty and the panel's scroll is hidden", async (t) => {
     const ctx = await view(t);
     pick(ctx, 2);
-    await ctx.settle(400);
+    await ctx.settle(700);
     const asked = tallies(ctx).length;
     el(ctx, "btn-select-none-thumbnails").click();
-    await ctx.settle(400);
+    await ctx.settle(700);
     assert.equal(tallies(ctx).length, asked);
     assert.equal(listText(ctx, "selection-tags-list"), "");
     assert.ok(ctx.document.querySelector(".selection-summary-scroll").classList.contains("hidden"));
@@ -75,10 +75,10 @@ describe("counting what the selection carries", () => {
     const held = [];
     ctx.bulk.tally = () => new Promise((resolve) => held.push(resolve));
     pick(ctx, 2);
-    await ctx.settle(400);
+    await ctx.settle(700);
     assert.equal(held.length, 1);
     pick(ctx, 3);
-    await ctx.settle(400);
+    await ctx.settle(700);
     assert.equal(held.length, 2);
     held[1]({ total: 2, tags: [{ tag: "New/Answer", count: 2 }], more_tags: 0, people: [], more_people: 0 });
     await ctx.settle(60);
@@ -91,7 +91,7 @@ describe("counting what the selection carries", () => {
     const ctx = await view(t);
     ctx.bulk.tally = { total: 1, tags: [{ tag: "Trips/Coast", count: 1 }], more_tags: 0, people: [], more_people: 0 };
     pick(ctx, 2);
-    await ctx.settle(400);
+    await ctx.settle(700);
     assert.deepEqual(chips(ctx, "selection-tags-list"), ["Trips/Coast (1)"]);
     ctx.bulk.tally = () => new Promise(() => {});
     pick(ctx, 3);
@@ -106,7 +106,7 @@ describe("counting what the selection carries", () => {
       tags: range(500).map((n) => ({ tag: `Trips/Place ${String(n).padStart(3, "0")}`, count: 1 })), people: [{ name: "Wren Halloway", count: 9 }],
     };
     pick(ctx, 2);
-    await ctx.settle(400);
+    await ctx.settle(700);
     assert.equal(ctx.document.querySelectorAll("#selection-tags-list .selection-summary-chip").length, 500);
     assert.match(listText(ctx, "selection-tags-list"), /120 more, not listed$/);
     assert.match(listText(ctx, "selection-people-list"), /3 more, not listed$/);
@@ -116,12 +116,12 @@ describe("counting what the selection carries", () => {
     const ctx = await view(t);
     ctx.server.first("/api/library/selection/tally", { error: "The library is busy." }, { status: 500 });
     pick(ctx, 2);
-    await ctx.settle(400);
+    await ctx.settle(700);
     assert.match(listText(ctx, "selection-tags-list"), /Could not count what these photos carry \(The library is busy\.\)\./);
     ctx.server.routes.shift();
     ctx.bulk.tally = { total: 2, tags: [{ tag: "Trips/Coast", count: 2 }], more_tags: 0, people: [], more_people: 0 };
     pick(ctx, 3);
-    await ctx.settle(400);
+    await ctx.settle(700);
     assert.deepEqual(chips(ctx, "selection-tags-list"), ["Trips/Coast (2)"]);
   });
 
@@ -129,7 +129,7 @@ describe("counting what the selection carries", () => {
     const ctx = await view(t, 68000);
     ctx.module("selected.js").setIdRange(0, 29999, true);
     ctx.module("selection.js").updateSelectedThumbnailsCount();
-    await ctx.settle(400);
+    await ctx.settle(700);
     assert.equal(tallies(ctx).length, 0);
     assert.match(listText(ctx, "selection-tags-list"), /Not counted: see the note above\./);
     assert.match(el(ctx, "selection-note").textContent, /30,000 photos are selected/);
@@ -139,7 +139,7 @@ describe("counting what the selection carries", () => {
     const ctx = await loadViewPage(t, { search: "?view=all", ids: range(300), onIds: () => ({ source: {}, total: 250000, ids: range(300), complete: false }) });
     ctx.bulk.tally = { total: 250000, tags: [{ tag: "Trips/Coast", count: 9 }], more_tags: 0, people: [], more_people: 0 };
     el(ctx, "btn-select-all-thumbnails").click();
-    await ctx.settle(400);
+    await ctx.settle(700);
     assert.equal(tallies(ctx).length, 1);
     assert.deepEqual(chips(ctx, "selection-tags-list"), ["Trips/Coast (9)"]);
   });
@@ -149,7 +149,7 @@ describe("counting what the selection carries", () => {
     const held = [];
     ctx.bulk.tally = () => new Promise((resolve) => held.push(resolve));
     pick(ctx, 2);
-    await ctx.settle(400);
+    await ctx.settle(700);
     await ctx.popTo("?view=year&value=2020");
     held[0]({ total: 1, tags: [{ tag: "Late/Answer", count: 1 }], more_tags: 0, people: [], more_people: 0 });
     await ctx.settle(60);
@@ -165,7 +165,7 @@ describe("a folder's selection panel is as it was", () => {
     await openFolder(ctx, FOLDER);
     await ctx.settle(100);
     el(ctx, "btn-select-all-thumbnails").click();
-    await ctx.settle(400);
+    await ctx.settle(700);
     assert.equal(tallies(ctx).length, 0);
     assert.deepEqual(chips(ctx, "selection-tags-list"), ["Trips/Coast (3)"]);
   });

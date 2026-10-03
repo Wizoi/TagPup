@@ -243,7 +243,7 @@ describe("only one bulk edit at a time", () => {
     }
     ctx.bulk.tally = { total: 1, tags: [{ tag: "Trips/Coast", count: 1 }], more_tags: 0, people: [], more_people: 0 };
     ctx.module("selection.js").updateSelectedThumbnailsCount();
-    await ctx.settle(400);
+    await ctx.until(() => ctx.document.querySelector(".selection-summary-chip-remove"));
     const pill = ctx.document.querySelector(".selection-summary-chip-remove");
     assert.equal(pill.getAttribute("aria-disabled"), "true");
     assert.match(pill.title, /A bulk edit is running/);
@@ -288,7 +288,7 @@ describe("a pill of the tally", () => {
     ctx.bulk.tally = tally;
     el(ctx, "btn-select-all-thumbnails").click();
     click(ctx.window, ctx.cardById(4).querySelector(".thumbnail-checkbox"));
-    await ctx.settle(400);
+    await ctx.until(() => ctx.document.querySelector("#selection-tags-list .selection-summary-chip"));
     const pills = [...ctx.document.querySelectorAll("#selection-tags-list .selection-summary-chip")];
     assert.deepEqual(pills.map((pill) => pill.textContent.replace(/[^\w\/() ]/g, "").trim()), ["Old/Stuff (1)", "Trips/Coast (3)"], "alphabetical");
     pills[1].querySelector(".selection-summary-chip-remove").click();
@@ -304,7 +304,7 @@ describe("a pill of the tally", () => {
     const ctx = await view(t, 400);
     ctx.bulk.tally = tally;
     el(ctx, "btn-select-all-thumbnails").click();
-    await ctx.settle(400);
+    await ctx.until(() => ctx.document.querySelector("#selection-people-list .selection-summary-chip"));
     const person = ctx.document.querySelector("#selection-people-list .selection-summary-chip");
     person.querySelector(".selection-summary-chip-remove").click();
     await ctx.settle(60);
@@ -321,7 +321,7 @@ describe("a pill of the tally", () => {
     const odd = 'Trips/R&D <img src=x onerror="boom()"> "quoted" \'single\'';
     ctx.bulk.tally = { total: 1, tags: [{ tag: odd, count: 1 }], more_tags: 0, people: [], more_people: 0 };
     click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
-    await ctx.settle(400);
+    await ctx.until(() => ctx.document.querySelector("#selection-tags-list .selection-summary-chip"));
     const pill = ctx.document.querySelector("#selection-tags-list .selection-summary-chip");
     assert.equal(pill.querySelector("img"), null);
     assert.ok(pill.textContent.includes(odd));

@@ -1749,7 +1749,7 @@ and refused, the time left, **Cancel** -- which is still there after the view ch
 - **Finding it again** (`GET /api/library/bulk/current`, new: `tagpup.jobs.bulk_edits.current`). The job is the library's: the strip is under the header, not in the view or the folder,
   and it survives opening another view or going back to the folder. The page asks as it starts and as a view opens (one question when they come together, none within five seconds of
   the last); it answers `{job: status}` for the job running (here or in another process), else the latest that stopped part-way -- cancelled, failed, abandoned by a restart -- if
-  it began within 30 days (the cache folder sweeps its list of photos then), else `null`; `done` is never offered. A stopped job that was **Dismiss**ed is not offered again to
+  it began within 30 days (the cache folder sweeps its list of photos then), else `null`; `done` and `expired` are never offered. A stopped job that was **Dismiss**ed is not offered again to
   this browser (`localStorage`, per library). A different library's page asks under its own name: it cannot show this one's strip. A read that fails shows nothing and logs a warning
   (the strip is an offer; a second start is refused by the server anyway).
 - **When a job ends** (`bulk-job.js jobEnded`, once for each end): the status line says the summary -- "Added Trips/Lighthouse to 3,380 photos; 32 missing on disk were skipped; 0

@@ -274,6 +274,11 @@ export async function loadViewPage(t, {
       ctx.paneTab("library").click();
       await ctx.settle(20);
     },
+    // Wait (in 40 ms steps, at most `ms`) for something that arrives after a timer or a request, not for a fixed time.
+    until: async (check, ms = 4000) => {
+      for (let waited = 0; waited < ms && !check(); waited += 40) await ctx.settle(40);
+      return check();
+    },
     key: (el, key, init = {}) => {
       const event = new ctx.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
       el.dispatchEvent(event);
