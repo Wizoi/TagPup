@@ -223,7 +223,17 @@ export function pageScript(pageDir, commonDir = COMMON_DIR) {
       "})();",
     ].join("\n");
   });
-  return `"use strict";\n${parts.join("\n")}\n`;
+  // What each module exports, by its file (web/tagpup/state.js), for a test that has to reach
+  // into the page: the page's own state, or the grid it built. Tests only; a browser has no such line.
+  const exposed = modules
+    .map((m, i) => `${JSON.stringify(path.relative(REPO_ROOT, m.file).split(path.sep).join("/"))}: __module${i}`)
+    .join(", ");
+  return `"use strict";\n${parts.join("\n")}\nglobalThis.__pageModules = { ${exposed} };\n`;
+}
+
+/** A module of the page, as the page itself holds it: `pageExports(window, "web/tagpup/state.js").state`. */
+export function pageExports(window, file) {
+  return window.__pageModules[file];
 }
 
 /** Every line of a page's modules, for tests that read the page's source. */

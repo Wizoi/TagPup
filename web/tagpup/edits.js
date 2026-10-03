@@ -7,6 +7,7 @@ import { baseName, pathKey, samePath } from './common/paths.js';
 import { leafOf, photoAlreadyHas, tagProblem, textProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
+import { renameInSelection } from './selected.js';
 import { btnSaveDetails, inputAddPerson, inputAddTag, inputPhotoTitle } from './elements.js';
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
@@ -320,6 +321,7 @@ export async function writeDetailEdits(fields) {
     if (data.new_path && data.new_path !== path) {
         photo.path = data.new_path;
         photo.filename = baseName(data.new_path);
+        renameInSelection(path, data.new_path);
     }
 
     // The file is written. Whatever goes wrong redrawing the page from here on

@@ -7,8 +7,18 @@ export const state = {
     scannedFolder: '',
     folderPhotos: [],
     activePhotoPath: null,
+    // The selection: paths, in the order they were picked, which the bulk edits read; and
+    // the same photos by pathKey, for O(1) membership. selected.js is the one writer of both.
     selectedThumbnails: [],
+    selectedKeys: new Set(),
     lastSelectedPath: null,
+    // The grid (vgrid.js, built by wireThumbnailGrid), what it is showing -- the folder's photos
+    // after the filter, and where each is by pathKey -- and which folder and filter that was,
+    // to tell a new list (scroll to the top) from the same one drawn again (keep the place).
+    grid: null,
+    shownPhotos: [],
+    shownIndex: new Map(),
+    shownSource: null,
     folderSuggestions: {},
     progressTimer: null,
     knownTags: [],

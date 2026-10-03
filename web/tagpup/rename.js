@@ -14,6 +14,7 @@ import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { renderFileList } from './folder.js';
 import { renderThumbnails } from './grid.js';
 import { updateSelectedThumbnailsCount } from './selection.js';
+import { clearSelection } from './selected.js';
 
 /**
  * Why a Smart Rename grouping cannot be used, or null if it can: the server's rule
@@ -82,7 +83,7 @@ export function wireRenameAndTimeShift() {
             const renamedCount = Object.entries(data.updated_paths || {})
                 .filter(([from, to]) => !samePath(from, to)).length;
             state.folderPhotos = data.updated_photos;
-            state.selectedThumbnails = [];
+            clearSelection();
             state.lastSelectedPath = null;
             
             renameGroupingInput.value = '';

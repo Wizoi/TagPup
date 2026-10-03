@@ -26,6 +26,7 @@ import {
 } from './edits.js';
 import { renderFileList, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
 import { damageOf, showPhotoDamage } from './damaged.js';
+import { removeFromSelection } from './selected.js';
 
 // ---- Detected faces ----------------------------------------------------
 // Face recognition already ran for this photo -- the suggester needs it to propose
@@ -556,7 +557,11 @@ export function rotatePhoto(direction) {
             mainImage.src = photoFileUrl(photo, 800);
             const thumb = document.querySelector(
                 `#thumbnails-grid [data-path="${CSS.escape(path)}"] img`);
-            if (thumb) thumb.src = photoFileUrl(photo, 300);
+            if (thumb) {
+                // The grid asks for a picture from data-src (vgrid.js); a card drawn later reads the new mtime.
+                thumb.dataset.src = photoFileUrl(photo, 300);
+                thumb.src = thumb.dataset.src;
+            }
             saveToLocalStorageCache();
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = 'Ready';
@@ -599,10 +604,7 @@ export function deleteActivePhoto() {
             state.folderPhotos.splice(index, 1);
 
             // Remove from selection array if selected
-            const selIndex = state.selectedThumbnails.indexOf(path);
-            if (selIndex !== -1) {
-                state.selectedThumbnails.splice(selIndex, 1);
-            }
+            removeFromSelection([path]);
 
             // Update cache
             saveToLocalStorageCache();

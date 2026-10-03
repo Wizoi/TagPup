@@ -1,13 +1,15 @@
 // TagPup's page: the folder view's thumbnails, their size, selecting them, and the
-// right-click menu.
+// right-click menu. The cards are drawn by the windowed grid (vgrid.js): only the rows on
+// screen, and a couple either side, are in the DOM; this module is what a card is, and what
+// selecting does across all of them.
 import { api } from './common/api.js';
-import { buildElement, replaceContent } from './common/dom.js';
-import { baseName } from './common/paths.js';
+import { buildElement } from './common/dom.js';
+import { baseName, pathKey } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
-    btnSizeLarge, btnSizeMedium, btnSizeSmall, gridContextMenu, inputPhotoTitle, statusDot,
-    statusText, thumbnailsGrid
+    btnSizeLarge, btnSizeMedium, btnSizeSmall, folderViewMain, gridContextMenu, inputPhotoTitle,
+    photoSearch, statusDot, statusText, thumbnailsGrid
 } from './elements.js';
 import { saveToLocalStorageCache } from './cache.js';
 import {
@@ -17,13 +19,17 @@ import { queueWriteOf } from './edits.js';
 import { damageOf, markCard } from './damaged.js';
 import { renderFileList, visiblePhotos } from './folder.js';
 import { photoFileUrl, selectPhoto } from './photo.js';
+import { createVGrid } from './vgrid.js';
+import {
+    addToSelection, isSelected, removeFromSelection, renameInSelection, setSelection
+} from './selected.js';
 
 export function setThumbnailSize(size) {
     btnSizeSmall.classList.remove('active');
     btnSizeMedium.classList.remove('active');
     btnSizeLarge.classList.remove('active');
     thumbnailsGrid.classList.remove('size-smaller', 'size-larger');
-    
+
     if (size === 'small') {
         btnSizeSmall.classList.add('active');
         thumbnailsGrid.classList.add('size-smaller');
@@ -34,13 +40,15 @@ export function setThumbnailSize(size) {
         thumbnailsGrid.classList.add('size-larger');
     }
     localStorage.setItem('tagpup_thumbnail_size', size);
+    // A card's width is a new one, so its height is: read again, the same photos kept in view.
+    if (state.grid && state.shownPhotos.length) state.grid.relayout();
 }
 
 export function wireThumbnailSize() {
     btnSizeSmall.addEventListener('click', () => setThumbnailSize('small'));
     btnSizeMedium.addEventListener('click', () => setThumbnailSize('medium'));
     btnSizeLarge.addEventListener('click', () => setThumbnailSize('large'));
-    
+
     // Restore saved size preference
     const savedSize = localStorage.getItem('tagpup_thumbnail_size') || 'medium';
     setThumbnailSize(savedSize);
@@ -82,12 +90,24 @@ export function showGridContextMenu(x, y, pathUnderCursor) {
     gridContextMenu.style.top = `${Math.max(8, top)}px`;
 }
 
+/** The cards on screen show what is selected: the mark and the checkbox. */
+function syncSelectionMarks() {
+    if (!state.grid) return;
+    state.grid.eachCard((card, photo) => {
+        const on = isSelected(photo.path);
+        card.classList.toggle('selected', on);
+        const box = card.querySelector('.thumbnail-checkbox');
+        if (box) box.checked = on;
+    });
+}
+
 export function invertThumbnailSelection() {
-    const all = state.folderPhotos.map(p => p.path);
-    const next = all.filter(p => !state.selectedThumbnails.includes(p));
-    state.selectedThumbnails.length = 0;
-    next.forEach(p => state.selectedThumbnails.push(p));
-    renderThumbnails();
+    const next = [];
+    for (const photo of state.folderPhotos) {
+        if (!isSelected(photo.path)) next.push(photo.path);
+    }
+    setSelection(next);
+    syncSelectionMarks();
     upper.updateSelectedThumbnailsCount();
 }
 
@@ -139,270 +159,297 @@ export function wireGridContextMenu() {
     }
 }
 
-// Render Grid Thumbnails
+// ---- The windowed grid --------------------------------------------------
+
+/** A title being typed in a card: the card stays as it is, wherever it scrolls to. */
+function cardIsBeingEdited(card) {
+    const input = card.querySelector('.thumbnail-filename-input');
+    return Boolean(input) && !input.dataset.saving;
+}
+
+function noPhotosFound() {
+    return buildElement('div', {
+        style: 'grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 40px;',
+        text: 'No photos found matching filter.',
+    });
+}
+
+/**
+ * Build the grid over the folder's photos, once, at start-up. The source is what
+ * renderThumbnails last put in state.shownPhotos; a card is keyed by its photo's path.
+ */
+export function wireThumbnailGrid() {
+    state.grid = createVGrid({
+        container: thumbnailsGrid,
+        scroller: folderViewMain,
+        source: {
+            count: () => state.shownPhotos.length,
+            recordAt: (index) => state.shownPhotos[index],
+            indexOfKey: (key) => state.shownIndex.has(key) ? state.shownIndex.get(key) : -1,
+        },
+        buildCard: buildThumbnailCard,
+        cardKey: (photo) => pathKey(photo.path),
+        isBusy: cardIsBeingEdited,
+        afterBuild: () => upper.updateCameraHighlights(),
+        empty: noPhotosFound,
+    });
+}
+
+/**
+ * Draw the folder's photos as the filter leaves them. The same folder and filter again keeps
+ * the place in the list (an edit, a rename, a rescan); another folder or another filter
+ * starts from the top.
+ */
 export function renderThumbnails() {
-    thumbnailsGrid.innerHTML = '';
+    const shown = visiblePhotos();
+    const index = new Map();
+    shown.forEach((photo, at) => index.set(pathKey(photo.path), at));
+    state.shownPhotos = shown;
+    state.shownIndex = index;
 
-    const filtered = visiblePhotos();
+    const source = `${pathKey(state.scannedFolder)}\n${photoSearch.value.toLowerCase().trim()}`;
+    if (state.shownSource === source) {
+        state.grid.refresh();
+    } else {
+        state.shownSource = source;
+        state.grid.reset();
+    }
+}
 
-    if (filtered.length === 0) {
-        replaceContent(thumbnailsGrid, buildElement('div', {
-            style: 'grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 40px;',
-            text: 'No photos found matching filter.',
-        }));
-        return;
+function buildThumbnailCard(photo) {
+    const card = document.createElement('div');
+    card.className = 'thumbnail-card';
+    const selected = isSelected(photo.path);
+    if (selected) {
+        card.classList.add('selected');
+    }
+    card.setAttribute('data-path', photo.path);
+
+    const chkContainer = document.createElement('div');
+    chkContainer.className = 'thumbnail-checkbox-container';
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.className = 'thumbnail-checkbox';
+    chk.checked = selected;
+    chk.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handleCardSelectionClick(photo.path, chk.checked, card, e.shiftKey);
+    });
+    chkContainer.appendChild(chk);
+    card.appendChild(chkContainer);
+
+    const imgWrapper = document.createElement('div');
+    imgWrapper.className = 'thumbnail-img-wrapper';
+
+    // Add AI suggestion badge if suggestions exist
+    if (state.folderSuggestions[photo.path]) {
+        const aiBadge = document.createElement('span');
+        aiBadge.className = 'thumbnail-has-sugg';
+        aiBadge.textContent = 'AI';
+        imgWrapper.appendChild(aiBadge);
     }
 
-    const fragment = document.createDocumentFragment();
-    filtered.forEach(photo => {
-        const card = document.createElement('div');
-        card.className = 'thumbnail-card';
-        if (state.selectedThumbnails.includes(photo.path)) {
-            card.classList.add('selected');
-        }
-        card.setAttribute('data-path', photo.path);
+    // A photo that cannot be read has no picture to ask for: its card says why (damaged.js).
+    // The picture is asked for by the grid, once the card has stayed in view (vgrid.js).
+    const damage = damageOf(photo.path);
+    if (!damage || damage.indexed) {
+        const img = document.createElement('img');
+        img.dataset.src = photoFileUrl(photo, 300);
+        img.alt = photo.filename;
+        imgWrapper.appendChild(img);
+    }
+    card.appendChild(imgWrapper);
+    if (damage) markCard(card, damage);
 
-        const chkContainer = document.createElement('div');
-        chkContainer.className = 'thumbnail-checkbox-container';
-        const chk = document.createElement('input');
-        chk.type = 'checkbox';
-        chk.className = 'thumbnail-checkbox';
-        chk.checked = state.selectedThumbnails.includes(photo.path);
-        chk.addEventListener('click', (e) => {
-            e.stopPropagation();
-            handleCardSelectionClick(photo.path, chk.checked, card, e.shiftKey);
-        });
-        chkContainer.appendChild(chk);
-        card.appendChild(chkContainer);
+    const infoRow = document.createElement('div');
+    infoRow.className = 'thumbnail-info-row';
 
-        const imgWrapper = document.createElement('div');
-        imgWrapper.className = 'thumbnail-img-wrapper';
+    const textInfo = document.createElement('div');
+    textInfo.className = 'thumbnail-text-info';
 
-        // Add AI suggestion badge if suggestions exist
-        if (state.folderSuggestions[photo.path]) {
-            const aiBadge = document.createElement('span');
-            aiBadge.className = 'thumbnail-has-sugg';
-            aiBadge.textContent = 'AI';
-            imgWrapper.appendChild(aiBadge);
-        }
+    const name = document.createElement('span');
+    name.className = 'thumbnail-filename editable-title';
+    const fullName = photo.filename || "";
+    const lastDotIndex = fullName.lastIndexOf('.');
+    const displayName = lastDotIndex !== -1 ? fullName.substring(0, lastDotIndex) : fullName;
 
-        // A photo that cannot be read has no picture to ask for: its card says why (damaged.js).
-        const damage = damageOf(photo.path);
-        if (!damage || damage.indexed) {
-            const img = document.createElement('img');
-            img.src = photoFileUrl(photo, 300);
-            img.loading = 'lazy';
-            img.alt = photo.filename;
-            imgWrapper.appendChild(img);
-        }
-        card.appendChild(imgWrapper);
-        if (damage) markCard(card, damage);
+    if (photo.title) {
+        name.textContent = photo.title;
+        name.classList.add('has-title');
+        name.title = `Title: ${photo.title}\nFile: ${fullName}\n(Click to edit title)`;
+    } else {
+        name.textContent = displayName;
+        name.title = `File: ${fullName}\n(Click to add title)`;
+    }
 
-        const infoRow = document.createElement('div');
-        infoRow.className = 'thumbnail-info-row';
-        
-        const textInfo = document.createElement('div');
-        textInfo.className = 'thumbnail-text-info';
-        
-        const name = document.createElement('span');
-        name.className = 'thumbnail-filename editable-title';
-        const fullName = photo.filename || "";
-        const lastDotIndex = fullName.lastIndexOf('.');
-        const displayName = lastDotIndex !== -1 ? fullName.substring(0, lastDotIndex) : fullName;
-        
-        if (photo.title) {
-            name.textContent = photo.title;
-            name.classList.add('has-title');
-            name.title = `Title: ${photo.title}\nFile: ${fullName}\n(Click to edit title)`;
-        } else {
-            name.textContent = displayName;
-            name.title = `File: ${fullName}\n(Click to add title)`;
-        }
-        
-        name.addEventListener('click', (e) => {
-            e.stopPropagation(); // prevent card selection trigger!
-            
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.className = 'thumbnail-filename-input';
-            input.value = photo.title || '';
-            input.placeholder = displayName;
-            input.title = "Type caption/title and press Enter to save";
-            
-            name.replaceWith(input);
-            input.focus();
-            input.select();
-            
-            let isSaving = false;
-            function finishEdit() {
-                if (isSaving) return;
-                isSaving = true;
-                
-                const newTitle = input.value.trim();
-                if (newTitle === (photo.title || '')) {
-                    input.replaceWith(name);
-                    return;
-                }
-                
-                statusDot.className = 'status-indicator-dot busy';
-                statusText.textContent = 'Saving title...';
-                
-                // Queued with every other write to a photo, so the tags it sends
-                // are the photo's tags when it runs, not a copy from before.
-                queueWriteOf(photo.path, () => api.json('/api/photo/save-metadata', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: photo.path, title: newTitle, tags: photo.tags })
-                })
-                .then(data => {
-                    if (data.success) {
-                        const oldPath = photo.path;
-                        photo.title = newTitle;
-                        photo.captions = newTitle ? [newTitle] : [];
-                        
-                        if (data.new_path && data.new_path !== oldPath) {
-                            photo.path = data.new_path;
-                            photo.filename = baseName(data.new_path);
-                            if (state.activePhotoPath === oldPath) {
-                                state.activePhotoPath = data.new_path;
-                            }
-                        }
-                        
-                        renderFileList();
-                        renderThumbnails();
-                        
-                        if (state.activePhotoPath === photo.path) {
-                            inputPhotoTitle.value = newTitle;
-                        }
-                        
-                        statusDot.className = 'status-indicator-dot';
-                        statusText.textContent = 'Ready';
-                        saveToLocalStorageCache();
-                    } else {
-                        throw new Error(data.error || 'Failed to save');
-                    }
-                })
-                .catch(err => {
-                    console.error(err);
-                    statusDot.className = 'status-indicator-dot';
-                    statusText.textContent = 'Error';
-                    alert("Error saving title: " + err.message);
-                    input.replaceWith(name);
-                }));
+    name.addEventListener('click', (e) => {
+        e.stopPropagation(); // prevent card selection trigger!
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'thumbnail-filename-input';
+        input.value = photo.title || '';
+        input.placeholder = displayName;
+        input.title = "Type caption/title and press Enter to save";
+
+        name.replaceWith(input);
+        input.focus();
+        input.select();
+
+        let isSaving = false;
+        function finishEdit() {
+            if (isSaving) return;
+            isSaving = true;
+
+            const newTitle = input.value.trim();
+            if (newTitle === (photo.title || '')) {
+                input.replaceWith(name);
+                return;
             }
-            
-            input.addEventListener('keydown', (ev) => {
-                if (ev.key === 'Enter') {
-                    ev.preventDefault();
-                    finishEdit();
-                } else if (ev.key === 'Escape') {
-                    ev.preventDefault();
-                    input.replaceWith(name);
+
+            // Saving: the grid may draw the card again from the photo, editor and all.
+            input.dataset.saving = '1';
+            statusDot.className = 'status-indicator-dot busy';
+            statusText.textContent = 'Saving title...';
+
+            // Queued with every other write to a photo, so the tags it sends
+            // are the photo's tags when it runs, not a copy from before.
+            queueWriteOf(photo.path, () => api.json('/api/photo/save-metadata', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: photo.path, title: newTitle, tags: photo.tags })
+            })
+            .then(data => {
+                if (data.success) {
+                    const oldPath = photo.path;
+                    photo.title = newTitle;
+                    photo.captions = newTitle ? [newTitle] : [];
+
+                    if (data.new_path && data.new_path !== oldPath) {
+                        photo.path = data.new_path;
+                        photo.filename = baseName(data.new_path);
+                        renameInSelection(oldPath, data.new_path);
+                        if (state.activePhotoPath === oldPath) {
+                            state.activePhotoPath = data.new_path;
+                        }
+                    }
+
+                    renderFileList();
+                    renderThumbnails();
+
+                    if (state.activePhotoPath === photo.path) {
+                        inputPhotoTitle.value = newTitle;
+                    }
+
+                    statusDot.className = 'status-indicator-dot';
+                    statusText.textContent = 'Ready';
+                    saveToLocalStorageCache();
+                } else {
+                    throw new Error(data.error || 'Failed to save');
                 }
-            });
-            
-            input.addEventListener('blur', () => {
+            })
+            .catch(err => {
+                console.error(err);
+                statusDot.className = 'status-indicator-dot';
+                statusText.textContent = 'Error';
+                alert("Error saving title: " + err.message);
+                input.replaceWith(name);
+            }));
+        }
+
+        input.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') {
+                ev.preventDefault();
                 finishEdit();
-            });
-        });
-        
-        textInfo.appendChild(name);
-
-        // Date taken display
-        const dateSpan = document.createElement('span');
-        dateSpan.className = 'thumbnail-date';
-        let dateVal = "Unknown";
-        const thumbDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));
-        if (thumbDate) dateVal = formatFriendlyDateSingle(thumbDate, getFolderDateStats());
-        dateSpan.textContent = dateVal;
-        textInfo.appendChild(dateSpan);
-        infoRow.appendChild(textInfo);
-
-        const btnDetail = document.createElement('button');
-        btnDetail.className = 'btn-thumbnail-detail';
-        btnDetail.title = 'View details and edit metadata';
-        btnDetail.textContent = '🔍';
-        btnDetail.addEventListener('click', (e) => {
-            e.stopPropagation();
-            selectPhoto(photo.path);
-        });
-        infoRow.appendChild(btnDetail);
-        
-        card.appendChild(infoRow);
-
-        // Click toggles card selection
-        card.addEventListener('click', (e) => {
-            if (e.target.tagName === 'INPUT') return;
-            const isSelected = state.selectedThumbnails.includes(photo.path);
-            const nextChecked = !isSelected;
-            chk.checked = nextChecked;
-            handleCardSelectionClick(photo.path, nextChecked, card, e.shiftKey);
+            } else if (ev.key === 'Escape') {
+                ev.preventDefault();
+                input.replaceWith(name);
+            }
         });
 
-        fragment.appendChild(card);
+        input.addEventListener('blur', () => {
+            finishEdit();
+        });
     });
-    thumbnailsGrid.appendChild(fragment);
-    upper.updateCameraHighlights();
+
+    textInfo.appendChild(name);
+
+    // Date taken display
+    const dateSpan = document.createElement('span');
+    dateSpan.className = 'thumbnail-date';
+    let dateVal = "Unknown";
+    const thumbDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));
+    if (thumbDate) dateVal = formatFriendlyDateSingle(thumbDate, getFolderDateStats());
+    dateSpan.textContent = dateVal;
+    textInfo.appendChild(dateSpan);
+    infoRow.appendChild(textInfo);
+
+    const btnDetail = document.createElement('button');
+    btnDetail.className = 'btn-thumbnail-detail';
+    btnDetail.title = 'View details and edit metadata';
+    btnDetail.textContent = '🔍';
+    btnDetail.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectPhoto(photo.path);
+    });
+    infoRow.appendChild(btnDetail);
+
+    card.appendChild(infoRow);
+
+    // Click toggles card selection
+    card.addEventListener('click', (e) => {
+        if (e.target.tagName === 'INPUT') return;
+        const nextChecked = !isSelected(photo.path);
+        chk.checked = nextChecked;
+        handleCardSelectionClick(photo.path, nextChecked, card, e.shiftKey);
+    });
+
+    return card;
 }
+
+// ---- Selecting ----------------------------------------------------------
+// By photo, never by card: most of the photos have no card at the moment. The range of a
+// Shift-click is read from the grid's order (state.shownPhotos), the cards on screen follow.
 
 export function handleCardSelectionClick(path, isChecked, cardElement, isShiftKey) {
     if (isShiftKey && state.lastSelectedPath) {
-        const cardElements = Array.from(thumbnailsGrid.querySelectorAll('.thumbnail-card'));
-        const paths = cardElements.map(el => el.getAttribute('data-path'));
-        
-        const startIdx = paths.indexOf(state.lastSelectedPath);
-        const endIdx = paths.indexOf(path);
-        
+        const startIdx = state.shownIndex.has(pathKey(state.lastSelectedPath))
+            ? state.shownIndex.get(pathKey(state.lastSelectedPath)) : -1;
+        const endIdx = state.shownIndex.has(pathKey(path)) ? state.shownIndex.get(pathKey(path)) : -1;
+
         if (startIdx !== -1 && endIdx !== -1) {
             const minIdx = Math.min(startIdx, endIdx);
             const maxIdx = Math.max(startIdx, endIdx);
-            
-            for (let i = minIdx; i <= maxIdx; i++) {
-                const currentPath = paths[i];
-                const currentCard = cardElements[i];
-                const currentChk = currentCard.querySelector('.thumbnail-checkbox');
-                
-                if (currentChk) currentChk.checked = isChecked;
-                
-                const idx = state.selectedThumbnails.indexOf(currentPath);
-                if (isChecked) {
-                    if (idx === -1) state.selectedThumbnails.push(currentPath);
-                    currentCard.classList.add('selected');
-                } else {
-                    if (idx > -1) state.selectedThumbnails.splice(idx, 1);
-                    currentCard.classList.remove('selected');
-                }
-            }
+            const inRange = state.shownPhotos.slice(minIdx, maxIdx + 1).map(photo => photo.path);
+            if (isChecked) addToSelection(inRange);
+            else removeFromSelection(inRange);
+            syncSelectionMarks();
             upper.updateSelectedThumbnailsCount();
             state.lastSelectedPath = path;
             return;
         }
     }
-    
+
     toggleThumbnailSelection(path, isChecked, cardElement);
     state.lastSelectedPath = path;
 }
 
 export function toggleThumbnailSelection(path, isChecked, cardElement) {
-    const idx = state.selectedThumbnails.indexOf(path);
-    if (isChecked) {
-        if (idx === -1) state.selectedThumbnails.push(path);
-        cardElement.classList.add('selected');
-    } else {
-        if (idx > -1) state.selectedThumbnails.splice(idx, 1);
-        cardElement.classList.remove('selected');
-    }
+    if (isChecked) addToSelection([path]);
+    else removeFromSelection([path]);
+    if (cardElement) cardElement.classList.toggle('selected', isChecked);
+    else syncSelectionMarks();
     upper.updateSelectedThumbnailsCount();
 }
 
 export function selectAllThumbnails() {
-    state.selectedThumbnails = state.folderPhotos.map(p => p.path);
-    renderThumbnails();
+    setSelection(state.folderPhotos.map(p => p.path));
+    syncSelectionMarks();
     upper.updateSelectedThumbnailsCount();
 }
 
 export function selectNoneThumbnails() {
-    state.selectedThumbnails = [];
-    renderThumbnails();
+    setSelection([]);
+    syncSelectionMarks();
     upper.updateSelectedThumbnailsCount();
 }
