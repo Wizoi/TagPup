@@ -19,6 +19,7 @@ import numpy as np
 from tagpup.files.identity import read_document_id
 from tagpup.ml.vector_index import VectorIndex
 from tagpup.store import db, generations, schema
+from tagpup.store import derived as store_derived
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import photos as store_photos
 from tagpup.store import taxonomy as store_taxonomy
@@ -252,6 +253,7 @@ class PhotoIndex:
             # Who each photo's keywords name depends on this library's tree, read once;
             # the store rebuilds each photo's people from it and the photo's faces.
             known = store_taxonomy.read_people_vocabulary(self.conn)
+            batch = store_derived.Batch(self.conn)   # the tree and the folders, once for the batch
             for meta, emb in zip(metas, embeddings):
                 store_photos.record_indexed(self.conn, meta["path"], {
                     "mtime": meta.get("mtime", 0.0),
@@ -265,7 +267,7 @@ class PhotoIndex:
                     # minted one into the file by now.
                     "document_id": (meta.get("document_id")
                                     or read_document_id(meta.get("raw_metadata", {}))),
-                }, model=self.model, known=known)
+                }, model=self.model, known=known, batch=batch)
             self.conn.commit()
 
             if reload:

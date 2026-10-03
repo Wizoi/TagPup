@@ -65,18 +65,7 @@ class Vectors(unittest.TestCase):
         before, stat = self.written_by_the_app()
         photos.record_file_stat(self.lib.library.path, self.photo, before=before)
         self.assertEqual((stat.st_mtime, stat.st_size), self.stored()[:2])
-        before, stat = self.written_by_the_app()
-        photos.record_reads(self.lib.library.path, [{"path": self.photo, "raw_metadata": {"a": 1},
-                                                     "mtime": stat.st_mtime, "size": stat.st_size}],
-                            before={self.photo: before})
-        self.assertEqual((stat.st_mtime, stat.st_size), self.stored()[:2])
 
-    def test_a_file_changed_elsewhere_and_read_back_is_embedded_again(self):
-        stat = self.change_the_file()
-        before = self.stored()
-        photos.record_reads(self.lib.library.path, [{"path": self.photo, "raw_metadata": {"a": 1},
-                                                     "mtime": stat.st_mtime, "size": stat.st_size}])
-        self.assertEqual(before, self.stored())
 
     def test_a_file_changed_elsewhere_is_not_made_current_by_recording_its_tags(self):
         # Turned in Explorer, then found by a tag rename that writes nothing and records

@@ -89,6 +89,10 @@ class Connection(sqlite3.Connection):
     #: What tagpup.store.roots keeps here, or None before the connection first needs it.
     roots_state = None
 
+    #: Whether tagpup.store.derived has found the library's derived tables there (migration 19):
+    #: remembered once true, so a write does not ask the schema each time.
+    derived_ready = False
+
 
 def _is_readonly(target, kwargs):
     return kwargs.get("uri") and "mode=ro" in str(target)

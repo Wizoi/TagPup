@@ -51,7 +51,8 @@ import threading
 
 __all__ = ["stored", "key", "same", "is_under", "sql_equals", "sql_under", "sql_in", "COLLATE",
            "Roots", "to_row", "from_row", "root_name", "check_locations", "is_native_absolute",
-           "RootsError", "UnmappedRoot", "UnknownRoot", "outside_roots", "exiftool_spelling", "ROOT_MARK"]
+           "RootsError", "UnmappedRoot", "UnknownRoot", "outside_roots", "exiftool_spelling", "ROOT_MARK",
+           "row_parent", "row_name"]
 
 #: Does this filesystem ignore case? normcase says so on Windows and not elsewhere.
 CASE_INSENSITIVE = os.path.normcase("A") == "a"
@@ -518,6 +519,32 @@ def exiftool_spelling(native):
     """A native path as ExifTool prints it in a SourceFile: with "/" for the separator, on
     every machine. Only for comparing with what ExifTool says; never stored or opened."""
     return native.replace(os.sep, "/") if os.sep != "/" else native
+
+
+def row_parent(value):
+    """The folder a path in row form is in, in row form; None for a top: the root itself ("@name"),
+    a drive's or a share's own folder, or a name with no folder. Pure, and never asks the machine's
+    map: "@name/a/b.jpg" is in "@name/a", "@name/a" in "@name", and a native path is in its
+    dirname. The folders of a library are derived by it (tagpup.store.derived), the same for a
+    library that holds a root and one that holds none."""
+    if not value:
+        return None
+    if value.startswith(ROOT_MARK):
+        head, separator, _name = value.rpartition(ROW_SEP)
+        return head if separator else None
+    parent = os.path.dirname(value)
+    return parent if parent and parent != value else None
+
+
+def row_name(value):
+    """The name of the folder (or file) a row-form path ends in, to show: "2024" for
+    "@name/Trips/2024", the root's own name for "@name", the last name of a native path, and the
+    drive or share itself for a native top."""
+    if not value:
+        return ""
+    if value.startswith(ROOT_MARK):
+        return value[1:].rpartition(ROW_SEP)[2]
+    return os.path.basename(value.rstrip("\\/")) or value
 
 
 def outside_roots(folders, roots):

@@ -9,7 +9,7 @@ import collections
 import os
 
 from tagpup.core import paths
-from tagpup.store import generations, people, schema
+from tagpup.store import derived, generations, people, schema
 from tagpup.store import roots as store_roots
 
 #: One rule and what breaks it. `examples` are paths, ids or tags, a few at most.
@@ -99,6 +99,62 @@ def people_out_of_date(conn):
     return _check("photos whose people are out of date", sorted(path for photo_id, path in listed if photo_id in stale))
 
 
+# ---- The derived tables (tagpup.store.derived; docs/ARCHITECTURE.md, phase 9a) -----------------------
+
+def photo_tags_out_of_date(conn):
+    """Photos whose keyword rows (`photo_tags`) are not what their keywords and the tag tree give: a
+    writer that changed one and did not refresh (tagpup.store.derived), or rows made by an older
+    version of the app that did not know them. `tools/doctor.py --rebuild-derived --apply` makes
+    them so. Waits for migration 19."""
+    if not derived.present(conn):
+        return _check("photos whose keyword rows are out of date", [])
+    return _check("photos whose keyword rows are out of date", derived.stale_tags(conn))
+
+
+def photo_folders_out_of_date(conn):
+    """Photos not in the folder their path names (`photo_folder`), or in one though it names none."""
+    if not derived.present(conn):
+        return _check("photos not in the folder their path names", [])
+    return _check("photos not in the folder their path names", derived.stale_folders(conn)[0])
+
+
+def folders_out_of_date(conn):
+    """Folders whose parent is not the folder above them (the chain to the top is complete), or that a
+    photo needs and the table has not (counted, with no id to show). A folder holding no photo is
+    `empty_folders`'s: reported, not broken."""
+    if not derived.present(conn):
+        return _check("folders that are not what the photos' paths give", [])
+    stale = derived.stale_folders(conn)
+    return Check("folders that are not what the photos' paths give", len(stale.folders) + stale.missing,
+                 stale.folders[:EXAMPLES])
+
+
+def empty_folders(conn):
+    """The ids of the folders with no photo at or below them: what a delete that did not come through the
+    store leaves (its own prune takes them). Reported, not broken: a count of the photos in a folder is the
+    same with one there. `tools/doctor.py --rebuild-derived --apply` takes them."""
+    return derived.stale_folders(conn).strays if derived.present(conn) else []
+
+
+def photo_meta_out_of_date(conn):
+    """Photos whose rating, camera, size and place (`photo_meta`) are not what their raw metadata gives."""
+    if not derived.present(conn):
+        return _check("photos whose metadata rows are out of date", [])
+    return _check("photos whose metadata rows are out of date", derived.stale_meta(conn))
+
+
+def tags_without_a_node(conn):
+    """(distinct keywords, uses, photos, [(keyword, photos carrying it)] the most used first) of the
+    keywords photos carry that name no node of the tag tree, so have no row in `photo_tags`. Reported,
+    not broken: the tree is the owner's, indexing never adds to it, and a node made for the keyword
+    gives its photos their rows. A library without the tables says none."""
+    if not derived.present(conn):
+        return 0, 0, 0, []
+    found = derived.unnamed_keywords(conn)
+    ranked = sorted(found.by_tag.items(), key=lambda pair: (-pair[1], pair[0]))
+    return len(ranked), sum(found.by_tag.values()), found.photos, ranked
+
+
 def orphan_nodes(conn):
     """Tag-tree nodes whose parent is not in the tree."""
     return _check("tree nodes whose parent is missing", [tag for (tag,) in conn.execute(
@@ -186,7 +242,9 @@ def missing_files(conn):
 
 # ---- The library's roots (docs/ARCHITECTURE.md, "Roots and machines") -------------------------
 
-#: The tables with a column of paths the roots convert, and the column (tagpup.store.adoption.TABLES).
+#: The tables with a column of paths the roots convert, and the column (tagpup.store.adoption.TABLES). Not
+#: the derived `folders`: its paths are the photos' folders in the form the photos' rows are in, which the
+#: adoption rebuilds, and `photo_folders_out_of_date` / `folders_out_of_date` compare it with the photos.
 ROOT_COLUMNS = (("photos", "path"), ("change_files", "path"), ("change_files", "new_path"),
                 ("added_folders", "path"), ("damaged_files", "path"))
 
@@ -275,7 +333,8 @@ def unrooted_by_folder(conn):
 RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excluded,
          people_out_of_date, orphan_nodes, crops_without_a_face, vectors_without_a_photo,
          people_without_a_photo, suggestions_without_a_photo, one_file_two_rows,
-         rooted_rows_convert, native_rows_under_a_root)
+         rooted_rows_convert, native_rows_under_a_root, photo_tags_out_of_date, photo_folders_out_of_date,
+         folders_out_of_date, photo_meta_out_of_date)
 
 
 def run(conn):

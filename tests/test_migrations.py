@@ -48,6 +48,7 @@ KINDS = {
     16: schema.ADDITIVE,     # the damaged_files table
     17: schema.ADDITIVE,     # the faces_pending table
     18: schema.ADDITIVE,     # the roots table, empty
+    19: schema.ADDITIVE,     # photo_tags, folders, photo_folder and photo_meta, derived from the photos
 }
 
 
@@ -544,7 +545,8 @@ class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
             self.assertEqual(["photo files in the journal", "the stamp of each file before its write",
                               "the runs of recurring jobs", "when the library was last in step",
                               "the folders asked to be added", "the photo files found damaged",
-                              "the photos whose faces are to be detected", "the library's roots"],
+                              "the photos whose faces are to be detected", "the library's roots",
+                              "the tables the library views stand on"],
                              schema.ensure(path))
         # What it touches: change_files, which it makes, and changes, the runner's own;
         # migration 12 touches change_files alone, 13 job_runs, 14 sync_runs, 15
