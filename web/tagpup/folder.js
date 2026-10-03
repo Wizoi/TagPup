@@ -244,6 +244,8 @@ export function scanFolder(forceRefresh = false, { keepTyped = false } = {}) {
                     state.folderPhotos = cacheEntry.photos;
                     carrySelection(previous, path, state.folderPhotos);
                     state.folderSuggestions = cacheEntry.suggestions || {};
+                    state.suggestionsInMemory = cacheEntry.inMemory && Object.keys(state.folderSuggestions).length > 0
+                        ? path : null;
                     updateListStats('(cached)');
                     folderViewHeader.classList.remove('hidden');
                     upper.updateSuggestButtonState();
