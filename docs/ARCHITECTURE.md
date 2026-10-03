@@ -650,6 +650,40 @@ Exit: the owner can open the whole library by folder, keyword, person or date, m
 between a disk folder and its library view without losing place, and edit from either,
 with every edit undoable and nothing overwritten that changed outside.
 
+### Ideas taken from Windows Live Photo Gallery's database *(2026-10-02)*
+The owner's WLPG index (`Pictures.pd6`, a SQL Server Compact 3.1 file: 73,184 files, 836
+hierarchical tags, 159,325 tag uses, a 1.3-million-row word index, 17,486 face regions) was
+read as a design reference only; nothing is imported from it and tags and people are not
+compared. What is worth lifting, in the order it would be decided:
+- **A `folders` table with parent ids and a membership flag** (phase 9a, with the derived
+  folders table already planned): WLPG keeps volume, folder tree (parent id, "is a root",
+  "in the library" or not) and file name apart, so renaming or moving a folder is one row and
+  a folder's counts are a join. TagPup's `photos.path` repeats the whole path in 68,466 rows.
+  A `folder_id` on `photos` is the cheap form; decide when 9a is designed, not before, because
+  it is a second migration of every photo row beside the roots one.
+- **Derived metadata columns**, as `taken` and `year` already are (phase 9a): rating, camera
+  make and model, dimensions, GPS. WLPG keeps all of them as columns and the 2011 Find tab
+  filtered on them; ours sit inside `raw_metadata` JSON, so a filter reads every row. Rebuilt
+  from the file's metadata, never edited.
+- **Full-text search by SQLite FTS5** (phase 9e): WLPG built its own word index over file name,
+  tags, title, caption and author. FTS5 over the same fields does that without a hand-made
+  index, and the words-AND, tags-OR behaviour of the owner's notes sits on top of it.
+- **A content signature per file** (small, can come before phase 9): WLPG stores one for every
+  file (`ObjectSig`) and pairs moves and renames by it. Sync pairs by (name, size) and Verify
+  can only call a copy "differs" when the times differ; a cheap signature (size plus a hash of
+  the first and last blocks, read when the file is read anyway) tells a moved or re-timed copy
+  from a changed file, and is the fallback phase 10's duplicate review needs.
+- **Volume identity** (small): WLPG recognises a drive by its serial number and type, so a
+  portable drive on another letter is the same drive. The machine's map could record a
+  removable root's volume serial, and Verify say "this is not the drive that held it".
+- **Cached usage counts** (only if measured slow): WLPG stores a count per tag and per person.
+  The navigator's counts (9c) are one indexed query each; keep the cache out unless a measured
+  click needs it.
+- **Not lifted:** the face tables' top-five suggestions per face (ours are computed from the
+  vectors and the pool); a recycle table (the real Recycle Bin is used); a separate people
+  table keyed by contact id (identity here is the leaf name, CLAUDE.md); WLPG's own
+  database-only flags (flagged, emailed, printed), which no file holds.
+
 ### Phase 10: Family albums from many sources (idea, after phase 9)
 The owner's idea *(2026-09-25)*: once the local folders, the views and their management
 are right (phases 8 and 9), bring in photos from where the family keeps them --
