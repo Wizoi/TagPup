@@ -149,6 +149,25 @@ def _page(conn, scope, cursor, limit):
     return rows[:limit], len(rows) > limit
 
 
+def all_ids(conn, source, cap):
+    """([photo id] of the whole source in the order `page` gives, how many photos the source holds): at most `cap`
+    ids, the total counted when the source holds more. Two statements at most, one per phase, each an index-ordered
+    read of ids alone -- the keyset page's order without the keyset."""
+    scope = _scope(conn, source)
+    if scope is None:
+        return [], 0
+    ids = [photo_id for (photo_id,) in conn.execute(
+        "SELECT p.id FROM %s WHERE %s AND p.taken IS NOT NULL ORDER BY p.taken, p.id LIMIT ?" % (scope.from_, scope.where),
+        list(scope.params) + [cap + 1])]
+    if len(ids) <= cap and not scope.dated:
+        ids += [photo_id for (photo_id,) in conn.execute(
+            "SELECT p.id FROM %s WHERE %s AND p.taken IS NULL ORDER BY p.id LIMIT ?" % (scope.from_, scope.where),
+            list(scope.params) + [cap + 1 - len(ids)])]
+    if len(ids) <= cap:
+        return ids, len(ids)
+    return ids[:cap], conn.execute(*scope.count).fetchone()[0]
+
+
 def total(conn, source):
     """How many photos `source` holds."""
     scope = _scope(conn, source)

@@ -604,6 +604,41 @@ def library_page():
         return responses.error(500, str(e))
 
 
+@routes.get("/api/library/ids")
+def library_ids():
+    """The whole ordered id list of a source, for a grid that jumps to the middle of it
+    (tagpup.services.library_view.ids)."""
+    if (refusal := _this_pc_only()) is not None:
+        return refusal
+    library = state.require()
+    kind = request.args.get("kind")
+    value = (request.args.get("folder") or request.args.get("value")) if kind == "folder" else request.args.get("value")
+    recursive = (request.args.get("recursive") or "").lower() in YES
+    try:
+        return jsonify(library_view.ids(library, kind, value, recursive))
+    except (Refused, NotFound, paths.RootsError) as why:
+        return _view_error(why)
+    except Exception as e:
+        logger.error("Error reading the ids of a source: %s", e, exc_info=True)
+        return responses.error(500, str(e))
+
+
+@routes.get("/api/library/cards")
+def library_cards():
+    """The cards of the photos named by `ids` (at most 200), in that order; an id the library has no photo of is
+    left out (tagpup.services.library_view.cards)."""
+    if (refusal := _this_pc_only()) is not None:
+        return refusal
+    library = state.require()
+    try:
+        return jsonify({"cards": library_view.cards(library, library_view.read_ids(request.args.get("ids")))})
+    except (Refused, NotFound, paths.RootsError) as why:
+        return _view_error(why)
+    except Exception as e:
+        logger.error("Error reading cards of the library: %s", e, exc_info=True)
+        return responses.error(500, str(e))
+
+
 @routes.get("/api/photo-thumb")
 def photo_thumb():
     """A photo's thumbnail by id, from the cache (tagpup.services.thumbnails). The URL carries the file's stamp
