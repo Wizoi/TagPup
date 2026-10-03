@@ -1129,8 +1129,10 @@ The page only: no route, no migration. A folder opens as it did; what changes is
   built again under the new key. "Extend selection to here" with nothing selected no longer throws.
 - **The place in the list.** `renderThumbnails()` is `refresh()` for the same folder and filter, `reset()` for another folder
   or another filter text (`state.shownSource`). A photo open and then closed (the grid is hidden, which loses its scroll
-  offset in the browser) comes back at the same place: the grid remembers where the view was and puts it back when it has a
-  layout again. A source that shrinks while scrolled past its end shows its end.
+  offset in the browser) comes back at the same place: a hidden grid keeps the window it had, builds no card and asks for no
+  picture however often the photo view saves, and remembers where the view was and puts it back when it has a layout again
+  (also when it was shown again before any render saw it hidden). The selection belongs to its folder: another folder starts
+  with none, the same folder scanned again keeps what is still in it; Select all and Invert take what the filter shows. A source that shrinks while scrolled past its end shows its end.
 - **What 9b-2 must know.** A library source implements `count()` / `recordAt(i)` / `indexOfKey(key)` over the pages it has
   fetched; `recordAt(i)` for a record not fetched yet must return a placeholder record the card builder can draw (its key
   stable, e.g. `'#' + i`) and ask for the page; when the page arrives call `refresh()`. The folder source builds
@@ -1138,11 +1140,14 @@ The page only: no route, no migration. A folder opens as it did; what changes is
   source should not do that per refresh. `cardKey` is the photo's id there, not its path, or a rename rebuilds the card.
   Selection is by path today (`selected.js`): 9d's selection that spans folders is by id, and `selected.js` is where that
   changes. The sidebar list (`renderFileList`) still builds a row for every photo; it is not a grid and 9c's navigator
-  replaces it, but at 20,000 photos it is the next cost. Tab visits only the cards that exist.
-- **Measured** (scratch harness over `measure_identify_faces.py`'s sandbox: a copy of photo_index (2.6 GB) in the temp
-  directory under its own `TAGPUP_HOME`, its root placed at an empty sandbox folder, a free port, 759 synthetic JPEGs
-  generated there (no real photo is read), headless Chromium 1600x1000, deleted afterwards; a fresh browser for each open;
-  the trunk's code is the baseline, run the same way, two runs; an empty page's frame is 16.7 ms here). The click is the
+  replaces it, but at 20,000 photos it is the next cost. Tab visits only the cards that exist; both are known limits,
+  left to 9c.
+- **Measured** with `scripts/measure_grid.py --run` (`--code-root <a `git archive` of the commit before>` for the baseline;
+  without `--run` it prints what it would do). Its sandbox is `scripts/sandbox.py`'s, which `measure_identify_faces.py` and
+  `measure_suggest_folder.py` share: a copy of photo_index (2.6 GB) in the temp directory under its own `TAGPUP_HOME`, its
+  root placed at an empty sandbox folder, a free port, 759 synthetic JPEGs generated there (no real photo is read), headless
+  Chromium 1600x1000, deleted afterwards; a fresh browser for each open; the trunk's code is the baseline, run the same
+  way, two runs; an empty page's frame is 16.7 ms here). The click is the
   person's: open the folder, scroll it, select. Run to run the numbers move by up to 40%; the direction did not.
 
   | the click (759-photo folder) | trunk | this branch |
@@ -1153,7 +1158,7 @@ The page only: no route, no migration. A folder opens as it did; what changes is
   | scroll top to bottom in 3 s: DOM nodes at the peak | 7,590 | 500 |
   | the same: longest task, frames over 100 ms | none, 0-1 | none, 0-1 |
   | the same: frame interval, 95th percentile | 50-83 ms | 50 ms |
-  | the same: pictures requested | 669 on the first sweep (native lazy loading), then none (kept in place) | 79-149, of which 25-96 from the network |
+  | the same: pictures requested | 669 on the first sweep (native lazy loading), then none (kept in place) | 79-224, of which 25-119 from the network (the committed script, last) |
   | Select all / Invert / Select none: in the handler | 40-62 / 60-101 / 28-48 ms | 0.9-1.1 / 3.1-3.3 / 0.2 ms |
   | the same, until painted and the main thread runs | 84-197 ms | 60-78 ms |
 
