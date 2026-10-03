@@ -2,7 +2,7 @@
 // offer, and turning what someone typed into a tag, asking where to file a new one.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { leafOf, rootOf, samePerson, tagProblem } from './common/vocabulary.js';
+import { leafOf, rootOf, samePerson, sortedTags, tagProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { isJustLooking } from './looking.js';
@@ -127,7 +127,7 @@ export function updateTagsDatalist() {
         return !namesAPerson(t);
     });
 
-    const combined = Array.from(new Set([...filteredKnownTags, ...uniqueFolderTags])).sort();
+    const combined = sortedTags(new Set([...filteredKnownTags, ...uniqueFolderTags]));
     combined.forEach(t => {
         const opt = document.createElement('option');
         opt.value = t;
@@ -197,7 +197,7 @@ export function updatePeopleDatalist() {
         byPerson.set(leaf, preferPathed(byPerson.get(leaf), tag));
     });
 
-    Array.from(byPerson.values()).sort().forEach(p => {
+    sortedTags(byPerson.values()).forEach(p => {
         const opt = document.createElement('option');
         opt.value = p;
         peopleDatalist.appendChild(opt);
@@ -232,7 +232,8 @@ export function showPlacementModal(title, message, options, allowNewRoot = false
                 buildElement('input', { attrs: { type: 'radio', name: 'placement-opt', value, checked } }),
                 buildElement('span', { text }),
             ]);
-        const choices = options.map((opt, idx) => optionLabel(opt, opt, idx === 0));
+        // Alphabetical, once; the first is the one chosen to begin with.
+        const choices = sortedTags(options).map((opt, idx) => optionLabel(opt, opt, idx === 0));
         if (allowNewRoot) {
             choices.push(
                 optionLabel('__new_root__', 'Create a new root category...', false),

@@ -2,7 +2,7 @@
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { pathKey, samePath } from './common/paths.js';
-import { leafOf, photoAlreadyHas, samePerson, tagProblem } from './common/vocabulary.js';
+import { leafOf, photoAlreadyHas, samePerson, sortedTags, tagProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
@@ -100,7 +100,7 @@ export function updateSelectedThumbnailsCount() {
         
         // Render People List
         selectionPeopleList.innerHTML = '';
-        const peopleKeys = Object.keys(peopleCounts).sort();
+        const peopleKeys = sortedTags(Object.keys(peopleCounts));
         if (peopleKeys.length === 0) {
             replaceContent(selectionPeopleList, noneChip());
         } else {
@@ -145,7 +145,7 @@ export function updateSelectedThumbnailsCount() {
         
         // Render Tags List
         selectionTagsList.innerHTML = '';
-        const tagKeys = Object.keys(tagCounts).sort();
+        const tagKeys = sortedTags(Object.keys(tagCounts));
         if (tagKeys.length === 0) {
             replaceContent(selectionTagsList, noneChip());
         } else {
@@ -294,7 +294,7 @@ export function noteSuggestion(into, key, photoPath, score) {
  */
 export function renderSuggestionChips(container, counts, isPerson) {
     container.innerHTML = '';
-    const keys = Object.keys(counts).sort();
+    const keys = sortedTags(Object.keys(counts));
     if (keys.length === 0) {
         replaceContent(container, noneChip());
         return;
