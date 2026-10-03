@@ -1,5 +1,6 @@
 // The Identify grid: building it, and its tabs.
 import { api } from './common/api.js';
+import { compareTagNames } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
     inputReassignName, matchingFacesGrid, matchingPersonCount, modeSelect, tabLowConf,
@@ -549,7 +550,7 @@ This photo also names ${face.other_names.join(', ')}. `
             clusters.sort((a, b) => {
                 const diff = confidenceOf(b) - confidenceOf(a);
                 if (Math.abs(diff) > 0.0001) return diff;
-                return b.faces.length - a.faces.length;
+                return (b.faces.length - a.faces.length) || compareTagNames(a.name, b.name);
             });
 
             clusters.forEach(cluster => {

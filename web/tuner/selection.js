@@ -1,5 +1,6 @@
 // Selecting faces in the Identify grid, and the selected face's details.
 import { api } from './common/api.js';
+import { sortedTags } from './common/vocabulary.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
 import {
@@ -123,7 +124,7 @@ export function showFaceDetails(faceId) {
         .then(details => {
             matchingDetailTags.innerHTML = '';
             const tagsList = details.tags || [];
-            tagsList.forEach(tag => {
+            sortedTags(tagsList).forEach(tag => {
                 const pill = document.createElement('span');
                 pill.className = 'tag-pill';
                 pill.textContent = tag;
@@ -135,7 +136,7 @@ export function showFaceDetails(faceId) {
 
             matchingDetailPeople.innerHTML = '';
             const peopleList = details.people || [];
-            peopleList.forEach(person => {
+            sortedTags(peopleList).forEach(person => {
                 const pill = document.createElement('span');
                 pill.className = 'tag-pill people-tag';
                 pill.textContent = `👤 ${person}`;

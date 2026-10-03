@@ -24,7 +24,17 @@ const assignUndoText = document.getElementById('assign-undo-text');
 const btnAssignUndo = document.getElementById('btn-assign-undo');
 const btnAssignUndoDismiss = document.getElementById('btn-assign-undo-dismiss');
 
-// Update reassign and unmatch buttons text and disabled status
+/**
+ * The person beside `name` in the sidebar, as it is drawn: the one before, or after for the first.
+ * It followed the server's order, which is not the order shown once the list is sorted by name.
+ */
+function besidePerson(name) {
+    const people = state.shownPeople.length > 0 ? state.shownPeople : (state.allPeopleWithCounts || []);
+    const idx = people.findIndex(p => p.name === name);
+    if (idx === -1) return null;
+    if (idx > 0) return people[idx - 1].name;
+    return people.length > 1 ? people[idx + 1].name : null;
+}
 
 // ---- Excluding faces ---------------------------------------------------
 // A race photograph is mostly strangers, and detection occasionally returns
@@ -219,17 +229,7 @@ function postUnmatchBulk(faceIds, { undo = false } = {}) {
             // Check if the person is going to be removed after unmatching
             const willBeRemoved = (state.activePersonFaces.length === 0);
             if (willBeRemoved) {
-                let priorName = null;
-                if (state.allPeopleWithCounts && state.allPeopleWithCounts.length > 0) {
-                    const idx = state.allPeopleWithCounts.findIndex(p => p.name === state.activePersonName);
-                    if (idx !== -1) {
-                        if (idx > 0) {
-                            priorName = state.allPeopleWithCounts[idx - 1].name;
-                        } else if (state.allPeopleWithCounts.length > 1) {
-                            priorName = state.allPeopleWithCounts[idx + 1].name;
-                        }
-                    }
-                }
+                const priorName = besidePerson(state.activePersonName);
 
                 if (priorName) {
                     upper.selectPerson(priorName);
@@ -393,17 +393,7 @@ export function postMatchBulk(faceIds, name) {
             // Check if the person is going to be removed after matching
             const willBeRemoved = (state.activePersonFaces.length === 0);
             if (willBeRemoved) {
-                let priorName = null;
-                if (state.allPeopleWithCounts && state.allPeopleWithCounts.length > 0) {
-                    const idx = state.allPeopleWithCounts.findIndex(p => p.name === state.activePersonName);
-                    if (idx !== -1) {
-                        if (idx > 0) {
-                            priorName = state.allPeopleWithCounts[idx - 1].name;
-                        } else if (state.allPeopleWithCounts.length > 1) {
-                            priorName = state.allPeopleWithCounts[idx + 1].name;
-                        }
-                    }
-                }
+                const priorName = besidePerson(state.activePersonName);
 
                 if (priorName) {
                     upper.selectPerson(priorName);

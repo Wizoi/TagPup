@@ -12,6 +12,8 @@ export const state = {
 
     // Face Matching Mode State
     allPeopleWithCounts: [],
+    // The same people in the order the sidebar shows them (people.js sets it when it draws them).
+    shownPeople: [],
     activePersonName: null,
     lastLoadedPersonName: null,
     //: The person whose grid is being fetched right now. Redrawing the sidebar asks
