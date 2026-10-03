@@ -18,13 +18,13 @@ import re
 import string
 import threading
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
 from tagpup.core import fields, paths, suggesting, vocabulary
 from tagpup.core.library import picker_name
-from tagpup.core.result import NotFound
+from tagpup.core.result import NotFound, Refused
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import damaged_photos
@@ -32,10 +32,12 @@ from tagpup.services import faces as face_actions
 from tagpup.services import file_changes
 from tagpup.services import indexing
 from tagpup.services import libraries as library_actions
+from tagpup.services import library_view
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.services import tagging as tagging_actions
 from tagpup.services import tags as tags_service
+from tagpup.services import thumbnails
 from tagpup.web import activity_routes, desktop, responses, state
 from tagpup.web import libraries as web_libraries
 
@@ -49,6 +51,13 @@ AUTOCOMPLETE_LIMIT = 15
 #: How long the browser may keep a photo it was sent: the page puts the photo's mtime in
 #: the URL, so a rotated photo is asked for again.
 PHOTO_CACHE_SECONDS = 86400
+
+#: How long the browser may keep a thumbnail whose URL carries the file's stamp (`v`): a changed file has a
+#: new URL, so a year is safe.
+THUMB_CACHE_SECONDS = 31536000
+
+#: What the query says when it means yes.
+YES = ("1", "true", "yes", "on")
 
 
 # ---- What the server keeps for each library --------------------------------------------
@@ -517,6 +526,108 @@ def photo_file():
     # Turned upright, and kept by the browser for a day (PHOTO_CACHE_SECONDS).
     return responses.photo(request.args.get("path"), request.args.get("size"),
                            upright=True, cache_seconds=PHOTO_CACHE_SECONDS)
+
+
+def _this_pc_only():
+    """The 403 reply for a request from any other address than this PC's, else None: the library's views carry
+    photo paths and names, and the pictures themselves are of people."""
+    if request.remote_addr not in activity_routes.LOOPBACK:
+        return responses.error(403, "The library's views answer this PC only")
+    return None
+
+
+def _view_error(why):
+    """The reply for what a view's service refused or could not read: its own sentence, never a traceback."""
+    if isinstance(why, library_view.NotReady):
+        return responses.error(409, str(why))
+    if isinstance(why, Refused):
+        return responses.error(400, str(why))
+    if isinstance(why, NotFound):
+        return responses.error(404, str(why))
+    if isinstance(why, paths.RootsError):
+        # The gate (tagpup.web.roots_gate) answers this before a route runs; this is for what it could not see.
+        return responses.error(409, str(why), roots_problem=True)
+    if isinstance(why, thumbnails.Unavailable):
+        reply = responses.error(503, str(why))
+        reply[0].headers["Retry-After"] = "2"
+        return reply
+    return None
+
+
+@routes.get("/api/library/navigator")
+def library_navigator():
+    """The counts of one section of the navigator (tagpup.services.library_view.navigator)."""
+    if (refusal := _this_pc_only()) is not None:
+        return refusal
+    library = state.require()
+    try:
+        return jsonify(library_view.navigator(library, request.args.get("section")))
+    except (Refused, NotFound, paths.RootsError) as why:
+        return _view_error(why)
+    except Exception as e:
+        logger.error("Error reading the navigator: %s", e, exc_info=True)
+        return responses.error(500, str(e))
+
+
+@routes.get("/api/library/view")
+def library_page():
+    """A page of the photos of a source, ordered by Date Taken, with the total and the cards
+    (tagpup.services.library_view.view)."""
+    if (refusal := _this_pc_only()) is not None:
+        return refusal
+    library = state.require()
+    kind = request.args.get("kind")
+    # A folder is named by `folder`, which the Roots ingress resolves through the first place of its root
+    # like every path of a request; the other kinds by `value`.
+    value = (request.args.get("folder") or request.args.get("value")) if kind == "folder" else request.args.get("value")
+    recursive = (request.args.get("recursive") or "").lower() in YES
+    try:
+        return jsonify(library_view.view(library, kind, value, recursive, request.args.get("after"),
+                                         request.args.get("limit")))
+    except (Refused, NotFound, paths.RootsError) as why:
+        return _view_error(why)
+    except Exception as e:
+        logger.error("Error reading a page of the library: %s", e, exc_info=True)
+        return responses.error(500, str(e))
+
+
+@routes.get("/api/photo-thumb")
+def photo_thumb():
+    """A photo's thumbnail by id, from the cache (tagpup.services.thumbnails). The URL carries the file's stamp
+    (`v`, the modified time the card holds), so a thumbnail whose `v` is the file's is kept by the browser for a
+    year; any other is revalidated by its ETag. A photo that cannot be shown is a small placeholder (header
+    X-TagPup-Thumb says which: damaged, unreadable, last known); an id with no photo is a 404 sentence."""
+    if (refusal := _this_pc_only()) is not None:
+        return refusal
+    library = state.require()
+    wanted = request.args.get("id")
+    if not wanted:
+        return responses.error(400, "Missing 'id' parameter")
+    try:
+        photo_id = int(wanted)
+    except (ValueError, TypeError):
+        return responses.error(400, "Invalid 'id' parameter")
+    try:
+        thumb = thumbnails.serve(library, photo_id)
+    except (NotFound, paths.RootsError, thumbnails.Unavailable) as why:
+        return _view_error(why)
+    except Exception as e:
+        logger.error("Error serving the thumbnail of photo %s: %s", photo_id, e, exc_info=True)
+        return responses.error(500, "The thumbnail could not be made: %s" % e)
+    reply = Response(b"" if thumb.etag and request.if_none_match.contains(thumb.etag) else thumb.content,
+                     status=304 if thumb.etag and request.if_none_match.contains(thumb.etag) else 200,
+                     mimetype="image/jpeg")
+    reply.headers["X-TagPup-Thumb"] = thumb.kind
+    stamped = False
+    try:
+        stamped = thumb.mtime is not None and abs(float(request.args.get("v")) - thumb.mtime) < 0.1
+    except (TypeError, ValueError):
+        pass
+    if thumb.etag:
+        reply.set_etag(thumb.etag)
+    reply.headers["Cache-Control"] = ("private, max-age=%d, immutable" % THUMB_CACHE_SECONDS
+                                      if thumb.kind == thumbnails.OK and thumb.etag and stamped else "no-cache")
+    return reply
 
 
 @routes.post("/api/photo/open-explorer")
