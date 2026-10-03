@@ -32,10 +32,16 @@ function server(state) {
     .on("/api/taxonomy/tree", [])
     .on("/api/databases", { databases: ["kr-track"] })
     .on("/api/folder/membership", () => (state.held ? HELD : NOT_HELD))
-    .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
+    // The index of an added folder: running at first, then done (what the page polls once a second).
+    .on("/api/folder/index-status", () => {
+      if (!state.held) return { status: "completed", percent: 100, message: "Ready" };
+      state.indexPolls = (state.indexPolls || 0) + 1;
+      return state.indexPolls < 2 ? { status: "running", percent: 40, message: "Indexing..." }
+        : { status: "completed", percent: 100, message: "Folder indexed." };
+    })
     .on("/api/folder/add", () => {
       state.held = true;
-      state.look = null;   // the server drops the look when the folder is added (tagpup.jobs.indexing)
+      state.look = null;   // the server drops the look when the folder is added (tagpup.jobs.suggestions.dropped_by_add)
       return { success: true, status: "running", library: "kr-track", folder: FOLDER, added: 1, queued: [FOLDER],
         already_queued: [], invalid: [], pending: 1 };
     })
@@ -93,9 +99,14 @@ describe("a folder looked at, then added", () => {
     assert.ok(!ctx.document.body.classList.contains("just-looking"));
     assert.ok(!ctx.$("btn-suggest-tags").disabled, "Suggest stayed off after the folder was added");
 
-    // Indexing done, the folder scanned again: still enabled, and the click starts the run that saves.
-    await openFolder(ctx, FOLDER);
-    await flush(ctx.window, 8);
+    // Indexing running, then done: the page scans the folder again itself (a real request), and Suggest stays
+    // enabled; the page does not claim anything was let go.
+    const scans = () => ctx.s.calls.filter((c) => c.method === "GET" && c.url.includes("/api/folder/scan")).length;
+    const before = scans();
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+    await flush(ctx.window, 12);
+    assert.ok(scans() > before, "the folder was not scanned again when its indexing finished");
+    assert.doesNotMatch(ctx.$("status-text").textContent, /let go/);
     assert.ok(!ctx.$("btn-suggest-tags").disabled);
     click(ctx.window, ctx.$("btn-suggest-tags"));
     await flush(ctx.window, 12);
@@ -105,6 +116,32 @@ describe("a folder looked at, then added", () => {
     assert.equal(state.look, null);
     // What it found is in the library: nothing left to ask for, and no longer marked as in memory.
     assert.ok(ctx.$("btn-suggest-tags").disabled, "Suggest stays on after a run that saved");
+  });
+});
+
+describe("a folder added while its Suggest is going", () => {
+  test("the page says the folder was added, not that the analysis was let go after a while", async (t) => {
+    const state = { held: false, look: null, saved: null };
+    const ctx = await open(t, state);
+    const polls = { count: 0 };
+    ctx.s.first("/api/folder/suggest-status", () => {
+      polls.count += 1;
+      // The first poll finds the run going with something found; the folder is added; the next finds the look gone
+      // (the run ended in a folder the library holds, and dropped what it found).
+      return polls.count < 3 ? { status: "running", completed: 1, total: 2, in_memory: true, suggestions: { [A]: OFFERS[A] } }
+        : { status: "idle" };
+    });
+    click(ctx.window, ctx.$("btn-just-look"));
+    await flush(ctx.window);
+    click(ctx.window, ctx.$("btn-suggest-tags"));
+    await flush(ctx.window, 12);
+    click(ctx.window, ctx.$("btn-add-folder-from-note"));
+    await flush(ctx.window, 12);
+    await new Promise((resolve) => setTimeout(resolve, 3200));
+    await flush(ctx.window, 12);
+    assert.match(ctx.$("status-text").textContent, /The folder was added: Suggest again to save its suggestions/);
+    assert.doesNotMatch(ctx.$("status-text").textContent, /let go after a while/);
+    assert.ok(!ctx.$("btn-suggest-tags").disabled);
   });
 });
 

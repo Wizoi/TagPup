@@ -133,9 +133,9 @@ export function checkIndexingStatus(folderPath) {
 }
 
 /**
- * The server let go of what a Suggest that only looked found (it is kept in memory, for a while), or the
- * folder became the library's and it was dropped: the page says so, forgets the copy it held -- here and in
- * this browser's cache -- and Suggest is run again.
+ * The server no longer holds what a Suggest that only looked found (it is kept in memory, for a while): it
+ * let it go after a while, or the folder was added to the library and it was dropped. The page says which,
+ * forgets the copy it held -- here and in this browser's cache -- and Suggest is run again.
  */
 export function suggestionsLetGo() {
     state.suggestionsInMemory = null;
@@ -146,7 +146,14 @@ export function suggestionsLetGo() {
     updateSelectedThumbnailsCount();
     updateSuggestButtonState();
     if (state.activePhotoPath) renderSuggestionsPanel(state.activePhotoPath);
-    setStatus('error', 'The analysis was let go after a while; run Suggest again', { transient: false });
+    // The library holds the folder (it was added: what the membership says, and Add sets): not a thing gone
+    // wrong, and the run that saves is the next Suggest.
+    const held = state.folderMembership && !(state.folderMembership.photos_not_held > 0);
+    if (held) {
+        setStatus('ready', 'The folder was added: Suggest again to save its suggestions', { transient: false });
+    } else {
+        setStatus('error', 'The analysis was let go after a while; run Suggest again', { transient: false });
+    }
 }
 
 export function checkSuggestionsStatus(folderPath) {
