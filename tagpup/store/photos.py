@@ -454,6 +454,12 @@ def tag_usage(db_path):
 
     Once per photo: a photo carrying two tags under a node counted twice toward it and
     toward everything above it (docs/findings.md, #41).
+
+    From `photo_tags` (migration 19) when the library has it: one pass of an index rolled up the tree's
+    parents (store.library_view.keyword_counts), 40 ms on photo_index's scale where reading and parsing every
+    photo's tags JSON was 350 ms, which held the Python process at page start and made every other first request
+    wait behind it (docs/findings.md, #534). A library without the derived tables is counted from the JSON as it
+    always was. The same counts, node for node (tests/test_tag_usage_from_photo_tags.py).
     """
     counts = {}
     if not os.path.exists(db_path):
@@ -461,6 +467,9 @@ def tag_usage(db_path):
     try:
         conn = db.connect(db.readonly_uri(db_path), uri=True)
         try:
+            if derived.present(conn):
+                from tagpup.store import library_view   # library_view imports this module's neighbours
+                return {node["tag"]: node["count"] for node in library_view.keyword_counts(conn) if node["count"]}
             for (tags_json,) in conn.execute("SELECT tags FROM photos WHERE tags IS NOT NULL"):
                 try:
                     levels = {level for tag in json.loads(tags_json) for level in vocabulary.lineage(tag)}

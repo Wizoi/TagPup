@@ -29,6 +29,7 @@ from handler_harness import Library  # noqa: E402
 
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
+from tagpup.store import derived  # noqa: E402
 
 #: Where the machine has ExifTool; the checkout's settings are not read.
 EXIFTOOL = own_home.installed_exiftool()
@@ -114,6 +115,8 @@ class TaxonomyTestBase(unittest.TestCase):
                 json.dumps(raw_meta),
             ),
         )
+        # A photo's keywords are in photo_tags as the writers keep them (the tree's counts read it, #534).
+        tagpup_db.write_with_connection(self.lib.db_path, derived.rebuild_all, label="test: derived tables")
         return path
 
     def db_tags(self, photo_path):

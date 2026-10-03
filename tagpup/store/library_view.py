@@ -265,10 +265,11 @@ def keyword_counts(conn):
             here = parent.get(here)
         upward[node_id] = tuple(walked)
     counts = collections.Counter()
-    sets = collections.Counter()   # photos for each distinct set of tags: most photos share theirs
-    for _photo, tag_ids in conn.execute("SELECT photo_id, group_concat(tag_id) FROM photo_tags GROUP BY photo_id"):
-        sets[tag_ids] += 1
-    for tag_ids, photos in sets.items():
+    # Photos for each distinct set of tags, counted by SQLite (the table is read in photo order, so a photo's ids
+    # come out in one order): most photos share theirs, and Python then sees thousands of sets, not 68,000 photos.
+    sets = conn.execute("SELECT tag_ids, COUNT(*) FROM (SELECT group_concat(tag_id) AS tag_ids FROM photo_tags"
+                        " GROUP BY photo_id) GROUP BY tag_ids").fetchall()
+    for tag_ids, photos in sets:
         reached = set()
         for tag_id in tag_ids.split(","):
             reached.update(upward.get(int(tag_id), ()))

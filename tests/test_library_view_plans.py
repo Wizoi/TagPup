@@ -190,6 +190,8 @@ class Plans(unittest.TestCase):
                     if "FROM roots" in statement:
                         continue   # the library's roots: a row or two
                     for line in lines:
+                        if line.startswith("SCAN (subquery"):
+                            continue   # the per-set count of the keywords' one pass: its inner scan is checked below
                         if line.startswith("SCAN"):
                             # photo_tags is WITHOUT ROWID: its primary key is the table, read in photo order
                             self.assertTrue("COVERING INDEX" in line or line == "SCAN photo_tags" or "tag_taxonomy" in line
