@@ -186,6 +186,46 @@ class TheKeyset(Library):
         self.assertTrue(set(self.made) <= set(seen), "no photo that was there at the start was skipped")
 
 
+class EqualDates(Library):
+    """A run of photos with one Date Taken across a page boundary: the keyset's second part, the id, decides."""
+
+    def setUp(self):
+        super().setUp()
+        self.vl.tree("Trips/Coast", "People/Wren Halloway", face_root="People")
+        self.same = [self.vl.photo("Run", "r%d.jpg" % n, taken="2024:06:15 12:00:00", tags=["Trips/Coast", "People/Wren Halloway"])
+                     for n in range(7)]
+        self.vl.photo("Run", "before.jpg", taken="2024:06:14 12:00:00", tags=["Trips/Coast"])
+        self.vl.photo("Run", "after.jpg", taken="2024:06:16 12:00:00", tags=["Trips/Coast"])
+        self.folder = os.path.join(self.vl.pictures, "Run")
+        self.sources = {"all": ("all", None, False), "folder": ("folder", self.folder, False),
+                        "folder+": ("folder", self.folder, True), "keyword": ("keyword", "Trips/Coast", False),
+                        "person": ("person", "Wren Halloway", False), "year": ("year", "2024", False),
+                        "month": ("month", "2024-06", False)}
+
+    def test_pages_of_three_through_a_run_of_seven_equal_dates_lose_and_repeat_none(self):
+        for name, (kind, value, recursive) in self.sources.items():
+            with self.subTest(source=name):
+                ids, sizes, totals = walk(self.vl, kind, value, recursive, limit=3)
+                self.assertEqual(len(ids), len(set(ids)), "no photo twice")
+                self.assertEqual(self.same, [each for each in ids if each in self.same], "equal dates in id order")
+                self.assertEqual({len(ids)}, totals)
+                self.assertTrue(set(self.same) <= set(ids), "none of the run skipped")
+
+    def test_a_page_beginning_at_every_position_of_the_run_is_what_follows_it(self):
+        for name, (kind, value, recursive) in self.sources.items():
+            with self.subTest(source=name):
+                source = library_view.source_of(self.vl.library, kind, value, recursive)
+                conn = db.connect(db.readonly_uri(self.vl.path), uri=True)
+                try:
+                    everything, _more = store.page(conn, source, None, 100)
+                    for position in range(len(everything)):
+                        cursor = store.next_cursor(everything[position])
+                        rest, _more = store.page(conn, source, cursor, 100)
+                        self.assertEqual(everything[position + 1:], rest, "after position %d" % position)
+                finally:
+                    conn.close()
+
+
 class TheTokenAndTheLimit(Library):
     def setUp(self):
         super().setUp()
@@ -336,10 +376,23 @@ class AKeyword(Library):
         self.assertEqual([self.quote], self.ids("keyword", "Trips/O'Brien"))
 
     def test_a_keyword_the_tree_has_no_node_for_holds_nothing_and_is_not_an_error(self):
-        for tag in ("Trips/Nowhere", "Nothing", "trips/coast", "Trips/%", "Trips/a%b", "'; DROP TABLE photos; --"):
+        for tag in ("Trips/Nowhere", "Nothing", "Trips/Coas", "Trips/%", "Trips/a%b", "'; DROP TABLE photos; --"):
             with self.subTest(tag=tag):
                 found = library_view.view(self.vl.library, "keyword", tag)
                 self.assertEqual(([], 0), (found["ids"], found["total"]))
+
+    def test_a_tag_typed_in_other_case_names_the_node_it_is_without_case(self):
+        self.assertEqual([self.harbour, self.cliffs, self.both], self.ids("keyword", "trips/coast"))
+        self.assertEqual(9, len(self.ids("keyword", "TRIPS")))
+        self.assertEqual(9, library_view.view(self.vl.library, "keyword", "trips")["total"])
+
+    def test_an_exact_match_wins_over_the_node_that_differs_only_in_case(self):
+        self.vl.tree("Zed/Alpha", "zed/alpha")
+        exact = self.vl.photo("A", "z1.jpg", taken="2024:03:01 00:00:00", tags=["zed/alpha"])
+        other = self.vl.photo("A", "z2.jpg", taken="2024:03:02 00:00:00", tags=["Zed/Alpha"])
+        self.assertEqual([exact], self.ids("keyword", "zed/alpha"))
+        self.assertEqual([other], self.ids("keyword", "Zed/Alpha"))
+        self.assertEqual([other], self.ids("keyword", "ZED/ALPHA"), "no exact node: the lowest id, as photo_tags ties it")
 
     def test_it_is_read_as_a_keyword_is(self):
         self.assertEqual(self.ids("keyword", "Trips/Coast"), self.ids("keyword", " Trips | Coast "))

@@ -95,7 +95,7 @@ def _scope(conn, source):
         return Scope("photo_folder pf JOIN photos p ON p.id = pf.photo_id", "pf.folder_id = ?", (row[0],),
                      ("SELECT COUNT(*) FROM photo_folder WHERE folder_id = ?", (row[0],)))
     if kind == KEYWORD:
-        sql, params = derived.under(source.value)
+        sql, params = derived.under(resolve_tag(conn, source.value))
         # IN, not a join: a photo holding two tags under the keyword is one row, and the plan seeks
         # photo_tags's covering index once for each node and the photo by its primary key.
         return Scope("photos p", "p.id IN (SELECT photo_id FROM photo_tags WHERE tag_id IN (%s))" % sql, params,
@@ -108,6 +108,18 @@ def _scope(conn, source):
         return Scope("photos p", "p.id IN (SELECT photo_id FROM photo_people WHERE name IN (%s))" % marks, tuple(names),
                      ("SELECT COUNT(DISTINCT photo_id) FROM photo_people WHERE name IN (%s)" % marks, tuple(names)))
     raise ValueError("no such kind of source: %r" % (kind,))
+
+
+def resolve_tag(conn, tag):
+    """The tag of the node a typed keyword names: itself when the tree has exactly it (that wins), else the node
+    it is without case and with its segments trimmed, as photo_tags ties a photo's keywords to nodes
+    (derived.Tree: the lowest id when two differ only in case); `tag` as typed when there is none, which holds
+    nothing."""
+    if conn.execute("SELECT 1 FROM tag_taxonomy WHERE tag = ?", (tag,)).fetchone():
+        return tag
+    nodes = conn.execute("SELECT id, tag FROM tag_taxonomy").fetchall()
+    found = derived.Tree(nodes).find(tag)
+    return next((node_tag for node_id, node_tag in nodes if node_id == found), tag)
 
 
 def spellings(conn, name):
