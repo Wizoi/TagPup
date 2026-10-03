@@ -21,6 +21,7 @@ Reads only. Every function does nothing useful on a library that has not had mig
 says so); the service answers that in a sentence.
 """
 import collections
+import time
 
 from tagpup.core import paths, vocabulary
 from tagpup.store import damaged_files, derived
@@ -167,6 +168,21 @@ def all_ids(conn, source, cap):
     if len(ids) <= cap:
         return ids, len(ids)
     return ids[:cap], conn.execute(*scope.count).fetchone()[0]
+
+
+def id_plans(conn, source, cap):
+    """([(statement, [plan lines])] of every SELECT `all_ids` runs for `source`, the milliseconds it took): what the
+    measurement script prints and a person reads to see that a source's id list searches an index, as SQLite plans it."""
+    seen = []
+    conn.set_trace_callback(seen.append)
+    started = time.perf_counter()
+    try:
+        all_ids(conn, source, cap)
+    finally:
+        conn.set_trace_callback(None)
+    elapsed = (time.perf_counter() - started) * 1000
+    return [(sql, [row[-1] for row in conn.execute("EXPLAIN QUERY PLAN " + sql)])
+            for sql in seen if sql.lstrip().upper().startswith("SELECT")], elapsed
 
 
 def total(conn, source):

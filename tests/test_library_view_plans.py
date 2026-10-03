@@ -160,6 +160,16 @@ class Plans(unittest.TestCase):
         found = self.plan_of(self.ids(store.Source(store.PERSON, "Wren Halloway")))
         self.assertIn("idx_photo_people_name (name=?)", "\n".join("\n".join(lines) for _statement, lines in found))
 
+    def test_id_plans_gives_each_statement_with_its_plan_for_the_measurement_script(self):
+        conn = db.connect(db.readonly_uri(self.vl.path), uri=True)
+        try:
+            statements, elapsed = store.id_plans(conn, store.Source(store.ALL), 1000)
+        finally:
+            conn.close()
+        self.assertEqual(2, len(statements), "the dated photos, then the undated")
+        self.assertTrue(all(lines and lines[0].startswith("SEARCH") for _sql, lines in statements))
+        self.assertGreaterEqual(elapsed, 0)
+
     def test_the_whole_id_list_reads_the_ids_and_nothing_else(self):
         for source in (store.Source(store.ALL), store.Source(store.KEYWORD, "Trips"), store.Source(store.FOLDER, self.top, True)):
             for statement, _lines in self.plan_of(self.ids(source)):
