@@ -468,6 +468,14 @@ class Warming(Cache):
             counts = thumbnails.warm(self.library, apply=True)
         self.assertEqual((0, 3), (counts["made"], counts["unwritable"]))
 
+    def test_apply_also_takes_the_thumbnails_of_photos_the_library_no_longer_holds(self):
+        thumbs.write(self.library.thumbs, 4242, "00000000", 1.0, 1, b"orphan")
+        self.assertEqual(0, thumbnails.warm(self.library)["swept"], "a dry run deletes nothing")
+        self.assertEqual(1, len(entries_of(self.library)))
+        counts = thumbnails.warm(self.library, apply=True)
+        self.assertEqual(1, counts["swept"])
+        self.assertEqual(3, len(entries_of(self.library)))
+
     def test_progress_is_reported_after_each_batch(self):
         seen = []
         thumbnails.warm(self.library, apply=True, progress=seen.append)

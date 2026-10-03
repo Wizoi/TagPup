@@ -1466,6 +1466,8 @@ def thumbs_warm(ctx, folder, limit, apply_):
             shown, _megabytes(shown * counts["average"]), _megabytes(counts["average"])), markup=False, soft_wrap=True)
         return
     console.print("Made %d, %s." % (counts["made"], _megabytes(counts["bytes_made"])), markup=False)
+    if counts["swept"]:
+        console.print("Deleted %d thumbnail(s) of photos the library no longer holds." % counts["swept"], markup=False)
     if counts["unwritable"]:
         console.print("%d could not be kept: the cache folder cannot be written (read-only or full)." % counts["unwritable"],
                       markup=False, soft_wrap=True)

@@ -286,7 +286,8 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
 
     Returns {"photos": looked at, "present": already cached, "to_make": without one, "made", "damaged": not
     decoded (recorded damaged, or found not to), "missing": file not there, "failed": file not reachable,
-    "unwritable": made and not kept (the cache cannot be written), "bytes_cached": what the cache holds before, "bytes_made", "estimate": bytes the missing ones would take
+    "unwritable": made and not kept (the cache cannot be written), "swept": entries of photos the library no longer
+    holds, deleted (with --apply only), "bytes_cached": what the cache holds before, "bytes_made", "estimate": bytes the missing ones would take
     (from the average entry, ASSUMED_BYTES when none is cached), "stopped": the limit was reached}. `progress`
     is called with the counts so far after each batch."""
     root = library.thumbs
@@ -344,8 +345,11 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
                     progress(dict(counts))
     finally:
         conn.close()
+    counts["swept"] = 0
     if apply:
-        thumbs.sweep_temporaries(root)
+        # The explicit maintenance also takes what nothing owns: entries of photos taken out of the library by
+        # something that did not say so (a restore, a delete outside the services), and a crashed writer's files.
+        counts["swept"] = sweep(library)["removed"]
     return counts
 
 
