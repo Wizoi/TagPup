@@ -612,9 +612,12 @@ staleness stand on.
 
 **Stages**, each reviewed and merged on its own; the performance ones measured as the
 click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
-- **9a. What views stand on (server only).** A derived `photo_tags(photo_id, tag)` table,
-  indexed on tag, kept by the writes that keep `photo_people` and rebuilt from
-  `photos.tags` by a migration; "a keyword and everything under it" is a range on it. A
+- **9a. What views stand on (server only).** A derived `photo_tags(photo_id, tag_id)` table
+  *(owner, 2026-10-02: identity by id, not by name; see "Identity by id" below)*, `tag_id`
+  the `tag_taxonomy` node's id, indexed on `tag_id`, kept by the writes that keep
+  `photo_people` and rebuilt from `photos.tags` by a migration; "a keyword and everything
+  under it" is the node's descendants, a range on `tag_taxonomy.tag` (unique, indexed) that
+  gives ids, joined to `photo_tags`. A
   thumbnail cache on disk: derived, keyed by photo id and the file's size and modified
   time, under `data/cache/<library>/thumbs`, made when a photo is indexed or its file
   changes (queued, phase 8's events) and on first ask, dropped when its stamp changes or it
@@ -649,6 +652,35 @@ click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
 Exit: the owner can open the whole library by folder, keyword, person or date, move
 between a disk folder and its library view without losing place, and edit from either,
 with every edit undoable and nothing overwritten that changed outside.
+
+### Identity by id *(owner, 2026-10-02; design, not built)*
+Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag
+is a path (`People/<name>`) in the files and in `photos.tags`; CLAUDE.md's rule exists because
+every site converting between the two by hand shipped a bug. `tag_taxonomy` already gives every
+node an integer id and a parent id, and a person is a node with `has_face` set. The design:
+- **Files, pages and the API keep names and paths.** XMP keywords are text and the files are the
+  source of truth; nothing outside the store learns an id. The conversion lives at the store
+  boundary, as root-relative paths do (`to_row` / `from_row`), in one module, with the same
+  single-owner test.
+- **`photo_tags(photo_id, tag_id)`** (9a, new) and, in a later migration, **`photo_people`
+  and `faces` naming a person by `tag_id`** (a column beside `name` first, filled and checked,
+  then the name column read from the taxonomy). That later migration touches the 225,000 faces
+  of photo_index and every identity path, so it follows 9b-9e and is asked about before it runs.
+- **What an id fixes:** two people of one name filed in different branches (the ambiguous
+  person path, #27) are two nodes; renaming a person is one taxonomy change in the database,
+  and merging two is one id merge (the files still take their keyword rewrites, as now);
+  counts and the navigator key on the id and survive a rename. Storage is a minor gain: the
+  database is 2.55 GB, nearly all crops, vectors and metadata.
+- **What must hold:** ids are stable. The taxonomy lives only in the database
+  (`*_taxonomy.json` is an export), so a re-import or a rebuild from files must find a node by
+  its path and keep its id, and add a node, never reuse an id, for a tag a file holds that the
+  tree lacks. A node deleted in the tree leaves no `photo_tags` row naming it (cascade), and a
+  file still holding its keyword makes the node again with a new id on the next read.
+- **How it fails, to be tested before it is built:** a tag in a file the tree lacks; a rename of
+  a person or branch while an index run or Suggest is running; two libraries sharing one name
+  with different ids; the tree edited in TagTuner while a bulk tag write is under way; an
+  undo that replays a name recorded before the change; a restore of a snapshot taken before ids
+  were used; a backfill read of 225,000 faces (one lookup per name, not per row).
 
 ### Ideas taken from Windows Live Photo Gallery's database *(2026-10-02)*
 The owner's WLPG index (`Pictures.pd6`, a SQL Server Compact 3.1 file: 73,184 files, 836
