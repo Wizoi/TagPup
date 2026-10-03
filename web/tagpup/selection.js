@@ -25,6 +25,8 @@ import { renderThumbnails } from './grid.js';
 import { queuePhotoWrite, takeWritten } from './edits.js';
 import { BULK_CONFIRM_ABOVE, BULK_LIMIT, isSelected, selectionCount, selectionProblem } from './selected.js';
 import { setStatus } from './status.js';
+import { addTypedToSelection } from './bulk-edit.js';
+import { clearTally, selectionTallied } from './tally.js';
 
 /**
  * A library view's selection that a request cannot carry says why beside the panel, the moment it is so, not when a bulk
@@ -272,14 +274,16 @@ export function updateSelectedThumbnailsCount() {
 function showLibrarySelection() {
     selectionDateLabel.textContent = 'Date Taken';
     selectionDateValue.textContent = '--';
-    const note = buildElement('span', {
-        style: 'color: var(--text-muted); font-size: 12px; padding: 4px 0;',
-        text: 'Not tallied for a library view',
-    });
-    if (selectionPeopleList) replaceContent(selectionPeopleList, note.cloneNode(true));
-    if (selectionTagsList) replaceContent(selectionTagsList, note.cloneNode(true));
     if (selectionSuggestedPeopleList) selectionSuggestedPeopleList.innerHTML = '';
     if (selectionSuggestedTagsList) selectionSuggestedTagsList.innerHTML = '';
+    // What the selection carries is counted by the server, 250 ms after the selection stops changing (tally.js); none, nothing.
+    if (selectionCount() === 0) {
+        clearTally();
+        if (selectionPeopleList) selectionPeopleList.innerHTML = '';
+        if (selectionTagsList) selectionTagsList.innerHTML = '';
+    } else {
+        selectionTallied();
+    }
     btnApplyRename.disabled = true;
     upper.updateFolderAutoApplyState();
 }
@@ -427,10 +431,6 @@ export function confirmBulkWrite(what, count) {
     return true;
 }
 
-function notYet() {
-    setStatus('error', 'Editing a selection of a library view arrives with the bulk job.', { transient: false });
-}
-
 /**
  * Apply a tag to a given set of photos.
  *
@@ -438,7 +438,6 @@ function notYet() {
  * be selected at the time.
  */
 export function applyTagToPhotos(tag, isPerson, paths) {
-    if (state.library) return notYet();
     const targets = (paths || []).filter(Boolean);
     if (targets.length === 0) return;
     if (!confirmBulkWrite(`Add ${tag} to`, targets.length)) return;
@@ -469,7 +468,6 @@ export function applyTagToPhotos(tag, isPerson, paths) {
  * only one of those leaves the chip in place and looks like the button is broken.
  */
 export function removeTagFromAllSelected(tagOrTags, isPerson) {
-    if (state.library) return notYet();
     if (state.selectedThumbnails.length === 0) return;
     const tags = Array.isArray(tagOrTags) ? tagOrTags : [tagOrTags];
     if (tags.length === 0) return;
@@ -493,7 +491,8 @@ export function removeTagFromAllSelected(tagOrTags, isPerson) {
 
 // Bulk Editing operations
 export async function bulkAddPeopleToSelection() {
-    if (state.library) return notYet();
+    // A library view's selection is photo ids and its edit a job (bulk-edit.js); a folder's is paths and a request.
+    if (state.library) return addTypedToSelection(true);
     if (state.selectedThumbnails.length === 0) return;
     const val = bulkAddPeopleInput.value.trim();
     if (!val) return;
@@ -541,7 +540,7 @@ export async function bulkAddPeopleToSelection() {
 }
 
 export async function bulkAddTagsToSelection() {
-    if (state.library) return notYet();
+    if (state.library) return addTypedToSelection(false);
     if (state.selectedThumbnails.length === 0) return;
     const val = bulkAddTagsInput.value.trim();
     if (!val) return;

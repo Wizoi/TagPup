@@ -26,6 +26,7 @@ import {
 import { checkFolderMembership, wireMembership } from './membership.js';
 import { navigatorCountsChanged, navigatorFollows, wireNavigator } from './navigator.js';
 import { addedFromView, wireBanner } from './library-banner.js';
+import { attachBulk, wireBulk } from './bulk-job.js';
 import { landOnAnchor, libraryViewPainted, wireMoves } from './library-moves.js';
 import { checkDamagedPhotos, showLibraryDamage } from './damaged.js';
 import {
@@ -136,6 +137,9 @@ document.addEventListener('DOMContentLoaded', () => {
     wireMoves();
     wireBanner();
 
+    // The strip of a bulk edit of the library's photos: Cancel, Resume, Start again.
+    wireBulk();
+
     enableSwipeNavigation(mainImage);
 
     if (btnCarryForward) btnCarryForward.addEventListener('click', carryTagsForward);
@@ -169,6 +173,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // keeps it that way.
     // How many of the library's photos were found damaged, in the header (damaged.js).
     showLibraryDamage();
+    // A bulk edit already running in this library (started before this page was opened or reloaded) is picked up by its strip.
+    attachBulk();
     const params = new URLSearchParams(window.location.search);
     const initialPath = params.get('path');
     // A `?view` in the address names the library view to open, and wins over a `?path`.

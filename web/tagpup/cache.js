@@ -26,6 +26,23 @@ export function saveToLocalStorageCache() {
     }
 }
 
+/**
+ * Forget every folder's scan this browser kept: a bulk edit rewrote photo files across folders, and a scan kept from before names their
+ * old stamps (a save from it would be refused as changed on disk) and their old tags. Other keys of local storage are left alone.
+ */
+export function forgetFolderCaches() {
+    try {
+        const stale = [];
+        for (let at = 0; at < localStorage.length; at++) {
+            const key = localStorage.key(at);
+            if (key && key.startsWith('tagpup_cache_')) stale.push(key);
+        }
+        for (const key of stale) localStorage.removeItem(key);
+    } catch (e) {
+        console.warn('Could not forget the folders kept in this browser:', e);
+    }
+}
+
 // ------------------------------------------------------------------ paths --
 // Every photo and folder path the server sends is already in one spelling -- the
 // native absolute path, exactly as the database holds it -- so server paths are

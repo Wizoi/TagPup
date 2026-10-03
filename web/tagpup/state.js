@@ -86,6 +86,20 @@ export const state = {
     // The last write queued for one photo, by pathKey: what leaving that photo waits
     // for, where detailSaveInFlight, the tail of the whole queue, has bulk writes too.
     photoWrites: {},
+    // What the selected photos of a library view carry, as the server counted it (tally.js): `status` idle | counting | ready | error,
+    // `key` the selection (the view's token and the selection's version) it was asked for, `asked` the number of the request whose
+    // answer counts, `data` the answer.
+    tally: { status: 'idle', key: '', asked: 0, timer: 0, controller: null, data: null, message: '' },
+    // The bulk edit of the library's photos the page is showing (bulk-job.js, bulk-strip.js): `job` is the status the server last
+    // gave of it, `request` what was started ({ op, selection, params, desc }, for Start again), `starting` while the start is
+    // out, `conflict` the sentence of a refused second start, `cancelling` after Cancel was pressed, `failures` the answers to
+    // "how is it going" that did not come (`trouble` says so, `gaveUp` after too many), `timer`/`controller`/`asked` the poll, and
+    // `endedKey` the job end already acted on (the counts, the cards, the caches), once.
+    bulk: {
+        job: null, request: null, starting: false, conflict: '', cancelling: false,
+        failures: 0, trouble: '', gaveUp: false, timer: 0, controller: null, asked: 0, endedKey: '', announced: null,
+        attaching: null, attachedAt: 0,
+    },
     // The photo write queue's entries, for its status (write-queue.js): each
     // { id, label, status: waiting | writing | done | failed, error, at, retry }.
     // batchTotal and batchSettled count the writes since the queue was last empty.

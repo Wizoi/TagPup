@@ -180,7 +180,7 @@ describe("opening a view from the address", () => {
     assert.equal(ctx.document.getElementById("add-folder-modal").classList.contains("active"), false);
     assert.equal(ctx.document.getElementById("btn-suggest-tags").disabled, true);
     assert.equal(ctx.document.getElementById("btn-toggle-rename").disabled, true);
-    assert.equal(ctx.document.getElementById("btn-toggle-timeshift").disabled, true);
+    assert.equal(ctx.document.getElementById("btn-toggle-timeshift").disabled, false, "Shift Date Taken works on a view's selection (9d-2)");
     assert.equal(ctx.document.getElementById("photo-search").disabled, true);
     assert.match(ctx.document.getElementById("photo-search").title, /later stages/);
   });

@@ -16,6 +16,7 @@ import { renderThumbnails } from './grid.js';
 import { updateSelectedThumbnailsCount } from './selection.js';
 import { BULK_LIMIT, clearSelection } from './selected.js';
 import { whereWritten } from './write-queue.js';
+import { shiftSelectionInView } from './bulk-edit.js';
 
 /**
  * Why a Smart Rename grouping cannot be used, or null if it can: the server's rule
@@ -135,6 +136,8 @@ export const UNKNOWN_CAMERA = 'Unknown Camera';
 export const ALL_CAMERAS = 'All Cameras';
 
 export function populateCameraModelsDropdown() {
+    // The cameras are a folder's: a view has none to list, and its time shift is not held back by an empty folder.
+    if (state.library) return;
     if (!state.folderPhotos || state.folderPhotos.length === 0) {
         timeshiftPanel.classList.add('hidden');
         btnToggleTimeshift.disabled = true;
@@ -183,6 +186,11 @@ export function onCamera(photo, camera) {
 }
 
 export function applyTimeShift() {
+    // A library view shifts its selection of photos across folders, as a job (bulk-edit.js); a folder shifts a camera's photos.
+    if (state.library) {
+        shiftSelectionInView();
+        return;
+    }
     const folder = state.scannedFolder;
     if (!folder) return;
     

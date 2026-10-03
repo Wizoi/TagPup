@@ -214,12 +214,12 @@ export function reconcileIdSelection() {
  * `how` 'ids' (the ids picked), 'source' (the source but the excluded ones), 'rest-ids' (the ids the excluded ones leave) or
  * 'rest-source' (the source but the ids the picked ones leave), or `how` null and a `sentence` saying why it cannot be sent.
  */
-function planRequest() {
+function planRequest({ job = true } = {}) {
     const lib = state.library;
     if (!lib) return { how: null, sentence: 'No library view is open.' };
     const count = selectionCount();
     if (count <= 0) return { how: null, sentence: '' };
-    if (count > JOB_LIMIT) {
+    if (job && count > JOB_LIMIT) {
         return { how: null, sentence: `${count.toLocaleString()} photos are selected; a bulk edit takes at most ${JOB_LIMIT.toLocaleString()}. Narrow the selection.` };
     }
     const sel = lib.sel;
@@ -235,6 +235,11 @@ function planRequest() {
     return { how: null, sentence: tooScattered(count, sel.excluded.size) };
 }
 
+/** The selection as the tally's request names it: as selectionRequest, but a tally is not limited to what a job takes. */
+export function tallyRequest() {
+    return selectionRequest({ job: false });
+}
+
 /** Why the selection cannot be sent as it is, in a sentence; '' when it can, or when nothing is selected. */
 export function selectionProblem() {
     return planRequest().sentence;
@@ -245,8 +250,8 @@ export function selectionProblem() {
  * limit), or { ok: false, sentence } saying why it cannot be sent. Nothing is asked of the server here: this is the page's
  * own check, made before any request.
  */
-export function selectionRequest() {
-    const plan = planRequest();
+export function selectionRequest({ job = true } = {}) {
+    const plan = planRequest({ job });
     if (!plan.how) return { ok: false, sentence: plan.sentence || 'Nothing is selected.' };
     const lib = state.library;
     const sel = lib.sel;

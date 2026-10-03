@@ -70,6 +70,10 @@ export const timeshiftPanel = document.getElementById('timeshift-panel');
 export const timeshiftCameraSelect = document.getElementById('timeshift-camera-select');
 export const timeshiftMinutesInput = document.getElementById('timeshift-minutes-input');
 export const btnApplyTimeshift = document.getElementById('btn-apply-timeshift');
+export const timeshiftCameraField = document.getElementById('timeshift-camera-field');
+export const timeshiftDirectionField = document.getElementById('timeshift-direction-field');
+export const timeshiftDirection = document.getElementById('timeshift-direction');
+export const timeshiftViewNote = document.getElementById('timeshift-view-note');
 export const btnToggleTimeshift = document.getElementById('btn-toggle-timeshift');
 
 export const btnToggleRename = document.getElementById('btn-toggle-rename');
@@ -89,6 +93,24 @@ export const inputPhotoTitle = document.getElementById('input-photo-title');
 export const btnSaveTitle = document.getElementById('btn-save-title');
 export const btnSaveDetails = document.getElementById('btn-save-details');
 export const writeQueueBox = document.getElementById('write-queue');
+
+// The bulk edit's strip (bulk-strip.js)
+export const bulkStrip = document.getElementById('bulk-strip');
+export const bulkStripTitle = document.getElementById('bulk-strip-title');
+export const bulkStripBar = document.getElementById('bulk-strip-bar');
+export const bulkStripProgress = document.getElementById('bulk-strip-progress');
+export const bulkStripEta = document.getElementById('bulk-strip-eta');
+export const bulkStripCounts = document.getElementById('bulk-strip-counts');
+export const bulkStripMessage = document.getElementById('bulk-strip-message');
+export const bulkStripErrors = document.getElementById('bulk-strip-errors');
+export const bulkStripErrorsSummary = document.getElementById('bulk-strip-errors-summary');
+export const bulkStripErrorList = document.getElementById('bulk-strip-error-list');
+export const bulkStripLive = document.getElementById('bulk-strip-live');
+export const btnBulkCancel = document.getElementById('btn-bulk-cancel');
+export const btnBulkResume = document.getElementById('btn-bulk-resume');
+export const btnBulkAgain = document.getElementById('btn-bulk-again');
+export const btnBulkShow = document.getElementById('btn-bulk-show');
+export const btnBulkDismiss = document.getElementById('btn-bulk-dismiss');
 export const detailPeople = document.getElementById('detail-people');
 export const inputAddPerson = document.getElementById('input-add-person');
 export const btnAddPerson = document.getElementById('btn-add-person');

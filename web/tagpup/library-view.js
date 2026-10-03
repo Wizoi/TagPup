@@ -14,6 +14,7 @@ import { state } from './state.js';
 import {
     btnApplyRename, btnFolderAutoApply, btnLibraryRefresh, btnLibraryScope, btnRefreshList, btnShowOnDisk,
     btnToggleRename, btnToggleTimeshift,
+    timeshiftCameraField, timeshiftDirectionField, timeshiftViewNote,
     folderPathInput, folderViewHeader, folderViewMain, folderViewStats, folderViewTitle, indexProgressContainer,
     libraryStrip, libraryStripBack, libraryStripSource, libraryStripStatus, libraryStripTotal,
     photoList, photoSearch, renamePanel, suggestProgressContainer, timeshiftPanel
@@ -24,6 +25,7 @@ import {
     openFolderView, scanFolder, updateCurrentFolderLabel, updateListStats, updatePhotoPosition
 } from './folder.js';
 import { clearSelection } from './selected.js';
+import { attachBulk, lockBulkControls } from './bulk-job.js';
 import { forgetBanner } from './library-banner.js';
 import { clearSyncInfo, loadSyncInfo } from './sync-state.js';
 import {
@@ -76,7 +78,12 @@ function showChrome() {
     photoSearch.disabled = true;
     photoSearch.title = SEARCH_OFF;
     btnToggleRename.title = FOLDER_ONLY;
-    btnToggleTimeshift.title = FOLDER_ONLY;
+    // Shift Date Taken works on the selection of a view, by minutes and a direction: no camera (bulk-edit.js).
+    btnToggleTimeshift.disabled = false;
+    btnToggleTimeshift.title = 'Shift Date Taken of the selected photos';
+    timeshiftCameraField.classList.add('hidden');
+    timeshiftDirectionField.classList.remove('hidden');
+    timeshiftViewNote.classList.remove('hidden');
     btnRefreshList.title = 'Ask the library for this view again';
     libraryStrip.classList.remove('hidden');
     folderViewHeader.classList.remove('hidden');
@@ -87,6 +94,13 @@ function hideChrome() {
     photoSearch.title = '';
     btnToggleRename.title = 'Smart Rename Files';
     btnToggleTimeshift.title = 'Camera Time Shift';
+    timeshiftCameraField.classList.remove('hidden');
+    timeshiftDirectionField.classList.add('hidden');
+    timeshiftViewNote.classList.add('hidden');
+    // A folder's own scan enables it again; with no folder open there is nothing to shift.
+    btnToggleTimeshift.disabled = true;
+    btnToggleTimeshift.classList.remove('active');
+    timeshiftPanel.classList.add('hidden');
     btnRefreshList.title = 'Refresh files list';
     libraryStrip.classList.add('hidden');
     forgetBanner();
@@ -217,6 +231,8 @@ function beginView(spec, history, scrollTop) {
         return;
     }
     loadSyncInfo();            // when the library was last in step with its folders
+    lockBulkControls();        // a bulk edit that is running keeps the view's edit controls off
+    attachBulk();              // a bulk edit started elsewhere (another tab, before a reload) shows in the strip
     loadLibraryIds(lib).then(replaced => {
         if (lib !== state.library) return;
         if (!replaced) {
@@ -252,6 +268,7 @@ export function closeLibraryView({ folder = '' } = {}) {
     state.activePhotoPath = null;
     clearAddress();
     hideChrome();
+    lockBulkControls();
     upper.navigatorFollows();   // no source is open: the sidebar goes back to the pane a folder view has
     if (folder) {
         folderPathInput.value = folder;
