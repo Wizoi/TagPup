@@ -229,16 +229,6 @@ class OtherWritersOfAPhoto(WithALibrary):
             conn, self.photo, {"XMP:Subject": ["Trips/Coast"], "XMP:Rating": None}))
         self.assertEqual(before, self.dump(), "the undo puts the derived rows back as they were")
 
-    def test_a_read_back_after_the_file_changed_follows_its_metadata(self):
-        """record_reads records what was read of the file's metadata -- not its keywords, which are
-        the row's own column -- so the camera and the place follow, and the keyword rows stay."""
-        raw = photo_rows.as_read(self.photo, {"XMP:Subject": ["Trips/Lake"], "EXIF:Make": "Harbourlight",
-                                              "Composite:GPSLatitude": 48.5, "Composite:GPSLongitude": -122.4})
-        photos.record_reads(self.path, [dict(raw, path=self.photo)])
-        self.assertEqual(["Trips/Coast"], self.tags_of(self.one))
-        self.assertEqual((None, "Harbourlight", None, 48.5, -122.4), self.meta_of(self.one))
-        self.agrees()
-
     def test_a_photo_only_a_face_or_suggest_named_has_a_folder_and_nothing_else(self):
         path = self.where("2025", "unread.jpg")
         unread = photo_rows.add_unread(self.conn, path)

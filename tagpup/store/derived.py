@@ -255,7 +255,9 @@ def record(conn, photo_id, path, tags, raw_metadata, batch=None):
         return 0
     batch = batch or Batch(conn)
     meta = photo_meta.extract(raw_metadata)
-    return _put(conn, {photo_id: _state(path, [tag for tag in tags if isinstance(tag, str)], meta, batch.tree)}, batch)
+    # What record_indexed wrote is what keywords_of reads back: tags that are None or not a list say nothing.
+    keywords = [tag for tag in tags if isinstance(tag, str)] if isinstance(tags, (list, tuple)) else []
+    return _put(conn, {photo_id: _state(path, keywords, meta, batch.tree)}, batch)
 
 
 # ---- Folders no photo is in ------------------------------------------------------------------

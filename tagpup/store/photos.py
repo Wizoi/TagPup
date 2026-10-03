@@ -158,41 +158,6 @@ def forget_photo(db_path, photo_path):
     return removed
 
 
-def record_reads(db_path, records, label="photos read back", before=None):
-    """Record what was just read from each photo's file: its raw metadata, mtime and
-    size. Returns how many rows changed.
-
-    A record with no metadata -- a file that could not be read -- is left as it was.
-    `before` maps a path to its file's stamp just before a metadata write of the app's
-    own, whose vectors are carried forward (_stamp); a file read back after changing
-    elsewhere might look different, and keeps the stamp that tells the embedder so.
-    """
-    def store(conn):
-        changed = 0
-        roots = store_roots.roots_for(conn)
-        for entry in records:
-            if not entry.get("raw_metadata"):
-                continue
-            if before and entry["path"] in before:
-                _stamp(conn, entry["path"], entry.get("mtime", 0.0), entry.get("size", 0),
-                       before=before[entry["path"]], whole=True)
-            where, where_params = store_roots.sql_equals(conn, "path", entry["path"])
-            written = conn.execute(
-                "UPDATE photos SET raw_metadata = ?, mtime = ?, size = ? WHERE " + where,
-                (store_roots.raw_to_row(json.dumps(entry["raw_metadata"]), roots), entry.get("mtime", 0.0),
-                 entry.get("size", 0)) + where_params).rowcount
-            if written:
-                # A file's person fields are one source of its people (#89), and a time
-                # shift changes when it was taken.
-                people.rebuild_photos(conn, [entry["path"]])
-                _dated_paths(conn, [entry["path"]])
-                derived.refresh_photos(conn, _ids_of(conn, [entry["path"]]))
-            changed += written
-        return changed
-
-    return db.write_with_connection(db_path, store, label=label)
-
-
 def move_rows(db_path, renames):
     """Move index rows from each old path to its new one. Its faces point at the row by
     id, so they go with it.
@@ -260,12 +225,15 @@ def move_rows_in(conn, renames):
         staged.append((store_roots.to_row(conn, new_path), photo_ids))
 
     moved = 0
+    every = []
     for new_stored, photo_ids in staged:
         for photo_id in photo_ids:
             cursor.execute("UPDATE photos SET path = ? WHERE id = ?", (new_stored, photo_id))
             moved += cursor.rowcount
         date_photos(conn, photo_ids)   # a year may be in the new name
-        derived.refresh_photos(conn, photo_ids)   # the photo's folder, and the one it left
+        every += photo_ids
+    # The photos' folders, and the ones they left, in one call: one read of the tag tree for all of them.
+    derived.refresh_photos(conn, every)
     return moved, skipped
 
 
@@ -282,7 +250,7 @@ def rows_of(conn, photo_paths):
     return found
 
 
-def follow_fields(conn, photo_path, written, stat=None, before=None):
+def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None):
     """Make a photo's row say what the file journal just left in its file: `written` is
     {field: value} of the fields written, forward, again after a crash, or back in an
     undo (tagpup.services.file_changes). The caller commits, in the transaction that marks
@@ -301,7 +269,8 @@ def follow_fields(conn, photo_path, written, stat=None, before=None):
     before the write -- one Suggest made, or one the file has moved on from -- is not
     stamped (_describes_before), as record_tags does not stamp one: it would claim to
     match a file whose other fields, its Date Taken first, it never held. Its vectors
-    still follow the file's new stamp."""
+    still follow the file's new stamp. A loop of them hands every call one derived.Batch (the tag
+    tree read once for the loop, not once a photo)."""
     where, params = store_roots.sql_equals(conn, "path", photo_path)
     row = conn.execute("SELECT id, raw_metadata, mtime, size FROM photos WHERE " + where + " LIMIT 1",
                        params).fetchone()
@@ -351,7 +320,7 @@ def follow_fields(conn, photo_path, written, stat=None, before=None):
         embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
     people.rebuild(conn, [photo_id])
     date_photos(conn, [photo_id])
-    derived.refresh_photos(conn, [photo_id])
+    derived.refresh_photos(conn, [photo_id], batch)
     return photo_id
 
 

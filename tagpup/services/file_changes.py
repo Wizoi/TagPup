@@ -61,7 +61,7 @@ from tagpup.core.result import Result
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, names
 from tagpup.services import roots as roots_service
-from tagpup.store import db, embeddings, file_journal, journal, photos, schema
+from tagpup.store import db, derived, embeddings, file_journal, journal, photos, schema
 
 logger = logging.getLogger(__name__)
 
@@ -298,8 +298,9 @@ def _follow(library, followed):
         return
 
     def work(conn):
+        batch = derived.Batch(conn)   # the tag tree read once for the whole loop, in this transaction
         for path, now in followed:
-            photos.follow_fields(conn, path, now)
+            photos.follow_fields(conn, path, now, batch=batch)
 
     try:
         db.write_with_connection(library.path, work, label="rows of %d file(s) read" % len(followed))

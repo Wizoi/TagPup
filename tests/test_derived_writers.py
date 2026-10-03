@@ -119,7 +119,7 @@ class DerivedTablesAreKeptByTheirWriters(unittest.TestCase):
     def test_the_scan_finds_the_writers_it_is_meant_to(self):
         """A guard that matches nothing passes forever."""
         found = {name for _module, name, _node in self.photos}
-        for known in ("record_indexed", "record_tags", "move_rows_in", "follow_fields", "record_saved", "record_reads",
+        for known in ("record_indexed", "record_tags", "move_rows_in", "follow_fields", "record_saved",
                       "forget_photo", "remove", "remove_under", "_photos_pass"):
             self.assertIn(known, found)
         self.assertIn("add_path", {name for _module, name, _node in self.tree})

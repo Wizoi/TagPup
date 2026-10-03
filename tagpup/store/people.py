@@ -67,6 +67,8 @@ def _differences(conn, photo_ids, known):
                 tags = json.loads(tags_json) if tags_json else []
             except (TypeError, ValueError):
                 raw, tags = {}, []
+            if not isinstance(tags, list):
+                tags = []   # a damaged read wrote null, or a string: no keywords, as derived.keywords_of reads it
             from_keywords = {name.lower() for name in vocabulary.extract_people(raw, tags, known)}
             people = [(name, "keyword" if name.lower() in from_keywords else "face")
                       for name in vocabulary.people_in_photo(raw, tags, named.get(photo_id, []), known)]

@@ -112,14 +112,6 @@ class PhotoPeople(unittest.TestCase):
         self.write(lambda conn: faces.restore(conn, [face_id]))
         self.assertEqual([WREN, ODA], self.listed())
 
-    def test_what_a_time_shift_read_back_is_a_source_of_them_too(self):
-        # A file's person fields name people as its keywords do (#89).
-        stat = os.stat(self.photo)
-        photos.record_reads(self.lib.library.path, [{
-            "path": self.photo, "raw_metadata": {"XMP:PersonInImage": [ODA]},
-            "mtime": stat.st_mtime, "size": stat.st_size}])
-        self.assertIn(ODA, self.listed())
-
     def test_they_go_with_the_photo(self):
         self.write(lambda conn: conn.execute("DELETE FROM photos"))
         self.assertEqual([(0,)], self.lib.rows("SELECT COUNT(*) FROM photo_people"))

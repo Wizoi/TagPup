@@ -930,7 +930,7 @@ tables 21 to 24):
 **Kept by the writes, in their transactions** (the lesson of the bulk tag writes that once did not tell the index): the
 index's `record_indexed` (the batch shares one `derived.Batch`, the tree read inside its transaction, so a record costs 0.103 s
 for 500 photos where it cost 0.080 s), `record_tags`, `record_saved`, `follow_fields` (so a change of files and its undo),
-`record_reads`, `move_rows_in` and `ensure_row`; the tree's edits (`people.tree_edit` reads every photo's keywords once, as
+`move_rows_in` (one refresh for all the photos it moves) and `ensure_row`; the tree's edits (`people.tree_edit` reads every photo's keywords once, as
 `people.follow_tree` does, to find those a changed node names: 0.31 s on photo_index warm, measured read-only, under the
 write lock of an edit that adds, moves or takes away a node, and nothing for a flag); the journal's `_derive` after an apply, an undo or a settle,
 and its rehearsal, which compares the derived rows too. A photo deleted, or a node, takes its rows by trigger on any
