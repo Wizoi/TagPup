@@ -31,8 +31,8 @@ from flask import Blueprint, Flask, Response, abort, current_app, g, jsonify, re
 from tagpup import config as tagpup_config
 from tagpup.logs import REQUESTS
 from tagpup.web import (activity_routes, history_routes, jobs_routes, libraries, lifecycle as lifecycles,
-                        rules_routes, security, settings_routes, sync_routes, tagpup_routes, taxonomy_routes,
-                        tuner_routes)
+                        roots_gate, roots_ingress, rules_routes, security, settings_routes, sync_routes, tagpup_routes,
+                        taxonomy_routes, tuner_routes)
 
 logger = logging.getLogger(__name__)
 requests_log = logging.getLogger(REQUESTS)
@@ -95,6 +95,9 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
 
     app.before_request(security.guard)
     app.before_request(libraries.attach_library)
+    app.before_request(roots_gate.guard)
+    app.before_request(roots_ingress.guard)
+    app.after_request(roots_ingress.mark)
     app.before_request(_start_clock)
     app.after_request(_never_cache_json)
     app.after_request(_log_slow)

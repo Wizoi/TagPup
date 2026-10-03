@@ -32,6 +32,7 @@ from tagpup.core import library as libraries
 from tagpup.core.library import Library
 from tagpup.core.result import NotFound, Refused
 from tagpup.services import duplicate_faces, inspect, person_tags, refresh_rows
+from tagpup.services import roots as roots_service
 from tagpup.services import sync as sync_service
 from tagpup.services import journal as library_journal
 
@@ -110,11 +111,29 @@ def library_names():
             if os.path.exists(config.library_path(name + ".db"))]
 
 
-def find_library(name):
-    """The Library called `name` in the home's data folder; ToolError when there is none."""
+def find_library(name, photos=True):
+    """The Library called `name` in the home's data folder; ToolError when there is none. And, for a
+    tool that reads photos' paths (`photos`), when the library holds a root this machine does not
+    place: the message names machine_roots.json and the line to add (tagpup.services.roots.problem),
+    where the store would refuse the first path with a traceback's last line."""
     if not name or name not in library_names():
         raise ToolError("There is no library called %r; `libraries` lists them." % (name,))
-    return Library(config.library_path(name + ".db"))
+    found = Library(config.library_path(name + ".db"))
+    if photos:
+        unplaced = roots_service.problem(found)
+        if unplaced:
+            raise ToolError(unplaced)
+    return found
+
+
+def _embedder(library):
+    """The CLIP settings the library's vectors are counted against, or None where the library's settings
+    cannot be read -- its folder settings hold paths, which a root this machine does not place cannot
+    name: the checks then say so (tagpup.services.inspect), and count nothing against a model."""
+    try:
+        return runtimes.peek_settings(library).embedder
+    except ValueError:
+        return None
 
 
 def _answer(action, reveal=False):
@@ -153,8 +172,8 @@ def build():
           "list, and photos without a CLIP vector for the library's CLIP model. Counts only.")
     def summary(library: str) -> dict[str, Any]:
         def read():
-            found = find_library(library)
-            return inspect.summary(found, runtimes.peek_settings(found).embedder)
+            found = find_library(library, photos=False)
+            return inspect.summary(found, _embedder(found))
         return _answer(read)
 
     @tool("The folders a library's photos are directly in, the fullest first: each one's number, "
@@ -191,7 +210,7 @@ def build():
     @tool("One consistency check of tools/doctor.py, by name: how many rows break it, and a few "
           "of them as ids. The checks: " + ", ".join(inspect.CHECKS) + "." + REVEAL)
     def check(library: str, name: str, reveal: bool = False) -> dict[str, Any]:
-        return _answer(lambda: inspect.check(find_library(library), name, reveal), reveal)
+        return _answer(lambda: inspect.check(find_library(library, photos=False), name, reveal), reveal)
 
     @tool("Every consistency check tools/doctor.py runs, in its order, with how many rows break "
           "each and how many checks are broken; and how many photos have no CLIP vector for the "
@@ -199,8 +218,8 @@ def build():
           + REVEAL)
     def checks(library: str, reveal: bool = False) -> dict[str, Any]:
         def read():
-            found = find_library(library)
-            return inspect.all_checks(found, reveal, runtimes.peek_settings(found).embedder)
+            found = find_library(library, photos=False)
+            return inspect.all_checks(found, reveal, _embedder(found))
         return _answer(read, reveal)
 
     @tool("The rows whose file is not on disk, by folder: whether each folder is gone entirely, its "
@@ -216,7 +235,7 @@ def build():
           "placeholders' values; any not given are planned as NULL. Answers table and index names, "
           "never rows.")
     def query_plan(library: str, sql: str, params: Optional[list] = None) -> dict[str, Any]:
-        return _answer(lambda: inspect.query_plan(find_library(library), sql, params))
+        return _answer(lambda: inspect.query_plan(find_library(library, photos=False), sql, params))
 
     def write_tool(description, name=None):
         return server.tool(name=name, description=description, annotations=WRITES)
@@ -267,7 +286,7 @@ def build():
           "started and finished, whether it looked at the whole library, whether it left it in step, "
           "and what it found and changed, as counts. Both null for a library never synced.")
     def sync_state(library: str) -> dict[str, Any]:
-        return _answer(lambda: sync_service.last(find_library(library)))
+        return _answer(lambda: sync_service.last(find_library(library, photos=False)))
 
     @write_tool("Remove the tag-tree nodes that are a person's bare name where a People path "
                 "already names the same person (a tree left by old indexing). Only the tree changes; "
@@ -302,7 +321,7 @@ def build():
           % library_journal.RETENTION_DAYS)
     def history(library: str, change: Optional[int] = None, reveal: bool = False,
                 limit: int = 20) -> dict[str, Any]:
-        return _answer(lambda: library_journal.history(find_library(library), change, reveal, limit), reveal)
+        return _answer(lambda: library_journal.history(find_library(library, photos=False), change, reveal, limit), reveal)
 
     @write_tool("Undo a change of the library's journal, by its id (`history` lists them). The default "
                 "is a dry run: it rehearses the undo -- undoes the change and applies it again inside a "
@@ -314,7 +333,7 @@ def build():
                 "Answers name tables, row ids and columns, never values.")
     def undo(library: str, change: int, apply: bool = False) -> dict[str, Any]:
         def act():
-            found = find_library(library)
+            found = find_library(library, photos=False)
             # A change of photo files is undone file by file, through the library's ExifTool.
             exiftool = runtimes.exiftool(found, runtimes.peek_settings(found))
             return written(library_journal.undo(found, change, apply=apply, exiftool_path=exiftool), found)
@@ -327,7 +346,7 @@ def build():
     def prune_journal(library: str, days: int = library_journal.RETENTION_DAYS,
                       apply: bool = False) -> dict[str, Any]:
         def act():
-            found = find_library(library)
+            found = find_library(library, photos=False)
             result = library_journal.prune(found, days, apply=apply)
             return {"ok": result.ok, "dry_run": not apply, "changes": result.attempted,
                     "pruned": result.changed, "values": result.details["values"], "days": days}

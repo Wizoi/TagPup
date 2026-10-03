@@ -78,6 +78,36 @@ function refusedForAnUpdate(res) {
         && !!res.headers.get('X-TagPup-Updating');
 }
 
+/**
+ * A library whose root this machine does not place is answered 409 with the sentence that says
+ * so and X-TagPup-Roots-Problem (tagpup/web/roots_gate.py): announced on the document as a
+ * `tagpup:roots-problem` event, which web/common/roots-banner.js shows as a banner. The reply
+ * itself goes on to the caller as it is.
+ */
+function announceRootsProblem(res) {
+    if (!res || res.status !== 409 || !res.headers || typeof res.headers.get !== 'function') return;
+    if (!res.headers.get('X-TagPup-Roots-Problem') || typeof res.clone !== 'function') return;
+    res.clone().json().then(body => {
+        document.dispatchEvent(new CustomEvent('tagpup:roots-problem', { detail: { message: body && body.error } }));
+    }).catch(() => {});
+}
+
+/** Set once a request's paths have been rewritten, so the page is told once per load. */
+let rootsMovedAnnounced = false;
+
+/**
+ * A response whose request carried an old place's paths (the server rewrote them,
+ * X-TagPup-Roots-Moved: the root's name) says the page is out of date: announced once as a
+ * `tagpup:roots-moved` event, which web/common/roots-banner.js shows and answers by reloading.
+ */
+function announceRootsMoved(res) {
+    if (rootsMovedAnnounced || !res || !res.headers || typeof res.headers.get !== 'function') return;
+    const root = res.headers.get('X-TagPup-Roots-Moved');
+    if (!root || typeof document === 'undefined') return;
+    rootsMovedAnnounced = true;
+    document.dispatchEvent(new CustomEvent('tagpup:roots-moved', { detail: { root } }));
+}
+
 function pause(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -89,6 +119,8 @@ function pause(ms) {
 function fetchThroughAnUpdate(url, options, started = Date.now(), updating = false) {
     const again = (ms) => pause(ms).then(() => fetchThroughAnUpdate(url, options, started, true));
     return fetch(url, options).then(res => {
+        announceRootsProblem(res);
+        announceRootsMoved(res);
         if (refusedForAnUpdate(res) && Date.now() - started < UPDATE_WAIT_MS) {
             const seconds = Number(res.headers.get('Retry-After'));
             return again(Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : RESTART_RETRY_MS);

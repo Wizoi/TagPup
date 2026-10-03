@@ -23,6 +23,7 @@ from contextlib import closing
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import NotFound, Refused
 from tagpup.files.metadata import MetadataExtractor
+from tagpup.services import roots as roots_service
 from tagpup.store import checks as rules
 from tagpup.store import db, embeddings, inspection, taxonomy
 
@@ -61,11 +62,33 @@ def _listed(pairs, reveal, limit):
 
 # ---- What a library holds ---------------------------------------------------------------
 
+#: The check that says a library's roots are not placed on this machine: every other check reads the
+#: photos' paths, which the store refuses (paths.UnmappedRoot) for such a library, so this one answers in
+#: their place, with the sentence that names machine_roots.json and the line to add.
+ROOTS_CHECK = "roots_placed"
+
+
+def _unplaced(library):
+    """The sentence for why `library`'s photos' paths cannot be read on this machine, or None."""
+    return roots_service.problem(library)
+
+
+def _unplaced_answer(sentence):
+    return {"check": ROOTS_CHECK, "rule": "this machine places every root the library holds", "count": 1,
+            "message": sentence}
+
+
 def summary(library, embedder_settings=None):
     """What the library holds, as tools/doctor.py prints it: photos, faces, named, named by
     hand, excluded, untagged; with the schema's version, the tree's nodes, the people the
     photos list, and -- given the CLIP model's settings (the library's: tagpup.services.settings)
-    -- how many photos have no vector for that model. Counts only."""
+    -- how many photos have no vector for that model. Counts only. For a library whose root this machine
+    does not place, `roots_problem` says so (the sentence) and the counts that read no path are given."""
+    sentence = _unplaced(library)
+    if sentence:
+        with _reading(library) as conn:
+            return {"roots_problem": sentence, "schema_version": inspection.schema_version(conn),
+                    "tree_nodes": inspection.tree_nodes(conn)}
     with _reading(library) as conn:
         held = dict(rules.summary(conn))
         held["schema_version"] = inspection.schema_version(conn)
@@ -248,8 +271,13 @@ def check(library, name, reveal=False):
     """One of tools/doctor.py's rules (tagpup.store.checks), by its name: how many rows
     break it, and a few of them as ids -- paths and tags only with `reveal`."""
     rule = CHECKS.get(name)
-    if rule is None:
+    if rule is None and name != ROOTS_CHECK:
         raise Refused("There is no check called %r; the checks are %s." % (name, ", ".join(CHECKS)))
+    sentence = _unplaced(library)
+    if sentence:
+        return _unplaced_answer(sentence)
+    if rule is None:
+        return {"check": ROOTS_CHECK, "rule": "this machine places every root the library holds", "count": 0}
     with _reading(library) as conn:
         return _reported(conn, name, rule(conn), reveal)
 
@@ -257,7 +285,12 @@ def check(library, name, reveal=False):
 def all_checks(library, reveal=False, embedder_settings=None):
     """Every rule tools/doctor.py checks, in its order, and how many are broken; with the
     CLIP model's settings, how many photos have no vector for it (reported, not broken:
-    the next index computes them). Rows whose file is gone are `missing_files`'s."""
+    the next index computes them). Rows whose file is gone are `missing_files`'s. A library whose root
+    this machine does not place answers with that as the one broken check (`roots_placed`, its sentence in
+    `message`): the others read the photos' paths, which cannot be named."""
+    sentence = _unplaced(library)
+    if sentence:
+        return {"broken": 1, "checks": [_unplaced_answer(sentence)]}
     with _reading(library) as conn:
         results = [_reported(conn, rule.__name__, rule(conn), reveal) for rule in rules.RULES]
         answer = {"broken": sum(1 for r in results if r["count"]), "checks": results}

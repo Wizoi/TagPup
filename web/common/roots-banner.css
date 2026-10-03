@@ -1,0 +1,15 @@
+/* The banner a library whose root this machine does not place shows (web/common/roots-banner.js). */
+
+.roots-banner {
+    padding: 10px 16px;
+    background-color: #5a2a1a;
+    color: #ffe9dd;
+    border-bottom: 1px solid #a8532f;
+    font-size: 14px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.roots-banner.hidden {
+    display: none;
+}

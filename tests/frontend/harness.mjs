@@ -253,8 +253,14 @@ export class FakeServer {
    * `body` may be a function of the URL returning the body or a promise of it, for a
    * reply that has to arrive later -- a scan still running while someone types.
    */
-  on(match, body, { status = 200 } = {}) {
-    this.routes.push({ match, body, status });
+  on(match, body, { status = 200, headers = {} } = {}) {
+    this.routes.push({ match, body, status, headers });
+    return this;
+  }
+
+  /** Like on(), ahead of every route there is: for a test that answers a longer path than one a page set up. */
+  first(match, body, { status = 200, headers = {} } = {}) {
+    this.routes.unshift({ match, body, status, headers });
     return this;
   }
 
@@ -295,9 +301,12 @@ export class FakeServer {
         (r) => url.includes(r.match) || url.includes(r.match.replace(/^\//, ""))
       ) || (url.includes("api/rules") ? { body: PUBLISHED_RULES, status: 200 } : undefined);
       const status = route ? route.status : 200;
+      const headers = (route && route.headers) || {};
       const reply = (payload) => ({
         ok: status >= 200 && status < 300,
         status,
+        headers: { get: (name) => headers[name] ?? null },
+        clone: () => reply(payload),
         json: () => Promise.resolve(payload),
         text: () => Promise.resolve(JSON.stringify(payload)),
       });

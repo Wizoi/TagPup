@@ -7,6 +7,7 @@ from tagpup.core import dates, fields, paths, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
 from tagpup.files import images, metadata, names, recycle_bin
 from tagpup.services import file_changes, libraries
+from tagpup.services import roots as roots_service
 from tagpup.store import db, embeddings, faces, photos, taxonomy
 from tagpup.store import folders as store_folders
 
@@ -50,6 +51,7 @@ def taken_order(record):
     return dates.date_taken_sort_key(record.get("raw_metadata", {}), record.get("mtime", 0.0))
 
 
+@roots_service.canonical_args("folder")
 def scan_folder(library, folder, exiftool_path):
     """The photos under `folder`, at any depth, as page records keyed by paths.key:
     opening a folder in TagPup.
@@ -103,6 +105,7 @@ def scan_folder(library, folder, exiftool_path):
     return found
 
 
+@roots_service.canonical_args("folder")
 def read_folder(library, folder, exiftool_path):
     """Every photo under `folder` read from its file, whatever the index holds, as page
     records keyed by paths.key: the folder after Smart Rename, and a time shift on a
@@ -195,6 +198,7 @@ def face_crop(library, face_id):
     return crop
 
 
+@roots_service.canonical_args("photo_paths")
 def preserve_names(library, photo_paths, exiftool_path):
     """Write each photo's current name into its XMP-xmpMM:PreservedFileName where it holds
     none -- the name it had before Smart Rename first renamed it, which later renames
@@ -212,6 +216,7 @@ def preserve_names(library, photo_paths, exiftool_path):
                                      unreadable="skip")
 
 
+@roots_service.canonical_args("photo_paths")
 @file_changes.exclusively()
 def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     """Number photos in the order given and name each for it: "<grouping> - <index> -
@@ -288,6 +293,7 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     return result
 
 
+@roots_service.canonical_args("photo_paths")
 def shift_date_taken(library, photo_paths, minutes, exiftool_path):
     """Move Date Taken in each photo by `minutes`, and tell the index. Time Shift.
 
@@ -340,6 +346,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
     return result
 
 
+@roots_service.canonical_args("photo_path")
 def delete(library, photo_path):
     """Send a photo to the Recycle Bin, and forget it: its row, faces and cached
     embedding. Clicking Delete.
@@ -367,6 +374,7 @@ def delete(library, photo_path):
 
 
 @file_changes.exclusively()
+@roots_service.canonical_args("photo_path")
 def rotate(library, photo_path, direction, exiftool_path):
     """Turn a photo a quarter left or right. Clicking Rotate Left or Rotate Right.
 

@@ -42,6 +42,10 @@ FULL_COPIES = {
     # Until phase 7.5's migrations stage: then only a migration that destroys
     # information copies the library, and one that changes data records its rows.
     os.path.join("tagpup", "store", "schema.py"): "a migration that rewrites data",
+    # `roots adopt --apply` rewrites every path of the library in one transaction: a copy is taken first
+    # (or the one made within the quarter hour before is kept), though the journal can undo it
+    # (docs/ARCHITECTURE.md, "Roots and machines"; the owner asked for it, 2026-10-02).
+    os.path.join("tagpup", "store", "adoption.py"): "a library whose every path is rewritten",
     # `index --reset` deletes the library; `compact` rewrites the whole file.
     "tagpup_cli.py": "a library deleted or rewritten whole",
     # backfill_document_ids and relink_renamed_photos copied it too, until phase 7.5's

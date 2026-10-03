@@ -30,10 +30,9 @@ re-detects a photo's faces keeping the decided ones by where they are.
 import logging
 import os
 import threading
-import time
 
 from tagpup.core import paths
-from tagpup.files import images
+from tagpup.files import images, shares
 from tagpup.store import damaged_files, db
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import faces as store_faces
@@ -60,22 +59,11 @@ def reason(kind):
 SHARE_WAIT = 1.0
 SHARE_AWAY = 30.0
 
-#: {share key: when it did not answer in time (time.monotonic)}: a share away, by its
-#: root (the server and the share), whichever of its folders was asked.
-_away = {}
-#: {share key: the thread still reading it}: a share that has not answered is not asked
-#: again, on another thread, while the first still waits.
-_reading = {}
-_away_lock = threading.Lock()
-
-
-def _share_of(folder):
-    """The key of the share `folder` is on: its root, the server and the share."""
-    return paths.key(os.path.splitdrive(paths.stored(folder))[0] or folder)
-
-
-def _on_a_share(path):
-    return str(path).startswith(("\\\\", "//"))
+#: What a share that is away is: tagpup.files.shares, the one owner of it (Roots' Verify asks it too). These
+#: are its caches, here by their old names.
+_away = shares._away
+_reading = shares._reading
+_on_a_share = shares.on_a_share
 
 
 def _stamps_in(folder):
@@ -99,41 +87,11 @@ def _stamps_in(folder):
 def _folder_stamps(folder):
     """_stamps_in(folder) -- within SHARE_WAIT for a folder on a network share, which is
     taken as not there (None) for SHARE_AWAY when it did not answer in time: a page's
-    request never waits on a share gone away."""
+    request never waits on a share gone away (tagpup.files.shares)."""
     if not _on_a_share(folder):
         return _stamps_in(folder)
-    key = _share_of(folder)
-    with _away_lock:
-        since = _away.get(key)
-        still = _reading.get(key)
-    if since is not None and time.monotonic() - since < SHARE_AWAY:
-        return None
-    if still is not None and still.is_alive():
-        # Another folder of the share is being listed: wait for it, as long as for any --
-        # only a wait that timed out makes the share away; one that answered does not.
-        still.join(SHARE_WAIT)
-        if still.is_alive():
-            with _away_lock:
-                _away.setdefault(key, time.monotonic())
-            return None
-    with _away_lock:
-        answer = {}
-        reader = threading.Thread(target=lambda: answer.update(found=_stamps_in(folder)),
-                                  name="DamagedPhotosShareRead", daemon=True)
-        _reading[key] = reader
-    reader.start()
-    reader.join(SHARE_WAIT)
-    if "found" not in answer:
-        logger.info("The share of %s did not answer within %s s; its damaged photos are not shown for %s s.",
-                    folder, SHARE_WAIT, SHARE_AWAY)
-        with _away_lock:
-            _away[key] = time.monotonic()
-        return None
-    with _away_lock:
-        _away.pop(key, None)
-        if _reading.get(key) is reader:
-            _reading.pop(key, None)
-    return answer["found"]
+    state, found = shares.bounded(folder, lambda: _stamps_in(folder), SHARE_WAIT, SHARE_AWAY)
+    return found if state == "ok" else None
 
 
 def _current(found):

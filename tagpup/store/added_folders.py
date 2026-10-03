@@ -14,6 +14,7 @@ indexing is not. Removing a folder from the library forgets what was added at or
 import time
 
 from tagpup.core import paths
+from tagpup.store import roots as store_roots
 
 TABLE = "added_folders"
 
@@ -31,8 +32,8 @@ def record(conn, folder, subfolders=True):
     """Record `folder` as added, with the folders under it unless not `subfolders`. Returns
     1 when that added something -- a folder not added before, or its subfolders now -- else
     0. The caller commits."""
-    stored = paths.stored(folder)
-    where, params = paths.sql_equals("path", stored)
+    stored = store_roots.to_row(conn, folder)
+    where, params = store_roots.sql_equals(conn, "path", folder)
     row = conn.execute("SELECT subfolders FROM added_folders WHERE " + where, params).fetchone()
     if row is not None:
         if subfolders and not row[0]:
@@ -48,7 +49,8 @@ def every(conn):
     """[(folder, with its subfolders)] of every folder added."""
     if not _there(conn):
         return []
-    return [(path, bool(subfolders)) for path, subfolders in conn.execute("SELECT path, subfolders FROM added_folders")]
+    return [(path, bool(subfolders)) for path, subfolders in store_roots.natives(
+        conn, conn.execute("SELECT path, subfolders FROM added_folders").fetchall(), 0)]
 
 
 def covers(conn, folder):
@@ -56,7 +58,8 @@ def covers(conn, folder):
     holds the folders asked for, a handful, so it is read whole."""
     if not _there(conn):
         return False
-    for path, subfolders in conn.execute("SELECT path, subfolders FROM added_folders"):
+    for path, subfolders in store_roots.natives(
+            conn, conn.execute("SELECT path, subfolders FROM added_folders").fetchall(), 0):
         if paths.same(folder, path) or (subfolders and paths.is_under(folder, path)):
             return True
     return False
@@ -67,7 +70,7 @@ def forget_under(conn, folder):
     Returns the records removed. The caller commits."""
     if not _there(conn):
         return 0
-    at, at_params = paths.sql_equals("path", folder)
-    under, under_params = paths.sql_under("path", folder)
+    at, at_params = store_roots.sql_equals(conn, "path", folder)
+    under, under_params = store_roots.sql_under(conn, "path", folder)
     return conn.execute("DELETE FROM added_folders WHERE (" + at + ") OR (" + under + ")",
                         at_params + under_params).rowcount

@@ -60,6 +60,7 @@ from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, names
+from tagpup.services import roots as roots_service
 from tagpup.store import db, embeddings, file_journal, journal, photos, schema
 
 logger = logging.getLogger(__name__)
@@ -113,9 +114,60 @@ def _exclusive(function):
     return held
 
 
+#: The Result of the change this thread is writing, so that a stop half-way (RootsChanged) can say what
+#: was written and journaled before it stopped.
+_running = threading.local()
+
+
+def _settle_stopped(library, change_id):
+    """A change a stop cut short is finished now, not at the next settle: the files never written are taken
+    out of it and it is applied for the files that were, so that what was written can be undone at once.
+    The pin has been let go by now (the roots changed), so these writes see the roots as they are."""
+    if not change_id:
+        return
+    try:
+        left = [row.id for row in file_journal.files_of(library.path, change_id) if row.state == "planned"]
+        file_journal.withdraw(library.path, left)
+        file_journal.finish(library.path, change_id)
+    except Exception as problem:
+        logger.warning("Could not finish change %s after it was stopped: %s", change_id, problem)
+
+
+def _pinned(function):
+    """Hold one map for the whole change (tagpup.services.roots.pinned): a place moved meanwhile
+    changes nothing until it ends, and a change of the library's roots by another process stops
+    it. A change that stops half-way is left as a crash leaves one -- its files written are
+    recorded, the rest settled the next time the library is opened (settle_once). A change that
+    returns a Result answers it as a refusal naming why; a rename raises."""
+    @functools.wraps(function)
+    def held(library, *args, **kwargs):
+        _running.result = None
+        try:
+            with roots_service.pinned(library):
+                return function(library, *args, **kwargs)
+        except (roots_service.RootsChanged, roots_service.Unplaced) as stop:
+            if function.__name__ == "rename":
+                raise
+            # What was written and journaled before it stopped is in the Result the change was filling.
+            result = getattr(_running, "result", None) or Result()
+            _running.result = None
+            said = roots_service.stopped(stop)
+            if result.changed or result.details.get("change"):
+                said += (" Before it stopped %d file(s) were written, recorded as change %s in History, which "
+                         "can be undone." % (result.changed, result.details.get("change")))
+            result.refuse(said)
+            _settle_stopped(library, result.details.get("change"))
+            for name, empty in (("change", None), ("conflicts", []), ("read_back", {}), ("written", {})):
+                result.details.setdefault(name, empty)
+            return result
+    return held
+
+
 # ---- Forward ---------------------------------------------------------------------------
 
+@roots_service.canonical_args("photo_paths")
 @_exclusive
+@_pinned
 def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one, summary=None,
                  unreadable="fail", stop_at_first_error=False, et=None, held=None, read_back_also=()):
     """Write fields into many photos as one change named `operation` (see the module's
@@ -152,6 +204,7 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
 def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
                   stop_at_first_error, fresh, read_back_also):
     result = Result(attempted=len(photo_paths))
+    _running.result = result
     written = result.details["written"] = {}
     result.details.update(change=None, conflicts=[], read_back={})
     settle(library, exiftool_path)
@@ -452,7 +505,9 @@ def _holds(path, row):
     return now is not None and all(now.get(key) == value for key, value in row.before.items())
 
 
+@roots_service.canonical_args(both=("renames", "aside"))
 @_exclusive
+@_pinned
 def rename(library, operation, renames, aside, exiftool_path=None, summary=None):
     """Rename photos -- `renames`, old -> new, and first the files in the way, `aside`
     (tagpup.files.names.aside_for) -- as one change named `operation`: planned and

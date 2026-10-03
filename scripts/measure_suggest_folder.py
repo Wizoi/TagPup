@@ -36,10 +36,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from .code_snapshot import REPO_ROOT, copy_code
-    from .measure_identify_faces import free_port, remove_sandbox
+    from .measure_identify_faces import free_port, place_roots, remove_sandbox
 except ImportError:  # imported as a top-level module
     from code_snapshot import REPO_ROOT, copy_code
-    from measure_identify_faces import free_port, remove_sandbox
+    from measure_identify_faces import free_port, place_roots, remove_sandbox
 
 import _root  # noqa: E402,F401
 from tagpup.store import db as tagpup_db  # noqa: E402
@@ -74,6 +74,9 @@ def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
     if not home.stamped:
         library_settings.stamp(Library(target), home.values)
     print("  copied %.1f GB in %.1fs" % (os.path.getsize(target) / 1e9, time.time() - started))
+    # A copy that holds roots points, through the machine's map, at the real photos: the sandbox
+    # gets a map of its own, placing each root inside it.
+    place_roots(target, sandbox)
 
     folders = []
     leaf = os.path.basename(os.path.normpath(photos))

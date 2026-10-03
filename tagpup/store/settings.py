@@ -6,12 +6,23 @@ library's history and can be undone. What a value means, and what it may be, is
 tagpup.core.validation.SETTINGS'; the service fills in the defaults.
 """
 from tagpup.store import db, schema
+from tagpup.store import roots as store_roots
 
 TABLE = "settings"
 
 
 def _rows(conn):
-    return {key: value for key, value in conn.execute("SELECT key, value FROM settings")}
+    """{key: value} of the settings, the two that name folders (library.roots,
+    library.ignored) as this machine reads them: a library may hold a folder under a root as
+    the root's row, and what is shown and compared is the native path (tagpup.store.roots).
+    Their journaled values hold the row."""
+    held = {key: value for key, value in conn.execute("SELECT key, value FROM settings")}
+    roots = store_roots.roots_for(conn)
+    if not roots.identity:
+        for key in store_roots.FOLDER_SETTINGS:
+            if key in held:
+                held[key] = store_roots.folders_to_native(held[key], roots)
+    return held
 
 
 def read(db_path):

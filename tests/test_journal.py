@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import own_home  # noqa: E402
 from journal_library import JournalLibrary  # noqa: E402
 
 from tagpup.store import db, journal, schema  # noqa: E402
@@ -206,10 +207,16 @@ class Refusals(JournalLibrary):
 
     def test_undo_once_the_schema_has_moved_on(self):
         applied = self.delete_copy()
-        self.execute("UPDATE changes SET schema_version = schema_version - 1 WHERE id = ?", (applied.change_id,))
+        self.execute("UPDATE changes SET schema_version = 7 WHERE id = ?", (applied.change_id,))
         message = self.refused(lambda: journal.undo(self.db_path, applied.change_id))
-        self.assertIn("change %d was made at schema %d and the library is at %d"
-                      % (applied.change_id, schema.LATEST - 1, schema.LATEST), message)
+        self.assertIn("change %d was made at schema 7 and the library is at %d" % (applied.change_id, schema.LATEST),
+                      message)
+        self.assertIn("migration 8", message)
+
+    def test_undo_once_only_an_exempt_migration_has_run_since(self):
+        applied = self.delete_copy()
+        self.execute("UPDATE changes SET schema_version = schema_version - 1 WHERE id = ?", (applied.change_id,))
+        journal.undo(self.db_path, applied.change_id)
 
     def test_undo_twice(self):
         applied = self.delete_copy()
@@ -428,6 +435,145 @@ class HistoryAndPruning(JournalLibrary):
         conn.close()
         self.assertEqual([], journal.history(bare))
         self.assertEqual((0, 0), journal.prunable(bare))
+
+
+class TheSchemaMovedOn(unittest.TestCase):
+    """A change made at an older schema is undone unless a migration since could have changed what
+    its rows mean: one that is not additive, or that touches a table a change can name or the journal
+    derives. Real migration records decide; one that cannot be classified refuses."""
+
+    def test_a_gap_of_only_additive_migrations_that_touch_no_journaled_table_is_exempt(self):
+        for version in (17, 12, 10 + 1):
+            self.assertIsNone(journal.schema_gap_blocker(version, 18), version)
+        self.assertIsNone(journal.schema_gap_blocker(12, 17), "13 to 17: job runs, sync runs, folders, damaged, pending")
+        self.assertIsNone(journal.schema_gap_blocker(18, 18))
+
+    def test_a_gap_with_a_migration_that_touches_a_journaled_table_refuses_naming_it(self):
+        found = journal.schema_gap_blocker(7, 18)
+        self.assertIn("migration 8", found)
+        self.assertIn("touches photos", found)
+        self.assertIn("migration 10", journal.schema_gap_blocker(9, 18))   # the settings table is journaled
+
+    def test_a_gap_with_a_migration_that_is_not_additive_refuses_naming_it(self):
+        found = journal.schema_gap_blocker(3, 18)
+        self.assertIn("migration 4", found)
+        self.assertIn("destructive", found)
+        self.assertIn("migration 7", journal.schema_gap_blocker(6, 18), "7 changes data")
+
+    def test_a_migration_that_is_not_in_the_list_refuses(self):
+        fewer = tuple(m for m in schema.MIGRATIONS if m.version != 15)
+        with mock.patch.object(schema, "MIGRATIONS", fewer):
+            self.assertIn("migration 15 is not known", journal.schema_gap_blocker(14, 18))
+        self.assertIn("is not applied here", journal.schema_gap_blocker(19, 18))
+
+    def test_a_fake_additive_migration_touching_a_journaled_table_is_not_exempt(self):
+        fake = schema.Migration(19, "x", lambda conn: None, schema.ADDITIVE, "adds nothing", ("tag_taxonomy",), ())
+        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS + (fake,)):
+            self.assertIn("touches tag_taxonomy", journal.schema_gap_blocker(18, 19))
+
+    def test_a_change_made_at_17_through_the_production_writers_is_undone_after_18_runs(self):
+        from test_migrations import at_version
+        home = own_home.for_test(self)
+        path = home.library("harbour.db")
+        at_version(path, 17)
+        # A library as it stood at schema 17: the journal writes at that version.
+        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:17]), \
+                mock.patch.object(schema, "LATEST", 17):
+            schema._current.clear()
+            applied = journal.apply(path, "add a node", [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})])
+        recorded = db.connect(db.readonly_uri(path), uri=True)
+        try:
+            self.assertEqual(17, recorded.execute("SELECT schema_version FROM changes WHERE id = ?",
+                                                  (applied.change_id,)).fetchone()[0])
+        finally:
+            recorded.close()
+        schema._current.clear()
+        self.assertEqual(["the library's roots"], schema.ensure(path), "migration 18 runs on opening")
+        undone = journal.undo(path, applied.change_id)
+        self.assertEqual(1, undone.rows)
+        conn = db.connect(db.readonly_uri(path), uri=True)
+        try:
+            self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM tag_taxonomy WHERE tag = 'Fresh'").fetchone()[0])
+        finally:
+            conn.close()
+
+    def test_the_history_lists_such_a_change_as_undoable(self):
+        home = own_home.for_test(self)
+        path = home.library("harbour.db")
+        schema.ensure(path)
+        applied = journal.apply(path, "add a node", [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})])
+        conn = db.connect(path)
+        try:
+            conn.execute("UPDATE changes SET schema_version = 17 WHERE id = ?", (applied.change_id,))
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertEqual({applied.change_id: []}, journal.refusals(path, [applied.change_id]))
+        conn = db.connect(path)
+        try:
+            conn.execute("UPDATE changes SET schema_version = 7 WHERE id = ?", (applied.change_id,))
+            conn.commit()
+        finally:
+            conn.close()
+        said = journal.refusals(path, [applied.change_id])[applied.change_id]
+        self.assertIn("made at schema 7 and the library is at %d" % schema.LATEST, said[0])
+        self.assertIn("migration 8", said[0])
+
+    def test_an_adoption_stays_undoable_after_a_later_additive_migration(self):
+        import roots_library as rl
+        from tagpup.core import paths
+        home = own_home.for_test(self)
+        side = rl.Side(home, "adopted", real=1, bulk=2, outside=0)
+        adopted = side.adopt()
+        self.assertTrue(adopted.ok, adopted.message())
+
+        def make(conn):
+            conn.execute("CREATE TABLE IF NOT EXISTS later_things (id INTEGER PRIMARY KEY)")
+
+        fake = schema.Migration(19, "a later table", make, schema.ADDITIVE, "adds a table", ("later_things",),
+                                (schema.RowsKept(),) + schema.STANDARD)
+        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS + (fake,)), \
+                mock.patch.object(schema, "LATEST", 19):
+            schema._current.clear()
+            self.assertEqual(["a later table"], schema.ensure(side.db_path))
+            conn = db.connect(db.readonly_uri(side.db_path), uri=True)
+            try:
+                self.assertEqual([], journal.refusal(conn, adopted.details["change"]))
+            finally:
+                conn.close()
+            undone = journal.undo(side.db_path, adopted.details["change"])
+            self.assertGreater(undone.rows, 0)
+        self.assertEqual([], [p for p in side.raw_paths() if p.startswith(paths.ROOT_MARK)])
+
+    def test_a_migration_is_never_undone_whatever_the_gap(self):
+        from test_migrations import at_version
+        from tagpup.services import journal as journal_service
+        from tagpup.core.library import Library
+        home = own_home.for_test(self)
+        path = home.library("harbour.db")
+        at_version(path, 10)
+        schema._current.clear()
+        self.assertEqual(8, len(schema.ensure(path)))
+        library = Library(path)
+        listed = journal.history(path, limit=100)
+        migrations = [e for e in listed if e["operation"].startswith("migration ")]
+        self.assertGreaterEqual(len(migrations), 8)
+        reasons = journal_service.refusals(library, migrations)
+        for entry in migrations:
+            self.assertIn("a migration is not undone", reasons[entry["id"]], entry)
+            self.assertEqual(["change %d (%s): a migration is not undone" % (entry["id"], entry["operation"])],
+                             journal.refusals(path, [entry["id"]])[entry["id"]])
+            result = journal_service.undo(library, entry["id"], apply=True)
+            self.assertIn("a migration is not undone", result.refused)
+        after = journal.history(path, limit=100)
+        self.assertEqual([], [e["id"] for e in after if e["status"] == "undone"], "nothing was marked undone")
+
+    def test_a_change_at_the_current_version_is_as_before(self):
+        home = own_home.for_test(self)
+        path = home.library("harbour.db")
+        schema.ensure(path)
+        applied = journal.apply(path, "add a node", [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})])
+        self.assertEqual({applied.change_id: []}, journal.refusals(path, [applied.change_id]))
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ import os
 import re
 import sqlite3
 
-from tagpup.core import paths
+from tagpup.store import roots as store_roots
 
 #: How many ids go in one IN (...): well under SQLite's limit on parameters.
 CHUNK = 500
@@ -58,19 +58,22 @@ def people_named(conn):
 def ids_and_paths(conn):
     """(id, path as stored) of every photo, by path: the unique index on path covers it,
     where ordering by id reads every row, raw metadata and all."""
-    return conn.execute("SELECT id, path FROM photos ORDER BY path").fetchall()
+    return store_roots.ordered(conn, store_roots.natives(
+        conn, conn.execute("SELECT id, path FROM photos ORDER BY path").fetchall(), 1), 1)
 
 
 def under(conn, folder):
     """(id, path as stored) of each photo under `folder`, at any depth, by id."""
-    where, params = paths.sql_under("path", folder)
-    return conn.execute("SELECT id, path FROM photos WHERE " + where + " ORDER BY id", params).fetchall()
+    where, params = store_roots.sql_under(conn, "path", folder)
+    return store_roots.natives(conn, conn.execute(
+        "SELECT id, path FROM photos WHERE " + where + " ORDER BY id", params).fetchall(), 1)
 
 
 def tags_of_every_photo(conn):
     """(id, path as stored, tags) of every photo; unreadable tags are []."""
     return [(photo_id, path, _json(tags_json, []))
-            for photo_id, path, tags_json in conn.execute("SELECT id, path, tags FROM photos ORDER BY id")]
+            for photo_id, path, tags_json in store_roots.natives(
+                conn, conn.execute("SELECT id, path, tags FROM photos ORDER BY id").fetchall(), 1)]
 
 
 def tags_of(conn, photo_ids):
@@ -78,23 +81,25 @@ def tags_of(conn, photo_ids):
     rows are read by id, so a folder of thirty photos reads thirty (docs/findings.md, #185)."""
     found = []
     for chunk in _chunks(sorted(photo_ids)):
-        found.extend((photo_id, path, _json(tags_json, [])) for photo_id, path, tags_json in conn.execute(
-            "SELECT id, path, tags FROM photos WHERE id IN (%s)" % _marks(chunk), chunk))
+        found.extend((photo_id, path, _json(tags_json, [])) for photo_id, path, tags_json in store_roots.natives(
+            conn, conn.execute("SELECT id, path, tags FROM photos WHERE id IN (%s)" % _marks(chunk),
+                               chunk).fetchall(), 1))
     return sorted(found)
 
 
 def of_person(conn, name):
     """(id, path as stored) of each photo whose people (photo_people) list `name`, spelled
     exactly as the rows spell it, by id. idx_photo_people_name serves it."""
-    return conn.execute("SELECT p.id, p.path FROM photos p WHERE p.id IN"
-                        " (SELECT photo_id FROM photo_people WHERE name = ?) ORDER BY p.id",
-                        (name,)).fetchall()
+    return store_roots.natives(conn, conn.execute(
+        "SELECT p.id, p.path FROM photos p WHERE p.id IN"
+        " (SELECT photo_id FROM photo_people WHERE name = ?) ORDER BY p.id", (name,)).fetchall(), 1)
 
 
 def row(conn, photo_id):
     """{path, mtime, size, tags, captions, raw_metadata, document_id} of one photo, or None."""
-    found = conn.execute("SELECT path, mtime, size, tags, captions, raw_metadata, document_id"
-                         " FROM photos WHERE id = ?", (photo_id,)).fetchone()
+    found = store_roots.native_one(conn, conn.execute(
+        "SELECT path, mtime, size, tags, captions, raw_metadata, document_id"
+        " FROM photos WHERE id = ?", (photo_id,)).fetchone(), 0, raw=(5,))
     if found is None:
         return None
     path, mtime, size, tags, captions, raw, document_id = found
@@ -112,8 +117,12 @@ def ids_of_stored(conn, stored_paths):
     """{path: id} of the photos stored under exactly these paths."""
     found = {}
     for chunk in _chunks(stored_paths):
-        found.update({path: photo_id for photo_id, path in conn.execute(
-            "SELECT id, path FROM photos WHERE path IN (%s)" % _marks(chunk), chunk)})
+        asked = {}
+        for path in chunk:
+            asked.setdefault(store_roots.to_row(conn, path), []).append(path)
+        for photo_id, row in conn.execute(
+                "SELECT id, path FROM photos WHERE path IN (%s)" % _marks(asked), list(asked)).fetchall():
+            found.update({path: photo_id for path in asked[row]})
     return found
 
 
@@ -121,7 +130,7 @@ def ids_of_files(conn, photo_paths):
     """The ids of the photos stored under any spelling of these paths, as paths compare."""
     found = set()
     for photo_path in photo_paths:
-        where, params = paths.sql_equals("path", photo_path)
+        where, params = store_roots.sql_equals(conn, "path", photo_path)
         found.update(photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params))
     return sorted(found)
 
@@ -152,8 +161,10 @@ def faces_on(conn, photo_ids):
 def whose_file_is_gone(conn):
     """(id, path as stored) of each photo whose file is not on disk, by path. What
     tagpup.store.checks.missing_files counts by folder, row by row."""
-    return [(photo_id, path) for photo_id, path in conn.execute("SELECT id, path FROM photos ORDER BY path")
-            if not os.path.exists(path)]
+    return store_roots.ordered(conn, [
+        (photo_id, path) for photo_id, path in store_roots.natives(
+            conn, conn.execute("SELECT id, path FROM photos ORDER BY path").fetchall(), 1)
+        if not os.path.exists(path)], 1)
 
 
 # ---- Query plans ------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import os
 
 from tagpup.core import paths
 from tagpup.store import generations, people, schema
+from tagpup.store import roots as store_roots
 
 #: One rule and what breaks it. `examples` are paths, ids or tags, a few at most.
 Check = collections.namedtuple("Check", "name count examples")
@@ -90,8 +91,12 @@ def people_out_of_date(conn):
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'photo_people'").fetchone():
         return _check("photos whose people are out of date", [])
     stale = set(people.stale(conn))
-    return _check("photos whose people are out of date", sorted(
-        path for photo_id, path in conn.execute("SELECT id, path FROM photos") if photo_id in stale))
+    try:
+        listed = store_roots.natives(conn, conn.execute("SELECT id, path FROM photos").fetchall(), 1)
+    except paths.RootsError:
+        # A root this machine does not place: the paths cannot be spelled. rooted_rows_convert says so.
+        listed = []
+    return _check("photos whose people are out of date", sorted(path for photo_id, path in listed if photo_id in stale))
 
 
 def orphan_nodes(conn):
@@ -143,7 +148,11 @@ def suggestions_without_a_photo(conn):
 
 def one_file_two_rows(conn):
     """Photos with more than one row, their paths differing only as paths.key ignores."""
-    seen = collections.Counter(paths.key(p) for (p,) in conn.execute("SELECT path FROM photos"))
+    try:
+        listed = store_roots.natives(conn, conn.execute("SELECT path FROM photos").fetchall(), 0)
+    except paths.RootsError:
+        listed = []   # a root this machine does not place: rooted_rows_convert says so
+    seen = collections.Counter(paths.key(p) for (p,) in listed)
     return _check("photos with two rows", sorted(k for k, n in seen.items() if n > 1))
 
 
@@ -169,16 +178,104 @@ def missing_files(conn):
     Reported, not broken: a folder on an unplugged drive looks the same as a deleted one
     (docs/ARCHITECTURE.md, phase 8)."""
     by_folder = collections.Counter()
-    for (path,) in conn.execute("SELECT path FROM photos"):
+    for (path,) in store_roots.natives(conn, conn.execute("SELECT path FROM photos").fetchall(), 0):
         if not os.path.exists(path):
             by_folder[os.path.dirname(path)] += 1
     return [(folder, count, os.path.isdir(folder)) for folder, count in sorted(by_folder.items())]
 
 
+# ---- The library's roots (docs/ARCHITECTURE.md, "Roots and machines") -------------------------
+
+#: The tables with a column of paths the roots convert, and the column (tagpup.store.adoption.TABLES).
+ROOT_COLUMNS = (("photos", "path"), ("change_files", "path"), ("change_files", "new_path"),
+                ("added_folders", "path"), ("damaged_files", "path"))
+
+
+def _roots_or_why(conn):
+    """(the Roots of the library on `conn`, None) -- or (None, why not): the machine's map is
+    missing or does not place a root. A check says so; it does not stop."""
+    try:
+        return store_roots.roots_for(conn), None
+    except paths.RootsError as problem:
+        return None, str(problem)
+
+
+def _path_rows(conn):
+    """(table, row id, the path) of every row of each ROOT_COLUMNS: the key of the row in its
+    table (the id; the path itself, as a rowid, for the tables keyed by it)."""
+    for table, column in ROOT_COLUMNS:
+        if not _table(conn, table):
+            continue
+        key = "id" if table in ("photos", "change_files") else "rowid"
+        for row_id, value in conn.execute("SELECT %s, %s FROM %s WHERE %s IS NOT NULL" % (key, column, table, column)):
+            yield table, row_id, value
+
+
+def rooted_rows_convert(conn):
+    """Rooted rows -- `@name/...` in a path column -- that cannot be read: the root is not the
+    library's, this machine does not place it (machine_roots.json), or the row is not what
+    paths.to_row writes. A photo is named by its id, any other row by its table and key."""
+    if not _table(conn, "roots"):
+        # Behind migration 18: nothing can be rooted, and a row that says so is not a root's.
+        return _check("rooted rows that do not convert back", [])
+    held = {name for name, _address in store_roots._rows(conn)}
+    roots, _why = _roots_or_why(conn)
+    broken = []
+    for table, row_id, value in _path_rows(conn):
+        if not value.startswith(paths.ROOT_MARK):
+            continue
+        name = value[1:].partition(paths.ROW_SEP)[0].lower()
+        good = name in held and roots is not None
+        if good:
+            try:
+                found = roots.locate(paths.from_row(value, roots))
+                # Held under one root, though the file lies under another's place: a nested root's
+                # rows left under the outer one, which a lookup under the inner root misses.
+                good = found is None or found[0] == name
+            except paths.RootsError:
+                good = False
+        if not good:
+            broken.append(row_id if table == "photos" else "%s %s" % (table, row_id))
+    return _check("rooted rows that do not convert back", broken)
+
+
+def native_rows_under_a_root(conn):
+    """Rows that still hold a native path under the location of a root the library has: a
+    write that converted by the roots the library had before another process adopted one. The
+    adoption converts every row under the root, and every write after it converts its own; one
+    here was written between (docs/ARCHITECTURE.md, "Roots and machines"). A photo is named by
+    its id."""
+    if not _table(conn, "roots") or not store_roots._rows(conn):
+        return _check("native rows under a root", [])
+    roots, _why = _roots_or_why(conn)
+    if roots is None:
+        return _check("native rows under a root", [])
+    broken = []
+    for table, row_id, value in _path_rows(conn):
+        if value and not value.startswith(paths.ROOT_MARK) and roots.locate(value) is not None:
+            broken.append(row_id if table == "photos" else "%s %s" % (table, row_id))
+    return _check("native rows under a root", broken)
+
+
+def unrooted_by_folder(conn):
+    """The photos held under no root of the library, by folder: [{"group", "count"}], the
+    biggest first (paths.outside_roots). Reported, not broken: a folder outside the roots can be
+    opened and tagged and uses the library (docs/ARCHITECTURE.md). A library with no roots has
+    every photo native, and says nothing."""
+    if not _table(conn, "roots") or not store_roots._rows(conn):
+        return []
+    roots, _why = _roots_or_why(conn)
+    if roots is None:
+        return []
+    return paths.outside_roots([os.path.dirname(path) for (path,) in conn.execute("SELECT path FROM photos")
+                                if not path.startswith(paths.ROOT_MARK)], roots)
+
+
 #: The rules a library keeps, in the order a report lists them.
 RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excluded,
          people_out_of_date, orphan_nodes, crops_without_a_face, vectors_without_a_photo,
-         people_without_a_photo, suggestions_without_a_photo, one_file_two_rows)
+         people_without_a_photo, suggestions_without_a_photo, one_file_two_rows,
+         rooted_rows_convert, native_rows_under_a_root)
 
 
 def run(conn):

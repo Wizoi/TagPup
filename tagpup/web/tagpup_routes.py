@@ -655,6 +655,12 @@ def photos_bulk_tags():
             result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
                                                  state.exiftool(library))
             if result.refused:
+                # A write stopped half-way (its roots changed) has written some files: the page is told which,
+                # and its records say so, as for a failure.
+                if result.details.get("written"):
+                    _records_written(library, result)
+                    return responses.refused(result, written=_written_tags(result),
+                                             change=result.details.get("change"))
                 return responses.refused(result)
             _records_written(library, result)
     except Exception as e:

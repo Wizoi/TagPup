@@ -2,6 +2,7 @@
 // Every request goes through api.js, which puts the library in front of it
 // (web/common/api.js).
 import { initDatabaseSelector } from './common/library.js';
+import { wireRootsBanner } from './common/roots-banner.js';
 import { loadRules } from './common/validate.js';
 import { upper } from './hooks.js';
 import {
@@ -129,6 +130,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // The gear: the tag editor (web/common/tag-editor.js) and TagTuner on this library.
     wireTagPupGear();
+
+    // A library whose root this computer does not place says so, at the top of the page.
+    wireRootsBanner();
 
     // ---- Start ------------------------------------------------------------
     //

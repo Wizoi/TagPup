@@ -26,15 +26,24 @@ writers to different databases never wait on each other.
 
 **A retry** for the writer this process cannot see -- another process, or a checkpoint.
 
+**The library's roots, held by the connection.** A path column holds a root's name and the path
+under it once a library has been adopted by a root (tagpup.store.roots), and the store converts
+at its boundary. The conversion a connection uses is kept on the connection (`roots_state`), so
+an operation that holds a connection converts every path of it by one Roots -- never a lookup a
+row -- and a write is refused, and run again, when the library's roots changed between the
+moment its paths were converted and the moment it commits.
+
 Never call `sqlite3.connect` directly; `tests/test_db_access.py` fails if you do.
 """
+import json
 import logging
+import os
 import sqlite3
 import threading
 import time
 from contextlib import contextmanager
 
-from tagpup.core import paths
+from tagpup.core import paths, processes
 from tagpup.core.library import Library
 
 logger = logging.getLogger("tagpup_cli.db")
@@ -71,6 +80,14 @@ def readonly_uri(db_path):
     them on purpose.
     """
     return "file:%s?mode=ro" % paths.stored(db_path).replace("\\", "/")  # not a path: URI syntax
+
+
+class Connection(sqlite3.Connection):
+    """The connection db.connect makes: SQLite's, with a place to keep the roots the store
+    converts this connection's paths by (tagpup.store.roots.roots_for)."""
+
+    #: What tagpup.store.roots keeps here, or None before the connection first needs it.
+    roots_state = None
 
 
 def _is_readonly(target, kwargs):
@@ -111,6 +128,7 @@ def connect(target, *args, foreign_keys=False, **kwargs):
     relies on: deleting a photo row takes its faces with it (ON DELETE CASCADE).
     """
     kwargs.setdefault("timeout", BUSY_TIMEOUT_MS / 1000.0)
+    kwargs.setdefault("factory", Connection)
     conn = sqlite3.connect(target, *args, **kwargs)
     configure(conn, readonly=_is_readonly(target, kwargs))
     if foreign_keys:
@@ -145,10 +163,63 @@ def retry_when_busy(operation, attempts=4, first_delay=0.25, label="database wri
             delay *= 2
 
 
+#: How long a note that the library is busy for a reason stays believed: a process that crashed
+#: holding it leaves the file behind.
+BUSY_NOTE_SECONDS = 15 * 60
+
+
+def _busy_file(target):
+    return str(target) + ".busy"
+
+
+def mark_busy(target, why):
+    """Say, beside the library at `target`, why a write may have to wait: a maintenance step
+    holds the write lock for a long time (a backup copy under a root's adoption). A write that
+    then fails as locked says it (`write`), where it was a bare "database is locked". Cleared
+    with clear_busy."""
+    try:
+        with open(_busy_file(target), "w", encoding="utf-8") as handle:
+            json.dump({"why": why, "since": time.time(), "pid": os.getpid()}, handle)
+    except OSError:
+        pass
+
+
+def clear_busy(target):
+    try:
+        os.remove(_busy_file(target))
+    except OSError:
+        pass
+
+
+def busy_note(target):
+    """Why the library at `target` is busy, if a maintenance step said so recently and the process
+    that said it is still there, else None. A note whose process has gone -- killed during its
+    copy -- is removed: its lock is gone with it, and any lock failure after it is an ordinary one."""
+    try:
+        with open(_busy_file(target), encoding="utf-8") as handle:
+            found = json.load(handle)
+        if time.time() - float(found["since"]) >= BUSY_NOTE_SECONDS:
+            return None
+        if not processes.is_alive(int(found["pid"])):
+            clear_busy(target)
+            return None
+        return str(found["why"])
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
 def write(target, operation, label="database write"):
-    """Run a write with this process's other writes to the same database held back."""
+    """Run a write with this process's other writes to the same database held back. A write
+    that fails for the lock when a step said it holds it for a reason (mark_busy) says why."""
     with lock_for(target):
-        return retry_when_busy(operation, label=label)
+        try:
+            return retry_when_busy(operation, label=label)
+        except sqlite3.OperationalError as problem:
+            note = busy_note(target) if "locked" in str(problem).lower() else None
+            if note:
+                raise sqlite3.OperationalError("%s: %s" % (problem, note)) from problem
+            raise
 
 
 def write_with_connection(target, operation, label="database write"):
@@ -166,12 +237,17 @@ def write_with_connection(target, operation, label="database write"):
 
     `operation` is called with the connection and its result returned; the commit,
     rollback and close are handled here. It may be called more than once, so it
-    should not carry state between attempts.
+    should not carry state between attempts: one is that the library's roots changed, by
+    another process, between the moment the operation converted its paths and the moment it
+    would commit (roots.unchanged), when it is run again with the roots as they now are.
     """
     def attempt():
         conn = connect(target)
         try:
             result = operation(conn)
+            if conn.roots_state is not None:
+                from tagpup.store import roots   # roots imports this module
+                roots.unchanged(conn)
             conn.commit()
             return result
         except Exception:

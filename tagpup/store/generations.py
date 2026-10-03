@@ -4,11 +4,41 @@ Triggers made by tagpup.store.schema bump `photos`, `faces` or `taxonomy` in the
 `generations` table on every change to those tables, from any process: TagPup,
 TagTuner, the CLI or a script. A cache that stores the generations it was built at
 is current exactly while they have not moved, which one small query can tell.
+
+A cache of photos or faces holds the paths of this machine, native, and where a library holds a
+root a path is where the machine's map puts it (tagpup.store.roots): move the root in the map
+and the paths a cache holds are the old place's, though no row moved. So the generations of
+photos and faces carry a salt made of the library's roots and where this machine keeps them --
+nothing, 0, for a library with no roots -- and every cache keyed by them is built again when the
+map moves, the Identify Faces grids, the folders the watcher watches and the index's.
 """
 import sqlite3
 import threading
+import zlib
+
+from tagpup.store import roots as store_roots
 
 NAMES = ("photos", "faces", "taxonomy")
+
+#: The generations whose caches hold paths.
+WITH_PATHS = ("photos", "faces")
+
+#: One more than any salt, for a library whose roots this machine cannot place.
+_UNPLACED = 1 << 40
+
+
+def _salt(conn):
+    """A number that is 0 for a library with no roots and otherwise says where this machine
+    keeps them, to be added to a generation. Never raises: a map that cannot be read is a
+    salt of its own, and what converts a path says why."""
+    try:
+        roots = store_roots.roots_for(conn)
+    except ValueError:
+        return _UNPLACED
+    if roots.identity:
+        return 0
+    text = repr(sorted((name, roots.logical[name], roots.locations.get(name, ())) for name in roots.logical))
+    return (zlib.crc32(text.encode("utf-8")) + 1) << 41
 
 
 def value(conn, name):
@@ -24,7 +54,8 @@ def values(conn, names=NAMES):
             tuple(names)).fetchall())
     except sqlite3.OperationalError:
         found = {}
-    return tuple(found.get(name, 0) for name in names)
+    salt = _salt(conn) if any(name in WITH_PATHS for name in names) else 0
+    return tuple(found.get(name, 0) + (salt if name in WITH_PATHS else 0) for name in names)
 
 
 class Cache:
