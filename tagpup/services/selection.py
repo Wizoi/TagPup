@@ -15,6 +15,7 @@ connection; a root this machine does not place raises paths.RootsError (the web 
 """
 import collections
 
+from tagpup.core import vocabulary
 from tagpup.core.result import Refused
 from tagpup.services import library_view
 from tagpup.store import library_view as store
@@ -67,6 +68,39 @@ def read(library, body):
         raise Refused("A source is {\"kind\": ..., \"value\": ..., \"recursive\": ...}.")
     source = library_view.source_of(library, named.get("kind"), named.get("value"), named.get("recursive"))
     return Selection(None, source, _id_list(body.get("excluded", []), "excluded"))
+
+
+def tally(library, selection):
+    """What the photos of `selection` hold: {"total" (the photos that exist), "tags": [{"tag", "count"}], "people":
+    [{"name", "count"}], "more_tags", "more_people"} -- the tags and people the selection carries, each with the number of
+    its photos, tags alphabetically by the shared order (vocabulary.tag_sort_key) and people by it too, at most MAX_TALLIED
+    of each (the rest are counted in `more_*`, the most used kept). From photo_tags and photo_people, one grouped read over
+    the selection: a source is joined in SQL and its excluded ids taken out there, so 68,000 photos are no list in
+    Python and no request of that size. A tag no node of the tree holds is not in photo_tags and so not in it (the
+    navigator's counts leave it out too). Refused as `resolve` refuses a selection, but NOT for being larger than a job
+    takes: the panel may tally a whole library."""
+    conn = library_view.opened(library)
+    try:
+        found = store.tally(conn, selection.ids, selection.source, selection.excluded)
+    finally:
+        conn.close()
+    tags = _kept([(tag, count) for tag, count in found["tags"]])
+    people = _kept(found["people"])
+    return {"total": found["total"],
+            "tags": [{"tag": tag, "count": count} for tag, count in tags[0]], "more_tags": tags[1],
+            "people": [{"name": name, "count": count} for name, count in people[0]], "more_people": people[1]}
+
+
+def _kept(counted):
+    """([(name, count)] at most MAX_TALLIED of them -- the most used, then in the shared alphabetical order --, how many
+    were left out)."""
+    if len(counted) > MAX_TALLIED:
+        counted = sorted(counted, key=lambda each: (-each[1], vocabulary.tag_sort_key(each[0])))
+        left = len(counted) - MAX_TALLIED
+        counted = counted[:MAX_TALLIED]
+    else:
+        left = 0
+    return sorted(counted, key=lambda each: vocabulary.tag_sort_key(each[0])), left
 
 
 def _refuse_if_large(count):

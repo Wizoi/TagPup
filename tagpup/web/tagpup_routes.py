@@ -35,6 +35,7 @@ from tagpup.services import libraries as library_actions
 from tagpup.services import library_view
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
+from tagpup.services import selection as selection_service
 from tagpup.services import tagging as tagging_actions
 from tagpup.services import tags as tags_service
 from tagpup.services import thumbnails
@@ -718,6 +719,24 @@ def library_find():
         return _view_error(why)
     except Exception as e:
         logger.error("Error finding a photo of the library: %s", e, exc_info=True)
+        return responses.error(500, str(e))
+
+
+@routes.post("/api/library/selection/tally")
+def library_selection_tally():
+    """The tags and people a selection of photos carries, with how many photos carry each (phase 9d-1,
+    tagpup.services.selection.tally): `selection` is a list of ids or a source minus the ids excluded."""
+    if (refusal := _this_pc_only()) is not None:
+        return refusal
+    library = state.require()
+    body = request.get_json(silent=True)
+    try:
+        return jsonify(selection_service.tally(library, selection_service.read(
+            library, body.get("selection") if isinstance(body, dict) else None)))
+    except (Refused, NotFound, paths.RootsError) as why:
+        return _view_error(why)
+    except Exception as e:
+        logger.error("Error tallying a selection: %s", e, exc_info=True)
         return responses.error(500, str(e))
 
 
