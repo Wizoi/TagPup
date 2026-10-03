@@ -718,6 +718,9 @@ LOOPBACK = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
 #: The background task the folder watcher is (tagpup.runtime.BACKGROUND).
 WATCHER = "folder watcher"
 
+#: How often the page asks how a full Verify is going, in milliseconds.
+POLL_MS = 1000
+
 
 @routes.before_request
 def _roots_from_this_pc():
@@ -780,6 +783,7 @@ def roots_list():
     for entry in found["roots"]:
         entry["verifying"] = running.get(entry["name"])
     found["busy"] = _busy(library)
+    found["poll_ms"] = POLL_MS
     return jsonify(found)
 
 

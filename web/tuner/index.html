@@ -9,11 +9,16 @@
     <link rel="stylesheet" href="common/tag-editor.css">
     <link rel="stylesheet" href="common/settings-dialog.css">
     <link rel="stylesheet" href="common/history-dialog.css">
+    <link rel="stylesheet" href="common/roots-banner.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
+    <div id="roots-banner" class="roots-banner hidden" role="alert">
+        <strong>This computer does not know where this library keeps its photos.</strong>
+        <span class="roots-banner-message"></span>
+    </div>
     <div class="app-container">
         <!-- Top Navbar -->
         <header class="app-header">
@@ -62,6 +67,7 @@
                         <button type="button" role="menuitem" data-action="library-settings" title="This library's settings: the CLIP model, face detection and ExifTool (Suggest's words and the rename format are in TagPup's gear)">Library settings</button>
                         <button type="button" role="menuitem" data-action="library-history" title="This library's last changes, and Undo beside each that can be undone">History...</button>
                         <button type="button" role="menuitem" data-action="folders-review" title="Folders under the library's roots that hold photos not in it: include or ignore each">Folders to review...</button>
+                        <button type="button" role="menuitem" data-action="library-roots" title="Where this computer keeps each root of the library: check a place, move a root, move it back">Roots...</button>
                         <a role="menuitem" href="/activity/" target="_blank" rel="noopener" title="What runs and what ran in every library: indexing, jobs, syncs, snapshots, logs">Activity...</a>
                         <div class="gear-menu-separator" role="separator"></div>
                         <a role="menuitem" data-app="tagpup" target="_blank" rel="noopener" aria-disabled="true">Open in TagPup</a>
