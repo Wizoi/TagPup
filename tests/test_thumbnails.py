@@ -80,6 +80,11 @@ class FirstAsk(Cache):
             self.serve(99999)
         self.assertIn("no photo 99999", str(caught.exception))
 
+    def test_an_id_sqlite_cannot_hold_is_no_photo_and_not_an_overflow(self):
+        for wanted in (-1, 0, 2 ** 63, 2 ** 70):
+            with self.subTest(wanted=wanted), self.assertRaises(NotFound):
+                thumbnails.serve(self.library, wanted)
+
     def test_the_url_names_the_photo_by_id_and_carries_the_stamp(self):
         self.assertEqual("/api/photo-thumb?id=7&v=1717236000.5", thumbnails.url(7, 1717236000.5))
         self.assertEqual("/api/photo-thumb?id=7", thumbnails.url(7))

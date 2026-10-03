@@ -178,11 +178,14 @@ def serve(library, photo_id):
     """The Thumb of photo `photo_id` of `library`. Raises NotFound -- with its sentence -- for an id the
     library has no photo of, or one whose file is not there and was never shown; Unavailable when the file cannot
     be reached; paths.RootsError for a photo under a root this machine does not place."""
-    conn = _look(library)
-    try:
-        row = store_photos.thumb_row(conn, photo_id)
-    finally:
-        conn.close()
+    # An id SQLite cannot hold names no photo: a sentence, not an overflow.
+    row = None
+    if 0 < photo_id < 2 ** 63:
+        conn = _look(library)
+        try:
+            row = store_photos.thumb_row(conn, photo_id)
+        finally:
+            conn.close()
     if row is None:
         raise NotFound("There is no photo %d in this library." % photo_id)
     root = library.thumbs
