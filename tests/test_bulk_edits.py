@@ -476,6 +476,28 @@ class WhatGoesWrong(Bulk):
         self.assertEqual(("done", 25, self.PHOTOS - 25), (done["state"], done["error_count"], done["changed"]))
         self.assertIn("Can't check", done["errors"][0]["why"])
 
+    def test_photos_on_a_share_that_does_not_answer_are_errors_not_sent_to_exiftool_and_the_others_are_written(self):
+        from tagpup.services import damaged_photos
+        away = {paths.key(self.path(photo_id)) for photo_id in self.ids[:6]}
+        real = damaged_photos.stamp_of
+
+        def stamp_of(path):
+            return damaged_photos.UNANSWERED if paths.key(path) in away else real(path)
+        with mock.patch.object(damaged_photos, "stamp_of", stamp_of):
+            done = self.run_tags(add=["Trips/Coast"])
+        self.assertEqual(("done", 6, self.PHOTOS - 6), (done["state"], done["error_count"], done["changed"]))
+        self.assertIn("share that did not answer", done["errors"][0]["why"])
+        for key in away:
+            self.assertNotIn(key, self.files.reads, "ExifTool was never asked to read a file on the share that is away")
+
+    def test_a_whole_share_away_stops_the_job_after_five_chunks_and_not_after_five_minutes_a_photo(self):
+        from tagpup.services import damaged_photos
+        with mock.patch.object(damaged_photos, "stamp_of", return_value=damaged_photos.UNANSWERED), \
+                mock.patch.object(bulk_edits, "CHUNK", 5):
+            done = self.run_tags(add=["Trips/Coast"])
+        self.assertEqual(("failed", 25, 0), (done["state"], done["done"], done["changed"]))
+        self.assertEqual({}, self.files.reads)
+
     def test_a_library_behind_is_a_409_before_anything_starts(self):
         with mock.patch("tagpup.services.library_view.store.ready", return_value=False):
             self.assertEqual(409, self.post("start", {"op": "tags", "selection": ALL, "params": {"add": ["A"]}}).status_code)

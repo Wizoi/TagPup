@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from tagpup.core import dates, paths, validation, vocabulary
 from tagpup.core.result import Refused, Result
 from tagpup.files import job_files
-from tagpup.services import file_changes, file_only, libraries, library_view, tagging
+from tagpup.services import damaged_photos, file_changes, file_only, libraries, library_view, tagging
 from tagpup.services import photos as photo_actions
 from tagpup.store import file_journal, taxonomy
 from tagpup.store import library_view as store
@@ -187,6 +187,7 @@ def run_chunk(library, edit, ids, exiftool_path, operation):
         conn.close()
     present = [(photo_id, found[photo_id]) for photo_id in ids if photo_id in found]
     out = Outcome(skipped_missing=len(ids) - len(present))
+    present = _reachable(present, out)
     if not present:
         return out
     by_key = {paths.key(path): photo_id for photo_id, path in present}
@@ -204,8 +205,28 @@ def run_chunk(library, edit, ids, exiftool_path, operation):
     return out
 
 
+#: What an error says of a photo on a network share that did not answer.
+AWAY = "its folder could not be reached just now (a network share that did not answer), so nothing was written to it"
+
+
+def _reachable(present, out):
+    """`present` without the photos on a share that does not answer (each an error of `out`): a bounded stat of each file
+    (damaged_photos.stamp_of: a share is asked within a second, and one found away is answered at once for 30 seconds, so a
+    chunk of 25 waits once). Sent on, such a photo would cost ExifTool's whole deadline (five minutes) and then one more for each
+    photo of the batch it is retried singly for. A file that is gone is no matter here (the write counts it missing) and one that
+    cannot be read is the write's own error."""
+    kept = []
+    for photo_id, path in present:
+        if damaged_photos.stamp_of(path) is damaged_photos.UNANSWERED:
+            out.errors.append((photo_id, os.path.basename(path), AWAY))
+        else:
+            kept.append((photo_id, path))
+    return kept
+
+
 def _count(out, result, present, by_key):
-    """Count a Result of one chunk into `out`."""
+    """Count a Result of one chunk into `out`, whose errors so far are the photos left out as away."""
+    away = len(out.errors)
     out.changed = result.changed
     gone = result.details.get(tagging.SKIPPED_MISSING, 0)
     damaged = result.details.get(libraries.SKIPPED_DAMAGED, 0)
@@ -222,7 +243,7 @@ def _count(out, result, present, by_key):
         for what, why in result.errors:
             photo_id = by_key.get(paths.key(what))
             out.errors.append((photo_id, os.path.basename(what), str(why)))
-    out.unchanged = max(0, len(present) - out.changed - gone - damaged - len(out.errors))
+    out.unchanged = max(0, len(present) - out.changed - gone - damaged - (len(out.errors) - away))
 
 
 def _shift(library, photo_paths, minutes, exiftool_path, operation):
