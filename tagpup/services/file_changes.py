@@ -92,14 +92,33 @@ def skip(why):
 _one_at_a_time = threading.RLock()
 
 
+#: How many threads are waiting for the lock now (waiting()). Counted under its own small lock.
+_waiting = 0
+_waiting_guard = threading.Lock()
+
+
+def waiting():
+    """How many changes of photo files are waiting for the lock now. A job that takes the lock for a chunk at a time lets
+    them in between chunks (it waits while this is above zero): a lock is not fair, and the thread that has just let go of one
+    takes it again before a waiter has woken."""
+    return _waiting
+
+
 @contextlib.contextmanager
 def exclusively():
     """Hold the one lock of changes of photo files: around the reads a change is planned
     from and its writes. A second waits for the first. Also a decorator:
     `@file_changes.exclusively()`."""
+    global _waiting
     if not _one_at_a_time.acquire(blocking=False):
         logger.info("A change of photo files waits for the one under way to finish")
-        _one_at_a_time.acquire()
+        with _waiting_guard:
+            _waiting += 1
+        try:
+            _one_at_a_time.acquire()
+        finally:
+            with _waiting_guard:
+                _waiting -= 1
     try:
         yield
     finally:
