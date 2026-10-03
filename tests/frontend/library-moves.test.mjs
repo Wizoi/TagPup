@@ -158,15 +158,47 @@ describe("Show on disk, and the scope of a folder's view", () => {
     assert.equal(ctx.here.scrollTop, GRID_TOP + 40 * STRIDE, "the 161st photo is at the top again (no strip above a folder view)");
   });
 
-  test("a folder that is not on disk: the scan's own sentence, nothing thrown", async (t) => {
+  test("a folder that is not on disk keeps the view and says so; the page is never left with neither a view nor a folder (#569)", async (t) => {
     const ctx = await loadViewPage(t, { search: FOLDER_VIEW });
     const said = [];
     ctx.window.alert = (text) => said.push(text);
     ctx.server.first("/api/folder/scan", { error: "Path is not a valid directory: D:\\Library\\2020\\Event 01" }, { status: 400 });
     ctx.document.getElementById("btn-show-on-disk").click();
     await ctx.settle(200);
-    assert.match(said.join(), /Path is not a valid directory/);
-    assert.deepEqual(pageErrors().filter((each) => !/Scan failed|Path is not a valid/.test(each)), []);
+    assert.ok(ctx.state.library, "the view is still open");
+    assert.equal(ctx.state.library.status, "ready");
+    assert.ok(ctx.real().length > 0);
+    assert.match(ctx.stripText(), /That folder is not on disk any more\./);
+    assert.deepEqual(said, [], "no alert");
+    assert.match(ctx.window.location.search, /view=folder/);
+    assert.equal(ctx.document.getElementById("folder-path-input").value, "");
+    assert.equal(ctx.document.getElementById("btn-show-on-disk").disabled, false, "and the button can be tried again");
+  });
+
+  test("a scan that cannot be had for another reason keeps the view too, with the server's sentence", async (t) => {
+    const ctx = await loadViewPage(t, { search: FOLDER_VIEW });
+    ctx.server.first("/api/folder/scan", { error: "The share did not answer." }, { status: 500 });
+    ctx.document.getElementById("btn-show-on-disk").click();
+    await ctx.settle(200);
+    assert.ok(ctx.state.library);
+    assert.match(ctx.stripText(), /Could not open that folder on disk: The share did not answer\./);
+    pageErrors();
+  });
+
+  test("the view is closed only after the scan has answered, and a second click while it is out sends no second scan", async (t) => {
+    const ctx = await loadViewPage(t, { search: FOLDER_VIEW, scan: scan(60) });
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    ctx.server.first("/api/folder/scan", () => gate.then(() => scan(60)()));
+    ctx.document.getElementById("btn-show-on-disk").click();
+    ctx.document.getElementById("btn-show-on-disk").click();
+    await ctx.settle(60);
+    assert.ok(ctx.state.library, "still the view while the scan is out");
+    assert.equal(ctx.server.urls().filter((url) => url.includes("/api/folder/scan")).length, 1);
+    release();
+    await ctx.settle(200);
+    assert.equal(ctx.state.library, null);
+    assert.equal(ctx.state.scannedFolder, FOLDER);
   });
 });
 
@@ -180,6 +212,7 @@ describe("the banner: the disk holds photos the library does not", () => {
     const ctx = await loadViewPage(t, { search: FOLDER_VIEW, membership: MEMBERSHIP });
     await ctx.popTo("?view=all");
     ctx.hold.membership = true;
+    ctx.state.moves.cache.clear();
     await ctx.popTo(FOLDER_VIEW);
     assert.equal(ctx.state.library.status, "ready");
     assert.ok(ctx.real().length > 0, "the cards are drawn while the question is out");
@@ -240,10 +273,11 @@ describe("the banner: the disk holds photos the library does not", () => {
       search: FOLDER_VIEW,
       before: (window) => {
         const set = window.setTimeout.bind(window);
-        window.setTimeout = (fn, ms, ...rest) => set(fn, ms === 8000 ? 30 : ms, ...rest);
+        window.setTimeout = (fn, ms, ...rest) => set(fn, ms === 15000 ? 30 : ms, ...rest);
       },
     });
     ctx.hold.membership = true;
+    ctx.state.moves.cache.clear();
     ctx.state.moves.dismissed.clear();
     await ctx.popTo("?view=all");
     await ctx.popTo(FOLDER_VIEW);

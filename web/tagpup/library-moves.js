@@ -9,6 +9,7 @@
 // The banner for photos the disk holds and the library does not is library-banner.js's.
 import { api } from './common/api.js';
 import { pathKey, samePath } from './common/paths.js';
+import { upper } from './hooks.js';
 import { state } from './state.js';
 import { btnLibraryScope, btnShowInLibrary, btnShowOnDisk } from './elements.js';
 import { checkNotHeld } from './library-banner.js';
@@ -35,11 +36,44 @@ export function showInLibrary() {
     openLibraryView({ kind: 'folder', value: folder, recursive: true });
 }
 
+/**
+ * Show on disk: the folder is scanned FIRST, and the library view is closed only when the scan has answered (findings #569).
+ * A folder that is not on disk any more (the scan answers 400), or cannot be read, leaves the view as it is and says so in
+ * the strip: the page is never left with neither a view nor a folder. The scan the folder view then asks for is answered by
+ * the server's cache of this one.
+ */
 export function showOnDisk() {
     const lib = state.library;
-    if (!lib || lib.invalid || lib.kind !== 'folder') return;
-    state.moves.anchor = { path: topPhotoPath(), folder: lib.value, toKind: 'folder' };
-    backToFolder(lib.value);
+    if (!lib || lib.invalid || lib.kind !== 'folder' || state.moves.leaving) return;
+    const folder = lib.value;
+    state.moves.leaving = true;
+    btnShowOnDisk.disabled = true;
+    const done = () => {
+        state.moves.leaving = false;
+        btnShowOnDisk.disabled = false;
+    };
+    api.fetch(`/api/folder/scan?path=${encodeURIComponent(folder)}&force=false`)
+        .then(res => res.json().catch(() => ({})).then(body => ({ ok: res.ok, status: res.status, body })))
+        .then(({ ok, status, body }) => {
+            done();
+            if (lib !== state.library) return;       // another view since: nothing to leave
+            if (!ok) {
+                lib.notice = status === 400
+                    ? 'That folder is not on disk any more.'
+                    : `Could not open that folder on disk: ${(body && body.error) || `the server answered ${status}`}`;
+                upper.libraryChanged();
+                return;
+            }
+            state.moves.anchor = { path: topPhotoPath(), folder, toKind: 'folder' };
+            backToFolder(folder);
+        })
+        .catch(err => {
+            done();
+            console.error('Could not scan the folder to show it on disk:', err);
+            if (lib !== state.library) return;
+            lib.notice = `Could not open that folder on disk: ${err.message}`;
+            upper.libraryChanged();
+        });
 }
 
 /** This folder only <-> with its subfolders: another view of the same folder, in the history. */
@@ -73,9 +107,9 @@ function landInLibrary(lib) {
 }
 
 /** A library view has been drawn (opened or refreshed): land where the move said, and ask what the disk holds. */
-export function libraryViewPainted(lib) {
+export function libraryViewPainted(lib, options) {
     landInLibrary(lib);
-    checkNotHeld(lib);
+    checkNotHeld(lib, options);
 }
 
 export function wireMoves() {

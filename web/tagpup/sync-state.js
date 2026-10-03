@@ -7,6 +7,7 @@
 import { api } from './common/api.js';
 import { state } from './state.js';
 import { libraryStripSync } from './elements.js';
+import { forgetWhatTheDiskHeld } from './library-banner.js';
 
 const TIME = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/;
 
@@ -67,8 +68,12 @@ export function loadSyncInfo() {
         .then(({ ok, body }) => {
             if (token !== info.asked) return;
             if (!ok || !body || typeof body !== 'object') throw new Error((body && body.error) || 'The library could not be asked.');
-            info.lastInStep = body.last_in_step || null;
-            info.syncing = body.syncing === true;
+            const lastInStep = body.last_in_step || null;
+            const syncing = body.syncing === true;
+            // A sync came or went: the disk and the library may have moved apart, so what the disk was said to hold is asked again.
+            if (info.known && (info.lastInStep !== lastInStep || info.syncing !== syncing)) forgetWhatTheDiskHeld();
+            info.lastInStep = lastInStep;
+            info.syncing = syncing;
             info.known = true;
             info.status = 'ready';
             renderSyncInfo();

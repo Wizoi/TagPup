@@ -45,8 +45,9 @@ export const state = {
     // view being opened ({ path, folder, toKind } -- the top of the grid when the move was made), `addFor` the folder
     // the add-folder question is asked of when it was asked from a library view, the folders whose
     // "not in the library" banner was dismissed (until the page is left), the banner shown, and the number of the
-    // membership question whose answer counts.
-    moves: { anchor: null, dismissed: new Set(), banner: null, asked: 0, controller: null, addFor: null },
+    // membership question whose answer counts; `cache` what the disk held of each folder (by pathKey), for the page's life
+    // (library-banner.js).
+    moves: { anchor: null, dismissed: new Set(), banner: null, asked: 0, controller: null, addFor: null, cache: new Map(), leaving: false },
     // When the library was last in step with its folders, for the view's strip (sync-state.js).
     syncInfo: { status: 'idle', lastInStep: null, syncing: false, known: false, asked: 0, controller: null },
     // The grid's keys (grid-keys.js): the index of the card the arrow keys are on (or -1), where a Shift run began

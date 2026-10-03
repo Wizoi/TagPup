@@ -2304,6 +2304,24 @@ select {
     font-size: 13px;
 }
 
+.moves-banner.moves-banner-quiet {
+    background: transparent;
+    border-color: transparent;
+    padding: 0 14px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.moves-check {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent);
+    text-decoration: underline;
+    cursor: pointer;
+}
+
 .moves-banner > span {
     flex: 1;
 }
@@ -2340,6 +2358,12 @@ select {
     border-radius: 6px;
     background: rgba(239, 68, 68, 0.08);
     font-size: 13px;
+}
+
+.selection-missing-note {
+    margin: 0 20px 8px;
+    font-size: 12px;
+    color: #f59e0b;
 }
 
 [data-writes][inert] {

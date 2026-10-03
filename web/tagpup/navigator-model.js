@@ -6,12 +6,20 @@
 // A row is { id, level, label, count, hint, title, expandable, expanded, spec } where `spec` is what
 // openLibraryView takes ({ kind, value, recursive }) or null for a row that only groups (the junk years).
 // The lists are the whole library's -- 2,746 folders, 895 keyword nodes, 413 people, 61 years on photo_index -- and
-// a tree shows only what is expanded, at most NAV_MAX_ROWS rows: the page never draws them all at once.
+// a tree shows only what is expanded, at most NAV_MAX_ROWS rows (a flat list, NAV_MAX_LIST_ROWS): the page never draws them
+// all at once, and when it draws fewer than there are it says how many it left out, counted over the whole tree.
 import { baseName, pathKey } from './common/paths.js';
 import { compareTagNames } from './common/vocabulary.js';
 
 /** The most rows one section draws; the rest are said in a line and reached by the filter. */
-export const NAV_MAX_ROWS = 400;
+export const NAV_MAX_ROWS = 1500;
+
+/**
+ * The most rows a flat list draws: the people, the years and months, what a filter finds. The cap exists for trees, whose
+ * open branches can run to thousands of rows; a list of 413 people is not that, and people past a cap of 400 were
+ * reachable only by typing their names (findings #567). A list longer than this is cut at its end and says how many.
+ */
+export const NAV_MAX_LIST_ROWS = 5000;
 
 /** Years outside this range (to the current year + 1) are grouped as 'Other years': scanned dates gone wrong. */
 export const NAV_FIRST_YEAR = 1970;
@@ -199,22 +207,25 @@ function navMatches(text, needle) {
     return String(text).toLowerCase().includes(needle);
 }
 
-function navWalk(nodes, level, expanded, make, out, cap) {
+/** Every row of the open branches, however many: the count of what is left out is the real one. */
+function navWalk(nodes, level, expanded, make, out) {
     for (const node of nodes) {
-        if (out.length > cap) return;
         const row = make(node, level, expanded);
         out.push(row);
-        if (row.expanded) navWalk(node.children, level + 1, expanded, make, out, cap);
+        if (row.expanded) navWalk(node.children, level + 1, expanded, make, out);
     }
 }
 
 /**
  * The rows of a section for what is expanded and what is typed in its filter: { rows, hidden } -- `hidden` rows
- * beyond NAV_MAX_ROWS are not drawn. With a filter the tree is a flat list of what navMatches (a folder by its name or
+ * beyond the cap (NAV_MAX_ROWS for the open branches of a tree, NAV_MAX_LIST_ROWS for a flat list) are not drawn and are
+ * all counted. With a filter the tree is a flat list of what navMatches (a folder by its name or
  * its path, a keyword by its tag, a person or a date by its words), each with the place it is filed in.
  */
-export function sectionRows(section, index, expanded, filter, cap = NAV_MAX_ROWS) {
+export function sectionRows(section, index, expanded, filter, capped = null) {
     if (!index) return { rows: [], hidden: 0 };
+    const treeCap = capped ?? NAV_MAX_ROWS;
+    const cap = capped ?? NAV_MAX_LIST_ROWS;
     const needle = String(filter || '').trim().toLowerCase();
     const out = [];
     if (section === 'people') {
@@ -226,8 +237,8 @@ export function sectionRows(section, index, expanded, filter, cap = NAV_MAX_ROWS
     if (section === 'dates') return navDateRows(index, expanded, needle, cap);
     const make = section === 'folders' ? navFolderRow : navKeywordRow;
     if (!needle) {
-        navWalk(index.tops, 1, expanded, make, out, cap);
-        return navCapped(out, cap, out.length);
+        navWalk(index.tops, 1, expanded, make, out);
+        return navCapped(out, treeCap, out.length);
     }
     let found = 0;
     const nodes = section === 'folders' ? index.byKey.values() : index.byTag.values();
@@ -236,7 +247,7 @@ export function sectionRows(section, index, expanded, filter, cap = NAV_MAX_ROWS
         const where = section === 'folders' ? node.path : node.tag;
         if (!navMatches(node.name, needle) && !navMatches(where, needle)) continue;
         found += 1;
-        if (all.length <= cap) all.push(node);
+        all.push(node);
     }
     if (section === 'keywords') all.sort((a, b) => compareTagNames(a.tag, b.tag));
     for (const node of all) {

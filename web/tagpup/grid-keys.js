@@ -95,12 +95,32 @@ export function settleRoving() {
     }
 }
 
+/** The card a key's target is, or is inside of (its checkbox, its magnifier): null for the grid itself. */
+function cardOf(target) {
+    return target && target !== thumbnailsGrid && target.closest ? target.closest('.thumbnail-card') : null;
+}
+
 function currentIndex(target) {
-    if (target && target !== thumbnailsGrid) {
-        const at = indexOfCard(target);
+    const card = cardOf(target);
+    if (card) {
+        const at = indexOfCard(card);
         if (at >= 0) return at;
     }
     return state.gridKeys.index;
+}
+
+/**
+ * Does this key belong to the control it was pressed in, rather than to the card around it? A title being typed keeps all
+ * its keys; a button keeps Enter and Space (they press it); a checkbox keeps Space (it toggles it). Every other key of an
+ * inner control -- the arrows, Home, End, the pages -- is the card's, so that a click on the magnifier or the checkbox does
+ * not strand the keyboard (findings #571).
+ */
+function keyIsTheControls(target, key) {
+    const tag = target.tagName;
+    if (tag === 'TEXTAREA' || target.isContentEditable) return true;
+    if (tag === 'INPUT') return target.type !== 'checkbox' || key === ' ';
+    if (tag === 'BUTTON' || tag === 'A') return key === 'Enter' || key === ' ';
+    return false;
 }
 
 function goTo(index) {
@@ -134,8 +154,11 @@ export function wireGridKeys(handlers) {
     });
     thumbnailsGrid.addEventListener('keydown', (e) => {
         if (e.ctrlKey || e.metaKey || e.altKey || !state.grid) return;
-        // A title being typed, a button in a card: theirs. Only a card or the grid itself is the keys'.
-        if (e.target !== thumbnailsGrid && !(e.target.classList && e.target.classList.contains('thumbnail-card'))) return;
+        // The grid, a card, or a control inside a card (whose own keys are left to it: keyIsTheControls).
+        if (e.target !== thumbnailsGrid) {
+            if (!cardOf(e.target)) return;
+            if (e.target !== cardOf(e.target) && keyIsTheControls(e.target, e.key)) return;
+        }
         const count = handlers.count();
         if (count <= 0) return;
         const keys = state.gridKeys;

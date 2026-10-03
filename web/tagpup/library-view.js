@@ -303,7 +303,7 @@ export function refreshLibraryView() {
         }
         libraryChanged();
         upper.navigatorCountsChanged({ now: true });   // the counts are read at each call: ask again
-        upper.libraryViewPainted(lib);
+        upper.libraryViewPainted(lib, { refreshed: true });   // what the disk held is asked again, by the rule for its size
         return true;
     });
 }

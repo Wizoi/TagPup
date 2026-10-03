@@ -82,7 +82,7 @@ describe("the four sections", () => {
     const first = ctx.rowByLabel("folders", "1985");
     click(ctx.window, first.querySelector(".nav-twisty"));
     assert.equal(ctx.rows("folders").length, 1 + 40 + 68);
-    assert.ok(ctx.rows("folders").length < 400);
+    assert.ok(ctx.rows("folders").length < 400, "two levels of a library: a few hundred rows, not 2,746");
     assert.equal(ctx.row("folders", "f:d:\\library\\1985").getAttribute("aria-level"), "2");
   });
 
@@ -123,8 +123,8 @@ describe("the four sections", () => {
     const ctx = await loadViewPage(t, { search: "?view=all" });
     await ctx.openTab("people");
     const rows = ctx.rows("people");
-    assert.equal(rows.length, 400, "413 people: the first 400 are drawn, the rest said");
-    assert.match(ctx.note("people"), /13 more are not shown/);
+    assert.equal(rows.length, 413, "all 413 people are drawn and reachable, none cut");
+    assert.equal(ctx.note("people"), "");
     const names = rows.map((row) => row.querySelector(".nav-label").textContent);
     assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true })));
     assert.equal(rows[0].getAttribute("role"), "option");
@@ -173,16 +173,44 @@ describe("the four sections", () => {
     assert.match(ctx.idsAsked.at(-1), /kind=year&value=2022$/);
   });
 
-  test("a section is drawn at most 400 rows, even with everything open, and says how many it left out", async (t) => {
+  test("an expanded tree is drawn at most 1,500 rows and the count left out is the real one (49 of 1,549)", async (t) => {
+    const nodes = [{ tag: "Big", name: "Big", parent: null, count: 1 }];
+    for (let i = 0; i < 1548; i++) nodes.push({ tag: `Big/Item ${String(i).padStart(4, "0")}`, name: `Item ${String(i).padStart(4, "0")}`, parent: "Big", count: 1 });
+    const ctx = await loadViewPage(t, { search: "?view=all", navigator: { keywords: { keywords: nodes } } });
+    await ctx.openTab("keywords");
+    click(ctx.window, ctx.rowByLabel("keywords", "Big").querySelector(".nav-twisty"));
+    assert.equal(ctx.rows("keywords").length, 1500);
+    assert.match(ctx.note("keywords"), /^49 more are not shown/);
+  });
+
+  test("a parent with 1,000 children shows every one of them", async (t) => {
+    const nodes = [{ tag: "Wide", name: "Wide", parent: null, count: 1 }];
+    for (let i = 0; i < 1000; i++) nodes.push({ tag: `Wide/Child ${String(i).padStart(4, "0")}`, name: `Child ${String(i).padStart(4, "0")}`, parent: "Wide", count: 1 });
+    const ctx = await loadViewPage(t, { search: "?view=all", navigator: { keywords: { keywords: nodes } } });
+    await ctx.openTab("keywords");
+    click(ctx.window, ctx.rowByLabel("keywords", "Wide").querySelector(".nav-twisty"));
+    assert.equal(ctx.rows("keywords").length, 1001);
+    assert.ok(ctx.rowByLabel("keywords", "Child 0999"), "the last child is there");
+    assert.equal(ctx.note("keywords"), "");
+  });
+
+  test("the whole keyword tree of photo_index's size, everything open, is drawn (895 rows) with nothing left out", async (t) => {
     const ctx = await loadViewPage(t, { search: "?view=all" });
     await ctx.openTab("keywords");
     const sec = ctx.state.nav.sections.keywords;
     for (const node of sec.index.byTag.values()) sec.expanded.add(node.id);
-    // Draw again with everything open (a filter that is empty draws the tree).
     ctx.document.querySelector("#nav-panel-keywords .nav-filter").dispatchEvent(new ctx.window.Event("input"));
     await ctx.settle(200);
-    assert.equal(ctx.rows("keywords").length, 400);
-    assert.match(ctx.note("keywords"), /\d+ more are not shown/);
+    assert.equal(ctx.rows("keywords").length, 895);
+    assert.equal(ctx.note("keywords"), "");
+  });
+
+  test("the last person of 413 is reachable without typing", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all" });
+    await ctx.openTab("people");
+    const names = syntheticPeople().map((each) => each.name).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
+    assert.ok(ctx.rowByLabel("people", names.at(-1)), "the alphabetically last person has a row");
+    assert.ok(ctx.rowByLabel("people", names[0]));
   });
 });
 
@@ -193,7 +221,7 @@ describe("the filter", () => {
     const input = ctx.document.querySelector("#nav-panel-people .nav-filter");
     input.value = "wren";
     input.dispatchEvent(new ctx.window.Event("input"));
-    assert.equal(ctx.rows("people").length, 400, "not at once: the filter waits for the next key");
+    assert.equal(ctx.rows("people").length, 413, "not at once: the filter waits for the next key");
     await ctx.settle(200);
     const names = ctx.rows("people").map((row) => row.querySelector(".nav-label").textContent);
     assert.ok(names.length > 0 && names.length < 80);
@@ -233,7 +261,7 @@ describe("the filter", () => {
     ctx.key(input, "Escape");
     await ctx.settle(200);
     assert.equal(input.value, "");
-    assert.equal(ctx.rows("people").length, 400);
+    assert.equal(ctx.rows("people").length, 413);
     ctx.key(input, "ArrowDown");
     assert.equal(ctx.document.activeElement, ctx.rows("people")[0]);
   });
@@ -342,12 +370,12 @@ describe("a stale answer paints nowhere", () => {
     ctx.tab("people").click();
     await ctx.settle(20);
     await ctx.release("people");
-    assert.equal(ctx.rows("people").length, 400);
+    assert.equal(ctx.rows("people").length, 413);
     assert.equal(ctx.rows("keywords").length, 0, "keywords is still loading");
     await ctx.release("keywords");
     assert.equal(ctx.rows("keywords").length, 0, "keywords is not on screen: it is drawn when its tab is");
     assert.ok(ctx.panel("keywords").classList.contains("hidden"), "the tab that is shown is still People");
-    assert.equal(ctx.rows("people").length, 400);
+    assert.equal(ctx.rows("people").length, 413);
     const asked = ctx.navigatorAsked.length;
     await ctx.openTab("keywords");
     assert.equal(ctx.rows("keywords").length, 5, "drawn at once from what was read");
@@ -542,7 +570,7 @@ describe("counts after an edit", () => {
     ctx.server.first("/api/library/navigator?section=people", { error: "The library is busy." }, { status: 500 });
     ctx.module("navigator.js").navigatorCountsChanged({ now: true });
     await ctx.settle(60);
-    assert.equal(ctx.rows("people").length, 400, "the rows that were read stay");
+    assert.equal(ctx.rows("people").length, 413, "the rows that were read stay");
     assert.equal(ctx.status("people"), "The library is busy.");
   });
 });

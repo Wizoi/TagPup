@@ -11,7 +11,7 @@
 // another loads, or a source followed before its section is here, paints nowhere else. A section that cannot be read
 // says why in a sentence (the server's: a library at an older schema, an unplaced root); never a trace.
 //
-// What is drawn is navigator-model.js's rows through navigator-tree.js: at most 400, the tree's open branches only.
+// What is drawn is navigator-model.js's rows through navigator-tree.js: at most 1,500 for a tree's open branches, 5,000 for a flat list.
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';

@@ -163,6 +163,72 @@ describe("across the edge of the window, at 20,000 photos", () => {
   });
 });
 
+describe("keys pressed in a card's inner controls act on the card (#571)", () => {
+  test("after a click on the magnifier or the checkbox the arrows, Home, End and the pages still move the card", async (t) => {
+    const ctx = await viewPage(t);
+    const detail = ctx.cardById(1001).querySelector(".btn-thumbnail-detail");
+    detail.focus();
+    assert.equal(ctx.state.gridKeys.index, 1, "focusing a control inside a card puts the keys on its card");
+    const arrow = ctx.key(detail, "ArrowRight");
+    await frame(ctx.window);
+    assert.equal(arrow.defaultPrevented, true);
+    assert.equal(ctx.focusedId(), 1002);
+    const box = ctx.cardById(1002).querySelector(".thumbnail-checkbox");
+    box.focus();
+    ctx.key(box, "ArrowDown");
+    await frame(ctx.window);
+    assert.equal(ctx.focusedId(), 1006);
+    ctx.cardById(1006).querySelector(".thumbnail-checkbox").focus();
+    ctx.key(ctx.focused(), "End");
+    await ctx.settle(300);
+    assert.equal(ctx.focusedId(), 1399);
+    ctx.cardById(1399).querySelector(".btn-thumbnail-detail").focus();
+    ctx.key(ctx.focused(), "Home");
+    await ctx.settle(300);
+    assert.equal(ctx.focusedId(), 1000);
+    ctx.cardById(1000).querySelector(".btn-thumbnail-detail").focus();
+    ctx.key(ctx.focused(), "PageDown");
+    await ctx.settle(300);
+    assert.equal(ctx.focusedId(), 1008);
+  });
+
+  test("Space on the checkbox still toggles it, and Enter and Space on the magnifier still press it: those keys stay the control's", async (t) => {
+    const ctx = await viewPage(t);
+    const box = ctx.cardById(1001).querySelector(".thumbnail-checkbox");
+    box.focus();
+    assert.equal(ctx.key(box, " ").defaultPrevented, false, "not taken from the checkbox");
+    assert.equal(ctx.state.selectedThumbnails.length, 0, "and not toggled twice by the grid");
+    const detail = ctx.cardById(1002).querySelector(".btn-thumbnail-detail");
+    detail.focus();
+    assert.equal(ctx.key(detail, "Enter").defaultPrevented, false);
+    assert.equal(ctx.key(detail, " ").defaultPrevented, false);
+  });
+
+  test("Enter on the checkbox opens the photo, as on the card", async (t) => {
+    const ctx = await viewPage(t);
+    const box = ctx.cardById(1003).querySelector(".thumbnail-checkbox");
+    box.focus();
+    ctx.key(box, "Enter");
+    await ctx.settle(100);
+    assert.deepEqual(ctx.photosAsked, [1003]);
+  });
+
+  test("a title being typed keeps all its keys", async (t) => {
+    const FOLDER = "D:\\Library\\2020\\Event 01";
+    const records = Array.from({ length: 12 }, (_, i) => photoRecord({ filename: `IMG_${i}.jpg`, path: `${FOLDER}\\IMG_${i}.jpg` }));
+    const ctx = await viewPage(t, 8, { search: "", scan: () => records });
+    await openFolder(ctx, FOLDER);
+    await ctx.settle(100);
+    ctx.real()[2].querySelector(".thumbnail-filename").click();
+    const input = ctx.document.querySelector(".thumbnail-filename-input");
+    assert.ok(input);
+    for (const key of ["ArrowRight", "ArrowDown", "Home", "End", " ", "PageDown"]) {
+      assert.equal(ctx.key(input, key).defaultPrevented, false, key);
+    }
+    assert.equal(ctx.document.activeElement, input);
+  });
+});
+
 describe("the page's shortcuts are still everyone's", () => {
   test("Ctrl+Z and Ctrl+D are answered with the focus on a card, as with it nowhere", async (t) => {
     const ctx = await viewPage(t);
