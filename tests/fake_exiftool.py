@@ -30,6 +30,8 @@ class Files:
         self.lock = threading.Lock()
         self.starts = 0
         self.cannot_start = None
+        self.sessions = []        # the keyword arguments each session was asked for (timeout=...)
+        self.read_calls = 0       # get_tags commands answered or begun
 
     # ---- what the tests set up and look at -------------------------------------------------------
 
@@ -56,6 +58,7 @@ class Files:
     def session(self, *args, **kwargs):
         """A stand-in for ExifToolSession(executable=...): a context manager that is this table."""
         files = self
+        files.sessions.append(dict(kwargs))
 
         class Session:
             def __enter__(self):
@@ -70,6 +73,8 @@ class Files:
         return Session()
 
     def get_tags(self, photo_paths, tags=None):
+        with self.lock:
+            self.read_calls += 1
         rows = []
         for path in photo_paths:
             key = paths.key(path)

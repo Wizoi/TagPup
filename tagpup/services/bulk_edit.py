@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 
 from tagpup.core import dates, paths, validation, vocabulary
 from tagpup.core.result import Refused, Result
-from tagpup.files import job_files
+from tagpup.files import exiftool_session, job_files
 from tagpup.services import damaged_photos, file_changes, file_only, libraries, library_view, tagging
 from tagpup.services import photos as photo_actions
 from tagpup.store import file_journal, taxonomy
@@ -34,6 +34,13 @@ OPS = (TAGS, PEOPLE, TIME_SHIFT)
 
 #: The most tags, or people, one edit adds, and the same of what it takes off.
 MOST_NAMED = 200
+
+#: How long one ExifTool command of a chunk may take, in seconds. The session's own is 300: a share that went away in the middle
+#: of a chunk would cost that, and a chunk is 25 photos. A chunk's worst case is about this, counted as errors.
+CHUNK_TIMEOUT = 60
+
+#: The longest a photo's name or a reason is kept, in characters (what a status and a state file carry of an error).
+MOST_TEXT = 200
 
 #: What the journal calls the changes of a job (History's `operation`): the work's own name, then the job, so that the
 #: files a job wrote are found by it (tagpup.store.file_journal.photo_ids_done).
@@ -177,6 +184,31 @@ class Outcome:
         return self.changed + self.unchanged + self.skipped_missing + self.skipped_damaged + len(self.errors)
 
 
+class ChunkSession:
+    """The ExifTool session of one chunk, which stays dead once a command has timed out: pyexiftool starts its process again on
+    the next command, and that command would wait its own deadline for a share that is not coming back. Every command after a
+    timeout answers the same ExifToolTimeout at once, so the files after it are errors in the time it takes to say so."""
+
+    def __init__(self, session):
+        self._session = session
+        self._dead = None
+
+    def __getattr__(self, name):
+        wanted = getattr(self._session, name)
+        if not callable(wanted):
+            return wanted
+
+        def command(*args, **kwargs):
+            if self._dead is not None:
+                raise self._dead
+            try:
+                return wanted(*args, **kwargs)
+            except exiftool_session.ExifToolTimeout as stalled:
+                self._dead = stalled
+                raise
+        return command
+
+
 def run_chunk(library, edit, ids, exiftool_path, operation):
     """Do `edit` to the photos `ids` (a few: a job takes 25), and say what became of each (Outcome). An exception that
     escapes is not one photo's -- ExifTool that cannot start, a library that cannot be read -- and stops the job."""
@@ -192,15 +224,19 @@ def run_chunk(library, edit, ids, exiftool_path, operation):
         return out
     by_key = {paths.key(path): photo_id for photo_id, path in present}
     chosen = [path for _photo_id, path in present]
-    # The whole chunk under the one lock: the files are read, checked for being gone, planned and written without another
-    # change of photo files between (the route of the folder view does the same around a bulk write).
-    with file_changes.exclusively():
-        if edit.op == TIME_SHIFT:
-            result = _shift(library, chosen, edit.minutes, exiftool_path, operation)
-        else:
-            result = tagging.change_tags(library, chosen, edit.add, edit.remove, exiftool_path, operation=operation,
-                                         stop_at_first_error=False,
-                                         persons={paths.key(path): set(edit.persons) for path in chosen} if edit.persons else None)
+    # The chunk's own ExifTool, with a deadline of its own and started before the lock is asked for. The whole chunk then runs
+    # under the one lock: the files are read, checked for being gone, planned and written without another change of photo files
+    # between (the route of the folder view does the same around a bulk write). Left to write_fields, each write would start a
+    # session with the default deadline of five minutes.
+    with exiftool_session.ExifToolSession(executable=exiftool_path, timeout=CHUNK_TIMEOUT) as session:
+        et = ChunkSession(session)
+        with file_changes.exclusively():
+            if edit.op == TIME_SHIFT:
+                result = _shift(library, chosen, edit.minutes, exiftool_path, operation, et)
+            else:
+                result = tagging.change_tags(
+                    library, chosen, edit.add, edit.remove, exiftool_path, operation=operation, stop_at_first_error=False,
+                    persons={paths.key(path): set(edit.persons) for path in chosen} if edit.persons else None, et=et)
     _count(out, result, present, by_key)
     return out
 
@@ -218,7 +254,7 @@ def _reachable(present, out):
     kept = []
     for photo_id, path in present:
         if damaged_photos.stamp_of(path) is damaged_photos.UNANSWERED:
-            out.errors.append((photo_id, os.path.basename(path), AWAY))
+            out.errors.append((photo_id, os.path.basename(path)[:MOST_TEXT], AWAY))
         else:
             kept.append((photo_id, path))
     return kept
@@ -238,15 +274,15 @@ def _count(out, result, present, by_key):
         left_out = {paths.key(what) for what, _why in result.skipped}
         for photo_id, path in present:
             if paths.key(path) not in written and paths.key(path) not in left_out:
-                out.errors.append((photo_id, os.path.basename(path), result.refused))
+                out.errors.append((photo_id, os.path.basename(path)[:MOST_TEXT], result.refused[:MOST_TEXT]))
     else:
         for what, why in result.errors:
             photo_id = by_key.get(paths.key(what))
-            out.errors.append((photo_id, os.path.basename(what), str(why)))
+            out.errors.append((photo_id, os.path.basename(what)[:MOST_TEXT], str(why)[:MOST_TEXT]))
     out.unchanged = max(0, len(present) - out.changed - gone - damaged - (len(out.errors) - away))
 
 
-def _shift(library, photo_paths, minutes, exiftool_path, operation):
+def _shift(library, photo_paths, minutes, exiftool_path, operation, et=None):
     """photos.shift_date_taken for a bulk job's chunk: a photo whose file is gone, or found damaged, is left out and counted
     (the folder's shift refuses the whole batch for one damaged photo); one ExifTool cannot read is an error, not a skip;
     and no record of each photo is read back for a page, which nobody is waiting to receive. Nothing is caught here: an
@@ -260,10 +296,10 @@ def _shift(library, photo_paths, minutes, exiftool_path, operation):
     if kept is None:
         return refused
     writable, skipped = file_only.leave_out_unwritable(loose)
-    plan_one = photo_actions.date_shift_plan(minutes)
+    plan_one = photo_actions.date_shift_plan(minutes, strict=True)
     journaled = file_changes.write_fields(library, operation, exiftool_path, kept, dates.SHIFTED_FIELDS, plan_one,
-                                          summary={"photos": len(kept), "minutes": minutes}) if kept else None
-    files = file_only.write_fields(exiftool_path, writable, dates.SHIFTED_FIELDS, plan_one) if writable else None
+                                          summary={"photos": len(kept), "minutes": minutes}, et=et) if kept else None
+    files = file_only.write_fields(exiftool_path, writable, dates.SHIFTED_FIELDS, plan_one, et=et) if writable else None
     result = libraries.with_skipped(file_only.combined(journaled, files), left + skipped)
     result.attempted += len(gone)
     for what, why in gone:
@@ -292,6 +328,11 @@ def read_ids(library, job):
 
 def forget_ids(library, job):
     job_files.forget_ids(library.bulk_jobs, job)
+
+def forget(library, job):
+    """Let go of everything kept of job `job` (its state and its list of photos): when it is over for good."""
+    job_files.forget(library.bulk_jobs, job)
+
 
 def sweep(library):
     """Let go of the records of jobs long over."""

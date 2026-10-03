@@ -15,8 +15,9 @@ import time
 
 _counter = itertools.count()
 
-#: A state file this old (seconds) is let go at the next job's start; its job is long over.
-KEEP_SECONDS = 30 * 86400
+#: A state file this old (seconds) is let go at the next job's start; its job is long over. They can name the tags and the
+#: people of an edit and the files that failed, so they are not kept: a week.
+KEEP_SECONDS = 7 * 86400
 
 
 def _write(path, data):
@@ -64,6 +65,15 @@ def read_ids(folder, job):
     """The photo ids job `job` resolved, as a list, or None when there are none or they cannot be read."""
     found = _read(ids_path(folder, job))
     return found if isinstance(found, list) and all(type(each) is int for each in found) else None
+
+
+def forget(folder, job):
+    """Let go of everything kept of job `job`: its state and its list of photos. Missing files are no matter."""
+    for path in (state_path(folder, job), ids_path(folder, job)):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def forget_ids(folder, job):

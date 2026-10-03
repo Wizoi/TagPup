@@ -203,14 +203,15 @@ ADD_TO_ALL = "add to all selected"
 
 @roots_service.canonical_args("photo_paths")
 def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_TO_ALL, stop_at_first_error=True,
-                persons=None):
+                persons=None, et=None):
     """Add the same tags to many photos and take the same tags off them. Adding or
     removing tags on a selection of photos. See _change_each.
 
     `operation` names the change in the journal. A bulk JOB (tagpup.jobs.bulk_edits) passes its own and
     `stop_at_first_error=False`: a photo that cannot be read or written is an error and the others are written all the
     same. `persons` ({paths.key(path): the tags of `add` that are people}): a person the file already names by their
-    leaf is not added again (_change_each).
+    leaf is not added again (_change_each). `et`: an ExifTool session the caller opened (a bulk job's chunk gets its own,
+    with a deadline of its own), used instead of one per write.
 
     A photo whose file is gone is left out and listed in the result's skips (details[SKIPPED_MISSING] says how many);
     the photos after it are written. Only a read or write ERROR of a present file stops the run
@@ -223,7 +224,7 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
     if problem:
         return _refused(len(photo_paths), problem)
     present, gone = leave_out_missing(photo_paths)
-    result = (_change_present(library, present, add, remove, exiftool_path, operation, stop_at_first_error, persons)
+    result = (_change_present(library, present, add, remove, exiftool_path, operation, stop_at_first_error, persons, et)
               if present else _refused(0, None))
     if not result.refused:
         result.attempted += len(gone)
@@ -234,7 +235,7 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
 
 
 def _change_present(library, photo_paths, add, remove, exiftool_path, operation=ADD_TO_ALL, stop_at_first_error=True,
-                    persons=None):
+                    persons=None, et=None):
     """change_tags for photos whose files are there."""
     refused = _refused(len(photo_paths), None)
     held, loose = libraries.split(library, photo_paths)
@@ -249,7 +250,7 @@ def _change_present(library, photo_paths, add, remove, exiftool_path, operation=
     if held or not loose:
         done = libraries.with_skipped(_change_each(library, [(path, add, remove) for path in kept],
                                                    exiftool_path, operation, persons=persons,
-                                                   stop_at_first_error=stop_at_first_error), left)
+                                                   stop_at_first_error=stop_at_first_error, et=et), left)
     if not loose:
         return file_only.combined(done, None)
     # The photos of folders the library does not hold: their files only, in the same request
@@ -262,7 +263,7 @@ def _change_present(library, photo_paths, add, remove, exiftool_path, operation=
     writable, skipped = file_only.leave_out_unwritable(loose)
     files = libraries.with_skipped(
         _change_each(library, [(path, add, remove) for path in writable], exiftool_path, operation,
-                     files_only=True, persons=persons, stop_at_first_error=stop_at_first_error)
+                     files_only=True, persons=persons, stop_at_first_error=stop_at_first_error, et=et)
         if writable else _refused(0, None), skipped)
     return file_only.combined(done, files)
 
@@ -374,7 +375,8 @@ def _tags_held(held):
     return vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS})
 
 
-def _change_each(library, plan, exiftool_path, operation, files_only=False, persons=None, stop_at_first_error=True):
+def _change_each(library, plan, exiftool_path, operation, files_only=False, persons=None, stop_at_first_error=True,
+                 et=None):
     """Write each photo in `plan` -- (path, tags to add, tags to take off) -- as one change
     of photo files (tagpup.services.file_changes): planned from what every file holds,
     committed, then written a file at a time, each recorded in its row as it is marked
@@ -413,10 +415,10 @@ def _change_each(library, plan, exiftool_path, operation, files_only=False, pers
 
     if files_only:
         return file_only.write_fields(exiftool_path, [path for path, _a, _r in plan], KEYWORD_READ, plan_one,
-                                      stop_at_first_error=stop_at_first_error)
+                                      stop_at_first_error=stop_at_first_error, et=et)
     return file_changes.write_fields(library, operation, exiftool_path, [path for path, _a, _r in plan],
                                      KEYWORD_READ, plan_one, summary={"photos": len(plan)},
-                                     stop_at_first_error=stop_at_first_error)
+                                     stop_at_first_error=stop_at_first_error, et=et)
 
 
 @roots_service.canonical_args("photo_paths")
