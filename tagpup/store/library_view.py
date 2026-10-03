@@ -25,6 +25,7 @@ import collections
 from tagpup.core import paths, vocabulary
 from tagpup.store import damaged_files, derived
 from tagpup.store import roots as store_roots
+from tagpup.store.people import PEOPLE_JSON
 
 #: The kinds of source (Source.kind).
 ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH = "all", "folder", "keyword", "person", "year", "month"
@@ -212,6 +213,16 @@ def card_rows(conn, photo_ids):
         for photo_id, path, mtime, size, taken in store_roots.natives(conn, rows, 1):
             found[photo_id] = (path, mtime, size, taken)
     return found
+
+
+def photo_row(conn, photo_id):
+    """(path -- native --, mtime, size, tags JSON, people JSON, captions JSON, raw_metadata JSON, year) of the photo
+    `photo_id`, or None: one row by its primary key, what the details panel shows of a photo. Raises
+    paths.RootsError for a root this machine does not place."""
+    rows = conn.execute("SELECT p.path, p.mtime, p.size, p.tags, " + PEOPLE_JSON + ", p.captions, p.raw_metadata, p.year"
+                        " FROM photos p WHERE p.id = ?", (photo_id,)).fetchall()
+    rows = store_roots.natives(conn, rows, 0, raw=(6,))
+    return tuple(rows[0]) if rows else None
 
 
 def damaged(conn):

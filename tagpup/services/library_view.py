@@ -30,6 +30,7 @@ import re
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import NotFound, Refused
 from tagpup.services import damaged_photos, thumbnails
+from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.store import db
 from tagpup.store import library_view as store
@@ -202,6 +203,25 @@ def read_ids(text):
     if len(found) > MAX_CARDS:
         raise Refused("Ask for at most %d photos at a time." % MAX_CARDS)
     return found
+
+
+def photo(library, photo_id):
+    """The photo `photo_id` as the page reads a photo of a folder (services.photos.page_record), from the library's row
+    and not from the file: what the details panel shows and edits by path. NotFound when the library has no such photo."""
+    conn = _open(library)
+    try:
+        row = store.photo_row(conn, photo_id) if 0 < photo_id < 2 ** 62 else None
+    finally:
+        conn.close()
+    if row is None:
+        raise NotFound("There is no photo %d in this library." % photo_id)
+    path, mtime, size, tags, people, captions, raw, year = row
+    record = photo_actions.page_record(path, {
+        "tags": json.loads(tags) if tags else [], "people": json.loads(people) if people else [],
+        "captions": json.loads(captions) if captions else [], "raw_metadata": json.loads(raw) if raw else {},
+        "year": year}, mtime, size)
+    record["id"] = photo_id
+    return record
 
 
 def _cards(conn, photo_ids):

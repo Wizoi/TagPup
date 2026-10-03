@@ -168,6 +168,42 @@ class TheCards(Routes):
         self.assertEqual(counts[0], counts[1])
 
 
+class ThePhoto(Routes):
+    def photo(self, wanted):
+        reply = self.get("/api/library/photo", query_string={"id": wanted})
+        return reply, reply.get_json()
+
+    def test_it_is_the_record_a_scan_gives_with_the_id(self):
+        reply, found = self.photo(self.a)
+        self.assertEqual(200, reply.status_code)
+        record = found["photo"]
+        self.assertEqual(self.a, record["id"])
+        self.assertEqual(self.vl.path_of(self.a), record["path"])
+        self.assertEqual("a.jpg", record["filename"])
+        self.assertEqual(["Trips/Coast", "People/Wren Halloway"], record["tags"])
+        self.assertEqual(["Wren Halloway"], record["people"])
+        self.assertEqual("2024:06:01 10:00:00", record["taken"])
+        self.assertEqual("", record["title"])
+        self.assertIn("raw_metadata", record)
+        self.assertEqual({"path", "filename", "tags", "people", "title", "mtime", "size", "year", "taken", "raw_metadata", "id"},
+                         set(record))
+
+    def test_an_undated_photo_has_no_taken(self):
+        self.assertIsNone(self.photo(self.d)[1]["photo"]["taken"])
+
+    def test_an_id_with_no_photo_is_a_404_in_a_sentence_and_a_bad_one_a_400(self):
+        for wanted in (999999, -1, 0, 2 ** 70):
+            reply, found = self.photo(wanted)
+            self.assertEqual(404, reply.status_code, wanted)
+            self.assertIn("There is no photo", found["error"])
+        for wanted in ("", "abc", "1.5"):
+            self.assertEqual(400, self.photo(wanted)[0].status_code, wanted)
+        self.assertEqual(400, self.get("/api/library/photo").status_code)
+
+    def test_this_pc_only_and_a_library_behind_is_a_sentence(self):
+        self.assertEqual(403, self.get("/api/library/photo?id=1", environ_overrides=REMOTE).status_code)
+
+
 class ALibraryThatIsNotReady(unittest.TestCase):
     def test_a_library_behind_is_a_sentence_for_both(self):
         home = own_home.for_test(self)
@@ -177,7 +213,7 @@ class ALibraryThatIsNotReady(unittest.TestCase):
         app.testing = True
         client = app.test_client()
         with mock.patch.object(web_libraries.library_actions, "bring_up_to_date", side_effect=RuntimeError("locked")):
-            for url in ("/behind/api/library/ids?kind=all", "/behind/api/library/cards?ids=1"):
+            for url in ("/behind/api/library/ids?kind=all", "/behind/api/library/cards?ids=1", "/behind/api/library/photo?id=1"):
                 reply = client.get(url)
                 self.assertEqual(409, reply.status_code, url)
                 self.assertIn("has not been brought up to date", reply.get_json()["error"])

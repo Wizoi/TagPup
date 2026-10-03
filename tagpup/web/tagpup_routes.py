@@ -639,6 +639,26 @@ def library_cards():
         return responses.error(500, str(e))
 
 
+@routes.get("/api/library/photo")
+def library_photo():
+    """One photo of the library, by id, as a folder's scan describes it -- tags, people, title, raw metadata -- from the
+    library's row (tagpup.services.library_view.photo): what the details panel opens a card in a library view with."""
+    if (refusal := _this_pc_only()) is not None:
+        return refusal
+    library = state.require()
+    try:
+        photo_id = int(request.args.get("id") or "")
+    except ValueError:
+        return responses.error(400, "id must be a whole number.")
+    try:
+        return jsonify({"photo": library_view.photo(library, photo_id)})
+    except (Refused, NotFound, paths.RootsError) as why:
+        return _view_error(why)
+    except Exception as e:
+        logger.error("Error reading photo %s of the library: %s", photo_id, e, exc_info=True)
+        return responses.error(500, str(e))
+
+
 @routes.get("/api/photo-thumb")
 def photo_thumb():
     """A photo's thumbnail by id, from the cache (tagpup.services.thumbnails). The URL carries the file's stamp
