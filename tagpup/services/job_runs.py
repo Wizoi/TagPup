@@ -48,10 +48,20 @@ def progress(library, run_id, counts):
     return job_runs.progress(library.path, run_id, counts)
 
 
-def end(library, run_id, now, counts, failed=False, note=None):
+def end(library, run_id, now, counts, failed=False, note=None, keep=()):
     """End run `run_id` with its `counts`: done, or failed with `note` (tagpup.store.job_runs.finish). A run that was
     cancelled is done: its counts say how far it got. False when it was no longer this process's to end."""
-    return job_runs.finish(library.path, run_id, FAILED if failed else DONE, now, counts, note)
+    return job_runs.finish(library.path, run_id, FAILED if failed else DONE, now, counts, note, keep)
+
+
+def discard(library, run_id):
+    """Delete run `run_id` of this process, still running, as though never claimed (tagpup.store.job_runs.discard)."""
+    return job_runs.discard(library.path, run_id)
+
+
+def amend(library, run_id, counts, note):
+    """Correct the counts and note of an ended run (tagpup.store.job_runs.amend)."""
+    return job_runs.amend(library.path, run_id, counts, note)
 
 
 def get(library, run_id):
