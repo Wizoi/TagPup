@@ -12,7 +12,6 @@ import { btnSaveDetails, inputAddPerson, inputAddTag, inputPhotoTitle } from './
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { markEntry, pendingWrites, queueEntry, whereWritten } from './write-queue.js';
-import { isJustLooking, libraryName } from './looking.js';
 import {
     fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson, updateTagsDatalist
 } from './tags.js';
@@ -123,9 +122,9 @@ export function saveDetailEdits(fields = { title: true, tags: true, people: true
  * for (openPhotoWrite). A bulk write is queued without one, and leaving waits for none:
  * an arrow key waited for a slow bulk write on a network share to finish.
  */
-export function queueWriteOf(path, job, label = `Save photo ${baseName(path)}`, options = {}) {
+export function queueWriteOf(path, job, label = `Save photo ${baseName(path)}`) {
     const key = pathKey(path);
-    const run = queuePhotoWrite(job, label, options).finally(() => {
+    const run = queuePhotoWrite(job, label).finally(() => {
         if (state.photoWrites[key] === run) delete state.photoWrites[key];
         updateSaveButton();
     });
@@ -159,32 +158,16 @@ export function openPhotoWrite() {
  * result, or false if it threw; the queue carries on either way.
  */
 /**
- * Is a write that needs the library held back: the folder open is one the library does not
- * hold, looked at without adding it (membership.js)? Then it is not queued -- a carry-forward,
- * or applying what Suggest offered, whose controls are dimmed too -- and the status says why.
- * Returns true when held back. A caption, a tag or a rename is not such a write: it goes to
- * the photo files only, and the server says which photos those are.
+ * Queue `job`, a write to photo files, behind every write queued before it. A photo of a
+ * folder the library does not hold is written to its file only, which the server decides per
+ * photo (tagpup.services.file_only); the queue does not ask.
  */
-export function writesHeldBack() {
-    if (!isJustLooking()) return false;
-    const name = libraryName();
-    setStatus('error', `Not done: ${name} does not hold this folder, and that needs ${name}. Add it to ${name} first.`,
-        { transient: false });
-    return true;
-}
-
-/**
- * Queue `job`, a write to photo files. `options.needsLibrary`: the write needs the library's
- * database (carry-forward, applying suggestions), so it is held back while just looking.
- */
-export function queuePhotoWrite(job, label = 'Save a photo', options = {}) {
-    // Not queued, so the queue's status never counts it (write-queue.js).
-    if (options.needsLibrary && writesHeldBack()) return Promise.resolve(false);
+export function queuePhotoWrite(job, label = 'Save a photo') {
     // An entry of the queue's status (write-queue.js): `label` says what it does, and
     // the job is given it, to put a failure's reason in `error`. A job that resolves
     // false failed; Retry queues it again.
     const entry = queueEntry(label);
-    entry.retry = () => queuePhotoWrite(job, label, options);
+    entry.retry = () => queuePhotoWrite(job, label);
     const before = state.detailSaveInFlight || Promise.resolve();
     const run = before.then(() => {
         markEntry(entry, 'writing');

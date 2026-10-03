@@ -258,7 +258,9 @@ class TheDialogTellsTheTruth(unittest.TestCase):
                                "membership.js"), encoding="utf-8") as handle:
             source = handle.read()
         self.assertNotIn("changes nothing", source)
-        self.assertIn("Suggest and face naming stay off", source)
+        # Suggest runs (analysing in memory, 2026-10-03); only face naming stays off.
+        self.assertIn("without adding them", source)
+        self.assertIn("naming stays off", source)
 
 
 if __name__ == "__main__":

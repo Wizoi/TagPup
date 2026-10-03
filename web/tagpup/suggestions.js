@@ -14,7 +14,7 @@ import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson } from './tags.js';
 import { postPhotoMetadata, queuePhotoWrite, queueWriteOf, redrawIfShowing } from './edits.js';
-import { isJustLooking } from './looking.js';
+import { libraryName } from './looking.js';
 import { isPhotoTagged, renderFileList, scanFolder } from './folder.js';
 import { saveSingleTitle } from './photo.js';
 import { recordUndo, snapshotPhotos } from './undo.js';
@@ -27,11 +27,6 @@ export function updateSuggestButtonState(status = null) {
         return;
     }
     if (status === 'preparing' || status === 'running') {
-        btnSuggestTags.disabled = true;
-        return;
-    }
-    // Just looking at a folder the library does not hold (membership.js).
-    if (isJustLooking()) {
         btnSuggestTags.disabled = true;
         return;
     }
@@ -179,8 +174,7 @@ export function checkSuggestionsStatus(folderPath) {
                         renderSuggestionsPanel(state.activePhotoPath);
                     }
 
-                    statusDot.className = 'status-indicator-dot';
-                    statusText.textContent = 'Ready';
+                    sayWhereTheyAre(data);
                 }
                 else {
                     // 'idle' (never run), 'not_started', 'error', or anything unexpected:
@@ -205,6 +199,27 @@ export function checkSuggestionsStatus(folderPath) {
     // Query once immediately, then poll
     queryProgress();
     state.progressTimer = setInterval(queryProgress, 1500);
+}
+
+/**
+ * A finished run's closing line. In a folder the library does not hold the run kept what it found
+ * in memory (`in_memory`), and the line says nothing was added; what the library had too little of
+ * to compare with, and the photos that could not be analysed, are in `notes`.
+ */
+function sayWhereTheyAre(data) {
+    const notes = Array.isArray(data.notes) ? data.notes : [];
+    if (!data.in_memory) {
+        if (notes.length) {
+            setStatus('ready', notes.join(' '), { transient: false });
+        } else {
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Ready';
+        }
+        return;
+    }
+    const name = libraryName();
+    setStatus('ready', [`Analysed against ${name}; nothing was added to ${name}.`, ...notes].join(' '),
+        { transient: false });
 }
 
 // Render suggestions box in right pane for active photo
@@ -322,7 +337,7 @@ export function applySuggestedTagDirect(tagName, isPerson, forPath = state.activ
         setStatus('ready', 'Ready');
         saveToLocalStorageCache();
         return true;
-    }, undefined, { needsLibrary: true });
+    });
 }
 
 export function applySuggestedTitle() {
@@ -383,7 +398,7 @@ export async function applyAllSingleSuggestions() {
         setStatus('ready', 'Ready');
         saveToLocalStorageCache();
         return true;
-    }, undefined, { needsLibrary: true });
+    });
 }
 
 export function applyFolderSuggestionsLevel() {
@@ -460,7 +475,7 @@ export function applyFolderSuggestionsLevel() {
             alert("Error applying suggestions: " + err.message);
             return false;
         });
-    }, `Apply All suggestions (${targets.length} photos)`, { needsLibrary: true });
+    }, `Apply All suggestions (${targets.length} photos)`);
 }
 
 export function updateFolderAutoApplyState() {

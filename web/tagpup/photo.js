@@ -379,7 +379,7 @@ export function carryTagsForward() {
         saveToLocalStorageCache();
         setStatus('ready', `Copied ${missing.length} tag(s) from ${from}`);
         return true;
-    }, undefined, { needsLibrary: true });
+    });
 }
 
 /** Keep the carry-forward button honest about what it would do. */
