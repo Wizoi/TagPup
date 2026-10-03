@@ -18,6 +18,7 @@ conflict and never overwritten. An edit never replaces a list: it adds and remov
 
 What a chunk reports is what CHANGED (a file written and read back), not what was attempted.
 """
+import logging
 import os
 from dataclasses import dataclass, field
 
@@ -28,6 +29,8 @@ from tagpup.services import damaged_photos, file_changes, file_only, libraries, 
 from tagpup.services import photos as photo_actions
 from tagpup.store import file_journal, taxonomy
 from tagpup.store import library_view as store
+
+logger = logging.getLogger(__name__)
 
 TAGS, PEOPLE, TIME_SHIFT = "tags", "people", "time_shift"
 OPS = (TAGS, PEOPLE, TIME_SHIFT)
@@ -193,6 +196,12 @@ class ChunkSession:
         self._session = session
         self._dead = None
 
+    @property
+    def dead(self):
+        """Did a command of this session time out (or its process die)? Then what it was doing to the file it was at is not
+        known, and nor is what it did before it said so."""
+        return self._dead is not None
+
     def __getattr__(self, name):
         wanted = getattr(self._session, name)
         if not callable(wanted):
@@ -207,6 +216,55 @@ class ChunkSession:
                 self._dead = stalled
                 raise
         return command
+
+
+class ChunkUndecided(Exception):
+    """A command of the chunk stalled and the files could not then be read to see what it had done: which photos of the chunk
+    were shifted is not known. The job stops with the chunk in flight in its record, for a resume to decide from the journal and
+    the files, and shifts nothing over a guess."""
+
+
+#: What an error says of a photo that is not shifted, decided after a stalled command by reading it.
+NOT_SHIFTED = "ExifTool did not answer in time; read afterwards, the file was not shifted"
+
+#: ... of one that cannot be told.
+UNCONFIRMED = "could not confirm whether it was shifted: the file differs from both what it held and what the shift leaves"
+
+
+def conflicts(library, operation):
+    """The files of the changes named `operation` that the journal holds as conflicts: after a stalled command, a file that
+    may nonetheless have been written."""
+    return file_journal.files_of_operation(library.path, operation, "conflict")
+
+
+def decide(library, rows, exiftool_path):
+    """file_changes.reconcile over a session of its own -- the chunk's has timed out and stays dead -- with the chunk's deadline.
+    (landed, not_written, elsewhere); ChunkUndecided when a file cannot be read to tell, or ExifTool cannot be had."""
+    try:
+        with exiftool_session.ExifToolSession(executable=exiftool_path, timeout=CHUNK_TIMEOUT) as fresh:
+            landed, not_written, elsewhere, unknown = file_changes.reconcile(library, rows, ChunkSession(fresh))
+    except Exception as problem:
+        logger.warning("Could not read the files of a chunk after a stalled command: %s", problem)
+        raise ChunkUndecided(type(problem).__name__) from None
+    if unknown:
+        raise ChunkUndecided("%d file(s) could not be read" % len(unknown))
+    return landed, not_written, elsewhere
+
+
+def _decided(library, result, exiftool_path):
+    """After a stalled command in a time shift's chunk, read every file the chunk planned that is not recorded done and say what
+    became of it: written after all (counted changed, its conflict row done), not written (an error saying so), or changed by
+    something else (an error saying that). ChunkUndecided when it cannot be told."""
+    change = result.details.get("change")
+    rows = [row for row in file_journal.files_of(library.path, change) if row.state != "done"] if change else []
+    if not rows:
+        return
+    landed, not_written, elsewhere = decide(library, rows, exiftool_path)
+    landed_keys = {paths.key(row.path) for row in landed}
+    said = {paths.key(row.path): NOT_SHIFTED for row in not_written}
+    said.update({paths.key(row.path): UNCONFIRMED for row in elsewhere})
+    result.errors = [(what, said.get(paths.key(what), why)) for what, why in result.errors if paths.key(what) not in landed_keys]
+    result.changed += len(landed)
 
 
 def run_chunk(library, edit, ids, exiftool_path, operation):
@@ -233,6 +291,8 @@ def run_chunk(library, edit, ids, exiftool_path, operation):
         with file_changes.exclusively():
             if edit.op == TIME_SHIFT:
                 result = _shift(library, chosen, edit.minutes, exiftool_path, operation, et)
+                if et.dead:
+                    _decided(library, result, exiftool_path)
             else:
                 result = tagging.change_tags(
                     library, chosen, edit.add, edit.remove, exiftool_path, operation=operation, stop_at_first_error=False,
@@ -334,9 +394,27 @@ def forget(library, job):
     job_files.forget(library.bulk_jobs, job)
 
 
-def sweep(library):
-    """Let go of the records of jobs long over."""
-    job_files.sweep(library.bulk_jobs)
+def sweep(library, now=None):
+    """Let go of the records of jobs untouched too long (tagpup.files.job_files.sweep: a job's files go together, a time shift that
+    can be resumed is kept a month, anything else a week). The ids of the resumable jobs let go."""
+    return job_files.sweep(library.bulk_jobs, now)
+
+
+def resumable_heads(library):
+    """The ids of the jobs a resume can still carry on (both their list of photos and their state are there): the library keeps
+    their first runs, which their ids are, however many runs come after."""
+    return job_files.jobs_with_records(library.bulk_jobs)
+
+
+def has_record(library, job):
+    """Does job `job` have the record a resume needs: its list of photos and its state, both readable?"""
+    return job_files.has_ids(library.bulk_jobs, job) and job_files.read_state(library.bulk_jobs, job) is not None
+
+
+def is_this_process(owner):
+    """Is `owner` ('host:pid:start', as a run names its process) this process?"""
+    return owner == file_journal.owner()
+
 
 def shifted_ids(library, operation):
     """The ids of the photos the changes named `operation` (operation_of) wrote and left done: the journal's account, and the

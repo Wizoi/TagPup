@@ -413,6 +413,33 @@ def _read_back(et, library, wrote, also=(), records=None):
     return unchanged
 
 
+@_exclusive
+def reconcile(library, rows, et):
+    """Decide, by reading each of their files with `et` (a session the caller opened for it, not the one whose command stalled),
+    the files of `rows` that a stalled command left in doubt -- ExifTool may have written a file and not answered in time, so the
+    journal marked it a conflict, or never reached it. A file that holds what the change was to leave is DONE, its row recorded as
+    it holds it (a conflict row for a file that holds the target is not a conflict); one that holds what it held is NOT WRITTEN, taken
+    out of the change; one that holds neither was changed by something else and stays a conflict; one that could not be read is
+    UNKNOWN. Returns (landed, not_written, elsewhere, unknown), lists of rows. A shift is not safe to plan again from a file that
+    may already be shifted, so what is unknown is for the caller to refuse to go on over."""
+    landed, not_written, elsewhere, unknown = [], [], [], []
+    wanted = sorted({field for row in rows for field in row.after})
+    held = field_values.read(et, [row.path for row in rows], wanted) if rows else {}
+    for row in rows:
+        now = held.get(paths.key(row.path))
+        if now is None or isinstance(now, Exception):
+            unknown.append(row)
+        elif fields.reads_same(now, row.after):
+            _record_held(library, row, now, row.after, "done", row.stamp)
+            landed.append(row)
+        elif fields.reads_same(now, row.before):
+            file_journal.withdraw(library.path, [row.id])
+            not_written.append(row)
+        else:
+            elsewhere.append(row)
+    return landed, not_written, elsewhere, unknown
+
+
 def _conflict(library, row, why):
     file_journal.mark(library.path, [row.id], "conflict", why)
     return "conflict", "%s: %s" % (row.named(), why)

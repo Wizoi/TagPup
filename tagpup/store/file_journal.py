@@ -275,6 +275,23 @@ def change(db_path, change_id):
     return Change(found[0], found[1], found[2], found[3], found[4], json.loads(found[5] or "{}"))
 
 
+def files_of_operation(db_path, operation, state):
+    """The files, as FileRow, that the changes named exactly `operation` hold in `state` (a bulk job's changes are named after
+    it): a resume asks which of its files a command that stalled left 'conflict', to read them and decide. Driven from `changes`
+    as photo_ids_done is. Reads only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not has_table(conn):
+            return []
+        roots = store_roots.roots_for(conn)
+        columns = ", ".join("f." + each.strip() for each in _FILE_COLUMNS.split(","))
+        return [_row(found, roots) for found in conn.execute(
+            "SELECT " + columns + " FROM changes c CROSS JOIN change_files f ON f.change_id = c.id"
+            " WHERE c.operation = ? AND f.state = ? ORDER BY f.id", (operation, state))]
+    finally:
+        conn.close()
+
+
 def photo_ids_done(db_path, operation):
     """The ids of the photos whose files a change named exactly `operation` wrote and left done: what a bulk job that
     names each of its changes after itself asks, to tell which photos it has already changed (a time shift is not safe to
