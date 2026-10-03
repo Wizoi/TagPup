@@ -231,21 +231,18 @@ def _registry_rules(key):
 
 
 def read_search_rules():
-    """[(folder, include)] of Windows Search's scope rules for files, from WorkingSetRules and DefaultRules, or None when
-    neither can be read."""
+    """[(folder, include)] of Windows Search's scope rules for files: WorkingSetRules, else DefaultRules; None when neither
+    can be read."""
     if sys.platform != "win32":
         return None
-    found, readable = [], False
+    # WorkingSetRules is the whole working set: a copy of every default and the user's own changes over them. DefaultRules
+    # is read only when it cannot be, never merged: merged, a default's Include=0 would beat the user's Include=1.
     for name in SEARCH_RULE_SETS:
         raw = _registry_rules(SEARCH_KEY + "\\" + name)
-        if raw is None:
-            continue
-        readable = True
-        for url, include in raw:
-            folder = parse_scope_url(url)
-            if folder:
-                found.append((folder, bool(include)))
-    return found if readable else None
+        if raw is not None:
+            return [(folder, bool(include)) for folder, include in
+                    ((parse_scope_url(url), include) for url, include in raw) if folder]
+    return None
 
 
 _unanswered = {}
@@ -281,10 +278,12 @@ def read_not_indexed(folder):
 
 
 def _sample(folder):
+    # Depth first: a root of year and month folders reaches a file in a few steps, where breadth first spent its
+    # entries on the folders (26 years of 12 months is 338 before the first file).
     sampled = unmarked = seen = 0
     waiting = [folder]
     while waiting and sampled < SAMPLE_FILES and seen < SAMPLE_ENTRIES:
-        with os.scandir(waiting.pop(0)) as entries:
+        with os.scandir(waiting.pop()) as entries:
             for entry in entries:
                 seen += 1
                 if entry.is_dir(follow_symlinks=False):
@@ -524,6 +523,8 @@ def search_finding(probes, data_folder, places):
         sample = probes.unmarked_files(folder)
         if sample is None:
             unknown.append((folder, None))
+        elif not sample[0]:
+            unknown.append((folder, None))   # no file found to look at: that is not "every file is marked"
         elif sample[1]:
             problems.append((folder, "%d of %d sampled files are not marked" % (sample[1], sample[0])))
         else:
@@ -642,6 +643,9 @@ def check(data_folder, places=(), refresh=False, probes=None, total=TOTAL_SECOND
         if probes is None and _worker is not None and _worker.is_alive():
             return _result([finding("timeout", INFO, "The file access check is still running",
                                     "A check that took too long has not ended; ask again in a moment.")], {})
+        if refresh:
+            with _guard:
+                _unanswered.clear()   # Check again looks again, whatever a share did not answer a minute ago
         if probes is None and not refresh:
             with _guard:
                 held = _cache.get(key)

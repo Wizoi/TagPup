@@ -118,42 +118,53 @@ class Defender(unittest.TestCase):
 
 
 GUID = "d8254c53-2b61-4c77-9a0e-5f3b1c6a7e90"
-#: Rules as this PC's registry holds them (2026-10-03): a [volume guid] after the drive, wildcards in a component,
-#: a drive that is a wildcard; WorkingSetRules and DefaultRules (where the Users\ Include=1 rule lives).
+#: Rules as this PC's registry holds them (2026-10-03): a [volume guid] after the drive, wildcards in a component, a
+#: drive that is a wildcard. WorkingSetRules is the WHOLE working set: a copy of every default (Default=1) and the
+#: user's own (Default=0) -- among them C:\Users\ Include=0, where DefaultRules says Include=1.
 WORKING_SET = [
     ("file:///C:\\[%s]\\Users\\*\\AppData\\Local\\Temp\\" % GUID, 0),
+    ("file:///C:\\[%s]\\ProgramData\\" % GUID, 0),
+    ("file:///C:\\[%s]\\Users\\" % GUID, 0),
     ("file:///C:\\[%s]\\Users\\pat\\.*\\" % GUID, 0),
     ("file:///C:\\[%s]\\Users\\pat\\AppData\\" % GUID, 0),
+    ("file:///C:\\[%s]\\Users\\pat\\Pictures\\Keep\\" % GUID, 1),
     ("file:///C:\\[%s]\\ProgramData\\Microsoft\\Windows\\Start Menu\\" % GUID, 1),
     ("file:///*\\$RECYCLE.BIN\\", 0),
     ("iehistory://{S-1-5-21-1}/", 1),
 ]
-DEFAULT = [("file:///C:\\[%s]\\Users\\" % GUID, 1), ("file:///C:\\[%s]\\ProgramData\\" % GUID, 0)]
+DEFAULT = [("file:///C:\\[%s]\\Users\\" % GUID, 1), ("file:///C:\\[%s]\\ProgramData\\" % GUID, 0),
+           ("file:///C:\\[%s]\\Users\\pat\\Pictures\\Keep\\" % GUID, 0)]
 
 
 class TheRegistrysRules(unittest.TestCase):
     def rules(self):
-        return [(fa.parse_scope_url(url), bool(include)) for url, include in WORKING_SET + DEFAULT
-                if fa.parse_scope_url(url)]
+        return [(fa.parse_scope_url(url), bool(include)) for url, include in WORKING_SET if fa.parse_scope_url(url)]
 
     def test_the_volume_guid_is_not_part_of_the_folder(self):
         self.assertEqual("C:\\Users\\*\\AppData\\Local\\Temp", fa.parse_scope_url(WORKING_SET[0][0]))
         self.assertEqual("C:\\Users", fa.parse_scope_url(DEFAULT[0][0]))
-        self.assertEqual("*\\$RECYCLE.BIN", fa.parse_scope_url(WORKING_SET[4][0]))
+        self.assertEqual("*\\$RECYCLE.BIN", fa.parse_scope_url(WORKING_SET[7][0]))
 
-    def test_the_users_rule_of_the_default_rules_includes_a_pictures_folder(self):
+    def test_the_working_set_alone_decides(self):
         include = lambda path: fa.search_scope_includes(path, self.rules())   # noqa: E731
-        self.assertTrue(include("C:\\Users\\pat\\Pictures\\TagPup"))
+        self.assertFalse(include("C:\\Users\\pat\\Pictures\\TagPup"), "the user's C:\\Users\\ Include=0 beats the default")
+        self.assertFalse(include("C:\\Users\\bob\\Documents"))
         self.assertFalse(include("C:\\Users\\pat\\AppData\\Roaming\\TagPup"), "a named folder rule excludes")
         self.assertFalse(include("C:\\Users\\pat\\.config\\x"), "Users\\pat\\.* is a wildcard component")
         self.assertFalse(include("C:\\Users\\bob\\AppData\\Local\\Temp\\x"), "Users\\*\\AppData\\Local\\Temp")
-        self.assertTrue(include("C:\\Users\\bob\\Documents"))
         self.assertFalse(include("D:\\Training\\Pictures"), "no rule covers D:")
         self.assertFalse(include("E:\\$RECYCLE.BIN\\x"), "a rule whose drive is a wildcard")
         self.assertFalse(include("C:\\ProgramData\\x"))
         self.assertTrue(include("C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\x"), "the more specific include wins")
 
-    def test_both_rule_sets_are_read(self):
+    def test_a_user_rule_that_includes_what_the_defaults_exclude_wins(self):
+        with mock.patch.object(fa, "_registry_rules", lambda key: WORKING_SET if "WorkingSet" in key else DEFAULT), \
+                mock.patch.object(fa.sys, "platform", "win32"):
+            found = fa.read_search_rules()
+        self.assertTrue(fa.search_scope_includes("C:\\Users\\pat\\Pictures\\Keep\\2019", found),
+                        "Include=1 Default=0 against the default's Include=0 for the same URL")
+
+    def test_only_the_working_set_is_read_unless_it_cannot_be(self):
         asked = []
 
         def registry_rules(key):
@@ -162,9 +173,20 @@ class TheRegistrysRules(unittest.TestCase):
 
         with mock.patch.object(fa, "_registry_rules", registry_rules), mock.patch.object(fa.sys, "platform", "win32"):
             found = fa.read_search_rules()
+        self.assertEqual(["WorkingSetRules"], asked)
+        self.assertIn(("C:\\Users", False), found)
+        self.assertNotIn(("C:\\Users", True), found)
+
+        asked.clear()
+
+        def only_defaults(key):
+            asked.append(key.rsplit("\\", 1)[-1])
+            return None if "WorkingSet" in key else DEFAULT
+
+        with mock.patch.object(fa, "_registry_rules", only_defaults), mock.patch.object(fa.sys, "platform", "win32"):
+            found = fa.read_search_rules()
         self.assertEqual(["WorkingSetRules", "DefaultRules"], asked)
         self.assertIn(("C:\\Users", True), found)
-        self.assertIn(("C:\\Users\\*\\AppData\\Local\\Temp", False), found)
 
     def test_neither_set_readable_is_unknown(self):
         with mock.patch.object(fa, "_registry_rules", lambda key: None), mock.patch.object(fa.sys, "platform", "win32"):
@@ -260,7 +282,40 @@ class WindowsSearch(unittest.TestCase):
         self.assertEqual("info", found["windows-search"]["level"])
 
 
+class ASampleOfNoFilesIsNeverOk(unittest.TestCase):
+    def test_a_root_of_year_and_month_folders_is_sampled_down_to_its_files(self):
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="years_") as root:
+            for year in range(1998, 2024):
+                for month in range(1, 13):
+                    folder = os.path.join(root, str(year), "%02d" % month)
+                    os.makedirs(folder)
+                    with open(os.path.join(folder, "IMG_0001.jpg"), "wb") as handle:
+                        handle.write(b"x")
+            sampled, unmarked = fa.read_unmarked_files(root)
+            self.assertGreater(sampled, 0)
+            self.assertEqual(sampled, unmarked, "none of them carries the mark")
+            found, _ = run(places=[root], search_rules=lambda: [(root, True)], not_indexed=lambda folder: folder == root,
+                           unmarked_files=fa.read_unmarked_files)
+            self.assertEqual("warn", found["windows-search"]["level"])
+
+    def test_no_file_sampled_is_could_not_be_checked_and_not_ok(self):
+        found, _ = run(search_rules=lambda: [(PHOTOS, True)], not_indexed=lambda folder: folder == PHOTOS,
+                       unmarked_files=lambda folder: (0, 0))
+        self.assertEqual("info", found["windows-search"]["level"])
+        self.assertIn("could not be checked", found["windows-search"]["title"])
+
+
 class TheAttributeIsReadBounded(unittest.TestCase):
+    def test_check_again_forgets_an_unanswered_look(self):
+        fa.forget()
+        self.addCleanup(fa.forget)
+        fa._unanswered["\\\\nas\\photos"] = time.monotonic()
+        ready = probes()
+        with mock.patch.object(fa, "Probes", lambda: ready):
+            fa.check(DATA, [], refresh=True)
+        self.assertEqual({}, fa._unanswered)
+
     def setUp(self):
         fa.forget()
         self.addCleanup(fa.forget)
