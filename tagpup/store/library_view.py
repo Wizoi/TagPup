@@ -24,7 +24,7 @@ import collections
 import time
 
 from tagpup.core import paths, vocabulary
-from tagpup.store import damaged_files, derived
+from tagpup.store import damaged_files, db, derived
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -168,6 +168,39 @@ def all_ids(conn, source, cap):
     if len(ids) <= cap:
         return ids, len(ids)
     return ids[:cap], conn.execute(*scope.count).fetchone()[0]
+
+
+def source_ids(conn, source, cap):
+    """all_ids, read in ONE transaction: the dated photos and the undated are two statements, and a photo dated
+    between them (a bulk time shift of the library is under way, a sync) would be listed twice or not at all by two
+    snapshots. The transaction is the connection's own and read-only; it ends with the connection."""
+    db.begin(conn)
+    return all_ids(conn, source, cap)
+
+
+def existing_ids(conn, photo_ids):
+    """The ids of `photo_ids` that have a photo, as a set: one primary-key read in batches of CHUNK."""
+    found = set()
+    ids = list(photo_ids)
+    for start in range(0, len(ids), CHUNK):
+        chunk = ids[start:start + CHUNK]
+        found.update(photo_id for (photo_id,) in conn.execute(
+            "SELECT id FROM photos WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk))
+    return found
+
+
+def paths_of(conn, photo_ids):
+    """{photo id: path -- native --} of the photos `photo_ids` that have a row: one read in batches of CHUNK of ids
+    and paths alone (a bulk edit resolves each chunk of its photos as it reaches them). Raises paths.RootsError for a
+    root this machine does not place."""
+    found = {}
+    ids = list(photo_ids)
+    for start in range(0, len(ids), CHUNK):
+        chunk = ids[start:start + CHUNK]
+        rows = conn.execute("SELECT id, path FROM photos WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk).fetchall()
+        for photo_id, path in store_roots.natives(conn, rows, 1):
+            found[photo_id] = path
+    return found
 
 
 def id_plans(conn, source, cap):

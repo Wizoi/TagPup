@@ -94,6 +94,12 @@ def _open(library):
     return conn
 
 
+def opened(library):
+    """A read-only connection to a library that is ready for the views, for the services that read beside this one
+    (tagpup.services.selection): NotReady, as the views answer it, when it is not."""
+    return _open(library)
+
+
 # ---- The request's words, read ------------------------------------------------------------------
 
 def source_of(library, kind, value=None, recursive=False):
