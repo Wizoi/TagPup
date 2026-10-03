@@ -28,6 +28,11 @@ export function rootOf(tag) {
     return String(tag).split('/')[0].trim();
 }
 
+/** The tag of a node named `name` under the tag `parentTag` (none: a root): "People/Rowan Thackeray". */
+export function joinTag(parentTag, name) {
+    return parentTag ? `${parentTag}/${name}` : String(name);
+}
+
 /** Do these two tags name the same person, however each is spelled? */
 export function samePerson(a, b) {
     const left = leafOf(a).toLowerCase();
