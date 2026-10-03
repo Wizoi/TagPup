@@ -17,7 +17,7 @@
  *               and/or photos were rewritten, so what the page shows of them is old.
  */
 import { api } from './api.js';
-import { nameProblem, tagProblem } from './vocabulary.js';
+import { joinTag, nameProblem, tagProblem } from './vocabulary.js';
 import { createTagTree } from './tag-tree.js';
 
 /**
@@ -25,12 +25,21 @@ import { createTagTree } from './tag-tree.js';
  * tree (web/common/tag-tree.js), which holds the nodes as shown, the open branches, and
  * the patches; it is made on the first opening and kept, so what was open is open still.
  */
+/** What makes a name more than one level, as the server reads it (tagpup.core.vocabulary.segments). */
+const PATH_SEPARATORS = /[/|\\]/;
+const NOTICE_MS = 6000;
+
 const tagEditor = {
     hooks: null,
     nodes: [],
     view: null,
-    libraryKey: null,
     scrolled: 0,
+    notice: null,
+    noticeTimer: null,
+    tail: Promise.resolve(),
+    inflight: 0,
+    failed: false,
+    made: 0,
     overlay: null,
     search: null,
     tree: null,
@@ -72,14 +81,6 @@ function syncTree() {
     tagEditor.view.reconcile(list);
 }
 
-/** The tree was changed: read it again, show what differs, and tell the page. */
-function afterTreeEdit(photosChanged) {
-    return reloadTree().then(() => {
-        syncTree();
-        tagEditor.hooks.edited({ treeChanged: true, photosChanged });
-        editorSay('Ready');
-    });
-}
 
 function editorElement(tag, className, text) {
     const el = document.createElement(tag);
@@ -114,9 +115,12 @@ function buildTagEditor() {
     const btnAddRoot = editorElement('button', 'btn btn-primary', '➕ Add Root Category');
     btnAddRoot.id = 'btn-taxonomy-add-root';
     controls.append(search, btnAddRoot);
+    const note = editorElement('div', 'tag-editor-notice');
+    note.setAttribute('role', 'status');
+    tagEditor.notice = note;
     const tree = editorElement('div', 'tag-editor-tree');
     tree.id = 'taxonomy-tree-container';
-    body.append(controls, tree);
+    body.append(controls, note, tree);
 
     const footer = editorElement('div', 'tag-editor-footer');
     if (!tagEditor.hooks.status) {
@@ -195,9 +199,7 @@ export function openTagEditor() {
     tagEditor.opener = document.activeElement;
     tagEditor.overlay.classList.add('active');
     const view = tagEditor.view;
-    const key = api.url('/api/taxonomy/tree');
-    if (view.size() === 0 || tagEditor.libraryKey !== key) {
-        tagEditor.libraryKey = key;
+    if (view.size() === 0) {
         view.load(editorNodes());
         view.applyFilter(tagEditor.search.value);
     } else {
@@ -218,142 +220,315 @@ export function closeTagEditor() {
     if (opener && typeof opener.focus === 'function' && document.contains(opener)) opener.focus();
 }
 
-export function updateTaxonomyNode(id, fields) {
-    editorSay('Updating taxonomy...', true);
-
-    api.json('/api/taxonomy/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, ...fields })
-    })
-    .then(data => {
-        if (data.success) {
-            afterTreeEdit(false);
-        } else {
-            alert("Error updating tag: " + data.error);
-        }
-    })
-    .catch(err => {
-        console.error(err);
-        editorSay('Error');
+/**
+ * Settle the tree's own state after the server answered, then the page's: read the tree
+ * again, show what differs from what is shown, and tell the page. `view` is the tree the
+ * action was made on.
+ */
+function afterTreeEdit(photosChanged, view = tagEditor.view) {
+    return reloadTree().then(() => {
+        if (view === tagEditor.view) syncTree();
+        tagEditor.hooks.edited({ treeChanged: true, photosChanged });
     });
 }
 
+/** A failed or refused action: the tree is read again, quietly, so what is shown is the server's. */
+function settleAfterFailure(view) {
+    return reloadTree().then(() => {
+        if (view === tagEditor.view) syncTree();
+    });
+}
+
+/** Say something to the person, in the editor, where they are looking. Cleared after a while. */
+function notice(text) {
+    if (!tagEditor.notice) return;
+    tagEditor.notice.textContent = text;
+    clearTimeout(tagEditor.noticeTimer);
+    if (text) tagEditor.noticeTimer = setTimeout(() => { tagEditor.notice.textContent = ''; }, NOTICE_MS);
+}
+
+/** Back to Ready when nothing is in flight. */
+function settled() {
+    if (tagEditor.inflight === 0 && !tagEditor.failed) editorSay('Ready');
+}
+
+/**
+ * Run `job` after the ones asked before it. The server rewrites photo files for a rename
+ * or a delete, and two of those running at once -- a branch and a node in it -- would
+ * write the same file twice at the same time; so they go one at a time, in the order
+ * they were asked. What is shown does not wait: each action shows its result at once.
+ */
+function enqueue(job) {
+    if (tagEditor.inflight === 0) tagEditor.failed = false;
+    tagEditor.inflight += 1;
+    const run = tagEditor.tail.then(job).catch((err) => {
+        console.error(err);
+        tagEditor.failed = true;
+        editorSay('Error');
+    }).then(() => {
+        tagEditor.inflight -= 1;
+        settled();
+    });
+    tagEditor.tail = run;
+    return run;
+}
+
+/** A second action on a node still being changed is refused, in words, and its row repainted. */
+function refuseIfBusy(id) {
+    if (!tagEditor.view.isBusy(id)) return false;
+    notice('That tag is still being changed; try again when it has finished.');
+    tagEditor.view.repaint(id);
+    return true;
+}
+
+/** Flags of a node: set at once, written by the server, put back if it refuses. */
+export function updateTaxonomyNode(id, fields) {
+    const view = tagEditor.view;
+    const node = view.node(id);
+    if (!node || refuseIfBusy(id)) return Promise.resolve();
+    notice('');
+    const saved = view.flagsOf(id);
+    view.setFlags(id, fields);
+    view.setBusy(id, 'saving…');
+    editorSay('Updating taxonomy...', true);
+
+    return enqueue(async () => {
+        let data;
+        try {
+            data = await api.json('/api/taxonomy/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: node.id, ...fields }),
+            });
+        } catch (err) {
+            console.error(err);
+            view.setBusy(id, null);
+            view.restoreFlags(saved);
+            editorSay('Error');
+            tagEditor.failed = true;
+            return settleAfterFailure(view);
+        }
+        view.setBusy(id, null);
+        if (data.success) return afterTreeEdit(false, view);
+        view.restoreFlags(saved);
+        alert("Error updating tag: " + data.error);
+        return settleAfterFailure(view);
+    });
+}
+
+/**
+ * A new tag: shown at once, under its parent, in its order, with a marker until the
+ * server answers; taken out again if it refuses. A name that is a path ("A/B") makes
+ * several nodes the server alone names, so it is shown when the server has answered.
+ */
 export function createTaxonomyNode(name, parentId = null, hasFace = 0) {
     const problem = tagProblem(name);
     if (problem) {
         alert(problem);
-        return;
+        return Promise.resolve();
+    }
+    const view = tagEditor.view;
+    const parent = parentId === null ? null : view.node(parentId);
+    if (parentId !== null && !parent) return Promise.resolve();
+    notice('');
+
+    let temp = null;
+    if (!PATH_SEPARATORS.test(name)) {
+        const already = view.siblingNamed(parentId, name);
+        if (already) {
+            view.reveal(already.id);
+            notice(`"${already.tag}" is already there.`);
+            return Promise.resolve();
+        }
+        tagEditor.made += 1;
+        temp = view.add({
+            id: `new-${tagEditor.made}`, temp: true, name, parent_id: parentId,
+            tag: parent ? joinTag(parent.tag, name) : name,
+            has_face: parent ? parent.has_face : hasFace,
+            hidden_from_autocomplete: parent ? parent.hidden_from_autocomplete : 0,
+            usage_count: 0,
+        }, { show: true });
+        view.setBusy(temp.id, 'adding…');
     }
     editorSay('Creating tag...', true);
 
-    api.json('/api/taxonomy/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, parent_id: parentId, has_face: hasFace })
-    })
-    .then(data => {
-        if (data.success) {
-            afterTreeEdit(false);
-        } else {
-            alert("Error creating tag: " + data.error);
+    const undo = () => {
+        if (temp && view.node(temp.id) === temp) view.remove(temp.id);
+    };
+    return enqueue(async () => {
+        if (parent && view.node(parent.id) !== parent) {
+            undo();
+            notice('Not added: the tag it was to go under is gone.');
+            return;
         }
-    })
-    .catch(err => {
-        console.error(err);
-        editorSay('Error');
+        let data;
+        try {
+            data = await api.json('/api/taxonomy/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, parent_id: parent ? parent.id : null, has_face: hasFace }),
+            });
+        } catch (err) {
+            console.error(err);
+            undo();
+            editorSay('Error');
+            tagEditor.failed = true;
+            return settleAfterFailure(view);
+        }
+        if (!data.success) {
+            undo();
+            alert("Error creating tag: " + data.error);
+            return;
+        }
+        if (temp && view.node(temp.id) === temp) {
+            view.setBusy(temp.id, null);
+            if (view.has(data.id)) {
+                // The tag was there already, or is the parent's own name: nothing was made.
+                view.remove(temp.id);
+                view.reveal(data.id);
+            } else {
+                view.rekey(temp.id, data.id, { tag: data.tag });
+            }
+        }
+        await afterTreeEdit(false, view);
+        if (!temp) view.reveal(data.id);
     });
 }
 
+/**
+ * Take a tag out. Asked first, as it was, and the node stays, marked, until the server
+ * has done it: unlike a rename it can fail part-way (a photo that cannot be rewritten
+ * keeps the tag, and the tree keeps the node), and a node removed at once would have to
+ * come back. Its place, what is open and the scroll are kept either way.
+ */
 export function deleteTaxonomyNode(id, tagPath) {
+    const view = tagEditor.view;
+    const node = view.node(id);
+    if (!node || refuseIfBusy(id)) return Promise.resolve();
+    notice('');
+    view.setBusy(id, 'checking…');
     editorSay('Checking usage...', true);
 
-    api.json('/api/taxonomy/delete-check', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tag_id: id })
-    })
-    .then(async (data) => {
-        if (!data.success) {
-            alert("Error checking tag usage: " + data.error);
-            return;
-        }
-
-        let confirmResult = { action: 'remove' };
-
-        if (data.used) {
-            const possibleTargets = tagEditor.view.ordered()
-                .filter(n => n.id !== id && !n.tag.startsWith(tagPath + "/"))
-                .map(n => n.tag);
-
-            confirmResult = await showDeleteConflictModal(tagPath, data.count, possibleTargets);
-            if (!confirmResult) {
-                editorSay('Ready');
+    return (async () => {
+        try {
+            const data = await api.json('/api/taxonomy/delete-check', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tag_id: node.id }),
+            });
+            if (!data.success) {
+                alert("Error checking tag usage: " + data.error);
                 return;
             }
-        } else {
-            const confirmed = confirm(`Are you sure you want to remove tag "${tagPath}"?`);
-            if (!confirmed) {
-                editorSay('Ready');
+
+            let confirmResult = { action: 'remove' };
+            if (data.used) {
+                const possibleTargets = view.ordered()
+                    .filter(n => !n.temp && n.id !== id && !n.tag.startsWith(tagPath + "/"))
+                    .map(n => n.tag);
+                confirmResult = await showDeleteConflictModal(tagPath, data.count, possibleTargets);
+                if (!confirmResult) return;
+            } else if (!confirm(`Are you sure you want to remove tag "${tagPath}"?`)) {
                 return;
             }
-        }
 
-        editorSay('Deleting tag...', true);
-
-        api.json('/api/taxonomy/delete-confirm', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                tag_id: id,
-                action: confirmResult.action,
-                target_tag: confirmResult.target_tag
-            })
-        })
-        .then(resData => {
-            if (resData.success) {
-                afterTreeEdit(Boolean(data.used));
-            } else {
+            view.setBusy(id, data.used ? 'deleting… the photos are being rewritten' : 'deleting…');
+            editorSay('Deleting tag...', true);
+            await enqueue(async () => {
+                let resData;
+                try {
+                    resData = await api.json('/api/taxonomy/delete-confirm', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            tag_id: node.id,
+                            action: confirmResult.action,
+                            target_tag: confirmResult.target_tag,
+                        }),
+                    });
+                } catch (err) {
+                    console.error(err);
+                    editorSay('Error');
+                    tagEditor.failed = true;
+                    tagEditor.hooks.edited({ treeChanged: false, photosChanged: true });
+                    return settleAfterFailure(view);
+                }
+                if (resData.success) {
+                    const next = view.neighbour(id);
+                    view.remove(id);
+                    // The row that had the focus is gone: it goes to the one beside it.
+                    if (next !== null && !tagEditor.overlay.contains(document.activeElement)) {
+                        view.focusOn(next, 'delete');
+                    }
+                    return afterTreeEdit(Boolean(data.used), view);
+                }
                 alert("Error deleting tag: " + resData.error);
                 // A partial delete rewrote some photos; show them as they are now.
                 if (resData.photos_rewritten) tagEditor.hooks.edited({ treeChanged: false, photosChanged: true });
-                editorSay('Ready');
-            }
-        });
-    })
-    .catch(err => {
-        console.error(err);
-        editorSay('Error');
-    });
+            });
+        } catch (err) {
+            console.error(err);
+            editorSay('Error');
+            tagEditor.failed = true;
+        } finally {
+            if (view.node(id) === node) view.setBusy(id, null);
+            settled();
+        }
+    })();
 }
 
+/**
+ * A new name: shown at once, in its alphabetical place, the node marked while the server
+ * rewrites the photos. Answered, the marker goes and nothing else moves; refused, the node
+ * goes back to its old name and place and the reason is shown. Warned ("some photos not
+ * rewritten") the new name stays: the tree has it, and the warning says what does not.
+ */
 export function renameTaxonomyNode(tagId, newName) {
     // A node's own name is one level: no "/" either.
     const problem = nameProblem(newName);
     if (problem) {
         alert(problem);
-        return;
+        return Promise.resolve();
     }
+    const view = tagEditor.view;
+    const node = view.node(tagId);
+    if (!node || refuseIfBusy(tagId) || node.name === newName) return Promise.resolve();
+    notice('');
+    const oldName = node.name;
+    view.rename(tagId, newName);
+    view.setBusy(tagId, node.usage_count > 0 ? 'renaming… the photos are being rewritten' : 'renaming…');
     editorSay('Renaming tag...', true);
 
-    api.json('/api/taxonomy/rename', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tag_id: tagId, new_name: newName })
-    })
-    .then(data => {
-        if (data.success) {
-            // Some photos may not have been rewritten; they still carry the old tag.
-            if (data.warning) alert("Renamed, but " + data.warning);
-            afterTreeEdit(true);
-        } else {
-            alert("Error renaming tag: " + data.error);
-            editorSay('Ready');
+    const back = () => {
+        view.setBusy(tagId, null);
+        if (view.node(tagId) === node) view.rename(tagId, oldName);
+    };
+    return enqueue(async () => {
+        let data;
+        try {
+            data = await api.json('/api/taxonomy/rename', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tag_id: node.id, new_name: newName }),
+            });
+        } catch (err) {
+            // Nothing says whether the server did it: show the old name, then read what it holds.
+            console.error(err);
+            back();
+            editorSay('Error');
+            tagEditor.failed = true;
+            tagEditor.hooks.edited({ treeChanged: false, photosChanged: true });
+            return settleAfterFailure(view);
         }
-    })
-    .catch(err => {
-        console.error(err);
-        editorSay('Error');
+        if (!data.success) {
+            back();
+            alert("Error renaming tag: " + data.error);
+            return settleAfterFailure(view);
+        }
+        view.setBusy(tagId, null);
+        // Some photos may not have been rewritten; they still carry the old tag.
+        if (data.warning) alert("Renamed, but " + data.warning);
+        return afterTreeEdit(true, view);
     });
 }
 
