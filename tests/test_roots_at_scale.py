@@ -36,6 +36,9 @@ FACES = 225_000
 
 SCALE = float(os.environ.get("TAGPUP_ROOTS_SCALE", "1"))
 
+#: Rows and crops as big as the real ones (a library of about 1 GB), only when asked for: it takes minutes.
+REAL_SIZE = bool(os.environ.get("TAGPUP_ROOTS_REAL_SIZE"))
+
 #: Fields of an ExifTool read, about what the indexer keeps of one photo.
 FIELDS = {"XMP:Subject": ["Activity/Sailing", "Places/Harbour"], "IPTC:Keywords": ["Activity/Sailing", "Places/Harbour"],
           "EXIF:DateTimeOriginal": "2024:06:01 10:00:00", "EXIF:Make": "Fictional", "EXIF:Model": "Cam 7",
@@ -66,6 +69,8 @@ def make_library(home, photos, faces_count):
                 folder = os.path.join(pictures, "%d" % (2015 + n % 10), "Event %02d" % (n % 40))
             path = os.path.join(folder, "IMG_%06d.jpg" % n)
             raw = dict(FIELDS, SourceFile=path.replace(os.sep, "/"))
+            if REAL_SIZE:
+                raw["MakerNotes"] = "x" * 2800   # about 4 KB a row, as the real raw_metadata is
             rows.append((path, 1_700_000_000.0 + n, 4_000_000 + n, json.dumps(["Activity/Sailing", "Places/Harbour"]),
                          json.dumps(["Start line"]), json.dumps(raw), "xmp.did:%08d" % n))
         conn.executemany("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata, document_id)"
@@ -74,6 +79,10 @@ def make_library(home, photos, faces_count):
         conn.executemany("INSERT INTO faces (photo_id, box, embedding, name, name_source) VALUES (?, ?, ?, ?, ?)",
                          [(1 + n % photos, "[1, 2, 11, 12]", b"\x00" * 64, "Rowan Thackeray" if n % 9 == 0 else None,
                            "manual" if n % 9 == 0 else None) for n in range(per_photo * photos)])
+        if REAL_SIZE:
+            # Each of the first 120,000 faces with its 6 KB cached crop, as photo_index holds them.
+            conn.executemany("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)",
+                             [(n + 1, bytes([255, 216]) + bytes(5996) + bytes([255, 217])) for n in range(min(120_000, per_photo * photos))])
         conn.commit()
     finally:
         conn.close()

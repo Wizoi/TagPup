@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -36,6 +37,11 @@ WINDOWS = os.name == "nt"
 
 #: What a conversion moves, and what the journal and counters add on their own.
 NOT_COMPARED = ("generations", "changes", "change_rows", "roots", "schema_version", "photo_people")
+
+
+def tagpup_cli_console():
+    import tagpup_cli
+    return tagpup_cli.console
 
 
 class Crash(BaseException):
@@ -830,7 +836,7 @@ class TheBackupHoldsTheLock(AdoptionCase):
 
     def test_the_estimate_uses_the_speed_the_last_backup_ran_at(self):
         self.assertTrue(self.adopt().ok)
-        with open(os.path.join(self.home.data, "backups", adoption.RATE_FILE), encoding="utf-8") as handle:
+        with open(adoption._rate_file(self.side.db_path), encoding="utf-8") as handle:
             rate = json.load(handle)["bytes_per_second"]
         self.assertGreater(rate, 0)
         size = adoption.backup_estimate(self.side.db_path)["bytes"]
@@ -872,6 +878,104 @@ class TheBackupHoldsTheLock(AdoptionCase):
         self.assertIn("backup copy holds the write lock for the length of the copy, about", said)
         self.assertTrue(outcome and outcome[0].ok, outcome)
         self.assertFalse(os.path.exists(self.side.db_path + ".busy"), "the note outlived the copy")
+
+    def test_a_note_left_by_a_process_that_was_killed_is_not_believed(self):
+        """An adoption killed during its copy leaves its note; the lock went with it, and a later
+        lock failure -- someone else's -- is an ordinary one."""
+        code = ("import sys, time\n"
+                "sys.path.insert(0, %r)\n"
+                "from tagpup.store import db\n"
+                "db.mark_busy(%r, 'being adopted by a root')\n"
+                "time.sleep(120)\n") % (os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                         self.side.db_path)
+        child = processes.start([sys.executable, "-c", code], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.time() + 60
+            while not os.path.exists(self.side.db_path + ".busy") and time.time() < deadline:
+                time.sleep(0.1)
+            self.assertTrue(os.path.exists(self.side.db_path + ".busy"))
+            self.assertEqual("being adopted by a root", db.busy_note(self.side.db_path), "alive: believed")
+        finally:
+            processes.kill_tree(child.pid)
+            child.wait()
+        holder = db.connect(self.side.db_path)
+        try:
+            holder.execute("BEGIN IMMEDIATE")
+            with mock.patch.object(db, "BUSY_TIMEOUT_MS", 200):
+                with self.assertRaises(sqlite3.OperationalError) as raised:
+                    db.write_with_connection(self.side.db_path, lambda conn: conn.execute(
+                        "UPDATE settings SET value = value"))
+        finally:
+            holder.rollback()
+            holder.close()
+        self.assertEqual("database is locked", str(raised.exception))
+        self.assertFalse(os.path.exists(self.side.db_path + ".busy"), "the dead note is removed")
+
+    def test_the_apply_prints_its_warning_before_the_copy_runs(self):
+        from click.testing import CliRunner
+        from tagpup_cli import cli
+        order = []
+        real_print = tagpup_cli_console().print
+        real_backup = adoption.backup
+
+        def say(*args, **kwargs):
+            order.append(str(args[0]) if args else "")
+            return real_print(*args, **kwargs)
+
+        def backup(db_path):
+            order.append("<<THE COPY RUNS>>")
+            return real_backup(db_path)
+
+        with mock.patch.object(tagpup_cli_console(), "print", say), mock.patch.object(adoption, "backup", backup):
+            done = CliRunner().invoke(cli, ["--db", self.side.db_path, "roots", "adopt", "--name", "pictures",
+                                            "--location", self.side.pictures, "--apply"])
+        self.assertEqual(0, done.exit_code, done.output)
+        warned = [n for n, line in enumerate(order) if line.startswith("Run this with TagPup and TagTuner stopped")]
+        copied = order.index("<<THE COPY RUNS>>")
+        self.assertEqual(1, len(warned))
+        self.assertLess(warned[0], copied, "the warning came after the copy had held the lock")
+        self.assertIn("--apply holds the lock for the copy, starting now.", order[warned[0]])
+
+    def test_a_rate_that_cannot_be_believed_is_not(self):
+        default = adoption.DEFAULT_BACKUP_RATE
+        size = adoption.backup_estimate(self.side.db_path)["bytes"]
+        file = adoption._rate_file(self.side.db_path)
+        os.makedirs(os.path.dirname(file), exist_ok=True)
+        for bad in ('{"bytes_per_second": NaN}', '{"bytes_per_second": Infinity}', '{"bytes_per_second": -5}',
+                    '{"bytes_per_second": 0}', '{"bytes_per_second": 1}', '{"bytes_per_second": 1048575}',
+                    '{"bytes_per_second": "fast"}', '{"bytes_per_second": null}', '{"bytes_per_second": 1e999}',
+                    '{"other": 1}', "not json", ""):
+            with self.subTest(bad=bad):
+                with open(file, "w", encoding="utf-8") as handle:
+                    handle.write(bad)
+                found = adoption.backup_estimate(self.side.db_path)
+                self.assertEqual(max(1, int(round(size / default))), found["seconds"])
+        with open(file, "w", encoding="utf-8") as handle:
+            handle.write('{"bytes_per_second": %d}' % (adoption.MIN_BACKUP_RATE * 50))
+        self.assertEqual(max(1, int(round(size / (adoption.MIN_BACKUP_RATE * 50)))),
+                         adoption.backup_estimate(self.side.db_path)["seconds"], "a believable rate is used")
+
+    def test_a_copy_too_slow_to_be_a_speed_is_not_kept_and_the_file_is_written_whole_and_by_library(self):
+        file = adoption._rate_file(self.side.db_path)
+        with mock.patch.object(adoption, "_library_bytes", return_value=10):
+            adoption.backup(self.side.db_path)
+        self.assertFalse(os.path.exists(file), "a rate below the least believed was kept")
+        adoption.backup(self.side.db_path)
+        self.assertTrue(os.path.exists(file))
+        self.assertIn(os.path.splitext(os.path.basename(self.side.db_path))[0], os.path.basename(file))
+        self.assertEqual([], [n for n in os.listdir(os.path.dirname(file)) if n.endswith(".tmp")])
+        with mock.patch("os.replace", side_effect=PermissionError("held")):
+            adoption.backup(self.side.db_path)
+        self.assertEqual([], [n for n in os.listdir(os.path.dirname(file)) if n.endswith(".tmp")])
+        with open(file, encoding="utf-8") as handle:
+            self.assertGreater(json.load(handle)["bytes_per_second"], 0, "whole, whatever happened to the next write")
+
+    def test_two_libraries_do_not_share_a_speed(self):
+        other = rl.Side(self.home, "second_library", real=1, bulk=1, outside=0)
+        adoption.backup(self.side.db_path)
+        self.assertNotEqual(adoption._rate_file(self.side.db_path), adoption._rate_file(other.db_path))
+        self.assertFalse(os.path.exists(adoption._rate_file(other.db_path)))
 
     def test_a_note_that_is_old_is_not_believed_and_a_lock_with_no_note_is_a_bare_lock(self):
         db.mark_busy(self.side.db_path, "a reason")

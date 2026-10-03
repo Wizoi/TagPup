@@ -1301,7 +1301,9 @@ def roots_adopt(ctx, name, address, location, apply_):
     location, a root already adopted, a row that would not convert back. A dry run unless
     --apply."""
     library = _existing_library(ctx)
-    result = library_roots.adopt(library, name, address, location, _machine(), apply=apply_)
+    # The dry run is always made first and printed in full, the warning with it, BEFORE anything
+    # that holds the write lock runs: --apply tells the owner what it is about to do, then does it.
+    result = library_roots.adopt(library, name, address, location, _machine(), apply=False)
     report = result.details.get("rehearsal")
     if report:
         console.print("%s root %s at %s:" % ("Would adopt" if not apply_ else "Adopting", report["root"],
@@ -1309,9 +1311,12 @@ def roots_adopt(ctx, name, address, location, apply_):
         _say_conversion(report)
         console.print("Run this with TagPup and TagTuner stopped: the backup holds the write lock for the length of "
                       "the copy (about %d s for a library this size, %.1f GB); an app writing meanwhile waits, "
-                      "and is told why if it gives up." % (report["backup"]["seconds"],
-                                                             report["backup"]["bytes"] / 1e9),
-                      markup=False, soft_wrap=True)
+                      "and is told why if it gives up.%s" % (
+                          report["backup"]["seconds"], report["backup"]["bytes"] / 1e9,
+                          " --apply holds the lock for the copy, starting now." if apply_ and not result.refused
+                          else ""), markup=False, soft_wrap=True)
+    if not result.refused and apply_:
+        result = library_roots.adopt(library, name, address, location, _machine(), apply=True)
     if result.refused:
         console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
         raise SystemExit(1)

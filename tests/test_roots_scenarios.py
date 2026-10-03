@@ -15,6 +15,7 @@ import json
 import os
 import shutil
 import sys
+import time
 import unittest
 from unittest import mock
 
@@ -319,39 +320,68 @@ class NestedRootsAreRefused(unittest.TestCase):
         self.regatta = os.path.join(self.side.pictures, "2024 Regatta")
 
     def adopt(self, name, location, address=""):
+        # A backup's name carries the second it was taken in: a copy taken by a refused attempt
+        # must not be able to overwrite the earlier one's name and so hide.
+        time.sleep(1.1)
+        self.last = (name, location, address)
         return roots_service.adopt(self.side.library, name, address, location, rl.machine(), apply=True)
+
+    def backups(self):
+        """What data/backups holds, every file by its path under it: a refused adoption takes no
+        copy, and a copy the refusal comes after would show here."""
+        folder = os.path.join(self.home.data, "backups")
+        return sorted((os.path.relpath(os.path.join(where, name), folder),
+                       os.stat(os.path.join(where, name)).st_mtime_ns)
+                      for where, _folders, names in os.walk(folder) for name in names)
 
     def refused_and_unchanged(self, result, first, second):
         self.assertTrue(result.refused, "a nested root was adopted")
+        self.assertEqual(self.copies, self.backups(), "a refused adoption took a backup")
         self.assertIn("%r" % first, result.refused)
         self.assertIn("%r" % second, result.refused)
         self.assertIn("one root must hold each folder", result.refused)
+        self.assertEqual(self.before, self.side.dump())
+        self.assertFalse(os.path.exists(self.side.db_path + ".busy"))
+        # The service refuses at its dry run, before the store is asked; the store refuses too, on its
+        # own, before it takes a copy or marks the library busy.
+        name, location, address = self.last
+        time.sleep(1.1)
+        with self.assertRaises(adoption.Refused) as raised:
+            adoption.adopt(self.side.db_path, name, address, [location])
+        self.assertIn("one root must hold each folder", str(raised.exception))
+        self.assertEqual(self.copies, self.backups(), "the store took a backup before it refused")
         self.assertEqual(self.before, self.side.dump())
         self.assertFalse(os.path.exists(self.side.db_path + ".busy"))
 
     def test_a_root_inside_one_the_library_has(self):
         self.assertTrue(self.side.adopt().ok)
         self.before = self.side.dump()
+        self.copies = self.backups()
+        self.assertEqual(1, len([c for c in self.copies if c[0].endswith(".db")]), "the first adoption's own backup")
         self.refused_and_unchanged(self.adopt("regatta", self.regatta), "regatta", "pictures")
         dry = roots_service.adopt(self.side.library, "regatta", "", self.regatta, rl.machine())
         self.assertIn("one root must hold each folder", dry.refused)
-        self.assertEqual([], [p for p in os.listdir(self.home.data) if "regatta" in p])
+        self.assertEqual(self.copies, self.backups())
 
     def test_a_root_around_one_the_library_has(self):
         self.assertTrue(self.adopt("regatta", self.regatta).ok)
         self.before = self.side.dump()
+        self.copies = self.backups()
         self.refused_and_unchanged(self.adopt("pictures", self.side.pictures), "pictures", "regatta")
 
     def test_a_root_at_the_same_place(self):
         self.assertTrue(self.side.adopt().ok)
         self.before = self.side.dump()
+        self.copies = self.backups()
         result = self.adopt("again", self.side.pictures)
         self.assertTrue(result.refused)
         self.assertEqual(self.before, self.side.dump())
+        self.assertEqual(self.copies, self.backups())
 
     def test_a_root_whose_address_lies_under_anothers(self):
         self.assertTrue(self.side.adopt().ok)
         self.before = self.side.dump()
+        self.copies = self.backups()
         result = self.adopt("scans", self.side.outside_folder, address=rl.ADDRESS + "\\Scans")
         self.refused_and_unchanged(result, "scans", "pictures")
 

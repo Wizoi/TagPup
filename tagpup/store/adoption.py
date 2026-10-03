@@ -49,6 +49,7 @@ leaves the library exactly as it was, since it is one transaction.
 """
 import json
 import logging
+import math
 import os
 import sqlite3
 import time
@@ -72,8 +73,12 @@ CHUNK = 2000
 #: The speed a backup copy is assumed to run at before one has been timed on this machine.
 DEFAULT_BACKUP_RATE = 100 * 1024 * 1024
 
-#: Where the last backup's measured speed is kept, in the library's backups folder.
-RATE_FILE = "backup_rate.json"
+#: Where the last backup's measured speed is kept, in the library's backups folder, one file for
+#: each library: backup_rate.<library>.json.
+RATE_FILE = "backup_rate"
+
+#: A speed below this is not believed (a stalled copy, a bad file): the default is used.
+MIN_BACKUP_RATE = 1024 * 1024
 
 #: The steps of an adoption, in order; `_reached` is told of each.
 STEPS = ("photos converted", "other tables converted", "settings converted", "root recorded",
@@ -516,7 +521,8 @@ def rehearse(db_path, name, address, locations):
 # ---- The adoption ----------------------------------------------------------------------------
 
 def _rate_file(db_path):
-    return os.path.join(Library(db_path).backups, RATE_FILE)
+    library = Library(db_path)
+    return os.path.join(library.backups, "%s.%s.json" % (RATE_FILE, library.name))
 
 
 def _library_bytes(db_path):
@@ -530,8 +536,10 @@ def backup_estimate(db_path):
     rate = DEFAULT_BACKUP_RATE
     try:
         with open(_rate_file(db_path), encoding="utf-8") as handle:
-            rate = float(json.load(handle)["bytes_per_second"]) or rate
-    except (OSError, ValueError, KeyError, TypeError):
+            kept = float(json.load(handle)["bytes_per_second"])
+        if math.isfinite(kept) and kept >= MIN_BACKUP_RATE:
+            rate = kept
+    except (OSError, ValueError, KeyError, TypeError, OverflowError):
         pass
     size = _library_bytes(db_path)
     return {"bytes": size, "seconds": max(1, int(round(size / rate)))}
@@ -545,11 +553,19 @@ def backup(db_path):
     size = _library_bytes(db_path)
     kept = db.backup(db_path, "roots-adopt")
     elapsed = max(time.monotonic() - started, 0.001)
-    try:
-        with open(_rate_file(db_path), "w", encoding="utf-8") as handle:
-            json.dump({"bytes_per_second": size / elapsed}, handle)
-    except OSError:
-        pass
+    rate = size / elapsed
+    if math.isfinite(rate) and rate >= MIN_BACKUP_RATE:
+        target = _rate_file(db_path)
+        temporary = "%s.%d.tmp" % (target, os.getpid())
+        try:
+            with open(temporary, "w", encoding="utf-8") as handle:
+                json.dump({"bytes_per_second": rate}, handle)
+            os.replace(temporary, target)
+        except OSError:
+            try:
+                os.remove(temporary)
+            except OSError:
+                pass
     return kept
 
 

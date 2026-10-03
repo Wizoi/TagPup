@@ -43,7 +43,7 @@ import threading
 import time
 from contextlib import contextmanager
 
-from tagpup.core import paths
+from tagpup.core import paths, processes
 from tagpup.core.library import Library
 
 logger = logging.getLogger("tagpup_cli.db")
@@ -192,12 +192,18 @@ def clear_busy(target):
 
 
 def busy_note(target):
-    """Why the library at `target` is busy, if a maintenance step said so recently, else None."""
+    """Why the library at `target` is busy, if a maintenance step said so recently and the process
+    that said it is still there, else None. A note whose process has gone -- killed during its
+    copy -- is removed: its lock is gone with it, and any lock failure after it is an ordinary one."""
     try:
         with open(_busy_file(target), encoding="utf-8") as handle:
             found = json.load(handle)
-        if time.time() - float(found["since"]) < BUSY_NOTE_SECONDS:
-            return str(found["why"])
+        if time.time() - float(found["since"]) >= BUSY_NOTE_SECONDS:
+            return None
+        if not processes.is_alive(int(found["pid"])):
+            clear_busy(target)
+            return None
+        return str(found["why"])
     except (OSError, ValueError, KeyError, TypeError):
         pass
     return None
