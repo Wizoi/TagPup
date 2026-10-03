@@ -5,7 +5,7 @@ from choosing it to having suggestions on screen. So the unit here is that click
 sequence, performed in a browser, against a server started the way the app starts it.
 
 Everything runs in a sandbox, built and deleted the same way as
-measure_identify_faces.py: the library is copied through SQLite's backup API (the
+measure_identify_faces.py (scripts/sandbox.py): the library is copied through SQLite's backup API (the
 original opened read-only, keeping the library's settings), the code is snapshotted,
 and the server is a separate process on a free port with the sandbox as its home. The photos are copied too, into folders
 the library has never seen -- so nothing is cached for them, which is the situation
@@ -36,10 +36,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from .code_snapshot import REPO_ROOT, copy_code
-    from .measure_identify_faces import free_port, place_roots, remove_sandbox
+    from .sandbox import free_port, place_roots, remove_sandbox
 except ImportError:  # imported as a top-level module
     from code_snapshot import REPO_ROOT, copy_code
-    from measure_identify_faces import free_port, place_roots, remove_sandbox
+    from sandbox import free_port, place_roots, remove_sandbox
 
 import _root  # noqa: E402,F401
 from tagpup.store import db as tagpup_db  # noqa: E402

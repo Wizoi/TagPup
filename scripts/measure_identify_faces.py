@@ -49,7 +49,6 @@ person actually sees.
 """
 import argparse
 import os
-import shutil
 import socket
 import statistics
 import subprocess
@@ -60,22 +59,14 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
-from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
-from tagpup.core.library import Library  # noqa: E402
-from tagpup.services import roots as roots_service  # noqa: E402
+# The sandbox's helpers, shared with the other measurement scripts; the tests reach them here too.
+from sandbox import copy_library, free_port, place_roots, remove_sandbox  # noqa: E402,F401
 # The code a sandbox runs: scripts/code_snapshot.py, shared with the installer.
 from code_snapshot import copy_code  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-def free_port():
-    """A port nothing is on, so a run can never collide with a server you are using."""
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
-
 
 def build_sandbox(source_db, sandbox):
     """A private copy of the code and the library, wired to each other.
@@ -90,36 +81,9 @@ def build_sandbox(source_db, sandbox):
     # The server runs with the sandbox as its TAGPUP_HOME (start_sandbox_server), so
     # library names in URLs resolve to the sandbox's data/.
     target = os.path.join(sandbox, "data", "measured.db")
-    started = time.time()
-    source = tagpup_db.connect(
-        tagpup_db.readonly_uri(source_db), uri=True)
-    destination = tagpup_db.connect(target)
-    try:
-        source.backup(destination)
-    finally:
-        destination.close()
-        source.close()
-    size = os.path.getsize(target) / 1e9
-    print("  copied %.1f GB in %.1fs" % (size, time.time() - started))
+    copy_library(source_db, target)
     place_roots(target, sandbox)
     return target
-
-
-def place_roots(db_path, sandbox):
-    """Make the sandbox's copy of the library safe if it holds roots: write the sandbox's OWN
-    machine map (machine_roots.json in its home) placing each root at an empty folder of the sandbox,
-    never at the real photos -- a converted library copy would otherwise point at them through the
-    machine's map, and a sandbox server would read them, or write a tag into them. Fails loudly
-    (roots_service.SandboxError) when the copy has a root the sandbox did not place. {name: place}."""
-    map_path = os.path.join(sandbox, tagpup_config.MACHINE_ROOTS_FILE)
-    machine = roots_service.Machine(
-        lambda: tagpup_config.machine_roots(map_path),
-        lambda name, place: tagpup_config.add_machine_root(name, place, path=map_path),
-        lambda: map_path)
-    placed = roots_service.place_in_sandbox(Library(db_path), sandbox, machine)
-    for name, place in placed.items():
-        print("  root %s placed at %s, by the sandbox's own map" % (name, place))
-    return placed
 
 
 def start_sandbox_server(sandbox, db_path, port):
@@ -146,29 +110,6 @@ def start_sandbox_server(sandbox, db_path, port):
             time.sleep(0.5)
     process.kill()
     raise RuntimeError("the sandbox server never came up on port %d" % port)
-
-
-def remove_sandbox(sandbox):
-    """Delete the sandbox, and say so if it cannot be.
-
-    Windows releases a dead process's file handles a moment after it exits, so the
-    first attempt can fail on a database the server still had open. Retried rather
-    than ignored: this directory holds a copy of the whole library, and the first
-    version of this quietly left 2.7 GB in the temp directory every run because the
-    failure was swallowed.
-    """
-    for _attempt in range(10):
-        shutil.rmtree(sandbox, ignore_errors=True)
-        if not os.path.exists(sandbox):
-            return True
-        time.sleep(0.5)
-
-    size = 0
-    for root, _dirs, files in os.walk(sandbox):
-        size += sum(os.path.getsize(os.path.join(root, f)) for f in files)
-    print("\nWARNING: could not delete the sandbox. %.1f GB left at:\n  %s"
-          % (size / 1e9, sandbox), file=sys.stderr)
-    return False
 
 
 def first_ignorable_cluster(page):
