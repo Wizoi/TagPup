@@ -20,7 +20,9 @@ This document records the design, specifications, prerequisites, and instruction
 
 A gear at the right of the header holds what is not tuning: **Tag editor** opens the tag
 tree's editor -- the same module TagPup's gear opens (`web/common/tag-editor.js`), over the
-same routes, which both apps serve. **Library settings** opens the library's settings
+same routes, which both apps serve; its tags are in alphabetical order, and a rename,
+new tag, flag or delete changes the tree in place, without rebuilding it
+(docs/SPEC_TAGPUP_GUI.md, "Tag Taxonomy Tree Manager"). **Library settings** opens the library's settings
 (below). **Open in TagPup**
 opens TagPup on the same library in a new tab, its address from `/api/apps`. **Activity...**
 opens the Activity page in a new tab (below). The menu
