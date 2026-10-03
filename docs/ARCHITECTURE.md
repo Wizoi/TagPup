@@ -485,6 +485,66 @@ logs (by source, filtered, raw, downloaded). Done:
   `data/supervisor.json` without its token. Its reads do not count as somebody using the
   app, so an open page does not hold an update back from its quiet moment.
 
+### File access check *(owner, 2026-10-03; built, branch `arch/file-access-check`)*
+*"Defender can be an issue: warn the user if it is also checking the photo folder. Other processes scanning
+or reading files WILL interfere, and the user should exclude them if possible."* The bulk time-shift job's
+review found one: its state file's `os.replace` failed with WinError 5 because another handle (the other
+TagPup process, Defender, the Search indexer) had the file open. Two parts, both **read-only**:
+
+- **Naming the holder after a failure** (`tagpup.files.lock_owners`). Windows' Restart Manager (the API an
+  installer asks "which programs hold this file?"; `RmStartSession`, `RmRegisterResources`, `RmGetList`,
+  `RmEndSession`, through ctypes) lists the processes that hold a file open, with no administrator. `holders(path)`
+  gives `[{name, pid, kind, service}]`, never raises (any failure is `[]`), is `[]` off Windows, and is bounded
+  to 2 s on a thread of its own: a share that does not answer leaves a daemon thread to end when Windows lets
+  it, at most four at once, then `[]` at once. The session is ended in a `finally`; a test calls it 200 times
+  and the process's handle count does not grow. `describe()` turns it into "held open by MsMpEng.exe (Windows
+  Security / Microsoft Defender real-time scanning)" from a table of known scanners, sync clients and backups
+  (`python.exe` is "another TagPup process", or "this TagPup process" when it is the caller). `explain(error,
+  path)` returns the error with " It is held open by ..." added when the error is the kind a held file makes
+  (`PermissionError`, WinError 5/32/33, ExifTool's "permission denied", "error renaming temporary file") and a
+  holder is known; it is called **after** a failure only, so it never delays a write that succeeds. Names
+  only: no path, command line or user. Used by `names.rename_all` (the sentence the owner sees), and the
+  journaled and file-only writers (`file_changes._after_failure`, `file_only._write_one`). Not changed: the
+  SQLite "database is locked" diagnostics (SQLite has its own lock and its own retry in `tagpup.store.db`).
+  The bulk job's state-file retry (`tagpup.jobs.bulk_edits`, on `arch/phase-9d1-bulk-jobs`) is to call
+  `explain()` after its retries fail, the same way.
+- **Advice** (`tagpup.services.file_access.check`, `GET /api/file-access/check`; the Activity page's File
+  access section). Findings, each decided from a small injectable read so a test feeds what this PC
+  answered: (1) Defender's real-time and on-access state; (2) whether Defender's **exclusions** cover the data
+  folder and each root's place -- `Get-MpPreference` says "N/A: Must be an administrator" to a process that is
+  not one, so the registry (`HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths`) is tried, and if that
+  is refused too the finding is a **warning that it is not known**, with the exact elevated commands for the
+  owner (`Get-MpPreference ... ExclusionPath` to look, `Add-MpPreference -ExclusionPath '<data folder>'` to add);
+  covered means equal or under, compared by `tagpup.core.paths`; (3) Defender's scanning of network files when a
+  root lies on a share; (4) other antivirus products registered with Windows (`SecurityCenter2`), named, since
+  TagPup cannot read their exclusions; (5) Windows Search: the `NOT_CONTENT_INDEXED` attribute and the scope
+  rules in `...\CrawlScopeManager\Windows\SystemIndex\WorkingSetRules` (`search_scope_includes`: the most specific
+  rule that covers a folder decides, an exclusion wins a tie); (6) cloud sync: a folder inside OneDrive,
+  Dropbox, Google Drive or iCloud (the `OneDrive*` variables, and the profile's default folders); (7) the
+  scanning, sync and backup programs running now, as a note.
+  **What it never does**: change a setting. No `Add-MpPreference`, registry write, service change or
+  attribute set is run -- the one program it starts is `powershell.exe -NoProfile -NonInteractive -Command`
+  with a fixed script that only `Get-`s, through `tagpup.core.processes`, hidden, with a 20 s deadline; the
+  registry is opened `KEY_READ`; the commands are text for the owner to copy (`tests/test_file_access.py`
+  greps for a writer and for `subprocess`). A finding that fails is "could not be checked" and the others stand;
+  PowerShell missing or blocked is an info finding, not an error. The whole check is bounded (30 s), runs on a
+  thread of its own, one at a time, and is remembered 10 minutes per process (`refresh=1` asks again).
+  **Why the data folder is the recommendation**: SQLite's write-ahead and shared-memory files, the thumbnail
+  cache and the bulk-edit state files are opened, written and replaced all the time, and a scan in the middle
+  makes a save or a replace fail; none of it is a photo. **The photo folders are the owner's choice**, marked a
+  trade-off in the commands: excluding them leaves the photos never scanned. The places are the first place
+  of each root on this machine (`tagpup.services.roots.listing`); the route passes every library's when none
+  is named.
+- **The page**: File access on Activity, a row for each finding (level icon, title, why, "What to do", the
+  commands in a box with a Copy button), "Check again", "Last checked <time>". Asked once when the page opens,
+  never on a timer. "I've dealt with this" on a warning is kept per browser in `localStorage`
+  (`tagpup.fileAccess.dismissed`, by finding id) and shows the finding greyed as ok. Elsewhere one quiet line,
+  "Other programs may be scanning these files: see Activity > File access" (TagTuner's Roots dialog;
+  `web/common/file-access-note.js`, for the bulk-job summary too): no popup, no banner on the main page.
+- **Not done**: the Defender Operational event log (scan started and finished, 1000-1002) is readable but
+  says nothing about the files a write meets; the bulk job's summary line and state-file hook wait for that
+  branch to be merged.
+
 ### Roots and machines (design *(2026-10-02)*; root-relative stored path approved by the owner, 2026-10-02; stages 1 to 4 built)
 The owner's model *(2026-10-02)*: the library is rooted at the share `\\idziserver\Pictures`
 (`D:\ServerFolders\Pictures` on the server). Everything under it is the family's catalog and
