@@ -109,6 +109,26 @@ export const btnCarryForward = document.getElementById('btn-carry-forward');
 export const tagsDatalist = document.getElementById('tags-datalist');
 export const peopleDatalist = document.getElementById('people-datalist');
 
+// The sidebar's two panes and the switch between them (navigator.js)
+export const sidebarSwitch = document.getElementById('sidebar-switch');
+export const sidebarTabLibrary = document.getElementById('sidebar-tab-library');
+export const sidebarTabFolder = document.getElementById('sidebar-tab-folder');
+export const sidebarPaneLibrary = document.getElementById('sidebar-pane-library');
+export const sidebarPaneFolder = document.getElementById('sidebar-pane-folder');
+
+// Moving between a folder and its view of the library (library-moves.js), and when the library was last in step (sync-state.js)
+export const btnShowInLibrary = document.getElementById('btn-show-in-library');
+export const btnShowOnDisk = document.getElementById('btn-show-on-disk');
+export const btnLibraryScope = document.getElementById('btn-library-scope');
+export const libraryStripSync = document.getElementById('library-strip-sync');
+export const movesBanner = document.getElementById('moves-banner');
+export const movesBannerText = document.getElementById('moves-banner-text');
+export const btnMovesAdd = document.getElementById('btn-moves-add');
+export const btnMovesDismiss = document.getElementById('btn-moves-dismiss');
+
+// A photo whose file is gone is shown and not editable (stale.js)
+export const photoMissingNote = document.getElementById('photo-missing-note');
+
 // The grid's right-click menu (grid.js)
 export const gridContextMenu = document.getElementById('grid-context-menu');
 

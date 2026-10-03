@@ -24,6 +24,9 @@ import {
     leaveLibraryView, libraryChanged, openViewFromAddress, refreshFolderOrView, wireLibraryView
 } from './library-view.js';
 import { checkFolderMembership, wireMembership } from './membership.js';
+import { navigatorCountsChanged, navigatorFollows, wireNavigator } from './navigator.js';
+import { addedFromView, wireBanner } from './library-banner.js';
+import { landOnAnchor, libraryViewPainted, wireMoves } from './library-moves.js';
 import { checkDamagedPhotos, showLibraryDamage } from './damaged.js';
 import {
     carryTagsForward, deleteActivePhoto, openPhotoInDefaultApp, renderTags, rotatePhoto,
@@ -51,9 +54,10 @@ import {
 
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
-    applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, populateCameraModelsDropdown, recordUndo,
+    addedFromView, applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, populateCameraModelsDropdown, recordUndo,
     renderFileList, renderSuggestionsPanel, renderTags, renderThumbnails, selectPhoto,
-    leaveLibraryView, libraryChanged, reloadChangedPhoto, syncSelectionMarks,
+    landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows,
+    reloadChangedPhoto, syncSelectionMarks,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
 });
@@ -126,6 +130,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Views of the library: the strip above the grid, and Back and Forward between views and folders.
     wireLibraryView();
+
+    // The navigator beside the grid, the move between a folder and its view, and the banner for photos the library lacks.
+    wireNavigator();
+    wireMoves();
+    wireBanner();
 
     enableSwipeNavigation(mainImage);
 

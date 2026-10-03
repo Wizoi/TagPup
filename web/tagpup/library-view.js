@@ -6,12 +6,14 @@
 //
 // The address is the view: `?view=<kind>&value=<value>[&recursive=1]` (library-source.js,
 // viewSpecFromSearch), pushed when a view is opened, so Back and Forward move between views and
-// folders, and a bookmark opens one. A `?view` wins over a `?path`.
+// folders, and a bookmark opens one. A `?view` wins over a `?path`. The navigator (navigator.js) opens views
+// through here and follows them (phase 9c): `upper.navigatorFollows` as one opens or closes.
 import { baseName } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
-    btnApplyRename, btnFolderAutoApply, btnLibraryRefresh, btnRefreshList, btnToggleRename, btnToggleTimeshift,
+    btnApplyRename, btnFolderAutoApply, btnLibraryRefresh, btnLibraryScope, btnRefreshList, btnShowOnDisk,
+    btnToggleRename, btnToggleTimeshift,
     folderPathInput, folderViewHeader, folderViewMain, folderViewStats, folderViewTitle, indexProgressContainer,
     libraryStrip, libraryStripBack, libraryStripSource, libraryStripStatus, libraryStripTotal,
     photoList, photoSearch, renamePanel, suggestProgressContainer, timeshiftPanel
@@ -22,6 +24,8 @@ import {
     openFolderView, scanFolder, updateCurrentFolderLabel, updateListStats, updatePhotoPosition
 } from './folder.js';
 import { clearSelection } from './selected.js';
+import { forgetBanner } from './library-banner.js';
+import { clearSyncInfo, loadSyncInfo } from './sync-state.js';
 import {
     destroyLibrary, forgetCards, loadLibraryIds, newLibrary, viewLabel, viewSearch, viewSpecFromSearch
 } from './library-source.js';
@@ -85,6 +89,8 @@ function hideChrome() {
     btnToggleTimeshift.title = 'Camera Time Shift';
     btnRefreshList.title = 'Refresh files list';
     libraryStrip.classList.add('hidden');
+    forgetBanner();
+    clearSyncInfo();
     folderViewTitle.textContent = 'Folder View';
     updateCurrentFolderLabel();
 }
@@ -117,6 +123,16 @@ export function libraryChanged() {
     libraryStripStatus.textContent = status || '';
     libraryStripStatus.classList.toggle('library-strip-problem', lib.status === 'error' || Boolean(lib.notice));
     btnLibraryRefresh.disabled = lib.invalid || lib.loading;
+    // A folder's view can be this folder only or with its subfolders, and the folder can be shown on disk.
+    const ofFolder = lib.kind === 'folder' && !lib.invalid;
+    btnLibraryScope.classList.toggle('hidden', !ofFolder);
+    btnShowOnDisk.classList.toggle('hidden', !ofFolder);
+    if (ofFolder) {
+        btnLibraryScope.textContent = lib.recursive ? 'This folder only' : 'With subfolders';
+        btnLibraryScope.title = lib.recursive
+            ? 'Show only the photos directly in this folder'
+            : 'Show the photos in this folder and in the folders under it';
+    }
     folderViewTitle.textContent = lib.invalid ? 'Library view' : label;
     folderViewStats.textContent = `${lib.total.toLocaleString()} photos`;
     folderViewHeader.textContent = '';
@@ -192,11 +208,17 @@ function beginView(spec, history, scrollTop) {
     clearSelection();
     state.lastSelectedPath = null;
     state.folderPhotos = [];
+    forgetBanner();            // what the disk held of the view before is not this view's
     writeAddress(spec, history);
     showChrome();
+    upper.navigatorFollows();  // the sidebar shows the source, in the tab it belongs to
     openFolderView();          // the grid, empty: 'Opening the view...' until the order is here
     libraryChanged();
-    if (lib.invalid) return;
+    if (lib.invalid) {
+        clearSyncInfo();
+        return;
+    }
+    loadSyncInfo();            // when the library was last in step with its folders
     loadLibraryIds(lib).then(replaced => {
         if (lib !== state.library) return;
         if (!replaced) {
@@ -210,6 +232,7 @@ function beginView(spec, history, scrollTop) {
             state.grid.render();
         }
         libraryChanged();
+        upper.libraryViewPainted(lib);   // land where a move said, and ask what the disk holds beyond the library
     });
 }
 
@@ -231,6 +254,7 @@ export function closeLibraryView({ folder = '' } = {}) {
     state.activePhotoPath = null;
     clearAddress();
     hideChrome();
+    upper.navigatorFollows();   // no source is open: the sidebar goes back to the pane a folder view has
     if (folder) {
         folderPathInput.value = folder;
         scanFolder(false);
@@ -245,9 +269,8 @@ export function leaveLibraryView() {
     closeLibraryView();
 }
 
-/** Back to folder view: the folder that was open when the view was, opened again. */
-export function backToFolder() {
-    const folder = state.libraryReturn;
+/** Back to folder view: the folder that was open when the view was, opened again (or `folder`: Show on disk). */
+export function backToFolder(folder = state.libraryReturn) {
     leavePhotoThen(() => {
         if (!state.library) return;
         const url = new URL(window.location.href);
@@ -266,6 +289,7 @@ export function refreshLibraryView() {
     const extent = state.grid ? state.grid.extent() : null;
     const anchor = extent ? lib.ids[extent.viewFrom] : undefined;
     forgetCards(lib);
+    loadSyncInfo();
     return loadLibraryIds(lib, true).then(replaced => {
         if (!replaced || lib !== state.library) {
             // The order could not be read: the cards are asked for again as they are drawn, the order is as it was.
@@ -278,6 +302,8 @@ export function refreshLibraryView() {
             if (at >= 0) state.grid.scrollToIndex(at, 'start');
         }
         libraryChanged();
+        upper.navigatorCountsChanged({ now: true });   // the counts are read at each call: ask again
+        upper.libraryViewPainted(lib);
         return true;
     });
 }

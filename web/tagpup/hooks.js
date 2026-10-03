@@ -6,12 +6,17 @@
 // called from every feature, and each of those calls back into the features, so a call
 // back up the page goes through here. main.js fills it in before anything runs.
 export const upper = {
+    addedFromView: null,
     applySuggestedTagDirect: null,
     checkDamagedPhotos: null,
     checkFolderMembership: null,
     checkSuggestionsStatus: null,
+    landOnAnchor: null,
     leaveLibraryView: null,
     libraryChanged: null,
+    libraryViewPainted: null,
+    navigatorCountsChanged: null,
+    navigatorFollows: null,
     populateCameraModelsDropdown: null,
     recordUndo: null,
     reloadChangedPhoto: null,

@@ -9,6 +9,7 @@
 // state and time, the last few done, and a failed one's reason, with Retry and
 // Dismiss. The entries are state.writeQueue's; only edits.js adds and marks them.
 import { buildElement, replaceContent } from './common/dom.js';
+import { upper } from './hooks.js';
 import { state } from './state.js';
 import { libraryName } from './looking.js';
 import { writeQueueBox } from './elements.js';
@@ -53,6 +54,8 @@ export function markEntry(entry, status) {
     entry.at = new Date();
     const queue = state.writeQueue;
     if (status === 'done' || status === 'failed') queue.batchSettled += 1;
+    // A write that finished may have changed what the library's navigator counts (keywords, people): read again, after a moment.
+    if (status === 'done') upper.navigatorCountsChanged();
     const done = queue.entries.filter(e => e.status === 'done');
     if (done.length > KEEP_DONE) {
         const dropped = new Set(done.slice(0, done.length - KEEP_DONE));

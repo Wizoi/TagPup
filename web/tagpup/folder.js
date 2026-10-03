@@ -5,7 +5,7 @@ import { baseName, samePath } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
-    btnChangeDb, btnCreateDb, btnFolderAutoApply, btnToggleRename, btnToggleTimeshift,
+    btnChangeDb, btnCreateDb, btnFolderAutoApply, btnShowInLibrary, btnToggleRename, btnToggleTimeshift,
     currentFolderName, dbSelect, emptyState, facesSection, folderPathInput, folderViewContent,
     folderViewHeader, folderViewStats, listStats, panelContent, photoList, photoPosition,
     photoSearch, sidebar, sidebarResizer, statusDot, statusText
@@ -192,6 +192,8 @@ export function updateCurrentFolderLabel() {
         currentFolderName.classList.toggle('hidden', !leaf);
     }
     document.title = leaf ? `${leaf} — TagPup` : 'TagPup GUI';
+    // Show in library: a folder is open on disk, and no view of the library is.
+    btnShowInLibrary.classList.toggle('hidden', !state.scannedFolder || Boolean(state.library));
     if (folderViewHeader) {
         const label = leaf ? `Folder View — ${leaf}` : 'Folder View (Thumbnails)';
         folderViewHeader.innerHTML = '';
@@ -608,4 +610,6 @@ export function openFolderView() {
     upper.renderThumbnails();
     upper.updateSelectedThumbnailsCount();
     updatePhotoPosition();
+    // A move from a library view lands on the photo it was made from (library-moves.js).
+    upper.landOnAnchor();
 }

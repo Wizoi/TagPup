@@ -9,7 +9,7 @@ import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
     btnSizeLarge, btnSizeMedium, btnSizeSmall, folderViewMain, gridContextMenu, inputPhotoTitle,
-    photoSearch, statusDot, statusText, thumbnailsGrid
+    libraryStrip, photoSearch, statusDot, statusText, thumbnailsGrid
 } from './elements.js';
 import { saveToLocalStorageCache } from './cache.js';
 import {
@@ -18,8 +18,10 @@ import {
 import { baseOf, photoChangedOnDisk, queueWriteOf, stampOf, takeStamp } from './edits.js';
 import { damageOf, markCard } from './damaged.js';
 import { renderFileList, visiblePhotos } from './folder.js';
-import { photoFileUrl, selectPhoto } from './photo.js';
+import { openLibraryPhoto, photoFileUrl, selectPhoto } from './photo.js';
 import { createVGrid } from './vgrid.js';
+import { cardLabel, settleRoving, wireGridKeys } from './grid-keys.js';
+import { markStale } from './stale.js';
 import {
     applyEditedRecords, ASK_SELECT_ABOVE, cancelLibrarySelection, cardDamage, idsBetween, libraryCardKey,
     libraryCount, libraryIdOfPath, libraryIndexOfKey, libraryRecordAt, selectInLibrary
@@ -98,11 +100,22 @@ export function showGridContextMenu(x, y, pathUnderCursor) {
 export function syncSelectionMarks() {
     if (!state.grid) return;
     state.grid.eachCard((card, photo) => {
+        if (card.classList.contains('placeholder')) return;
         const on = isSelected(photo.path);
         card.classList.toggle('selected', on);
         const box = card.querySelector('.thumbnail-checkbox');
         if (box) box.checked = on;
+        labelCard(card, on);
     });
+}
+
+/** What a screen reader hears of a card, and whether it is selected (the card is an option of the grid's listbox). */
+function labelCard(card, selected) {
+    card.setAttribute('aria-selected', selected ? 'true' : 'false');
+    card.setAttribute('aria-label', cardLabel({
+        name: card.dataset.name, date: card.dataset.date, selected,
+        damaged: card.classList.contains('damaged'), stale: card.dataset.stale || undefined,
+    }));
 }
 
 export function invertThumbnailSelection() {
@@ -209,8 +222,65 @@ export function wireThumbnailGrid() {
         cardKey: (photo) => state.library ? libraryCardKey(photo) : pathKey(photo.path),
         isBusy: cardIsBeingEdited,
         afterBuild: () => upper.updateCameraHighlights(),
+        afterDraw: settleRoving,
+        // The strip above the grid in a library view is sticky: a card scrolled to is put below it.
+        topInset: () => (libraryStrip.classList.contains('hidden') ? 0 : libraryStrip.offsetHeight + 12),
         empty: noPhotosFound,
     });
+    wireGridKeys({
+        count: () => (state.library ? state.library.ids.length : state.shownPhotos.length),
+        open: openAtIndex, toggle: toggleAtIndex, extend: extendRange,
+    });
+}
+
+// ---- What the grid's keys do to a photo -----------------------------------------------------------------------
+
+/** Enter on the photo at this index of the view: the details panel (a library photo by its id, a placeholder's too). */
+function openAtIndex(index) {
+    const lib = state.library;
+    if (lib) {
+        if (lib.ids[index] !== undefined) openLibraryPhoto(lib.ids[index]);
+        return;
+    }
+    const photo = state.shownPhotos[index];
+    if (photo) selectPhoto(photo.path);
+}
+
+/** Space (or Shift+Space, which extends from the last one picked): select or deselect the photo at this index. */
+function toggleAtIndex(index, shift) {
+    const lib = state.library;
+    if (lib) {
+        const id = lib.ids[index];
+        if (id === undefined) return;
+        const card = lib.cards.get(id);
+        // No card yet: its path is fetched with it, and it is added (a card's selection is by path, 9b-2).
+        if (!card) {
+            selectInLibrary('add', [id]);
+            return;
+        }
+        handleCardSelectionClick(card.path, shift ? true : !isSelected(card.path), null, shift);
+        return;
+    }
+    const photo = state.shownPhotos[index];
+    if (photo) handleCardSelectionClick(photo.path, shift ? true : !isSelected(photo.path), null, shift);
+}
+
+/** Shift+arrow: every photo from where the run began to this index is selected, whether or not its card is there. */
+function extendRange(from, to) {
+    const low = Math.min(from, to);
+    const high = Math.max(from, to);
+    const lib = state.library;
+    if (lib) {
+        const ids = lib.ids.slice(low, high + 1);
+        selectInLibrary('add', ids);
+        lib.lastId = lib.ids[to] === undefined ? lib.lastId : lib.ids[to];
+        return;
+    }
+    const paths = state.shownPhotos.slice(low, high + 1).map(photo => photo.path);
+    addToSelection(paths);
+    if (state.shownPhotos[to]) state.lastSelectedPath = state.shownPhotos[to].path;
+    syncSelectionMarks();
+    upper.updateSelectedThumbnailsCount();
 }
 
 /**
@@ -234,6 +304,8 @@ export function renderThumbnails() {
         state.grid.refresh();
     } else {
         state.shownSource = source;
+        state.gridKeys.index = -1;
+        state.gridKeys.anchor = -1;
         state.grid.reset();
     }
 }
@@ -248,6 +320,8 @@ function renderLibraryThumbnails() {
     state.shownIndex = new Map();
     if (state.shownSource !== source) {
         state.shownSource = source;
+        state.gridKeys.index = -1;
+        state.gridKeys.anchor = -1;
         state.grid.reset();
         return;
     }
@@ -290,6 +364,8 @@ function buildThumbnailCard(photo) {
     if (photo.placeholder) return buildPlaceholderCard(photo);
     const card = document.createElement('div');
     card.className = 'thumbnail-card';
+    card.setAttribute('role', 'option');
+    card.tabIndex = -1;          // the grid is one tab stop; grid-keys.js gives it to one card
     const selected = isSelected(photo.path);
     if (selected) {
         card.classList.add('selected');
@@ -305,6 +381,8 @@ function buildThumbnailCard(photo) {
     const chk = document.createElement('input');
     chk.type = 'checkbox';
     chk.className = 'thumbnail-checkbox';
+    chk.tabIndex = -1;
+    chk.setAttribute('aria-hidden', 'true');   // the card is the option: Space on it selects
     chk.checked = selected;
     chk.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -330,11 +408,17 @@ function buildThumbnailCard(photo) {
     if (!damage || damage.indexed) {
         const img = document.createElement('img');
         img.dataset.src = inLibrary ? api.image(photo.thumb) : photoFileUrl(photo, 300);
-        img.alt = photo.filename;
+        img.alt = '';           // the card's label says what it is
+        // A picture that cannot be had (the file is gone, the share is away) is a grey card, not a broken-image icon.
+        img.addEventListener('error', () => img.classList.add('failed'));
         imgWrapper.appendChild(img);
     }
     card.appendChild(imgWrapper);
     if (damage) markCard(card, damage);
+    if (photo.stale) {
+        markStale(card, photo);
+        card.dataset.stale = photo.stale;
+    }
 
     const infoRow = document.createElement('div');
     infoRow.className = 'thumbnail-info-row';
@@ -465,6 +549,8 @@ function buildThumbnailCard(photo) {
     const btnDetail = document.createElement('button');
     btnDetail.className = 'btn-thumbnail-detail';
     btnDetail.title = 'View details and edit metadata';
+    btnDetail.tabIndex = -1;
+    btnDetail.setAttribute('aria-hidden', 'true');   // Enter on the card opens it
     btnDetail.textContent = '🔍';
     btnDetail.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -473,6 +559,9 @@ function buildThumbnailCard(photo) {
     infoRow.appendChild(btnDetail);
 
     card.appendChild(infoRow);
+    card.dataset.name = fullName;
+    card.dataset.date = dateVal === 'Unknown' ? '' : dateVal;
+    labelCard(card, selected);
 
     // Click toggles card selection
     card.addEventListener('click', (e) => {
@@ -540,8 +629,10 @@ export function handleCardSelectionClick(path, isChecked, cardElement, isShiftKe
 export function toggleThumbnailSelection(path, isChecked, cardElement) {
     if (isChecked) addToSelection([path]);
     else removeFromSelection([path]);
-    if (cardElement) cardElement.classList.toggle('selected', isChecked);
-    else syncSelectionMarks();
+    if (cardElement) {
+        cardElement.classList.toggle('selected', isChecked);
+        labelCard(cardElement, isChecked);
+    } else syncSelectionMarks();
     upper.updateSelectedThumbnailsCount();
 }
 

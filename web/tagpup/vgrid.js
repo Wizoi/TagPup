@@ -20,7 +20,15 @@
 //     isBusy(card)          true while something is being typed in the card: it is kept, not
 //                           rebuilt, and not taken out of the DOM while it scrolls away
 //     afterBuild()          called after a render that built cards
+//     afterDraw()           called after every draw of the window (cards built, kept or taken out): the
+//                           page's roving tab stop and the focus kept across it (phase 9c)
+//     topInset()            pixels at the top of the scroller something sticky covers (a strip above the
+//                           grid): scrollToIndex puts a card below it, not under it
 //     empty()               the element shown when there is nothing to show
+//
+// The card that has the keyboard focus is never taken out from under it: where a draw would release it, it is
+// kept (laid out of sight, as a card being typed in is) while the focus is in it, and one rebuilt for changed data
+// is built again and given the focus again. A page's keys can then count on the focused card being in the DOM.
 //
 // Layout is measured through one function, `measure({grid, scroller, card})`, so a test can
 // give a page numbers (jsdom has no layout) and a hidden grid is told apart from a short one.
@@ -64,6 +72,8 @@ export function createVGrid(options) {
     const cardKey = options.cardKey || (record => String(record));
     const isBusy = options.isBusy || (() => false);
     const afterBuild = options.afterBuild || (() => {});
+    const afterDraw = options.afterDraw || (() => {});
+    const topInset = options.topInset || (() => 0);
     const empty = options.empty || null;
     const bufferRows = options.bufferRows ?? BUFFER_ROWS;
     const imageRows = options.imageRows ?? IMAGE_ROWS;
@@ -191,8 +201,17 @@ export function createVGrid(options) {
 
     function release(entry) {
         cancelImage(entry);
+        entry.released = true;
         entry.card.remove();
         live.delete(entry.key);
+    }
+
+    // The entry whose card holds the keyboard focus, if any.
+    function focusedEntry() {
+        const active = container.ownerDocument.activeElement;
+        if (!active || active === container.ownerDocument.body || !container.contains(active)) return null;
+        for (const entry of live.values()) if (entry.card === active || entry.card.contains(active)) return entry;
+        return null;
     }
 
     function clearStyles(entry) {
@@ -220,6 +239,7 @@ export function createVGrid(options) {
     function draw(from, to, before, after, m) {
         container.style.setProperty('--vgrid-before', `${before}px`);
         container.style.setProperty('--vgrid-after', `${after}px`);
+        const focused = focusedEntry();
         const next = new Map();
         const drawn = [];
         let built = 0;
@@ -251,7 +271,7 @@ export function createVGrid(options) {
         const below = [];
         for (const entry of [...live.values()]) {
             if (next.has(entry.key)) continue;
-            const index = isBusy(entry.card) ? indexOfKey(entry.key) : -1;
+            const index = isBusy(entry.card) || entry === focused ? indexOfKey(entry.key) : -1;
             if (index < 0) {
                 release(entry);
                 continue;
@@ -278,6 +298,14 @@ export function createVGrid(options) {
         for (const entry of sequence) live.set(entry.key, entry);
         order = drawn;
         if (built) afterBuild();
+        // A card rebuilt under the focus gives it to the one built in its place; a focus with nowhere to go
+        // waits on the grid itself, which the page's keys listen on.
+        if (focused && focused.released) {
+            const fresh = live.get(focused.key);
+            const target = fresh && !fresh.card.classList.contains('placeholder') ? fresh.card : container;
+            if (target.focus) target.focus({ preventScroll: true });
+        }
+        afterDraw();
     }
 
     function showEmpty() {
@@ -469,15 +497,22 @@ export function createVGrid(options) {
         scrollToIndex(index, align = 'nearest') {
             if (!layout) return false;
             const row = Math.floor(index / layout.columns);
-            const topOfRow = layout.gridTop + row * layout.stride;
+            const inset = Math.max(0, topInset() || 0);
+            const topOfRow = layout.gridTop + row * layout.stride - inset;
             const height = scroller.clientHeight;
             let to = scroller.scrollTop;
             if (align === 'start' || topOfRow < to) to = topOfRow;
-            else if (topOfRow + layout.stride > to + height) to = topOfRow + layout.stride - height;
+            else if (topOfRow + layout.stride + inset > to + height) to = topOfRow + layout.stride + inset - height;
+            to = Math.max(0, to);
             scroller.scrollTop = to;
             lastTop = to;
             render();
             return true;
+        },
+        /** How the cards lie now: the columns, and how many rows the view holds (a page of the keys), or null with no layout. */
+        geometry() {
+            if (!layout || !laidOut) return null;
+            return { columns: layout.columns, rows: Math.max(1, Math.floor(scroller.clientHeight / layout.stride)) };
         },
         /** Call fn(card, record, index) for each card in the DOM: marks that follow data. */
         eachCard(fn) {

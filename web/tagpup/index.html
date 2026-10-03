@@ -62,6 +62,15 @@
         <main class="app-content">
             <!-- Sidebar: Folder Control & File list -->
             <aside class="sidebar">
+                <!-- The switch between the library's navigator and the open folder's list (web/tagpup/navigator.js).
+                     The same pattern as the navigator's own tabs: arrow keys move between them. -->
+                <div id="sidebar-switch" class="sidebar-switch" role="tablist" aria-label="Show in the sidebar" data-own-keys>
+                    <button type="button" id="sidebar-tab-library" class="sidebar-switch-tab" role="tab" aria-selected="false" aria-controls="sidebar-pane-library" tabindex="-1" title="Browse the whole library by folder, keyword, person or date">Library</button>
+                    <button type="button" id="sidebar-tab-folder" class="sidebar-switch-tab active" role="tab" aria-selected="true" aria-controls="sidebar-pane-folder" tabindex="0" title="The folder that is open, and its photos">Folder</button>
+                </div>
+                <!-- The library's navigator: Folders, Keywords, People and Dates, each built by navigator.js on first use. -->
+                <div id="sidebar-pane-library" class="sidebar-pane hidden" role="tabpanel" aria-labelledby="sidebar-tab-library"></div>
+                <div id="sidebar-pane-folder" class="sidebar-pane" role="tabpanel" aria-labelledby="sidebar-tab-folder">
                 <!-- Folder Picker -->
                 <div class="folder-control-panel">
                     <h3>Select Image Folder</h3>
@@ -115,6 +124,7 @@
                     </li>
                     <!-- Filenames will load dynamically here -->
                 </ul>
+                </div>
             </aside>
             <div class="sidebar-resizer" id="sidebar-resizer"></div>
 
@@ -133,7 +143,7 @@
                     <div class="image-section">
                         <div class="card-header">
                             <h3>Original Image <span id="photo-position" class="photo-position hidden" title="Where this photo is in the list"></span></h3>
-                            <div class="image-rotation-controls">
+                            <div class="image-rotation-controls" data-writes>
                                 <button id="btn-rotate-left" class="btn btn-secondary btn-sm" title="Rotate 90° Left">🔄 Rotate Left</button>
                                 <button id="btn-rotate-right" class="btn btn-secondary btn-sm" title="Rotate 90° Right">🔄 Rotate Right</button>
                                 <button id="btn-delete-photo" class="btn btn-danger btn-sm" title="Delete Photo (Move to Recycle Bin)">🗑️ Delete</button>
@@ -141,6 +151,8 @@
                         </div>
                         <!-- Why, when this photo was found damaged (web/tagpup/damaged.js). -->
                         <p id="photo-damaged-note" class="photo-damaged-note hidden" role="alert"></p>
+                        <!-- This photo's file is gone: it is shown as the library holds it, and cannot be edited (web/tagpup/stale.js). -->
+                        <p id="photo-missing-note" class="photo-missing-note hidden" role="alert"></p>
                         <div class="image-viewer">
                             <img id="main-image" src="" alt="Selected Photo">
                         </div>
@@ -162,12 +174,12 @@
                                     <span class="detail-label">Date Taken</span>
                                     <div style="display: flex; align-items: center; gap: 8px;">
                                         <span class="detail-value" id="detail-date-taken"></span>
-                                        <button id="btn-edit-date-taken" class="btn btn-secondary btn-sm" style="padding: 2px 6px; font-size: 11px; line-height: 1;" title="Edit date taken">✏️</button>
+                                        <button id="btn-edit-date-taken" data-writes class="btn btn-secondary btn-sm" style="padding: 2px 6px; font-size: 11px; line-height: 1;" title="Edit date taken">✏️</button>
                                     </div>
                                 </div>
                                 <div class="detail-item full-width">
                                     <span class="detail-label">Title / Caption</span>
-                                    <div class="title-edit-container">
+                                    <div class="title-edit-container" data-writes>
                                         <input type="text" id="input-photo-title" placeholder="Set photo title/caption...">
                                         <button id="btn-save-title" class="btn btn-secondary btn-sm">Save</button>
                                         <button id="btn-suggest-title-wand" class="btn btn-secondary btn-sm wand-btn" title="No AI title suggested" disabled>🪄</button>
@@ -175,7 +187,7 @@
                                 </div>
                                 <div class="detail-item full-width">
                                     <span class="detail-label">People Tags</span>
-                                    <div class="tags-edit-wrapper">
+                                    <div class="tags-edit-wrapper" data-writes>
                                         <div class="tags-container" id="detail-people">
                                             <!-- People pills inserted here -->
                                         </div>
@@ -187,7 +199,7 @@
                                 </div>
                                 <div class="detail-item full-width">
                                     <span class="detail-label">Keywords / Tags</span>
-                                    <div class="tags-edit-wrapper">
+                                    <div class="tags-edit-wrapper" data-writes>
                                         <div class="tags-container" id="detail-tags">
                                             <!-- Tag pills inserted here -->
                                         </div>
@@ -209,7 +221,7 @@
                          reference, and the place to pick up a match the suggester was
                          not confident enough to propose. -->
                     <div class="analysis-row">
-                        <div id="suggestions-section" class="suggestions-section hidden">
+                        <div id="suggestions-section" class="suggestions-section hidden" data-writes>
                             <div class="suggestions-header-row">
                                 <h3>🤖 AI Suggestions</h3>
                                 <button id="btn-apply-all-single-sugg" class="btn btn-secondary btn-sm">Apply All</button>
@@ -249,10 +261,19 @@
                             <strong id="library-strip-source" class="library-strip-source"></strong>
                             <span id="library-strip-total" class="folder-stats-badge"></span>
                             <span id="library-strip-status" class="library-strip-status"></span>
+                            <span id="library-strip-sync" class="library-strip-sync"></span>
                             <span class="library-strip-actions">
+                                <button id="btn-library-scope" class="btn btn-secondary btn-sm hidden" title="Show only the photos directly in this folder, or its subfolders' too">This folder only</button>
+                                <button id="btn-show-on-disk" class="btn btn-secondary btn-sm hidden" title="Open this folder on disk, as a folder view: the files themselves are read">Show on disk</button>
                                 <button id="btn-library-refresh" class="btn btn-secondary btn-sm" title="Ask the library for this view's photos again; the place in the view is kept">Refresh view</button>
                                 <a id="library-strip-back" class="library-strip-back" href="#">Back to folder view</a>
                             </span>
+                        </div>
+                        <!-- The disk holds photos of this folder the library does not (web/tagpup/library-moves.js). -->
+                        <div id="moves-banner" class="moves-banner hidden" role="status">
+                            <span id="moves-banner-text"></span>
+                            <button id="btn-moves-add" class="btn btn-primary btn-sm">Add them</button>
+                            <button id="btn-moves-dismiss" class="btn btn-secondary btn-sm">Dismiss</button>
                         </div>
                         <div class="folder-view-header-card">
                             <div>
@@ -263,6 +284,7 @@
                                 <p class="folder-subtitle">Select images to batch edit tags, time shift, or cleanly rename.</p>
                             </div>
                             <div class="folder-view-actions">
+                                <button id="btn-show-in-library" class="btn btn-secondary btn-sm hidden" title="Open this folder's photos as the library holds them: by Date Taken, from the index, with the folder's subfolders">Show in library</button>
                                 <div class="selection-actions">
                                     <button id="btn-select-all-thumbnails" class="btn btn-secondary btn-sm">Select All</button>
                                     <button id="btn-select-none-thumbnails" class="btn btn-secondary btn-sm">Select None</button>
@@ -324,7 +346,7 @@
                         </div>
                         
                         <!-- Thumbnails Grid -->
-                        <div class="thumbnails-grid" id="thumbnails-grid">
+                        <div class="thumbnails-grid" id="thumbnails-grid" role="listbox" aria-multiselectable="true" aria-label="Photos" tabindex="-1" data-own-keys>
                             <!-- Thumbnails loaded dynamically -->
                         </div>
                     </div>
