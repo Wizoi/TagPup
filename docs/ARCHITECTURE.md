@@ -1572,11 +1572,26 @@ untouched.
     it lacks, changes nothing): start them again; a resume of one is `400`. **A time shift is not**, so its resolved list (`<job>.ids`)
     and its record (`<job>.state.json`: counts, the first 50 errors, `done` -- the photos settled -- and `inflight` -- the end of the
     chunk about to be written, kept BEFORE it is written) are kept in `cache/<library>/bulk/` (`Library.bulk_jobs`,
-    `tagpup.files.job_files`: atomic replace, fsync, a damaged file reads as none; swept after 30 days; nothing the rows or the files
-    depend on). **Resume** (`POST /api/library/bulk/resume`, a time shift that is `abandoned`, `cancelled` or `failed`) claims a new run
-    under the SAME job id, settles the journal, then asks the journal -- the one record of what was written -- which photos of the
-    in-flight chunk a change **named after the job** left `done`: those are not shifted again and are counted `changed`; the rest are
-    done. A test crashes the process at the 30th write, between a file's write and its row, and before a chunk planned anything, and
+    `tagpup.files.job_files`: atomic replace, fsync, a damaged file reads as none; nothing the rows or the files
+    depend on). **They are kept only while a resume is possible** *(review, #580)*: the state file can hold an edit's tags and people and the
+    names of files that failed, so a tags or people job removes both files when it ends (done, cancelled, failed), and a time shift when it
+    ends done; a time shift that is cancelled or failed keeps them, and anything untouched for **7 days** is swept when the next job starts.
+    A finished job's status then comes from the library's record of the run (`job_runs`: `state`, `op`, the counts; the first 50 errors are
+    lost with the file). Nothing a person or an exception wrote is kept in `job_runs.note` or the state: a failed job's message is a fixed
+    sentence and the exception's class name ("It could not go on (FileNotFoundError); the server's log says why."), the detail is logged;
+    each error's `name` and `why` are cut at 200 characters.
+    **Resume** (`POST /api/library/bulk/resume`, a time shift that is `abandoned`, `cancelled` or `failed`) *(rewritten, #577, #578)*:
+    the record is the state file plus the journal, **never this process's memory of the job** (two processes share a library: the installed
+    app and the repo-run app). The state file carries a **sequence number** (`seq`, one more on every write). A resume takes the claim
+    first (outside the module lock: it may ask the system who is alive, which takes seconds, and status and cancel never wait for it), reads
+    the state under it, settles the journal and asks it -- the one record of what was written -- which photos of the in-flight chunk a
+    change **named after the job** left `done` (those are not shifted again and are counted `changed`; `inflight` is carried into the resumed
+    job, and the count credited from the journal is not written into the state until the chunk is finished, so a second resume cannot count
+    them twice), checks that the file's `seq` is still the one it read (else `409` "Another TagPup process moved this job on: reload and look
+    at it again.", nothing begun), and ONLY THEN registers, writes and starts the job. If the settle (or anything before the start) fails --
+    the library busy under another process's long write -- the claim is given back, the state file and the job are exactly as they were, and
+    the route answers `409` "Could not settle the last chunk that was being written: try again in a moment." (never `200`); the next Resume
+    starts from the intact record. `status` of a job that is over in this process but has moved on in the file is the file's. A test crashes the process at the 30th write, between a file's write and its row, and before a chunk planned anything, and
     after each resume every photo's file was written exactly once. `GET status?job=&ids=1` adds `shifted_ids`, from the same journal:
     exactly which photos a job shifted. **Deviation from the brief:** it said refuse a resume unless abandoned/cancelled; a `failed`
     shift (ExifTool gone mid-job) is resumable too, since otherwise its first half could never be completed without shifting it again.
@@ -1607,11 +1622,22 @@ untouched.
   a path, already named by their leaf, taken off every way the tree files them; a blank name; a tag the rules refuse (before anything
   starts); a time shift of a photo with no Date Taken and of one holding both date fields; selection of 1, of ids nobody has, of
   duplicates, above the cap, of a source minus more than it holds.
-- **What could not be made safe.** (1) **A share that stops answering in the middle of an ExifTool command**: the session's deadline is
-  300 s, and `field_values.read` then retries the batch a photo at a time, each with its own deadline, so one chunk of 25 can stall for
-  much longer than a chunk should, and a cancel waits for it. The check before the chunk (`_reachable`) catches a share that is away
-  when the chunk begins, not one that goes mid-chunk. The fix is in the ExifTool session and `field_values` (a shorter deadline for a
-  bulk job; no single retries after a timeout), which this task does not own. (2) A tag no tree node holds is not in the tally. (3) A
+- **A share that stops answering in the middle of an ExifTool command** *(was "could not be made safe"; #581)*. The session's deadline is 300 s
+  and `field_values.read` retried a timed-out batch a photo at a time, each with its own 300 s: 2 h 10 min for one chunk of 25, with the lock
+  held. Now `field_values.read` treats an `ExifToolTimeout` (or a dead process) as the batch's answer -- every photo `Unreadable("ExifTool
+  did not answer in N s")`, nothing retried singly (a batch refused by one bad path is still retried singly) -- and a bulk chunk opens its
+  OWN `ExifToolSession(timeout=60)` (`bulk_edit.CHUNK_TIMEOUT`), started before the lock is asked for, closed at the chunk's end, wrapped so
+  that **once a command has timed out every later command of the chunk answers the same at once** (pyexiftool would start its process again
+  and wait a minute more for the next file). A chunk's worst case is about a minute, counted as errors, nothing written to a file whose
+  read timed out, the lock released; five such chunks in a row stop the job. The session is not reused across chunks (starting one is
+  small against a chunk of a second or more); the held and single-photo paths are unchanged. `settle` inside a chunk still uses the
+  default session, which matters only when a crash left changes to finish.
+  Also in this pass: a shift that moves a date out of range (before the year 1, after 9999) is that photo's **error** ("the shifted date
+  would be before the year 1") and not `unchanged`, only for the job (`dates.shifted_strictly`; Camera Time Shift still leaves such a
+  photo alone), and `validation` refuses a shift of more than 100 years (52,560,000 minutes) up front; the journal's question
+  (`file_journal.photo_ids_done`) drives from `changes` and finds each change's files by `idx_change_files_change` (the plan was a scan
+  of every `change_files` row; no migration was needed; 67,500 rows in 2,700 changes asked in well under 0.5 s, a plan test holds it).
+- **What could not be made safe.** (1) (see above: made safe.) (2) A tag no tree node holds is not in the tally. (3) A
   time shift of a photo whose row vanishes between the chunk's lookup and its write is written to its file without a record; a resume
   cannot tell it (milliseconds, on a photo being deleted).
 - **What 9d-2 must know.** (a) The page sends a SELECTION (ids, or the view's source and the ids it excluded) and never paths; `selectInLibrary`

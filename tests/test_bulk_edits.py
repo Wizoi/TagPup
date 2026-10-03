@@ -448,7 +448,8 @@ class WhatGoesWrong(Bulk):
         self.files.cannot_start = FileNotFoundError("ExifTool is not where the library says it is")
         done = self.run_tags(add=["Trips/Coast"])
         self.assertEqual(("failed", 0, 0), (done["state"], done["changed"], done["done"]))
-        self.assertIn("ExifTool is not where the library says", done["message"])
+        self.assertIn("FileNotFoundError", done["message"])
+        self.assertNotIn("ExifTool is not where", done["message"], "the text of an exception is not kept: it can name a path")
         self.assertEqual(1, self.files.starts, "it did not go on to ask again for every chunk")
         run = self.vl.rows("SELECT outcome, note FROM job_runs")[0]
         self.assertEqual("failed", run[0])
@@ -623,7 +624,8 @@ class TimeShift(Bulk):
         reply = self.shift_job(5)
         self.finish(reply["job"])
         self.assertIsNone(bulk_edit.read_ids(self.library, reply["job"]))
-        self.assertEqual("done", bulk_edit.read_state(self.library, reply["job"])["state"])
+        self.assertIsNone(bulk_edit.read_state(self.library, reply["job"]), "a job that is over keeps no record of its edit")
+        self.assertEqual("done", self.status(reply["job"])["state"], "its status is the library's record of the run")
 
     def test_a_restart_in_the_middle_leaves_it_abandoned_and_resume_shifts_nothing_twice(self):
         # The process dies as the 30th file is written: one chunk done, the second under way.
@@ -738,7 +740,7 @@ class TimeShift(Bulk):
             handle = self.shift_job(45)["job"]
             failed = self.finish(handle)
         self.assertEqual(("failed", 25, True), (failed["state"], failed["done"], failed["resumable"]))
-        self.assertIn("ExifTool went away", failed["message"])
+        self.assertIn("FileNotFoundError", failed["message"])
         self.assertEqual(200, self.post("resume", {"job": handle}).status_code)
         self.assertEqual("done", self.finish(handle)["state"])
         for photo_id in self.ids:
