@@ -21,7 +21,7 @@ const FINDINGS = {
   findings: [
     { id: "defender", level: "info", title: "Microsoft Defender scans files as they are opened and written",
       why: "Real-time protection is on.", what_to_do: "Exclude the data folder.", commands: [], places: [] },
-    { id: "defender-exclusions", level: "warn", title: "Whether Microsoft Defender excludes TagPup's folders is not known",
+    { id: "defender-exclusions:unknown", level: "warn", title: "Whether Microsoft Defender excludes TagPup's folders is not known",
       why: "Only an administrator can read the exclusions.", what_to_do: "Run the commands as administrator.",
       commands: ["# Windows PowerShell, run as administrator", `Add-MpPreference -ExclusionPath '${DATA}'`], places: [DATA] },
     { id: "windows-search", level: "ok", title: "Windows Search does not index TagPup's folders", why: "", what_to_do: "",
@@ -64,7 +64,7 @@ describe("File access", () => {
     const rows = body.querySelectorAll(".finding");
     assert.equal(rows.length, 3);
     assert.deepEqual([...rows].map((row) => row.dataset.level), ["info", "warn", "ok"]);
-    const warn = body.querySelector('.finding[data-id="defender-exclusions"]');
+    const warn = body.querySelector('.finding[data-id="defender-exclusions:unknown"]');
     assert.ok(warn.classList.contains("finding-warn"));
     assert.match(text(warn), /Only an administrator can read the exclusions\./);
     assert.match(text(warn), /What to do: Run the commands as administrator\./);
@@ -80,7 +80,7 @@ describe("File access", () => {
     await flush(window, 8);
     const copied = [];
     Object.defineProperty(window.navigator, "clipboard", { value: { writeText: (x) => copied.push(x) }, configurable: true });
-    const button = document.querySelector('.finding[data-id="defender-exclusions"] button.copy');
+    const button = document.querySelector('.finding[data-id="defender-exclusions:unknown"] button.copy');
     click(window, button);
     assert.deepEqual(copied, [`# Windows PowerShell, run as administrator\nAdd-MpPreference -ExclusionPath '${DATA}'`]);
     assert.equal(button.textContent, "Copied");
@@ -116,12 +116,12 @@ describe("File access", () => {
   test("a warning dealt with is greyed as ok, kept in the browser, and can be shown again", async (t) => {
     const { document, window } = await open(t);
     await flush(window, 8);
-    const warn = () => document.querySelector('.finding[data-id="defender-exclusions"]');
+    const warn = () => document.querySelector('.finding[data-id="defender-exclusions:unknown"]');
     click(window, warn().querySelector("button.dismiss"));
     assert.ok(warn().classList.contains("finding-ok"));
     assert.ok(warn().classList.contains("dismissed"));
     assert.equal(warn().querySelector("pre"), null, "its commands are put away");
-    assert.deepEqual(JSON.parse(window.localStorage.getItem(DISMISSED_KEY)), { "defender-exclusions": true });
+    assert.deepEqual(JSON.parse(window.localStorage.getItem(DISMISSED_KEY)), { "defender-exclusions:unknown": true });
     assert.equal(document.querySelector('.finding[data-id="defender"] button.dismiss'), null, "only a warning is dismissed");
     click(window, warn().querySelector("button.dismiss"));
     assert.ok(warn().classList.contains("finding-warn"));
@@ -130,10 +130,10 @@ describe("File access", () => {
 
   test("a page opened after a dismissal shows the warning greyed", async (t) => {
     const { document, window } = await open(t, server(), {
-      before: (win) => win.localStorage.setItem(DISMISSED_KEY, JSON.stringify({ "defender-exclusions": true })),
+      before: (win) => win.localStorage.setItem(DISMISSED_KEY, JSON.stringify({ "defender-exclusions:unknown": true })),
     });
     await flush(window, 8);
-    assert.ok(document.querySelector('.finding[data-id="defender-exclusions"]').classList.contains("dismissed"));
+    assert.ok(document.querySelector('.finding[data-id="defender-exclusions:unknown"]').classList.contains("dismissed"));
   });
 
   test("a check that fails says so and leaves the page standing", async (t) => {
