@@ -57,6 +57,11 @@ NOT_IN_LIBRARY = "not_in_library"
 #: names them: nothing is written into a photo recorded damaged or possibly incomplete.
 DAMAGED_PHOTOS = "damaged_photos"
 
+#: What a Result refused because the file is no longer the one the page built its record from (the stamp the
+#: page sent differs from the file's) carries: a web route answers 409, and the page reads the file again.
+CHANGED_ON_DISK = "changed_on_disk"
+CHANGED_ON_DISK_SENTENCE = "This photo changed on disk since you opened it: reload it first."
+
 
 class NotFound(Exception):
     """What a read or a write was asked about is not there. A web route answers it

@@ -209,15 +209,46 @@ export function queuePhotoWrite(job, label = 'Save a photo', options = {}) {
     return run;
 }
 
+/**
+ * The stamp of the file a record was built from -- its modified time and size -- which a write names: the server
+ * refuses a write whose file has changed since (409, `changed_on_disk`), because the whole tag list a save sends
+ * may be missing what another program put in the file. A record with no stamp names none (findings #533).
+ */
+export function stampOf(photo) {
+    return photo && photo.mtime > 0 && Number.isFinite(photo.size) ? { mtime: photo.mtime, size: photo.size } : undefined;
+}
+
+/** After a write: the record is of the file as it is now, and the next write names that. */
+export function takeStamp(photo, stamp) {
+    if (!photo || !stamp || !Number.isFinite(stamp.mtime) || !Number.isFinite(stamp.size)) return;
+    photo.mtime = stamp.mtime;
+    photo.size = stamp.size;
+}
+
+/**
+ * The server refused a write because the file changed since the page read it: nothing was written. The photo
+ * is read again -- the panel shows what the file holds now -- and the owner is told, in the status line that stays
+ * and by the caller's own message; nothing is merged and nothing is overwritten.
+ */
+export function photoChangedOnDisk(photo) {
+    return upper.reloadChangedPhoto(photo, () => setStatus('error',
+        'This photo changed on disk since you opened it. It was read again: look at it, then save again.',
+        { transient: false }));
+}
+
 /** POST a photo's title and tags -- as they are now, unless given -- and check the reply. */
 export async function postPhotoMetadata(photo, { title = photo.title, tags = photo.tags || [], ...extra } = {}) {
     const res = await api.fetch('/api/photo/save-metadata', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: photo.path, title, tags, ...extra })
+        body: JSON.stringify({ path: photo.path, title, tags, stamp: stampOf(photo), ...extra })
     });
     const data = await res.json();
-    if (!data.success) throw new Error(data.error || 'Failed to save');
+    if (!data.success) {
+        if (data.changed_on_disk) photoChangedOnDisk(photo);
+        throw new Error(data.error || 'Failed to save');
+    }
+    takeStamp(photo, data);
     return data;
 }
 
@@ -300,10 +331,14 @@ export async function writeDetailEdits(fields) {
                 path,
                 title: newTitle === null ? photo.title : newTitle,
                 tags,
+                stamp: stampOf(photo),
             })
         });
         data = await res.json();
-        if (!data.success) throw new Error(data.error || 'Failed to save');
+        if (!data.success) {
+            if (data.changed_on_disk) photoChangedOnDisk(photo);
+            throw new Error(data.error || 'Failed to save');
+        }
     } catch (err) {
         console.error(err);
         setStatus('error', `Not saved: ${err.message}`, { transient: false });
@@ -311,6 +346,7 @@ export async function writeDetailEdits(fields) {
         return false;
     }
 
+    takeStamp(photo, data);
     photo.tags = tags;
     if (newTitle !== null) {
         photo.title = newTitle;

@@ -27,7 +27,7 @@ import { checkFolderMembership, wireMembership } from './membership.js';
 import { checkDamagedPhotos, showLibraryDamage } from './damaged.js';
 import {
     carryTagsForward, deleteActivePhoto, openPhotoInDefaultApp, renderTags, rotatePhoto,
-    saveSingleAddPerson, saveSingleAddTag, saveSingleTitle, selectPhoto,
+    reloadChangedPhoto, saveSingleAddPerson, saveSingleAddTag, saveSingleTitle, selectPhoto,
     updateCarryForwardState, wireDateTakenModal, wireZoom
 } from './photo.js';
 import {
@@ -53,7 +53,7 @@ import {
 Object.assign(upper, {
     applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, populateCameraModelsDropdown, recordUndo,
     renderFileList, renderSuggestionsPanel, renderTags, renderThumbnails, selectPhoto,
-    leaveLibraryView, libraryChanged, syncSelectionMarks,
+    leaveLibraryView, libraryChanged, reloadChangedPhoto, syncSelectionMarks,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
 });

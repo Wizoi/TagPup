@@ -14,6 +14,7 @@ export const upper = {
     libraryChanged: null,
     populateCameraModelsDropdown: null,
     recordUndo: null,
+    reloadChangedPhoto: null,
     renderFileList: null,
     renderSuggestionsPanel: null,
     renderTags: null,

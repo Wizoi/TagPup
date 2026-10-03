@@ -34,6 +34,7 @@ from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.store import db
 from tagpup.store import library_view as store
+from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
 KINDS = store.KINDS
@@ -205,9 +206,16 @@ def read_ids(text):
     return found
 
 
-def photo(library, photo_id):
-    """The photo `photo_id` as the page reads a photo of a folder (services.photos.page_record), from the library's row
-    and not from the file: what the details panel shows and edits by path. NotFound when the library has no such photo."""
+def photo(library, photo_id, exiftool_path=None):
+    """The photo `photo_id` as the page reads a photo of a folder (services.photos.page_record): what the details panel
+    shows and edits by path. NotFound when the library has no such photo.
+
+    Built as the folder scan builds one: the file's stamp is taken and set against the row's, and the row's tags,
+    people and captions are the record only where it describes the file. A file that differs, or a row with no
+    stamp (made for a photo nobody read), is READ with ExifTool; the panel sends the whole tag list on a save, and a
+    list built from a row that says less than the file would write over what the file holds. The record's mtime and
+    size are the FILE's, which a write then names (tagpup.services.tagging.save_photo). A file that is gone is the
+    row's record with `missing` set."""
     conn = _open(library)
     try:
         row = store.photo_row(conn, photo_id) if 0 < photo_id < 2 ** 62 else None
@@ -216,11 +224,22 @@ def photo(library, photo_id):
     if row is None:
         raise NotFound("There is no photo %d in this library." % photo_id)
     path, mtime, size, tags, people, captions, raw, year = row
-    record = photo_actions.page_record(path, {
-        "tags": json.loads(tags) if tags else [], "people": json.loads(people) if people else [],
-        "captions": json.loads(captions) if captions else [], "raw_metadata": json.loads(raw) if raw else {},
-        "year": year}, mtime, size)
+    stamp = photo_actions.file_stamp(path)
+    if stamp is not None and not store_photos.describes(mtime, size, stamp):
+        record = photo_actions.read_file(library, path, exiftool_path() if callable(exiftool_path) else exiftool_path, stamp)
+    else:
+        record = photo_actions.page_record(path, {
+            "tags": json.loads(tags) if tags else [], "people": json.loads(people) if people else [],
+            "captions": json.loads(captions) if captions else [], "raw_metadata": json.loads(raw) if raw else {},
+            "year": year}, mtime if stamp is None else stamp[0], size if stamp is None else stamp[1])
+        if stamp is None:
+            record["missing"] = True
     record["id"] = photo_id
+    # What the library records of the photo's damage, as its card says it (the panel shows why, and asks for no
+    # picture of a file recorded unreadable).
+    shown = cards(library, [photo_id])
+    record["damaged"] = bool(shown and shown[0]["damaged"])
+    record["damage"] = shown[0]["damage"] if shown else None
     return record
 
 

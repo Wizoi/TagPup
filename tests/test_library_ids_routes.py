@@ -185,18 +185,19 @@ class ThePhoto(Routes):
         self.assertEqual("2024:06:01 10:00:00", record["taken"])
         self.assertEqual("", record["title"])
         self.assertIn("raw_metadata", record)
-        self.assertEqual({"path", "filename", "tags", "people", "title", "mtime", "size", "year", "taken", "raw_metadata", "id"},
+        self.assertTrue(record["missing"], "a row whose file is not there: the row, flagged (the file-and-row-at-odds cases are tests/test_stale_record_precondition.py)")
+        self.assertEqual({"path", "filename", "tags", "people", "title", "mtime", "size", "year", "taken", "raw_metadata", "id", "missing", "damaged", "damage"},
                          set(record))
 
     def test_an_undated_photo_has_no_taken(self):
         self.assertIsNone(self.photo(self.d)[1]["photo"]["taken"])
 
     def test_an_id_with_no_photo_is_a_404_in_a_sentence_and_a_bad_one_a_400(self):
-        for wanted in (999999, -1, 0, 2 ** 70):
+        for wanted in (999999, 0, 2 ** 70):
             reply, found = self.photo(wanted)
             self.assertEqual(404, reply.status_code, wanted)
             self.assertIn("There is no photo", found["error"])
-        for wanted in ("", "abc", "1.5"):
+        for wanted in ("", "abc", "1.5", "-1", "1_0", "+5"):
             self.assertEqual(400, self.photo(wanted)[0].status_code, wanted)
         self.assertEqual(400, self.get("/api/library/photo").status_code)
 

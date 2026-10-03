@@ -3,11 +3,12 @@ import logging
 import os
 
 from tagpup.core import fields, paths, suggesting, validation, vocabulary
-from tagpup.core.result import Result
+from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, metadata, names
 from tagpup.services import file_changes, file_only, libraries
+from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.store import photos, taxonomy
 
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 @file_changes.exclusively()
 @roots_service.canonical_args("photo_path")
-def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rename_format):
+def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rename_format, stamp=None):
     """Save one photo's caption, tags and Date Taken -- the photo panel -- and rename it
     after its new caption if Smart Rename named it.
 
@@ -44,6 +45,11 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     derived, nothing recorded of it afterwards; the caption still renames it after itself.
     The library's own answer decides, here, now. A photo that does not decode is refused.
 
+    `stamp`, (mtime, size), is the file's stamp as the record the page built the save from had it: a file whose stamp
+    is not that has changed since the page read it, and the save is refused (details `changed_on_disk`, the web route's
+    409) and writes nothing -- the whole tag list it carries may be missing what the file now holds. None (the CLI,
+    the MCP) is no check, as it was.
+
     details: `new_path`, `renamed`, `tags` as written, `flat` and `hierarchical` as
     written, `change`, and `index_warning` when the renamed photo's new name already had
     rows; `file_only` and `with_rows`, how many files (0 or 1) were written each way.
@@ -61,6 +67,10 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         wanted.update(fields.date_taken_fields(date_taken))
     people = taxonomy.people_paths(library.path)
     photo_path = paths.stored(photo_path)
+    if stamp is not None and photo_actions.changed_on_disk(photo_path, stamp):
+        result.refuse(CHANGED_ON_DISK_SENTENCE)
+        result.details[CHANGED_ON_DISK] = True
+        return result
     # One ExifTool session and one read before the write: the tags the file holds, the
     # plan's before, and the name Smart Rename kept.
     read = list(dict.fromkeys(SAVE_READ + tuple(wanted)))

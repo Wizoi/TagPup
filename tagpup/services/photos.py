@@ -46,6 +46,29 @@ def page_record(path, meta, mtime=0.0, size=0):
     }
 
 
+def file_stamp(path):
+    """(mtime, size) of the file at `path` as it is now, or None when there is none or it cannot be read."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return (stat.st_mtime, stat.st_size)
+
+
+def changed_on_disk(path, stamp):
+    """Is the file at `path` other than the one a page's record was built from, `stamp` = (mtime, size)? The row
+    comparison the folder scan trusts a row by (store.photos.describes); a file that is gone is changed."""
+    return not photos.describes(stamp[0], stamp[1], file_stamp(path))
+
+
+def read_file(library, path, exiftool_path, stamp=None):
+    """The page record of one photo read from its FILE with ExifTool, as the folder scan reads a photo whose row
+    does not describe it (the library's people vocabulary told to the reader). mtime and size are the file's:
+    `stamp`, (mtime, size), when the caller has just taken it."""
+    stamp = stamp or file_stamp(path) or (None, None)
+    return _read(library, [(path, stamp[0], stamp[1])], exiftool_path)[paths.key(path)]
+
+
 def taken_order(record):
     """The folder view's order for a page record: when it was taken, then file time."""
     return dates.date_taken_sort_key(record.get("raw_metadata", {}), record.get("mtime", 0.0))

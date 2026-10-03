@@ -2,7 +2,7 @@
 // forward, opening, rotating and deleting it, and editing when it was taken.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { baseName, isUnc } from './common/paths.js';
+import { baseName, isUnc, pathKey } from './common/paths.js';
 import { photoAlreadyHas } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -26,10 +26,10 @@ import {
     leavePhotoThen, postPhotoMetadata, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
 } from './edits.js';
-import { renderFileList, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
+import { renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
 import { damageOf, showPhotoDamage } from './damaged.js';
 import { removeFromSelection } from './selected.js';
-import { fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
+import { cardDamage, fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
 
 // ---- Detected faces ----------------------------------------------------
 // Face recognition already ran for this photo -- the suggester needs it to propose
@@ -177,6 +177,38 @@ function openPhoto(path) {
 }
 
 /**
+ * Put a library photo's record in the panel: the page's only full record, and what the library records of its
+ * damage, so the panel says why and asks for no picture of a file recorded unreadable.
+ */
+function showLibraryRecord(lib, record) {
+    state.folderPhotos = [record];
+    lib.activeId = record.id;
+    const damage = record.damaged ? cardDamage(record) : null;
+    state.damagedPhotos = damage ? { [pathKey(record.path)]: { ...damage, path: record.path, found: 'by an earlier check' } } : {};
+    showPhoto(record.path);
+}
+
+/**
+ * The photo's file changed since the page read it and a write was refused (edits.js photoChangedOnDisk): read it
+ * again, and show what the file holds now. A library view's photo is read from the library by id; a folder's, by
+ * reading the folder again.
+ */
+export function reloadChangedPhoto(photo, after = () => {}) {
+    const lib = state.library;
+    if (lib && photo.id !== undefined) {
+        return fetchLibraryRecord(photo.id).then(record => {
+            if (!record || lib !== state.library) return;
+            if (state.activePhotoPath === photo.path) showLibraryRecord(lib, record);
+            else state.folderPhotos = [record];
+            upper.renderThumbnails();
+            after();
+        }).catch(err => console.error('Could not read the photo again:', err));
+    }
+    state.afterScan = after;
+    return scanFolder(true, { keepTyped: true });
+}
+
+/**
  * Open the photo `id` of the library view in the details panel. The panel and every edit work on a record
  * by path (as a folder's photos are); a library view's photo is read whole from the library when it is
  * opened, and the page holds it alone. A photo the library no longer has is dropped from the view.
@@ -196,9 +228,7 @@ export function openLibraryPhoto(id) {
         leavePhotoThen(() => {
             done();
             if (lib !== state.library || token !== lib.openToken) return;
-            state.folderPhotos = [record];
-            lib.activeId = id;
-            showPhoto(record.path);
+            showLibraryRecord(lib, record);
         });
         return true;
     }).catch(err => {
@@ -608,6 +638,7 @@ export function rotatePhoto(direction) {
             // The photo's new mtime is its images' new URL, here and in the grid.
             const photo = state.folderPhotos.find(p => p.path === path) || { path };
             photo.mtime = data.mtime || Date.now() / 1000;
+            if (Number.isFinite(data.size)) photo.size = data.size;
             mainImage.src = photoFileUrl(photo, 800);
             // A library view's card has the file's old stamp in its thumbnail's address: asked for again.
             if (state.library && photo.id !== undefined) refetchCards([photo.id]);

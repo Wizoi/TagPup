@@ -204,11 +204,13 @@ export function updateCurrentFolderLabel() {
 }
 
 // Scans a folder
-export function scanFolder(forceRefresh = false) {
+export function scanFolder(forceRefresh = false, { keepTyped = false } = {}) {
     // Opening a folder, or refreshing this one, repopulates the panel from what
     // was scanned -- so it asks first, like any other way off the photo. Staying
     // puts the open folder back in the box rather than leave it naming another.
-    if (hasUnsavedEdits() || openPhotoWrite()) {
+    // `keepTyped`: the open photo's file changed and the folder is read again to show it (edits.js
+    // photoChangedOnDisk); what was typed stays in its fields, so there is nothing to ask about.
+    if (!keepTyped && (hasUnsavedEdits() || openPhotoWrite())) {
         leavePhotoThen(() => scanFolder(forceRefresh), {
             onStay: () => { if (state.scannedFolder) folderPathInput.value = state.scannedFolder; },
         });
@@ -328,6 +330,7 @@ export function scanFolder(forceRefresh = false) {
         .catch(err => {
             if (err.name === 'AbortError') return;
             console.error(err);
+            state.afterScan = null;
             listStats.textContent = 'Scan failed';
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = 'Error';
@@ -386,6 +389,11 @@ export function showScannedFolder(path, data) {
 
     statusDot.className = 'status-indicator-dot';
     statusText.textContent = 'Ready';
+    if (state.afterScan) {
+        const after = state.afterScan;
+        state.afterScan = null;
+        after();
+    }
 }
 
 /**
