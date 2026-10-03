@@ -987,18 +987,22 @@ Server only: no page, nothing the owner sees until 9b. Three things, each in its
   **Taken away by the code that takes the photo away, not by a schedule**: `photos.delete` (its id read before the row goes),
   `faces.remove_folder` (the ids under the folder, likewise) and the indexer's `PhotoIndex.remove_paths` (`sweep`: every entry of
   a photo the library does not hold, or holds at another path); `index --reset` clears the library's whole cache. A restore from a
-  snapshot, or a delete outside the services, leaves entries nothing will serve, which `warm --apply` sweeps.
+  snapshot, a journal undo of inserted photos (an undone index run or sync), or a delete outside the services leaves entries
+  nothing will serve, which `warm --apply` sweeps.
   **A damaged photo** -- a `damaged_files` record whose stamp still describes the file, and not a possibly incomplete copy,
   which decodes -- is answered a placeholder (`X-TagPup-Thumb: damaged`) **without its file being decoded**; one that does not
   decode though nothing says so is answered the same and remembered in the process while its stamp holds (a damaged file is
   not decoded for each of the thousand cards that ask), and **nothing is written to the library for it**: recording it is the
   indexer's finding, and a false one refuses writes to a good photo. Nothing is cached for either. **A cache that cannot be
   written** (the folder missing and not makeable, read-only, full) costs only the cache: the thumbnail is made and answered
-  with no ETag, and the first time is logged. **A file that cannot be read** (a share away: a bounded wait of one second,
-  as the damaged lists have) is `Unavailable`, a 503 with `Retry-After` and a sentence, and nothing is decided about the photo.
+  with no ETag, and the first time is logged. **A share that is away** shares the folder listings' memory (`tagpup.files.shares`): the first look waits one second, the share is then taken as away for 30 s and answered at once,
+  with no second thread while one hangs, so 24 cards on it cost one wait (a 503 with `Retry-After` and "the network share is away"); `thumbs warm` asks a share once and leaves its photos, and says so.
+  **A file that is there and cannot be read** (permissions, a lock) is a different answer from one that is gone (`damaged_photos.stamp_of`: None, `CANNOT_READ`, `UNANSWERED`): a 503 "cannot be read", never "not there". The older `_stamp` keeps
+  its None for both, so for the other callers nothing changed: `prune` and `forget_to_reindex` treat it as gone, `check_again` counts it unreachable, and `for_write` does not find an unreadable file damaged -- the write meets it itself.
+  Either is `Unavailable` and nothing is decided about the photo. **A cache that cannot be written ends `warm --apply` at the first one** (exit 1) before more is decoded.
   `page_copy` and `/api/photo-file?size=` are unchanged: the folder view still makes its thumbnails per request until 9b.
 - **`tagpup.services.library_view`** over **`tagpup.store.library_view`** (the SQL; `tagpup.services` holds none). A source is
-  `all`, `folder` (by its PATH, never an id; `recursive` takes its subfolders), `keyword` (the tag as the tree spells it,
+  `all`, `folder` (by its PATH, never an id; `recursive` takes its subfolders), `keyword` (the tag as the tree spells it, else the node it is without case -- an exact match wins, none is empty --,
   read as a keyword is: `|` and `\` as `/`, trimmed; and everything under it), `person` (the leaf, compared without case),
   `year` (`photos.year`) or `month` (`YYYY-MM`, a range of `photos.taken`). `view` returns `{source, total, ids, next, limit,
   cards}`: **ordered by Date Taken then id, photos with no date after them by id, by a KEYSET** -- the token is the (phase,
