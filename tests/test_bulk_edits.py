@@ -781,6 +781,58 @@ class AfterARestart(Bulk):
             self.assertIn("Trips/Coast", self.tags(photo_id))
             self.assertEqual(1, self.files.writes_of[paths.key(self.path(photo_id))])
 
+    def current(self):
+        reply = self.client.get("/library/api/library/bulk/current")
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        return reply.get_json()["job"]
+
+    def test_current_is_none_before_any_job_and_after_one_finished(self):
+        self.assertIsNone(self.current())
+        self.finish(self.tags_job(add=["Trips/Coast"])["job"])
+        self.assertIsNone(self.current())
+
+    def test_current_is_the_running_job_and_a_page_reloaded_mid_job_finds_it(self):
+        gate = Gate(2)
+        self.files.on_write = gate
+        self.addCleanup(gate.release.set)
+        handle = self.tags_job(add=["Trips/Coast"])["job"]
+        self.assertTrue(gate.reached.wait(30))
+        seen = self.current()
+        self.assertEqual((handle, "running", self.PHOTOS), (seen["job"], seen["state"], seen["total"]))
+        gate.release.set()
+        self.finish(handle)
+        self.assertIsNone(self.current())
+
+    def test_current_after_a_restart_is_the_abandoned_job_and_a_resumed_shift_is_found_by_its_first_id(self):
+        def die(_path, n):
+            if n == 30:
+                raise Crash()
+        self.files.on_write = die
+        with mock.patch.object(bulk_edits.Job, "_end", lambda self_, *a, **k: None):
+            handle = self.shift_job(90)["job"]
+            bulk_edits._held(self.library)[handle].thread.join(60)
+        self.crash()
+        self.files.on_write = None
+        seen = self.current()
+        self.assertEqual((handle, "abandoned", True), (seen["job"], seen["state"], seen["resumable"]))
+        self.post("resume", {"job": handle})
+        self.finish(handle)
+        self.assertIsNone(self.current(), "the resumed job finished")
+
+    def test_current_offers_a_cancelled_job_and_not_one_older_than_the_cache_keeps(self):
+        gate = Gate(2)
+        self.files.on_write = gate
+        self.addCleanup(gate.release.set)
+        handle = self.shift_job(5)["job"]
+        self.assertTrue(gate.reached.wait(30))
+        self.post("cancel", {"job": handle})
+        gate.release.set()
+        self.finish(handle)
+        seen = self.current()
+        self.assertEqual((handle, "cancelled", True), (seen["job"], seen["state"], seen["resumable"]))
+        with mock.patch.object(bulk_edits.time, "time", return_value=seen["started"] + 31 * 86400):
+            self.assertIsNone(self.current())
+
     def test_the_job_goes_on_when_the_page_is_closed_or_another_library_is_open(self):
         gate = Gate(2)
         self.files.on_write = gate

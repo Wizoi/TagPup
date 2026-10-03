@@ -552,6 +552,31 @@ def _stored_status(library, handle):
             "cancelling": False, "resumable": can, "what": counts.get("what")}
 
 
+#: A job that stopped part-way is offered to the page for this long (the cache folder sweeps its list of photos then).
+CURRENT_DAYS = 30
+
+
+def current(library):
+    """The bulk edit a page opening the library should show: the one running (here, or in another process), else the latest
+    one that stopped part-way -- cancelled, failed or abandoned by a restart -- within CURRENT_DAYS; None when the latest
+    finished, or there has been none. Its status, as `status` gives it. One read of the library's latest run, and only when
+    nothing runs in this process."""
+    with _lock:
+        running_here = next((job for job in _held(library).values() if job.state == RUNNING), None)
+    if running_here is not None:
+        return running_here.status()
+    found = runs_service.runs(library, JOB, limit=1)
+    if not found:
+        return None
+    handle = (found[0].changed or {}).get("job") or found[0].id
+    seen = status(library, handle)
+    if seen is None or seen["state"] == DONE:
+        return None
+    if seen["state"] != RUNNING and (time.time() - (seen.get("started") or 0)) > CURRENT_DAYS * 86400:
+        return None
+    return seen
+
+
 def cancel(library, handle):
     """Ask job `handle` to stop after the chunk it is writing, and return its status (`cancelling` true). A job that has
     finished, or is not running in this process, is no error -- the click may have come as it ended -- and its status says
