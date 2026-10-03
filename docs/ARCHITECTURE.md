@@ -1249,6 +1249,41 @@ panel and selection. Nothing is migrated and nothing of a folder's machinery run
   Next (arrow keys, swipe) and "N of M" follow the view's order by `ids`; two quick presses go two photos on. A photo the library no
   longer has is dropped from the view. A rotate asks for its card again (its thumbnail's `v` changed); a delete takes its card away,
   drops the total and opens the next photo. Same-as-previous (Ctrl+D) is off: the photo before is not in the page.
+- **The record is as fresh as a folder scan's, and a write names the file it was built from** *(review of 9b-2, findings #533)*. The panel
+  sends a photo's whole tag list on a tag add, a Date Taken edit and carry forward, and the server writes it as given; a record built from
+  the library's row (a view) or from this browser's half-hour cache of a scan (a folder) says less than the file when another program
+  added a keyword after the index read it, or when the row is Suggest's (a path and no stamp): the next save removed what the file held.
+  So: (1) `/api/library/photo` takes the file's stamp and sets it against the row's (`store.photos.describes`: size equal, time within
+  0.1 s); where they agree the row is the record, where they do not -- or the row has no stamp -- the file is read with ExifTool as the
+  folder scan reads it (`services.photos.read_file`); the record's `mtime` and `size` are the file's; a file that is gone is the row with
+  `missing`. (2) Every metadata write the panel makes -- a save of tags, title or people, the Date Taken edit, carry forward, Apply a
+  suggestion, the card's title in a folder -- sends `stamp: {mtime, size}` of its record, and `tagging.save_photo` (under the lock of
+  changes to files, before it reads) refuses with `409`, `changed_on_disk` and "This photo changed on disk since you opened it: reload it
+  first." when the file's stamp differs or the file is gone, writing nothing; held and file-only (Just look) photos alike, and a call
+  with no stamp (the CLI, the MCP) as ever. The page (`edits.js photoChangedOnDisk`, `photo.js reloadChangedPhoto`) reads the photo again
+  -- a view's by id, a folder's by scanning the folder (`scanFolder(true, {keepTyped})`, which asks nothing about what was typed: it stays
+  in its fields) -- and says so in the status line and the alert; nothing is merged and nothing overwritten. A successful write's reply
+  carries the new `mtime` and `size` (a rename by the caption: of the file under its new name) and the record takes them, so the next save
+  passes; bulk tags reports each photo's (`stamps`; it adds and removes against the file's own tags, so it needs no precondition),
+  rotate reports `size` with `mtime`. Auto-apply and Smart Rename read the folder again, so their records are fresh.
+- **A bulk write is asked about and capped** *(findings #535)*. A selection over 200 photos asks "Add Trips/Coast to 3,412 photos?" (the
+  write named, `selection.js confirmBulkWrite`) before any bulk tag, person or removal; the server refuses a request of more than 5,000
+  photos with `400` "Narrow the selection: bulk edits over 5000 photos arrive with the editing stage" -- bulk tags and Smart Rename; the
+  page says the same without sending. A job with progress, cancel and undo of its own is 9d's.
+- **The tag tree's counts are one pass of `photo_tags`** *(findings #534)*. `/api/taxonomy/tree` parsed every photo's tags JSON for
+  `usage_count` (`store.photos.tag_usage`): 350 ms on a synthetic library of photo_index's scale (68,466 photos, 159,651 `photo_tags`
+  rows, 931 nodes), which held the Python process at page start so that `/api/library/ids` and `/api/tags` waited behind it. It now
+  reads `photo_tags` (`library_view.keyword_counts`, whose per-photo grouping SQLite does: Python sees the distinct tag sets, not 68,000
+  photos): **68 ms**, the same counts node for node (`tests/test_tag_usage_from_photo_tags.py`); a library without the derived tables
+  is counted from the JSON as before. With the page's first three requests in flight together: tree 785 -> 122 ms, ids 830 -> 170 ms,
+  tags 920 -> 260 ms (`/api/tags` is itself 260 ms there: not looked at). So the "85-330 ms in the page" of the ids request was mostly
+  the tree route holding the process, not the route (30 ms alone). Re-measured on the sandbox copy with `measure_library_view.py` on a
+  machine eight times slower than the earlier runs (copying the library took 219 s, not 15), so its absolute numbers are not comparable;
+  navigation to the ids reply of `?view=all` was 385 ms (304-529) against 458 ms (448-591) before.
+- **A reply about the folder after a view opened shows nothing** *(findings #536)*: an index-status or suggest-status reply that lands
+  once a view is open returns at once (it unhid the progress containers and set `folderSuggestions` over the view). A photo opened from a
+  view carries what the library records of its damage (`damaged`, `damage` in the record), so the panel shows the note and asks for no
+  picture of a file recorded unreadable; `/api/library/photo` reads `id` as digits only.
 - **Measured** with `scripts/measure_library_view.py --run` (plan without `--run`; `--code-root <a git archive of the trunk>` for the
   baseline, which has no library view, so only the folder view is measured). The sandbox is `scripts/sandbox.py`'s: a copy of
   photo_index (68,472 photos, 2.6 GB; the server migrated it to 20 as it opened it), a free port, headless Chromium 1600 x 1000, a fresh
@@ -1261,7 +1296,7 @@ panel and selection. Nothing is migrated and nothing of a folder's machinery run
   |---|---|
   | (a) open `?view=all`: the ids reply to the first window of cards painted, main thread idle | 41 ms (40-55) |
   | the same: thumbnails first asked for (the 120 ms rule) / navigation to painted / navigation to the ids reply | +152 ms / 504 ms (498-631) / 458 ms (448-591) |
-  | the ids request in the page (390 KB, 68,472 ids): the route in-process, 30 ms (23 SQLite, 4 JSON) | 85-330 ms on this busy machine, 4 asks; a request of one card is 5-6 ms |
+  | the ids request in the page (390 KB, 68,472 ids): the route in-process, 30 ms (23 SQLite, 4 JSON) | 85-330 ms before the tree fix (it waited behind `/api/taxonomy/tree`); a request of one card is 5-6 ms |
   | (b) open the keyword node of 41,448 photos: the ids reply to painted, idle (ids 236 KB) | 39 ms (38-45); navigation to painted 438 ms; thumbnails asked +151 ms |
   | (c) scroll `all` top to bottom in 10 s (2.87 million px): frames / longest / over 33 ms / over 100 ms | 601 at 16.8 ms at most / no long task / 0 / 0 |
   | the same: DOM nodes at the peak / JS heap at the peak (4.4 MB after opening) | 500 / 4.8 MB |
@@ -1272,8 +1307,8 @@ panel and selection. Nothing is migrated and nothing of a folder's machinery run
 
   What the numbers do **not** show: the photos are not in the sandbox (the thumbnail requests were answered by the browser with a
   1-pixel picture, so the server's 5 ms a cached thumbnail and 47 ms a first one, 9a-2, are not in them), a person's browser is not
-  headless, and the ids request is 3 to 10 times its handler on this machine, which I did not run to ground: a request of one card
-  is 5 ms in the same server, so it is not the gate. `EXPLAIN QUERY PLAN` of the id lists on the copy: `all`, a year and a month
+  headless, and the ids request was 3 to 10 times its handler on this machine: that was the tag tree's route holding the process at page
+  start (see the tree's counts above), not the route. `EXPLAIN QUERY PLAN` of the id lists on the copy: `all`, a year and a month
   `SEARCH ... COVERING INDEX idx_photos_taken` / `idx_photos_year` with no sort; a folder with subfolders `SEARCH p USING INDEX
   idx_photos_path_nocase (path>? AND path<?)` and a temp b-tree for the order; the keyword two seeks of the tree, `photo_tags` by
   `tag_id`, `p` by primary key and a temp b-tree (104-124 ms for 41,448 ids in SQLite alone, as 9a-2's page of it); no `SCAN` of photos
