@@ -102,6 +102,8 @@ class Plans(unittest.TestCase):
     def test_a_month_is_a_range_of_the_date_index(self):
         text = self.assert_searches(self.page(store.Source(store.MONTH, "2016-02")), "idx_photos_taken (taken>? AND taken<?)")
         self.assertNotIn("TEMP B-TREE", text)
+        asked = [statement for statement, _lines in self.plan_of(self.page(store.Source(store.MONTH, "2016-02")))]
+        self.assertEqual([], [each for each in asked if "taken IS NULL" in each], "every photo of a month has a date")
 
     def test_a_folder_and_its_subfolders_is_a_range_of_the_path_index(self):
         self.assert_searches(self.page(store.Source(store.FOLDER, self.top, True)), "idx_photos_path_nocase (path>? AND path<?)")

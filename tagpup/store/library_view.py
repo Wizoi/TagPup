@@ -66,8 +66,9 @@ def month_range(month):
 
 
 #: The photos a source holds, for the statements that read them: `from_` and `where` (the photos table is `p`),
-#: the `params` of the where, and the (SQL, parameters) that count them.
-Scope = collections.namedtuple("Scope", "from_ where params count")
+#: the `params` of the where, the (SQL, parameters) that count them, and whether every one has a date
+#: (a month does: the undated photos are not looked for).
+Scope = collections.namedtuple("Scope", "from_ where params count dated", defaults=(False,))
 
 
 def _scope(conn, source):
@@ -82,7 +83,7 @@ def _scope(conn, source):
     if kind == MONTH:
         bounds = month_range(source.value)
         return Scope("photos p", "p.taken >= ? AND p.taken < ?", bounds,
-                     ("SELECT COUNT(*) FROM photos WHERE taken >= ? AND taken < ?", bounds))
+                     ("SELECT COUNT(*) FROM photos WHERE taken >= ? AND taken < ?", bounds), dated=True)
     if kind == FOLDER:
         if source.recursive:
             where, params = store_roots.sql_under(conn, "p.path", source.value)
@@ -127,7 +128,7 @@ def _page(conn, scope, cursor, limit):
             values += [cursor.taken, cursor.id]
         sql += " ORDER BY p.taken, p.id LIMIT ?"
         rows = [(photo_id, taken) for taken, photo_id in conn.execute(sql, values + [want])]
-    if len(rows) < want:
+    if len(rows) < want and not scope.dated:
         after = cursor.id if cursor is not None and cursor.phase == 1 else 0
         undated = conn.execute(
             "SELECT p.id FROM %s WHERE %s AND p.taken IS NULL AND p.id > ? ORDER BY p.id LIMIT ?"
