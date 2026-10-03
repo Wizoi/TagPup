@@ -7,7 +7,9 @@
  * the files and nothing of the library's (tests/test_just_look_edits.py) and decides,
  * photo by photo, by whether the library holds the photo's folder; the page does not
  * send a flag. What the page does here is stop blocking exactly those controls, say
- * where the write went, and keep Suggest, Apply All, carry-forward and face naming off.
+ * where the write went, and keep face naming off. Suggest works too (2026-10-03): the server
+ * analyses the photos against the library, keeps what it finds in memory and adds nothing to
+ * it (tests/test_analyse_only_suggest.py); what it offers is applied to the files only.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -310,20 +312,61 @@ describe("the other file edits", () => {
   });
 });
 
+describe("Suggest while just looking", () => {
+  const offered = {
+    status: "completed", completed: 2, total: 2, in_memory: true,
+    notes: ["The library has no named faces yet, so no people are suggested."],
+    suggestions: { [B]: { tags: [{ tag: "Trips/Lighthouse", score: 0.9 }], people: [], title: "Lighthouse" } },
+  };
+
+  test("runs, says nothing was added to the library, and what it offers is applied to the file", async (t) => {
+    const s = server()
+      .first("/api/folder/suggest-start", { success: true, status: "running", in_memory: true })
+      .first("/api/folder/suggest-status", offered);
+    const ctx = await looking(t, s);
+    assert.ok(!ctx.$("btn-suggest-tags").disabled, "Suggest is off while just looking");
+    click(ctx.window, ctx.$("btn-suggest-tags"));
+    await flush(ctx.window, 12);
+    assert.equal(ctx.posts("/api/folder/suggest-start").length, 1, "Suggest was not sent");
+    assert.match(ctx.$("status-text").textContent,
+      /Analysed against kr-track; nothing was added to kr-track\. The library has no named faces yet/);
+    await ctx.open(1);
+    const chip = ctx.document.querySelector("#suggested-tags-container .suggestion-chip");
+    assert.ok(chip, "the suggestion is not offered");
+    click(ctx.window, chip);
+    await flush(ctx.window, 12);
+    const sent = ctx.posts("/api/photo/save-metadata");
+    assert.equal(sent.length, 1, "taking the suggestion wrote nothing");
+    assert.ok(sent[0].body.tags.includes("Trips/Lighthouse"), JSON.stringify(sent[0].body.tags));
+    assert.equal(sent[0].body.just_looking, undefined, "the page sends no flag; the server decides");
+    assert.equal(ctx.posts("/api/taxonomy/create").length, 0, "a node was made in the library's tree");
+  });
+
+  test("Apply All on the selection goes to the files, with no taxonomy write", async (t) => {
+    const s = server()
+      .first("/api/folder/auto-apply", { success: true, written: {}, skipped_damaged: 0, skipped: [], file_only: 1, with_rows: 0 })
+      .first("/api/folder/suggest-status", offered);
+    const ctx = await looking(t, s);
+    click(ctx.window, ctx.$("btn-suggest-tags"));
+    await flush(ctx.window, 12);
+    ctx.select(1);
+    ctx.$("btn-folder-auto-apply").disabled = false;
+    click(ctx.window, ctx.$("btn-folder-auto-apply"));
+    await flush(ctx.window, 12);
+    assert.equal(ctx.posts("/api/folder/auto-apply").length, 1, "Apply All was held back while just looking");
+    assert.equal(ctx.posts("/api/taxonomy/create").length, 0);
+  });
+});
+
 describe("what stays off", () => {
-  test("Suggest, Apply All, carry-forward and the faces strip need the library", async (t) => {
+  test("only face naming needs the library: a click on the faces strip is held", async (t) => {
     const ctx = await looking(t);
     await ctx.open(1);
-    ctx.$("btn-suggest-tags").disabled = false;
-    for (const id of ["btn-suggest-tags", "btn-folder-auto-apply", "btn-carry-forward", "btn-apply-all-single-sugg"]) {
-      click(ctx.window, ctx.$(id));
-    }
+    const before = ctx.posts("/api/faces/name").length + ctx.posts("/api/photo-faces/name").length;
     click(ctx.window, ctx.$("faces-strip"));
-    ctx.key(ctx.document.body, "d", { ctrlKey: true });
     await flush(ctx.window, 8);
-    assert.equal(ctx.posts("/api/folder/suggest-start").length, 0);
-    assert.equal(ctx.posts("/api/folder/auto-apply").length, 0);
-    assert.equal(ctx.posts("/api/photo/save-metadata").length, 0, "a carry-forward or an Apply All was written");
+    assert.equal(ctx.posts("/api/faces/name").length + ctx.posts("/api/photo-faces/name").length, before);
+    assert.equal(ctx.posts("/api/photo/save-metadata").length, 0);
   });
 
   test("the right-click menu offers what it always did, and writes nothing", async (t) => {

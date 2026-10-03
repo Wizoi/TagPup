@@ -175,8 +175,10 @@ class TheSuggestRoute(Folders, unittest.TestCase):
         self.addCleanup(tagpup_routes.folders.forget, self.library)
         self.addCleanup(indexing_jobs.forget, self.library)
         self.started = []
+        self.looking = []
         patcher = mock.patch.object(suggestion_jobs.SuggestionRuns, "start",
-                                    lambda runs, folder, work: self.started.append(folder) or "running")
+                                    lambda runs, folder, work: self.started.append(folder)
+                                    or self.looking.append(work.looking) or "running")
         patcher.start()
         self.addCleanup(patcher.stop)
         self.indexed = FakeIndex()
@@ -187,27 +189,26 @@ class TheSuggestRoute(Folders, unittest.TestCase):
     def suggest(self, folder):
         return self.client.post("/library/api/folder/suggest-start", json={"folder_path": folder})
 
-    def test_refuses_a_folder_the_library_does_not_hold_and_names_it(self):
+    def test_a_folder_the_library_does_not_hold_is_only_looked_at(self):
+        """Not refused (2026-10-03): the run analyses the photos and keeps what it finds in memory
+        (tests/test_analyse_only_suggest.py); no row is made, here or in another library."""
         reply = self.suggest(self.lighthouse)
-        self.assertEqual(409, reply.status_code, reply.data)
-        self.assertEqual("%s is not in library. Add it to library first." % self.lighthouse, reply.get_json()["error"])
-        self.assertEqual([], self.started)
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual(([self.lighthouse], [True], True), (self.started, self.looking, reply.get_json()["in_memory"]))
         self.assertEqual(0, rows_under(self.library.path, self.lighthouse))
         self.assertEqual(2, rows_under(self.quayside, self.lighthouse), "the other library was changed")
 
-    def test_refuses_a_held_folder_holding_one_it_does_not(self):
+    def test_a_held_folder_holding_one_it_does_not_is_looked_at_whole(self):
         scans = os.path.join(self.regatta, "Scans")
         make_photos(scans, "scan_01.jpg")
         reply = self.suggest(self.regatta)
-        self.assertEqual(409, reply.status_code, reply.data)
-        self.assertIn("1 folder(s) under %s are not in library, %s first" % (self.regatta, scans),
-                      reply.get_json()["error"])
-        self.assertEqual([], self.started)
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual(([self.regatta], [True]), (self.started, self.looking))
 
     def test_starts_on_a_folder_the_library_holds(self):
         reply = self.suggest(self.regatta)
         self.assertEqual(200, reply.status_code, reply.data)
-        self.assertEqual([self.regatta], self.started)
+        self.assertEqual(([self.regatta], [False]), (self.started, self.looking), "kept in the library, as always")
 
     def test_starts_once_the_folder_is_added(self):
         reply = self.client.post("/library/api/folder/add", json={"folder_path": self.lighthouse})

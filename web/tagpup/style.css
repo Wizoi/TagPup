@@ -1545,11 +1545,6 @@ body {
     50% { background: rgba(251, 191, 36, 0.35); }
 }
 
-body.just-looking #btn-suggest-tags,
-body.just-looking #btn-suggest-title-wand,
-body.just-looking #btn-carry-forward,
-body.just-looking #btn-apply-all-single-sugg,
-body.just-looking #btn-folder-auto-apply,
 body.just-looking #faces-strip {
     opacity: 0.4;
     cursor: not-allowed;

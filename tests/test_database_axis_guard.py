@@ -80,7 +80,8 @@ class TestNoLibraryIsResolvedImplicitly(unittest.TestCase):
         from tagpup.jobs import suggestions as suggestion_jobs
         from tagpup.web import tagpup_routes
 
-        self.assertEqual(["library", "photos", "models"], list(inspect.signature(suggestion_jobs.work_for).parameters))
+        self.assertEqual(["library", "photos", "models", "looking", "held_now"],
+                         list(inspect.signature(suggestion_jobs.work_for).parameters))
         self.assertEqual(["library", "folder"], list(inspect.signature(tagpup_routes._folder_photos).parameters))
         self.assertEqual(["library"], list(inspect.signature(tagpup_routes._folder_indexer).parameters))
 

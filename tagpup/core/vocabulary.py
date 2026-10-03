@@ -80,6 +80,29 @@ def same_person(a, b):
     return bool(left) and left == key(leaf_of(b))
 
 
+def person_tag(name, filed, roots):
+    """The tag a suggested person `name` is written as, or None when someone must choose: the one
+    rule a click on the person's chip and Apply All both follow. The page's resolveTagOrPerson
+    (web/tagpup/tags.js) is its mirror, and tests/fixtures/person_filing.json is the table both are
+    fed (tests/test_person_filing_table.py, tests/frontend/person-filing-table.test.mjs).
+
+    `filed` are the paths the tree files the name under, under its people roots; `roots` the
+    people roots' names as the tree spells them. A name the tree files once is that path; filed
+    twice, None (which folder?). Not filed: under the one people root, under People when the tree
+    has none, and None when it has several. A name that is already a path is as it is."""
+    if "/" in name:
+        return name
+    if len(filed) == 1:
+        return filed[0]
+    if len(filed) > 1:
+        return None
+    if not roots:
+        return NEW_LIBRARY_FACE_ROOT + SEPARATOR + name
+    if len(roots) == 1:
+        return roots[0] + SEPARATOR + name
+    return None
+
+
 def hidden_by(tag, hidden):
     """Is the tag, or any path above it, in `hidden`? (A hidden branch hides its leaves.)"""
     return any(path in hidden for path in lineage(tag))

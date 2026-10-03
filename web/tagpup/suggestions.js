@@ -14,7 +14,7 @@ import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson } from './tags.js';
 import { postPhotoMetadata, queuePhotoWrite, queueWriteOf, redrawIfShowing } from './edits.js';
-import { isJustLooking } from './looking.js';
+import { isJustLooking, libraryName } from './looking.js';
 import { isPhotoTagged, renderFileList, scanFolder } from './folder.js';
 import { saveSingleTitle } from './photo.js';
 import { recordUndo, snapshotPhotos } from './undo.js';
@@ -30,9 +30,10 @@ export function updateSuggestButtonState(status = null) {
         btnSuggestTags.disabled = true;
         return;
     }
-    // Just looking at a folder the library does not hold (membership.js).
-    if (isJustLooking()) {
-        btnSuggestTags.disabled = true;
+    // What is on the page was found in memory, and the library holds the folder now: the run that saves
+    // is the next Suggest, whatever the page holds already.
+    if (state.suggestionsInMemory && samePath(state.suggestionsInMemory, state.scannedFolder) && !isJustLooking()) {
+        btnSuggestTags.disabled = false;
         return;
     }
     const hasUnprocessed = state.folderPhotos.some(photo => !state.folderSuggestions[photo.path]);
@@ -56,6 +57,7 @@ export function startSuggestions() {
     })
     .then(data => {
         if (data.success) {
+            state.suggestionsInMemory = data.in_memory ? path : null;
             suggestProgressContainer.classList.remove('hidden');
             checkSuggestionsStatus(path);
         } else {
@@ -130,6 +132,30 @@ export function checkIndexingStatus(folderPath) {
     state.indexProgressTimer = setInterval(queryProgress, 1000);
 }
 
+/**
+ * The server no longer holds what a Suggest that only looked found (it is kept in memory, for a while): it
+ * let it go after a while, or the folder was added to the library and it was dropped. The page says which,
+ * forgets the copy it held -- here and in this browser's cache -- and Suggest is run again.
+ */
+export function suggestionsLetGo() {
+    state.suggestionsInMemory = null;
+    state.folderSuggestions = {};
+    saveToLocalStorageCache();
+    btnFolderAutoApply.disabled = true;
+    renderFileList();
+    updateSelectedThumbnailsCount();
+    updateSuggestButtonState();
+    if (state.activePhotoPath) renderSuggestionsPanel(state.activePhotoPath);
+    // The library holds the folder (it was added: what the membership says, and Add sets): not a thing gone
+    // wrong, and the run that saves is the next Suggest.
+    const held = state.folderMembership && !(state.folderMembership.photos_not_held > 0);
+    if (held) {
+        setStatus('ready', 'The folder was added: Suggest again to save its suggestions', { transient: false });
+    } else {
+        setStatus('error', 'The analysis was let go after a while; run Suggest again', { transient: false });
+    }
+}
+
 export function checkSuggestionsStatus(folderPath) {
     if (state.progressTimer) clearInterval(state.progressTimer);
 
@@ -137,6 +163,23 @@ export function checkSuggestionsStatus(folderPath) {
         api.json(`/api/folder/suggest-status?path=${encodeURIComponent(folderPath)}`)
             .then(data => {
                 if (state.library) return;   // likewise: its progress and suggestions belong to a folder
+                // Where what it found is kept: in memory (a folder the library does not hold), or in the library.
+                if (data.in_memory) {
+                    state.suggestionsInMemory = folderPath;
+                } else if (data.status === 'idle'
+                    && state.suggestionsInMemory && samePath(state.suggestionsInMemory, folderPath)) {
+                    // Nothing is shown that the server no longer holds.
+                    if (Object.keys(state.folderSuggestions).length > 0) {
+                        clearInterval(state.progressTimer);
+                        suggestProgressContainer.classList.add('hidden');
+                        suggestionsLetGo();
+                        return;
+                    }
+                    state.suggestionsInMemory = null;
+                } else if (state.suggestionsInMemory && samePath(state.suggestionsInMemory, folderPath)
+                    && data.status !== 'idle') {
+                    state.suggestionsInMemory = null;
+                }
                 if (data.status === 'preparing' || data.status === 'running') {
                     suggestProgressContainer.classList.remove('hidden');
                     const total = data.total || 0;
@@ -179,8 +222,7 @@ export function checkSuggestionsStatus(folderPath) {
                         renderSuggestionsPanel(state.activePhotoPath);
                     }
 
-                    statusDot.className = 'status-indicator-dot';
-                    statusText.textContent = 'Ready';
+                    sayWhereTheyAre(data);
                 }
                 else {
                     // 'idle' (never run), 'not_started', 'error', or anything unexpected:
@@ -205,6 +247,27 @@ export function checkSuggestionsStatus(folderPath) {
     // Query once immediately, then poll
     queryProgress();
     state.progressTimer = setInterval(queryProgress, 1500);
+}
+
+/**
+ * A finished run's closing line. In a folder the library does not hold the run kept what it found
+ * in memory (`in_memory`), and the line says nothing was added; what the library had too little of
+ * to compare with, and the photos that could not be analysed, are in `notes`.
+ */
+function sayWhereTheyAre(data) {
+    const notes = Array.isArray(data.notes) ? data.notes : [];
+    if (!data.in_memory) {
+        if (notes.length) {
+            setStatus('ready', notes.join(' '), { transient: false });
+        } else {
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Ready';
+        }
+        return;
+    }
+    const name = libraryName();
+    setStatus('ready', [`Analysed against ${name}; nothing was added to ${name}.`, ...notes].join(' '),
+        { transient: false });
 }
 
 // Render suggestions box in right pane for active photo
@@ -322,7 +385,7 @@ export function applySuggestedTagDirect(tagName, isPerson, forPath = state.activ
         setStatus('ready', 'Ready');
         saveToLocalStorageCache();
         return true;
-    }, undefined, { needsLibrary: true });
+    });
 }
 
 export function applySuggestedTitle() {
@@ -383,7 +446,7 @@ export async function applyAllSingleSuggestions() {
         setStatus('ready', 'Ready');
         saveToLocalStorageCache();
         return true;
-    }, undefined, { needsLibrary: true });
+    });
 }
 
 export function applyFolderSuggestionsLevel() {
@@ -451,6 +514,13 @@ export function applyFolderSuggestionsLevel() {
         })
         .catch(err => {
             console.error(err);
+            // What a Suggest that only looked found is kept in the server's memory for a while: gone, nothing
+            // was written, and it is said so rather than shown as a failure of the write.
+            if (state.suggestionsInMemory && /No suggestions found/.test(err.message || '')) {
+                suggestionsLetGo();
+                entry.error = 'The analysis was let go';
+                return false;
+            }
             // Some photos may have been written before the one that failed: the
             // folder is read again, so the page's records say what the files hold.
             scanFolder(true);
@@ -460,7 +530,7 @@ export function applyFolderSuggestionsLevel() {
             alert("Error applying suggestions: " + err.message);
             return false;
         });
-    }, `Apply All suggestions (${targets.length} photos)`, { needsLibrary: true });
+    }, `Apply All suggestions (${targets.length} photos)`);
 }
 
 export function updateFolderAutoApplyState() {

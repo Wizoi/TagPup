@@ -585,18 +585,8 @@ class TwoTabs(Base):
 
 
 class WhatStaysRefused(Base):
-    """Suggest and what needs the library's database: still 409 in a folder it does not hold."""
-
-    def test_suggest_and_auto_apply(self):
-        self.assertEqual(409, self.post("/folder/suggest-start", {"folder_path": self.lighthouse}).status_code)
-        from tagpup.jobs import suggestions as suggestion_jobs
-        saved = {self.loose[0]: {"tags": [{"tag": "Trips/Lighthouse", "score": 0.9}], "people": [], "title": None}}
-        with mock.patch.object(suggestion_jobs.SuggestionRuns, "suggestions", return_value=saved):
-            reply = self.post("/folder/auto-apply", {"folder_path": self.lighthouse})
-        self.assertEqual(409, reply.status_code, reply.data)
-        self.assertEqual([], tags_in(self.loose[0]))
-        self.assert_library_unchanged()
-        self.addCleanup(suggestion_jobs.forget, self.library)
+    """The CLI's write of suggestions needs the library's database: still refused in a folder it does
+    not hold. (Suggest and Apply All are not: tests/test_analyse_only_suggest.py.)"""
 
     def test_the_cli_write_of_suggestions(self):
         from tagpup.services import tagging

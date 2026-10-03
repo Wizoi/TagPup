@@ -51,9 +51,12 @@ class PhotoEmbeddings:
     vector of a photo, `clip.embed_image` unless given.
     """
 
-    def __init__(self, clip, photo_index=None, embed=None):
+    def __init__(self, clip, photo_index=None, embed=None, remember=True):
         self.clip = clip
         self.photo_index = photo_index
+        #: False: the library's vectors are read, and none is ever written (a Just look run,
+        #: tagpup.jobs.suggestions: a vector is a row of the library).
+        self.remember = remember
         self.embed = embed or clip.embed_image
         #: The name its vectors are kept under in a library (tagpup.store.embeddings).
         self.model_key = store_embeddings.model_key(**clip.settings)
@@ -82,6 +85,8 @@ class PhotoEmbeddings:
         """Keep the vector in the library, stamped with `stamp`: the file's (mtime, size)
         as it was opened to be embedded, else as it is now. Taken after, a photo rotated
         while it was embedded kept the vector from before the turn as current (#86)."""
+        if not self.remember:
+            return
         try:
             if stamp is None:
                 stamp = store_embeddings.stamp_of(file_path)

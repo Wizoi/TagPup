@@ -11,7 +11,9 @@ export function saveToLocalStorageCache() {
     const cacheEntry = {
         timestamp: Date.now(),
         photos: state.folderPhotos,
-        suggestions: state.folderSuggestions
+        suggestions: state.folderSuggestions,
+        // Found by a Suggest that only looked, and kept in the server's memory (suggestions.js).
+        inMemory: Boolean(state.suggestionsInMemory)
     };
     try {
         localStorage.setItem(folderCacheKey(state.scannedFolder), JSON.stringify(cacheEntry));

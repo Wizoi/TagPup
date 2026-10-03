@@ -8,16 +8,19 @@
 // kr-track?", with how many photos it holds and whether it is outside the library's root
 // folders. It names only this library: no other library is opened or mentioned. Add adds
 // it (POST /api/folder/add); Just look shows its photos and lets the owner edit their
-// files (below) without adding it. The server refuses Suggest in a folder not added (409)
-// whatever the page does.
+// files (below) without adding it.
 //
 // Just look is not read-only (2026-10-02): "that should still let me change captions on
 // photos, do smart renames, and add/update tags if it does not go into an index". Captions,
 // tags, Smart Rename, rotating, deleting and the date changes write the photo FILES and
 // nothing of the library's (tagpup.services.file_only); the server decides, photo by photo,
-// by whether the library holds the photo's folder -- never by this page. What stays held
-// back here is what needs the library's database: Suggest, applying what it offered
-// (Apply All, carry-forward) and naming faces.
+// by whether the library holds the photo's folder -- never by this page.
+//
+// Suggest works there too (2026-10-03: "do the photo analysis and get the suggestions from the
+// index -- but we just do not want to add it to the index"). The server analyses the photos
+// against what the library holds, keeps what it finds in memory, and adds nothing to the
+// library; applying what it offered (Apply All, a suggestion's chip, carry-forward) writes the
+// files only. What stays held back here is what needs a row of the library's: naming faces.
 import { api, libraryIn } from './common/api.js';
 import { samePath } from './common/paths.js';
 import { state } from './state.js';
@@ -31,16 +34,12 @@ import { setStatus } from './status.js';
 import { checkIndexingStatus, updateSuggestButtonState } from './suggestions.js';
 
 /**
- * What needs the library's database, held back while just looking: Suggest and what it
- * offered, and naming faces. Clicks on these, and Ctrl+D, are stopped before any feature
- * hears them. (A caption, a tag, a rename, a turn, a delete and a date are not here: they
- * write the files, and are allowed.)
+ * What needs a row of the library's, held back while just looking: naming a face (it makes a
+ * person record in the faces table). A click on the faces strip is stopped before any feature
+ * hears it. (A caption, a tag, a rename, a turn, a delete, a date, Suggest and applying what it
+ * offered are not here: they read the library or write the files, and are allowed.)
  */
-const WRITE_CONTROLS = [
-    '#btn-suggest-tags', '#btn-suggest-title-wand', '#btn-carry-forward', '#btn-apply-all-single-sugg',
-    '#suggested-people-container', '#suggested-tags-container', '#btn-folder-auto-apply',
-    '#selection-suggested-people-list', '#selection-suggested-tags-list', '#faces-strip',
-].join(', ');
+const WRITE_CONTROLS = '#faces-strip';
 
 /** Say which library the page works in, in the header, all the time. */
 export function showLibraryName() {
@@ -130,7 +129,8 @@ export function askToAdd(found) {
     }
     fact('Adding it gives each photo a place in the library, indexes it, and keeps it in step from then on. '
         + 'Just look does not add it: tags, captions, renames, rotating, deleting and date changes would be made '
-        + 'to the photo files only, and Suggest and face naming stay off.', 'add-folder-note');
+        + 'to the photo files only; Suggest analyses the photos against ' + name + ' without adding them, and face '
+        + 'naming stays off.', 'add-folder-note');
 
     btnAddFolder.textContent = `Add to ${name}`;
     btnAddFolderFromNote.textContent = `Add to ${name}`;
@@ -142,7 +142,7 @@ function closeDialog() {
     addFolderModal.classList.remove('active');
 }
 
-/** Just look: the photos, edited in their files only, with Suggest and face naming held back until added. */
+/** Just look: the photos, edited in their files only, and Suggest analysing them in memory; face naming is held back until added. */
 export function justLook() {
     closeDialog();
     state.justLooking = state.scannedFolder || null;
@@ -158,7 +158,8 @@ export function applyJustLooking() {
         const name = libraryName();
         justLookingText.textContent = looking
             ? `Just looking: ${name} does not hold this folder. Tags, captions, renames, rotating, deleting and date `
-                + `changes are made to the photo files only, not to ${name}. Suggest and face naming are off until you add it.`
+                + `changes are made to the photo files only, not to ${name}. Suggest analyses the photos against ${name} `
+                + `without adding them; nothing is saved to ${name}. Face naming is off until you add the folder.`
             : '';
         btnAddFolderFromNote.textContent = `Add to ${name}`;
     }
@@ -211,9 +212,9 @@ function stop(event) {
 }
 
 /**
- * The dialog's buttons, the header's name, and the guard that holds back what needs the
- * library's database while just looking: on the window, capturing, so it hears a click or a key before
- * any feature's own listener on the document does.
+ * The dialog's buttons, the header's name, and the guard that holds back what needs a row of
+ * the library's while just looking: on the window, capturing, so it hears a click before any
+ * feature's own listener on the document does.
  */
 export function wireMembership() {
     showLibraryName();
@@ -230,10 +231,5 @@ export function wireMembership() {
         if (!isJustLooking()) return;
         const target = e.target && e.target.closest ? e.target.closest(WRITE_CONTROLS) : null;
         if (target) stop(e);
-    }, true);
-    window.addEventListener('keydown', (e) => {
-        if (!isJustLooking()) return;
-        const key = e.key || '';
-        if ((e.ctrlKey || e.metaKey) && !e.altKey && ['d', 'D'].includes(key)) stop(e);
     }, true);
 }

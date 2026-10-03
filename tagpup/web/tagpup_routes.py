@@ -22,7 +22,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
-from tagpup.core import fields, paths, suggesting, vocabulary
+from tagpup.core import fields, paths, vocabulary
 from tagpup.core.library import picker_name
 from tagpup.core.result import NotFound, Refused
 from tagpup.jobs import indexing as indexing_jobs
@@ -110,8 +110,19 @@ class FolderCache:
 
 folders = state.PerLibrary(lambda library: FolderCache())
 
+
+@routes.before_request
+def _a_page_is_looking():
+    """Whatever the page asks counts as use of what Suggest only looked at and kept in memory in the library
+    the page is in, so it is not let go under an owner who is reviewing it
+    (tagpup.jobs.suggestions.touch_looks)."""
+    library = state.current()
+    suggestion_jobs.touch_looks(library.key if library is not None else None)
+
 #: The name the folder scans are kept under in the process's idle registry.
 FOLDER_SCANS = "folder scans"
+#: ... and the suggestions of folders the library does not hold, which live in memory only.
+LOOKED_SUGGESTIONS = "looked-at suggestions"
 
 
 def idle_caches(idle):
@@ -121,6 +132,14 @@ def idle_caches(idle):
     started from a scan."""
     idle.register(FOLDER_SCANS, folders.release, in_use=lambda: suggestion_jobs.running() > 0)
     folders.on_use = lambda: idle.used(FOLDER_SCANS)
+    # What a Suggest in a folder the library does not hold found, kept in memory only.
+    # One entry for each library, so one the owner is not working in is let go whatever the other is used for.
+    def looks_used(library_key):
+        name = "%s (%s)" % (LOOKED_SUGGESTIONS, library_key)
+        idle.register(name, lambda: suggestion_jobs.release_looks(library_key),
+                      in_use=lambda: suggestion_jobs.running_in(library_key) > 0)
+        idle.used(name)
+    suggestion_jobs.on_looks_use = looks_used
 
 
 def forget_scans(library):
@@ -283,6 +302,7 @@ def folder_index_start():
     cluster = bool(body.get("cluster", False))
     result = library_actions.add(library, [body.get("folder_path")], lambda folders: indexing_jobs.queue_for(
         library).start(folders, _folder_indexer(library), cluster=cluster))
+    suggestion_jobs.dropped_by_add(library, [body.get("folder_path")])
     if result.refused:
         return responses.error(400, result.message())
     return jsonify({"success": True, "status": "running", **result.details})
@@ -300,6 +320,7 @@ def folder_add():
         return responses.error(400, "Path is not a valid directory: %s" % folder)
     result = library_actions.add(library, [folder], lambda folders: indexing_jobs.queue_for(library).start(
         folders, _folder_indexer(library)))
+    suggestion_jobs.dropped_by_add(library, [folder])
     if result.refused:
         return responses.error(400, result.message())
     return jsonify({"success": result.ok, "status": "running", "library": picker_name(os.path.basename(library.path)),
@@ -325,19 +346,32 @@ def folder_suggest_start():
     if not folder or not os.path.isdir(folder):
         return responses.error(400, "Invalid folder path")
     folder = paths.stored(folder)
-    # Suggest makes rows -- faces, vectors, what it offered -- for every photo it looks at:
-    # only in the folders the library holds; the page asks to add one first (/api/folder/add).
-    # Its ignored folders are passed over, as sync passes them (not held, not offered).
+    # In a folder the library holds, Suggest keeps what it finds as rows -- faces, vectors,
+    # what it offered -- for every photo it looks at. In one it does not hold it only looks:
+    # the photos are analysed against what the library holds and what is found stays in
+    # memory, nothing added to the library (tagpup.jobs.suggestions). Decided here, now, by the
+    # library's own answer. Its ignored folders are passed over, as sync passes them (not held,
+    # not offered); an ignored folder itself is not the library's to suggest in.
     ignored = runtimes.peek_settings(library).ignored
-    refusal = library_actions.not_in(library, folder, ignored)
+    try:
+        refusal, looking = library_actions.suggest_how(library, folder, ignored)
+    except Exception as e:
+        # Whether the library holds the folder is not known: nothing is run, in memory or
+        # in the library.
+        logger.error("Could not ask %s whether it holds %s: %s", library.name, folder, e)
+        return responses.error(503, "Could not ask %s what it holds just now (%s): nothing was started. Try again."
+                               % (picker_name(os.path.basename(library.path)), e))
     if refusal:
         return responses.error(409, refusal)
 
     def photos():
         return {key: meta for key, meta in _folder_photos(library, folder).items()
                 if not library_actions.is_ignored(meta["path"], ignored)}
-    work = suggestion_jobs.work_for(library, photos, state.runtime())
-    return jsonify({"success": True, "status": suggestion_jobs.runs_for(library).start(folder, work)})
+    work = suggestion_jobs.work_for(library, photos, state.runtime(), looking=looking,
+                                    held_now=(lambda: not library_actions.suggest_how(library, folder, ignored)[1])
+                                    if looking else None)
+    return jsonify({"success": True, "status": suggestion_jobs.runs_for(library).start(folder, work),
+                    "in_memory": looking})
 
 
 @routes.post("/api/folder/auto-apply")
@@ -358,12 +392,12 @@ def folder_auto_apply():
     if photo_paths:
         wanted = {paths.key(p) for p in photo_paths}
         suggestions = {k: v for k, v in suggestions.items() if paths.key(k) in wanted}
-    # Apply exactly what the panel offered (tagpup.core.suggesting.offered_tags).
-    additions = {path: suggesting.offered_tags(entry, threshold) for path, entry in suggestions.items()}
+    # Apply exactly what the panel offered (tagpup.core.suggesting.offered_tags), a person filed as a
+    # click on their chip files them (tagging.person_filer), the tree read once.
     try:
         # The page's records are told in the order the files were written.
         with file_changes.exclusively():
-            result = tagging_actions.add_tags(library, additions, state.exiftool(library))
+            result = tagging_actions.apply_suggestions(library, suggestions, state.exiftool(library), threshold)
             if result.refused:
                 return responses.refused(result)
             _records_written(library, result)
@@ -373,7 +407,8 @@ def folder_auto_apply():
     if not result.ok:
         logger.error("Error auto-applying suggestions: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
-    return jsonify({"success": True, "written": _written_tags(result), **_skipped_damaged(result)})
+    return jsonify({"success": True, "written": _written_tags(result), **_skipped_damaged(result),
+                    **_where(result)})
 
 
 @routes.post("/api/folder/time-shift")
@@ -461,6 +496,9 @@ def folder_rename_photos():
         result = photo_actions.smart_rename(
             library, sorted(photo_paths, key=taken), grouping, state.rename_format(library),
             state.exiftool(library))
+        # What Suggest only looked at is kept under the names the files had (#547).
+        if result.details.get("updated_paths"):
+            suggestion_jobs.runs_for(library).renamed(result.details["updated_paths"])
         if result.refused:
             return responses.refused(result)
         if not result.ok:

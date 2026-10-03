@@ -93,7 +93,8 @@ class TheWriteRoutes(WriteCase):
     def test_apply_all(self):
         saved = {self.photo: {"tags": [{"tag": "Trips/Lighthouse", "score": 0.9}], "people": [], "title": None}}
         with mock.patch.object(suggestion_jobs.SuggestionRuns, "suggestions", return_value=saved):
-            self.assert_refused(self.post("/folder/auto-apply", {"folder_path": self.lighthouse}))
+            self.assert_file_only(self.post("/folder/auto-apply", {"folder_path": self.lighthouse}))
+        self.assertNotEqual(self.before, stamp(self.photo))
 
     def test_rotating_turns_the_file_only(self):
         self.assert_file_only(self.post("/photo/rotate", {"path": self.photo, "direction": "left"}))
@@ -147,10 +148,11 @@ class ALibraryThatCannotBeRead(WriteCase):
         self.assertEqual(before, stamp(held))
 
     def test_suggest_fails_not_refused(self):
-        import sqlite3
-        with self.unreadable(), self.assertRaises(sqlite3.OperationalError):
-            # The app is in testing mode: a route that raises, raises (a 500 served).
-            self.post("/folder/suggest-start", {"folder_path": self.regatta})
+        with self.unreadable():
+            reply = self.post("/folder/suggest-start", {"folder_path": self.regatta})
+        # Not a 409 sending the owner to Add a folder it holds, and no run, in memory or in the library.
+        self.assertEqual(503, reply.status_code, reply.data)
+        self.assertIn("nothing was started", reply.get_json()["error"])
 
 
 class TheCliWrite(unittest.TestCase):
