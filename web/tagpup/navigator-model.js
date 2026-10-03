@@ -8,7 +8,7 @@
 // The lists are the whole library's -- 2,746 folders, 895 keyword nodes, 413 people, 61 years on photo_index -- and
 // a tree shows only what is expanded, at most NAV_MAX_ROWS rows: the page never draws them all at once.
 import { baseName, pathKey } from './common/paths.js';
-import { compareTagNames } from './common/tag-tree.js';
+import { compareTagNames } from './common/vocabulary.js';
 
 /** The most rows one section draws; the rest are said in a line and reached by the filter. */
 export const NAV_MAX_ROWS = 400;
