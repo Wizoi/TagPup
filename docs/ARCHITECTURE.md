@@ -871,7 +871,7 @@ click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
   files the library does not (offering to index them, through sync); staleness marks on
   the cards on screen (size and modified time, no ExifTool) and a missing photo shown
   but not editable; "last in step" from sync.
-- **9d. Editing from a library view.** Bulk edits on a selection that spans folders,
+- **9d. Editing from a library view.** *(9d-1, the server's half -- bulk edits by photo id as a job, a selection's tally -- built 2026-10-03, see "Phase 9d-1" below; 9d-2, the page.)* Bulk edits on a selection that spans folders,
   through the same journaled writes (History lists and undoes them); a file changed
   outside while an edit is planned is a conflict for sync to settle, never overwritten.
 - **9e. Search.** A search is a source: *all of* these tags or people, *any of* those,
@@ -1493,6 +1493,141 @@ The page, and two small routes and a card field under it. Nothing is migrated. T
   grid cannot give, so the option stays and the inner controls are `aria-hidden` with `tabindex=-1`; their own keys are left to them (a title being typed keeps all its keys, Space and Enter stay
   the checkbox's and the magnifier's) and every other key of an inner control acts on its card *(findings #571)*. Counts shown are `toLocaleString()`, so a thousands separator is the browser's.
   A card's title is still the file name. A library view of a folder with a very long path names it on several lines in its header. The navigator cannot show a folder "gone from disk" (the route does not say).
+
+### Phase 9d-1: bulk edits by photo id, as a job; a selection's tally *(built 2026-10-03; branch `arch/phase-9d1-bulk-jobs`)*
+Server only: no page, nothing the owner sees until 9d-2. Nothing is migrated. Today a bulk edit from a library view fetches every
+selected photo's path (`selectInLibrary`: about 340 requests for 68,000) and posts them to the synchronous `/api/photos/bulk-tags`,
+which holds the lock of changes of photo files for the whole request, is capped at 5,000 and has no progress or cancel. Three
+pieces replace that for a library view; the folder view's routes (`bulk-tags`, `time-shift`, `rename-photos`, their 5,000 cap) are
+untouched.
+
+- **A SELECTION** (`tagpup.services.selection`) is `{"ids": [...]}` (at most 20,000; duplicates are one photo, an id with no photo
+  is not in it) or `{"source": {"kind", "value", "recursive"}, "excluded": [...]}` (every photo of a library-view source but at
+  most 20,000 excluded ones). A page that has Select all of a keyword and then deselects 300 photos sends the source and 300 ids,
+  not 68,000. **One resolver** turns either into the ids that exist, in order, each once: an ids selection in the order named; a
+  source in exactly `/api/library/ids`'s order (it calls the same `store.all_ids`, a test holds the two equal for every kind of
+  source), read in **one read transaction** (`store.source_ids`: the dated photos and the undated are two statements, and a photo
+  dated between them -- another bulk time shift, a sync -- would be listed twice or not at all by two snapshots; a test re-dates a
+  photo between the statements and fails without the transaction). A selection of more than 200,000 photos is refused, naming how
+  many it was, and the cap counts the source, not what is left after the exclusions.
+- **THE TALLY** (`POST /api/library/selection/tally`) replaces the panel's "Not tallied for a library view": `{"total", "tags":
+  [{"tag","count"}], "more_tags", "people": [{"name","count"}], "more_people"}`, alphabetical by `tag_sort_key`, at most 500 each (the
+  most used kept, the rest counted). From `photo_tags` (by tree node: a tag no node holds is not counted, as the navigator's counts
+  leave it out) and `photo_people` (names that differ only in case are one entry, each photo once), one grouped read over the
+  selection. The ids go into a TEMP table of the read-only connection (a read-only connection may make one) and the photos are
+  looked up by key from it (`sel CROSS JOIN photos p ON p.id = sel.id`: left to itself the planner scanned the whole library's index for
+  one photo, 20 ms for one id, 1 ms now); a source is joined in SQL and its excluded ids taken out there. **Measured on photo_index
+  itself, read-only** (`scripts/measure_bulk_jobs.py --scale`, 68,472 photos, 151,414 `photo_tags`, 80,060 `photo_people`; medians of
+  3): resolve the whole library 23 ms; tally the whole library as a source 160 ms (872 tags, 413 people), minus 20,000 excluded 139 ms;
+  20,000 ids 88 ms, 68,000 ids 304 ms, one id 1 ms. The tally is not capped at a job's 200,000.
+- **THE JOB** (`tagpup.jobs.bulk_edits`; the work of a chunk is `tagpup.services.bulk_edit`). `POST /api/library/bulk/start` with
+  `{"op": "tags"|"people"|"time_shift", "selection", "params"}` reads and checks the edit (`bulk_edit.prepare`: a tag the rules
+  refuse, a person the tree files in two places, a shift of 0, nothing to do, a tag both added and taken off -- each a `400` with a
+  sentence and nothing begun), resolves the selection on the server and returns `{"job", "total", "requested", "missing",
+  "excluded"}` while a thread of the server does the work; `GET .../status?job=` is an in-memory read (no query of the library:
+  a test fails if the status reads the library's run or the job's record), `POST .../cancel`, `POST .../resume`.
+  - **Chunks of 25, the lock per chunk.** Each chunk resolves its ids to their rows' paths **at that moment** (a photo renamed
+    meanwhile is found by id; one deleted is `skipped_missing`), takes `file_changes.exclusively()` for the chunk only and writes it
+    by the machinery a single save and Add to all selected use: the photos' fields read, planned and committed in the journal, each
+    file **read again before its write** (a file another program changed meanwhile is a conflict, reported and never overwritten), written,
+    its row and the derived tables told in the same transaction that marks it done, the files read back. A job **adds and removes
+    against each file's own tags** (`change_tags`), never a list; a person goes through `vocabulary.person_tag` (the one filing
+    rule) and the leaf rule (`persons`: a file naming the person already is not written), no node of the tree is made; a time shift
+    moves each date field the photo holds (`photos.date_shift_plan`, the folder shift's own plan), a photo with no Date Taken is
+    `unchanged`. A held and a not-held photo would be written as ever (`libraries.split`), but a photo named by id has a row, which makes
+    its folder the library's (`store.folders.holds`), so a bulk edit by id is always journaled; a row deleted between the chunk's
+    lookup and its write leaves a file-only write, a race of milliseconds on a photo being deleted.
+  - **Between chunks the job lets a waiting write in.** The lock is not fair: the thread that has let go of it can take it again
+    before a waiter has woken. `file_changes.waiting()` counts the threads blocked for it and the job waits (at most 5 s) while it is
+    above zero. A test makes a single-photo save wait in the middle of chunk 2 and shows it complete before the job's third chunk
+    writes. **Honest limit of that test:** without the wait the save is not starved on this machine either (the job's own reads and
+    state writes between chunks give the waiter time to wake), so the test fails the old design of one hold of the lock for the whole
+    job, not the unfair re-acquire; the wait is the guarantee, not an observed need.
+  - **What is counted.** Every photo of a chunk is exactly one of `changed` (a file written and read back), `unchanged` (holds what it
+    was to hold, or no Date Taken), `skipped_missing` (no row, or its file is gone), `skipped_damaged`, or an **error entry** (the
+    first 50 `{id, name, why}` are kept, every one counted in `error_count`). A photo that cannot be read, an unwritable file, a
+    conflict: an error, and the job goes on. A photo on a **network share that does not answer** is an error too and is never sent to
+    ExifTool (`bulk_edit._reachable`: a bounded stat; asked of ExifTool it would cost its five-minute deadline and then one more for each
+    photo of the batch it is retried singly for). **Five chunks in a row in which nothing could be done** stop the job as `failed`, with
+    the last sentence; **an exception that is not one photo's** (ExifTool that cannot start, the library gone) stops it as `failed`
+    with the message. A chunk **refused as a whole** (a share holding a recorded-damaged photo did not answer; the roots changed) is
+    that chunk's photos as errors.
+  - **One at a time per library.** A second start is `409` with a sentence naming the one running (its kind and how far it is); the
+    claim is in the library's `job_runs` as Verify's is (`bulk edit`), so another process is refused too (a test of two starts at once
+    gives one `200` and one `409`). A server drain waits for a running job (`lifecycle.long_work`: "1 bulk edit(s)"). The job holds its
+    Library, not the page's: the page may close or switch library and the job goes on, its status reachable.
+  - **The Activity page** lists the run (`job_runs`, `outcome` running/done/failed/abandoned) with `what` -- "bulk tags: add 1 and
+    remove 1 tag(s), 1,200 of 5,000 photos [done]", no tag or person named -- and the counts, rewritten at most every 2 s while it
+    runs and at the end, never per photo. A cancelled job is `done` there (the table has no cancelled) and says so in `what` and
+    `state`.
+  - **The journal.** Each chunk is one journaled change of its held photos, named after the job (`bulk tags (job 12)`, `bulk people
+    (job 12)`, `bulk time shift (job 12)`): **a job of 68,000 photos is about 2,700 entries in History**, each undoable by the existing
+    mechanism and none by a job-level undo. Decided, not gold-plated (the owner said not to build undo): the lock is held per chunk, so
+    a chunk is the unit that is planned, committed and can be settled after a crash; a change for the whole job would hold a plan of
+    68,000 files open for hours. Collapsing a job's changes into one History line is a page-or-History task (9d-2 or later).
+  - **Interrupted part-way.** The thread dies with its process and leaves a `running` row; the status says `abandoned` (the row's
+    owner is not alive) with how far it got ("TagPup was closed before this finished: 1,200 of 5,000 photos were done."), and the
+    next claim marks the row so. The chunk in flight when it stopped is settled by the journal's existing settle (planned files are
+    written forward at the next write or start). **Tags and people are idempotent** (adding a tag a photo holds, taking one off that
+    it lacks, changes nothing): start them again; a resume of one is `400`. **A time shift is not**, so its resolved list (`<job>.ids`)
+    and its record (`<job>.state.json`: counts, the first 50 errors, `done` -- the photos settled -- and `inflight` -- the end of the
+    chunk about to be written, kept BEFORE it is written) are kept in `cache/<library>/bulk/` (`Library.bulk_jobs`,
+    `tagpup.files.job_files`: atomic replace, fsync, a damaged file reads as none; swept after 30 days; nothing the rows or the files
+    depend on). **Resume** (`POST /api/library/bulk/resume`, a time shift that is `abandoned`, `cancelled` or `failed`) claims a new run
+    under the SAME job id, settles the journal, then asks the journal -- the one record of what was written -- which photos of the
+    in-flight chunk a change **named after the job** left `done`: those are not shifted again and are counted `changed`; the rest are
+    done. A test crashes the process at the 30th write, between a file's write and its row, and before a chunk planned anything, and
+    after each resume every photo's file was written exactly once. `GET status?job=&ids=1` adds `shifted_ids`, from the same journal:
+    exactly which photos a job shifted. **Deviation from the brief:** it said refuse a resume unless abandoned/cancelled; a `failed`
+    shift (ExifTool gone mid-job) is resumable too, since otherwise its first half could never be completed without shifting it again.
+  - **A cancel** stops after the chunk being written (a test: 50 of 60 done, the 3rd chunk never starts) and the report says how many were done; a cancel after
+    the end is a `200` with `cancelling: false`.
+- **Measured** (`scripts/measure_bulk_jobs.py --run --photos 500`: 500 small real JPEGs, the real ExifTool, rows as the indexer records
+  them, the app called in-process through Flask's test client in a temporary TAGPUP_HOME, deleted afterwards; the machine was not
+  quiet):
+
+  | the action | result |
+  |---|---|
+  | (a) a tags job over 500 photos (add one, take one off) | 26.9 s: **18.6 photos a second**, a chunk of 25 is 1.34 s; 500 changed, 0 errors |
+  | (b) a time-shift job over the same | 21.7 s: **23.0 photos a second**, a chunk 1.09 s |
+  | (c) a single-photo save made during (a), 18 of them at 300 ms intervals | median 1,262 ms, longest 1,580 ms: it waits for the chunk being written and does its own work (a chunk is 1,343 ms) |
+  | (d) the status request, polled every 20 ms while the job ran | median 2.8 ms, p95 17 ms (the process is busy writing), longest 49 ms; no query |
+  | (e) a second start while one runs; cancel to stopped | `409`; 599 ms (the rest of the chunk) |
+
+  So **68,000 photos is about an hour** at this machine's pace, in chunks of a second and a third each. What a photo costs is the
+  per-file precondition the brief asked to keep (each file read again before its write) plus ExifTool's write and the read back; a
+  longer chunk would raise throughput a little and the wait of a single save with it. Not tuned.
+- **How it fails**, each a test (`tests/test_selection.py`, `test_selection_tally.py`, `test_bulk_edits.py`, `test_bulk_edits_real_exiftool.py`
+  -- the last three with the real ExifTool): a restart mid-chunk, between a file's write and its row, before the chunk planned anything
+  (resume writes every file once); a cancelled and a failed shift resumed; resume refused for a job that is done, running, a tags job, or
+  whose list is lost; two starts at once; a photo deleted, renamed or replaced while the job runs; a file edited by another program
+  between the plan and the write; a damaged photo; an unreadable file; a write that fails; 55 errors (50 named, 55 counted); ExifTool that
+  cannot start; five failing chunks; a chunk refused as a whole; a share away (some photos; all of them); a library at schema 18; the roots
+  gate; this PC only; a library switched meanwhile; the status of a job the process did not run; a person filed in two places, named by
+  a path, already named by their leaf, taken off every way the tree files them; a blank name; a tag the rules refuse (before anything
+  starts); a time shift of a photo with no Date Taken and of one holding both date fields; selection of 1, of ids nobody has, of
+  duplicates, above the cap, of a source minus more than it holds.
+- **What could not be made safe.** (1) **A share that stops answering in the middle of an ExifTool command**: the session's deadline is
+  300 s, and `field_values.read` then retries the batch a photo at a time, each with its own deadline, so one chunk of 25 can stall for
+  much longer than a chunk should, and a cancel waits for it. The check before the chunk (`_reachable`) catches a share that is away
+  when the chunk begins, not one that goes mid-chunk. The fix is in the ExifTool session and `field_values` (a shorter deadline for a
+  bulk job; no single retries after a timeout), which this task does not own. (2) A tag no tree node holds is not in the tally. (3) A
+  time shift of a photo whose row vanishes between the chunk's lookup and its write is written to its file without a record; a resume
+  cannot tell it (milliseconds, on a photo being deleted).
+- **What 9d-2 must know.** (a) The page sends a SELECTION (ids, or the view's source and the ids it excluded) and never paths; `selectInLibrary`
+  goes, a Select all of 68,000 is instant. (b) `start` -> `{job}`; poll `status` once a second (cheap; do not poll a `done`/`cancelled`/`failed`/`abandoned`
+  job); show `done` of `total`, `changed`, the counts left out (`skipped_missing`, `skipped_damaged`) and `error_count` with the first 50
+  `errors` (`id`, `name`, `why`), `eta_seconds`, and the `message` (a sentence for cancelled/failed/abandoned). `409` on start names the job
+  running: the page should offer to show it. `resumable` says when a Resume button applies (a time shift that stopped); a tags/people job that was
+  abandoned or cancelled is offered "Start again". (c) The server clears the folder view's cached scans as the job writes
+  (`forget_scans`), but the page must refresh a library view's navigator counts (`navigatorCountsChanged`) and the cards it holds when
+  the job ends, and re-read an open photo (a record read before the job names the old stamp: the next save is refused as changed on disk,
+  which is right). The job is not in `queuePhotoWrite`: single saves interleave between its chunks, so the page need not wait for it, but it
+  should not offer a second bulk edit. (d) The confirmation ("Add X to N photos?") can use the tally's `total` or the start's `total`
+  (the photos that exist now, which can be fewer than the page thought: `missing`). (e) The tally route is what fills the panel for a
+  selection; it is not capped at 200,000 and its lists carry `more_*`. (f) A person's name is sent bare (`params.add: ["Rowan Thackeray"]`
+  for op `people`, or a full path, `People/Friends/Rowan Thackeray`, for a person filed twice); a refused name comes back as a `400` sentence.
+  (g) History will show a job as one change per 25 photos.
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1, the rest design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag
