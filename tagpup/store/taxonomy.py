@@ -76,6 +76,28 @@ def people_roots(conn):
         "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'") if name}
 
 
+def people_filing(db_path):
+    """How the library's tree files people, read once: ({lowercased leaf: [every path under a
+    people root ending in it]}, [the people roots' names as the tree spells them]). A library
+    whose tree is empty, or that is not there, has a new library's one root. Nothing is
+    written; a library that cannot be read raises."""
+    if not db_path or not os.path.exists(db_path):
+        return {}, [vocabulary.NEW_LIBRARY_FACE_ROOT]
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not tree_has_nodes(conn):
+            return {}, [vocabulary.NEW_LIBRARY_FACE_ROOT]
+        roots = {name.strip().lower(): name.strip() for (name,) in conn.execute(
+            "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'") if name}
+        found = {}
+        for tag_path in tags(conn):
+            if "/" in tag_path and vocabulary.key(vocabulary.root_of(tag_path)) in roots:
+                found.setdefault(vocabulary.key(vocabulary.leaf_of(tag_path)), []).append(tag_path)
+        return {leaf: sorted(each) for leaf, each in found.items()}, sorted(roots.values())
+    finally:
+        conn.close()
+
+
 def _read_people_paths(conn):
     """{lowercased leaf name: tag path} of everyone the tree on `conn` files under a
     people root, leaving out anyone filed in two places."""

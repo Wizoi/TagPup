@@ -110,6 +110,13 @@ class FolderCache:
 
 folders = state.PerLibrary(lambda library: FolderCache())
 
+
+@routes.before_request
+def _a_page_is_looking():
+    """Whatever the page asks counts as use of what Suggest only looked at and kept in memory, so it is not
+    let go under an owner who is reviewing it (tagpup.jobs.suggestions.touch_looks)."""
+    suggestion_jobs.touch_looks()
+
 #: The name the folder scans are kept under in the process's idle registry.
 FOLDER_SCANS = "folder scans"
 #: ... and the suggestions of folders the library does not hold, which live in memory only.
@@ -374,8 +381,10 @@ def folder_auto_apply():
     if photo_paths:
         wanted = {paths.key(p) for p in photo_paths}
         suggestions = {k: v for k, v in suggestions.items() if paths.key(k) in wanted}
-    # Apply exactly what the panel offered (tagpup.core.suggesting.offered_tags).
-    additions = {path: suggesting.offered_tags(entry, threshold) for path, entry in suggestions.items()}
+    # Apply exactly what the panel offered (tagpup.core.suggesting.offered_tags), a person filed as a
+    # click on their chip files them (tagging.person_filer), the tree read once.
+    file_person = tagging_actions.person_filer(library)
+    additions = {path: suggesting.offered_tags(entry, threshold, file_person) for path, entry in suggestions.items()}
     try:
         # The page's records are told in the order the files were written.
         with file_changes.exclusively():
@@ -478,6 +487,9 @@ def folder_rename_photos():
         result = photo_actions.smart_rename(
             library, sorted(photo_paths, key=taken), grouping, state.rename_format(library),
             state.exiftool(library))
+        # What Suggest only looked at is kept under the names the files had (#547).
+        if result.details.get("updated_paths"):
+            suggestion_jobs.runs_for(library).renamed(result.details["updated_paths"])
         if result.refused:
             return responses.refused(result)
         if not result.ok:

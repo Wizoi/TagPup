@@ -260,6 +260,27 @@ def add_tags(library, additions, exiftool_path):
     return file_only.combined(done, files)
 
 
+def person_filer(library):
+    """name -> the tag a suggested person is written as, the rule a click on the suggestion's chip
+    follows (the page's resolveTagOrPerson): a name the tree files once is that path; a name it does
+    not hold is filed under the library's one people root (People/<name>); a name it files twice,
+    or a tree with several people roots, is left as it is -- the page asks, and a bare name is the
+    form resolve_people still files when the person is added. The tree is read once, here, and only
+    read: no node is made. The people the suggester names bare were written bare by Apply All."""
+    filed, roots = taxonomy.people_filing(library.path)
+
+    def file_person(name):
+        if "/" in name:
+            return name
+        found = filed.get(vocabulary.key(name), [])
+        if len(found) == 1:
+            return found[0]
+        if not found and len(roots) == 1:
+            return "%s%s%s" % (roots[0], vocabulary.SEPARATOR, name)
+        return name
+    return file_person
+
+
 def _refused(attempted, problem):
     """A bulk change refused before anything was written; `written` is empty."""
     result = Result(attempted=attempted)

@@ -36,6 +36,7 @@ import threading
 import numpy as np
 
 from tagpup.core import paths
+from tagpup.services import suggester
 from tagpup.services import suggestions as saved
 
 logger = logging.getLogger(__name__)
@@ -142,9 +143,33 @@ def under_way():
 
 
 def forget(library):
-    """Drop a library's runs from memory. A run still going finishes into nothing."""
+    """Drop a library's runs from memory, and the prompts a looking run kept for it. A run still
+    going finishes into nothing."""
     with _runs_lock:
         _runs.pop(library.key, None)
+    suggester.forget_looking_text_embeddings(library.path)
+
+
+def touch_looks():
+    """Say the process's idle registry that what runs that only looked kept in memory is in use,
+    when any is kept: every request of the page counts, so an owner reviewing what was found is
+    not stranded by the idle release (#547). Cheap: no library is asked."""
+    if on_looks_use is None:
+        return
+    with _runs_lock:
+        every = list(_runs.values())
+    if any(runs.looks for runs in every):
+        on_looks_use()
+
+
+def drop_looks(library_key, folder):
+    """The folder is, or is becoming, the library's (`library_key`: its Library.key) -- it was added, or its indexing completed: what a
+    run that only looked kept for it, and for any folder under it, is let go, so the status answers
+    from the library and the next Suggest is the run that saves (#545). A folder with a run under way
+    is left; its indexing completing drops it. How many folders."""
+    with _runs_lock:
+        runs = _runs.get(library_key) if library_key else None
+    return runs.drop_looks(folder) if runs is not None else 0
 
 
 def plain(value):
@@ -261,6 +286,36 @@ class SuggestionRuns:
             for key in let_go:
                 self._drop_look(key)
         return len(let_go)
+
+    def drop_looks(self, folder):
+        """Let go of the looks of `folder` and every folder under it not under way. How many."""
+        top = paths.key(folder)
+        with self.lock:
+            let_go = [key for key in self.looks
+                      if (key == top or paths.is_under(key, top))
+                      and self.statuses.get(key, {}).get("status") not in ("preparing", "running")]
+            for key in let_go:
+                self._drop_look(key)
+        return len(let_go)
+
+    def renamed(self, renames):
+        """Photos of a looked-at folder were renamed on disk (a Smart Rename that wrote the files only):
+        `renames` {old path: new path}. What is kept for each is kept under its new name, in the folders
+        looked at; nothing is analysed again."""
+        by_key = {paths.key(old): paths.stored(new) for old, new in renames.items()}
+        with self.lock:
+            for key, memory in self.looks.items():
+                if not any(paths.key(photo) in by_key for photo in memory):
+                    continue
+                moved = {}
+                for photo, entry in memory.items():
+                    new = by_key.get(paths.key(photo))
+                    if new is not None and isinstance(entry.get("raw_suggestions"), dict) \
+                            and "path" in entry["raw_suggestions"]:
+                        entry = dict(entry, raw_suggestions=dict(entry["raw_suggestions"], path=new))
+                    moved[new or photo] = entry
+                self.looks[key] = moved
+                self.spellings.pop(key, None)
 
     def _drop_look(self, key):
         """Forget a folder's looking run. Under the lock."""
@@ -388,7 +443,7 @@ class SuggestionRuns:
             photos = work.photos()
             if not photos:
                 logger.warning("No photos found in %s.", folder)
-                self._say_error(key, "No images found in this folder.")
+                self._say_error(key, "No images found in this folder. Nothing was changed.")
                 return
             with self.lock:
                 self.spellings[key] = {paths.key(meta["path"]): paths.stored(meta["path"])
@@ -424,15 +479,19 @@ class SuggestionRuns:
 
                 if made and key in self.statuses:
                     self._take_consensus_in_memory(key, photos, model)
+                # What the library lacks is read from it: outside the lock a poll waits on.
+                found = self._what_was_found(key, photos, model, left_out)
                 with self.lock:
                     entry = self.statuses[key]
-                    entry.update(self._what_was_found(key, photos, model, left_out))
+                    entry.update(found)
                     entry["status"] = "completed"
             finally:
                 _end(model)
         except Exception as e:
             logger.exception("Error analysing the photos of %s without saving: %s", folder, e)
-            self._say_error(key, str(e))
+            said = str(e)
+            # Whatever failed -- the scan, the models -- a run that only looks has written nothing to the library.
+            self._say_error(key, said if "nothing was changed" in said.lower() else "%s Nothing was changed." % said)
 
     def _say_error(self, key, message):
         """Always said, even with the entry gone, so the page stops polling."""
@@ -452,7 +511,8 @@ class SuggestionRuns:
         except Exception as e:
             logger.warning("Could not tell what the library lacks: %s", e)
         wanted = {paths.key(meta["path"]) for meta in photos.values()}
-        memory = self.looks.get(key, {})
+        with self.lock:
+            memory = dict(self.looks.get(key, {}))
         failed = [found for photo, found in memory.items() if paths.key(photo) in wanted and not _succeeded(found)]
         if failed:
             notes.append("%d photo(s) could not be analysed, nothing was recorded of them (%s)."

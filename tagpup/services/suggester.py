@@ -8,6 +8,7 @@ suggester made its own face model in a module-level slot, and a script filled an
 slot with the rest (docs/findings.md, #112). It was scripts/suggester.py and
 scripts/suggest_models.py.
 """
+import collections
 import json
 import logging
 import math
@@ -17,13 +18,58 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from tagpup.core import clustering, dates, suggesting, vocabulary
+from tagpup.core import clustering, dates, paths, suggesting, vocabulary
 from tagpup.services import faces as face_records
 from tagpup.services import search
 from tagpup.store import faces as store_faces
 from tagpup.store.taxonomy import TagTaxonomy
 
 logger = logging.getLogger("tagpup_cli.suggester")
+
+
+class TextEmbeddingCache:
+    """What CLIP made of candidate words' prompts, kept in this process for a run that keeps nothing
+    in the library (a Just look run; `remember=False`). A run that saves keeps them in the library
+    (PhotoIndex.save_tag_embedding), so its next run reads them; one that may not write used to
+    embed every year's prompts again each time. Never persisted; bounded (the oldest is dropped past
+    `limit`: a vector is 2 KB); one per library, dropped with it (forget_looking_text_embeddings)."""
+
+    def __init__(self, limit=5000):
+        self.limit = limit
+        self._found = collections.OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key):
+        with self._lock:
+            found = self._found.get(key)
+        return None if found is None else found.tolist()
+
+    def put(self, key, vector):
+        with self._lock:
+            self._found[key] = np.asarray(vector, dtype=np.float32)
+            self._found.move_to_end(key)
+            while len(self._found) > self.limit:
+                self._found.popitem(last=False)
+
+    def __len__(self):
+        with self._lock:
+            return len(self._found)
+
+
+_looking_text = {}
+_looking_text_lock = threading.Lock()
+
+
+def looking_text_embeddings(db_path):
+    """The library's TextEmbeddingCache, made the first time it is asked for."""
+    with _looking_text_lock:
+        return _looking_text.setdefault(paths.key(str(db_path)), TextEmbeddingCache())
+
+
+def forget_looking_text_embeddings(db_path):
+    """Let go of a library's: it is forgotten."""
+    with _looking_text_lock:
+        _looking_text.pop(paths.key(str(db_path)), None)
 
 
 def extract_path_hints(file_path: str) -> List[str]:
@@ -66,8 +112,10 @@ class TagSuggester:
     """
 
     def __init__(self, index, taxonomy, embedder=None, candidate_tags: List[str] = None, faces=None,
-                 remember=True):
+                 remember=True, text_cache=None):
         self.index = index
+        #: Where a prompt's embedding is kept when `remember` is False (TextEmbeddingCache).
+        self.text_cache = text_cache
         #: False: the library is only read -- no face of a photo detected here is recorded
         #: and no candidate word's embedding is kept in it (a Just look run, where nothing
         #: is added to the library: tagpup.jobs.suggestions). What is computed stays in memory.
@@ -138,6 +186,9 @@ class TagSuggester:
             if self.index and hasattr(self.index, "get_tag_embedding"):
                 cached_emb = self.index.get_tag_embedding(tag, prompt, model_name, pretrained)
 
+            if cached_emb is None and self.text_cache is not None:
+                cached_emb = self.text_cache.get((prompt, model_name, pretrained))
+
             if cached_emb is not None:
                 self.candidate_embeddings[tag] = cached_emb
             else:
@@ -149,6 +200,8 @@ class TagSuggester:
                 try:
                     emb = self.embedder.embed_text(prompt)
                     self.candidate_embeddings[tag] = emb
+                    if self.text_cache is not None:
+                        self.text_cache.put((prompt, model_name, pretrained), emb)
                     if self.remember and self.index and hasattr(self.index, "save_tag_embedding"):
                         self.index.save_tag_embedding(tag, prompt, model_name, pretrained, emb)
                 except Exception as e:
@@ -187,6 +240,9 @@ class TagSuggester:
             if self.index and hasattr(self.index, "get_tag_embedding"):
                 cached_emb = self.index.get_tag_embedding(tag, prompt, model_name, pretrained)
 
+            if cached_emb is None and self.text_cache is not None:
+                cached_emb = self.text_cache.get((prompt, model_name, pretrained))
+
             if cached_emb is not None:
                 year_embeddings[tag] = cached_emb
             else:
@@ -198,6 +254,8 @@ class TagSuggester:
                 try:
                     emb = self.embedder.embed_text(prompt)
                     year_embeddings[tag] = emb
+                    if self.text_cache is not None:
+                        self.text_cache.put((prompt, model_name, pretrained), emb)
                     if self.remember and self.index and hasattr(self.index, "save_tag_embedding"):
                         self.index.save_tag_embedding(tag, prompt, model_name, pretrained, emb)
                 except Exception as e:
@@ -671,6 +729,7 @@ def model_for_run(photo_index, clip, faces, configured_words, remember=True):
     candidates = suggesting.zero_shot_words(configured_words, taxonomy.paths, taxonomy.people_roots())
     # Said only when it differs, so a stand-in for either class need not know of it.
     given = {} if remember else {"remember": False}
-    suggester = TagSuggester(photo_index, taxonomy, embedder=clip, candidate_tags=candidates, faces=faces, **given)
+    own = {} if remember else dict(given, text_cache=looking_text_embeddings(photo_index.db_path))
+    suggester = TagSuggester(photo_index, taxonomy, embedder=clip, candidate_tags=candidates, faces=faces, **own)
     suggester._precompute_candidates()
     return SuggestionModel(suggester, search.PhotoEmbeddings(clip, photo_index, **given), taxonomy.people_roots())

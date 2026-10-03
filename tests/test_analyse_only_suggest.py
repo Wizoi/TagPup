@@ -7,7 +7,7 @@ exactly what adds a folder to the library, so it was refused (409) in a folder n
 Now such a run compares each photo with what the library already knows (its vectors, its
 named faces, its tag tree: all READ), keeps what it finds in this process's memory, and
 the owner applies it to the photo FILES (tagpup.services.file_only). The library is
-byte-identical after: every table is dumped before and after (tests/library_dump.py).
+unchanged after: every table is dumped before and after (tests/library_dump.py) and its rows are the same.
 
 The models are stood in for -- no download, no GPU -- by two small fakes that embed a photo
 by its name and find faces by it; everything else is real: the app, its routes, the runtime,
@@ -225,6 +225,10 @@ class Base(unittest.TestCase):
         for table in self.before:
             self.assertEqual(self.before[table], after[table], "the library's %s changed" % table)
 
+    def counts(self):
+        """(photo rows, vectors) the library holds."""
+        return (self.rows("SELECT COUNT(*) FROM photos")[0][0], self.rows("SELECT COUNT(*) FROM embeddings")[0][0])
+
     def rows(self, sql, params=()):
         conn = db.connect(db.readonly_uri(self.library.path), uri=True)
         try:
@@ -283,6 +287,45 @@ class ARunInAFolderNotHeldAddsNothing(Base):
         self.assert_library_unchanged()
 
 
+class TheGuardDoesNotRestOnTheRefusalOfRows(Base):
+    """For a folder nobody added, ensure_row refuses and the refusal is swallowed, so a looking run
+    that kept a vector would pass the dump all the same (#544). These tests give the library every
+    reason to accept rows -- the folder is held -- and force the run to look: nothing may be written."""
+
+    def look_at_the_held_folder(self, folder):
+        self.before = library_dump.dump(self.library.path)
+        counts = self.counts()
+        with mock.patch.object(library_actions, "suggest_how", return_value=(None, True)):
+            reply = self.start(folder)
+        self.assertTrue(reply["in_memory"])
+        self.assertEqual("completed", self.status(folder)["status"])
+        self.assertEqual(counts, self.counts(), "a photo row or a vector was made")
+        self.assert_library_unchanged()
+
+    def test_a_folder_the_library_would_accept_rows_for_gets_none_from_a_looking_run(self):
+        library_actions.record_added(self.library, [self.cup])
+        self.look_at_the_held_folder(self.cup)
+
+    def test_a_partly_held_folder_whose_held_photo_has_no_vector_is_looked_at_whole_and_saved_nowhere(self):
+        mixed = os.path.join(self.home.root, "Share", "Mixed")
+        held, loose = os.path.join(mixed, "mix_01.jpg"), os.path.join(mixed, "Sub", "mix_02.jpg")
+        damaged_photos.whole_jpeg(held, seed=71)
+        damaged_photos.whole_jpeg(loose, seed=72)
+        conn = db.connect(self.library.path)
+        try:
+            photo_rows.add_read(conn, held, {})   # a row, and no vector under the current model
+            conn.commit()
+        finally:
+            conn.close()
+        self.before = library_dump.dump(self.library.path)
+        counts = self.counts()
+        reply = self.start(mixed)
+        self.assertTrue(reply["in_memory"], "a folder holding one the library does not is looked at")
+        self.assertEqual(2, len(self.status(mixed)["suggestions"]))
+        self.assertEqual(counts, self.counts(), "the held photo was given a vector")
+        self.assert_library_unchanged()
+
+
 class TheSameRunInAFolderHeldSavesAsItAlwaysDid(Base):
     def test_rows_are_made_for_a_held_folder(self):
         self.assertEqual({"success": True, "status": "running", "in_memory": False}, self.start(self.regatta))
@@ -302,9 +345,14 @@ class TheFolderIsAddedWhileTheRunIsGoing(Base):
             self.assertEqual("running", self.start(self.cup)["status"])
             self.assertEqual(1, len(Deferred.waiting))
             library_actions.record_added(self.library, [self.cup])
+            # What the library holds now, the folder being its own: the run saves none of it (#544).
+            self.before = library_dump.dump(self.library.path)
+            photos, vectors = self.counts()
             Deferred.waiting[0].run()
         found = self.status(self.cup)
         self.assertEqual(("completed", True), (found["status"], found["in_memory"]))
+        self.assertEqual((photos, vectors), self.counts(), "a photo row or a vector was made")
+        self.assert_library_unchanged()
         self.assertEqual([], self.rows("SELECT * FROM suggestions"), "the run was decided in memory at its start")
         self.assertEqual(0, self.rows("SELECT COUNT(*) FROM faces WHERE photo_id IN "
                                       "(SELECT id FROM photos WHERE path LIKE '%Harbour Cup%')")[0][0])
@@ -465,7 +513,7 @@ class WhatIsAppliedIsWhatTheFileHoldsNow(Base):
         self.assertEqual(["From Elsewhere", "Trips/Regatta", "People/Rowan Thackeray"], tags_in(self.loose[1]))
         self.assert_library_unchanged()
 
-    def test_a_person_the_tree_does_not_hold_is_written_as_offered_and_the_tree_is_untouched(self):
+    def test_a_person_the_tree_does_not_hold_is_filed_under_the_people_root_and_the_tree_is_untouched(self):
         conn = db.connect(self.library.path)
         try:
             store_faces.insert(conn, self.held[1], [0, 0, 100, 100], WREN.tobytes(), name="Wren Okafor", prob=0.99)
@@ -478,7 +526,8 @@ class WhatIsAppliedIsWhatTheFileHoldsNow(Base):
         offer = self.suggested(self.cup)["cup_03.jpg"]
         self.assertEqual(["Wren Okafor"], [p["name"] for p in offer["people"]])
         self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0}).status_code)
-        self.assertIn("Wren Okafor", tags_in(self.loose[2]))
+        # As a click on the chip files her (#546): under the one people root, never bare.
+        self.assertEqual(["Trips/Regatta", "People/Wren Okafor"], tags_in(self.loose[2]))
         self.assertEqual(tree, tree_of(self.library.path))
         self.assert_library_unchanged()
 

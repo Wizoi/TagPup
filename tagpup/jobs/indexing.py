@@ -20,6 +20,7 @@ import time
 
 from tagpup.core import paths, runs
 from tagpup.core.result import Result
+from tagpup.jobs import suggestions as suggestion_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def queue_for(library):
     with _queues_lock:
         queue = _queues.get(library.key)
         if queue is None:
-            queue = _queues[library.key] = IndexQueue(library.name)
+            queue = _queues[library.key] = IndexQueue(library.name, key=library.key)
         return queue
 
 
@@ -79,9 +80,11 @@ class IndexQueue:
     leaving that start's folder with nothing to index it.
     """
 
-    def __init__(self, library=None):
+    def __init__(self, library=None, key=None):
         #: The library's name: what its runs' tags and the Activity page name it by.
         self.library = library
+        #: Its key (Library.key): which library's memory a folder's looks are let go in.
+        self.key = key
         self._lock = threading.RLock()
         #: {"folder", "cluster", "index"}, in the order they were asked for.
         self._pending = []
@@ -144,6 +147,10 @@ class IndexQueue:
                 self._ensure_runner()
             pending = len(self._pending)
 
+        # The folders queued are the library's from now on (tagpup.services.libraries.add recorded
+        # them before): what a Suggest that only looked kept for them is let go (#545).
+        for folder in queued:
+            suggestion_jobs.drop_looks(self.key, folder)
         if not valid:
             result.refuse("No valid folder path" + (": %s" % ", ".join(invalid[:3]) if invalid else ""))
         result.changed = len(queued)
@@ -275,6 +282,10 @@ class IndexQueue:
                 # told it (tagpup.services.indexing).
                 with runs.running(*(job.get("parents") or ()), run):
                     self._index(job, status)
+                # Indexed: what a run that only looked kept in memory for it is let go, even one that
+                # finished after the folder was added (#545).
+                for each in _folders_of(job):
+                    suggestion_jobs.drop_looks(self.key, each)
                 self._remember(job, status)
         finally:
             # Only this worker's own entry: a newer one may have started already.

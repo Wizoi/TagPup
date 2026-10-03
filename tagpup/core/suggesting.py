@@ -56,7 +56,7 @@ def clip_prompt(word, year=None, person=False):
     return "a photo of %s in %s" % (thing, year) if year is not None else "a photo of %s" % thing
 
 
-def offered_tags(entry, threshold=0.0):
+def offered_tags(entry, threshold=0.0, file_person=None):
     """What Apply All writes for one photo from its saved suggestions `entry`: the
     `tags` and `people` the panel showed, scoring at least `threshold`.
 
@@ -65,11 +65,16 @@ def offered_tags(entry, threshold=0.0):
     OFFER_A_TAG or better. The two lists drifted: a photo came back from Apply All
     carrying two people the panel had never mentioned, while the suggestions it *had*
     listed were still sitting there unapplied. One list, two consumers.
+
+    `file_person(name)`, when given, is what turns a person's name into the tag they are
+    written as (tagpup.services.tagging.person_filer): the one rule a click on the chip
+    follows too.
     """
     offered = list(entry.get("tags") or [])
     offered_people = list(entry.get("people") or [])
     chosen = [t["tag"] for t in offered if t.get("score", 0.0) >= threshold]
-    chosen += [p["name"] for p in offered_people if p.get("score", 0.0) >= threshold]
+    chosen += [file_person(p["name"]) if file_person else p["name"]
+               for p in offered_people if p.get("score", 0.0) >= threshold]
     return chosen
 
 
