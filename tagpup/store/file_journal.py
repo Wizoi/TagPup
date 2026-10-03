@@ -275,6 +275,21 @@ def change(db_path, change_id):
     return Change(found[0], found[1], found[2], found[3], found[4], json.loads(found[5] or "{}"))
 
 
+def photo_ids_done(db_path, operation):
+    """The ids of the photos whose files a change named exactly `operation` wrote and left done: what a bulk job that
+    names each of its changes after itself asks, to tell which photos it has already changed (a time shift is not safe to
+    repeat). A change undone since leaves its files `undone`, and they are not in it. Reads only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not has_table(conn):
+            return set()
+        return {photo_id for (photo_id,) in conn.execute(
+            "SELECT f.photo_id FROM change_files f JOIN changes c ON c.id = f.change_id"
+            " WHERE c.operation = ? AND f.state = 'done' AND f.photo_id IS NOT NULL", (operation,))}
+    finally:
+        conn.close()
+
+
 def writes_files(db_path, change_id):
     """Did change `change_id` plan photo files?"""
     conn = db.connect(db.readonly_uri(db_path), uri=True)

@@ -160,6 +160,29 @@ def finish(db_path, run_id, outcome, now, changed=None, note=None):
     return db.write_with_connection(db_path, work, label="finish run %d" % run_id)
 
 
+def progress(db_path, run_id, changed):
+    """Record the counts of run `run_id` so far, while it runs: `changed` as the run's counts (what the Activity page lists
+    of a run in progress). False when the run is no longer this process's and running -- taken over as abandoned, ended, or
+    the library restored from a snapshot without it. One small write; a job calls it every few seconds, never per photo."""
+    def work(conn):
+        return conn.execute("UPDATE job_runs SET changed = ? WHERE id = ? AND outcome = 'running' AND owner = ?",
+                            (json.dumps(changed or {}, sort_keys=True), run_id, file_journal.owner())).rowcount == 1
+
+    return db.write_with_connection(db_path, work, label="progress of run %d" % run_id)
+
+
+def get(db_path, run_id):
+    """The run `run_id` of the library, or None. Reads only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not has_table(conn):
+            return None
+        found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE id = ?", (run_id,)).fetchone()
+        return _run(found) if found else None
+    finally:
+        conn.close()
+
+
 def latest(db_path):
     """{(job, library): (the latest run, the latest that ended)} of every job the library
     at `db_path` has run, each a Run or None. Reads only; {} for a library without the
