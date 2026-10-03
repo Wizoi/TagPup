@@ -1369,7 +1369,7 @@ The page, and two small routes and a card field under it. Nothing is migrated. T
   keys' arithmetic (`paintRows`, `treeKeyAction`, `tabKeyTarget`, all pure but the draw); `navigator.js` asks, listens and keeps the state (`state.nav`).
   *Folders* and *Keywords* are lazy trees from the route's flat list by parent (a branch is drawn only when open; folders in the route's order, keywords
   alphabetical by `compareTagNames`), *People* an alphabetical list, *Dates* the years newest first opening to January..December (and an "Other" row for the
-  photos of the year whose date names no month). **At most 400 rows are drawn** whatever is open, and a line says how many were left out; a filter box
+  photos of the year whose date names no month). **At most 1,500 rows of a tree's open branches (5,000 of a flat list: the people, the years and months, what a filter finds) are drawn**, and a line says how many were left out, counted over the whole tree (a parent with 1,000 children shows all of them; all 413 of photo_index's people are on the page; findings #567); a filter box
   (120 ms after the last key) lists what matches wherever it is filed, with its place. **Years before 1970 or after next year** are one collapsed
   **Other years (N)** entry at the end, still reachable. A folder row shows the photos with its subfolders (the direct count is in its tooltip and its
   label); a click on a row opens the view of it **and** opens the branch; a click on the arrow only opens the branch. A keyword no tree node holds cannot be
@@ -1387,7 +1387,7 @@ The page, and two small routes and a card field under it. Nothing is migrated. T
   A source with no row (a keyword with no node, a folder the library holds nothing in) is an empty view with its sentence and no highlight. Two libraries are two
   pages: nothing of one's navigator can reach the other's.
 - **The move between disk and library** (`library-moves.js`): **Show in library** (beside Select All, with a folder open on disk) opens the folder's library
-  view with its subfolders; **Show on disk** (in the strip of a folder's view) opens the folder on disk through the history entry Back to folder view uses;
+  view with its subfolders; **Show on disk** (in the strip of a folder's view) scans the folder FIRST and closes the view only when the scan has answered, through the history entry Back to folder view uses -- a folder that is not on disk any more (400), or cannot be read, keeps the view and says so in its strip, so the page is never left with neither a view nor a folder (#569);
   **This folder only / With subfolders** is another view of the same folder. The selection is cleared by every one (a view opening or closing clears it, 9b-1). The
   photo at the top of the grid is the one to land on: a folder view finds it by `pathKey` in `shownIndex`, a library view asks the library which id a path is
   (`GET /api/library/find?path=` -> `{id}`, `null` for a photo it does not hold: one seek of `idx_photos_path_nocase`, `COVERING INDEX (path=?)` on photo_index) and
@@ -1397,8 +1397,16 @@ The page, and two small routes and a card field under it. Nothing is migrated. T
   **Dismiss**. Add them opens the add-folder question of a folder opened -- the library's name, what it holds and lacks, the warnings -- with **Not now** in place of Just
   look; nothing is indexed until **Add to <library>** is pressed (`/api/folder/add` for the banner's folder, `state.moves.addFor`; a folder view's own Add still adds the
   open folder), and then the banner goes and the strip says it is being indexed and to Refresh view when it has finished (the folder's index pollers are idle in a view). The
-  question has a deadline (8 s, then the request is aborted) and **any** failure -- a share away, a folder gone from the disk (400), a library that cannot say, the
+  question has a deadline (15 s, then the request is aborted; the server gives up at 12) and **any** failure -- a share away, a folder gone from the disk (400), a library that cannot say, the
   view left meanwhile -- shows nothing and logs nothing: it is an offer. Dismiss lasts until the page is left, per folder.
+  **A walk is a folder's worth of disk, so it is not made on every view change** *(findings #568)*: (a) the answer is kept per folder for the page's life (`state.moves.cache`) and forgotten by
+  Refresh view, an Add, and a change in `last_in_step` or `syncing` (sync-state.js: the moments the disk and the library may have moved apart); a "could not check" is never kept; (b) it is
+  asked by itself only for a view of **this folder only** and for one with subfolders of **under 1,000 photos** (the view's total); a larger one shows a quiet link, "Check this folder on disk for
+  new photos", that asks when clicked and says "Every photo on disk in this folder is in the library." or "Could not check this folder on disk just now (why)."; (c) the server
+  (`libraries.membership_checked`) first asks a folder on a network share (a UNC path or a mapped drive: `shares.on_a_network_drive`) to say it is there within a second on a thread that is
+  waited for -- else the answer is `{could_not_check: true, why}` and no thread is left walking it -- then walks on a thread of its own and waits 12 s (`it took too long`); a request for a
+  folder under walk is **answered by that walk**, never a second one; the route no longer calls `isdir` on a share itself. On the sandbox copy with 68,000 empty photo files under the
+  root place, a click on the library's largest folder (68,324 photos) made one membership request taking 2.9 s (2.7-3.2); it makes none now and shows the link.
 - **When the library was last in step** (`sync-state.js`): the strip says "Library last in step with its folders: 5 min ago" (or "never"; ". A sync is running now." while one is) from
   `GET /api/sync` -- the answer the Activity page's "Last in step" is made of, plus `syncing` (new: whether this process's folder watcher is syncing the library now, `activity_routes.is_syncing`;
   false when it runs none). Asked once as a view opens and again with Refresh view; a request that fails says "Could not read when the library was last in step with its
@@ -1433,23 +1441,30 @@ The page, and two small routes and a card field under it. Nothing is migrated. T
 
   | the action | this branch (median; range) |
   |---|---|
-  | (a) click Library: Folders rows painted, main thread idle -- cold (first after the server started) | 115 ms (the request 55 ms; the reply 792 KB, the 2,746 folders) |
-  | (a) the same, warm | 151 ms (109-162; the request 57-122) |
+  | (a) click Library: Folders rows painted, main thread idle -- cold (first after the server started) | 115 ms (the request 55 ms; the reply 792 KB, the 2,746 folders), before gzip; 245-430 ms on later, busier runs |
+  | (a) the same, warm | 151 ms (109-162; the request 57-122) before gzip; 196 ms (138-461) after, the machine busier: the request is the server's 30-50 ms either way, and the reply is now 58 KB (792 KB gzipped, below) |
   | (b) the folder tree opened to depth 3: each of three clicks until painted and idle | 47 / 46 / 47 ms (45-48), 74 rows after, no task over 50 ms |
   | (c) a click on the largest keyword node (41,448 photos): click to the first window of cards painted and idle | 480 ms (6 rounds: 413-597); the same view by its address: navigation to painted and idle 500 ms (440-1,119) |
   | (d) five letters typed in the People filter, 60 ms between keys | the list redrawn 17 ms after the filter's own 120 ms wait (15-21); no task over 50 ms; 400 rows to 2-118 |
   | (e) ArrowDown held through 2,000 photos (5 columns, 400 keys at 30 a second, 17.6 s) | 1,056 frames, p95 16.8 ms, longest 16.8 ms, none over 100 ms, no long task, peak 550 grid nodes, the focus in the grid at every frame and on a card at the end |
-  | (f) `GET /api/library/cards` for 200 ids, the sandbox holds no photo file so all 200 are `missing`: branch / trunk | 18.9 ms (17.8-20.9) / 12.7 ms (9.8-16.8): the 200 stats cost 6 ms; 200 stats of files that are there, on a local disk, 5.2-5.9 ms (26-29 us each), of files that are gone 3.0-3.2 ms |
+  | (f) `GET /api/library/cards` for 200 ids, the sandbox holds no photo file so all 200 are `missing`: branch / trunk | 19.8 ms (18.8-21.0) / 8.8 ms (8.3-9.1): the 200 stats and the 200 looks at the drive's kind cost 11 ms (6 ms before the mapped-drive check; asked of Windows per card it cost 0.6 ms each, 130 ms a batch, until the answer was kept per drive letter for 30 s); 200 stats of files that are there, on a local disk, 5.2-6.6 ms (26-33 us each), of files that are gone 3.0-3.9 ms |
+  | (h) a click on the largest folder row (68,324 photos) with 68,000 files on disk under it: membership requests, click to painted and idle | before (`866e279`): 1 request, 2.9 s (2.7-3.2), 597 ms (514-781); now: 0 requests and the quiet link, 480 ms (447-583) |
+  | the navigator's folders reply and a view's order, through the real Waitress server with `Accept-Encoding: gzip` | 811,009 -> 59,588 bytes (13.6 times) and 399,821 -> 159,182; the browser fetch decodes it unseen (58.2 KB in the page's resource timing); server time 30-50 ms either way |
   | (g) open the 759-photo folder view, scan reply to painted and idle: branch / trunk | 93 (90-95) / 94 (52-103) ms |
   | (g) the same, scrolled top to bottom in 3 s: p95 frame, frames over 100 ms, peak nodes | 50.0 ms, 0, 500 on both |
 
   What the numbers do **not** show: the click on a 41,000-photo keyword is the server's ids request (190-440 ms in the page, the same 9b-2 measured, 100 ms of it a sort in
-  SQLite), and in some of its rounds (not in address-opened ones) the page acted on the reply about 190 ms after it was on the wire, with no long task: not attributed, and absent
-  from headless runs of the other flows. Headless Chromium at 16.7 ms a frame has no compositor to fall behind; the photos are not in the sandbox (the stat is of a file that is gone, the
+  SQLite), and in many of its rounds the page acted on the reply 85-266 ms after Chromium's own `responseEnd` for it. **That gap is not the page's work** *(CDP trace, findings #572)*: in
+  eight traced click rounds the renderer's main thread ran nothing over 2 ms between `responseEnd` and the page having the response (no task, no GC -- the scavenges all came before it -- no
+  layout; the navigator's painting happens at the click, before the request is even made), and in the four rounds whose network events were listed the renderer's `ResourceReceiveResponse`, `ResourceReceivedData` and `ResourceFinish` for the ids request
+  all came at one instant (three of them 127-203 ms after `responseEnd`, one with no gap), after which the page asked for its cards 7 ms later. So it is the delivery of the response from the browser process to the renderer.
+  It also happens when the view is opened by a bare `popstate` (no click, the navigator closed) and with the `/api/sync` request faked away, with and without the thumbnail route, with and
+  without a rAF loop; it does not happen to a bare `fetch` of the same URL on an idle page (22 of 22 rounds: 1 ms) with or without an AbortController, nor when the view is opened by its
+  address. The navigator's work is therefore not deferred: there is none in the window. The cause below the page is not known. Headless Chromium at 16.7 ms a frame has no compositor to fall behind; the photos are not in the sandbox (the stat is of a file that is gone, the
   thumbnail a 1-pixel picture); and nothing is measured on a network share, where each stat of a share that answers is a thread (`shares.bounded`) and one that does not costs the one
   second, once.
 - **How it fails**, each a test (`tests/frontend/navigator.test.mjs`, `library-moves.test.mjs`, `stale-cards.test.mjs`, `grid-keys.test.mjs`, `vgrid.test.mjs`;
-  `tests/test_library_cards_stale.py`, `test_library_find.py`): the four tabs at photo_index's size (rows bounded at 400, the first 400 of 413 people, 895 nodes never at once); a tab
+  `tests/test_library_cards_stale.py`, `test_library_find.py`): the four tabs at photo_index's size (rows bounded, all 413 people on the page, an expanded tree's count left out right: 1,549 rows is 49 left out; a parent with 1,000 children whole); a tab
   opened while another loads, an older answer for the same section dropped, a click while a view is loading; Back and Forward restoring the view, the highlight and the tab; the address
   opened cold to a folder, a keyword, a person, a month and a year among the odd ones; a folder or keyword that is gone; counts after a write (quiet, once for five writes, the section off
   screen read when shown); a library with nothing, one at schema 18, an unplaced root, a network failure; two libraries; the banner after the paint, for a folder's view only, with a
@@ -1457,16 +1472,26 @@ The page, and two small routes and a card field under it. Nothing is migrated. T
   view; "last in step" never / running / failing / an older answer late; Show in library and on disk (selection cleared, landing on the photo, the photo not held, a folder not on disk);
   stale badges, a missing photo inert, a changed one cleared, 200 in a batch, an away share (no mark); the keys at 20,000 photos with the DOM bounded, Enter and Space on a place, a
   Shift range across unloaded cards, the focus across a refresh and a wheel scroll, Ctrl+Z with the focus on a card. The server's: a file as the row says, edited, deleted, touched, a
-  row nobody stamped, a share away or a file unreadable (no mark), `view` that looks at no disk, one stat each.
+  row nobody stamped, a share away or a file unreadable (no mark), `view` that looks at no disk, one stat each; a batch whose stats answer in 0.6 s each ends within its 1.5 s budget with the rest
+  unmarked; a mapped drive is a share for the bounded stat and its type is asked of Windows once; a bulk tag write with a missing photo in the middle writes the photos after it and lists it
+  (`tests/test_bulk_tags_missing.py`); a membership walk is shared by two askers, abandoned at its deadline, refused for a share away (`tests/test_membership_is_bounded.py`); a long JSON reply is gzipped
+  (`tests/test_gzip_json.py`); and the page's: a bulk write leaves out missing photos and says how many (`bulk-missing.test.mjs`), the banner's cache and its link (`banner-cost.test.mjs`), Show on disk of
+  a folder that is gone keeps the view, the keys of a card's magnifier and checkbox move the card.
 - **What 9d builds on.** A write of a selection that spans folders is by path today and `selectInLibrary` is the one place that turns ids into paths (Shift+arrows and Select all use
   it): with id-based writes it goes and a range is instant. A card says `stale`: a bulk edit must skip a **missing** photo and say how many (the server refuses it), and take the new
-  stamp a write returns into the card (`applyEditedRecords`). Every write of the page goes through `queuePhotoWrite`, which is what re-reads the navigator's counts: a new write path that
+  stamp a write returns into the card (`applyEditedRecords`). Both halves exist for bulk tags *(findings #566)*: the page leaves a photo whose card said `missing` out of the paths it sends
+  (`state.library.missing`, by `pathKey`, kept as cards arrive; the confirmation names the count actually written; the selection panel says how many are left out; a selection of only missing
+  photos sends nothing), and `tagging.change_tags` skips a photo whose file is gone and writes the rest (`details["skipped_missing"]`, the reply's `skipped_missing` and `skipped`), so a stale card
+  never stops a batch; 9d's other bulk writes should take the same two steps. Every write of the page goes through `queuePhotoWrite`, which is what re-reads the navigator's counts: a new write path that
   does not will leave the counts as they were until Refresh view. The grid's keys call `handleCardSelectionClick`, `selectInLibrary` and `openLibraryPhoto` and know nothing else of a photo.
   `state.nav` is the place the search (9e) reads "within what the navigator has selected": `state.nav.followed`.
 - **Known limits.** Shift+arrows only add. After Enter the photo panel hides the grid and the focus is on nothing; Tab starts from the top of the page (the card the keys were on is still the
-  grid's tab stop). **Show on disk** for a folder that is not on disk closes the view first and the scan says so in an alert (the folder is not probed first). Adding from the banner shows no
-  progress (the folder's pollers are idle in a view): Refresh view when it has finished. The banner's question walks the folder on disk (the route a folder opened asks), and a request
-  abandoned at its deadline leaves the server's thread to finish. The folders reply is 792 KB uncompressed. Counts shown are `toLocaleString()`, so a thousands separator is the browser's.
+  grid's tab stop). Adding from the banner shows no
+  progress (the folder's pollers are idle in a view): Refresh view when it has finished. A membership walk abandoned at its deadline goes on to its end (the next asker is answered by it);
+  a view with subfolders of 1,000 photos or more asks for the disk only when told to, so it can be a day behind the disk. The card stat budget is 1.5 s a batch: past it the cards are
+  unmarked, quietly. A card is an `option` of the grid's listbox, though in a folder view it can hold an editable title input: a `gridcell` would need a row structure and counts a windowed
+  grid cannot give, so the option stays and the inner controls are `aria-hidden` with `tabindex=-1`; their own keys are left to them (a title being typed keeps all its keys, Space and Enter stay
+  the checkbox's and the magnifier's) and every other key of an inner control acts on its card *(findings #571)*. Counts shown are `toLocaleString()`, so a thousands separator is the browser's.
   A card's title is still the file name. A library view of a folder with a very long path names it on several lines in its header. The navigator cannot show a folder "gone from disk" (the route does not say).
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1, the rest design)*
