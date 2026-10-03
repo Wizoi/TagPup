@@ -59,7 +59,7 @@ from tagpup.core import fields, paths
 from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, names
+from tagpup.files import exiftool_session, field_values, lock_owners, names
 from tagpup.services import roots as roots_service
 from tagpup.store import db, derived, embeddings, file_journal, journal, photos, schema
 
@@ -457,6 +457,7 @@ def _after_failure(et, library, row, origin, target, finished, on_failure, error
     if now is not None and fields.reads_same(now, target):
         _record_held(library, row, now, target, finished, row.stamp)
         return finished, None
+    error = lock_owners.explain(error, row.path)   # after a failure only: who holds the file, if it is held
     if now is not None and fields.reads_same(now, origin):
         if on_failure == "withdraw":
             file_journal.withdraw(library.path, [row.id])

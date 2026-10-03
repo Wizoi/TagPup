@@ -7,7 +7,7 @@ import time
 from tagpup.core import paths
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session
+from tagpup.files import exiftool_session, lock_owners
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +76,8 @@ class RenameFailed(Exception):
     def message(self):
         if self.stranded:
             return ("Could not rename: %s. These could not be put back: %s"
-                    % (self.cause, ", ".join(self.stranded)))
-        return "Could not rename: %s. Every photo was put back under its old name." % self.cause
+                    % (str(self.cause).rstrip("."), ", ".join(self.stranded)))
+        return "Could not rename: %s. Every photo was put back under its old name." % str(self.cause).rstrip(".")
 
 
 def aside_for(renames):
@@ -167,6 +167,8 @@ def rename_all(renames, aside=None):
                 stranded.append(aside)
                 logger.error("Smart Rename could not put %s back as %s: %s",
                              aside, original, back_err)
-        logger.error("Smart Rename failed and was undone: %s", rename_err)
-        raise RenameFailed(rename_err, stranded) from rename_err
+        # Only now, with everything put back: who holds the file, when the error is the kind a held file makes.
+        why = lock_owners.explain(rename_err, getattr(rename_err, "filename", None))
+        logger.error("Smart Rename failed and was undone: %s", why)
+        raise RenameFailed(why, stranded) from rename_err
     return done, moved_aside

@@ -33,7 +33,7 @@ from tagpup.core import fields, paths
 from tagpup.core.result import DAMAGED_PHOTOS, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, images, metadata, names, recycle_bin
+from tagpup.files import exiftool_session, field_values, images, lock_owners, metadata, names, recycle_bin
 from tagpup.services import file_changes
 
 logger = logging.getLogger(__name__)
@@ -219,9 +219,10 @@ def _write_one(et, path, before, after, just_read, result):
         try:
             now = field_values.read_one(et, path, list(after))
         except field_values.Unreadable:
-            return error
+            return lock_owners.explain(error, path)
         if fields.reads_same(now, after):
             return None
+        error = lock_owners.explain(error, path)   # after a failure only: who holds the file, if it is held
         if fields.reads_same(now, before):
             return error
         result.details["conflicts"].append(path)
