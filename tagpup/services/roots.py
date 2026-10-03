@@ -28,6 +28,8 @@ The machine's map is the entry point's to hand in (`Machine`): this layer does n
 tagpup.config.
 """
 import contextlib
+import functools
+import inspect
 import os
 from dataclasses import dataclass
 from typing import Callable
@@ -101,6 +103,73 @@ def pinned(library):
 def stopped(why):
     """The sentence for a run that did not run, or stopped: `why` a RootsChanged or an Unplaced."""
     return STOPPED if isinstance(why, RootsChanged) else str(why)
+
+
+def _roots_of(library):
+    """The Roots a path of the library is canonicalised by, None when it has none or this machine
+    cannot say (the gate and `problem` tell the owner; a path is then left as given)."""
+    try:
+        roots = store_roots.roots_for(library)
+    except Exception:
+        return None
+    return None if roots.identity else roots
+
+
+def canonical(library, path):
+    """`path` spelled by the first place of its root (paths.canonical): THE boundary an old
+    place's spelling is resolved at, so every file operation of a service is at the place the
+    owner was told writes go to, and the page's next answer names it."""
+    return paths.canonical(path, _roots_of(library)) if path else path
+
+
+def canonical_all(library, many):
+    """canonical for each of a list; a dict has its keys made so."""
+    roots = _roots_of(library)
+    if roots is None:
+        return many
+    if isinstance(many, dict):
+        return {paths.canonical(each, roots): value for each, value in many.items()}
+    return [paths.canonical(each, roots) for each in many]
+
+
+def _one(each, roots):
+    """A path, or a (path, ...) tuple whose first is one (a suggestion's write)."""
+    if isinstance(each, str):
+        return paths.canonical(each, roots)
+    if isinstance(each, (tuple, list)) and each and isinstance(each[0], str):
+        return type(each)([paths.canonical(each[0], roots), *each[1:]])
+    return each
+
+
+def canonical_args(*names, both=()):
+    """Decorator for a service whose first argument is the library: the arguments `names` -- a
+    path, a list of paths, or a dict keyed by paths -- are resolved by the first place of their
+    root before the service sees them; those in `both` are dicts of path to path (renames), whose
+    values are resolved too. A library with no roots is not touched, and costs one read of its
+    roots table."""
+    def decorate(function):
+        signature = inspect.signature(function)
+
+        @functools.wraps(function)
+        def run(*args, **kwargs):
+            bound = signature.bind(*args, **kwargs)
+            roots = _roots_of(bound.arguments.get(next(iter(signature.parameters))))
+            if roots is not None:
+                for name in (*names, *both):
+                    given = bound.arguments.get(name)
+                    if isinstance(given, str):
+                        bound.arguments[name] = paths.canonical(given, roots)
+                    elif isinstance(given, dict):
+                        both_ways = name in both
+                        bound.arguments[name] = {
+                            paths.canonical(key_, roots): (paths.canonical(value, roots)
+                                                           if both_ways and isinstance(value, str) else value)
+                            for key_, value in given.items()}
+                    elif isinstance(given, (list, tuple, set)):
+                        bound.arguments[name] = [_one(each, roots) for each in given]
+            return function(*bound.args, **bound.kwargs)
+        return run
+    return decorate
 
 
 def listing(library, machine=None):

@@ -21,6 +21,7 @@ from tagpup.core import clustering as face_rules
 from tagpup.core import dates, vocabulary
 from tagpup.core.result import NotFound
 from tagpup.ml import grouping
+from tagpup.services import roots as roots_service
 from tagpup.store import db, faces, generations, photos
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,7 @@ def photos_waiting(library, show_matched=False):
     return listed
 
 
+@roots_service.canonical_args("photo_path")
 def photo_details(library, photo_path, named):
     """One photo for the panel: its people, tags, caption and year, and each face with
     how like the closest named face it is. A photo with no row still answers, with

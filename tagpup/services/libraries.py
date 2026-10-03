@@ -16,6 +16,7 @@ from tagpup.core.library import Library, picker_name
 from tagpup.core.result import DAMAGED_PHOTOS, NOT_IN_LIBRARY, Result
 from tagpup.files import images
 from tagpup.services import damaged_photos, settings
+from tagpup.services import roots as roots_service
 from tagpup.store import added_folders, db, photos, schema, taxonomy
 from tagpup.store import folders as store_folders
 
@@ -276,6 +277,7 @@ def record_added(library, folders, subfolders=True):
         label="add %d folder(s)" % len(wanted))
 
 
+@roots_service.canonical_args("folders")
 def add(library, folders, queue):
     """Add `folders` to the library, as asked: "Add to <library>" in TagPup, TagTuner's Add
     Folder. Each folder is recorded as added, with its subfolders (record_added), so it is

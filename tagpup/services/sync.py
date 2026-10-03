@@ -443,6 +443,7 @@ def in_step(counts, result=None):
     return result.ok and not result.skipped
 
 
+@roots_service.canonical_args("folder")
 def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, roots=(), ignored=()):
     """Bring `library` in step with its folders (or with `folder`), reading changed files
     with the ExifTool at `exiftool_path`; a dry run unless `apply`. A Result on the

@@ -8,12 +8,14 @@ from tagpup.core.result import Result
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, metadata, names
 from tagpup.services import file_changes, libraries
+from tagpup.services import roots as roots_service
 from tagpup.store import photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
 
 @file_changes.exclusively()
+@roots_service.canonical_args("photo_path")
 def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rename_format):
     """Save one photo's caption, tags and Date Taken -- the photo panel -- and rename it
     after its new caption if Smart Rename named it.
@@ -113,6 +115,7 @@ def _caption_problem(et, photo_path, caption):
     return None if vocabulary.trimmed(caption) in held else problem
 
 
+@roots_service.canonical_args("photo_paths")
 def change_tags(library, photo_paths, add, remove, exiftool_path):
     """Add the same tags to many photos and take the same tags off them. Adding or
     removing tags on a selection of photos. See _change_each.
@@ -135,6 +138,7 @@ def change_tags(library, photo_paths, add, remove, exiftool_path):
                                                exiftool_path, "add to all selected"), left)
 
 
+@roots_service.canonical_args("additions")
 def add_tags(library, additions, exiftool_path):
     """Add each photo in `additions` (path -> tags) its own tags. Apply All on a folder's
     suggestions: suggestions deal in people's bare names, which are written as the tags
@@ -216,6 +220,7 @@ def _change_each(library, plan, exiftool_path, operation):
                                      stop_at_first_error=True)
 
 
+@roots_service.canonical_args("photo_paths")
 def replace_tag(library, photo_paths, old, new, exiftool_path):
     """Rename the tag `old` to `new` -- and every tag under it -- on each photo in
     `photo_paths`, or take it off without `new`: in the file, then in the index.
@@ -281,6 +286,7 @@ def suggestion_writes(library, suggestions, min_score=suggesting.OFFER_A_TAG):
 SUGGESTION_READ = tuple(dict.fromkeys(KEYWORD_READ + tuple(fields.caption_fields(""))))
 
 
+@roots_service.canonical_args("writes")
 def write_suggestions(library, writes, exiftool_path, nobackup=False):
     """Write each (path, tags, caption) of `writes` (suggestion_writes') as one change of
     photo files (tagpup.services.file_changes), which can be undone, each file's row told

@@ -442,6 +442,24 @@ def _row(name, rel):
     return ROOT_MARK + name + (ROW_SEP + rel if rel else "")
 
 
+def canonical(path, roots=None):
+    """`path` spelled by the FIRST place of its root, when it is spelled by another place the
+    root's map still lists (an old place kept after a move), else as it was given. A page that
+    still holds an old place's spelling, or a bookmark, must never reach a file as written: the
+    row follows by `to_row` (it recognises every place) while the file written is the old copy's,
+    not the one the owner was told writes go to. Pure; never raises."""
+    if not path or roots is None or roots.identity:
+        return path
+    try:
+        found = roots.locate(path)
+        if found is None or found[0] not in roots._first:
+            return path
+        first = from_row(to_row(path, roots), roots)
+    except RootsError:
+        return path
+    return path if key(first) == key(path) else first
+
+
 def to_row(path, roots=None):
     """A native path as the database holds it: "@name/rel" under a root, else stored().
     With no roots, or none configured, stored() -- as it always was. "" for nothing.

@@ -114,6 +114,11 @@ def _exclusive(function):
     return held
 
 
+#: The Result of the change this thread is writing, so that a stop half-way (RootsChanged) can say what
+#: was written and journaled before it stopped.
+_running = threading.local()
+
+
 def _pinned(function):
     """Hold one map for the whole change (tagpup.services.roots.pinned): a place moved meanwhile
     changes nothing until it ends, and a change of the library's roots by another process stops
@@ -122,21 +127,30 @@ def _pinned(function):
     returns a Result answers it as a refusal naming why; a rename raises."""
     @functools.wraps(function)
     def held(library, *args, **kwargs):
+        _running.result = None
         try:
             with roots_service.pinned(library):
                 return function(library, *args, **kwargs)
         except (roots_service.RootsChanged, roots_service.Unplaced) as stop:
             if function.__name__ == "rename":
                 raise
-            result = Result()
-            result.refuse(roots_service.stopped(stop))
-            result.details.update(change=None, conflicts=[], read_back={}, written={})
+            # What was written and journaled before it stopped is in the Result the change was filling.
+            result = getattr(_running, "result", None) or Result()
+            _running.result = None
+            said = roots_service.stopped(stop)
+            if result.changed or result.details.get("change"):
+                said += (" Before it stopped %d file(s) were written, recorded as change %s in History, which "
+                         "can be undone." % (result.changed, result.details.get("change")))
+            result.refuse(said)
+            for name, empty in (("change", None), ("conflicts", []), ("read_back", {}), ("written", {})):
+                result.details.setdefault(name, empty)
             return result
     return held
 
 
 # ---- Forward ---------------------------------------------------------------------------
 
+@roots_service.canonical_args("photo_paths")
 @_exclusive
 @_pinned
 def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one, summary=None,
@@ -175,6 +189,7 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
 def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
                   stop_at_first_error, fresh, read_back_also):
     result = Result(attempted=len(photo_paths))
+    _running.result = result
     written = result.details["written"] = {}
     result.details.update(change=None, conflicts=[], read_back={})
     settle(library, exiftool_path)
@@ -475,6 +490,7 @@ def _holds(path, row):
     return now is not None and all(now.get(key) == value for key, value in row.before.items())
 
 
+@roots_service.canonical_args(both=("renames", "aside"))
 @_exclusive
 @_pinned
 def rename(library, operation, renames, aside, exiftool_path=None, summary=None):
