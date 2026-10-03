@@ -301,6 +301,46 @@ The library's roots (`tagpup.store.roots`, migration 18; ARCHITECTURE.md, "Roots
 | `address` | TEXT | NOT NULL | The share's own address, `\\idziserver\Pictures\Pictures`: a spelling that names the root, so a path typed as the share's address is under it. May be empty. |
 | `added` | TEXT | NOT NULL | Local time it was added, `YYYY-MM-DD HH:MM:SS`. |
 
+### 21. `photo_tags` Table
+Each photo's keywords as tag-tree node ids (`tagpup/store/derived.py`, migration 19; ARCHITECTURE.md, "Phase 9" and "Identity by id"), derived from `photos.tags` and the tree as `photo_people` is, and never written by anything else: `derived.rebuild_all` (the migration, the doctor's repair) and `derived.refresh_photos` / `derived.record`, called in the same transaction by every writer of a photo's keywords, path or metadata (`store.photos`: `record_indexed`, `record_tags`, `record_saved`, `follow_fields`, `record_reads`, `move_rows_in`, `ensure_row`; the journal's `_derive`), and by the tree's edits for the photos whose keywords a changed node names (`people.tree_edit`, `journal._derive`: `derived.follow_tree`, `derived.follow_nodes`). Not journaled (`journal.DERIVED`): an undo rebuilds it from the rows it wrote. A keyword is matched to the node whose tag it is, else the node it is without case, with its segments trimmed and `|` and `\` read as `/` (`vocabulary.normalize`), the lowest id when two nodes differ only in case. A keyword that names no node gets no row and **no node is made for it**: the owner's tree does not change by indexing a photo, and `derived.tags_without_a_node` (the doctor's "photo tags with no tree node") says which and how many photos. A bare leaf (`Cora Ingersoll` for `People/Cora Ingersoll`) is such a keyword: it is the people rule's to resolve (`store.people`), not the tree's. "A keyword and everything under it" is the node's id and the ids of the nodes under it, a range on `tag_taxonomy.tag` (`derived.under`: `tag = ?` and `tag >= 'tag/' AND tag < 'tag0'`, two seeks of its unique index, never LIKE), joined to this table by `tag_id` (`derived.photos_under_tag`, `derived.count_under_tag`). A node renamed or moved keeps its id, so its rows are unchanged and its range follows its new path; a node deleted takes its rows (a trigger, `photo_tags_go_with_their_node`, on any connection) and the keyword is reported, not made again. A photo deleted takes its rows (`derived_go_with_their_photo`). The doctor's `photo_tags_out_of_date` finds a photo whose rows are not what its keywords and the tree give; `tools/doctor.py --rebuild-derived --apply` makes them so.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `photo_id` | INTEGER | PRIMARY KEY (with `tag_id`), FOREIGN KEY | The photo, `photos(id)`, ON DELETE CASCADE. |
+| `tag_id` | INTEGER | PRIMARY KEY (with `photo_id`), FOREIGN KEY, INDEXED | The node of the tag tree, `tag_taxonomy(id)`, ON DELETE CASCADE. `idx_photo_tags_tag` is on (`tag_id`, `photo_id`): a tag's photos come out of the index alone. The table is WITHOUT ROWID. |
+
+### 22. `folders` Table
+The folder tree of the library's photos (`tagpup/store/derived.py`, migration 19): a row for every folder a photo is directly in and for every ancestor of one, up to the top of its spelling -- the root (`@pictures`) of a rooted path, the drive or the share of a native one -- so the navigator can draw the tree. A folder with no photo at or below it has no row: it goes with its last photo (`derived.prune`). Derived from `photos.path` and never written by anything else, as `photo_tags`. **`path` is a path column**: the folder in ROW form, as `photos.path` is -- `@pictures/2024/Coast` in a library that holds a root, the machine's native path in one that holds none -- unique and compared without case where the filesystem is, and converted to a native path on the way out (`derived.folder_tree`). The roots' adoption and its undo rebuild the folders in their own transaction (`derived.rebuild_folders`), so an adopted library's folders are those of an unconverted twin's, by `from_row`. A folder's id is kept while the folder is (`AUTOINCREMENT`: never handed out again), and is not kept across the adoption, which changes every path's spelling: a page names a folder by its path. Per-folder counts: the photos directly in a folder are one GROUP BY of `photo_folder`, those in it and below are that rolled up the tree (`derived.folder_tree`), or one range of `photos.path` (`derived.recursive_count`).
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | The folder. |
+| `parent_id` | INTEGER | FOREIGN KEY, INDEXED | The folder above it, `folders(id)`; NULL for a top. |
+| `path` | TEXT | NOT NULL, UNIQUE, COLLATE NOCASE | The folder, in row form (see above). |
+| `name` | TEXT | NOT NULL | The folder's own name, to show: its last segment; the root's name for `@pictures`; the drive or share for a native top. |
+
+### 23. `photo_folder` Table
+Which folder each photo is directly in (`tagpup/store/derived.py`, migration 19), derived from `photos.path` and kept with `folders`. There is no `folder_id` on `photos`, which would have been a second migration of every photo row beside the roots one. A photo whose path names no folder has no row. A trigger (`derived_go_with_their_photo`) takes a photo's row with it on any connection; the folders its delete emptied are taken by `derived.prune`, which the deletes call. The doctor's `photo_folders_out_of_date` finds a photo not in the folder its path names, and a folder that holds nothing, whose parent is not the one above it, or that a photo needs and does not have.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `photo_id` | INTEGER | PRIMARY KEY, FOREIGN KEY | The photo, `photos(id)`, ON DELETE CASCADE. |
+| `folder_id` | INTEGER | NOT NULL, FOREIGN KEY, INDEXED | The folder it is directly in, `folders(id)`. |
+
+### 24. `photo_meta` Table
+What a photo's metadata says of the photo itself (`tagpup/store/derived.py`, `tagpup/core/photo_meta.py`, migration 19): one row for every photo, NULL for what it does not say, derived from `photos.raw_metadata` and rebuilt whenever it is written (never edited). Counted on photo_index's 68,466 rows (2026-10-02): `rating` is `XMP:Rating`, else `EXIF:Rating`, else the bare name, a whole number from -1 (rejected) to 5 and 0 when the file says unrated; `make` and `model` are `EXIF:Make` / `XMP:Make` and `EXIF:Model` / `XMP:Model`, trimmed; `latitude` and `longitude` are `Composite:GPSLatitude` and `Composite:GPSLongitude`, the signed decimal degrees (the EXIF pair has no sign, so it is not read), both or neither, in range, and not the pair 0, 0 that a camera without a fix writes. **`width` and `height` are NULL in every row**: the indexer does not ask ExifTool for `ImageWidth`, `ImageHeight`, `ExifImageWidth` or `Orientation` (`fields.METADATA_FIELDS`), so no row holds one. The extraction reads them where a row has them -- the picture's own size, else the size EXIF declares, as shown (width and height swapped for Orientation 5 to 8) -- and they fill once the indexer asks; asking changes what every read records, and is the owner's to decide. No index yet: a filter on a rating or a camera scans this table (about 3 MB), which 9e adds an index for if measured.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `photo_id` | INTEGER | PRIMARY KEY, FOREIGN KEY | The photo, `photos(id)`, ON DELETE CASCADE. |
+| `rating` | INTEGER | | -1 rejected, 0 unrated, 1 to 5 stars; NULL when the metadata holds none. |
+| `make` | TEXT | | The camera's make. |
+| `model` | TEXT | | The camera's model. |
+| `width` | INTEGER | | Pixels across as shown; NULL until the indexer reads the size. |
+| `height` | INTEGER | | Pixels down as shown; NULL until the indexer reads the size. |
+| `latitude` | REAL | | Signed decimal degrees, north positive. |
+| `longitude` | REAL | | Signed decimal degrees, east positive. |
+
 ---
 
 ## Entity-Relationship (ER) Diagram
@@ -358,6 +398,34 @@ erDiagram
         TEXT source
     }
 
+    photo_tags {
+        INTEGER photo_id PK
+        INTEGER tag_id PK
+    }
+
+    folders {
+        INTEGER id PK
+        INTEGER parent_id FK
+        TEXT path UK
+        TEXT name
+    }
+
+    photo_folder {
+        INTEGER photo_id PK
+        INTEGER folder_id FK
+    }
+
+    photo_meta {
+        INTEGER photo_id PK
+        INTEGER rating
+        TEXT make
+        TEXT model
+        INTEGER width
+        INTEGER height
+        REAL latitude
+        REAL longitude
+    }
+
     suggestions {
         INTEGER photo_id PK
         TEXT tags
@@ -397,6 +465,12 @@ erDiagram
     photos ||--o{ faces : "contains"
     photos ||--o{ embeddings : "embedded as"
     photos ||--o{ photo_people : "shows"
+    photos ||--o{ photo_tags : "carries"
+    tag_taxonomy ||--o{ photo_tags : "named by"
+    photos ||--o| photo_folder : "is in"
+    folders ||--o{ photo_folder : "holds"
+    folders ||--o{ folders : "parent of"
+    photos ||--o| photo_meta : "says"
     photos ||--o| suggestions : "offered"
     faces ||--o| face_crops : "cropped as"
     tag_taxonomy ||--o{ tag_taxonomy : "parent of"

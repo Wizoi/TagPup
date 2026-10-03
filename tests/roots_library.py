@@ -157,10 +157,12 @@ class Side:
         aside)."""
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
         try:
-            tables = [name for (name,) in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-            return {table: [tuple(row) for row in conn.execute("SELECT * FROM %s ORDER BY rowid" % table)]
-                    for table in tables if table not in leave_out}
+            tables = {name: sql for name, sql in conn.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")}
+            # A table WITHOUT ROWID (photo_tags) has no rowid to order by: its rows are in key order.
+            return {table: [tuple(row) for row in conn.execute("SELECT * FROM %s ORDER BY %s" % (
+                table, "1, 2" if "WITHOUT ROWID" in sql.upper() else "rowid"))]
+                    for table, sql in tables.items() if table not in leave_out}
         finally:
             conn.close()
 

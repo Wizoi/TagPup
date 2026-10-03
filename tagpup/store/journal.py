@@ -89,8 +89,8 @@ KEYS = {
 #: a key used again cannot mean another row (tests/test_journal_keys_and_cascades.py).
 NAMED = ("settings",)
 
-#: Derived tables: never journaled, rebuilt from what a change touched.
-DERIVED = ("photo_people",)
+#: Derived tables: never journaled, rebuilt from what a change touched (`_derive`).
+DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "photo_meta")
 
 #: Derived columns of journaled tables, rebuilt from the row's other columns after each
 #: write (a photo's dates, from its metadata and path: store.photos.date_photos). An
@@ -112,6 +112,10 @@ CASCADES = {
     ("photos", "embeddings"): ("photo_id", RECORDED),
     ("photos", "suggestions"): ("photo_id", RECORDED),
     ("photos", "photo_people"): ("photo_id", REBUILT),
+    ("photos", "photo_tags"): ("photo_id", REBUILT),
+    ("photos", "photo_folder"): ("photo_id", REBUILT),
+    ("photos", "photo_meta"): ("photo_id", REBUILT),
+    ("tag_taxonomy", "photo_tags"): ("tag_id", REBUILT),
     ("tag_taxonomy", "tag_taxonomy"): ("parent_id", FORBIDDEN),
 }
 
@@ -851,14 +855,16 @@ def schema_gap_blocker(version, current):
     """Why a change made at schema `version` may not mean what it did in a library at `current`:
     a sentence naming the first migration in between that could have changed it, or None when none
     could. A migration cannot have if it is ADDITIVE and touches no table a change can name or the
-    journal derives (KEYS, DERIVED): adding the roots table, the runs of jobs, a folder list, moves
+    journal keys (KEYS): adding the roots table, the runs of jobs, a folder list, the derived tables, moves
     no row a journaled change recorded. Every other migration blocks, and so does one that is not
     in the list: what cannot be classified is never exempt. A change made at a schema NEWER than
     the library's blocks too (an older version of the app opened it)."""
     if version > current:
         return "migration %d is not applied here" % version
     known = {migration.version: migration for migration in schema.MIGRATIONS}
-    journaled = set(KEYS) | set(DERIVED)
+    # Not DERIVED: every undo rebuilds the derived tables from the rows it wrote (_derive), so a
+    # migration that makes or fills one changes nothing an older change's rows mean.
+    journaled = set(KEYS)
     for number in range(version + 1, current + 1):
         migration = known.get(number)
         if migration is None:

@@ -443,10 +443,19 @@ class TheSchemaMovedOn(unittest.TestCase):
     derives. Real migration records decide; one that cannot be classified refuses."""
 
     def test_a_gap_of_only_additive_migrations_that_touch_no_journaled_table_is_exempt(self):
-        for version in (17, 12, 10 + 1):
-            self.assertIsNone(journal.schema_gap_blocker(version, 18), version)
+        for version in (18, 17, 12, 10 + 1):
+            self.assertIsNone(journal.schema_gap_blocker(version, 19), version)
         self.assertIsNone(journal.schema_gap_blocker(12, 17), "13 to 17: job runs, sync runs, folders, damaged, pending")
-        self.assertIsNone(journal.schema_gap_blocker(18, 18))
+        self.assertIsNone(journal.schema_gap_blocker(19, 19))
+
+    def test_a_migration_that_makes_the_derived_tables_blocks_no_undo(self):
+        """Migration 19 touches photo_tags, folders, photo_folder and photo_meta, all in journal.DERIVED:
+        every undo rebuilds them from the rows it wrote, so a change made at 18 is undone at 19."""
+        migration = {m.version: m for m in schema.MIGRATIONS}[19]
+        self.assertEqual(schema.ADDITIVE, migration.kind)
+        self.assertLessEqual({"photo_tags", "folders", "photo_folder", "photo_meta"}, set(journal.DERIVED))
+        self.assertLessEqual(set(migration.touches), set(journal.DERIVED))
+        self.assertIsNone(journal.schema_gap_blocker(18, 19))
 
     def test_a_gap_with_a_migration_that_touches_a_journaled_table_refuses_naming_it(self):
         found = journal.schema_gap_blocker(7, 18)
@@ -467,9 +476,9 @@ class TheSchemaMovedOn(unittest.TestCase):
         self.assertIn("is not applied here", journal.schema_gap_blocker(19, 18))
 
     def test_a_fake_additive_migration_touching_a_journaled_table_is_not_exempt(self):
-        fake = schema.Migration(19, "x", lambda conn: None, schema.ADDITIVE, "adds nothing", ("tag_taxonomy",), ())
+        fake = schema.Migration(20, "x", lambda conn: None, schema.ADDITIVE, "adds nothing", ("tag_taxonomy",), ())
         with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS + (fake,)):
-            self.assertIn("touches tag_taxonomy", journal.schema_gap_blocker(18, 19))
+            self.assertIn("touches tag_taxonomy", journal.schema_gap_blocker(19, 20))
 
     def test_a_change_made_at_17_through_the_production_writers_is_undone_after_18_runs(self):
         from test_migrations import at_version
@@ -488,7 +497,8 @@ class TheSchemaMovedOn(unittest.TestCase):
         finally:
             recorded.close()
         schema._current.clear()
-        self.assertEqual(["the library's roots"], schema.ensure(path), "migration 18 runs on opening")
+        self.assertEqual(["the library's roots", "the tables the library views stand on"], schema.ensure(path),
+                         "migrations 18 and 19 run on opening")
         undone = journal.undo(path, applied.change_id)
         self.assertEqual(1, undone.rows)
         conn = db.connect(db.readonly_uri(path), uri=True)
@@ -530,10 +540,10 @@ class TheSchemaMovedOn(unittest.TestCase):
         def make(conn):
             conn.execute("CREATE TABLE IF NOT EXISTS later_things (id INTEGER PRIMARY KEY)")
 
-        fake = schema.Migration(19, "a later table", make, schema.ADDITIVE, "adds a table", ("later_things",),
+        fake = schema.Migration(20, "a later table", make, schema.ADDITIVE, "adds a table", ("later_things",),
                                 (schema.RowsKept(),) + schema.STANDARD)
         with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS + (fake,)), \
-                mock.patch.object(schema, "LATEST", 19):
+                mock.patch.object(schema, "LATEST", 20):
             schema._current.clear()
             self.assertEqual(["a later table"], schema.ensure(side.db_path))
             conn = db.connect(db.readonly_uri(side.db_path), uri=True)
@@ -553,7 +563,7 @@ class TheSchemaMovedOn(unittest.TestCase):
         path = home.library("harbour.db")
         at_version(path, 10)
         schema._current.clear()
-        self.assertEqual(8, len(schema.ensure(path)))
+        self.assertEqual(9, len(schema.ensure(path)))
         library = Library(path)
         listed = journal.history(path, limit=100)
         migrations = [e for e in listed if e["operation"].startswith("migration ")]

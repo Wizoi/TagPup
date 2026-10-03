@@ -667,6 +667,49 @@ def _roots(conn):
                  " added TEXT NOT NULL)")
 
 
+def _derived_tables(conn):
+    """The tables the library views stand on, derived from the photos (tagpup.store.derived;
+    docs/ARCHITECTURE.md, phase 9a): `photo_tags` (a photo's keywords as tag-tree node ids),
+    `folders` and `photo_folder` (the folder tree and the folder each photo is directly in, the
+    path in ROW form) and `photo_meta` (rating, camera, size and place from the raw metadata). Made
+    from the rows that are there by `derived.rebuild_all`, in this transaction, and then kept by the
+    writes that keep photo_people. Nothing that was there changes, so it needs no backup: a failed
+    check rolls the whole migration back, and the tables are rebuilt from the photos whenever they
+    are wrong.
+
+    Triggers take a photo's rows with the photo and a node's with the node, on any connection, as
+    photo_people's does; foreign keys say the same where a connection turns them on.
+    """
+    conn.execute("CREATE TABLE photo_tags ("
+                 " photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,"
+                 " tag_id INTEGER NOT NULL REFERENCES tag_taxonomy(id) ON DELETE CASCADE,"
+                 " PRIMARY KEY (photo_id, tag_id)) WITHOUT ROWID")
+    # A tag's photos, by one seek, and covering: the photo ids come out of the index.
+    conn.execute("CREATE INDEX idx_photo_tags_tag ON photo_tags(tag_id, photo_id)")
+    conn.execute("CREATE TABLE folders ("
+                 " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                 " parent_id INTEGER REFERENCES folders(id) ON DELETE CASCADE,"
+                 " path TEXT NOT NULL UNIQUE COLLATE %s,"
+                 " name TEXT NOT NULL)" % paths.COLLATE)
+    conn.execute("CREATE INDEX idx_folders_parent ON folders(parent_id)")
+    conn.execute("CREATE TABLE photo_folder ("
+                 " photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,"
+                 " folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE)")
+    conn.execute("CREATE INDEX idx_photo_folder_folder ON photo_folder(folder_id)")
+    conn.execute("CREATE TABLE photo_meta ("
+                 " photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,"
+                 " rating INTEGER, make TEXT, model TEXT, width INTEGER, height INTEGER,"
+                 " latitude REAL, longitude REAL)")
+    conn.execute("CREATE TRIGGER derived_go_with_their_photo AFTER DELETE ON photos BEGIN"
+                 " DELETE FROM photo_tags WHERE photo_id = OLD.id;"
+                 " DELETE FROM photo_folder WHERE photo_id = OLD.id;"
+                 " DELETE FROM photo_meta WHERE photo_id = OLD.id; END")
+    conn.execute("CREATE TRIGGER photo_tags_go_with_their_node AFTER DELETE ON tag_taxonomy"
+                 " BEGIN DELETE FROM photo_tags WHERE tag_id = OLD.id; END")
+    from tagpup.store import derived   # the store imports this module
+    derived.rebuild_all(conn)
+
+
 # ---- What a migration holds true before it commits ----------------------------------------
 
 #: The runner's own tables: it writes them as it records each migration.
@@ -675,7 +718,7 @@ RUNNER_TABLES = ("schema_version", "changes", "change_rows")
 #: Tables any migration may change and nothing records: the counters its triggers move
 #: (tagpup.store.generations) and each photo's people, derived and rebuilt
 #: (journal.DERIVED, which a test holds to this).
-UNWATCHED = ("generations", "photo_people")
+UNWATCHED = ("generations", "photo_people", "photo_tags", "folders", "photo_folder", "photo_meta")
 
 
 class CheckFailed(RuntimeError):
@@ -856,6 +899,16 @@ class CropsMoved(Check):
 
 
 #: Every migration names these two, and a count of rows; a test holds it to them.
+class DerivedAgree(Check):
+    """The derived tables (tagpup.store.derived) are what the photos give: what rebuilding them
+    made is what a check that reads the photos again finds."""
+    name = "derived tables agree with the photos"
+
+    def after(self, conn, migration, state):
+        from tagpup.store import derived   # the store imports this module
+        return derived.problems(conn)
+
+
 STANDARD = (ForeignKeys(), Integrity())
 
 
@@ -1161,6 +1214,11 @@ MIGRATIONS = (
               "adds the roots table, empty: no path changes until the owner adopts a root",
               ("roots",),
               (RowsKept(),) + STANDARD),
+    Migration(19, "the tables the library views stand on", _derived_tables, ADDITIVE,
+              "adds photo_tags, folders, photo_folder and photo_meta, derived from the photos' rows; nothing that "
+              "was there changes",
+              ("photo_tags", "folders", "photo_folder", "photo_meta"),
+              (RowsKept(), DerivedAgree()) + STANDARD),
 )
 
 LATEST = MIGRATIONS[-1].version
