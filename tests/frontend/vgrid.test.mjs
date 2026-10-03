@@ -392,8 +392,9 @@ describe("hidden, then shown again", () => {
     // Hidden (display: none): no height, and the browser forgot the scroll position.
     t.here.viewport = 0;
     t.here.scrollTop = 0;
+    const drawn = t.ids();
     t.view.refresh();
-    assert.equal(t.ids().length, 120, "drawn without a layout while it cannot be seen");
+    assert.deepEqual(t.ids(), drawn, "while hidden the window stays as it was drawn");
     t.here.viewport = 600;
     t.view.refresh();
     assert.equal(t.here.scrollTop, 216 * 200);

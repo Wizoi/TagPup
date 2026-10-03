@@ -83,6 +83,7 @@ export function createVGrid(options) {
     let anchor = null;             // the row kept in view across a change of layout
     let lastTop = 0;               // the scroll offset to come back to when the grid is shown again
     let laidOut = false;           // the last render had a layout
+    let everLaidOut = false;       // the grid has been shown: no layout now means hidden, not unmeasurable
     let measured = false;          // images wait for a moment in view only when there is a layout
     let viewFrom = 0;              // the records in the view, [viewFrom, viewTo), by index
     let viewTo = 0;
@@ -322,6 +323,13 @@ export function createVGrid(options) {
         if (container.firstChild && !order.length) container.replaceChildren();
         let m = measure({ grid: container, scroller, card: firstCard() });
         if (!(m.viewport > 0 && m.columns > 0)) {
+            if (everLaidOut) {
+                // Hidden (a photo is open over it): the window stays as drawn, no card is built
+                // and no picture asked for; the next render with a layout redraws and puts the
+                // view back where it was.
+                laidOut = false;
+                return;
+            }
             drawUnmeasured(total);
             return;
         }
@@ -344,7 +352,10 @@ export function createVGrid(options) {
                 anchor = null;
             }
         }
-        if (target === null && !laidOut && lastTop > 0) target = lastTop;   // shown again after hidden
+        // Shown again after hidden. The browser forgets a hidden element's scroll offset; when the
+        // grid was shown again before any render saw it hidden, the offset is 0 and no scroll
+        // event said so (one would have set lastTop to 0).
+        if (target === null && lastTop > 0 && (!laidOut || m.scrollTop === 0)) target = lastTop;
         const stride = m.cardHeight + m.rowGap;
         const rows = Math.ceil(total / m.columns);
         const top = (target === null ? m.scrollTop : target) - m.gridTop;
@@ -353,6 +364,7 @@ export function createVGrid(options) {
         const firstRow = clamp(firstSeen - bufferRows, 0, rows - 1);
         const lastRow = clamp(lastSeen + bufferRows, firstRow, rows - 1);
         measured = true;
+        everLaidOut = true;
         setViewRange(firstSeen, lastSeen, m.columns, rows);
         layout = { columns: m.columns, stride, gridTop: m.gridTop };
         laidOut = true;
