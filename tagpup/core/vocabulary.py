@@ -86,12 +86,20 @@ def _level_key(text):
             digits += each
             continue
         if digits:
-            found.append((1, int(digits)))
+            found.append((1, _number_key(digits)))
             digits = ""
         found.append(_char_key(each))
     if digits:
-        found.append((1, int(digits)))
+        found.append((1, _number_key(digits)))
     return tuple(found)
+
+
+def _number_key(digits):
+    """A run of decimal digits as a number to compare: (how many digits without leading zeros, those
+    digits). The same order as the integers, with no limit on the length (int() refuses a run of more
+    than 4,300 digits, and one such keyword in a file must not fail every tag list)."""
+    plain = "".join(str(unicodedata.decimal(each)) for each in digits).lstrip("0") or "0"
+    return (len(plain), plain)
 
 
 def _char_key(each):

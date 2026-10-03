@@ -297,7 +297,7 @@ def people_counts(conn):
         names = [each[0] for each in spellings_of]
         found.append((name, conn.execute("SELECT COUNT(DISTINCT photo_id) FROM photo_people WHERE name IN (%s)"
                                          % ",".join("?" * len(names)), names).fetchone()[0]))
-    return sorted(found, key=lambda each: (-each[1], each[0]))
+    return sorted(found, key=lambda each: (-each[1], vocabulary.tag_sort_key(each[0])))
 
 
 def date_counts(conn):
