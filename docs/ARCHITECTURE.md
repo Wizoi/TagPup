@@ -844,7 +844,7 @@ click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
   not by name; see "Identity by id" below)*, `folders` and `photo_folder`, and `photo_meta`, kept by the writes
   that keep `photo_people` and rebuilt by the migration and the doctor; "a keyword and everything under it" is
   the node's descendants, a range on `tag_taxonomy.tag` (unique, indexed) that gives ids, joined to
-  `photo_tags`. **9a-2, to build**: A
+  `photo_tags`. **9a-2, built** *(2026-10-02, migration 20; see "Phase 9a-2" below)*: A
   thumbnail cache on disk: derived, keyed by photo id and the file's size and modified
   time, under `data/cache/<library>/thumbs`, made when a photo is indexed or its file
   changes (queued, phase 8's events) and on first ask, dropped when its stamp changes or it
@@ -964,6 +964,118 @@ and `photos.year` for dates; `photo_meta` for the rest. The navigator's Keywords
 rows on photo_index) by the tree's parents, one query and a pass in Python, as the folders' are. The thumbnail cache is keyed
 by the photo's id and stamp, as before. `folders.path` is row form: ask for a folder by path through `store.roots.sql_equals`-style
 conversion, never by an id kept in a page.
+
+### Phase 9a-2: the thumbnail cache, the library views' query service and their routes *(built 2026-10-02; migration 20; branch `arch/phase-9a2-view`)*
+Server only: no page, nothing the owner sees until 9b. Three things, each in its layer.
+
+- **The thumbnail cache** (`tagpup.files.thumbs`, the files; `tagpup.services.thumbnails`, what an entry is and when it
+  goes). DERIVED and not bounded *(owner)*: `<library folder>/cache/<library>/thumbs` (`Library.thumbs`; a test home holds its
+  own), a 300 px JPEG for each photo, `<id // 1000>/<id>_<path hash>_<mtime ms>_<size>.jpg`. The key is **the photo's id, eight
+  hex digits of the path its ROW holds, and the stamp of the file it was made from**, the stamp read from the file at each
+  ask: a file changed is a new entry and the old is deleted as the new is made; a photo renamed keeps its id and gets a new
+  hash, made once; an id handed out again after a restore never serves another photo's picture (its path hash differs);
+  **a library moved to another root place keeps its entries**, since the rows' paths and ids are unchanged (tested through
+  the roots' map). Two libraries on one machine have two folders, so the same ids never meet. **Made on first ask** (`serve`)
+  and ahead of time by `tagpup_cli.py thumbs warm [--folder F] [--limit N] [--apply]` (a dry run: counts, the bytes the missing
+  ones would take from the average entry kept, writes not even the folder; `--apply` makes them four at a time, can be stopped
+  and run again, brings a library behind up to date first and deletes entries of photos the library no longer holds). **Not
+  made when a photo is indexed or changed** -- a queue for that was in the first design and is the owner's to ask for: every
+  entry is made by the first ask or the warm command. **Atomic**: a temporary file in the shard, `os.replace`d over the name
+  (a rename that meets a reader on Windows leaves the entry that is there); two requests for one photo make it once (a lock
+  for each of 64 stripes, the entry looked for again inside it); another process making it too -- `warm` beside the
+  server -- writes the same whole file. A crash leaves a `.tmp-` file, taken when it is an hour old (`sweep`, `warm --apply`).
+  **Taken away by the code that takes the photo away, not by a schedule**: `photos.delete` (its id read before the row goes),
+  `faces.remove_folder` (the ids under the folder, likewise) and the indexer's `PhotoIndex.remove_paths` (`sweep`: every entry of
+  a photo the library does not hold, or holds at another path); `index --reset` clears the library's whole cache. A restore from a
+  snapshot, or a delete outside the services, leaves entries nothing will serve, which `warm --apply` sweeps.
+  **A damaged photo** -- a `damaged_files` record whose stamp still describes the file, and not a possibly incomplete copy,
+  which decodes -- is answered a placeholder (`X-TagPup-Thumb: damaged`) **without its file being decoded**; one that does not
+  decode though nothing says so is answered the same and remembered in the process while its stamp holds (a damaged file is
+  not decoded for each of the thousand cards that ask), and **nothing is written to the library for it**: recording it is the
+  indexer's finding, and a false one refuses writes to a good photo. Nothing is cached for either. **A cache that cannot be
+  written** (the folder missing and not makeable, read-only, full) costs only the cache: the thumbnail is made and answered
+  with no ETag, and the first time is logged. **A file that cannot be read** (a share away: a bounded wait of one second,
+  as the damaged lists have) is `Unavailable`, a 503 with `Retry-After` and a sentence, and nothing is decided about the photo.
+  `page_copy` and `/api/photo-file?size=` are unchanged: the folder view still makes its thumbnails per request until 9b.
+- **`tagpup.services.library_view`** over **`tagpup.store.library_view`** (the SQL; `tagpup.services` holds none). A source is
+  `all`, `folder` (by its PATH, never an id; `recursive` takes its subfolders), `keyword` (the tag as the tree spells it,
+  read as a keyword is: `|` and `\` as `/`, trimmed; and everything under it), `person` (the leaf, compared without case),
+  `year` (`photos.year`) or `month` (`YYYY-MM`, a range of `photos.taken`). `view` returns `{source, total, ids, next, limit,
+  cards}`: **ordered by Date Taken then id, photos with no date after them by id, by a KEYSET** -- the token is the (phase,
+  taken, id) of the last photo, opaque, checked when read (too long, not base64, not the shape, a part out of range: `400`),
+  never an offset, so a photo added, taken away or re-dated between two pages neither repeats nor skips another beyond what
+  that change itself explains (each is a test). `limit` is 200, at most 500, `400` below 1. A **card** is `{id, name, path
+  (native), taken, damaged, damage, thumb}`, one read in batches of 500 of the columns it needs -- no `raw_metadata`, no
+  BLOB, no query for each photo, no look at the disk (a test counts the statements for 3 and for 62 photos: equal) -- and
+  `thumb` is `/api/photo-thumb?id=<id>&v=<the row's mtime>`. `damaged` is the record describing the row's stamp. A keyword's
+  photos are `p.id IN (photo_tags of the nodes under it)`, so a photo holding two tags under the keyword is one row (the
+  `EXISTS` form scans the date index and is 2.5 times slower; a `DISTINCT` join 46% slower). A source with nothing is an empty page,
+  not an error. The navigator, `navigator(library, section)`: `folders` (`derived.folder_tree`: direct and recursive counts,
+  by native path with `parent` a path), `keywords` (every node with the photos at or under it, each once per node: one pass of
+  `photo_tags` by photo, `group_concat`ed and rolled up the parent ids in Python, **equal node for node to `count_under_tag`**,
+  a test), `people` (`photo_people` by name, names differing only in case one entry, a photo counted once), `dates`
+  (`{years: [{year, count, months: [{month, count}], other}], undated}`: by `photos.year` and, within it, `taken`; `other` the
+  photos of the year whose `taken` is no month of it -- photo_index has 5 written with dashes, and 1,180 with no date, whose
+  years come from their names). Every function reads through a read-only connection and migrates nothing.
+- **Routes** (`tagpup.web.tagpup_routes`, loopback only -- `403` from any other address -- through the Roots gate and ingress,
+  specified in SPEC_TAGPUP_GUI): `GET /api/library/navigator?section=`, `GET /api/library/view?kind=&value=&folder=&recursive=&after=&limit=`
+  (a folder is named by `folder`, which the ingress resolves through the first place of its root, as any path of a request; the
+  other kinds by `value`) and `GET /api/photo-thumb?id=&v=`. The thumbnail's URL carries the stamp: when `v` is the file's modified
+  time the answer is `private, max-age=31536000, immutable`, with an `ETag` (the entry's name); otherwise `no-cache`, revalidated by
+  that ETag (`If-None-Match` is a `304` with no body); a placeholder or a last-known picture is `no-cache` with no ETag. An id with no
+  photo is `404` with a sentence; an id SQLite cannot hold is the same (it was a 500 until a test found it). A library not at
+  migrations 19 and 20 -- the app brings a library up to date as it opens it, so only one that could not be -- is `409` and a
+  sentence naming it and what to do; an unplaced root is the gate's `409` with `X-TagPup-Roots-Problem` before a route runs, and
+  `paths.RootsError` from a service called any other way.
+- **Migration 20** (additive, indexes only, touches no table, blocks no undo of an older change): `idx_photos_taken (taken, id)` and
+  `idx_photos_year (year, taken, id)`. Without them "all photos" is `SCAN p` and a sort of 68,466 rows (checked read-only on
+  photo_index's plan), and a month and a year are as bad. It is written to a library when the app opens it next, as every migration
+  is -- **photo_index is not migrated by this branch**; `tests/test_taken_indexes.py` holds that nothing but the two indexes changes.
+
+**Measured** on a SYNTHETIC library of photo_index's scale, made by the production writers (`record_indexed` with a shared
+`derived.Batch`, `taxonomy.add_path`; 68,466 photos in 2,699 folders -- one of 20,000 --, 143,851 `photo_tags` rows on 700 nodes, 95,721
+`photo_people` rows for 400 people, 810 undated; photo_index itself has 151,425 keyword uses on 876 keywords, 895 nodes, 80,053 people
+rows for 413 names, 1,180 undated, counted 2026-10-02; the synthetic one is a little lighter). Best of several, warm, a library opened
+for each call (about 12 ms of each is opening the library and SQLite reading its schema):
+
+| A page of 500 with its cards | first page | page 100 of 137 / the last |
+|---|---|---|
+| all | 12 ms | 14 ms |
+| a folder of 20,000, alone / with subfolders | 23 / 26 ms | 24 / 29 ms |
+| a folder holding no photo | 14 ms | |
+| keyword, 3,970 photos / 54,634 photos | 26 / 125 ms | 29 / 100 ms |
+| a person (232) / a year (2,196) / a month | 19 / 9 / 6 ms | |
+
+The statements alone are 0.2 to 9 ms except the 54,634-photo keyword (73 ms: the sort of its ids). The navigator: folders 19 ms (2,699),
+keywords 138 to 179 ms (700 nodes, 68,466 photos: the pass in Python is most of it), people 12 ms, dates 33 ms. Plans (the exact statements,
+`tests/test_library_view_plans.py` asserts them for each source on a library made the same way): all, a year, a month `SEARCH ... COVERING INDEX
+idx_photos_taken` / `idx_photos_year` with no sort; a folder with subfolders `SEARCH p USING INDEX idx_photos_path_nocase (path>? AND path<?)`
+and a temp b-tree for the order (checked on photo_index itself, read-only: the same lines); a folder alone `SEARCH folders ... (path=?)`, `SEARCH pf USING
+COVERING INDEX idx_photo_folder_folder (folder_id=?)`, `SEARCH p USING INTEGER PRIMARY KEY`; a keyword `SEARCH tag_taxonomy` twice (`tag=?`, `tag>? AND tag<?`),
+`SEARCH photo_tags USING COVERING INDEX idx_photo_tags_tag (tag_id=?)`, `SEARCH p USING INTEGER PRIMARY KEY`; a person `SEARCH photo_people USING INDEX
+idx_photo_people_name (name=?)`; the cards `SEARCH photos USING INTEGER PRIMARY KEY`. The only scans are of a covering index: the totals of all
+(`SCAN photos USING COVERING INDEX`, 2.4 ms), the person's spellings (400 names), and the navigator's passes. **Thumbnails**, 500 photos of 3000 x 2000 and 2.9 MB
+(files on a local disk): first ask 47 ms each (23.7 s for 500; the per-request path the folder view still uses is 36 ms each), a cached ask 4.4 to
+5.1 ms each (2.5 s for 500, nearly all of it SQLite opening a connection to find the row and the path), a revalidation `304` 5.2 ms, `warm --apply`
+four at a time 14 ms each (7.1 s), a dry run when everything is cached 0.09 ms a photo. My test pictures are noise and made 6.3 KB entries; the owner's
+estimate is 20 to 40 KB.
+
+**How it fails**, each a test: interrupted part-way (a write that fails after its temporary file leaves no entry and no temp, an old temp is swept);
+two at once (two requests make one entry; six writers leave one whole file); a read that fails (a file unreachable is a 503, a damaged one a
+placeholder, a cache that cannot be written still answers, a library behind or an unplaced root is a sentence); a library moved to another root place; two
+libraries holding one folder or the same ids; keyset pages while photos are added, deleted, re-dated, and while another thread writes; dates in the
+future, before 1970, with a zone, with no day; ties; `%`, `_` and a quote in a folder, a keyword and a name; a forged, huge or corrupt token; a limit of
+0, below 0, not a number, or huge.
+
+**What 9b must know.** A card's `thumb` is for `api.image()`, which puts the library in front. `next` is the only way on (opaque; a `null` is the end) and
+`total` comes with every page; ask 200 or fewer for a scrolling grid -- a page of 500 cards is about 150 KB of JSON. A photo is named by `id` in
+the view and by `path` (native) in every write route today; the card carries both; identity by id for the writes is not built. A rotate changes the file's
+stamp: refetch the card (its `thumb` has a new `v`) or the picture is the browser's old one for a year. A folder is named in the navigator by its `path`,
+which is what `view` takes, never an id; a keyword by its `tag`, a person by `name`, a year by `year` and a month by `month` ("2024-06"), as `dates` gives
+them. A month and a year do not always sum: `other` says by how many. `damaged` marks a photo to show as such; its thumbnail is the placeholder and says so
+(`X-TagPup-Thumb`). A photo whose file is gone is answered the last picture kept or a `404` sentence: show it, not editable (9c). Counts are read at each
+call, so the navigator is asked again after an edit. **Not built**: thumbnails made when a photo is indexed or changes, a bound on the cache, a
+person by id.
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1, the rest design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag
@@ -1127,5 +1239,5 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 7.6. Settings in the library, and a gear on each page | done, 2026-09-25 |
 | 8. Sync | done, 2026-09-26 (8a jobs, 8b snapshots, 8c sync with library roots, 8d always on with self-update, the folder watcher and idle memory); installing it at login waits for the owner |
 | 8.5. Activity | done, 2026-09-26 (the page, runs in the logs, the indexer's own log, bounded reads) |
-| 9. Library views | planned for October 2026 *(owner, 2026-09-25)*; design questions open. 9a-1, the derived tables (`photo_tags`, `folders`, `photo_folder`, `photo_meta`; migration 19), built on a branch 2026-10-02, not merged |
+| 9. Library views | planned for October 2026 *(owner, 2026-09-25)*; design questions open. 9a-1, the derived tables (`photo_tags`, `folders`, `photo_folder`, `photo_meta`; migration 19), and 9a-2, the thumbnail cache, `library_view` and their routes (migration 20), built on branches 2026-10-02, not merged |
 | 10. Family albums from many sources | idea *(owner, 2026-09-25)*, after phase 9; design questions open |
