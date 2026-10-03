@@ -25,11 +25,10 @@ while a long-lived connection sits idle is found. Inside a transaction the Roots
 the transaction began with. `pinned(db_path)` holds one Roots for every connection of the
 library in this process for a whole run: a map edited meanwhile changes nothing until the run
 ends, and a change of the library's roots by another process stops it (RootsChanged), where
-converting under the old Roots would write a native row into a converted library. It is built
-and tested, and no run in `services` calls it yet: an index run, a sync pass and a file change
-hold the Roots of their one connection, which is what keeps each operation consistent, and
-wrapping a run that opens a connection per batch is stage 3's (docs/ARCHITECTURE.md, "Roots
-and machines"). A write on a connection of its own that spans the change is
+converting under the old Roots would write a native row into a converted library. An index run,
+a sync pass and a change of photo files are pinned (tagpup.services.roots.pinned, which the
+CLI's `index`, `services.sync.sync` and `file_changes` call), since each opens a connection per
+batch (docs/ARCHITECTURE.md, "Roots and machines"). A write on a connection of its own that spans the change is
 refused at its commit and run again (db.write_with_connection; `unchanged`), and one that
 writes on a connection its caller commits begins its transaction first (`begin_write`).
 

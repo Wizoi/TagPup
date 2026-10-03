@@ -478,7 +478,7 @@ logs (by source, filtered, raw, downloaded). Done:
   `data/supervisor.json` without its token. Its reads do not count as somebody using the
   app, so an open page does not hold an update back from its quiet moment.
 
-### Roots and machines (design *(2026-10-02)*; root-relative stored path approved by the owner, 2026-10-02; stages 1 and 2 built, 3 not)
+### Roots and machines (design *(2026-10-02)*; root-relative stored path approved by the owner, 2026-10-02; stages 1 to 4 built)
 The owner's model *(2026-10-02)*: the library is rooted at the share `\\idziserver\Pictures`
 (`D:\ServerFolders\Pictures` on the server). Everything under it is the family's catalog and
 part of the backups; what TagPup **indexes** is a subset of folders under it (the library's
@@ -564,9 +564,9 @@ the design assumes a GPU and more memory later and does not wait for them.
     length by holding one connection. A write prepared before another process adopted the library is refused
     at its commit and run again (`write_with_connection` retries it, `roots.unchanged`); a write on a connection the
     caller commits (the index's `record_indexed`, `remove`) begins its transaction first (`roots.begin_write`), so the
-    roots are the library's at the moment the write lock is taken. The operations that should pin -- an index run, a sync pass, a file
-    change -- are the callers', in `services`; unpinned they hold the Roots of their connection, which is what keeps
-    a single operation consistent, and what is stage 3's to wire for a run that opens a connection per batch.
+    roots are the library's at the moment the write lock is taken. The operations that pin -- an index run, a sync pass, a file
+    change -- are pinned in `services` (stage 3, below); one that is not holds the Roots of its connection, which keeps
+    a single operation consistent.
   - **The boundary.** Every read of a path column returns the native path and every write stores `to_row` (idempotent:
     a path already in row form is written as it is). `store.roots.sql_equals` / `sql_under` / `sql_in` convert their
     argument by the connection's Roots and answer the same ranges on the same NOCASE indexes (checked with
@@ -630,10 +630,77 @@ the design assumes a GPU and more memory later and does not wait for them.
   - **What the owner sees**: nothing, until they run it; then `roots` lists each root with where this machine keeps it,
     and History lists `roots adopt: pictures` with its counts. On photo_index's shape (68,466 photos, 225,000 faces,
     made here) the dry run takes 1.5 s and `--apply` 5.9 s with the backup, an undo 6.6 s.
-  - **Not built, for stage 3**: TagTuner's Verify and Change location, the machine map's writer for a changed place
-    (`config.add_machine_root` refuses a different place for a root it has: the previous place is kept beside the new
-    one by the owner's edit), pinning a run in `services` (above), the server's answer to `services.roots.problem` at a library's open, and `roots remove` (an undo is the way back).
-- **Changing where a root lives, in TagTuner** *(owner, 2026-10-02)*: for now the libraries stay on
+  - **Stages 3 and 4, built** *(2026-10-02: TagTuner's Roots, the server's answer for an unplaced root, pinned runs, the sandbox's own map)*:
+    - **Verify** (`tagpup.services.roots_verify`, read-only: no row, no file, never the map). For a root and a CANDIDATE
+      location -- a hypothetical map, `paths.Roots` built from the library's roots with the candidate in the root's
+      place -- it reads the root's rows as the library holds them (`store.root_rows.stamps`: path, mtime, size; never a
+      BLOB; 0.08 s on photo_index's 68,466 rows) and looks at the disk: per row **matches** (size and modified time as
+      recorded, `store.photos.describes`), **differs** (there, and changed since indexed, or a copy with other times:
+      sync's to settle, never "missing"), **missing**, **unreadable**; and, in a full run, the photos at the place no
+      row has, the rows under no root grouped by folder (`paths.outside_roots`), and the rows kept native where the
+      place would be the root's (they would be missed by every lookup and indexed again). **A place that cannot be
+      reached is not "all missing"**: a drive not connected, a share away, a folder not there, a share that stops
+      answering half-way are each said (`state`: `no_drive`, `away`, `no_folder`, `unreadable`) and the rows not looked
+      at are not counted. Every look at the disk is a thread waited for 15 s at most; a share that did not answer is
+      "away" for 30 s by its drive or server and share, and no second thread is started for it (`damaged_photos` has
+      its own away-cache, which cannot say missing from away, so Verify keeps one). A **sample** (2,000 rows, at least one
+      from every folder -- 2,674 on photo_index, so about 2,700 -- the same rows for the same library, visited in a
+      spread order so one cut short has seen folders from everywhere) lists each folder once, answered in the request
+      within 25 s; **all** walks the place, listing each folder once, and is a job (`tagpup.jobs.verifying`): its
+      progress and cancel (between folders) are this process's, its claim and its result are the library's `job_runs`
+      (`verify root <name>`), which the Activity page lists, so a second Verify of the root -- another tab, another
+      process -- is told one is under way. Measured on a synthetic library of 68,466 rows in 2,674 folders (real small
+      files, a warm local disk): the sample 1.0 s, all 1.0 s; a share's cost is the 2,674 listings, which the
+      deadlines bound.
+    - **Moving a root** (`tagpup.config.set_location` / `change_back`, `tagpup.services.roots_location`): the map's edit
+      alone, never a row. `set_location` puts the new place first and keeps the old after it (so Change back is the
+      reverse: the first two swap), written whole to a temp file and `os.replace`d under the one `_edit_lock`; it
+      refuses a place that is not absolute, has the long-path or device prefix, does not exist, is another root's, or
+      is nested with the root's own other places, and, given `expected` (the place the page saw), a map that moved
+      since -- another tab, a hand edit. The service asks first: a **dry run** shows Verify's sample of the new place;
+      a **poor result** (more than 5% of the rows looked at missing, an unreachable place, rows kept native where it
+      would be) is refused unless the request says `override` -- but a drive or folder that is not there is refused
+      whatever is said, and so is a place that would put the root inside or over another root of the library (the same
+      photos reachable under two roots). It is refused **while anything of the library is running or queued** -- an
+      index run, Suggest, a sync, a verify (the web layer says what this process knows, the service reads the library's
+      own `job_runs`, any process's, ignoring a run whose process has ended) -- and names which. Two requests at once:
+      the claim of the change in `job_runs` lets one in and tells the other; a second Confirm, or a tab that came after
+      and found the root already at that place, changes nothing and says so. Each change is a run in `job_runs`
+      ("moved root pictures to X (was Y)", which the Activity page lists: a run may say what it did in `changed.what`).
+      A running server needs no restart: a connection that sits idle finds the new map within a second
+      (`store.roots.RECHECK_SECONDS`), the generations' salt rebuilds the caches of this machine's paths, and the web
+      layer lets go of its folder scans (`tests/test_roots_routes.py`: the next `/api/photos` after a change names the
+      new place, and no row changed -- a full dump compared).
+    - **TagTuner's Roots** (the gear's "Roots...", `web/tuner/roots.js`; `GET /api/roots`, `POST /api/roots/verify`,
+      `/verify-cancel`, `/change-location`, `/change-back` in `tagpup.web.tuner_routes`, loopback only, specified in
+      SPEC_TAGTUNER): one small dialog -- a row per root with where it is kept, "Tags and renames are written to files at
+      <place>", the earlier place (a separate copy: nothing written now goes there), the last check as a sentence,
+      Verify, Verify all (progress, Cancel), Change location (a place typed or picked, Check this place, then Move it
+      here -- once; a poor result shows why and needs "I mean it"), Change back. A library with no roots says "This
+      library has not adopted a root yet; nothing to change here." and shows the CLI command. A root this machine does
+      not place is listed so, and Change location is how it is placed.
+    - **The server's answer for an unplaced root** (`tagpup.web.roots_gate`, the MCP's `find_library`): a request that
+      needs a photo's path on a library whose root this machine does not place, or whose map cannot be read, is answered
+      409 with the sentence that names `machine_roots.json` and the line to add (`services.roots.problem`, kept for a
+      second per library) and `X-TagPup-Roots-Problem`; both pages show it as a banner (`web/common/roots-banner.js`,
+      fed by `api.js`). The picker, rules, version, Activity, history and Roots are let through, so the page opens
+      and the dialog can place the root. The MCP's tools say the same, except `history`, `undo`, `prune_journal`,
+      `sync_state` and `query_plan`, which read no photo's path.
+    - **Pinned runs** (`services.roots.pinned`): an index run (the CLI's `index`, in its own process, holding the map
+      it started with), a sync pass (`services.sync.sync`) and a change of photo files (`file_changes.write_fields`,
+      `rename`) convert every path by one Roots however the map is edited meanwhile, and stop with a sentence when
+      another process changes the library's roots (`RootsChanged`: the indexer exits 75, which the server's queue turns
+      into the sentence; a sync or a write answers a refused Result; a rename raises). A root this machine does not
+      place refuses the run in words (`Unplaced`).
+    - **The sandboxes** (stage 4): `services.roots.place_in_sandbox` -- called by `measure_identify_faces.py` and
+      `measure_suggest_folder.py` after they copy a library -- writes the sandbox's OWN `machine_roots.json` (in its
+      own `TAGPUP_HOME`) placing each root of the copy in an empty folder of the sandbox, and fails loudly for a root it
+      did not place, a place outside the sandbox, or a map that is not the sandbox's: a converted copy would otherwise
+      point, through the machine's map, at the real photos. `generate_screenshots.py` finds its photos from its own
+      checkout.
+    - **Not built**: `roots remove` (an undo is the way back); Verify from the CLI or the MCP; moving a root while a
+      run is under way (refused, by design); a library behind more than one machine map (one map per `TAGPUP_HOME`).
+- **Changing where a root lives, in TagTuner** *(owner, 2026-10-02; built, see "Stages 3 and 4")*: for now the libraries stay on
   `D:\Training`, and once the core features are in and trusted the same libraries are pointed at
   the official share, losing nothing. TagTuner's gear (the server-side component's page) shows
   each root with where this machine keeps it, and offers:
