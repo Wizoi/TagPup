@@ -818,6 +818,17 @@ def _stamp_of(sent):
     return (float(sent["mtime"]), int(sent["size"])), None
 
 
+def _base_of(sent):
+    """(the `base` a write names -- {"tags": [str], "title": str}, or None for a null one --, why it cannot be read)."""
+    if sent is None:
+        return None, None
+    ok = (isinstance(sent, dict) and isinstance(sent.get("tags", []), list)
+          and all(isinstance(tag, str) for tag in sent.get("tags", [])) and isinstance(sent.get("title", ""), str))
+    if not ok:
+        return None, 'base must be {"tags": [text], "title": text}.'
+    return {"tags": sent.get("tags", []), "title": sent.get("title", "")}, None
+
+
 def _stamp_reply(path):
     """{"mtime", "size"} of the file at `path` now, for the page's record: the stamp its next write names."""
     stamp = photo_actions.file_stamp(path)
@@ -838,9 +849,15 @@ def photo_save_metadata():
     stamp, why = _stamp_of(body.get("stamp"))
     if why:
         return responses.error(400, why)
+    # A page names what it read (`base`, null for a photo it could not read); a call with neither is no check.
+    base = tagging_actions.NO_BASE
+    if "base" in body or stamp is not None:
+        base, why = _base_of(body.get("base"))
+        if why:
+            return responses.error(400, why)
     try:
         result = tagging_actions.save_photo(library, photo_path, title, tags, date_taken,
-                                            state.exiftool(library), state.rename_format(library), stamp)
+                                            state.exiftool(library), state.rename_format(library), stamp, base)
         if result.refused:
             return responses.refused(result)
         new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
@@ -865,7 +882,8 @@ def photo_save_metadata():
     except Exception as e:
         logger.error("Error saving metadata for %s: %s", photo_path, e)
         return responses.error(500, str(e))
-    reply = {"success": True, "new_path": new_path, **_where(result), **_stamp_reply(new_path)}
+    reply = {"success": True, "new_path": new_path, **_where(result), **_stamp_reply(new_path),
+             "base": result.details.get("base")}
     if result.details["index_warning"]:
         reply["index_warning"] = result.details["index_warning"]
     return jsonify(reply)
@@ -940,8 +958,12 @@ def _records_written(library, result):
     say so either way."""
     cache = folders.of(library)
     for path, (tags, flat, hierarchical) in result.details["written"].items():
+        stamp = photo_actions.file_stamp(path)
         for _held, record in cache.entries_for(path):
             photo_actions.record_written(library, record, path, tags, flat, hierarchical)
+            if stamp:
+                # The cached scan carries the file's stamp now, or the next save from it is refused.
+                record["mtime"], record["size"] = stamp
 
 
 # ---- Autocomplete -----------------------------------------------------------------

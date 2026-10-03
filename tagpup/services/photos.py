@@ -32,7 +32,7 @@ def page_record(path, meta, mtime=0.0, size=0):
     raw_meta = meta.get("raw_metadata", {})
     captions = meta.get("captions", [])
     year = meta["year"] if "year" in meta else dates.photo_year(raw_meta, path)
-    return {
+    record = {
         "path": path,
         "filename": os.path.basename(path),
         "tags": meta.get("tags", []),
@@ -44,6 +44,11 @@ def page_record(path, meta, mtime=0.0, size=0):
         "taken": dates.date_taken(raw_meta),
         "raw_metadata": raw_meta,
     }
+    if meta.get("read_error"):
+        # ExifTool could not read it: it shows as holding nothing, which a save must not take for what the file holds.
+        record["unreadable"] = True
+        record["read_error"] = meta["read_error"]
+    return record
 
 
 def file_stamp(path):

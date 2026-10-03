@@ -109,7 +109,8 @@ class Fresh(unittest.TestCase):
 
     def save(self, record, **changes):
         body = {"path": record["path"], "title": record.get("title", ""), "tags": record["tags"],
-                "stamp": {"mtime": record["mtime"], "size": record["size"]}}
+                "stamp": {"mtime": record["mtime"], "size": record["size"]},
+                "base": {"tags": record["tags"], "title": record.get("title", "")}}
         body.update(changes)
         return self.post("/photo/save-metadata", body)
 
@@ -209,7 +210,8 @@ class AWriteNamesTheStampItWasBuiltFrom(Fresh):
         self.assertEqual(200, first.status_code, first.data)
         stamp = {"mtime": first.get_json()["mtime"], "size": first.get_json()["size"]}
         self.assertEqual(stamp_of(path)["size"], stamp["size"])
-        again = self.save(record, tags=["Trips/Coast", "Activity/Sailing", "Trips/Lakes"], stamp=stamp)
+        again = self.save(record, tags=["Trips/Coast", "Activity/Sailing", "Trips/Lakes"], stamp=stamp,
+                          base=first.get_json()["base"])
         self.assertEqual(200, again.status_code, again.data)
         stale = self.save(record, tags=["Trips/Coast"])                # the old stamp
         self.assertEqual(409, stale.status_code)
@@ -235,11 +237,13 @@ class AWriteNamesTheStampItWasBuiltFrom(Fresh):
         path, _none = self.make("b.jpg", 14, ["Trips/Coast"], row=None, folder=self.elsewhere)
         stamp = stamp_of(path)
         write_into(path, Subject=["Trips/Coast", "Trips/Lakes"])
-        reply = self.post("/photo/save-metadata", {"path": path, "title": "", "tags": ["Activity/Sailing"], "stamp": stamp})
+        held = {"tags": ["Trips/Coast"], "title": ""}
+        reply = self.post("/photo/save-metadata", {"path": path, "title": "", "tags": ["Activity/Sailing"], "stamp": stamp,
+                                                  "base": held})
         self.assertEqual(409, reply.status_code)
         self.assertEqual(["Trips/Coast", "Trips/Lakes"], sorted(tags_in(path)))
         fresh = self.post("/photo/save-metadata", {"path": path, "title": "", "tags": ["Activity/Sailing"],
-                                                  "stamp": stamp_of(path)})
+                                                  "stamp": stamp_of(path), "base": {"tags": ["Trips/Coast", "Trips/Lakes"], "title": ""}})
         self.assertEqual(200, fresh.status_code, fresh.data)
 
     def test_a_bulk_write_reports_each_written_photos_new_stamp(self):
@@ -254,6 +258,157 @@ class AWriteNamesTheStampItWasBuiltFrom(Fresh):
         reply = self.post("/photo/rotate", {"path": path, "direction": "left"})
         self.assertEqual(200, reply.status_code, reply.data)
         self.assertEqual(stamp_of(path)["size"], reply.get_json()["size"])
+
+
+class TheFileIsComparedWithWhatThePageRead(Fresh):
+    """The stamp is the cheap first check; under the lock, after the read of the file, its tags (a set) and caption
+    are compared with `base`, what the page read (findings #551, #552)."""
+
+    def hold_stamp(self, path):
+        """Put the file's modified time back to what it was, as a copy that keeps its times does."""
+        return os.stat(path).st_mtime_ns
+
+    def test_a_same_length_tag_change_with_the_time_restored_is_refused_and_the_file_is_unchanged(self):
+        path, photo_id = self.make("a.jpg", 20, ["Trips/Coast"])
+        record = self.record(photo_id)
+        stat = os.stat(path)
+        write_into(path, Subject=["Trips/Cliff"])                       # "Trips/Coast" -> a name of the same length
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        if os.stat(path).st_size != stat.st_size:
+            self.skipTest("the rewrite did not keep the size on this ExifTool: the stamp catches it")
+        before = open(path, "rb").read()
+        reply = self.save(record, tags=["Trips/Coast", "Activity/Sailing"])
+        self.assertEqual(409, reply.status_code, reply.data)
+        self.assertTrue(reply.get_json()["changed_on_disk"])
+        self.assertEqual(before, open(path, "rb").read())
+
+    def test_a_copy_that_keeps_its_times_with_other_keywords_is_refused(self):
+        path, photo_id = self.make("a.jpg", 21, ["Trips/Coast"])
+        record = self.record(photo_id)
+        other = path + ".other"
+        damaged_photos.whole_jpeg(other, seed=21)
+        write_into(other, Subject=["Trips/Lakes"])
+        # the copy has the original's size and time: pad it to the same length and put the time back
+        stat = os.stat(path)
+        with open(other, "rb") as handle:
+            body = handle.read()
+        original = os.path.getsize(path)
+        if len(body) > original:
+            self.skipTest("cannot pad a copy to the original's length")
+        with open(path, "wb") as handle:
+            handle.write(body + b"\0" * (original - len(body)))
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        reply = self.save(record, tags=["Trips/Coast", "Activity/Sailing"])
+        self.assertEqual(409, reply.status_code, reply.data)
+        self.assertEqual(["Trips/Lakes"], tags_in(path))
+
+    def test_a_photo_that_could_not_be_read_when_opened_is_flagged_and_a_save_from_it_is_refused(self):
+        path, photo_id = self.make("a.jpg", 22, [], row="unread")
+        with open(path, "wb") as handle:                                # empty: ExifTool cannot read it (File is empty)
+            handle.write(b"")
+        record = self.record(photo_id)
+        self.assertTrue(record.get("unreadable"), record)
+        good = path + ".good"
+        damaged_photos.whole_jpeg(good, seed=22)
+        write_into(good, Subject=["Trips/Coast", "Trips/Lakes"])
+        os.replace(good, path)                                          # replaced by a good file between open and save
+        reply = self.post("/photo/save-metadata", {"path": path, "title": "", "tags": ["Activity/Sailing"],
+                                                  "stamp": {"mtime": record["mtime"], "size": record["size"]}, "base": None})
+        self.assertEqual(409, reply.status_code, reply.data)
+        self.assertRegex(reply.get_json()["error"], "changed on disk|could not be read just now")
+        # the same save with the stamp of the good file still cannot be made from a base that was not read
+        again = self.post("/photo/save-metadata", {"path": path, "title": "", "tags": ["Activity/Sailing"],
+                                                   "stamp": stamp_of(path), "base": None})
+        self.assertEqual(409, again.status_code)
+        self.assertIn("could not be read just now", again.get_json()["error"])
+        self.assertEqual(["Trips/Coast", "Trips/Lakes"], sorted(tags_in(path)), "the keywords are kept")
+
+    def test_a_foreign_change_to_a_field_the_save_does_not_touch_is_not_refused(self):
+        path, photo_id = self.make("a.jpg", 23, ["Trips/Coast"])
+        record = self.record(photo_id)
+        write_into(path, Rating=4)                                      # another program rated it; tags and caption are as read
+        reply = self.save(record, tags=["Trips/Coast", "Activity/Sailing"], stamp=stamp_of(path))
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual(["Activity/Sailing", "Trips/Coast"], sorted(tags_in(path)))
+
+    def test_a_foreign_tag_is_refused_with_the_stamp_restored_to_what_the_page_has(self):
+        path, photo_id = self.make("a.jpg", 24, ["Trips/Coast"])
+        record = self.record(photo_id)
+        write_into(path, Subject=["Trips/Coast", "Trips/Lakes"])
+        reply = self.save(record, tags=["Trips/Coast"], stamp=stamp_of(path))      # even a stamp that matches
+        self.assertEqual(409, reply.status_code, reply.data)
+        self.assertEqual(["Trips/Coast", "Trips/Lakes"], sorted(tags_in(path)))
+
+    def test_a_foreign_caption_is_refused_too(self):
+        path, photo_id = self.make("a.jpg", 25, ["Trips/Coast"], caption="As read")
+        record = self.record(photo_id)
+        write_into(path, Description="Changed elsewhere")
+        reply = self.save(record, stamp=stamp_of(path))
+        self.assertEqual(409, reply.status_code, reply.data)
+        self.assertEqual("Changed elsewhere", caption_in(path))
+
+    def test_the_reply_gives_the_base_the_next_save_names(self):
+        path, photo_id = self.make("a.jpg", 26, ["Trips/Coast"], caption="One")
+        record = self.record(photo_id)
+        first = self.save(record, tags=["Trips/Coast", "Activity/Sailing"], title="Two", stamp=stamp_of(path))
+        self.assertEqual(200, first.status_code, first.data)
+        base = first.get_json()["base"]
+        self.assertEqual(["Activity/Sailing", "Trips/Coast"], sorted(base["tags"]))
+        self.assertEqual("Two", base["title"])
+        new_path = first.get_json()["new_path"]
+        stamp = {"mtime": first.get_json()["mtime"], "size": first.get_json()["size"]}
+        again = self.post("/photo/save-metadata", {"path": new_path, "title": "Two", "tags": base["tags"] + ["Trips/Lakes"],
+                                                  "stamp": stamp, "base": base})
+        self.assertEqual(200, again.status_code, again.data)
+
+    def test_the_folder_views_stale_cache_is_refused_by_the_base_alone(self):
+        path, _id = self.make("a.jpg", 27, ["Trips/Coast"])
+        scan = self.api("/folder/scan", query_string={"path": self.folder}).get_json()
+        record = [each for each in scan if each["path"] == path][0]
+        write_into(path, Subject=["Trips/Coast", "Trips/Lakes"])
+        reply = self.save(record, tags=["Trips/Coast"], stamp=stamp_of(path))
+        self.assertEqual(409, reply.status_code, reply.data)
+
+    def test_a_call_with_neither_stamp_nor_base_is_as_it_always_was(self):
+        path, _id = self.make("a.jpg", 28, ["Trips/Coast"])
+        write_into(path, Subject=["Trips/Coast", "Trips/Lakes"])
+        reply = self.post("/photo/save-metadata", {"path": path, "title": "", "tags": ["Activity/Sailing"]})
+        self.assertEqual(200, reply.status_code, reply.data)
+
+    def test_a_malformed_base_is_a_400(self):
+        path, _id = self.make("a.jpg", 29, ["Trips/Coast"])
+        for base in ("x", {"tags": "Trips/Coast"}, {"tags": [1]}, {"tags": [], "title": 3}):
+            reply = self.post("/photo/save-metadata", {"path": path, "title": "", "tags": [], "base": base})
+            self.assertEqual(400, reply.status_code, base)
+
+    def test_bulk_tags_never_sends_a_whole_list_and_is_unchanged(self):
+        path, _id = self.make("a.jpg", 30, ["Trips/Coast"])
+        write_into(path, Subject=["Trips/Coast", "Trips/Lakes"])
+        reply = self.post("/photos/bulk-tags", {"paths": [path], "add_tags": ["Activity/Sailing"], "remove_tags": []})
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual(["Activity/Sailing", "Trips/Coast", "Trips/Lakes"], sorted(tags_in(path)))
+
+    def test_the_extra_request_is_small(self):
+        base = {"tags": ["Trips/Coast/Harbour", "People/Wren Halloway", "Activity/Sailing"], "title": "Harbour at dawn"}
+        import json
+        self.assertLess(len(json.dumps({"base": base})), 200, "a photo's base is about a hundred bytes")
+
+
+class TheServersCacheCarriesTheFilesStamp(Fresh):
+    def test_after_a_bulk_write_the_cached_scan_has_the_new_stamp_and_a_save_from_it_passes(self):
+        a, _ida = self.make("a.jpg", 40, ["Trips/Coast"])
+        b, _idb = self.make("b.jpg", 41, ["Activity/Sailing"])
+        scan = self.api("/folder/scan", query_string={"path": self.folder}).get_json()       # the folder is cached
+        reply = self.post("/photos/bulk-tags", {"paths": [a], "add_tags": ["Trips/Lakes"], "remove_tags": []})
+        self.assertEqual(200, reply.status_code, reply.data)
+        again = self.api("/folder/scan", query_string={"path": self.folder}).get_json()      # served from the cache
+        record = [each for each in again if each["path"] == a][0]
+        self.assertEqual(stamp_of(a)["size"], record["size"])
+        self.assertAlmostEqual(stamp_of(a)["mtime"], record["mtime"], places=3)
+        saved = self.save(record, tags=record["tags"] + ["Activity/Sailing"])
+        self.assertEqual(200, saved.status_code, saved.data)
+        self.assertEqual(2, len(scan))
+        self.assertTrue(os.path.exists(b))
 
 
 class TheIdIsReadStrictly(Fresh):

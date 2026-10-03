@@ -3,7 +3,7 @@ import logging
 import os
 
 from tagpup.core import fields, paths, suggesting, validation, vocabulary
-from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, Result
+from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, UNREADABLE_BASE_SENTENCE, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, metadata, names
@@ -15,9 +15,27 @@ from tagpup.store import photos, taxonomy
 logger = logging.getLogger(__name__)
 
 
+#: `base` not given: no check of the file's tags and caption (the CLI, the MCP). None is a page's record of a photo
+#: ExifTool could not read; a dict is what the page read.
+NO_BASE = object()
+
+
+def _held_title(now):
+    """The caption the file holds, as the page reads it (the first of its captions, trimmed)."""
+    found = vocabulary.extract_captions({field: now.get(field) for field in vocabulary.CAPTION_FIELDS})
+    return vocabulary.trimmed(found[0]) if found else ""
+
+
+def _differs_from_base(now, base):
+    """Does the file hold other tags or another caption than the page read (`base`, {"tags", "title"})? The tags
+    as a SET of keyword paths, the caption trimmed: the two things a save writes over."""
+    return (set(_tags_held(now)) != set(base.get("tags") or [])
+            or _held_title(now) != vocabulary.trimmed(base.get("title") or ""))
+
+
 @file_changes.exclusively()
 @roots_service.canonical_args("photo_path")
-def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rename_format, stamp=None):
+def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rename_format, stamp=None, base=NO_BASE):
     """Save one photo's caption, tags and Date Taken -- the photo panel -- and rename it
     after its new caption if Smart Rename named it.
 
@@ -50,6 +68,13 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     409) and writes nothing -- the whole tag list it carries may be missing what the file now holds. None (the CLI,
     the MCP) is no check, as it was.
 
+    `base`, {"tags": [...], "title": "..."}, is the tags and caption the page read of the photo: the stamp can be
+    kept (a copy keeps its times; a same-length rename of a tag then the time put back), so under the same lock,
+    after the read of the file's current state, the file's tags (as a set) and caption are compared with `base` and
+    any difference refuses the save the same way, writing nothing. `base` None -- a record of a photo ExifTool
+    could not read when it was opened -- is refused (UNREADABLE_BASE_SENTENCE): the whole tag list it carries is
+    not made from what the file holds. Not given at all is no check.
+
     details: `new_path`, `renamed`, `tags` as written, `flat` and `hierarchical` as
     written, `change`, and `index_warning` when the renamed photo's new name already had
     rows; `file_only` and `with_rows`, how many files (0 or 1) were written each way.
@@ -76,6 +101,14 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     read = list(dict.fromkeys(SAVE_READ + tuple(wanted)))
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
         now = field_values.read_one(et, photo_path, read)
+        if base is None:
+            result.refuse(UNREADABLE_BASE_SENTENCE)
+            result.details[CHANGED_ON_DISK] = True
+            return result
+        if base is not NO_BASE and _differs_from_base(now, base):
+            result.refuse(CHANGED_ON_DISK_SENTENCE)
+            result.details[CHANGED_ON_DISK] = True
+            return result
         held = set(_tags_held(now))
         problem = (validation.first_problem("tag", (t for t in tags if t not in held))
                    or _caption_problem(et, photo_path, title))
@@ -103,7 +136,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
                                                                 kept[0]))
         renamed = not paths.same(new_path, photo_path)
         result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
-                              hierarchical=hierarchical, index_warning=None, change=written.details["change"])
+                              hierarchical=hierarchical, index_warning=None, change=written.details["change"],
+                              base={"tags": _tags_held(after), "title": vocabulary.trimmed(title or "")})
         touched = 1 if (written.changed or renamed) else 0
         result.details.update({file_only.FILE_ONLY: touched if files_only else 0,
                                file_only.WITH_ROWS: 0 if files_only else touched})
