@@ -854,7 +854,8 @@ click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
   everything under it, person, year or month) to an ordered page of photo ids and the
   total; and the navigator's counts (folder tree, tag tree, people, years and months),
   each one query. Routes and specs; EXPLAIN QUERY PLAN on photo_index for each.
-- **9b. One grid on photo ids.** The grid, the details panel, the selection and the bulk
+- **9b. One grid on photo ids.** *(9b-1, built 2026-10-02, not merged: the windowed grid and the folder view on it, see
+  "Phase 9b-1" below; 9b-2, a library source fed by `/api/library/view`, next.)* The grid, the details panel, the selection and the bulk
   edits take a source and work on photo ids; today's folder view becomes the "folder on
   disk" source through the same components. Only the cards on screen (and a screen
   either side) exist in the DOM. Exit: a 20,000-photo keyword scrolls without a stall,
@@ -1081,6 +1082,100 @@ them. A month and a year do not always sum: `other` says by how many. `damaged` 
 call, so the navigator is asked again after an edit. **Not built**: thumbnails made when a photo is indexed or changes, a bound on the cache, a
 person by id.
 
+### Phase 9b-1: the windowed grid, and the folder view on it *(built 2026-10-02; branch `arch/phase-9b1-grid`)*
+The page only: no route, no migration. A folder opens as it did; what changes is that only the cards on screen exist.
+`web/tagpup/vgrid.js` owns the windowing; `grid.js` is what a card is and what selecting does; `selected.js` owns the selection.
+
+- **The grid** (`createVGrid`). A *source* -- `count()`, `recordAt(i)`, and optionally `indexOfKey(key)` (else a scan) --
+  shown by `buildCard(record, i)` and `cardKey(record)` in the stylesheet's own CSS grid: the rows in view and two either
+  side are in the DOM, and the rows before and after are the grid's padding (`--vgrid-before` / `--vgrid-after`,
+  `style.css`), so the scroll bar is right for N cards. The columns are *read* from the browser (`gridTemplateColumns`
+  of the grid, so a size class, a dragged sidebar and browser zoom stay the stylesheet's), and the height of a row from a
+  rendered card (`getBoundingClientRect`, not `offsetHeight`, since a zoom makes it fractional), measured again when the
+  grid's width or a size class changes, never assumed. Rows are then fixed (`grid-auto-rows`) at the measured height, so
+  the arithmetic is exact. The scroller is `#folder-view-main` (the grid sits below the folder's header in it);
+  `overflow-anchor: none` there, since the padding changes under the browser's feet. **Nodes are reused, not pooled**: a
+  card whose key stays in the window is the same element, one that left is dropped; a pool would have needed a `bind()` for
+  every card builder and measured nothing worth it (35 cards, 350 nodes drawn at most 500 while scrolling the whole
+  folder, a frame costing a row's cards). `refresh()` after a data change draws the window again, keeping the scroll
+  position; `reset()` goes to the top; `relayout()` after a size change keeps the row at the top of the view at the top
+  (the same photos stay near the top of the view); `scrollToIndex(i, 'nearest' | 'start')`, `indexOfKey(key)`, `eachCard(fn)`.
+  Recomputed on `scroll` (once a frame), on `ResizeObserver` (the grid's width: read the columns again; the scroller's
+  height: redraw) and when asked. `destroy()` takes the listeners off.
+- **Measured through one function**, `measure({grid, scroller, card})` (`measureDom` by default; `view.setMeasure(fn)`):
+  jsdom has no layout, so a test gives numbers (`viewport`, `scrollTop`, `gridTop`, `columns`, `cardHeight`, `rowGap`,
+  `cardWidth`, `columnGap`). **With no layout** (jsdom, a hidden grid: `viewport` or `columns` 0) the first 120 records
+  are drawn whole and every picture at once, which is what the older page tests see. The page tests reach the grid through
+  `pageExports(window, 'web/tagpup/state.js').state.grid` (`tests/frontend/harness.mjs`, tests only).
+- **Pictures.** A card's `<img>` carries `data-src`; the grid sets `src` for a card that has stayed in the view's rows
+  for 120 ms (one timer; when it fires it looks at where the view is *now*, since a slow frame is not a pause), and for the
+  row either side only once the view has stood still that long. A card that leaves the window while its picture is
+  loading has `src` taken off (the request is cancelled). A card drawn again by `refresh()` shows the picture it had at
+  once. A picture that failed to load is not asked for again by that card. A damaged photo has no `<img>`; `markCard`
+  (`damaged.js`) works on the cards there are, and a card built later is marked as it is built.
+- **A title being typed** (`isBusy`): the card is kept as it is by `refresh()`, and when it scrolls out of the window it
+  is not removed (that moves focus away, and a blur is a save) but laid, absolutely, where it would have been, at the
+  grid's edge, where it cannot be seen and takes no room; it is the same element when it returns. Once the save is under
+  way (`data-saving`) it is an ordinary card again and the redraw after the save shows the new title.
+- **Selection by photo, not by card** (`selected.js`). `state.selectedThumbnails` is unchanged for every other module (an
+  array of paths in pick order, copied with `slice()` by the bulk edits); `state.selectedKeys` is the same photos by
+  `pathKey`, a Set, for O(1) membership. `selected.js` is the one writer of both (`setSelection`, `addToSelection`,
+  `removeFromSelection`, `clearSelection`, `renameInSelection`; a test fails any other module that assigns, pushes or
+  splices). A Shift-click range is computed over the source's order (`state.shownPhotos`, `state.shownIndex`: key to
+  index), so it spans cards that are not in the DOM; Select all / Invert / Select none are one pass over the folder's photos
+  and then `eachCard` marks the cards that exist (no card is built again). A bulk write receives `selectedThumbnails`,
+  built once. The selection panel's tally no longer searches the array once per photo.
+- **A photo renamed by saving its title** keeps its selection under the new path (it kept the old one), and its card is
+  built again under the new key. "Extend selection to here" with nothing selected no longer throws.
+- **The place in the list.** `renderThumbnails()` is `refresh()` for the same folder and filter, `reset()` for another folder
+  or another filter text (`state.shownSource`). A photo open and then closed (the grid is hidden, which loses its scroll
+  offset in the browser) comes back at the same place: the grid remembers where the view was and puts it back when it has a
+  layout again. A source that shrinks while scrolled past its end shows its end.
+- **What 9b-2 must know.** A library source implements `count()` / `recordAt(i)` / `indexOfKey(key)` over the pages it has
+  fetched; `recordAt(i)` for a record not fetched yet must return a placeholder record the card builder can draw (its key
+  stable, e.g. `'#' + i`) and ask for the page; when the page arrives call `refresh()`. The folder source builds
+  `state.shownIndex` once per `renderThumbnails()` (O(N) with `pathKey`; for 20,000 it is the cost to watch); a library
+  source should not do that per refresh. `cardKey` is the photo's id there, not its path, or a rename rebuilds the card.
+  Selection is by path today (`selected.js`): 9d's selection that spans folders is by id, and `selected.js` is where that
+  changes. The sidebar list (`renderFileList`) still builds a row for every photo; it is not a grid and 9c's navigator
+  replaces it, but at 20,000 photos it is the next cost. Tab visits only the cards that exist.
+- **Measured** (scratch harness over `measure_identify_faces.py`'s sandbox: a copy of photo_index (2.6 GB) in the temp
+  directory under its own `TAGPUP_HOME`, its root placed at an empty sandbox folder, a free port, 759 synthetic JPEGs
+  generated there (no real photo is read), headless Chromium 1600x1000, deleted afterwards; a fresh browser for each open;
+  the trunk's code is the baseline, run the same way, two runs; an empty page's frame is 16.7 ms here). The click is the
+  person's: open the folder, scroll it, select. Run to run the numbers move by up to 40%; the direction did not.
+
+  | the click (759-photo folder) | trunk | this branch |
+  |---|---|---|
+  | folder opens: scan reply to cards painted, main thread idle | 128-168 ms | 55-57 ms |
+  | longest main-thread task of the open | 80-106 ms | none over 50 ms |
+  | cards / DOM nodes after opening | 759 / 7,590 | 35 / 350 |
+  | scroll top to bottom in 3 s: DOM nodes at the peak | 7,590 | 500 |
+  | the same: longest task, frames over 100 ms | none, 0-1 | none, 0-1 |
+  | the same: frame interval, 95th percentile | 50-83 ms | 50 ms |
+  | the same: pictures requested | 669 on the first sweep (native lazy loading), then none (kept in place) | 79-149, of which 25-96 from the network |
+  | Select all / Invert / Select none: in the handler | 40-62 / 60-101 / 28-48 ms | 0.9-1.1 / 3.1-3.3 / 0.2 ms |
+  | the same, until painted and the main thread runs | 84-197 ms | 60-78 ms |
+
+  | 20,000 synthetic records through the folder view | trunk | this branch |
+  |---|---|---|
+  | render: in the handler / until painted and idle / longest task | 281-616 ms / 2.0-4.3 s / 1.2-2.6 s | 9 ms / 57-59 ms / none |
+  | cards / DOM nodes | 20,000 / 200,000 | 35 / 350 |
+  | scroll top to bottom in 10 s: peak nodes, longest task, frames over 100 ms | 200,000, 249-279 ms, 38-48 | 500, none, 0 |
+  | the same: pictures requested | 4,132-5,523 | 0 |
+  | Select all / Invert / Select none: until painted and idle | 6.0-7.8 / 4.8-5.6 / 3.3-4.0 s | 68-80 / 67-78 / 62-67 ms |
+
+  What the numbers do **not** show: on the 759-photo folder, scrolling is the same 50 ms a frame before and after
+  (headless Chromium, software compositing; an empty page runs at 16.7 ms), so a person scrolling a folder of that size
+  will not feel a difference there, and the folder opens in about half the time (a tenth of a second or less either way).
+  The gain is the bound: opening, selecting and scrolling cost the window, not the folder, and 20,000 photos are possible.
+- **Tests.** `tests/frontend/vgrid.test.mjs` (the grid alone: the window, padding arithmetic, reuse, order, an editor kept,
+  pictures asked for and cancelled, a size change, a width change, hidden and shown, the source interface),
+  `grid-window.test.mjs` (the page on a layout it is given: the window, a Shift-range across unrendered cards, Select all
+  of 400 and the bulk write that follows, a card's menu after it was recycled, a title being typed while scrolling away,
+  a rename, the filter, a photo opened and closed, two folders, a size change, a damaged photo scrolled to, one owner of the
+  selection), `selection-follows-the-photo.test.mjs` (the two fixes, which failed on the trunk).
+
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1, the rest design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag
 is a path (`People/<name>`) in the files and in `photos.tags`; CLAUDE.md's rule exists because
@@ -1243,5 +1338,5 @@ Behaviour changes queued behind the phases. They wait so that they land once, in
 | 7.6. Settings in the library, and a gear on each page | done, 2026-09-25 |
 | 8. Sync | done, 2026-09-26 (8a jobs, 8b snapshots, 8c sync with library roots, 8d always on with self-update, the folder watcher and idle memory); installing it at login waits for the owner |
 | 8.5. Activity | done, 2026-09-26 (the page, runs in the logs, the indexer's own log, bounded reads) |
-| 9. Library views | planned for October 2026 *(owner, 2026-09-25)*; design questions open. 9a-1, the derived tables (`photo_tags`, `folders`, `photo_folder`, `photo_meta`; migration 19), and 9a-2, the thumbnail cache, `library_view` and their routes (migration 20), built on branches 2026-10-02, not merged |
+| 9. Library views | planned for October 2026 *(owner, 2026-09-25)*; design questions open. 9a-1, the derived tables (`photo_tags`, `folders`, `photo_folder`, `photo_meta`; migration 19), and 9a-2, the thumbnail cache, `library_view` and their routes (migration 20), built on branches 2026-10-02, not merged; 9b-1, the windowed grid and the folder view on it (`web/tagpup/vgrid.js`), built on its branch 2026-10-02, not merged |
 | 10. Family albums from many sources | idea *(owner, 2026-09-25)*, after phase 9; design questions open |
