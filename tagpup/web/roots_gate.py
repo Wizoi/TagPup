@@ -10,7 +10,8 @@ paths asks `tagpup.services.roots.problem` first, and is answered 409 with the m
 machine_roots.json, where it is and the line to add, and carries `roots_problem` so the page can show
 it as a banner (web/common/roots-banner.js, which api.js feeds with the X-TagPup-Roots-Problem
 header). What does not read a photo's path is let through, so the page can load and the Roots dialog
-can open: the library picker, the rules, the version, the Activity page, the history and Roots itself.
+can open: the library picker, the rules, the version, the Activity page, the history, the folder picker (the
+Roots dialog's Browse names the place a root is to be) and Roots itself.
 
 One look is an open of the library and a stat of the map; it is kept for a second per library, as a
 connection keeps its map (tagpup.store.roots), and forgotten when the map is changed here.
@@ -31,7 +32,7 @@ HEADER = "X-TagPup-Roots-Problem"
 
 #: What an /api/ path may be asked while the library's roots are not placed.
 LET_THROUGH = ("/api/roots", "/api/databases", "/api/server", "/api/rules", "/api/apps", "/api/activity",
-               "/api/history", "/api/jobs")
+               "/api/history", "/api/jobs", "/api/browse-folder")
 
 #: How long a look is trusted, in seconds.
 FRESH = 1.0

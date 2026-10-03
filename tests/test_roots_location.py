@@ -363,6 +363,39 @@ class ChangingTheLocation(RootsCase):
         rooted = [path for path in again if "Elsewhere" not in path]
         self.assertTrue(rooted and all(path.startswith(self.copy) for path in rooted), rooted[:2])
 
+    def test_a_unc_spelling_of_a_place_is_a_place_and_the_drive_letter_one_is_kept_after_it(self):
+        """The same folder by its administrative share, as a server's share is reached: another
+        spelling of the place is another place of the map, and the old is kept for Change back."""
+        drive, rest = os.path.splitdrive(self.copy)
+        unc = "\\\\localhost\\%s$%s" % (drive[0], rest)
+        if not os.path.isdir(unc):
+            self.skipTest("this machine has no administrative share for its drive")
+        result = self.move(unc, apply=True)
+        self.assertIsNone(result.refused, result.refused)
+        self.assertEqual(18, result.details["verify"]["matches"])
+        self.assertEqual([unc, self.side.pictures], self.places())
+
+    def test_the_generations_every_cache_of_paths_is_keyed_by_move_with_the_map(self):
+        from tagpup.store import generations
+        conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
+        self.addCleanup(conn.close)
+        before = generations.values(conn)
+        self.move(apply=True)
+        time.sleep(1.2)
+        after = generations.values(conn)
+        self.assertNotEqual(before[:2], after[:2], "a cache of this machine's paths would not be built again")
+        self.assertEqual(before[2], after[2], "the tag tree did not move")
+
+    def test_the_count_of_a_roots_rows_is_one_range_of_the_path_index(self):
+        from tagpup.store import roots as store_roots
+        conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
+        self.addCleanup(conn.close)
+        where, params = store_roots.sql_under(conn, "path", self.side.pictures)
+        plan = " ".join(row[3] for row in conn.execute("EXPLAIN QUERY PLAN SELECT COUNT(*) FROM photos WHERE " + where,
+                                                       params))
+        self.assertIn("SEARCH", plan)
+        self.assertNotIn("SCAN", plan)
+
     def test_change_location_of_a_root_the_library_does_not_have(self):
         with self.assertRaises(NotFound):
             roots_location.change_location(self.library, "scans", self.copy, self.machine)

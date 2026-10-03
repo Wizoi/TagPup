@@ -663,7 +663,9 @@ the design assumes a GPU and more memory later and does not wait for them.
       whatever is said, and so is a place that would put the root inside or over another root of the library (the same
       photos reachable under two roots). It is refused **while anything of the library is running or queued** -- an
       index run, Suggest, a sync, a verify (the web layer says what this process knows, the service reads the library's
-      own `job_runs`, any process's, ignoring a run whose process has ended) -- and names which. Two requests at once:
+      own `job_runs`, any process's, ignoring a run whose process has ended) -- and names which. The machine's map is one for
+      every library of the home, so a root of one name in two libraries moves in both: the dialog says which others use
+      it, and a run queued or running in any of them holds the move up too. Two requests at once:
       the claim of the change in `job_runs` lets one in and tells the other; a second Confirm, or a tab that came after
       and found the root already at that place, changes nothing and says so. Each change is a run in `job_runs`
       ("moved root pictures to X (was Y)", which the Activity page lists: a run may say what it did in `changed.what`).

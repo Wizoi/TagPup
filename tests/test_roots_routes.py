@@ -332,6 +332,14 @@ class WhatAMachineThatDoesNotPlaceTheRootIsTold(RootsRoutes):
         self.assertIsNone(listed["roots"][0]["active"])
         self.assertEqual(200, self.get("/api/history").status_code)
 
+    def test_the_folder_picker_the_roots_dialog_uses_is_not_gated(self):
+        """Browse... names the place the root is to be: it must work while the root has none."""
+        self.lose_the_map()
+        with mock.patch("tagpup.web.tuner_routes.desktop.ask_for_folder", return_value=self.copy):
+            reply = self.get("/api/browse-folder")
+        self.assertEqual(200, reply.status_code)
+        self.assertEqual(self.copy, reply.get_json()["path"])
+
     def test_it_can_be_placed_from_the_roots_dialog_and_the_library_opens_again(self):
         """A root with no place: Change location names one, and the next request works."""
         self.lose_the_map()
