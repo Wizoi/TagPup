@@ -844,6 +844,30 @@ def _writes_files(conn, change_id):
         "SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone() is not None
 
 
+def schema_gap_blocker(version, current):
+    """Why a change made at schema `version` may not mean what it did in a library at `current`:
+    a sentence naming the first migration in between that could have changed it, or None when none
+    could. A migration cannot have if it is ADDITIVE and touches no table a change can name or the
+    journal derives (KEYS, DERIVED): adding the roots table, the runs of jobs, a folder list, moves
+    no row a journaled change recorded. Every other migration blocks, and so does one that is not
+    in the list: what cannot be classified is never exempt. A change made at a schema NEWER than
+    the library's blocks too (an older version of the app opened it)."""
+    if version > current:
+        return "migration %d is not applied here" % version
+    known = {migration.version: migration for migration in schema.MIGRATIONS}
+    journaled = set(KEYS) | set(DERIVED)
+    for number in range(version + 1, current + 1):
+        migration = known.get(number)
+        if migration is None:
+            return "migration %d is not known" % number
+        if migration.kind != schema.ADDITIVE:
+            return "migration %d, %s, is %s" % (number, migration.name, migration.kind)
+        touched = sorted(set(migration.touches) & journaled)
+        if touched:
+            return "migration %d, %s, touches %s" % (number, migration.name, ", ".join(touched))
+    return None
+
+
 def refusal(conn, change_id):
     """Why change `change_id` cannot be undone now, as the journal alone can say --
     without reading a row's values or a photo file -- or [] when it may be tried. The
@@ -873,8 +897,10 @@ def refusal(conn, change_id):
                 for other, name in file_journal.newer_overlapping(conn, change_id)]
     current = schema.version(conn)
     if version != current:
-        return ["change %d was made at schema %d and the library is at %d: its rows may not mean"
-                " what they did" % (change_id, version, current)]
+        blocking = schema_gap_blocker(version, current)
+        if blocking is not None:
+            return ["change %d was made at schema %d and the library is at %d: its rows may not mean"
+                    " what they did (%s)" % (change_id, version, current, blocking)]
     if _operation.startswith(ADOPTION):
         from tagpup.store import adoption   # adoption imports this module
         return adoption.undo_refusals(conn, change_id)
