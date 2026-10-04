@@ -181,5 +181,30 @@ class AFolderIsReadFromItsPhotos(FacesCase):
                 self.assertNotIn("idx_faces_name", plan)
 
 
+class AnExcludedFaceIsNotWaitingForAName(FacesCase):
+    """docs/findings.md, #642: Folder Matches and Re-examine's remaining counts took an
+    excluded face for an unmatched one: 769 photos in one library were listed only for
+    faces ruled out, and nothing could take them off the list."""
+
+    def setUp(self):
+        super().setUp()
+        self.ruled_out_photo = self.photo("ruled_out.jpg")
+        faces.exclude(self.lib.library, [self.face(self.ruled_out_photo, embedding=vector(5))], None)
+        self.waiting_photo = self.photo("waiting.jpg")
+        self.face(self.waiting_photo, embedding=vector(6))
+
+    def test_folder_matches_does_not_list_a_photo_for_an_excluded_face(self):
+        from tagpup.services import identify
+        listed = {p["path"]: p["unmatched_count"] for p in identify.photos_waiting(self.lib.library)}
+        self.assertEqual(listed, {self.waiting_photo: 1})
+
+    def test_the_remaining_counts_leave_it_out(self):
+        conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
+        try:
+            self.assertEqual(store_faces.unnamed_counts(conn, self.folder), {self.waiting_photo: 1})
+        finally:
+            conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -416,10 +416,12 @@ def named_elsewhere_in_photo(conn, photo_path, person_name, face_id):
 
 #: The faces of the photos under a folder, the photos found first: their range on
 #: idx_photos_path_nocase, then each one's faces by idx_faces_photo_id. CROSS JOIN keeps
-#: that order. Asked as faces whose photo is IN the folder, SQLite started from the
-#: unnamed faces of the whole library (idx_faces_identify): 190,000 of them in the
-#: largest, for a folder of 2,400 (docs/findings.md, #644).
-UNDER_FROM_PHOTOS = " FROM photos p CROSS JOIN faces f ON f.photo_id = p.id"
+#: that order, and INDEXED BY the index: with `excluded = 0` and `name IS NULL` beside
+#: it, SQLite otherwise took idx_faces_identify for each photo, every unnamed face of
+#: the library once per photo. Asked as faces whose photo is IN the folder, it started
+#: from the unnamed faces of the whole library: 190,000 of them in the largest, for a
+#: folder of 2,400 (docs/findings.md, #644).
+UNDER_FROM_PHOTOS = " FROM photos p CROSS JOIN faces f INDEXED BY idx_faces_photo_id ON f.photo_id = p.id"
 
 
 def _photos_under(conn, folder):
@@ -442,11 +444,12 @@ def unnamed(conn, photo_path=None, folder=None):
 
 
 def unnamed_counts(conn, folder):
-    """{photo_path as stored: faces still unnamed} for the photos under a folder."""
+    """{photo_path as stored: faces still unnamed} for the photos under a folder. An
+    excluded face is not waiting for a name (docs/findings.md, #642)."""
     where, params = _photos_under(conn, folder)
     return dict(store_roots.natives(conn, conn.execute(
         "SELECT p.path, COUNT(*)" + UNDER_FROM_PHOTOS + " WHERE " + where
-        + " AND f.name IS NULL GROUP BY f.photo_id", params).fetchall(), 0))
+        + " AND f.name IS NULL AND f.excluded = 0 GROUP BY f.photo_id", params).fetchall(), 0))
 
 
 # ---- What TagTuner's screens read -----------------------------------------------------
@@ -538,10 +541,12 @@ def in_photo_with_names(conn, photo_path):
 def photos_with_unnamed(conn, every=False):
     """(photo_path, unnamed faces, named faces, mtime, year) of every photo
     with a face still unnamed, newest first; with `every`, of every photo with a face,
-    those whose faces are all named too (TagTuner's Show matched)."""
+    those whose faces are all named too (TagTuner's Show matched). An excluded face is
+    neither: it was listed as unmatched, and a photo whose only nameless face had been
+    ruled out stayed in Folder Matches for good (docs/findings.md, #642)."""
     return store_roots.natives(conn, conn.execute(
         "SELECT p.path,"
-        " SUM(CASE WHEN f.name IS NULL THEN 1 ELSE 0 END) AS unmatched,"
+        " SUM(CASE WHEN f.name IS NULL AND f.excluded = 0 THEN 1 ELSE 0 END) AS unmatched,"
         " SUM(CASE WHEN f.name IS NOT NULL THEN 1 ELSE 0 END) AS matched,"
         " p.mtime, p.year"
         " FROM faces f" + PHOTO
