@@ -13,6 +13,16 @@ from flask import abort, request
 #: The only hosts the apps answer to.
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 
+#: The addresses of this PC, as a request's remote address: what answers this PC only --
+#: the Activity page, the roots, the drain a launcher sends (tagpup.web.lifecycle) -- takes
+#: a request from one of these and refuses any other.
+LOOPBACK = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
+
+
+def from_this_pc(remote):
+    """Is `remote`, a request's address, this PC?"""
+    return remote in LOOPBACK
+
 
 def hostname_of(authority):
     """The host out of a `host[:port]` authority, brackets and all handled.

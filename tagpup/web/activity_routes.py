@@ -53,7 +53,7 @@ from tagpup.services import file_access
 from tagpup.services import indexing
 from tagpup.services import job_runs
 from tagpup.services import roots as roots_service
-from tagpup.web import responses
+from tagpup.web import responses, security
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +63,6 @@ routes = Blueprint(PAGE, __name__)
 PAGE_FILES = {"index.html": "text/html; charset=utf-8", "style.css": "text/css; charset=utf-8"}
 SCRIPT_TYPE = "application/javascript; charset=utf-8"
 NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0"}
-
-#: The addresses of this PC: a request from any other is refused.
-LOOPBACK = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
 
 #: The background tasks the page asks (tagpup.runtime.BACKGROUND).
 WATCHER, JOBS = "folder watcher", "recurring jobs"
@@ -80,7 +77,7 @@ LINES, MOST_LINES = 200, 1000
 @routes.before_request
 def only_this_pc():
     """Refuse, 403, a request from anywhere but this PC."""
-    if request.remote_addr not in LOOPBACK:
+    if not security.from_this_pc(request.remote_addr):
         abort(403, description="The Activity page answers this PC only")
 
 

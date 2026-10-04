@@ -55,7 +55,7 @@ class Way(unittest.TestCase):
     """make_way, with the server it asks stood in for."""
 
     def setUp(self):
-        self.said, self.opened, self.drained, self.ended = [], [], [], []
+        self.said, self.opened, self.drained, self.ended, self.quiets = [], [], [], [], []
         self.clock = Clock()
         self.answers = []          # what each GET /api/server says, in turn (the last repeats)
         self.drains = []           # what each drain answers, in turn
@@ -66,8 +66,9 @@ class Way(unittest.TestCase):
         def ask(port):
             return self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
 
-        def drain(port, token):
+        def drain(port, token, quiet=None):
             self.drained.append(token)
+            self.quiets.append(quiet)
             return self.drains.pop(0)
 
         def end(found, port, answering, sleep=None):
@@ -154,6 +155,30 @@ class Way(unittest.TestCase):
         self.assertEqual([4242], self.ended)
         self.assertTrue(any("has not answered" in line for line in self.said), self.said)
 
+    def test_a_hung_server_the_always_on_process_runs_is_left_to_it(self):
+        """#745: the hung path read no `supervised`; a launcher ended the supervisor's child."""
+        self.answers = [None]
+        self.found["supervised"] = True
+        self.assertEqual(launcher.OPEN, self.way()[0])
+        self.assertEqual([], self.ended)
+        self.assertTrue(any("always-on process" in line for line in self.said), self.said)
+
+    def test_a_page_in_use_is_not_cut_until_the_patience_runs_out(self):
+        """#746: the drain waits for QUIET seconds with no request -- a save under way is not
+        cut -- and, after QUIET_PATIENCE of a page asking all the while, takes the next moment
+        with nothing in flight."""
+        self.answers = [self.status(OLD)]
+        in_use = {"drained": False, "waiting_for": ["a request 3s ago"]}
+        tries = launcher.QUIET_PATIENCE // launcher.RETRY_BUSY
+        self.drains = [dict(in_use) for _ in range(tries)] + [{"drained": True}]
+        self.assertEqual(launcher.SERVE, self.way()[0])
+        self.assertEqual([launcher.QUIET] * tries, self.quiets[:tries])
+        self.assertEqual(0, self.quiets[-1], "never stopped waiting for a quiet moment")
+        self.assertEqual(tries + 1, len(self.quiets))
+        busy = [line for line in self.said if "is busy" in line]
+        self.assertEqual(1, len(busy), "said again at every try: %s" % busy)
+        self.assertIn("the app is in use", busy[0])
+
     def test_a_silent_port_without_a_record_is_waited_for_then_opened_never_ended(self):
         """A server starting -- its record comes once it serves -- or not this user's."""
         self.answers = [None]
@@ -197,6 +222,47 @@ class Records(unittest.TestCase):
                                     answering=lambda p: False)
         self.assertEqual(launcher.SERVE, way[0])
         killed.assert_not_called()
+
+    def test_a_record_naming_a_live_process_by_the_wrong_start_is_nobody(self):
+        """#744: the start time is half the guard -- a record whose process ended and whose id
+        another process now has. Here that other process is this one."""
+        port = free_port()
+        launcher.say_where({"tagpup": port}, OLD, "t")
+        path = launcher.record_path(port)
+        with open(path, encoding="utf-8") as handle:
+            found = json.load(handle)
+        found["started"] += 1
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(found, handle)
+        self.assertIsNone(launcher.record(port))
+        self.assertEqual([], launcher.running())
+        self.assertEqual(1, launcher.clear_stale())
+        self.assertFalse(os.path.exists(path))
+        with mock.patch.object(launcher.processes, "kill_tree") as killed:
+            self.assertTrue(launcher.end(found, port, answering=lambda p: False, wait=0.5))
+        killed.assert_not_called()
+
+    def test_the_launchers_drain_asks_for_quiet_and_a_lease(self):
+        sent = []
+
+        class Reply:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b'{"drained": true, "success": true}'
+
+        def urlopen(request, timeout=None):
+            sent.append((request.get_header(launcher.HEADER.capitalize()) or request.headers.get(launcher.HEADER),
+                         json.loads(request.data.decode("utf-8"))))
+            return Reply()
+        with mock.patch.object(launcher.urllib.request, "urlopen", side_effect=urlopen):
+            self.assertTrue(launcher.drain(5, TOKEN)["drained"])
+        self.assertEqual({"seconds": launcher.DRAIN_SECONDS, "quiet": launcher.QUIET, "lease": launcher.LEASE},
+                         sent[0][1])
 
     def test_the_folder_is_the_users_own_unless_named(self):
         with mock.patch.dict(os.environ, {"LOCALAPPDATA": r"C:\Users\someone\AppData\Local"}):
@@ -244,6 +310,35 @@ class WhoMayDrain(unittest.TestCase):
         app = web.create_app("tagpup", lifecycle=Lifecycle(version=OLD, work=lambda: []))
         reply = app.test_client().post("/api/server/drain", json={"seconds": 5}, headers={launcher.HEADER: ""})
         self.assertEqual(403, reply.status_code)
+
+    def test_a_lease_not_ended_gives_the_server_back_its_work(self):
+        """#747: a launcher's window closed between its drain and the end left the server
+        turning every request away for LEFT_DRAINED (180 s), past the pages' two minutes."""
+        clock = [1000.0]
+        lifecycle = Lifecycle(version=OLD, launcher_token=TOKEN, work=lambda: [], clock=lambda: clock[0])
+        client = web.create_app("tagpup", lifecycle=lifecycle).test_client()
+        reply = client.post("/api/server/drain", json={"seconds": 5, "lease": 20}, headers={launcher.HEADER: TOKEN})
+        self.assertTrue(reply.get_json()["drained"], reply.get_json())
+        self.assertEqual(503, client.get("/harbour/api/tags").status_code)
+        clock[0] += 21
+        self.assertEqual(200, client.get("/harbour/api/tags").status_code, "still drained past its lease")
+
+    def test_a_drain_with_no_lease_keeps_the_supervisors_wait(self):
+        clock = [1000.0]
+        lifecycle = Lifecycle(version=OLD, launcher_token=TOKEN, work=lambda: [], clock=lambda: clock[0])
+        client = web.create_app("tagpup", lifecycle=lifecycle).test_client()
+        client.post("/api/server/drain", json={"seconds": 5}, headers={launcher.HEADER: TOKEN})
+        clock[0] += 21
+        self.assertEqual(503, client.get("/harbour/api/tags").status_code)
+        clock[0] += lifecycles.LEFT_DRAINED
+        self.assertEqual(200, client.get("/harbour/api/tags").status_code)
+
+    def test_a_lease_out_of_range_is_refused(self):
+        for lease in (0, -1, lifecycles.LEFT_DRAINED + 1, "20", True):
+            reply = self.app.test_client().post("/api/server/drain", json={"seconds": 5, "lease": lease},
+                                                headers={launcher.HEADER: TOKEN})
+            self.assertEqual(400, reply.status_code, lease)
+        self.assertTrue(self.lifecycle.status()["taking_work"])
 
     def test_a_launchers_drain_waits_for_the_startup_migrations(self):
         """The startup migration thread is long work (#664): the drain is refused while it runs."""

@@ -154,11 +154,9 @@ def _recorded(root):
                 record = json.load(handle)
         except (OSError, ValueError):
             continue
-        pid = record.get("pid") if isinstance(record, dict) else None
         # By its start too: an id is soon another process's once its own has ended.
-        alive = isinstance(pid, int) and pid != os.getpid() and processes.started(pid) is not None
-        if alive and processes.started(pid) == record.get("started"):
-            found.append(pid)
+        if processes.recorded_alive(record) and record["pid"] != os.getpid():
+            found.append(record["pid"])
     return found
 
 

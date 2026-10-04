@@ -59,9 +59,20 @@ HUNG_TRIES = 3
 
 #: How long a drain may wait for the requests in flight; how soon a busy server is asked
 #: again; how often the launcher says again what it waits for.
-DRAIN_SECONDS = 120
+DRAIN_SECONDS = 20
 RETRY_BUSY = 10
 SAY_AGAIN = 300
+
+#: A drain waits for QUIET seconds with no request -- a page in the middle of a save is not
+#: cut -- until it has waited QUIET_PATIENCE for one (a page that asks every few seconds
+#: never leaves one); then it takes the next moment with nothing in flight.
+QUIET = 15
+QUIET_PATIENCE = 120
+
+#: Drained, the server takes work again if it has not been ended within LEASE seconds: the
+#: launcher ends it within a second, and a window closed in between leaves no server
+#: refusing every request (tagpup.web.lifecycle).
+LEASE = 20
 
 #: How long an ended server has to let go of its port; how long something that answers on
 #: the port without a record (a server starting, before its record) is waited for.
@@ -76,14 +87,6 @@ def folder():
 
 def record_path(port):
     return os.path.join(folder(), "%d.json" % int(port))
-
-
-def _alive(found):
-    """Is the process `found` names -- by its id and when it started -- still running?"""
-    if not found or not found.get("pid"):
-        return False
-    started = processes.started(found["pid"])
-    return started is not None and started == found.get("started")
 
 
 # ---- The server's side: saying where it answers ------------------------------------------
@@ -113,7 +116,7 @@ def record(port):
     """The record of the live server that said it answers on `port`, or None: none, or its
     process has ended (a record left by a server ended without stopping)."""
     found = supervisor.read_json(record_path(port))
-    if not _alive(found):
+    if not processes.recorded_alive(found):
         return None
     if int(port) not in [value for value in (found.get("ports") or {}).values() if isinstance(value, int)]:
         return None
@@ -129,7 +132,7 @@ def clear_stale():
         return 0
     for name in names:
         path = os.path.join(folder(), name)
-        if name.endswith(".json") and not _alive(supervisor.read_json(path)) and supervisor.remove(path):
+        if name.endswith(".json") and not processes.recorded_alive(supervisor.read_json(path)) and supervisor.remove(path):
             removed += 1
     return removed
 
@@ -144,7 +147,7 @@ def running():
     for name in names:
         if name.endswith(".json"):
             found = supervisor.read_json(os.path.join(folder(), name))
-            if _alive(found):
+            if processes.recorded_alive(found):
                 seen.setdefault(found["pid"], found)
     return list(seen.values())
 
@@ -168,12 +171,14 @@ def ask(port, timeout=None):
     return value if isinstance(value, dict) and "version" in value else None
 
 
-def drain(port, token, seconds=DRAIN_SECONDS):
-    """POST /api/server/drain with the record's token: {"drained": bool, "waiting_for": [...]},
-    "refused": the status when the server refused it, "no_answer" when nothing answered."""
+def drain(port, token, quiet=QUIET, seconds=None):
+    """POST /api/server/drain with the record's token, after `quiet` seconds with no request,
+    for LEASE: {"drained": bool, "waiting_for": [...]}, "refused": the status when the server
+    refused it, "no_answer" when nothing answered."""
+    seconds = DRAIN_SECONDS if seconds is None else seconds
     request = urllib.request.Request(
         "http://127.0.0.1:%d/api/server/drain" % port, method="POST",
-        data=json.dumps({"seconds": seconds}).encode("utf-8"),
+        data=json.dumps({"seconds": seconds, "quiet": quiet, "lease": LEASE}).encode("utf-8"),
         headers={"Content-Type": "application/json", HEADER: token or ""})
     try:
         with urllib.request.urlopen(request, timeout=seconds + 30) as reply:
@@ -189,10 +194,10 @@ def end(found, port, answering, wait=END_WAIT, sleep=time.sleep):
     """End the server `found` names, and what it started, once it is drained or hangs --
     only while its record is alive, so never a process that reused its id -- and wait for
     `port` to be let go. True when it is."""
-    if _alive(found):
+    if processes.recorded_alive(found):
         processes.kill_tree(found["pid"])
     deadline = time.monotonic() + wait
-    while _alive(found) or answering(port):
+    while processes.recorded_alive(found) or answering(port):
         if time.monotonic() >= deadline:
             return False
         sleep(0.2)
@@ -216,6 +221,8 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
     said, said_at = None, None
     unanswered = 0
     starting_since = None
+    #: Since when the drain has waited only for a moment with no request.
+    quiet_since = None
     while True:
         if not answering(port):
             return SERVE, opened
@@ -231,6 +238,11 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
                     return OPEN, opened
                 sleep(1)
                 continue
+            if theirs.get("supervised"):
+                say("TagPup %s (process %s), run by the always-on process, is not answering; the always-on "
+                    "process ends a server that hangs. Opening its page." % (_name(theirs.get("version")),
+                                                                              theirs.get("pid")))
+                return OPEN, opened
             unanswered += 1
             if unanswered < HUNG_TRIES:
                 say("TagPup %s (process %s) is not answering; asking again (%d of %d)."
@@ -260,7 +272,8 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
             say("TagPup %s is running (process %s); handing over to %s."
                 % (_name(running_version), theirs.get("pid"), _name(version)))
             said, said_at = "", clock()
-        answer = drain(port, theirs.get("token"))
+        patient = quiet_since is not None and clock() - quiet_since >= QUIET_PATIENCE
+        answer = drain(port, theirs.get("token"), quiet=0 if patient else QUIET)
         if answer.get("drained"):
             say("TagPup %s finished what it was doing; ending it and starting %s."
                 % (_name(running_version), _name(version)))
@@ -273,7 +286,15 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
             return OPEN, opened
         if answer.get("no_answer"):
             continue   # asked again: gone (serve), or hanging (counted above)
-        waiting = ", ".join(answer.get("waiting_for") or ["the server"])
+        reasons = answer.get("waiting_for") or ["the server"]
+        if all(reason.startswith("a request ") for reason in reasons):
+            # Someone is using the page: the moment after their last request, or, after
+            # QUIET_PATIENCE, the next with nothing in flight.
+            quiet_since = clock() if quiet_since is None else quiet_since
+            reasons = ["a moment with no request: the app is in use"]
+        else:
+            quiet_since = None
+        waiting = ", ".join(reasons)
         if waiting != said or clock() - said_at >= SAY_AGAIN:
             say("TagPup %s is busy (%s): %s takes over when that ends. It answers meanwhile; closing this "
                 "window leaves the update to the next launch." % (_name(running_version), waiting, _name(version)))

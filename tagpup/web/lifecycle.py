@@ -41,7 +41,7 @@ from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup import launcher
 from tagpup.services import libraries as library_actions
 from tagpup.supervisor import TOKEN_HEADER
-from tagpup.web import responses
+from tagpup.web import responses, security
 
 logger = logging.getLogger(__name__)
 
@@ -113,10 +113,6 @@ def long_work():
     return found
 
 
-#: Where a launcher's drain may come from: this machine.
-LOOPBACK = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
-
-
 class Lifecycle:
     """One server process's: `version` (the installed version's name, or None from a
     checkout), `token` (the supervisor's, or None), `launcher_token` (the one in this
@@ -145,6 +141,9 @@ class Lifecycle:
         self._last_request = None
         #: A drain is under way: a second joins it.
         self._draining = False
+        #: How long a drained server not stopped waits before it takes work again: the
+        #: drain's `lease`, or LEFT_DRAINED.
+        self._lease = LEFT_DRAINED
 
     # ---- What it says ---------------------------------------------------------------
 
@@ -170,7 +169,7 @@ class Lifecycle:
     def allows_launcher(self, token, remote):
         """Is `token` the one in this server's record, sent from this machine (`remote`, the
         request's address)? Another machine is refused whatever it sends."""
-        return (self._launcher_token is not None and remote in LOOPBACK and isinstance(token, str)
+        return (self._launcher_token is not None and security.from_this_pc(remote) and isinstance(token, str)
                 and hmac.compare_digest(token, self._launcher_token))
 
     def authorizes(self, headers, remote):
@@ -189,7 +188,7 @@ class Lifecycle:
         """Count a request in; False when it is to be refused. One that only `watching`
         (only_watches) is not a request somebody made: the quiet moment is not reset."""
         with self._changed:
-            left = self._closed and self._drained_at is not None and self._clock() - self._drained_at > LEFT_DRAINED
+            left = self._closed and self._drained_at is not None and self._clock() - self._drained_at > self._lease
             if not left:
                 if self._closed:
                     return False
@@ -197,7 +196,7 @@ class Lifecycle:
                 if not watching:
                     self._last_request = self._clock()
                 return True
-        logger.warning("Drained %ds ago and not stopped: taking work again.", LEFT_DRAINED)
+        logger.warning("Drained %ds ago and not stopped: taking work again.", self._lease)
         self.resume()
         return self._enter(watching)
 
@@ -208,12 +207,14 @@ class Lifecycle:
 
     # ---- Draining ---------------------------------------------------------------------
 
-    def drain(self, seconds=DRAIN_SECONDS, quiet=0):
+    def drain(self, seconds=DRAIN_SECONDS, quiet=0, lease=None):
         """Stop taking new work and wait up to `seconds` for what is under way to finish.
         {"drained": True}, or {"drained": False, "waiting_for": [...]}: refused at once,
         nothing turned away, while work runs beside the requests or a request came in
         the last `quiet` seconds (someone is using the app); or the deadline passed, and
-        the server takes work again."""
+        the server takes work again. Drained and not stopped within `lease` seconds
+        (LEFT_DRAINED by default), it takes work again: a launcher's window closed
+        between its drain and the end it would have made (tagpup.launcher)."""
         deadline = self._clock() + seconds
         with self._changed:
             if self._draining:
@@ -233,6 +234,7 @@ class Lifecycle:
                     return {"drained": False, "waiting_for": busy}
                 self._closed = True
                 self._drained_at = None
+                self._lease = LEFT_DRAINED if lease is None else lease
             in_flight = self._in_flight
             self._draining = True
         try:
@@ -374,12 +376,16 @@ def drain():
     body = request.get_json(silent=True) or {}
     seconds = body.get("seconds", DRAIN_SECONDS)
     quiet = body.get("quiet", 0)
+    lease = body.get("lease")
+    if lease is not None and (isinstance(lease, bool) or not isinstance(lease, (int, float))
+                              or not 0 < lease <= LEFT_DRAINED):
+        return responses.error(400, "lease must be a number of seconds, more than 0 and at most %d" % LEFT_DRAINED)
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0 < seconds <= MAX_DRAIN_SECONDS:
         return responses.error(400, "seconds must be a number of seconds, more than 0 and at most %d"
                                % MAX_DRAIN_SECONDS)
     if isinstance(quiet, bool) or not isinstance(quiet, (int, float)) or quiet < 0:
         return responses.error(400, "quiet must be a number of seconds, 0 or more")
-    return jsonify(dict(lifecycle.drain(seconds, quiet), success=True))
+    return jsonify(dict(lifecycle.drain(seconds, quiet, lease), success=True))
 
 
 @routes.post(RESUME)

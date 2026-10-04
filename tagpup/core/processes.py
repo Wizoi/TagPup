@@ -80,6 +80,17 @@ def is_alive(pid):
         return True
 
 
+def recorded_alive(record):
+    """Is the process a record names -- {"pid", "started"}: its id and when it started
+    (started()) -- still running? A record of an ended process whose id another now has is
+    not: Windows reuses an id soon. The one test of the supervisor's, the launcher's and the
+    tests' records."""
+    if not isinstance(record, dict) or not record.get("pid"):
+        return False
+    now = started(record["pid"])
+    return now is not None and now == record.get("started")
+
+
 #: Windows: OpenProcess's right to read a process's times, and the exit code of one
 #: still running.
 _QUERY_LIMITED_INFORMATION = 0x1000
