@@ -2406,6 +2406,14 @@ Analysis, in the order it would be decided:
   program (MP and MWG) is read; regions edited in another program after TagPup wrote them; a
   folder in two libraries; a photo whose file is replaced by an older copy.
 
+### Backlog: the library view's selection details navigate, not edit *(owner, 2026-10-04; after 9e)*
+In a library view, the right pane's tags and people should stop working the way Organize's do (chips that change
+what photos hold). Clicking a person opens the People tab on that person's photos; clicking a tag opens the
+Keywords tab on that tag's photos -- a view change, the navigator showing it selected, as a sidebar click does.
+Suggest's auto-apply of AI suggestions does not belong in a library view and leaves its pane. Open when it is
+built: whether a library view keeps any way to add or take off a tag for a selection (9d-2's bulk add, the chip's
+x), or all editing moves to Organize.
+
 ### Backlog: which photo fields are searchable *(owner, 2026-10-04; after phase 9)*
 A later review of which metadata fields search offers, as members (all of / any of / none of) and as words. Named
 so far: **camera make and model** (already columns of `photo_meta`, phase 9a-1), so a time shift can be aimed at
