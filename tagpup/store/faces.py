@@ -568,6 +568,14 @@ def for_named_matrix(conn):
                         " WHERE name IS NOT NULL AND embedding IS NOT NULL AND excluded = 0").fetchall()
 
 
+def for_decided_matrix(conn):
+    """(id, name, embedding, name_source, photo_id) of every named face that has an embedding
+    and is not excluded: the candidates for what automatch compares a face against. The
+    caller keeps those a person decided (tagpup.services.identify.decided_faces)."""
+    return conn.execute("SELECT id, name, embedding, name_source, photo_id FROM faces"
+                        " WHERE name IS NOT NULL AND embedding IS NOT NULL AND excluded = 0").fetchall()
+
+
 def embedding_row(conn, face_id):
     """(embedding,) of one face, or None when there is no such face."""
     return conn.execute("SELECT embedding FROM faces WHERE id = ?", (face_id,)).fetchone()

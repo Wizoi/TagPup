@@ -132,6 +132,11 @@ def _named(library):
     return lambda: identify_jobs.named_faces(library, identify_cache.of(library))
 
 
+def _decided(library):
+    """The faces a person decided as unit vectors: what automatch compares with."""
+    return lambda: identify_jobs.decided_faces(library, identify_cache.of(library))
+
+
 def _int_arg(name, what):
     """A query parameter that must be an integer, or the 400 the old handlers sent."""
     value = request.args.get(name)
@@ -526,7 +531,7 @@ def photo_automatch():
     if not photo_path:
         abort(400, description="Missing photo_path")
     result = _faces_write(
-        library, lambda lib: faces_service.automatch_photo(lib, photo_path, _named(lib)))
+        library, lambda lib: faces_service.automatch_photo(lib, photo_path, _decided(lib)))
     return jsonify({"success": True, "matched_count": result.changed})
 
 
@@ -542,7 +547,7 @@ def folder_automatch():
     # Anything but no flag, or a false one, rehearses: "false" as text is the safe mistake.
     rehearse = bool(body.get("dry_run"))
     result = _faces_write(
-        library, lambda lib: faces_service.automatch_folder(lib, folder_path, _named(lib), rehearse=rehearse))
+        library, lambda lib: faces_service.automatch_folder(lib, folder_path, _decided(lib), rehearse=rehearse))
     details = result.details
     answer = {"success": True, "dry_run": rehearse, "matched_count": result.changed,
               "faces": details.get("faces", 0), "photos": details.get("photos", 0),

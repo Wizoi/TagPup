@@ -110,6 +110,17 @@ def rebuild_photos(conn, photo_paths, known=None):
     return rebuild(conn, ids, known) if ids else 0
 
 
+def keyword_keys(conn):
+    """{photo id: the people its keywords name, as vocabulary.key}, for each photo with a face
+    named and not excluded. photo_people is read by its primary key, one photo at a time."""
+    listed = collections.defaultdict(set)
+    for photo_id, name in conn.execute(
+            "SELECT photo_id, name FROM photo_people WHERE source = 'keyword' AND photo_id IN"
+            " (SELECT photo_id FROM faces WHERE name IS NOT NULL AND excluded = 0)"):
+        listed[photo_id].add(vocabulary.key(name))
+    return listed
+
+
 def of_photo(conn, photo_path):
     """The people of one photo, in order; [] without a row."""
     where, params = store_roots.sql_equals(conn, "path", photo_path)

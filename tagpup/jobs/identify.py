@@ -276,6 +276,18 @@ def named_faces(library, cache):
     return value
 
 
+def decided_faces(library, cache):
+    """(ids, names, matrix) of the faces a person decided (tagpup.services.identify.decided_faces),
+    for automatch alone. Cached against the faces fingerprint and the photos generation: a
+    keyword written or removed changes which faces qualify without touching a face."""
+    cached = cache.get("decided_matrix", identify.decided_stamp(library))
+    if cached is not None:
+        return cached
+    stamp, value = identify.decided_faces(library)
+    cache.put("decided_matrix", stamp, value)
+    return value
+
+
 def unnamed_faces(library, cache):
     """Every nameless face in play (tagpup.services.identify.UnnamedFaces), read once per
     state of the faces table rather than each time New Person opens; naming or excluding
