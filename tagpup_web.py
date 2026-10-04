@@ -199,6 +199,9 @@ def main(argv=None):
     lifecycle = Lifecycle(version=version, token=token, background=background)
     apps = {ports[kind]: web.create_app(kind, startup=startup, runtime=runtime, ports=ports, lifecycle=lifecycle)
             for kind in ("tagpup", "tuner")}
+    # Each library's migrations now, beside the serving, not in the first request (#661); a drain
+    # waits for them (Lifecycle.long_work, #664).
+    library_actions.bring_up_to_date_in_background(served_libraries(startup))
     if not os.environ.get("TAGPUP_WEB_NO_WARMUP"):
         runtime.warm_up_in_background(served_libraries(startup))
     background.start()

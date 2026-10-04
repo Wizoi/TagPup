@@ -65,7 +65,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from tagpup.core import paths
-from tagpup.store import db, derived, file_journal, people, schema
+from tagpup.store import db, derived, file_journal, people, person_ids, schema
 from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
@@ -93,10 +93,12 @@ NAMED = ("settings",)
 DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "photo_meta")
 
 #: Derived columns of journaled tables, rebuilt from the row's other columns after each
-#: write (a photo's dates, from its metadata and path: store.photos.date_photos). An
-#: inserted photo is recorded as written, before they are filled in, so an undo does not
-#: hold a row to them: it would find every inserted photo changed since.
-DERIVED_COLUMNS = {"photos": ("taken", "year")}
+#: write (a photo's dates, from its metadata and path: store.photos.date_photos; a face's
+#: person, from its name and the tree: store.person_ids). An inserted photo is recorded as
+#: written, before they are filled in, so an undo does not hold a row to them: it would find
+#: every inserted photo changed since. A face put back by an undo -- one recorded before the
+#: column existed among them -- is given its person's id by `_derive`.
+DERIVED_COLUMNS = {"photos": ("taken", "year"), "faces": ("tag_id",)}
 
 RECORDED, REBUILT, FORBIDDEN = "recorded", "rebuilt", "forbidden"
 
@@ -748,14 +750,18 @@ def _derive(conn, changes):
     keywords or faces changed or whose keywords a changed node names, the dates of each photo
     whose metadata or path changed, and the keyword, folder and metadata rows of each photo whose
     keywords, path or metadata changed, was made or was deleted and of each whose keywords a changed
-    node names (tagpup.store.derived). The generations move by their triggers. Returns how many
-    photos' people changed."""
+    node names (tagpup.store.derived); and the person each face of the photos it touched names, by
+    id -- every face's and every listed person's when it touched the tree (tagpup.store.person_ids).
+    The generations move by their triggers. Returns how many photos' people changed."""
     photo_ids, dated, nodes, listed, _node_ids = _touched(conn, changes)
     changed = 0
     if nodes:
         changed += people.follow_nodes(conn, nodes)
     if photo_ids:
+        person_ids.follow_faces(conn, sorted(photo_ids))
         changed += people.rebuild(conn, sorted(photo_ids))
+    if nodes:
+        person_ids.sync(conn)
     if dated:
         store_photos.date_photos(conn, sorted(dated))
     if listed:
@@ -883,7 +889,9 @@ def schema_gap_blocker(version, current):
             return "migration %d is not known" % number
         if migration.kind != schema.ADDITIVE:
             return "migration %d, %s, is %s" % (number, migration.name, migration.kind)
-        touched = sorted(set(migration.touches) & journaled)
+        derived_only = {table for table, columns in schema.ADDS_DERIVED_COLUMNS.get(number, {}).items()
+                        if set(columns) <= set(DERIVED_COLUMNS.get(table, ()))}
+        touched = sorted(set(migration.touches) & journaled - derived_only)
         if touched:
             return "migration %d, %s, touches %s" % (number, migration.name, ", ".join(touched))
     return None

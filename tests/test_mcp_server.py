@@ -30,7 +30,7 @@ from mcp.shared.memory import create_connected_server_and_client_session  # noqa
 
 from tagpup.core import processes  # noqa: E402
 from tagpup.mcp import server  # noqa: E402
-from tagpup.store import checks, db, derived, schema  # noqa: E402
+from tagpup.store import checks, db, derived, person_ids, schema  # noqa: E402
 
 LIBRARY = "harbour"
 
@@ -114,6 +114,7 @@ class McpServer(unittest.TestCase):
             add_people(conn, os.path.join(cls.gone, "camp_001.jpg"), ["Maren Oakhollow"], source="face")
             add_people(conn, os.path.join(cls.gone, "camp_002.jpg"), ["Maren Oakhollow"], source="face")
             derived.rebuild_all(conn)   # a library at rest: its derived tables are what its photos say
+            person_ids.sync(conn)       # and its faces and people hold the ids their names give
             conn.commit()
         finally:
             conn.close()

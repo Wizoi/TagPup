@@ -354,9 +354,10 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
         chosen, gone = decide(conn)
         # A bulk guess, not a per-face human decision, so it is left as an automatic
         # assignment that re-clustering may revise. Only the faces still unnamed and in
-        # play are named (faces.name_if_unnamed), and only those are counted.
-        return [(name, face_photo) for face_id, name, face_photo in chosen
-                if faces.name_if_unnamed(conn, face_id, name)], gone
+        # play are named, name_if_unnamed's guard, and only those are counted: in one write
+        # whose photos are rebuilt once (faces.name_unnamed; docs/findings.md, #659).
+        named = set(faces.name_unnamed(conn, {face_id: name for face_id, name, _photo in chosen}))
+        return [(name, face_photo) for face_id, name, face_photo in chosen if face_id in named], gone
 
     if rehearse:
         conn = db.connect(db.readonly_uri(library.path), uri=True)

@@ -409,14 +409,17 @@ class TheMigration(unittest.TestCase):
     def test_a_library_at_18_gets_the_tables_filled_from_its_rows_and_changes_nothing_else(self):
         _home, path = self.library_at(18)
         self.seed(path)
-        before = {table: self.look(path, "SELECT * FROM %s ORDER BY 1" % table)
-                  for table in ("photos", "tag_taxonomy", "faces", "settings")}
+        # The columns that were there: a later migration (21) adds one to faces.
+        columns = {table: ", ".join(row[1] for row in self.look(path, "PRAGMA table_info(%s)" % table))
+                   for table in ("photos", "tag_taxonomy", "faces", "settings")}
+        before = {table: self.look(path, "SELECT %s FROM %s ORDER BY 1" % (columns[table], table)) for table in columns}
         total = len(before["photos"])
         lists = [json.loads(tags or "[]") for (tags,) in self.look(path, "SELECT tags FROM photos")]
         self.assertGreater(total, 6, "the six seeded, and the two the older library holds")
         schema._current.clear()
-        self.assertEqual(["the tables the library views stand on", "photos by when they were taken"], schema.ensure(path))
-        self.assertEqual(before, {table: self.look(path, "SELECT * FROM %s ORDER BY 1" % table) for table in before})
+        self.assertEqual(["the tables the library views stand on", "photos by when they were taken", "people by their node's id"], schema.ensure(path))
+        self.assertEqual(before, {table: self.look(path, "SELECT %s FROM %s ORDER BY 1" % (columns[table], table))
+                                  for table in before})
         conn = db.connect(db.readonly_uri(path), uri=True)
         try:
             self.assertEqual([], derived.problems(conn))
@@ -451,7 +454,7 @@ class TheMigration(unittest.TestCase):
         self.assertFalse(names & {"photo_tags", "folders", "photo_folder", "photo_meta", "derived_go_with_their_photo",
                                   "photo_tags_go_with_their_node", "idx_photo_tags_tag"}, "all or nothing")
         schema._current.clear()
-        self.assertEqual(["the tables the library views stand on", "photos by when they were taken"], schema.ensure(path))
+        self.assertEqual(["the tables the library views stand on", "photos by when they were taken", "people by their node's id"], schema.ensure(path))
         self.assertEqual([(schema.LATEST,)], self.look(path, "SELECT MAX(version) FROM schema_version"))
 
     def test_a_failed_check_rolls_it_back(self):
@@ -479,7 +482,7 @@ class TheMigration(unittest.TestCase):
         schema.ensure(path)
         shutil.copyfile(snapshot, path)   # restored over the migrated library
         schema._current.clear()
-        self.assertEqual(["the tables the library views stand on", "photos by when they were taken"], schema.ensure(path))
+        self.assertEqual(["the tables the library views stand on", "photos by when they were taken", "people by their node's id"], schema.ensure(path))
         self.assertEqual(self.look(path, "SELECT COUNT(*) FROM photos")[0][0],
                          self.look(path, "SELECT COUNT(*) FROM photo_meta")[0][0])
 
@@ -490,7 +493,7 @@ class TheMigration(unittest.TestCase):
         first = schema.ensure(path)
         schema._current.clear()
         second = schema.ensure(path)
-        self.assertEqual((["the tables the library views stand on", "photos by when they were taken"], []), (first, second))
+        self.assertEqual((["the tables the library views stand on", "photos by when they were taken", "people by their node's id"], []), (first, second))
 
     def test_a_library_made_new_has_the_tables_empty(self):
         home = own_home.for_test(self)

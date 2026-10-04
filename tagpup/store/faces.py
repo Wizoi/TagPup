@@ -3,7 +3,9 @@
 Every write here that changes who a face is -- named, unnamed, excluded, detected,
 deleted -- rebuilds the people of the photos it touched (tagpup.store.people.rebuild),
 in the same transaction: clustering, re-detection and dedupe changed faces and left
-each photo's people as they were (docs/findings.md, #63).
+each photo's people as they were (docs/findings.md, #63). It gives their faces the id of
+the person their name now is, too (tagpup.store.person_ids.follow_faces), by the same
+call (`_rebuilt`).
 
 The names a photo's faces were given, turning their boxes when a photo is turned, a
 face's crop, a write to the table that the Identify Faces grids can account for, and
@@ -13,6 +15,7 @@ phase 3 (docs/ARCHITECTURE.md).
 A face names its photo by id; a photo's path crosses this module native, converted by the
 library's roots on the way in and out (tagpup.store.roots).
 """
+import collections
 import contextlib
 import json
 import logging
@@ -20,7 +23,7 @@ import os
 import types
 
 from tagpup.core import paths
-from tagpup.store import db, generations, people
+from tagpup.store import db, generations, people, person_ids
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -235,9 +238,13 @@ def _photos_of(conn, face_ids):
 
 
 def _rebuilt(conn, photo_ids, changed):
-    """`changed`, after rebuilding the people of `photo_ids` if anything changed."""
+    """`changed`, after rebuilding the people of `photo_ids` and giving their faces and listed people
+    the ids their names give (person_ids), if anything changed. The tree's people are read once for
+    both (docs/findings.md, #659)."""
     if changed and photo_ids:
-        people.rebuild(conn, photo_ids)
+        known = person_ids.read(conn)
+        person_ids.follow_faces(conn, photo_ids, known)
+        people.rebuild(conn, photo_ids, ids=known)
     return changed
 
 
@@ -366,6 +373,27 @@ def name_if_unnamed(conn, face_id, person_name):
     changed = conn.execute("UPDATE faces SET name = ? WHERE id = ? AND name IS NULL AND excluded = 0"
                            " AND " + NOT_DECIDED_NOBODY % "", (person_name, face_id)).rowcount
     return _rebuilt(conn, _photos_of(conn, [face_id]), changed)
+
+
+def name_unnamed(conn, names_by_id):
+    """Give each face in {id: name} its name as a guess, as name_if_unnamed does -- only a face still
+    unnamed, not excluded and not unmatched by hand -- in one statement per name and chunk, and rebuild
+    their photos once: automatch's write (docs/findings.md, #659), which named a folder's faces one by
+    one and rebuilt a photo for each. Returns the ids its UPDATE changed (RETURNING), in the order given:
+    a face another process named meanwhile is not counted, inside a transaction or not (#665). The
+    caller commits, inside the transaction that read the faces it chose."""
+    guard = " AND name IS NULL AND excluded = 0 AND " + NOT_DECIDED_NOBODY % ""
+    by_name = collections.defaultdict(list)
+    for face_id, person_name in names_by_id.items():
+        by_name[person_name].append(face_id)
+    named = set()
+    for person_name, face_ids in by_name.items():
+        for chunk in _chunks(face_ids):
+            named.update(face_id for (face_id,) in conn.execute(
+                "UPDATE faces SET name = ? WHERE " + _in(chunk) + guard + " RETURNING id", [person_name] + chunk).fetchall())
+    done = [face_id for face_id in names_by_id if face_id in named]
+    _rebuilt(conn, _photos_of(conn, done), len(done))
+    return done
 
 
 def unname(conn, face_ids, source="manual"):

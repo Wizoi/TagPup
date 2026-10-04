@@ -18,7 +18,6 @@ from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import library_view  # noqa: E402
-from tagpup.store import schema  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import libraries as web_libraries  # noqa: E402
 
@@ -211,7 +210,7 @@ class ALibraryThatIsNotReady(unittest.TestCase):
     def test_a_library_behind_is_a_sentence_for_both(self):
         home = own_home.for_test(self)
         path = home.library("behind.db")
-        at_version(path, schema.LATEST - 1)
+        at_version(path, 19)   # before the indexes the views page by (migration 20)
         app = web.create_app("tagpup", startup=Library(path))
         app.testing = True
         client = app.test_client()

@@ -11,6 +11,7 @@ tagpup.services.settings.
 import logging
 import os
 import threading
+import time
 
 from tagpup.core import paths, validation
 from tagpup.core.library import Library, picker_name
@@ -29,6 +30,55 @@ def bring_up_to_date(db_path):
     """The library's tables, made or migrated (tagpup.store.schema.ensure). Returns the
     names of the migrations applied: none, usually."""
     return schema.ensure(db_path)
+
+
+#: How many libraries the startup thread has still to bring up to date (bring_up_to_date_in_background):
+#: work beside the requests, which /api/server shows and a drain waits for (tagpup.web.lifecycle.long_work).
+_bringing = 0
+_bringing_guard = threading.Lock()
+
+
+def bringing_up_to_date():
+    """How many libraries this process's startup thread has still to bring up to date."""
+    with _bringing_guard:
+        return _bringing
+
+
+def bring_up_to_date_in_background(libraries_served):
+    """Bring each library the server serves to the current schema on a thread of its own, started as the
+    server starts (docs/findings.md, #661): a migration -- 21 takes 17.5 s on photo_index cold -- runs
+    then, not in the first request that names the library. The server answers meanwhile: /api/server,
+    which the supervisor's hand-over asks, names no library, and says the thread is busy; a drain waits
+    for it (bringing_up_to_date, #664), so a new version does not end the server part-way through a
+    migration. A page opened meanwhile gets a blank tab until the migration ends -- every URL under the
+    library's name resolves it and waits on its write lock -- and a page already open shows its own
+    spinner for its requests (#666). A library that cannot be brought up to date now -- held by another
+    program past the busy timeout -- is logged and left for its first request. A library whose file is
+    not there is left alone: bringing it up to date would make it, and the picker offers the default
+    library in an empty data folder (#100). Returns the thread."""
+    global _bringing
+    there = [library for library in libraries_served if os.path.exists(library.path)]
+    with _bringing_guard:
+        _bringing += len(there)
+
+    def run():
+        global _bringing
+        for library in there:
+            started = time.time()
+            try:
+                applied = bring_up_to_date(library.path)
+                if applied:
+                    logger.info("Brought %s up to date at start (%s) in %.1fs", library.path, ", ".join(applied),
+                                time.time() - started)
+            except Exception as e:
+                logger.warning("Could not bring %s up to date at start: %s", library.path, e)
+            finally:
+                with _bringing_guard:
+                    _bringing -= 1
+
+    thread = threading.Thread(target=run, name="BringUpToDateThread", daemon=True)
+    thread.start()
+    return thread
 
 
 def create(db_path):

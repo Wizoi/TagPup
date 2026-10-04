@@ -50,6 +50,7 @@ KINDS = {
     18: schema.ADDITIVE,     # the roots table, empty
     19: schema.ADDITIVE,     # photo_tags, folders, photo_folder and photo_meta, derived from the photos
     20: schema.ADDITIVE,     # idx_photos_taken and idx_photos_year: the indexes the library views page by
+    21: schema.ADDITIVE,     # faces.tag_id and photo_people.tag_id, filled from the name and the tree
 }
 
 
@@ -294,7 +295,8 @@ class AFailedCheck(Migrated):
 
 FACES_WITHOUT_REASON = ("id INTEGER PRIMARY KEY AUTOINCREMENT,"
                         " photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,"
-                        " box TEXT, embedding BLOB, name TEXT, prob REAL, name_source TEXT, excluded INTEGER DEFAULT 0")
+                        " box TEXT, embedding BLOB, name TEXT, prob REAL, name_source TEXT, excluded INTEGER DEFAULT 0,"
+                        " tag_id INTEGER")
 
 
 class TheTwelveSteps(Migrated):
@@ -356,7 +358,7 @@ class TheTwelveSteps(Migrated):
             schema.rebuild_table(conn, "faces", FACES_WITHOUT_REASON)
 
     def test_refuse_a_rebuild_leaving_a_row_naming_nothing(self):
-        columns = ["id", "photo_id", "box", "embedding", "name", "prob", "name_source", "excluded"]
+        columns = ["id", "photo_id", "box", "embedding", "name", "prob", "name_source", "excluded", "tag_id"]
         copy = {c: c for c in columns}
         copy["photo_id"] = "photo_id + 100000"
         with self.assertRaises(schema.CheckFailed) as failed:
@@ -552,13 +554,15 @@ class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
                               "the runs of recurring jobs", "when the library was last in step",
                               "the folders asked to be added", "the photo files found damaged",
                               "the photos whose faces are to be detected", "the library's roots",
-                              "the tables the library views stand on", "photos by when they were taken"],
+                              "the tables the library views stand on", "photos by when they were taken",
+                              "people by their node's id"],
                              schema.ensure(path))
         # What it touches: change_files, which it makes, and changes, the runner's own;
         # migration 12 touches change_files alone, 13 job_runs, 14 sync_runs, 15
-        # added_folders and 16 damaged_files, which they make.
+        # added_folders and 16 damaged_files, which they make; 21 faces and photo_people, whose
+        # columns it adds (a count of faces reads its smallest index, not its rows).
         self.assertLessEqual(set(counted), {"change_files", "changes", "job_runs", "sync_runs", "added_folders",
-                                            "damaged_files", "faces_pending"})
+                                            "damaged_files", "faces_pending", "faces", "photo_people"})
 
 
 class ANewLibrary(unittest.TestCase):

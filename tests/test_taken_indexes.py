@@ -5,6 +5,7 @@ no row of any table changes, and a change journaled before it can still be undon
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -50,7 +51,8 @@ class MigrationTwenty(unittest.TestCase):
         # the migration's own record (its version, and its entry in the journal) aside
         tables = [table for table in tables if table not in ("schema_version", "changes", "change_rows")]
         before = {table: look(self.path, "SELECT * FROM %s" % table) for table in tables}
-        self.assertEqual(["photos by when they were taken"], schema.ensure(self.path))
+        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:20]), mock.patch.object(schema, "LATEST", 20):
+            self.assertEqual(["photos by when they were taken"], schema.ensure(self.path))
         self.assertEqual(INDEXES, self.indexes())
         self.assertEqual(before, {table: look(self.path, "SELECT * FROM %s" % table) for table in tables})
         self.assertEqual(20, look(self.path, "SELECT MAX(version) FROM schema_version")[0][0])

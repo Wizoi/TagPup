@@ -509,12 +509,11 @@ class WhatGoesWrong(Bulk):
         from test_migrations import at_version
 
         from tagpup.core.library import Library
-        from tagpup.store import schema
         from tagpup.web import app as web
         from tagpup.web import libraries as web_libraries
         home = own_home.for_test(self)
         path = home.library("behind.db")
-        at_version(path, schema.LATEST - 1)
+        at_version(path, 19)   # before the indexes the views page by (migration 20)
         app = web.create_app("tagpup", startup=Library(path))
         app.testing = True
         with mock.patch.object(web_libraries.library_actions, "bring_up_to_date", side_effect=RuntimeError("locked")):

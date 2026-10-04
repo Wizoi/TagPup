@@ -9,7 +9,7 @@ import collections
 import os
 
 from tagpup.core import paths
-from tagpup.store import derived, generations, people, schema
+from tagpup.store import derived, generations, people, person_ids, schema
 from tagpup.store import roots as store_roots
 
 #: One rule and what breaks it. `examples` are paths, ids or tags, a few at most.
@@ -153,6 +153,31 @@ def tags_without_a_node(conn):
     found = derived.unnamed_keywords(conn)
     ranked = sorted(found.by_tag.items(), key=lambda pair: (-pair[1], pair[0]))
     return len(ranked), sum(found.by_tag.values()), found.photos, ranked
+
+
+# ---- People by their node's id (tagpup.store.person_ids; docs/ARCHITECTURE.md, "Identity by id") ------------
+
+def face_person_ids_out_of_step(conn):
+    """Faces whose person id (`faces.tag_id`) is not the node their name is now: a version of the app from
+    before migration 21 that named a face, or a tree edited by one. The examples are face ids.
+    `tools/doctor.py --rebuild-derived --apply` puts them right. Waits for migration 21."""
+    found = person_ids.out_of_step(conn, "faces", EXAMPLES)
+    return Check("faces whose person id is not their name's", found.rows, found.examples)
+
+
+def listed_person_ids_out_of_step(conn):
+    """People listed for a photo (`photo_people`) whose person id is not the node their name is now. The
+    examples are photo ids."""
+    found = person_ids.out_of_step(conn, "photo_people", EXAMPLES)
+    return Check("people listed whose person id is not their name's", found.rows, found.examples)
+
+
+def names_without_a_person(conn):
+    """(names no person node is called: {name: rows}, names more than one is: {name: rows}, names only a
+    branch is: {name: ([node ids], rows)}) of faces and photos' people (person_ids.unresolved). Reported, not
+    broken: none has an id, none is guessed, and the tree is the owner's to settle (the ambiguous person
+    path, docs/findings.md, #27; a branch is not a person, #660)."""
+    return person_ids.unresolved(conn)
 
 
 def orphan_nodes(conn):
@@ -334,7 +359,7 @@ RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excl
          people_out_of_date, orphan_nodes, crops_without_a_face, vectors_without_a_photo,
          people_without_a_photo, suggestions_without_a_photo, one_file_two_rows,
          rooted_rows_convert, native_rows_under_a_root, photo_tags_out_of_date, photo_folders_out_of_date,
-         folders_out_of_date, photo_meta_out_of_date)
+         folders_out_of_date, photo_meta_out_of_date, face_person_ids_out_of_step, listed_person_ids_out_of_step)
 
 
 def run(conn):
