@@ -107,6 +107,19 @@ class ReexamineThroughTheRoute(ExclusionTestBase):
         self.assertIsNone(self.row(self.wren_one)["name"])
 
 
+    def test_unmatch_all_marks_only_the_faces_it_unnames(self):
+        """docs/findings.md, #656: Unmatch All marked every face in the photo "nobody",
+        the nameless ones too, and Re-examine never named those again."""
+        status, body = self.post("/api/face/match", {"face_id": self.wren_one, "person_name": ROWAN})
+        self.assertEqual(status, 200, body)
+        status, body = self.post("/api/photo/unmatch-all", {"photo_path": self.third})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.row(self.wren_one)["source"], "manual", "the face it unnamed is a decision")
+        self.assertIsNone(self.row(self.stranger)["source"], "a face that never had a name was marked nobody")
+        self.assertEqual(self.reexamine(dry_run=True)["people"], {ROWAN: 2},
+                         "the face unnamed by hand stays nobody; the others are still candidates")
+
+
 class ReexamineInTheService(FacesCase):
     def setUp(self):
         super().setUp()

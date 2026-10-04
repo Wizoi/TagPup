@@ -378,12 +378,16 @@ def unname(conn, face_ids, source="manual"):
 
 
 def unname_photo(conn, photo_path):
-    """Take the names off every face in a photo, as a decision. Returns rows changed. By
-    equality: a LIKE pass as well cleared every name in IMG-1234.jpg along with
-    IMG_1234.jpg. The caller commits."""
+    """Take the names off every named face in a photo, as a decision. Returns rows
+    changed. By equality: a LIKE pass as well cleared every name in IMG-1234.jpg along
+    with IMG_1234.jpg. The caller commits.
+
+    Only the faces that had a name: marking the photo's nameless faces 'manual' as well
+    called each of them "nobody" for good, and automatch never named them again
+    (docs/findings.md, #656)."""
     where, params = _on_photo(conn, photo_path)
-    changed = conn.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE " + where,
-                           params).rowcount
+    changed = conn.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE " + where
+                           + " AND name IS NOT NULL", params).rowcount
     return _rebuilt(conn, {photo_id for (photo_id,) in conn.execute(
         "SELECT DISTINCT photo_id FROM faces WHERE " + where, params)}, changed)
 
