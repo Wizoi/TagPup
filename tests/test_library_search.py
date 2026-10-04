@@ -266,6 +266,28 @@ class TheOrders(Library):
         self.assertNotIn("TEMP B-TREE", text)
 
 
+class TheMembersAreGatheredOnce(Library):
+    def test_all_of_reads_the_names_and_the_tree_once_whatever_its_members_751(self):
+        # #751: each all_of person was a pass of photo_people's names and each keyword spelled otherwise a read of the tree.
+        value = search(all_of=[member("person", WREN), member("person", ROWAN.upper()), member("person", ELODIE),
+                               member("keyword", "trips/coast"), member("keyword", "ACTIVITY/sailing")],
+                       any_of=[member("person", WREN), member("keyword", "activity")], none_of=[member("person", "Nobody Atall")])
+        conn = db.connect(db.readonly_uri(self.vl.path), uri=True)
+        seen = []
+        try:
+            source = library_view.source_of(self.vl.library, "search", value)
+            conn.set_trace_callback(seen.append)
+            found, _total = store.all_ids(conn, source, 1000)
+        finally:
+            conn.set_trace_callback(None)
+            conn.close()
+        self.assertEqual(1, sum(1 for sql in seen if "SELECT DISTINCT name FROM photo_people" in sql))
+        self.assertEqual(1, sum(1 for sql in seen if sql.strip() == "SELECT id, tag FROM tag_taxonomy"))
+        expected = (self.of("person", WREN) & self.of("person", ROWAN) & self.of("person", ELODIE)
+                    & self.of("keyword", "Trips/Coast") & self.of("keyword", "Activity/Sailing"))
+        self.assertEqual(expected, set(found))
+
+
 class ASelectionOfASearch(Library):
     def test_select_all_less_some_resolves_tallies_and_is_the_list(self):
         named = {"kind": "search", "value": search(any_of=[member("person", WREN), member("person", ROWAN)],

@@ -193,13 +193,47 @@ def _words_clause(conn, words):
     return search_index.clause(words)
 
 
-def _member_clause(conn, member):
+class _Reads:
+    """What resolving the members of one source reads once however many members name it (#751): the names photo_people
+    holds, by vocabulary.key (one pass of its name index), the tag tree's nodes (read only when a keyword is not spelled
+    exactly as a node is), and the folders' parent ids. One for each statement a source is compiled into, never kept."""
+
+    def __init__(self, conn):
+        self.conn = conn
+        self._spelled = self._nodes = self._children = None
+
+    def spellings(self, name):
+        if self._spelled is None:
+            self._spelled = collections.defaultdict(list)
+            for (held,) in self.conn.execute("SELECT DISTINCT name FROM photo_people"):
+                self._spelled[vocabulary.key(held)].append(held)
+        return list(self._spelled.get(vocabulary.key(name), ()))
+
+    def tag(self, tag):
+        if self.conn.execute("SELECT 1 FROM tag_taxonomy WHERE tag = ?", (tag,)).fetchone():
+            return tag
+        if self._nodes is None:
+            nodes = self.conn.execute("SELECT id, tag FROM tag_taxonomy").fetchall()
+            self._nodes = (derived.Tree(nodes), dict(nodes))
+        tree, tag_of = self._nodes
+        found = tree.find(tag)
+        return tag_of.get(found, tag) if found is not None else tag
+
+    def children(self):
+        if self._children is None:
+            self._children = collections.defaultdict(list)
+            for folder_id, parent_id in self.conn.execute("SELECT id, parent_id FROM folders"):
+                self._children[parent_id].append(folder_id)
+        return self._children
+
+
+def _member_clause(conn, member, reads):
     """(SQL over `p`, params, the member's Scope) of the photos of one source of a search, or None when it holds none: a
     union's own clause, a folder alone by photo_folder, every other kind the where its own Scope reads it by."""
     if member.kind == FOLDER and not member.recursive:
-        scope = _union_scope(conn, (member,))
+        scope = _union_scope(conn, (member,), reads)
     else:
-        scope = _scope(conn, member)
+        scope = _scope(conn, member, reads)
     if scope is None:
         return None
     if scope.from_ != "photos p":
@@ -207,7 +241,7 @@ def _member_clause(conn, member):
     return "(%s)" % scope.where, tuple(scope.params), scope
 
 
-def _search_scope(conn, search):
+def _search_scope(conn, search, reads):
     """The Scope of a search: ONE where-clause over `photos p`, the AND of its parts -- the union of `any_of` (_union_scope's
     clause), each member of `all_of` (its own clause: an AND of gathered INs would be "any"), NOT the union of `none_of`,
     and the words -- so a photo is one row and the count counts it once. None when it can hold nothing: `any_of` or a
@@ -220,7 +254,7 @@ def _search_scope(conn, search):
     an AND of a small list and the whole library is either a handful or most of it."""
     parts, dated = [], False
     if search.any_of:
-        scope = _union_scope(conn, search.any_of)
+        scope = _union_scope(conn, search.any_of, reads)
         if scope is None:
             return None
         parts.append(("(%s)" % scope.where, tuple(scope.params)))
@@ -228,7 +262,7 @@ def _search_scope(conn, search):
     for member in search.all_of:
         if member.kind == ALL:
             continue
-        found = _member_clause(conn, member)
+        found = _member_clause(conn, member, reads)
         if found is None:
             return None
         parts.append(found[:2])
@@ -236,7 +270,7 @@ def _search_scope(conn, search):
     if search.none_of:
         if any(member.kind == ALL for member in search.none_of):
             return None
-        scope = _union_scope(conn, search.none_of)
+        scope = _union_scope(conn, search.none_of, reads)
         if scope is not None:
             parts.append(("NOT IFNULL((%s), 0)" % scope.where, tuple(scope.params)))
     if search.words:
@@ -247,7 +281,7 @@ def _search_scope(conn, search):
     return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), dated, True)
 
 
-def _union_scope(conn, members):
+def _union_scope(conn, members, reads=None):
     """The Scope of the union of `members`: ONE where-clause over `photos p`, so a photo in two of them is one row and the
     count counts it once. The members are gathered by kind -- the folders' ids (a folder with its subfolders is its own and
     every folder under it, by the tree's parent ids), the tag tree's node ids, the people's spellings, the years -- each
@@ -258,9 +292,9 @@ def _union_scope(conn, members):
     range of photos.path: the two agree while the derived tables are in step with the photos (the doctor checks them; #698)."""
     if any(member.kind == ALL for member in members):
         return _scope(conn, Source(ALL))
+    reads = reads or _Reads(conn)
     folder_ids, tag_ids, names, years, clauses = set(), set(), set(), set(), []
     walked = set()   # the folders whose subfolders are in: apart from folder_ids, so a folder named alone first is still walked (#695)
-    folders = spelled = None
     for member in members:
         kind = member.kind
         if kind == FOLDER:
@@ -270,10 +304,7 @@ def _union_scope(conn, members):
                 continue
             folder_ids.add(row[0])
             if member.recursive:
-                if folders is None:
-                    folders = collections.defaultdict(list)
-                    for folder_id, parent_id in conn.execute("SELECT id, parent_id FROM folders"):
-                        folders[parent_id].append(folder_id)
+                folders = reads.children()
                 below = [row[0]]
                 while below:
                     folder_id = below.pop()
@@ -282,15 +313,11 @@ def _union_scope(conn, members):
                         folder_ids.add(folder_id)
                         below.extend(folders.get(folder_id, ()))
         elif kind in (KEYWORD, KEYWORD_ONLY):
-            tag = resolve_tag(conn, member.value)
+            tag = reads.tag(member.value)
             sql, params = derived.under(tag) if kind == KEYWORD else ("SELECT id FROM tag_taxonomy WHERE tag = ?", (tag,))
             tag_ids.update(node_id for (node_id,) in conn.execute(sql, params))
         elif kind == PERSON:
-            if spelled is None:
-                spelled = collections.defaultdict(list)
-                for (held,) in conn.execute("SELECT DISTINCT name FROM photo_people"):
-                    spelled[vocabulary.key(held)].append(held)
-            names.update(spelled.get(vocabulary.key(member.value), ()))
+            names.update(reads.spellings(member.value))
         elif kind == YEAR:
             years.add(int(member.value))
         elif kind == MONTH:
@@ -316,21 +343,22 @@ def _union_scope(conn, members):
     return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), dated, ranged)
 
 
-def _scope(conn, source):
+def _scope(conn, source, reads=None):
     """The Scope of `source`; None for a source that holds none whatever is asked (a folder the library has no
     row of, a person nobody is called)."""
     kind = source.kind
     if kind == ALL:
         return Scope("photos p", "1", (), ("SELECT COUNT(*) FROM photos", ()))
+    reads = reads or _Reads(conn)
     if kind == ANY_OF:
-        return _union_scope(conn, source.value)
+        return _union_scope(conn, source.value, reads)
     if kind == SEARCH:
-        return _search_scope(conn, source.value)
+        return _search_scope(conn, source.value, reads)
     if kind == YEAR_OTHER:
         where, params = _year_other(int(source.value))
         return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), ranged=True)
     if kind == KEYWORD_ONLY:
-        tag = (resolve_tag(conn, source.value),)
+        tag = (reads.tag(source.value),)
         inner = "SELECT photo_id FROM photo_tags WHERE tag_id IN (SELECT id FROM tag_taxonomy WHERE tag = ?)"
         return Scope("photos p", "p.id IN (%s)" % inner, tag, ("SELECT COUNT(DISTINCT photo_id) FROM (%s)" % inner, tag))
     if kind == YEAR:
@@ -351,13 +379,13 @@ def _scope(conn, source):
         return Scope("photo_folder pf JOIN photos p ON p.id = pf.photo_id", "pf.folder_id = ?", (row[0],),
                      ("SELECT COUNT(*) FROM photo_folder WHERE folder_id = ?", (row[0],)))
     if kind == KEYWORD:
-        sql, params = derived.under(resolve_tag(conn, source.value))
+        sql, params = derived.under(reads.tag(source.value))
         # IN, not a join: a photo holding two tags under the keyword is one row, and the plan seeks
         # photo_tags's covering index once for each node and the photo by its primary key.
         return Scope("photos p", "p.id IN (SELECT photo_id FROM photo_tags WHERE tag_id IN (%s))" % sql, params,
                      ("SELECT COUNT(DISTINCT photo_id) FROM photo_tags WHERE tag_id IN (%s)" % sql, params))
     if kind == PERSON:
-        names = spellings(conn, source.value)
+        names = reads.spellings(source.value)
         if not names:
             return None
         marks = ",".join("?" * len(names))
@@ -371,18 +399,13 @@ def resolve_tag(conn, tag):
     it is without case and with its segments trimmed, as photo_tags ties a photo's keywords to nodes
     (derived.Tree: the lowest id when two differ only in case); `tag` as typed when there is none, which holds
     nothing."""
-    if conn.execute("SELECT 1 FROM tag_taxonomy WHERE tag = ?", (tag,)).fetchone():
-        return tag
-    nodes = conn.execute("SELECT id, tag FROM tag_taxonomy").fetchall()
-    found = derived.Tree(nodes).find(tag)
-    return next((node_tag for node_id, node_tag in nodes if node_id == found), tag)
+    return _Reads(conn).tag(tag)
 
 
 def spellings(conn, name):
     """The names `photo_people` holds that are `name` -- the same person without regard to case -- as it holds
     them: usually one. One pass of the name index (400 names on photo_index: 4 ms)."""
-    wanted = vocabulary.key(name)
-    return [held for (held,) in conn.execute("SELECT DISTINCT name FROM photo_people") if vocabulary.key(held) == wanted]
+    return _Reads(conn).spellings(name)
 
 
 #: The largest id a photo can have, and one more: the start of a descending read of ids.
