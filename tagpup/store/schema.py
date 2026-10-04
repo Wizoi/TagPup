@@ -721,6 +721,17 @@ def _taken_indexes(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_photos_year ON photos(year, taken, id)")
 
 
+def _name_index(conn):
+    """The index a library view orders by file name with (tagpup.store.library_view; docs/ARCHITECTURE.md, phase 9,
+    #671): `idx_photos_name` on the file name of each photo's path, without case, then id -- an expression of built-in
+    functions (`library_view.name_sql`), so nothing writes it but SQLite and no writer of a path has to know of it.
+    Without it an order by name computes each photo's name and sorts them: 630 ms for the whole of photo_index. Index
+    only: no row of any table changes, nothing is recorded in the journal, and no backup is needed."""
+    from tagpup.store import library_view   # the store imports this module
+    conn.execute("CREATE INDEX IF NOT EXISTS %s ON photos(%s COLLATE NOCASE, id)"
+                 % (library_view.NAME_INDEX, library_view.name_sql("path")))
+
+
 def _person_ids(conn):
     """Each face and each photo's listed person name the node of the tag tree that is that person:
     `faces.tag_id` and `photo_people.tag_id`, beside `name` (docs/ARCHITECTURE.md, "Identity by id",
@@ -1267,6 +1278,11 @@ MIGRATIONS = (
               "idx_faces_person; every read still reads the name",
               ("faces", "photo_people"),
               (RowsKept(), PersonIdsAgree()) + STANDARD),
+    Migration(22, "photos by file name", _name_index, ADDITIVE,
+              "adds idx_photos_name, the index a library view orders by file name with; no row of any table changes, "
+              "so it touches none and blocks no undo",
+              (),
+              (RowsKept(),) + STANDARD),
 )
 
 #: The columns a migration adds to a table the journal keys that the journal derives

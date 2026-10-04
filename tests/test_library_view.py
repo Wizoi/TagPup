@@ -613,7 +613,7 @@ class TheNavigator(Library):
 
     def test_the_people_are_counted_by_photos_most_first(self):
         found = self.section("people")["people"]
-        self.assertEqual([{"name": "Wren Halloway", "count": 2}, {"name": "Rowan Thackeray", "count": 1}], found)
+        self.assertEqual([("Wren Halloway", 2), ("Rowan Thackeray", 1)], [(each["name"], each["count"]) for each in found])
 
     def test_people_who_differ_only_in_case_are_one_entry_and_a_photo_counts_once(self):
         photo = self.vl.photo("2024 A", "extra.jpg", taken="2024:08:01 00:00:00")

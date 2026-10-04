@@ -15,13 +15,39 @@
 // that is closed or replaced is told apart from the one a reply was asked for by the object itself:
 // a reply for a view that is no longer `state.library` is dropped.
 import { api } from './common/api.js';
-import { pathKey } from './common/paths.js';
+import { baseName, pathKey } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { forgetSelectedIds, newIdSelection, reconcileIdSelection } from './selected.js';
 
-/** The kinds a view is, as GET /api/library/view names them. */
-export const LIBRARY_KINDS = ['all', 'folder', 'keyword', 'person', 'year', 'month'];
+/**
+ * The kinds a view is, as GET /api/library/view names them: the sources a navigator row holds -- `keyword_only` a keyword's
+ * node without the nodes under it, `year_other` the photos of a year whose date names no month of it -- and `any_of`, the
+ * union of a list of them (the rows selected together, #672; its value is the list, each { kind, value, recursive }).
+ */
+export const LIBRARY_KINDS = ['all', 'folder', 'keyword', 'person', 'year', 'month', 'keyword_only', 'year_other', 'any_of'];
+/** The kinds a union holds. */
+export const MEMBER_KINDS = LIBRARY_KINDS.filter(kind => kind !== 'any_of');
+/** The most sources a union holds: as the server takes (services.library_view.MAX_MEMBERS). */
+export const MAX_MEMBERS = 1000;
+/**
+ * The longest query an address of a view may have, in characters as it is sent (percent-encoded): the page's own address is
+ * read by the same server, which reads at most 262,144 bytes of a request's first line and headers, so a longer one could
+ * be shown but never reloaded or bookmarked. A union is asked of the server in a body, which has no such limit (#696):
+ * this, not the 1,000 sources, is the limit that bites for long paths (about 1,000 rows of short ones, 400 of a share's).
+ */
+export const MAX_ADDRESS = 100000;
+
+/**
+ * The orders a view is read in (#671): by Date Taken -- photos with none after the dated ones, either way -- or by file
+ * name, each either way. `taken` is the order an address that names none has.
+ */
+export const LIBRARY_ORDERS = ['taken', 'taken-desc', 'name', 'name-desc'];
+export const DEFAULT_ORDER = 'taken';
+/** What each order is called where it is chosen. */
+export const ORDER_LABELS = {
+    taken: 'Date taken, oldest first', 'taken-desc': 'Date taken, newest first', name: 'Name, A to Z', 'name-desc': 'Name, Z to A',
+};
 
 /** Cards in one request: the most the server answers. */
 export const BATCH = 200;
@@ -60,31 +86,104 @@ export function viewSpecFromSearch(search) {
         return { error: `This address names a view of the library (“${kind.slice(0, 40)}”) that TagPup does not know. `
             + `The kinds are ${LIBRARY_KINDS.join(', ')}.` };
     }
+    const order = params.get('order') || DEFAULT_ORDER;
+    if (!LIBRARY_ORDERS.includes(order)) {
+        return { error: `This address names an order (“${order.slice(0, 40)}”) that TagPup does not know. The orders are ${LIBRARY_ORDERS.join(', ')}.` };
+    }
+    if (kind === 'all') return { kind, value: null, recursive: false, order };
+    if (kind === 'any_of') {
+        const members = unionFromText(params.get('value') || '');
+        return members.error ? members : { kind, value: members, recursive: false, order };
+    }
+    const found = memberOf(kind, params.get('value'), ['1', 'true', 'yes'].includes((params.get('recursive') || '').toLowerCase()));
+    return found.error ? found : { ...found, order };
+}
+
+/** One source as an address or a union names it: { kind, value, recursive }, or { error } saying why it is none. */
+function memberOf(kind, raw, recursive) {
+    if (!MEMBER_KINDS.includes(kind)) return { error: `A view of the library cannot hold “${String(kind).slice(0, 40)}”.` };
     if (kind === 'all') return { kind, value: null, recursive: false };
-    const value = (params.get('value') || '').trim();
+    const value = (raw === null || raw === undefined ? '' : String(raw)).trim();
     if (!value) return { error: `This address names a ${kind} view without saying which.` };
     if (value.length > MAX_VALUE) return { error: `This address names a ${kind} too long to be one.` };
-    if (kind === 'year' && !YEAR.test(value)) return { error: 'A year is written as 2024.' };
+    if ((kind === 'year' || kind === 'year_other') && !YEAR.test(value)) return { error: 'A year is written as 2024.' };
     if (kind === 'month' && !MONTH.test(value)) return { error: 'A month is written as 2024-06.' };
-    const recursive = kind === 'folder' && ['1', 'true', 'yes'].includes((params.get('recursive') || '').toLowerCase());
-    return { kind, value, recursive };
+    return { kind, value, recursive: kind === 'folder' && Boolean(recursive) };
+}
+
+/** The sources a union's JSON names, or { error }: a list of at least two and at most MAX_MEMBERS, none a union. */
+function unionFromText(text) {
+    if (!text.trim()) return { error: 'This address names a view of several rows without saying which.' };
+    if (text.length > MAX_ADDRESS) return { error: 'This address names more rows than a view can show at once.' };
+    let found;
+    try {
+        found = JSON.parse(text);
+    } catch (err) {
+        return { error: 'This address names a view of several rows that cannot be read.' };
+    }
+    if (!Array.isArray(found) || found.length === 0) return { error: 'This address names a view of several rows that cannot be read.' };
+    if (found.length > MAX_MEMBERS) return { error: `This address names ${found.length.toLocaleString()} rows; a view shows at most ${MAX_MEMBERS.toLocaleString()} at once.` };
+    const members = [];
+    for (const each of found) {
+        const member = each && typeof each === 'object' ? memberOf(each.kind, each.value, each.recursive) : { error: 'This address names a view of several rows that cannot be read.' };
+        if (member.error) return member;
+        members.push(member);
+    }
+    return members;
+}
+
+/** A union's sources as its JSON holds them: short, `recursive` only where it is true. */
+function unionText(members) {
+    return JSON.stringify(members.map(m => (m.recursive ? { kind: m.kind, value: m.value, recursive: true } : { kind: m.kind, value: m.value })));
 }
 
 /** The query string that opens a view: the inverse of viewSpecFromSearch. */
 export function viewSearch(spec) {
     const params = new URLSearchParams();
     params.set('view', spec.kind);
-    if (spec.kind !== 'all') params.set('value', spec.value);
+    if (spec.kind === 'any_of') params.set('value', unionText(spec.value));
+    else if (spec.kind !== 'all') params.set('value', spec.value);
     if (spec.recursive) params.set('recursive', '1');
+    if (spec.order && spec.order !== DEFAULT_ORDER) params.set('order', spec.order);
     return `?${params.toString()}`;
+}
+
+/** Are these the same view: the same source, read in the same order? */
+export function sameView(a, b) {
+    if (!a || !b || a.kind !== b.kind || Boolean(a.recursive) !== Boolean(b.recursive)) return false;
+    if ((a.order || DEFAULT_ORDER) !== (b.order || DEFAULT_ORDER)) return false;
+    if (a.kind === 'any_of') return unionText(a.value || []) === unionText(b.value || []);
+    return (a.value ?? null) === (b.value ?? null);
 }
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
     'October', 'November', 'December'];
 
+/** What one source of a union is called, short. */
+function memberLabel(spec) {
+    if (spec.kind === 'month') {
+        const [year, month] = String(spec.value).split('-');
+        return `${MONTHS[Number(month) - 1] || month} ${year}`;
+    }
+    if (spec.kind === 'year') return String(spec.value);
+    if (spec.kind === 'year_other') return `${spec.value} with no month`;
+    if (spec.kind === 'keyword_only') return `${spec.value} alone`;
+    if (spec.kind === 'folder') return `${baseName(spec.value) || spec.value}${spec.recursive ? '' : ' alone'}`;
+    if (spec.kind === 'all') return 'everything';
+    return String(spec.value);
+}
+
 /** What a view is called, in the header. */
 export function viewLabel(spec) {
     if (spec.kind === 'all') return 'The whole library';
+    if (spec.kind === 'any_of') {
+        const members = Array.isArray(spec.value) ? spec.value : [];
+        const named = members.slice(0, 3).map(memberLabel);
+        if (members.length <= 3) return `${named.slice(0, -1).join(', ')}${members.length > 1 ? ' and ' : ''}${named.at(-1) || ''}`;
+        return `${named.join(', ')} and ${(members.length - 3).toLocaleString()} more`;
+    }
+    if (spec.kind === 'keyword_only') return `Keyword ${spec.value}, without the keywords under it`;
+    if (spec.kind === 'year_other') return `Photos of ${spec.value} whose date names no month`;
     if (spec.kind === 'year') return `Photos of ${spec.value}`;
     if (spec.kind === 'month') {
         const [year, month] = String(spec.value).split('-');
@@ -98,16 +197,36 @@ export function viewLabel(spec) {
 /** Why a view holds nothing, in a sentence. */
 export function emptySentence(spec) {
     if (spec.kind === 'all') return 'This library holds no photos.';
+    if (spec.kind === 'any_of') return 'None of the rows selected holds a photo, or the library no longer has them.';
+    if (spec.kind === 'keyword_only') return `No photo carries the keyword “${spec.value}” itself, or the library's tag tree has no such keyword.`;
+    if (spec.kind === 'year_other') return `Every photo of ${spec.value} has a month.`;
     if (spec.kind === 'keyword') return `No photo carries the keyword “${spec.value}”, or the library's tag tree has no such keyword.`;
     if (spec.kind === 'person') return `No photo names ${spec.value}.`;
     if (spec.kind === 'folder') return `The library holds no photo in ${spec.value}${spec.recursive ? ' or below it' : ''}.`;
     return `The library holds no ${spec.kind === 'year' ? 'photo of the year' : 'photo of'} ${spec.value}.`;
 }
 
+/** Is the address of this view too long to be read again (MAX_ADDRESS)? */
+export function addressTooLong(spec) {
+    return viewSearch(spec).length > MAX_ADDRESS;
+}
+
+/** The request for a view's ids: a GET of its address's words, or a POST of a union, which may be longer than an address (#696). */
+function idsRequest(lib, signal) {
+    if (lib.kind !== 'any_of') return [idsUrl(lib), { signal }];
+    const body = { kind: lib.kind, value: JSON.parse(unionText(lib.value)) };
+    if (lib.order && lib.order !== DEFAULT_ORDER) body.order = lib.order;
+    return ['/api/library/ids', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
+    }];
+}
+
 function idsUrl(lib) {
     const query = [`kind=${encodeURIComponent(lib.kind)}`];
     if (lib.kind === 'folder') query.push(`folder=${encodeURIComponent(lib.value)}`, `recursive=${lib.recursive ? 1 : 0}`);
+    else if (lib.kind === 'any_of') query.push(`value=${encodeURIComponent(unionText(lib.value))}`);
     else if (lib.value !== null) query.push(`value=${encodeURIComponent(lib.value)}`);
+    if (lib.order && lib.order !== DEFAULT_ORDER) query.push(`order=${encodeURIComponent(lib.order)}`);
     return `/api/library/ids?${query.join('&')}`;
 }
 
@@ -119,6 +238,7 @@ export function newLibrary(spec) {
     return {
         token: state.libraryTokens,
         kind: spec.kind, value: spec.value ?? null, recursive: Boolean(spec.recursive),
+        order: LIBRARY_ORDERS.includes(spec.order) ? spec.order : DEFAULT_ORDER,   // how the ids are ordered (#671)
         status: 'loading',            // loading | ready | empty | error
         message: '',                  // why it is empty or failed, in a sentence
         notice: '',                   // something that went wrong beside the view: a refresh, a selection
@@ -156,7 +276,7 @@ export function loadLibraryIds(lib, refreshing = false) {
     if (!refreshing) lib.status = 'loading';
     upper.libraryChanged();
     const current = () => lib === state.library && controller === lib.controller;
-    return api.fetch(idsUrl(lib), { signal: controller.signal })
+    return api.fetch(...idsRequest(lib, controller.signal))
         .then(res => res.json().catch(() => ({})).then(body => ({ ok: res.ok, body })))
         .then(({ ok, body }) => {
             if (!current()) return false;

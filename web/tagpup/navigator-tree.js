@@ -4,7 +4,9 @@
 //
 // A tree is one tab stop (roving tabindex): the row that is current has tabindex 0, the others -1; the arrow keys
 // move the current row (Up/Down through what is drawn, Right opens a closed row or goes to its first child, Left
-// closes an open row or goes to its parent, Home/End), Enter or Space opens the row's source. A row is an element
+// closes an open row or goes to its parent, Home/End), Enter or Space opens the row's source; Ctrl+Space adds or takes away the
+// row, Shift+Space selects from the last row picked, Ctrl+A every row drawn (navigator.js). A tree may hold several rows
+// selected (`aria-multiselectable`): the view is the union of them (#672). A row is an element
 // of its own for as long as its id is drawn: a count that changes, a row opened above it, a section loaded again
 // patch the elements that are there, and the focused one is never taken from under the person.
 import { buildElement } from './common/dom.js';
@@ -48,22 +50,26 @@ function patchRow(el, row, selected, current, tree) {
 /**
  * Draw `rows` in `container`: an element kept for each id that stays, made for a new one, dropped for one that
  * went; the DOM in the rows' order, moving only what is out of place (a moved element loses its focus).
- * `selectedId` is the row that is the view open; `currentId` the one the arrow keys are on (the tab stop), or
- * else the selected one, else the first. `tree`: the container is a tree (levels), else a listbox.
+ * `selected` is the Set of rows the open view is made of (or `selectedId`, one); `currentId` the one the arrow keys
+ * are on (the tab stop), or else the first selected one drawn, else the first. `tree`: the container is a tree
+ * (levels), else a listbox.
  */
-export function paintRows(container, rows, { selectedId = null, currentId = null, tree = true } = {}) {
+export function paintRows(container, rows, { selectedId = null, selected = null, currentId = null, tree = true } = {}) {
     let held = drawn.get(container);
     if (!held) {
         held = new Map();
         drawn.set(container, held);
     }
     const role = tree ? 'treeitem' : 'option';
+    const isSelected = selected ? (id => selected.has(id)) : (id => id === selectedId);
+    const firstSelected = rows.find(r => isSelected(r.id));
     const stop = rows.some(r => r.id === currentId) ? currentId
-        : rows.some(r => r.id === selectedId) ? selectedId : (rows[0] ? rows[0].id : null);
+        : firstSelected ? firstSelected.id : (rows[0] ? rows[0].id : null);
+    if (container.getAttribute('aria-multiselectable') !== 'true') container.setAttribute('aria-multiselectable', 'true');
     const next = new Map();
     for (const row of rows) {
         const el = held.get(row.id) || makeRow(role);
-        patchRow(el, row, row.id === selectedId, row.id === stop, tree);
+        patchRow(el, row, isSelected(row.id), row.id === stop, tree);
         next.set(row.id, el);
     }
     for (const [id, el] of held) if (!next.has(id)) el.remove();

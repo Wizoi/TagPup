@@ -119,7 +119,7 @@ describe("the four sections", () => {
     assert.equal(ctx.row("keywords", "k:Events").getAttribute("aria-selected"), "true");
   });
 
-  test("People: a list, alphabetical, with counts; a click opens the person", async (t) => {
+  test("People: alphabetical, with counts (a tree, flat when no one is filed in a branch); a click opens the person", async (t) => {
     const ctx = await loadViewPage(t, { search: "?view=all" });
     await ctx.openTab("people");
     const rows = ctx.rows("people");
@@ -127,8 +127,9 @@ describe("the four sections", () => {
     assert.equal(ctx.note("people"), "");
     const names = rows.map((row) => row.querySelector(".nav-label").textContent);
     assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true })));
-    assert.equal(rows[0].getAttribute("role"), "option");
-    assert.equal(ctx.document.querySelector("#nav-panel-people .nav-tree").getAttribute("role"), "listbox");
+    assert.equal(rows[0].getAttribute("role"), "treeitem");
+    assert.equal(rows[0].getAttribute("aria-level"), "1");
+    assert.equal(ctx.document.querySelector("#nav-panel-people .nav-tree").getAttribute("role"), "tree");
     click(ctx.window, rows[1]);
     await ctx.settle();
     assert.match(ctx.idsAsked.at(-1), /kind=person&value=/);
@@ -161,7 +162,7 @@ describe("the four sections", () => {
     assert.match(ctx.idsAsked.at(-1), /kind=year&value=\d+$/);
   });
 
-  test("Dates: a month with photos of its year that name no month shows 'Other', which opens the year", async (t) => {
+  test("Dates: a month with photos of its year that name no month shows 'Other', which opens those photos alone", async (t) => {
     const dates = { years: [{ year: 2022, count: 30, months: [{ month: "2022-03", count: 20 }], other: 10 }], undated: 0 };
     const ctx = await loadViewPage(t, { search: "?view=all", navigator: { dates } });
     await ctx.openTab("dates");
@@ -170,7 +171,7 @@ describe("the four sections", () => {
     assert.deepEqual(names, ["2022", "March", "Other"]);
     click(ctx.window, ctx.rowByLabel("dates", "Other"));
     await ctx.settle();
-    assert.match(ctx.idsAsked.at(-1), /kind=year&value=2022$/);
+    assert.match(ctx.idsAsked.at(-1), /kind=year_other&value=2022$/, "a year is its months and its Other (#672)");
   });
 
   test("an expanded tree is drawn at most 1,500 rows and the count left out is the real one (49 of 1,549)", async (t) => {
@@ -490,11 +491,12 @@ describe("following the view that is open", () => {
     await ctx.settle();
     assert.equal(ctx.state.library.kind, "person");
     assert.equal(ctx.selectedRows("people").length, 1);
-    // Back to the folder view (the address of the one before).
+    // Back to the folder view (the address of the one before): the folder and every folder under it are selected.
     await ctx.popTo("?view=folder&value=D%3A%5CLibrary&recursive=1");
     assert.equal(ctx.state.library.kind, "folder");
     assert.equal(ctx.state.nav.tab, "folders");
-    assert.equal(ctx.selectedRows("folders").length, 1);
+    assert.equal(ctx.selectedRows("folders").length, ctx.rows("folders").length);
+    assert.equal(ctx.selectedRows("folders")[0], ctx.rows("folders")[0]);
     await ctx.openTab("people");
     assert.equal(ctx.selectedRows("people").length, 0, "the person is no longer the view");
     await ctx.openTab("folders");

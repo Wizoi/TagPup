@@ -2153,6 +2153,27 @@ select {
     overflow: hidden;
 }
 
+/* The navigator's sort, one for every tab (#671). */
+.nav-sort {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px 0;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.nav-sort-select {
+    flex: 1;
+    padding: 4px 6px;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    font-size: 12px;
+}
+
 /* The navigator: four tabs, and for each a filter, a line that says what is going on, the rows, a note. */
 .nav-tabs {
     display: flex;

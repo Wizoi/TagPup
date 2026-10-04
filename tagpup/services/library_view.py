@@ -2,12 +2,16 @@
 (docs/ARCHITECTURE.md, phase 9a; the SQL is tagpup.store.library_view).
 
 A SOURCE says which photos: `all`; a `folder` (by its path, never an id) and, when asked, its subfolders; a
-`keyword` -- the tag as the tree spells it -- and everything under it; a `person` (the leaf name, as photo_people
-holds it: identity by id comes later); a `year`; a `month` ("2024-06"). `view` answers an ORDERED page of photo
-ids with the TOTAL and the cards of the page; `cards` turns any list of ids into cards.
+`keyword` -- the tag as the tree spells it -- and everything under it, or `keyword_only`, its node alone; a `person`
+(the leaf name, as photo_people holds it: identity by id comes later); a `year`; `year_other`, the photos of a year
+whose date names no month of it; a `month` ("2024-06"); or `any_of`, a list of those (at most MAX_MEMBERS): the
+union of the rows selected in the navigator (phase 9, #672). `view` answers an ORDERED page of photo ids with the
+TOTAL and the cards of the page; `cards` turns any list of ids into cards.
 
 * **Order**: by Date Taken (`photos.taken`, ExifTool's text, which sorts as time does) and then id; photos with
-  no date after them, by id. Never by file time. A page is `limit` photos (at most MAX_LIMIT) after a KEYSET
+  no date after them, by id -- or, asked (`order`, store.ORDERS), newest first (the undated still after the dated,
+  by id from the highest), or by file name either way (ties by id). Never by file time. A page is `limit` photos
+  (at most MAX_LIMIT) after a KEYSET
   token (`after`, from the page before: opaque; a forged or corrupt one is refused, never trusted), never an
   OFFSET: a photo added, deleted or re-dated between two pages neither repeats nor skips another beyond what
   that change itself explains, and a page deep in a 20,000-photo source costs what the first does.
@@ -62,7 +66,13 @@ MAX_IDS = 200_000
 MAX_CARDS = 200
 
 #: The longest page token read: a token is a few dozen characters; a very large one is refused before it is decoded.
-MAX_TOKEN = 200
+MAX_TOKEN = 400
+
+#: The most sources a union holds: the navigator's rows a person selected, compressed (a folder with every folder under it
+#: is one). A union of more is refused with a sentence; its address would be longer than the server reads.
+MAX_MEMBERS = 1000
+
+ORDERS = store.ORDERS
 
 _MONTH = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
 _YEAR = re.compile(r"^\d{1,4}$")
@@ -105,31 +115,92 @@ def opened(library):
 def source_of(library, kind, value=None, recursive=False):
     """The store's Source for a request's words, or Refused with why it means nothing. A folder is
     spelled by its first place when the library has roots (paths.canonical: the web layer's ingress does it
-    for the request, this for a caller that is not one) and as the filesystem spells it (paths.stored)."""
+    for the request, this for a caller that is not one) and as the filesystem spells it (paths.stored).
+
+    A union (`any_of`) is a list of sources, each {"kind", "value", "recursive"} -- as JSON text in a request's
+    query, as a list in a body -- none of them a union, at least one and at most MAX_MEMBERS; the same source named
+    twice is one. A union of one source is that source."""
+    return _source_of(kind, value, recursive, _Canonical(library), member=False)
+
+
+class _Canonical:
+    """The library's canonicaliser, asked of its roots once for a request however many folders it names."""
+
+    def __init__(self, library):
+        self.library, self.made, self.found = library, False, None
+
+    def __call__(self, folder):
+        if not self.made:
+            self.found, self.made = roots_service.canonicaliser(self.library), True
+        return self.found(folder) if self.found else folder
+
+
+def _source_of(kind, value, recursive, canonical, member):
     if kind not in KINDS:
         raise Refused("kind must be one of %s." % ", ".join(KINDS))
     if kind == store.ALL:
         return store.Source(store.ALL)
-    if not isinstance(value, str) or not value.strip():
+    if kind == store.ANY_OF:
+        if member:
+            raise Refused("A union cannot hold a union.")
+        return _union_of(value, canonical)
+    if not isinstance(value, (str, int)) or isinstance(value, bool) or not str(value).strip():
         raise Refused("A %s source needs a value." % kind)
+    value = str(value)
     if kind == store.FOLDER:
-        folder = paths.stored(value.strip())
-        canonical = roots_service.canonicaliser(library)
-        return store.Source(store.FOLDER, canonical(folder) if canonical else folder, bool(recursive))
-    if kind == store.KEYWORD:
+        return store.Source(store.FOLDER, canonical(paths.stored(value.strip())), bool(recursive))
+    if kind in (store.KEYWORD, store.KEYWORD_ONLY):
         tag = vocabulary.normalize(value)
         if not tag:
             raise Refused("A keyword source needs a tag.")
-        return store.Source(store.KEYWORD, tag)
+        return store.Source(kind, tag)
     if kind == store.PERSON:
         return store.Source(store.PERSON, value.strip())
-    if kind == store.YEAR:
+    if kind in (store.YEAR, store.YEAR_OTHER):
         if not _YEAR.match(value.strip()):
             raise Refused("A year is up to four digits, as 2024.")
-        return store.Source(store.YEAR, int(value.strip()))
+        return store.Source(kind, int(value.strip()))
     if not _MONTH.match(value.strip()):
         raise Refused("A month is written YYYY-MM, as 2024-06.")
     return store.Source(store.MONTH, value.strip())
+
+
+def _union_of(value, canonical):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            raise Refused("A union's value is a list of sources, as [{\"kind\": \"month\", \"value\": \"2024-07\"}].") from None
+    if not isinstance(value, list) or not value:
+        raise Refused("A union's value is a list of sources, at least one.")
+    if len(value) > MAX_MEMBERS:
+        raise Refused("That selects %d rows of the navigator; at most %d can be shown at once. Select fewer, or a "
+                      "row above them." % (len(value), MAX_MEMBERS))
+    members = []
+    for each in value:
+        if not isinstance(each, dict):
+            raise Refused("Each source of a union is {\"kind\": ..., \"value\": ..., \"recursive\": ...}.")
+        members.append(_source_of(each.get("kind"), each.get("value"), each.get("recursive"), canonical, member=True))
+    members = list(dict.fromkeys(members))
+    if len(members) == 1:
+        return members[0]
+    return store.Source(store.ANY_OF, tuple(members))
+
+
+def described(source):
+    """A Source as a reply names it: {"kind", "value", "recursive"}, a union's value the list of its sources so named."""
+    if source.kind == store.ANY_OF:
+        return {"kind": source.kind, "value": [described(member) for member in source.value], "recursive": False}
+    return {"kind": source.kind, "value": source.value, "recursive": source.recursive}
+
+
+def order_of(text):
+    """The order a request's `order` names (store.ORDERS; none: by Date Taken, oldest first), or Refused."""
+    if text is None or text == "":
+        return store.TAKEN
+    if text not in store.ORDERS:
+        raise Refused("order must be one of %s." % ", ".join(store.ORDERS))
+    return text
 
 
 def page_size(limit):
@@ -146,15 +217,20 @@ def page_size(limit):
     return min(wanted, MAX_LIMIT)
 
 
-def encode(cursor):
-    """The token that continues after `cursor` (store.Cursor): opaque to a page."""
-    raw = json.dumps([cursor.phase, cursor.taken, cursor.id], separators=(",", ":")).encode("utf-8")
+def encode(cursor, order=store.TAKEN):
+    """The token that continues after `cursor` (store.Cursor) in `order`: opaque to a page. By Date Taken oldest first
+    it is the (phase, taken, id) it always was; in another order the order goes first, so a token is never read in an
+    order it was not made for."""
+    parts = [cursor.phase, cursor.taken, cursor.id]
+    if order != store.TAKEN:
+        parts.insert(0, order)
+    raw = json.dumps(parts, separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def decode(token):
-    """The store.Cursor a token says, None for no token. Refused for one that is not what `encode` makes -- too
-    long, not base64, not JSON, the wrong shape: it is read and checked, never trusted."""
+def decode(token, order=store.TAKEN):
+    """The store.Cursor a token says, None for no token. Refused for one that is not what `encode` makes for `order` --
+    too long, not base64, not JSON, the wrong shape, another order's: it is read and checked, never trusted."""
     if token is None or token == "":
         return None
     if not isinstance(token, str) or len(token) > MAX_TOKEN:
@@ -163,11 +239,18 @@ def decode(token):
         found = json.loads(base64.b64decode(token + "=" * (-len(token) % 4), altchars=b"-_", validate=True).decode("utf-8"))
     except (binascii.Error, ValueError, UnicodeDecodeError):
         raise Refused("That page token is not one this server made.") from None
+    if order != store.TAKEN:
+        if not (isinstance(found, list) and len(found) == 4 and found[0] == order):
+            raise Refused("That page token is not one this server made for this order.")
+        found = found[1:]
     if not (isinstance(found, list) and len(found) == 3):
         raise Refused("That page token is not one this server made.")
     phase, taken, photo_id = found
+    longest = 64 if order in (store.TAKEN, store.TAKEN_DESC) else 260
     ok = (phase in (0, 1) and type(phase) is int and type(photo_id) is int and 0 <= photo_id < 2 ** 62
-          and (isinstance(taken, str) and 0 < len(taken) <= 64 if phase == 0 else taken is None))
+          and (isinstance(taken, str) and 0 < len(taken) <= longest if phase == 0 else taken is None))
+    if order in (store.NAME, store.NAME_DESC) and phase != 0:
+        ok = False   # every photo has a name: there is no second phase
     if not ok:
         raise Refused("That page token is not one this server made.")
     return store.Cursor(phase, taken, photo_id)
@@ -175,37 +258,38 @@ def decode(token):
 
 # ---- A page ---------------------------------------------------------------------------------------
 
-def view(library, kind, value=None, recursive=False, after=None, limit=None):
-    """A page of the photos of a source: {"source": {kind, value, recursive}, "total", "ids", "next" (a token or
-    None), "limit", "cards"}. The total is of the whole source, not of the page. A source that holds nothing
+def view(library, kind, value=None, recursive=False, after=None, limit=None, order=None):
+    """A page of the photos of a source: {"source": {kind, value, recursive}, "order", "total", "ids", "next" (a token
+    or None), "limit", "cards"}. The total is of the whole source, not of the page. A source that holds nothing
     -- a folder with no photo, a keyword no node has, a person nobody is -- is an empty page, not an error."""
     source = source_of(library, kind, value, recursive)
-    cursor = decode(after)
+    order = order_of(order)
+    cursor = decode(after, order)
     size = page_size(limit)
     conn = _open(library)
     try:
-        rows, more, total = store.view(conn, source, cursor, size)
+        rows, more, total = store.view(conn, source, cursor, size, order)
         shown = _cards(conn, [photo_id for photo_id, _taken in rows])
     finally:
         conn.close()
-    return {"source": {"kind": source.kind, "value": source.value, "recursive": source.recursive},
+    return {"source": described(source), "order": order,
             "total": total, "ids": [photo_id for photo_id, _taken in rows],
-            "next": encode(store.next_cursor(rows[-1])) if more and rows else None,
+            "next": encode(store.next_cursor(rows[-1]), order) if more and rows else None,
             "limit": size, "cards": shown}
 
 
-def ids(library, kind, value=None, recursive=False, cap=None):
-    """{"source", "total", "ids", "complete"}: the whole ordered id list of a source, in the order `view` pages it, for
-    a page that jumps to the middle of it. At most `cap` ids (MAX_IDS); `total` is the source's, `complete` false
+def ids(library, kind, value=None, recursive=False, cap=None, order=None):
+    """{"source", "order", "total", "ids", "complete"}: the whole ordered id list of a source, in the order `view` pages it,
+    for a page that jumps to the middle of it. At most `cap` ids (MAX_IDS); `total` is the source's, `complete` false
     when the list was cut. One read of ids alone: no card, no BLOB."""
     source = source_of(library, kind, value, recursive)
+    order = order_of(order)
     conn = _open(library)
     try:
-        found, total = store.all_ids(conn, source, MAX_IDS if cap is None else cap)
+        found, total = store.all_ids(conn, source, MAX_IDS if cap is None else cap, order)
     finally:
         conn.close()
-    return {"source": {"kind": source.kind, "value": source.value, "recursive": source.recursive},
-            "total": total, "ids": found, "complete": len(found) == total}
+    return {"source": described(source), "order": order, "total": total, "ids": found, "complete": len(found) == total}
 
 
 def read_ids(text):
@@ -330,8 +414,11 @@ def cards(library, photo_ids, check_disk=False):
 
 def navigator(library, section):
     """The counts of one section of the navigator: `folders` {"folders": [{path, name, parent, direct,
-    recursive}]}, `keywords` {"keywords": [{tag, name, parent, count}]}, `people` {"people": [{name, count}]}, `dates`
-    {"years": [{year, count, months: [{month, count}], other}], "undated"}. Each is one read of the library."""
+    recursive}]}, `keywords` {"keywords": [{tag, name, parent, count}]}, `people` {"people": [{name, count, group}],
+    "groups": [{tag, name, parent, count}], "unfiled"} -- each person under the tag of the branch they are filed in (None:
+    not filed), the branches above people with the photos naming anyone under them, and the photos naming someone not
+    filed (store.people_groups) --, `dates` {"years": [{year, count, months: [{month, count}], other}], "undated"}. Each
+    is one read of the library."""
     if section not in SECTIONS:
         raise Refused("section must be one of %s." % ", ".join(SECTIONS))
     conn = _open(library)
@@ -341,7 +428,14 @@ def navigator(library, section):
         if section == "keywords":
             return {"keywords": _keywords(store.keyword_counts(conn))}
         if section == "people":
-            return {"people": [{"name": name, "count": count} for name, count in store.people_counts(conn)]}
+            counted = store.people_counts(conn)
+            group_of, groups, unfiled = store.people_groups(conn, counted)
+            tag_of = {group["id"]: group["tag"] for group in groups}
+            return {"people": [{"name": name, "count": count, "group": group_of.get(name)} for name, count in counted],
+                    "groups": [{"tag": group["tag"], "name": group["name"], "parent": tag_of.get(group["parent_id"]),
+                                "count": group["count"]}
+                               for group in sorted(groups, key=lambda group: vocabulary.tag_sort_key(group["tag"]))],
+                    "unfiled": unfiled}
         return store.date_counts(conn)
     finally:
         conn.close()

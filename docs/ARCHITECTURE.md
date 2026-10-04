@@ -1865,7 +1865,137 @@ and refused, the time left, **Cancel** -- which is still there after the view ch
 - **What 9e builds on.** A search is a source: `selection.js`'s two shapes already name "the view's source but these" and "these", and the `source` object of `selectionRequest` is the one place that says it
   (`{kind, value, recursive}` of `/api/library/ids`); a search view needs a new `kind` in `library-source.js` and the same in `tagpup.services.library_view.source_of`, and Select all, ranges, the tally, every
   bulk edit and the strip work on it unchanged. `state.nav.followed` is still where "within what the navigator has selected" is read. `lockBulkControls` and `bulkBusy` are the one place that says an
-  edit may not start.
+  edit may not start. *(The navigator's union, `any_of`, is the shape a search's `any_of` is: see "Phase 9, the owner's review" below.)*
+
+### Phase 9, the owner's review: several rows at once, People by branch, one sort *(built 2026-10-04; branch `arch/library-review-2`; findings #671-#673)*
+The owner installed phase 9 and asked for three things of the navigator (#671-#673; #668-#670, #674 and #675 are another branch's). Server, page
+and one index-only migration (22).
+
+- **A source may be a union** (`any_of`, #672): `{"kind": "any_of", "value": [source, ...], "recursive": false}`, each a source of
+  the existing kinds -- none a union, at least one, at most 1,000 (`library_view.MAX_MEMBERS`; Refused with a sentence past it: the
+  address of more would outgrow what the server reads) -- the same source twice is one, a union of one is that source. Two kinds
+  are new because a navigator row holds them alone: `keyword_only` (a keyword's node without the nodes under it) and `year_other`
+  (the photos of a year whose date names no month of it: the year less its twelve month ranges, so a year is exactly its months and
+  this). **One statement** over `photos p` (`store._union_scope`): the members gathered by kind -- the folders' ids (a folder with its
+  subfolders is its own id and every folder under it, by `folders.parent_id`, read once), the tag tree's node ids (`derived.under` or the
+  node alone), the people's spellings (one pass of the name index for the whole union, not one a person), the years -- each one
+  `IN (...)`, the months and the years' "Other" OR'd; the clauses are OR'd as a **balanced tree**, since SQLite refuses an expression
+  nested 1,000 deep and a chain of ORs is nested as long as it is (a test holds 1,000 months). A photo in two members is one row and
+  counted once; a member that names nothing (a keyword deleted since the address was written) adds nothing. The walk under a
+  folder with its subfolders keeps its own set of folders walked, so a child folder named alone before its recursive parent does
+  not stop the walk at it (#695: every order of the members gives the same photos, a test). It is a source like
+  any other: `source_of` reads it (the JSON text of a query's `value`, or a list in a body), so `/api/library/ids`, `/view`, a
+  selection by source (`selection.read`), the tally and every bulk edit take it unchanged; the #607 widening notice compares the
+  job's total with the page's count as for any source.
+- **A union travels in a body** *(review, #696)*. The 1,000-source count bounds the work, not the length: 1,000 folders of
+  photo_index are a 145,613-character address, and a share's longer paths pass the 262,144 bytes Waitress reads of a request's
+  first line and headers. So `/api/library/ids` and `/view` also take a POST of the same words as JSON (`_source_asked`), and the
+  page asks every union so (a single source stays a GET of its address's words). The page's own address still holds the union, for
+  Back, Forward and a bookmark, and that address is read by the same server: the page refuses, with a sentence and no request, a
+  selection whose address would pass 100,000 characters (`MAX_ADDRESS`, `addressTooLong`), the limit that bites first for long
+  paths (a test: 600 share folders refused, 300 accepted and posted). An address made longer by hand is refused by Waitress before
+  the page loads.
+- **How 9e extends it.** A search is `{"kind": "search", "value": {"any_of": [...], "all_of": [...], "none_of": [...], "words": "..."}}`:
+  `any_of` is exactly this list and compiles to this clause (`_union_scope`); `all_of` is the members' clauses joined by AND
+  (each member's own `p.id IN (...)`, not gathered, since AND of a gathered IN is "any"); `none_of` is `AND NOT (<its any_of
+  clause>)`; `words` the FTS match. The navigator's selection is then the `any_of` of a search (or its scope: "within what the
+  navigator has selected" is `state.nav.followed`, which is this union), and nothing in the page's selection, tally or bulk
+  edits changes: they carry `{kind, value, recursive}` whatever `value` holds.
+- **Orders** (#671): `order=taken | taken-desc | name | name-desc` on `/api/library/ids` and `/view` (`library_view.order_of`; another is
+  `400`). By Date Taken the photos with none come **after the dated ones in both directions**, by id in the order's direction (newest
+  first: the undated from the highest id down). By file name: what follows the last separator of the row's path, **without case**
+  (`NOCASE`, ASCII), ties by id in the order's direction; there is no undated phase. The keyset token of an order other than the
+  default carries the order and is refused in another (`400`); the default's token is the 3-part one it always was. The page reads
+  the order once with the ids, so a sort is a new view: Back returns to the order before.
+- **Migration 22** (additive, index only, touches no table, blocks no undo): `idx_photos_name` on `(<file name> COLLATE NOCASE, id)`,
+  the file name an expression of built-in deterministic functions (`library_view.name_sql`: `substr(path, length(rtrim(path,
+  replace(replace(path, '/', ''), char(92), ''))) + 1)`), so SQLite keeps it and no writer of a path has to know of it -- chosen over a
+  column in `photo_meta`, which every writer of a path, the doctor's checks and the migration's backfill would have had to keep.
+  Checked by hand against #464 (nothing checks a migration's declared `touches`): a test holds that 22 adds exactly one index on
+  `photos` and no column or trigger, that every table's rows are unchanged, and that a change journaled at 21 is still undoable. An
+  order by name reads `photos p INDEXED BY idx_photos_name`, walking the index in order and testing each entry for the source (5 to
+  25 ms on photo_index whatever the source's size; sorting 15,000 photos by a name computed for each was 130 ms, the whole library
+  630 ms); without the index (a library not yet migrated) it is the sort, the same order. On the sandbox copy migration 22 took 0.7 to 1.1 s.
+- **The navigator** (`navigator.js`, `navigator-model.js`, `navigator-tree.js`): every tab is a multi-selectable tree
+  (`aria-multiselectable`). A click selects the row **and every row under it** (shown selected) and opens a closed branch; Ctrl-click
+  adds or takes away a row and the rows under it; Shift-click the rows drawn from the last row picked (Ctrl+Shift adds them); Ctrl+A
+  every row drawn; the keys Space/Enter, Ctrl+Space, Shift+Space. **A row's own photos stay when a row under it is taken off**
+  (decided): a row holds photos of its own -- a folder's own, a keyword's node alone, a person, a month, a year's "Other" -- and, with
+  the rows under it, its whole; `compress` turns the rows selected into the fewest sources (a row with every row below selected is its
+  whole: Select all of the folders is the one top folder with its subfolders), so the year 2021 with March taken off is eleven months
+  and `year_other`, and Trips with Trips/Coast taken off is `keyword_only` Trips and the other branches. A branch of people or the junk
+  years hold nothing of their own: they are the rows under them, and are shown selected when all of those are. **The selection is the
+  view's source**, held in the address (`?view=any_of&value=<JSON>&order=`), so Back, Forward and a bookmark restore it, and each tab
+  draws its rows of it (`selectedRows`). Decided: **switching tabs keeps the selection** (and the grid); **Ctrl-click in another tab
+  adds its rows to the same union** (a month and a person), a plain click or Shift-click anywhere starts again; **a row the filter hides
+  stays selected** and the note says how many are hidden; a click that would leave **nothing** selected leaves the selection as it is and
+  says so; more than 1,000 sources is a sentence and no request. The "Other" row under a year now opens the year's undated-by-month
+  photos alone (`year_other`), not the whole year. The filter box was already there on every tab (9c): typing "July" in Dates lists
+  each year's July, and Shift-clicking the first and the last shows every July.
+- **People by branch** (#673): `/api/library/navigator?section=people` adds to each person `group`, the tag of the branch above their
+  node -- by `person_ids`' one rule (a leaf `has_face` node, not a root, the only one called that name; a branch is never a person) --
+  and `groups` (`tag`, `name`, `parent`, `count`: every branch above a person, the photos naming anyone under it, each photo once,
+  one pass of `photo_people` grouped by photo in SQLite and rolled up the tree as the keywords' counts are) and `unfiled` (photos naming
+  someone with no such node). The tab is a tree: branches nested as the tree nests them, alphabetically, branches before people,
+  open at first; those not filed under "Not filed in the tag tree" at the end; a library that files no one is the flat list it was.
+  A branch's row selects its people (a union of them). Counted read-only on photo_index: 413 people, 404 filed under 12 branches (two
+  deep at most), 9 not filed (117 photos); kr-track: 75 people, 62 filed under 1 branch. The read is 46 ms in-process where the flat list
+  was 5 ms.
+- **The sort** is one control above the tabs (`#nav-sort`, `data-own-keys`): Date taken oldest or newest first, Name A to Z or Z to A.
+  Choosing one reads the view open again in it (a new history entry) and the views opened after it are read in it until another
+  is chosen or an address names one (`state.nav.order`).
+- **Measured** with `scripts/measure_library_review.py --run` on a sandbox copy of photo_index (68,324 photos; the copy migrated
+  to 22 by the served code before the server started), headless Chromium 1600 x 1000, a fresh browser each, three rounds, medians,
+  thumbnails answered a 1-pixel picture by the browser; the trunk measured the same way with `--code-root` (a `git archive` of
+  `6714b92`), which has no union and no sort:
+
+  | the action | this branch | trunk |
+  |---|---|---|
+  | (a) twelve Julys (filter "July", click the first, Shift-click the twelfth): the Shift-click to the first window painted and idle | 109 ms (73-141, five rounds); the ids request 44 ms (31-64), 4,003 photos, 23 KB; no long task | -- (one row at a time) |
+  | (b) the People tab: click to its rows painted and idle | 165 ms (145-199); the request 115 ms (97-152), 23 KB; 426 rows, 13 branch headers | 65 ms (64-66); the request 19 ms, 13 KB; 413 rows |
+  | (c) the whole library: navigation to painted and idle, by Date Taken | 389 ms (332-677); ids 158 ms | 373 ms (361-646); ids 175 ms |
+  | (c) the whole library, the sort changed to newest first / name A-Z / name Z-A | 295 / 294 / 380 ms; ids 132 / 207 / 194 ms | -- |
+  | (c) the largest keyword node (41,434 photos): navigation to painted and idle | 541 ms (509-643); ids 359 ms | 522 ms (500-557); ids 306 ms |
+  | (c) the same, the sort changed to newest first / name A-Z / name Z-A | 411 / 414 / 529 ms; ids 142 / 83 / 186 ms | -- |
+
+  An earlier run of the branch on a busier machine (the copy took 86 s, not 12) gave (b) 324 ms and (c) 815 / 679 ms for the
+  unchanged date order: these numbers move by a factor of two run to run. **The People tab is slower** -- about 100 ms in the page,
+  45 ms of it the branches' photo counts in-process (one pass of `photo_people` grouped by photo: 4,179 distinct sets of names), the
+  rest a reply twice as long; a header counting its people instead of its photos would cost nothing, and is the owner's call.
+  In-process on photo_index read-only (no index of names there yet, so the name orders are the fallback): the id list of 12 Julys
+  17 ms either way by date; 400 people 181 ms (44,431 photos, the sort of them); a mixed union (a keyword, a person, a year, a
+  month, a year's Other) 72 ms; all 22 ms by date either way, 490-516 ms by name without the index; the 14,838-photo keyword
+  34 ms by date, 117 ms by name without the index. With the index (a copy of photos made in a scratch file): all 25 ms, that
+  keyword 15 ms, a person 7 ms, either way.
+- **Plans** (checked on photo_index read-only; `tests/test_library_union_and_order.py` asserts them on a library made the same way):
+  twelve Julys `SEARCH p USING COVERING INDEX idx_photos_taken (taken>?)` with no sort, either direction (the index read from the
+  first July, each row tested); a mixed union `MULTI-INDEX OR` of `idx_photos_taken (taken>? AND taken<?)`, `idx_photos_year (year=?)`,
+  `photo_tags` by `idx_photo_tags_tag (tag_id=?)` and `photo_people` by `idx_photo_people_name (name=?)` each then `p` by primary key,
+  and a temp b-tree for the order; its undated read `SEARCH p USING INDEX idx_photos_taken (taken=?)`; a union of people the name
+  index for each name and a temp b-tree; newest first the same indexes read backwards with no sort; by name `SCAN p USING INDEX
+  idx_photos_name` (the index walked, nothing sorted) with the source's own seeks as list subqueries, and a keyset page `SEARCH p USING
+  INDEX idx_photos_name (<expr>>?)`. The people's branches: `SCAN photo_people USING INDEX sqlite_autoindex_photo_people_1` (80,000
+  small rows, not covering: the name is read) and a temp b-tree for the grouping.
+- **How it fails**, each a test (`tests/test_library_union_and_order.py`, `test_name_index.py`, `test_navigator_people_groups.py`,
+  `tests/frontend/navigator-multi.test.mjs`): a union of overlapping keywords (one photo, counted once); a deleted keyword or person
+  in it (nothing from it, the rest shows; all of it deleted is an empty view); a union holding `all`; 1,000 months in one statement;
+  1,001 sources, a nested union, JSON that is not a list, a month that is not one (a sentence each); a selection by a union source,
+  resolved and tallied with an id excluded; every order's keyset pages equal to its id list for all, a folder, a keyword and a union;
+  a token read in another order; the order by name without the index; the migration adding one index and nothing else, an undo
+  across it. On the page: twelve Julys by the filter and a Shift-click, Back and Forward to and from it; Ctrl-click on, off, and the
+  last row; four Ctrl-clicks with no answer awaited between them; a parent with one child taken off (its own photos stay) and put
+  back (the whole again); Ctrl+A of the whole tree (one source) and of 2,705 filtered rows (a sentence, no request); a Ctrl-click in
+  another tab and the tab switch; a selected row hidden by the filter; a bookmark of a union with a deleted keyword and an order, and
+  four bad ones (no request); Select all of the grid on a union (the union is the bulk edit's source); the People tree, a branch's
+  row, a person opened by the address under their branch; the sort changed, kept for the next row, restored by Back; a bad order in
+  the address; the sort's arrow keys not stepping the open photo.
+- **Known limits.** The order is read once with the ids, as before: an edit that moves a photo in the order shows at Refresh view.
+  `NOCASE` folds ASCII only, so "Émile" sorts after "Zed"; a number in a name sorts as text ("IMG_10" before "IMG_9"). A union's
+  folders are read through `photo_folder` (the derived table) where a single folder with its subfolders is a range of `photos.path`:
+  the two agree while the derived tables are in step (the doctor checks them). A folder spelled by a previous place of its root
+  inside a union is canonicalised by `source_of`; going to another library takes the view's parameters away, the order with them,
+  by the one list `common/library.js VIEW_PARAMS` (#697),, but the response does not carry the ingress's moved-root header. The People
+  tab is about 100 ms slower to open than the flat list was (see Measured).
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1; stage 1, the id beside the name, built 2026-10-04 on `arch/identity-by-id`, migration 21; stage 2 design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag
