@@ -875,6 +875,95 @@ body {
     max-width: 100%;
 }
 
+/* Sort by, in a view's header (#714; web/tagpup/sort-menu.js): the menu hangs below its button, right-aligned, two groups
+   of radio items, each showing its choice with a filled dot. */
+.sort-by {
+    position: relative;
+    display: inline-flex;
+}
+
+.sort-by-current {
+    font-weight: 600;
+}
+
+.sort-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 900;
+    min-width: 190px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.sort-menu [role="group"] {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.sort-menu-heading {
+    padding: 4px 12px 2px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.sort-menu [role="menuitemradio"] {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 7px 12px;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.sort-menu [role="menuitemradio"]::before {
+    content: "";
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1px solid var(--text-muted);
+}
+
+.sort-menu [role="menuitemradio"][aria-checked="true"]::before {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.sort-menu [role="menuitemradio"]:hover,
+.sort-menu [role="menuitemradio"]:focus {
+    background-color: rgba(255, 255, 255, 0.06);
+    outline: none;
+}
+
+.sort-menu [role="menuitemradio"]:focus-visible {
+    box-shadow: 0 0 0 2px var(--accent);
+}
+
+.sort-menu-separator {
+    height: 1px;
+    margin: 4px 6px;
+    background-color: var(--border-color);
+}
+
 /* A button that is an icon: its name is its aria-label, its tooltip says what it does. */
 .btn-icon {
     min-width: 28px;
@@ -2245,27 +2334,6 @@ select {
     flex: 1;
     min-height: 0;
     overflow: hidden;
-}
-
-/* The navigator's sort, one for every tab (#671). */
-.nav-sort {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px 0;
-    font-size: 12px;
-    color: var(--text-muted);
-}
-
-.nav-sort-select {
-    flex: 1;
-    padding: 4px 6px;
-    background-color: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    color: var(--text-primary);
-    font-family: var(--font-body);
-    font-size: 12px;
 }
 
 /* The navigator: four tabs, and for each a filter, a line that says what is going on, the rows, a note. */

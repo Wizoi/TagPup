@@ -21,8 +21,8 @@
 // hides it, and when another tab is shown; Ctrl-click in another tab adds its rows to the same union; a plain click anywhere
 // starts again. A click that would leave nothing selected leaves the selection as it is.
 //
-// The sort (#671) is one control above the tabs, for every tab: Date taken or Name, either way; the view open is read again
-// in the order chosen, and the views opened after it are read in it. The address holds it (`order`).
+// The sort is the view's header's Sort by (sort-menu.js, #714; it was one control above the tabs, #671): the order a view was
+// opened in is the one the next view is opened in (state.nav.order), whichever tab it is opened from.
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
@@ -30,7 +30,7 @@ import {
     sidebarPaneFolder, sidebarPaneLibrary, sidebarSwitch, sidebarTabFolder, sidebarTabLibrary
 } from './elements.js';
 import { openLibraryView } from './library-view.js';
-import { DEFAULT_ORDER, LIBRARY_ORDERS, MAX_MEMBERS, ORDER_LABELS, addressTooLong } from './library-source.js';
+import { DEFAULT_ORDER, MAX_MEMBERS, addressTooLong } from './library-source.js';
 import {
     compress, indexDates, indexFolders, indexKeywords, indexPeople, membersOf, peopleGroupIds, rowTree, sectionOf, sectionRows,
     selectedRows, specOfMembers, withRowsUnder
@@ -261,28 +261,12 @@ export function navigatorFollows() {
     const lib = state.library;
     nav.followed = lib && !lib.invalid ? { kind: lib.kind, value: lib.value, recursive: lib.recursive } : null;
     if (lib && !lib.invalid) nav.order = lib.order || DEFAULT_ORDER;
-    showOrder();
     const target = sectionOf(nav.followed);
     const touched = new Set(membersOf(nav.followed).map(sectionOf));
     for (const name of NAV_ORDER) nav.sections[name].reveal = touched.has(name);
     // A Ctrl-click in one tab keeps the tab: the union may start in another.
     if (target && !touched.has(nav.tab)) selectTab(target, { load: false });
     showPane(lib ? nav.choice.library : nav.choice.folder);
-}
-
-// ---- The sort --------------------------------------------------------------------------------
-
-function showOrder() {
-    const select = sidebarPaneLibrary.querySelector('.nav-sort-select');   // built by buildSort, not in index.html
-    if (select && select.value !== state.nav.order) select.value = state.nav.order;
-}
-
-/** The person chose an order: the view open is read again in it, and the views opened after it are. */
-function chooseOrder(order) {
-    if (!LIBRARY_ORDERS.includes(order)) return;
-    state.nav.order = order;
-    const lib = state.library;
-    if (lib && !lib.invalid) openLibraryView({ kind: lib.kind, value: lib.value, recursive: lib.recursive, order });
 }
 
 // ---- Rows: opening, expanding, the keys ---------------------------------------------------------
@@ -454,21 +438,7 @@ function wireSection(name) {
     });
 }
 
-function buildSort() {
-    const select = buildElement('select', {
-        className: 'nav-sort-select', id: 'nav-sort',
-        attrs: { 'aria-label': 'Sort the photos of the view by', 'data-own-keys': true, title: 'Sort the photos of the view' },
-    }, LIBRARY_ORDERS.map(order => buildElement('option', { text: ORDER_LABELS[order], attrs: { value: order } })));
-    select.value = state.nav.order;
-    select.addEventListener('change', () => chooseOrder(select.value));
-    return buildElement('div', { className: 'nav-sort' }, [
-        buildElement('label', { className: 'nav-sort-label', text: 'Sort', attrs: { for: 'nav-sort' } }),
-        select,
-    ]);
-}
-
 function buildPanels() {
-    sidebarPaneLibrary.appendChild(buildSort());
     const tabs = buildElement('div', {
         className: 'nav-tabs', id: 'nav-tabs',
         attrs: { role: 'tablist', 'aria-label': 'Browse the library by', 'data-own-keys': true },

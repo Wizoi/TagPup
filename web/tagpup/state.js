@@ -50,6 +50,8 @@ export const state = {
     // membership question whose answer counts; `cache` what the disk held of each folder (by pathKey), for the page's life
     // (library-banner.js).
     moves: { anchor: null, dismissed: new Set(), banner: null, asked: 0, controller: null, addFor: null, cache: new Map(), leaving: false },
+    // The Sort by menu of a view's header (sort-menu.js, #714): whether it is open, and the token of the view it was drawn for.
+    sortMenu: { open: false, token: 0 },
     // When the library was last in step with its folders, for the view's strip (sync-state.js).
     // `lastRunInStep`: whether the newest sync, of the whole library or a folder, left it in step (null: none, or not known).
     syncInfo: { status: 'idle', lastInStep: null, lastRunInStep: null, syncing: false, known: false, asked: 0, controller: null },

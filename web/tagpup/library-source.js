@@ -39,15 +39,35 @@ export const MAX_MEMBERS = 1000;
 export const MAX_ADDRESS = 100000;
 
 /**
- * The orders a view is read in (#671): by Date Taken -- photos with none after the dated ones, either way -- or by file
- * name, each either way. `taken` is the order an address that names none has.
+ * The orders a view is read in (#671, #714), as the address and the server name them: a field and, `-desc`, the direction --
+ * by Date Taken (photos with none after the dated ones, either way), by file name, or by caption (photos with none after the
+ * captioned ones, either way). `taken` is the order an address that names none has; an address of the first review's four
+ * orders reads as it did.
  */
-export const LIBRARY_ORDERS = ['taken', 'taken-desc', 'name', 'name-desc'];
+export const LIBRARY_ORDERS = ['taken', 'taken-desc', 'name', 'name-desc', 'caption', 'caption-desc'];
 export const DEFAULT_ORDER = 'taken';
-/** What each order is called where it is chosen. */
-export const ORDER_LABELS = {
-    taken: 'Date taken, oldest first', 'taken-desc': 'Date taken, newest first', name: 'Name, A to Z', 'name-desc': 'Name, Z to A',
-};
+/** The fields a view is sorted by, as Sort by's menu names them and in its order (sort-menu.js). */
+export const SORT_FIELDS = [
+    { field: 'taken', label: 'Date Taken' }, { field: 'caption', label: 'Caption' }, { field: 'name', label: 'File name' },
+];
+
+/** { field, descending } of an order (one that is none is the default). */
+export function orderParts(order) {
+    const known = LIBRARY_ORDERS.includes(order) ? order : DEFAULT_ORDER;
+    return { field: known.replace(/-desc$/, ''), descending: known.endsWith('-desc') };
+}
+
+/** The order of a field, either way. */
+export function orderOf(field, descending) {
+    return `${field}${descending ? '-desc' : ''}`;
+}
+
+/** What an order is called: "Date Taken, ascending". */
+export function orderLabel(order) {
+    const { field, descending } = orderParts(order);
+    const named = SORT_FIELDS.find(each => each.field === field);
+    return `${named ? named.label : field}, ${descending ? 'descending' : 'ascending'}`;
+}
 
 /** Cards in one request: the most the server answers. */
 export const BATCH = 200;

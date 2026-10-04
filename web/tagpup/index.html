@@ -303,6 +303,24 @@
                                 </div>
                                 <span class="library-strip-actions">
                                     <button id="btn-library-refresh" type="button" class="btn btn-secondary btn-sm btn-icon" aria-label="Refresh view" title="Refresh view: ask the library for this view's photos again; the place in the view is kept"><span aria-hidden="true">&#x21BB;</span></button>
+                                    <!-- Sort by: the field and the direction, each a group of radio items (web/tagpup/sort-menu.js, #714). -->
+                                    <span class="sort-by">
+                                        <button id="btn-sort-by" type="button" class="btn btn-secondary btn-sm" aria-haspopup="menu" aria-expanded="false" aria-controls="sort-menu" data-own-keys>Sort by: <span id="sort-by-current" class="sort-by-current"></span> <span aria-hidden="true">&#x25BE;</span></button>
+                                        <div id="sort-menu" class="sort-menu hidden" role="menu" aria-label="Sort by" data-own-keys>
+                                            <div role="group" aria-labelledby="sort-menu-field">
+                                                <div id="sort-menu-field" class="sort-menu-heading" role="presentation">Sort by</div>
+                                                <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-field="taken">Date Taken</button>
+                                                <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-field="caption">Caption</button>
+                                                <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-field="name">File name</button>
+                                            </div>
+                                            <div role="separator" class="sort-menu-separator"></div>
+                                            <div role="group" aria-labelledby="sort-menu-direction">
+                                                <div id="sort-menu-direction" class="sort-menu-heading" role="presentation">Order</div>
+                                                <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-direction="asc">Ascending</button>
+                                                <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-direction="desc">Descending</button>
+                                            </div>
+                                        </div>
+                                    </span>
                                 </span>
                             </div>
                             <div class="folder-view-header-card">

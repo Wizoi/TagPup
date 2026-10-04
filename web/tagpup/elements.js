@@ -183,6 +183,10 @@ export const libraryStripSource = document.getElementById('library-strip-source'
 export const libraryStripTotal = document.getElementById('library-strip-total');
 export const libraryStripStatus = document.getElementById('library-strip-status');
 export const btnLibraryRefresh = document.getElementById('btn-library-refresh');
+// Sort by, in a view's header, and its menu (sort-menu.js, #714)
+export const btnSortBy = document.getElementById('btn-sort-by');
+export const sortByCurrent = document.getElementById('sort-by-current');
+export const sortMenu = document.getElementById('sort-menu');
 export const damagedNotice = document.getElementById('damaged-notice');
 export const photoDamagedNote = document.getElementById('photo-damaged-note');
 export const justLookingText = document.getElementById('just-looking-text');

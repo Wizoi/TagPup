@@ -119,3 +119,190 @@ describe("#713: one floating header for a library view", () => {
     assert.equal(ctx.here.scrollTop, GRID_TOP + 20 * STRIDE - (92 + 16));
   });
 });
+
+describe("#714: Sort by, in the header: the field and the direction", () => {
+  const button = (ctx) => el(ctx, "btn-sort-by");
+  const menu = (ctx) => el(ctx, "sort-menu");
+  const items = (ctx) => [...menu(ctx).querySelectorAll("[role='menuitemradio']")];
+  const item = (ctx, label) => items(ctx).find((each) => each.textContent === label);
+  const checked = (ctx) => items(ctx).filter((each) => each.getAttribute("aria-checked") === "true").map((each) => each.textContent);
+  const isOpen = (ctx) => !menu(ctx).classList.contains("hidden");
+  const lastOrder = (ctx) => new URL(ctx.idsAsked.at(-1), "http://localhost").searchParams.get("order");
+  const press = (ctx, key, target = ctx.document.activeElement) => ctx.key(target, key);
+
+  test("two sections, each a radio group showing the current choice; the button says the order", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=keyword&value=Trips&order=name-desc" });
+    assert.ok(el(ctx, "folder-view-top").contains(button(ctx)), "in the floating header");
+    assert.ok(!el(ctx, "sidebar-pane-library").contains(button(ctx)), "not in the sidebar");
+    assert.equal(button(ctx).getAttribute("aria-haspopup"), "menu");
+    assert.equal(button(ctx).getAttribute("aria-label"), "Sort by: File name, descending");
+    assert.match(button(ctx).textContent, /^Sort by: File name/);
+    assert.ok(!isOpen(ctx));
+    click(ctx.window, button(ctx));
+    assert.ok(isOpen(ctx));
+    assert.equal(button(ctx).getAttribute("aria-expanded"), "true");
+    const groups = [...menu(ctx).querySelectorAll("[role='group']")];
+    assert.deepEqual(groups.map((g) => [...g.querySelectorAll("[role='menuitemradio']")].map((i) => i.textContent)),
+      [["Date Taken", "Caption", "File name"], ["Ascending", "Descending"]]);
+    assert.deepEqual(groups.map((g) => ctx.document.getElementById(g.getAttribute("aria-labelledby")).textContent), ["Sort by", "Order"]);
+    assert.deepEqual(checked(ctx), ["File name", "Descending"]);
+    assert.equal(ctx.document.activeElement, item(ctx, "File name"), "the focus on the field chosen");
+  });
+
+  test("Caption keeps the direction; Ascending keeps the field; each reads the view again, the address keeps it, Back returns", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all&order=taken-desc" });
+    click(ctx.window, button(ctx));
+    click(ctx.window, item(ctx, "Caption"));
+    await ctx.settle();
+    assert.ok(!isOpen(ctx));
+    assert.equal(ctx.document.activeElement, button(ctx), "the focus back on the button");
+    assert.equal(lastOrder(ctx), "caption-desc");
+    assert.equal(new URLSearchParams(ctx.window.location.search).get("order"), "caption-desc");
+    assert.equal(ctx.state.nav.order, "caption-desc", "and the next view is opened in it");
+    click(ctx.window, button(ctx));
+    click(ctx.window, item(ctx, "Ascending"));
+    await ctx.settle();
+    assert.equal(lastOrder(ctx), "caption");
+    assert.equal(ctx.window.location.search, "?view=all&order=caption");
+    assert.equal(button(ctx).getAttribute("aria-label"), "Sort by: Caption, ascending");
+    await ctx.popTo("?view=all&order=caption-desc");
+    assert.equal(lastOrder(ctx), "caption-desc");
+    assert.equal(button(ctx).getAttribute("aria-label"), "Sort by: Caption, descending");
+  });
+
+  test("the keys: ArrowDown opens on the field, arrows move through both sections, Enter chooses, Escape closes onto the button", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all" });
+    const asked = ctx.idsAsked.length;
+    button(ctx).focus();
+    press(ctx, "ArrowDown");
+    assert.ok(isOpen(ctx));
+    assert.equal(ctx.document.activeElement, item(ctx, "Date Taken"));
+    press(ctx, "ArrowUp");
+    assert.equal(ctx.document.activeElement, item(ctx, "Descending"), "up from the first wraps to the last");
+    press(ctx, "Home");
+    press(ctx, "ArrowDown");
+    press(ctx, "ArrowDown");
+    assert.equal(ctx.document.activeElement, item(ctx, "File name"));
+    press(ctx, "Escape");
+    assert.ok(!isOpen(ctx));
+    assert.equal(ctx.document.activeElement, button(ctx));
+    assert.equal(ctx.idsAsked.length, asked, "Escape chooses nothing");
+    press(ctx, "ArrowUp");
+    assert.equal(ctx.document.activeElement, item(ctx, "Ascending"), "ArrowUp opens on the direction chosen");
+    press(ctx, "ArrowDown");
+    const enter = press(ctx, "Enter");
+    assert.ok(enter.defaultPrevented);
+    await ctx.settle();
+    assert.equal(lastOrder(ctx), "taken-desc");
+    assert.ok(!isOpen(ctx));
+    assert.equal(ctx.document.activeElement, button(ctx));
+  });
+
+  test("the arrow keys in the menu do not step the open photo; Tab and a click outside close it", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all" });
+    const before = ctx.photosAsked.length;
+    click(ctx.window, button(ctx));
+    press(ctx, "ArrowDown");
+    press(ctx, "ArrowRight");
+    press(ctx, "ArrowLeft");
+    await ctx.settle(20);
+    assert.equal(ctx.photosAsked.length, before);
+    press(ctx, "Tab");
+    assert.ok(!isOpen(ctx));
+    click(ctx.window, button(ctx));
+    assert.ok(isOpen(ctx));
+    el(ctx, "thumbnails-grid").dispatchEvent(new ctx.window.MouseEvent("mousedown", { bubbles: true }));
+    assert.ok(!isOpen(ctx));
+    assert.equal(button(ctx).getAttribute("aria-expanded"), "false");
+  });
+
+  test("rapid clicks: the button toggles, the same choice asks for nothing, two choices read the last", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all" });
+    const asked = ctx.idsAsked.length;
+    for (let i = 0; i < 5; i++) click(ctx.window, button(ctx));
+    assert.ok(isOpen(ctx), "five clicks: open");
+    click(ctx.window, item(ctx, "Date Taken"));
+    click(ctx.window, button(ctx));
+    click(ctx.window, item(ctx, "Ascending"));
+    await ctx.settle();
+    assert.equal(ctx.idsAsked.length, asked, "what is chosen already is not asked again");
+    ctx.hold.ids = true;
+    click(ctx.window, button(ctx));
+    click(ctx.window, item(ctx, "File name"));
+    click(ctx.window, button(ctx));
+    click(ctx.window, item(ctx, "Caption"));
+    await ctx.settle(20);
+    await ctx.release("ids");
+    await ctx.settle();
+    assert.equal(ctx.state.library.order, "caption");
+    assert.equal(ctx.state.library.status, "ready", "the view is the last one chosen, and it is read");
+    assert.equal(ctx.window.location.search, "?view=all&order=caption");
+  });
+
+  test("the menu open while the view changes under it (Back, a navigator row) closes, its focus back on the button", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all" });
+    ctx.module("library-view.js").openLibraryView({ kind: "year", value: "2020" });
+    await ctx.settle();
+    click(ctx.window, button(ctx));
+    assert.ok(isOpen(ctx));
+    await ctx.popTo("?view=all");
+    assert.ok(!isOpen(ctx), "drawn for the view that has gone");
+    assert.equal(ctx.document.activeElement, button(ctx));
+    click(ctx.window, button(ctx));
+    ctx.module("library-view.js").closeLibraryView();
+    await ctx.settle();
+    assert.ok(!isOpen(ctx), "no view: no menu");
+  });
+
+  test("a sort chosen with unsaved edits in the open photo asks first; Cancel keeps the view, its order and the next view's", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all", ids: range(40) });
+    ctx.cardById(3).querySelector(".btn-thumbnail-detail").click();
+    await ctx.settle(60);
+    const title = el(ctx, "input-photo-title");
+    title.value = "Unsaved";
+    title.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+    const asked = ctx.idsAsked.length;
+    click(ctx.window, button(ctx));
+    click(ctx.window, item(ctx, "Caption"));
+    await ctx.settle(60);
+    const modal = ctx.document.querySelector(".unsaved-edits-modal");
+    assert.ok(modal, "Save, Discard or Cancel");
+    modal.querySelector("[data-choice='cancel']").click();
+    await ctx.settle(60);
+    assert.equal(ctx.idsAsked.length, asked);
+    assert.equal(ctx.state.library.order, "taken");
+    assert.equal(ctx.state.nav.order, "taken", "the next view is not read in an order that was never shown");
+    assert.equal(ctx.window.location.search, "?view=all");
+    assert.equal(button(ctx).getAttribute("aria-label"), "Sort by: Date Taken, ascending");
+  });
+
+  test("a bookmark of the first review's orders opens in them; caption orders are the address's own", async (t) => {
+    for (const [order, label] of [["taken", "Date Taken, ascending"], ["taken-desc", "Date Taken, descending"],
+      ["name", "File name, ascending"], ["name-desc", "File name, descending"], ["caption", "Caption, ascending"],
+      ["caption-desc", "Caption, descending"]]) {
+      const ctx = await loadViewPage(t, { search: `?view=all&order=${order}` });
+      assert.equal(ctx.state.library.invalid, undefined, order);
+      assert.equal(lastOrder(ctx), order === "taken" ? null : order);
+      assert.equal(button(ctx).getAttribute("aria-label"), `Sort by: ${label}`);
+    }
+  });
+
+  test("a view whose address is no view: Sort by is off and opens nothing", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all&order=sideways" });
+    assert.equal(button(ctx).disabled, true);
+    click(ctx.window, button(ctx));
+    assert.ok(!isOpen(ctx));
+  });
+
+  test("a view in caption order: Select all and the tally name the source, as in any order", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=keyword&value=Trips&order=caption", ids: range(40) });
+    el(ctx, "btn-select-all-thumbnails").click();
+    const request = ctx.module("selected.js").selectionRequest();
+    assert.deepEqual(JSON.parse(JSON.stringify(request.body)), { source: { kind: "keyword", value: "Trips", recursive: false }, excluded: [] },
+      "the selection names the source, never its order");
+    await ctx.settle(700);
+    const tallied = ctx.server.calls.filter((call) => call.url.includes("/selection/tally"));
+    assert.equal(tallied.length, 1);
+    assert.deepEqual(JSON.parse(JSON.stringify(tallied[0].body)).selection, JSON.parse(JSON.stringify(request.body)));
+  });
+});

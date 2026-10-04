@@ -103,6 +103,7 @@ function hideChrome() {
     btnRefreshList.title = 'Refresh files list';
     libraryStrip.classList.add('hidden');
     folderViewTop.classList.remove('in-library-view');
+    upper.showSortOrder();   // its menu, if it was open, is of no view now
     forgetBanner();
     clearSyncInfo();
     folderViewTitle.textContent = 'Folder View';
@@ -136,6 +137,7 @@ export function libraryChanged() {
     libraryStripStatus.classList.toggle('library-strip-problem', lib.status === 'error' || Boolean(lib.notice));
     libraryStripStatus.title = status || '';
     btnLibraryRefresh.disabled = lib.invalid || lib.loading;
+    upper.showSortOrder();
     folderViewTitle.textContent = lib.invalid ? 'Library view' : label;
     folderViewStats.textContent = `${lib.total.toLocaleString()} photos`;
     folderViewHeader.textContent = '';
