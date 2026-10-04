@@ -244,6 +244,28 @@ class AServerOfAnotherVersionRunning(InstallCase):
         self.install(name="20260105-000000-e")
         self.assertIn(names[0], install_app.versions(self.dest), "the running server's version was removed")
 
+    def test_a_launcher_waiting_for_another_install_says_so_first(self):
+        """#749: the second window was blank for as long as the first install took."""
+        import threading
+        from tagpup import supervisor
+        self.install(name="20260925-115722-0dd8402")
+        held = supervisor.Lock(os.path.join(self.dest, install_app.INSTALL_LOCK))
+        self.assertTrue(held.acquire())
+        self.addCleanup(held.release)   # a failure leaves no thread waiting on it
+        answers = {"rev-parse": "0dd8402", "status": ""}
+        with mock.patch.object(install_app, "git", side_effect=lambda *a: answers[a[0]]):
+            waiting = threading.Thread(target=lambda: install_app.update(self.dest, self.home, sys.executable,
+                                                                         say=self.said.append), daemon=True)
+            waiting.start()
+            deadline = time.time() + 30
+            while not any("another install is running" in line for line in self.said):
+                self.assertLess(time.time(), deadline, "nothing said while it waits: %s" % self.said)
+                time.sleep(0.05)
+            self.assertTrue(waiting.is_alive(), "it did not wait for the install under way")
+            held.release()
+            waiting.join(30)
+        self.assertFalse(waiting.is_alive())
+
     def test_two_launchers_at_once_install_one_version(self):
         """TagPup.cmd and TagTuner.cmd clicked together both run the install first; the
         second waits for the first and finds its version installed."""

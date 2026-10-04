@@ -199,9 +199,12 @@ def update(destination, home, python, say=print):
     One at a time: TagPup.cmd and TagTuner.cmd started together both run this, and the
     second, once the first is done, finds its version installed."""
     lock = supervisor.Lock(os.path.join(destination, INSTALL_LOCK))
-    if not lock.acquire(INSTALL_WAIT):
-        say("TagPup: another install has not finished in %ds; starting the installed version." % INSTALL_WAIT)
-        return None
+    if not lock.acquire(0):
+        # The other launcher's install: say so, or the window is blank while it copies.
+        say("TagPup: another install is running; waiting for it (at most %d s)..." % INSTALL_WAIT)
+        if not lock.acquire(INSTALL_WAIT):
+            say("TagPup: another install has not finished in %ds; starting the installed version." % INSTALL_WAIT)
+            return None
     try:
         return _update(destination, home, python, say)
     finally:
